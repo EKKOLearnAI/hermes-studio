@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Hermes Agent Web UI - Chat and Job Management Dashboard",
   "repository": {
     "type": "git",
@@ -27,6 +27,7 @@
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^13.1.0",
+    "axios": "^1.15.0",
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.1",
     "koa": "^2.15.3",
