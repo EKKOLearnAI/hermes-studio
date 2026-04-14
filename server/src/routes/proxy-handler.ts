@@ -25,6 +25,11 @@ export async function proxy(ctx: Context) {
     headers['cache-control'] = 'no-cache'
   }
 
+  // Auto-inject upstream API key if configured and not already present
+  if (!headers['authorization'] && !headers['Authorization'] && config.upstreamApiKey) {
+    headers['Authorization'] = `Bearer ${config.upstreamApiKey}`
+  }
+
   try {
     // Build request body from raw body
     let body: string | undefined
