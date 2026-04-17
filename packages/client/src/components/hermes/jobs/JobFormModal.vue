@@ -8,6 +8,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   jobId: string | null
+  jobProfile: string | null
 }>()
 
 const emit = defineEmits<{
@@ -27,11 +28,23 @@ const formData = ref({
   prompt: '',
   deliver: 'origin',
   repeat_times: null as number | null,
+  profile: '' as string,
 })
 
 const presetValue = ref<string | null>(null)
 
 const isEdit = computed(() => !!props.jobId)
+
+const profileOptions = computed(() => {
+  const opts: { label: string; value: string }[] = []
+  for (const p of jobsStore.profileJobs) {
+    opts.push({
+      label: p.profile === jobsStore.activeProfile ? `${p.profile} (${t('jobs.activeBot')})` : p.profile,
+      value: p.profile,
+    })
+  }
+  return opts
+})
 
 const schedulePresets = computed(() => [
   { label: t('jobs.presetEveryMinute'), value: '* * * * *' },
@@ -49,19 +62,24 @@ const targetOptions = computed(() => [
 ])
 
 onMounted(async () => {
+  // Default profile: use the currently selected/active profile
+  formData.value.profile = props.jobProfile || jobsStore.selectedProfile || jobsStore.activeProfile || ''
+
   if (props.jobId) {
-    try {
-      const { getJob } = await import('@/api/hermes/jobs')
-      const job = await getJob(props.jobId)
+    // Read job from in-memory profileJobs data (works for all profiles, not just active)
+    const found = jobsStore.findJobById(props.jobId)
+    if (found) {
+      const job = found.job
       formData.value = {
         name: job.name,
         schedule: typeof job.schedule === 'string' ? job.schedule : (job.schedule?.expr || job.schedule_display || ''),
         prompt: job.prompt,
         deliver: job.deliver || 'origin',
         repeat_times: typeof job.repeat === 'number' ? job.repeat : (typeof job.repeat === 'object' ? job.repeat.times : null),
+        profile: props.jobProfile || found.profile || formData.value.profile,
       }
-    } catch (e: any) {
-      message.error(t('jobs.loadFailed') + ': ' + e.message)
+    } else {
+      message.error(t('jobs.loadFailed'))
     }
   }
 })
@@ -89,7 +107,12 @@ async function handleSave() {
     if (isEdit.value) {
       await jobsStore.updateJob(props.jobId!, payload)
       message.success(t('jobs.jobUpdated'))
+    } else if (formData.value.profile) {
+      // Use profile-scoped CLI creation
+      await jobsStore.createProfileJob(formData.value.profile, payload)
+      message.success(t('jobs.jobCreated'))
     } else {
+      // Fallback: use gateway API (active profile only)
       await jobsStore.createJob(payload)
       message.success(t('jobs.jobCreated'))
     }
@@ -117,6 +140,14 @@ function handleClose() {
     @after-leave="emit('close')"
   >
     <NForm label-placement="top">
+      <NFormItem v-if="!isEdit" :label="t('jobs.targetBot')">
+        <NSelect
+          v-model:value="formData.profile"
+          :options="profileOptions"
+          :placeholder="t('jobs.selectBot')"
+        />
+      </NFormItem>
+
       <NFormItem :label="t('jobs.name')" required>
         <NInput
           v-model:value="formData.name"

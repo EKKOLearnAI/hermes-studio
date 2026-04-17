@@ -5,7 +5,11 @@ import type { Job } from '@/api/hermes/jobs'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps<{ job: Job }>()
+const props = defineProps<{
+  job: Job
+  profile?: string
+  isActiveProfile?: boolean
+}>()
 const emit = defineEmits<{
   edit: [jobId: string]
 }>()
@@ -15,6 +19,7 @@ const jobsStore = useJobsStore()
 const message = useMessage()
 
 const jobId = computed(() => props.job.job_id || props.job.id)
+const jobProfile = computed(() => props.profile || props.job._profile || '')
 
 const statusLabel = computed(() => {
   if (props.job.state === 'running') return t('jobs.status.running')
@@ -43,7 +48,11 @@ const formatTime = (t?: string | null) => {
 
 async function handlePause() {
   try {
-    await jobsStore.pauseJob(jobId.value)
+    if (jobProfile.value) {
+      await jobsStore.pauseProfileJob(jobProfile.value, jobId.value)
+    } else {
+      await jobsStore.pauseJob(jobId.value)
+    }
     message.success(t('jobs.jobPaused'))
   } catch (e: any) {
     message.error(e.message)
@@ -52,7 +61,11 @@ async function handlePause() {
 
 async function handleResume() {
   try {
-    await jobsStore.resumeJob(jobId.value)
+    if (jobProfile.value) {
+      await jobsStore.resumeProfileJob(jobProfile.value, jobId.value)
+    } else {
+      await jobsStore.resumeJob(jobId.value)
+    }
     message.success(t('jobs.jobResumed'))
   } catch (e: any) {
     message.error(e.message)
@@ -61,7 +74,11 @@ async function handleResume() {
 
 async function handleRun() {
   try {
-    await jobsStore.runJob(jobId.value)
+    if (jobProfile.value) {
+      await jobsStore.runProfileJob(jobProfile.value, jobId.value)
+    } else {
+      await jobsStore.runJob(jobId.value)
+    }
     message.info(t('jobs.jobTriggered'))
   } catch (e: any) {
     message.error(e.message)
@@ -70,7 +87,11 @@ async function handleRun() {
 
 async function handleDelete() {
   try {
-    await jobsStore.deleteJob(jobId.value)
+    if (jobProfile.value) {
+      await jobsStore.deleteProfileJob(jobProfile.value, jobId.value)
+    } else {
+      await jobsStore.deleteJob(jobId.value)
+    }
     message.success(t('jobs.jobDeleted'))
   } catch (e: any) {
     message.error(e.message)
@@ -82,7 +103,10 @@ async function handleDelete() {
   <div class="job-card">
     <div class="card-header">
       <h3 class="job-name">{{ job.name }}</h3>
-      <span class="status-badge" :class="statusType">{{ statusLabel }}</span>
+      <div class="header-badges">
+        <span v-if="jobProfile && !isActiveProfile" class="profile-badge">{{ jobProfile }}</span>
+        <span class="status-badge" :class="statusType">{{ statusLabel }}</span>
+      </div>
     </div>
 
     <div class="card-body">
@@ -113,6 +137,10 @@ async function handleDelete() {
           <template v-if="typeof job.repeat === 'string'">{{ job.repeat }}</template>
           <template v-else>{{ job.repeat.completed }} / {{ job.repeat.times ?? '∞' }}</template>
         </span>
+      </div>
+      <div v-if="job.skills && job.skills.length > 0" class="info-row">
+        <span class="info-label">{{ t('jobs.info.skills') }}</span>
+        <span class="info-value skills-list">{{ job.skills.join(', ') }}</span>
       </div>
     </div>
 
@@ -163,6 +191,13 @@ async function handleDelete() {
   margin-bottom: 12px;
 }
 
+.header-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .job-name {
   font-size: 15px;
   font-weight: 600;
@@ -170,7 +205,17 @@ async function handleDelete() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 70%;
+  max-width: 60%;
+}
+
+.profile-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(var(--accent-primary-rgb), 0.1);
+  color: $accent-primary;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .status-badge {
@@ -221,6 +266,15 @@ async function handleDelete() {
 .info-value {
   font-size: 12px;
   color: $text-secondary;
+  text-align: right;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-list {
+  font-size: 11px;
 }
 
 .run-status {

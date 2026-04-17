@@ -32,6 +32,18 @@ export interface Job {
     thread_id: string | null
   } | null
   last_delivery_error: string | null
+  _profile?: string
+}
+
+export interface ProfileJobsResult {
+  profile: string
+  jobs: Job[]
+  error?: string
+}
+
+export interface AllProfilesJobsResponse {
+  profiles: ProfileJobsResult[]
+  activeProfile: string
 }
 
 export interface CreateJobRequest {
@@ -63,6 +75,10 @@ export async function listJobs(): Promise<Job[]> {
   return res.jobs
 }
 
+export async function listAllProfileJobs(): Promise<AllProfilesJobsResponse> {
+  return request<AllProfilesJobsResponse>('/api/hermes/jobs/all-profiles')
+}
+
 export async function getJob(jobId: string): Promise<Job> {
   return unwrap(await request<{ job: Job }>(`/api/hermes/jobs/${jobId}`))
 }
@@ -72,6 +88,13 @@ export async function createJob(data: CreateJobRequest): Promise<Job> {
     method: 'POST',
     body: JSON.stringify(data),
   }))
+}
+
+export async function createProfileJob(profile: string, data: CreateJobRequest): Promise<{ success: boolean; message: string; profile: ProfileJobsResult }> {
+  return request(`/api/hermes/jobs/profile/${encodeURIComponent(profile)}/create`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }
 
 export async function updateJob(jobId: string, data: UpdateJobRequest): Promise<Job> {
@@ -97,4 +120,21 @@ export async function resumeJob(jobId: string): Promise<Job> {
 
 export async function runJob(jobId: string): Promise<Job> {
   return unwrap(await request<{ job: Job }>(`/api/hermes/jobs/${jobId}/run`, { method: 'POST' }))
+}
+
+// Profile-scoped operations (via CLI, no gateway dependency)
+export async function pauseProfileJob(profile: string, jobId: string): Promise<{ success: boolean; message: string; profile: ProfileJobsResult }> {
+  return request(`/api/hermes/jobs/profile/${encodeURIComponent(profile)}/${encodeURIComponent(jobId)}/pause`, { method: 'POST' })
+}
+
+export async function resumeProfileJob(profile: string, jobId: string): Promise<{ success: boolean; message: string; profile: ProfileJobsResult }> {
+  return request(`/api/hermes/jobs/profile/${encodeURIComponent(profile)}/${encodeURIComponent(jobId)}/resume`, { method: 'POST' })
+}
+
+export async function runProfileJob(profile: string, jobId: string): Promise<{ success: boolean; message: string; profile: ProfileJobsResult }> {
+  return request(`/api/hermes/jobs/profile/${encodeURIComponent(profile)}/${encodeURIComponent(jobId)}/run`, { method: 'POST' })
+}
+
+export async function deleteProfileJob(profile: string, jobId: string): Promise<{ success: boolean; message: string; profile: ProfileJobsResult }> {
+  return request(`/api/hermes/jobs/profile/${encodeURIComponent(profile)}/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
 }
