@@ -234,6 +234,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, AbortController>>(new Map())
   const isStreaming = computed(() => activeSessionId.value != null && streamStates.value.has(activeSessionId.value))
   const isLoadingSessions = ref(false)
+  const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
   // tmux-like resume state: true when we recovered an in-flight run from
   // localStorage after a refresh and are polling fetchSession for progress.
@@ -428,6 +429,7 @@ export const useChatStore = defineStore('chat', () => {
       console.error('Failed to load sessions:', err)
     } finally {
       isLoadingSessions.value = false
+      sessionsLoaded.value = true
     }
   }
 
@@ -918,7 +920,9 @@ export const useChatStore = defineStore('chat', () => {
     isRunActive,
     isSessionLive,
     isLoadingSessions,
+    sessionsLoaded,
     isLoadingMessages,
+
     newChat,
     switchSession,
     switchSessionModel,

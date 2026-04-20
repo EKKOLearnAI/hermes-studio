@@ -66,6 +66,8 @@ export const useProfilesStore = defineStore('profiles', () => {
       `hermes_session_msgs_v1_${profileName}_`,
       `hermes_in_flight_v1_${profileName}_`,
       `hermes_active_session_${profileName}`,
+      `hermes_session_pins_v1_${profileName}`,
+      `hermes_human_only_v1_${profileName}`,
     ]
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {

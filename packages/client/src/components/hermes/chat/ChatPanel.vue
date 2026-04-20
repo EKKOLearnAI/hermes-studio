@@ -1,15 +1,22 @@
 <script setup lang="ts">
 import { renameSession } from '@/api/hermes/sessions'
 import { useChatStore, type Session } from '@/stores/hermes/chat'
-import { NButton, NDropdown, NInput, NModal, NPopconfirm, NTooltip, useMessage } from 'naive-ui'
+import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
+import { NButton, NDropdown, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getSourceLabel } from '@/shared/session-display'
 import ChatInput from './ChatInput.vue'
+import ConversationMonitorPane from './ConversationMonitorPane.vue'
 import MessageList from './MessageList.vue'
+import SessionListItem from './SessionListItem.vue'
 
 const chatStore = useChatStore()
+const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
 const { t } = useI18n()
+
+const currentMode = ref<'chat' | 'live'>('chat')
 
 // Initialize synchronously from the media query so first paint is correct.
 // On narrow viewports the session list is an absolute-positioned overlay
@@ -20,11 +27,23 @@ const { t } = useI18n()
 const showSessions = ref(
   typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
 )
+const lastChatSessionsVisibility = ref(showSessions.value)
 let mobileQuery: MediaQueryList | null = null
 
 function handleSessionClick(sessionId: string) {
   chatStore.switchSession(sessionId)
   if (mobileQuery?.matches) showSessions.value = false
+}
+
+function handleModeChange(mode: 'chat' | 'live') {
+  if (mode === currentMode.value) return
+  if (mode === 'live') {
+    lastChatSessionsVisibility.value = showSessions.value
+    showSessions.value = false
+  } else {
+    showSessions.value = mobileQuery?.matches ? false : lastChatSessionsVisibility.value
+  }
+  currentMode.value = mode
 }
 
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
@@ -47,31 +66,6 @@ const renameValue = ref('')
 const renameSessionId = ref<string | null>(null)
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null)
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
-
-const sourceLabelKeys: Record<string, string> = {
-  telegram: 'Telegram',
-  api_server: 'API Server',
-  cli: 'CLI',
-  discord: 'Discord',
-  slack: 'Slack',
-  matrix: 'Matrix',
-  whatsapp: 'WhatsApp',
-  signal: 'Signal',
-  email: 'Email',
-  sms: 'SMS',
-  dingtalk: 'DingTalk',
-  feishu: 'Feishu',
-  wecom: 'WeCom',
-  weixin: 'WeChat',
-  bluebubbles: 'iMessage',
-  mattermost: 'Mattermost',
-  cron: 'Cron',
-}
-
-function getSourceLabel(source?: string): string {
-  if (!source) return ''
-  return sourceLabelKeys[source] || source
-}
 
 // Source sort order: api_server first, cron last, others alphabetical
 function sourceSortKey(source: string): number {
@@ -96,9 +90,14 @@ interface SessionGroup {
   sessions: Session[]
 }
 
+const pinnedSessions = computed(() =>
+  sortSessionsWithActiveFirst(chatStore.sessions.filter(session => sessionBrowserPrefsStore.isPinned(session.id))),
+)
+
 const groupedSessions = computed<SessionGroup[]>(() => {
   const map = new Map<string, Session[]>()
   for (const s of chatStore.sessions) {
+    if (sessionBrowserPrefsStore.isPinned(s.id)) continue
     const key = s.source || ''
     if (!map.has(key)) map.set(key, [])
     map.get(key)!.push(s)
@@ -127,9 +126,8 @@ function toggleGroup(source: string) {
     collapsedGroups.value = new Set([...collapsedGroups.value, source])
   } else {
     collapsedGroups.value = new Set(
-      groupedSessions.value.map(g => g.source).filter(s => s !== source)
+      groupedSessions.value.map(g => g.source).filter(s => s !== source),
     )
-    // Auto-select the first session in the expanded group
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
       chatStore.switchSession(group.sessions[0].id)
@@ -138,24 +136,35 @@ function toggleGroup(source: string) {
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
 }
 
-// Ensure the active session's group is expanded
-watch(groupedSessions, (groups) => {
+watch(groupedSessions, groups => {
   if (localStorage.getItem('hermes_collapsed_groups') !== null) {
-    // Has saved state — still ensure active session's group is visible
     const activeSource = chatStore.activeSession?.source
     if (activeSource && collapsedGroups.value.has(activeSource)) {
-      collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== activeSource))
+      collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== activeSource))
       localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
     }
     return
   }
-  // No saved state: expand only the first group
-  collapsedGroups.value = new Set(groups.slice(1).map(g => g.source))
+  collapsedGroups.value = new Set(groups.slice(1).map(group => group.source))
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
 }, { once: true })
 
+watch(
+  () => [chatStore.sessionsLoaded, ...chatStore.sessions.map(session => session.id)],
+  value => {
+    const sessionIds = value.slice(1) as string[]
+    if (!value[0] || sessionIds.length === 0) return
+    sessionBrowserPrefsStore.pruneMissingSessions(sessionIds)
+  },
+  { immediate: true },
+)
+
 const activeSessionTitle = computed(() =>
   chatStore.activeSession?.title || t('chat.newChat'),
+)
+
+const headerTitle = computed(() =>
+  currentMode.value === 'live' ? t('chat.liveSessions') : activeSessionTitle.value,
 )
 
 const totalTokens = computed(() => {
@@ -210,7 +219,7 @@ function formatTokens(n: number): string {
 }
 
 const activeSessionSource = computed(() =>
-  chatStore.activeSession?.source || '',
+  currentMode.value === 'chat' ? (chatStore.activeSession?.source || '') : '',
 )
 
 function handleNewChat() {
@@ -226,24 +235,21 @@ function copySessionId(id?: string) {
 }
 
 function handleDeleteSession(id: string) {
+  sessionBrowserPrefsStore.removePinned(id)
   chatStore.deleteSession(id)
   message.success(t('chat.sessionDeleted'))
 }
 
-function formatTime(ts: number) {
-  const d = new Date(ts)
-  const now = new Date()
-  const isToday = d.toDateString() === now.toDateString()
-  if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
-}
+const contextSessionId = ref<string | null>(null)
+const contextSessionPinned = computed(() =>
+  contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
+)
 
-// Context menu
 const contextMenuOptions = computed(() => [
+  { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
   { label: t('chat.rename'), key: 'rename' },
   { label: t('chat.copySessionId'), key: 'copy-id' },
 ])
-const contextSessionId = ref<string | null>(null)
 
 function handleContextMenu(e: MouseEvent, sessionId: string) {
   e.preventDefault()
@@ -260,6 +266,10 @@ const contextMenuY = ref(0)
 function handleContextMenuSelect(key: string) {
   showContextMenu.value = false
   if (!contextSessionId.value) return
+  if (key === 'pin') {
+    sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
+    return
+  }
   if (key === 'copy-id') {
     copySessionId(contextSessionId.value)
   } else if (key === 'rename') {
@@ -296,9 +306,8 @@ async function handleRenameConfirm() {
 
 <template>
   <div class="chat-panel">
-    <!-- Session List -->
-    <div class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
-    <aside class="session-list" :class="{ collapsed: !showSessions }">
+    <div v-if="currentMode === 'chat'" class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
+    <aside v-if="currentMode === 'chat'" class="session-list" :class="{ collapsed: !showSessions }">
       <div class="session-list-header">
         <span v-if="showSessions" class="session-list-title">{{ t('chat.sessions') }}</span>
         <div class="session-list-actions">
@@ -306,15 +315,35 @@ async function handleRenameConfirm() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
           <NButton quaternary size="tiny" @click="handleNewChat" circle>
-          <template #icon>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </template>
-        </NButton>
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </template>
+          </NButton>
         </div>
       </div>
       <div v-if="showSessions" class="session-items">
         <div v-if="chatStore.isLoadingSessions && chatStore.sessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
         <div v-else-if="chatStore.sessions.length === 0" class="session-empty">{{ t('chat.noSessions') }}</div>
+
+        <template v-if="pinnedSessions.length > 0">
+          <div class="session-group-header session-group-header--static">
+            <span class="session-group-label">{{ t('chat.pinned') }}</span>
+            <span class="session-group-count">{{ pinnedSessions.length }}</span>
+          </div>
+          <SessionListItem
+            v-for="s in pinnedSessions"
+            :key="`pinned-${s.id}`"
+            :session="s"
+            :active="s.id === chatStore.activeSessionId"
+            :live="chatStore.isSessionLive(s.id)"
+            :pinned="true"
+            :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+            @select="handleSessionClick(s.id)"
+            @contextmenu="handleContextMenu($event, s.id)"
+            @delete="handleDeleteSession(s.id)"
+          />
+        </template>
+
         <template v-for="group in groupedSessions" :key="group.source">
           <div class="session-group-header" @click="toggleGroup(group.source)">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="group-chevron" :class="{ collapsed: collapsedGroups.has(group.source) }"><polyline points="9 18 15 12 9 6"/></svg>
@@ -322,60 +351,23 @@ async function handleRenameConfirm() {
             <span class="session-group-count">{{ group.sessions.length }}</span>
           </div>
           <template v-if="!collapsedGroups.has(group.source)">
-            <button
+            <SessionListItem
               v-for="s in group.sessions"
               :key="s.id"
-              class="session-item"
-              :class="{ active: s.id === chatStore.activeSessionId, live: chatStore.isSessionLive(s.id) }"
-              @click="handleSessionClick(s.id)"
+              :session="s"
+              :active="s.id === chatStore.activeSessionId"
+              :live="chatStore.isSessionLive(s.id)"
+              :pinned="false"
+              :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+              @select="handleSessionClick(s.id)"
               @contextmenu="handleContextMenu($event, s.id)"
-            >
-              <div class="session-item-content">
-                <span class="session-item-title-row">
-                  <span
-                    v-if="chatStore.isSessionLive(s.id)"
-                    class="session-item-active-indicator"
-                    aria-hidden="true"
-                  >
-                    <svg
-                      class="session-item-active-spinner"
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <circle cx="12" cy="12" r="8" opacity="0.2" />
-                      <path d="M20 12a8 8 0 0 0-8-8" />
-                    </svg>
-                  </span>
-                  <span class="session-item-title">{{ s.title }}</span>
-                </span>
-                <span class="session-item-meta">
-                  <span v-if="s.model" class="session-item-model">{{ s.model }}</span>
-                  <span class="session-item-time">{{ formatTime(s.createdAt) }}</span>
-                </span>
-              </div>
-              <NPopconfirm
-                v-if="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
-                @positive-click="handleDeleteSession(s.id)"
-              >
-                <template #trigger>
-                  <button class="session-item-delete" @click.stop>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
-                </template>
-                {{ t('chat.deleteSession') }}
-              </NPopconfirm>
-            </button>
+              @delete="handleDeleteSession(s.id)"
+            />
           </template>
         </template>
       </div>
     </aside>
 
-    <!-- Context Menu -->
     <NDropdown
       placement="bottom-start"
       trigger="manual"
@@ -387,7 +379,6 @@ async function handleRenameConfirm() {
       @clickoutside="handleClickOutside"
     />
 
-    <!-- Rename Modal -->
     <NModal
       v-model:show="showRenameModal"
       preset="dialog"
@@ -404,43 +395,61 @@ async function handleRenameConfirm() {
       />
     </NModal>
 
-    <!-- Chat Area -->
     <div class="chat-main">
       <header class="chat-header">
         <div class="header-left">
-          <NButton quaternary size="small" @click="showSessions = !showSessions" circle>
+          <NButton v-if="currentMode === 'chat'" quaternary size="small" @click="showSessions = !showSessions" circle>
             <template #icon>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             </template>
           </NButton>
-          <span class="header-session-title">{{ activeSessionTitle }}</span>
+          <span class="header-session-title">{{ headerTitle }}</span>
           <span v-if="activeSessionSource" class="source-badge">{{ getSourceLabel(activeSessionSource) }}</span>
         </div>
         <div class="header-actions">
-          <NTooltip trigger="hover">
-            <template #trigger>
-              <NButton quaternary size="small" @click="copySessionId()" circle>
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                </template>
-              </NButton>
-            </template>
-            {{ t('chat.copySessionId') }}
-          </NTooltip>
-          <NButton size="small" @click="handleNewChat">
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </template>
-            {{ t('chat.newChat') }}
-          </NButton>
+          <div class="chat-mode-toggle">
+            <NButton
+              size="small"
+              :type="currentMode === 'chat' ? 'primary' : 'default'"
+              :aria-pressed="currentMode === 'chat'"
+              @click="handleModeChange('chat')"
+            >{{ t('chat.chatMode') }}</NButton>
+            <NButton
+              size="small"
+              :type="currentMode === 'live' ? 'primary' : 'default'"
+              :aria-pressed="currentMode === 'live'"
+              @click="handleModeChange('live')"
+            >{{ t('chat.liveMode') }}</NButton>
+          </div>
+          <template v-if="currentMode === 'chat'">
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton quaternary size="small" @click="copySessionId()" circle>
+                  <template #icon>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </template>
+                </NButton>
+              </template>
+              {{ t('chat.copySessionId') }}
+            </NTooltip>
+            <NButton size="small" @click="handleNewChat">
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </template>
+              {{ t('chat.newChat') }}
+            </NButton>
+          </template>
         </div>
       </header>
 
-      <MessageList />
-      <div v-if="contextWindow !== null" class="context-info">
-        <span>{{ formatTokens(totalTokens) }} / {{ formatTokens(contextWindow) }}</span>
-      </div>
-      <ChatInput />
+      <template v-if="currentMode === 'chat'">
+        <MessageList />
+        <div v-if="contextWindow !== null" class="context-info">
+          <span>{{ formatTokens(totalTokens) }} / {{ formatTokens(contextWindow) }}</span>
+        </div>
+        <ChatInput />
+      </template>
+      <ConversationMonitorPane v-else :human-only="sessionBrowserPrefsStore.humanOnly" />
     </div>
   </div>
 </template>
@@ -553,6 +562,10 @@ async function handleRenameConfirm() {
   user-select: none;
 }
 
+.session-group-header--static {
+  cursor: default;
+}
+
 .group-chevron {
   flex-shrink: 0;
   transition: transform 0.15s ease;
@@ -591,7 +604,7 @@ async function handleRenameConfirm() {
   text-align: center;
 }
 
-.session-item {
+:deep(.session-item) {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -630,19 +643,19 @@ async function handleRenameConfirm() {
   }
 }
 
-.session-item-content {
+:deep(.session-item-content) {
   flex: 1;
   overflow: hidden;
 }
 
-.session-item-title-row {
+:deep(.session-item-title-row) {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
-.session-item-title {
+:deep(.session-item-title) {
   display: block;
   font-size: 13px;
   white-space: nowrap;
@@ -650,7 +663,7 @@ async function handleRenameConfirm() {
   text-overflow: ellipsis;
 }
 
-.session-item-active-indicator {
+:deep(.session-item-active-indicator) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -658,24 +671,32 @@ async function handleRenameConfirm() {
   color: $accent-primary;
 }
 
-.session-item-active-spinner {
+:deep(.session-item-active-spinner) {
   animation: session-spin 1.1s linear infinite;
   filter: drop-shadow(0 0 6px rgba(var(--accent-primary-rgb), 0.35));
 }
 
-.session-item-time {
+:deep(.session-item-pin) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: $accent-primary;
+}
+
+:deep(.session-item-time) {
   font-size: 11px;
   color: $text-muted;
 }
 
-.session-item-meta {
+:deep(.session-item-meta) {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 2px;
 }
 
-.session-item-model {
+:deep(.session-item-model) {
   font-size: 10px;
   color: $accent-primary;
   background: rgba($accent-primary, 0.08);
@@ -689,7 +710,7 @@ async function handleRenameConfirm() {
   white-space: nowrap;
 }
 
-.session-item-delete {
+:deep(.session-item-delete) {
   flex-shrink: 0;
   opacity: 0.5;
   padding: 2px;
@@ -767,6 +788,13 @@ async function handleRenameConfirm() {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.chat-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
 }
 
 .context-info {

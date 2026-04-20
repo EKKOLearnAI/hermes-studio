@@ -1,8 +1,42 @@
 import Router from '@koa/router'
 import * as hermesCli from '../../services/hermes/hermes-cli'
+import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listSessionSummaries } from '../../services/hermes/sessions-db'
 
 export const sessionRoutes = new Router()
+
+function parseHumanOnly(value: unknown): boolean {
+  if (typeof value !== 'string') return true
+  return value !== 'false' && value !== '0'
+}
+
+function parseLimit(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const parsed = parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+// List human-visible conversations for live monitor mode
+sessionRoutes.get('/api/hermes/sessions/conversations', async (ctx) => {
+  const source = (ctx.query.source as string) || undefined
+  const humanOnly = parseHumanOnly(ctx.query.humanOnly)
+  const limit = parseLimit(ctx.query.limit)
+  const sessions = await listConversationSummaries({ source, humanOnly, limit })
+  ctx.body = { sessions }
+})
+
+// Get human-visible messages for a live monitor conversation
+sessionRoutes.get('/api/hermes/sessions/conversations/:id/messages', async (ctx) => {
+  const source = (ctx.query.source as string) || undefined
+  const humanOnly = parseHumanOnly(ctx.query.humanOnly)
+  const detail = await getConversationDetail(ctx.params.id, { source, humanOnly })
+  if (!detail) {
+    ctx.status = 404
+    ctx.body = { error: 'Conversation not found' }
+    return
+  }
+  ctx.body = detail
+})
 
 // List sessions from Hermes
 sessionRoutes.get('/api/hermes/sessions', async (ctx) => {
