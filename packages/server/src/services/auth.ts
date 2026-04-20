@@ -51,7 +51,7 @@ export async function authMiddleware(token: string | null) {
     const path = ctx.path.toLowerCase()
     if (
       path === '/health' ||
-      (!path.startsWith('/api') && !path.startsWith('/v1') && path !== '/webhook')
+      (!path.startsWith('/api') && !path.startsWith('/v1') && path !== '/webhook' && path !== '/upload')
     ) {
       await next()
       return

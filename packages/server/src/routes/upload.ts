@@ -1,7 +1,9 @@
 import Router from '@koa/router'
 import { randomBytes } from 'crypto'
-import { mkdir, writeFile } from 'fs/promises'
+import { writeFile } from 'fs/promises'
 import { config } from '../config'
+
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
 
 export const uploadRoutes = new Router()
 
@@ -20,11 +22,18 @@ uploadRoutes.post('/upload', async (ctx) => {
     return
   }
 
-  await mkdir(config.uploadDir, { recursive: true })
-
-  // Read raw body as Buffer
+  // Read raw body as Buffer with size limit
   const chunks: Buffer[] = []
-  for await (const chunk of ctx.req) chunks.push(chunk)
+  let totalSize = 0
+  for await (const chunk of ctx.req) {
+    totalSize += chunk.length
+    if (totalSize > MAX_UPLOAD_SIZE) {
+      ctx.status = 413
+      ctx.body = { error: `File too large (max ${MAX_UPLOAD_SIZE / 1024 / 1024}MB)` }
+      return
+    }
+    chunks.push(chunk)
+  }
   const raw = Buffer.concat(chunks)
   const boundaryBuf = Buffer.from(boundary)
   const parts = splitMultipart(raw, boundaryBuf)
