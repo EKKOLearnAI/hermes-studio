@@ -486,4 +486,16 @@ export default {
     cost: '费用',
     noData: '暂无用量数据',
   },
+  // 下载
+  download: {
+    downloading: '正在下载...',
+    downloadFailed: '下载失败',
+    fileNotFound: '文件不存在或已被删除',
+    fileTooLarge: '文件过大（超过限制）',
+    backendError: '文件读取失败，远程环境可能不可用',
+    backendTimeout: '文件读取超时',
+    unsupportedBackend: '当前 terminal backend 暂不支持文件下载',
+    invalidPath: '无效的文件路径',
+    download: '下载',
+  },
 }

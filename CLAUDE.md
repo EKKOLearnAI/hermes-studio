@@ -48,7 +48,8 @@ hermes-web-ui/
 │   │   │       ├── config.ts     # Local BFF: app config, weixin credentials
 │   │   │       ├── logs.ts       # Local BFF: log file listing & reading
 │   │   │       ├── skills.ts     # Local BFF: skills listing, memory CRUD
-│   │   │       └── system.ts     # Local BFF: health, model config, providers
+│   │   │       ├── system.ts     # Local BFF: health, model config, providers
+│   │   │       └── download.ts   # Local BFF: file download (multi-backend)
 │   │   ├── components/           # Vue components
 │   │   │   ├── layout/           # Shared: AppSidebar, LanguageSwitch, ModelSelector
 │   │   │   └── hermes/           # Hermes-specific components
@@ -92,6 +93,7 @@ hermes-web-ui/
 │   │   │   ├── logs.ts           # Log file listing & reading
 │   │   │   ├── weixin.ts         # Weixin QR code & credentials
 │   │   │   ├── terminal.ts       # WebSocket terminal (node-pty)
+│   │   │   ├── download.ts       # File download route (GET /api/hermes/download)
 │   │   │   ├── proxy.ts          # Reverse proxy routes + middleware
 │   │   │   └── proxy-handler.ts  # Proxy forwarding logic
 │   │   ├── routes/               # Shared routes
@@ -100,7 +102,10 @@ hermes-web-ui/
 │   │   ├── services/             # Business logic
 │   │   │   ├── hermes-cli.ts     # Hermes CLI wrapper (child_process.execFile)
 │   │   │   ├── auth.ts           # Auth middleware & token management
-│   │   │   └── hermes.ts         # Hermes gateway helpers
+│   │   │   ├── hermes.ts         # Hermes gateway helpers
+│   │   │   └── hermes/           # Hermes-specific services
+│   │   │       ├── file-provider.ts  # FileProvider abstraction (local/docker/ssh/singularity)
+│   │   │       └── hermes-profile.ts # Profile directory resolution
 │   │   ├── shared/providers.ts   # Provider model catalogs
 │   │   ├── config.ts             # Server configuration
 │   │   └── index.ts              # Bootstrap, middleware setup, SPA fallback
@@ -421,6 +426,7 @@ No test framework is currently configured. The intention is to add tests in the 
 | `AUTH_TOKEN` | Custom auth token (overrides auto-generated token) |
 | `PORT` | Server listen port (default from config) |
 | `UPSTREAM` | Hermes gateway URL (default `http://127.0.0.1:8642`) |
+| `MAX_DOWNLOAD_SIZE` | Maximum download file size in bytes (default `104857600` = 100MB) |
 
 ---
 

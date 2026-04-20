@@ -484,4 +484,16 @@ export default {
     cost: 'Cost',
     noData: 'No usage data',
   },
+  // Download
+  download: {
+    downloading: 'Downloading...',
+    downloadFailed: 'Download failed',
+    fileNotFound: 'File not found or deleted',
+    fileTooLarge: 'File too large (exceeds limit)',
+    backendError: 'File read failed, remote environment may be unavailable',
+    backendTimeout: 'File read timed out',
+    unsupportedBackend: 'Current terminal backend does not support file download',
+    invalidPath: 'Invalid file path',
+    download: 'Download',
+  },
 }
