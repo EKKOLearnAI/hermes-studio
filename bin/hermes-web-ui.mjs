@@ -26,6 +26,27 @@ function ensureNativeModules() {
   } catch {}
 }
 
+// ─── Auto-install missing production dependencies ─────────────
+// After `npm install -g` upgrade, node_modules may be stale or missing.
+// This check verifies a critical runtime dependency (koa) is resolvable;
+// if not, runs `npm install --omit=dev` to restore them.
+function ensureDependencies() {
+  const nmDir = join(pkgDir, 'node_modules')
+  const koaPath = join(nmDir, 'koa')
+  try {
+    statSync(koaPath)
+  } catch {
+    console.log('  ⚠ Dependencies missing, installing...')
+    try {
+      execSync('npm install --omit=dev', { cwd: pkgDir, stdio: 'pipe', timeout: 120000 })
+      console.log('  ✓ Dependencies installed')
+    } catch (err) {
+      console.error('  ✗ Failed to install dependencies:', err.message)
+      process.exit(1)
+    }
+  }
+}
+
 function getToken() {
   try {
     return readFileSync(TOKEN_FILE, 'utf-8').trim()
@@ -115,6 +136,7 @@ function startDaemon(port) {
 
   mkdirSync(PID_DIR, { recursive: true })
 
+  ensureDependencies()
   ensureNativeModules()
   const token = ensureToken()
 
@@ -296,6 +318,9 @@ function doUpdate() {
     if (code === 0) {
       console.log('  ✓ Update complete, restarting...')
       stopDaemon()
+      // After npm upgrade, node_modules may be stale — clear to force ensureDependencies() reinstall
+      const nmDir = join(pkgDir, 'node_modules')
+      try { execSync(`rm -rf "${nmDir}"`) } catch {}
       setTimeout(() => startDaemon(getPort()), 500)
     } else {
       console.log('  ✗ Update failed')
