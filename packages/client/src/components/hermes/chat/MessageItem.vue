@@ -3,6 +3,7 @@ import type { Message } from "@/stores/hermes/chat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
+import { handleCodeBlockCopyClick, inferStructuredLanguage, renderHighlightedCodeBlock } from "./highlight";
 
 const props = defineProps<{ message: Message }>();
 const { t } = useI18n();
@@ -25,6 +26,42 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+function renderToolPayload(content: string, language?: string): string {
+  return renderHighlightedCodeBlock(content, language, t("common.copy"), {
+    maxHighlightLength: 2000,
+  });
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard?.writeText?.(text)
+  } catch {
+    // Ignore clipboard failures; the code block still renders safely.
+  }
+}
+
+async function handleToolDetailClick(event: MouseEvent): Promise<void> {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return
+
+  const button = target.closest<HTMLElement>('[data-copy-code="true"]')
+  if (!button) return
+
+  event.preventDefault()
+
+  const source = button.closest<HTMLElement>('[data-copy-source]')?.dataset.copySource
+  if (source === 'tool-args' && formattedToolArgs.value) {
+    await copyText(formattedToolArgs.value)
+    return
+  }
+  if (source === 'tool-result' && fullToolResult.value) {
+    await copyText(fullToolResult.value)
+    return
+  }
+
+  await handleCodeBlockCopyClick(event)
+}
+
 const hasAttachments = computed(
   () => (props.message.attachments?.length ?? 0) > 0,
 );
@@ -42,21 +79,36 @@ const formattedToolArgs = computed(() => {
   }
 });
 
-const formattedToolResult = computed(() => {
+const fullToolResult = computed(() => {
   if (!props.message.toolResult) return "";
   try {
-    const parsed = JSON.parse(props.message.toolResult);
-    const str = JSON.stringify(parsed, null, 2);
-    // Truncate very long output
-    if (str.length > 2000)
-      return str.slice(0, 2000) + "\n" + t("chat.truncated");
-    return str;
+    return JSON.stringify(JSON.parse(props.message.toolResult), null, 2);
   } catch {
-    const raw = props.message.toolResult;
-    if (raw.length > 2000)
-      return raw.slice(0, 2000) + "\n" + t("chat.truncated");
-    return raw;
+    return props.message.toolResult;
   }
+});
+
+const formattedToolResult = computed(() => {
+  if (!fullToolResult.value) return "";
+  if (fullToolResult.value.length > 2000)
+    return fullToolResult.value.slice(0, 2000) + "\n" + t("chat.truncated");
+  return fullToolResult.value;
+});
+
+const renderedToolArgs = computed(() => {
+  if (!formattedToolArgs.value) return "";
+  return renderToolPayload(
+    formattedToolArgs.value,
+    props.message.toolArgs ? inferStructuredLanguage(props.message.toolArgs) : undefined,
+  );
+});
+
+const renderedToolResult = computed(() => {
+  if (!formattedToolResult.value) return "";
+  return renderToolPayload(
+    formattedToolResult.value,
+    props.message.toolResult ? inferStructuredLanguage(props.message.toolResult) : undefined,
+  );
 });
 </script>
 
@@ -109,14 +161,14 @@ const formattedToolResult = computed(() => {
           t("chat.error")
         }}</span>
       </div>
-      <div v-if="toolExpanded && hasToolDetails" class="tool-details">
-        <div v-if="formattedToolArgs" class="tool-detail-section">
+      <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+        <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolArgs }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
         </div>
-        <div v-if="formattedToolResult" class="tool-detail-section">
+        <div v-if="formattedToolResult" class="tool-detail-section" data-copy-source="tool-result">
           <div class="tool-detail-label">{{ t("chat.result") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolResult }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
         </div>
       </div>
     </template>
@@ -400,20 +452,22 @@ const formattedToolResult = computed(() => {
   margin-bottom: 2px;
 }
 
-.tool-detail-code {
-  font-family: $font-code;
-  font-size: 11px;
-  line-height: 1.5;
-  color: $text-secondary;
-  background: $code-bg;
-  border-radius: $radius-sm;
-  padding: 6px 8px;
-  margin: 0;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
+.tool-detail-code-block {
+  :deep(.hljs-code-block) {
+    margin: 0;
+  }
+
+  :deep(.code-header) {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  :deep(code.hljs) {
+    font-size: 11px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 @keyframes spin {
