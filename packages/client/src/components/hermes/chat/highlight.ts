@@ -80,6 +80,14 @@ export function renderHighlightedCodeBlock(
   return `<pre class="hljs-code-block"><div class="code-header">${languageLabelHtml}<button type="button" class="copy-btn" data-copy-code="true">${escapeHtml(copyLabel)}</button></div><code class="hljs language-${sanitizeLanguageClass(codeClassLanguage)}">${highlighted}</code></pre>`
 }
 
+export async function copyTextToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard?.writeText?.(text)
+  } catch {
+    // Ignore clipboard failures; the code block still renders safely.
+  }
+}
+
 export async function handleCodeBlockCopyClick(event: MouseEvent): Promise<void> {
   const target = event.target
   if (!(target instanceof HTMLElement)) return
@@ -94,9 +102,5 @@ export async function handleCodeBlockCopyClick(event: MouseEvent): Promise<void>
   const text = code?.textContent ?? ''
   if (!text) return
 
-  try {
-    await navigator.clipboard?.writeText?.(text)
-  } catch {
-    // Ignore clipboard failures; the code block still renders safely.
-  }
+  await copyTextToClipboard(text)
 }

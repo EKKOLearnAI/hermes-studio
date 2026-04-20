@@ -11,7 +11,7 @@ vi.mock('highlight.js', () => ({
   default: highlightJsMock,
 }))
 
-import { renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
+import { normalizeHighlightLanguage, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
 
 describe('highlight helper', () => {
   beforeEach(() => {
@@ -20,6 +20,17 @@ describe('highlight helper', () => {
     highlightJsMock.highlight.mockImplementation((content: string, { language }: { language: string }) => ({
       value: `<span class="mock-${language}">${content}</span>`,
     }))
+  })
+
+  it.each([
+    ['vue', 'xml'],
+    ['yml', 'yaml'],
+    ['sh', 'bash'],
+    ['zsh', 'bash'],
+    ['shellscript', 'bash'],
+    ['shell', 'shell'],
+  ])('normalizes %s to %s', (input, expected) => {
+    expect(normalizeHighlightLanguage(input)).toBe(expected)
   })
 
   it('uses a delegated copy attribute instead of inline javascript', () => {

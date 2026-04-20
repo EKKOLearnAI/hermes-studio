@@ -7,16 +7,16 @@ import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highligh
 const props = defineProps<{ content: string }>()
 const { t } = useI18n()
 
-const md = computed(() => new MarkdownIt({
+const md: MarkdownIt = new MarkdownIt({
   html: false,
   linkify: true,
   typographer: true,
   highlight(str: string, lang: string): string {
     return renderHighlightedCodeBlock(str, lang, t('common.copy'))
   },
-}))
+})
 
-const renderedHtml = computed(() => md.value.render(props.content))
+const renderedHtml = computed(() => md.render(props.content))
 
 function handleMarkdownClick(event: MouseEvent): void {
   void handleCodeBlockCopyClick(event)

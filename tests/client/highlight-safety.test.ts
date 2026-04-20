@@ -10,6 +10,13 @@ describe('highlight safety', () => {
     expect(html).not.toContain('<img')
   })
 
+  it('does not emit executable HTML for known-language code', () => {
+    const html = renderHighlightedCodeBlock('<script>alert(1)</script>', 'xml', 'Copy')
+
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;')
+  })
+
   it('escapes the language label', () => {
     const html = renderHighlightedCodeBlock('x'.repeat(5000), '<script>alert(1)</script>', 'Copy')
 

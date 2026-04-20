@@ -3,7 +3,13 @@ import type { Message } from "@/stores/hermes/chat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
-import { handleCodeBlockCopyClick, inferStructuredLanguage, renderHighlightedCodeBlock } from "./highlight";
+import {
+  copyTextToClipboard,
+  handleCodeBlockCopyClick,
+  renderHighlightedCodeBlock,
+} from "./highlight";
+
+const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
 const props = defineProps<{ message: Message }>();
 const { t } = useI18n();
@@ -26,40 +32,64 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+type ToolPayload = {
+  full: string;
+  display: string;
+  language?: string;
+};
+
+function formatToolPayload(raw?: string): ToolPayload {
+  if (!raw) {
+    return { full: "", display: "" };
+  }
+
+  try {
+    const full = JSON.stringify(JSON.parse(raw), null, 2);
+    return {
+      full,
+      display:
+        full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? full.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : full,
+      language: "json",
+    };
+  } catch {
+    return {
+      full: raw,
+      display:
+        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : raw,
+    };
+  }
+}
+
 function renderToolPayload(content: string, language?: string): string {
   return renderHighlightedCodeBlock(content, language, t("common.copy"), {
-    maxHighlightLength: 2000,
+    maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
   });
 }
 
-async function copyText(text: string): Promise<void> {
-  try {
-    await navigator.clipboard?.writeText?.(text)
-  } catch {
-    // Ignore clipboard failures; the code block still renders safely.
-  }
-}
-
 async function handleToolDetailClick(event: MouseEvent): Promise<void> {
-  const target = event.target
-  if (!(target instanceof HTMLElement)) return
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
 
-  const button = target.closest<HTMLElement>('[data-copy-code="true"]')
-  if (!button) return
+  const button = target.closest<HTMLElement>("[data-copy-code=\"true\"]");
+  if (!button) return;
 
-  event.preventDefault()
+  event.preventDefault();
 
-  const source = button.closest<HTMLElement>('[data-copy-source]')?.dataset.copySource
-  if (source === 'tool-args' && formattedToolArgs.value) {
-    await copyText(formattedToolArgs.value)
-    return
+  const source = button.closest<HTMLElement>("[data-copy-source]")?.dataset.copySource;
+  if (source === "tool-args" && fullToolArgs.value) {
+    await copyTextToClipboard(fullToolArgs.value);
+    return;
   }
-  if (source === 'tool-result' && fullToolResult.value) {
-    await copyText(fullToolResult.value)
-    return
+  if (source === "tool-result" && fullToolResult.value) {
+    await copyTextToClipboard(fullToolResult.value);
+    return;
   }
 
-  await handleCodeBlockCopyClick(event)
+  await handleCodeBlockCopyClick(event);
 }
 
 const hasAttachments = computed(
@@ -70,36 +100,19 @@ const hasToolDetails = computed(
   () => !!(props.message.toolArgs || props.message.toolResult),
 );
 
-const formattedToolArgs = computed(() => {
-  if (!props.message.toolArgs) return "";
-  try {
-    return JSON.stringify(JSON.parse(props.message.toolArgs), null, 2);
-  } catch {
-    return props.message.toolArgs;
-  }
-});
+const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
 
-const fullToolResult = computed(() => {
-  if (!props.message.toolResult) return "";
-  try {
-    return JSON.stringify(JSON.parse(props.message.toolResult), null, 2);
-  } catch {
-    return props.message.toolResult;
-  }
-});
-
-const formattedToolResult = computed(() => {
-  if (!fullToolResult.value) return "";
-  if (fullToolResult.value.length > 2000)
-    return fullToolResult.value.slice(0, 2000) + "\n" + t("chat.truncated");
-  return fullToolResult.value;
-});
+const fullToolArgs = computed(() => toolArgsPayload.value.full);
+const formattedToolArgs = computed(() => toolArgsPayload.value.display);
+const fullToolResult = computed(() => toolResultPayload.value.full);
+const formattedToolResult = computed(() => toolResultPayload.value.display);
 
 const renderedToolArgs = computed(() => {
   if (!formattedToolArgs.value) return "";
   return renderToolPayload(
     formattedToolArgs.value,
-    props.message.toolArgs ? inferStructuredLanguage(props.message.toolArgs) : undefined,
+    toolArgsPayload.value.language,
   );
 });
 
@@ -107,7 +120,7 @@ const renderedToolResult = computed(() => {
   if (!formattedToolResult.value) return "";
   return renderToolPayload(
     formattedToolResult.value,
-    props.message.toolResult ? inferStructuredLanguage(props.message.toolResult) : undefined,
+    toolResultPayload.value.language,
   );
 });
 </script>

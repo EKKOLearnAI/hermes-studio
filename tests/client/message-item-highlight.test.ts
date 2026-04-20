@@ -69,7 +69,7 @@ describe('MessageItem tool details', () => {
     expect(writeText).toHaveBeenCalledWith(expected)
   })
 
-  it('keeps full large tool arguments labeled as json and copyable', async () => {
+  it('truncates large tool arguments for display but copies the full formatted payload', async () => {
     const writeText = vi.mocked(navigator.clipboard.writeText)
     const message = {
       content: 'x'.repeat(4000),
@@ -92,8 +92,10 @@ describe('MessageItem tool details', () => {
     await wrapper.find('.tool-line').trigger('click')
 
     const expected = JSON.stringify(message, null, 2)
+    const code = wrapper.find('.tool-details code.hljs')
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('json')
-    expect(wrapper.html()).not.toContain('chat.truncated')
+    expect(wrapper.html()).toContain('chat.truncated')
+    expect(code.findAll('span')).toHaveLength(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(expected)
@@ -123,6 +125,7 @@ describe('MessageItem tool details', () => {
 
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('json')
     expect(wrapper.html()).toContain('chat.truncated')
+    expect(wrapper.find('.tool-details code.hljs').findAll('span')).toHaveLength(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(fullResult, null, 2))
@@ -149,6 +152,7 @@ describe('MessageItem tool details', () => {
 
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('text')
     expect(wrapper.html()).toContain('chat.truncated')
+    expect(wrapper.find('.tool-details code.hljs').findAll('span')).toHaveLength(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(fullResult)
