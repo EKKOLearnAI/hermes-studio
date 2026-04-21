@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     g++ \
     && ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.xz" \
-       | tar -xJ -C /usr/local --strip-components=1 \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.gz" \
+       | tar -xz -C /usr/local --strip-components=1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
