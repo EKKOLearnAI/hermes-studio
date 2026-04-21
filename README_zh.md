@@ -175,7 +175,7 @@ docker compose logs -f hermes-webui
 打开 **http://localhost:6060**
 
 - Hermes 持久化数据目录：`./hermes_data`
-- Web UI 认证 Token 存储在 `./hermes_data/hermes-web-ui-data/.token`
+- Web UI 认证 Token 存储在 `./hermes_data/hermes-web-ui/.token`
 - 首次启动并开启认证时，Token 会打印到容器日志中
 - 运行参数全部由 `docker-compose.yml` 环境变量驱动
 

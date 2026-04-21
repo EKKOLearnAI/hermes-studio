@@ -62,11 +62,11 @@ AUTH_DISABLED=false
 | Path | Description |
 |---|---|
 | `${HERMES_DATA_DIR}` (`./hermes_data`) | Hermes runtime data (sessions, config, profiles) |
-| `${HERMES_DATA_DIR}/hermes-web-ui-data` | Web UI data (auth token) |
+| `${HERMES_DATA_DIR}/hermes-web-ui` | Web UI data (auth token, etc.) |
 
 - Hermes data persists in `./hermes_data`, mapped to `/home/agent/.hermes` in the container.
-- Web UI auth token persists in `./hermes_data/hermes-web-ui-data/.token`.
-- When `AUTH_DISABLED=false`, the token is auto-generated on first run and printed to container logs.
+- Web UI data persists in `./hermes_data/hermes-web-ui/`, mapped to `/root/.hermes-web-ui` in the container.
+- When `AUTH_DISABLED=false`, the auth token is auto-generated on first run and printed to container logs.
 - Deleting the token file and restarting will generate a new one.
 
 ## Port Mapping
@@ -96,7 +96,7 @@ View auth token:
 ```bash
 docker compose logs hermes-webui | grep token
 # or
-cat ./hermes_data/hermes-web-ui-data/.token
+cat ./hermes_data/hermes-web-ui/.token
 ```
 
 Stop:

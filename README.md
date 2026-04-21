@@ -174,7 +174,7 @@ docker compose logs -f hermes-webui
 Open **http://localhost:6060**
 
 - Persistent Hermes data is stored in `./hermes_data`
-- Web UI auth token is stored in `./hermes_data/hermes-web-ui-data/.token`
+- Web UI auth token is stored in `./hermes_data/hermes-web-ui/.token`
 - On first run with auth enabled, the token is printed to container logs
 - All runtime settings are environment-variable driven in `docker-compose.yml`
 
