@@ -61,6 +61,7 @@
     "koa-send": "^5.0.1",
     "koa-static": "^5.0.0",
     "markdown-it": "^14.1.1",
+    "monaco-editor": "^0.55.1",
     "naive-ui": "^2.44.1",
     "node-pty": "^1.1.0",
     "pinia": "^3.0.4",

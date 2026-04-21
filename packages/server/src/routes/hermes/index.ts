@@ -8,6 +8,7 @@ import { weixinRoutes } from './weixin'
 import { codexAuthRoutes } from './codex-auth'
 import { gatewayRoutes } from './gateways'
 import { downloadRoutes } from './download'
+import { fileRoutes } from './files'
 import { proxyRoutes, proxyMiddleware } from './proxy'
 import { setupTerminalWebSocket } from './terminal'
 
@@ -22,6 +23,7 @@ hermesRoutes.use(weixinRoutes.routes())
 hermesRoutes.use(codexAuthRoutes.routes())
 hermesRoutes.use(gatewayRoutes.routes())
 hermesRoutes.use(downloadRoutes.routes())
+hermesRoutes.use(fileRoutes.routes())
 hermesRoutes.use(proxyRoutes.routes())
 
 export { setupTerminalWebSocket, proxyMiddleware }

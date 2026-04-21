@@ -5,6 +5,7 @@ import {
   localProvider,
   isInUploadDir,
   validatePath,
+  resolveHermesPath,
 } from '../../services/hermes/file-provider'
 
 export const downloadRoutes = new Router()
@@ -73,7 +74,8 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
 
   try {
     // Validate the path first
-    const validPath = validatePath(filePath)
+    // Support both absolute and relative paths
+    const validPath = filePath.startsWith('/') ? validatePath(filePath) : resolveHermesPath(filePath)
 
     // Choose provider: always use local for upload directory files
     let data: Buffer

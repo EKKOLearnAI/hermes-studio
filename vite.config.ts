@@ -38,6 +38,9 @@ export default defineConfig({
     outDir: '../../dist/client',
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    include: ['monaco-editor'],
+  },
   server: {
     proxy: {
       '/api': createProxyConfig(),
