@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(dpkg --print-architecture) \
-    && echo "Downloading Node.js v23.11.0 for ${ARCH}" \
-    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.gz" \
+    && NODE_ARCH=${ARCH/amd64/x64} \
+    && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${NODE_ARCH}.tar.gz" \
        -o /tmp/node.tar.gz \
     && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
     && rm -f /tmp/node.tar.gz \
