@@ -1,24 +1,16 @@
 import Router from '@koa/router'
 import { resolve } from 'path'
-import { readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { getGatewayManager } from './hermes/gateways'
 import * as hermesCli from '../services/hermes/hermes-cli'
 import { config } from '../config'
+import { logger } from '../services/logger'
 
-function getLocalVersion(): string {
-  const candidates = [
-    resolve(__dirname, '../../../package.json'),
-    resolve(__dirname, '../../../../package.json'),
-  ]
-  for (const p of candidates) {
-    try {
-      return JSON.parse(readFileSync(p, 'utf-8')).version
-    } catch { }
-  }
-  return '0.0.0'
-}
-
-const LOCAL_VERSION = getLocalVersion()
+// Injected by esbuild at build time; fallback to reading package.json in dev mode
+declare const __APP_VERSION__: string
+const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../../../package.json'), 'utf-8')).version } catch { return '0.0.0' } } )()
 let cachedLatestVersion = ''
 
 export async function checkLatestVersion(): Promise<void> {
@@ -33,7 +25,7 @@ export async function checkLatestVersion(): Promise<void> {
       if (latest && latest !== cachedLatestVersion) {
         cachedLatestVersion = latest
         if (latest !== LOCAL_VERSION) {
-          console.log(`⬆ New version available: v${LOCAL_VERSION} → v${latest}`)
+          logger.info('New version available: v%s → v%s', LOCAL_VERSION, latest)
         }
       }
     }

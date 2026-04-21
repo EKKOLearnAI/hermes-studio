@@ -1,6 +1,7 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
+import { logger } from '../logger'
 
 const execFileAsync = promisify(execFile)
 
@@ -126,7 +127,7 @@ export async function listSessions(source?: string, limit?: number): Promise<Her
     }
     return sessions
   } catch (err: any) {
-    console.error('[Hermes CLI] sessions export failed:', err.message)
+    logger.error(err, 'Hermes CLI: sessions export failed')
     throw new Error(`Failed to list sessions: ${err.message}`)
   }
 }
@@ -174,7 +175,7 @@ export async function getSession(id: string): Promise<HermesSession | null> {
     }
   } catch (err: any) {
     if (err.code === 1 || err.status === 1) return null
-    console.error('[Hermes CLI] session export failed:', err.message)
+    logger.error(err, 'Hermes CLI: session export failed')
     throw new Error(`Failed to get session: ${err.message}`)
   }
 }
@@ -190,7 +191,7 @@ export async function deleteSession(id: string): Promise<boolean> {
     })
     return true
   } catch (err: any) {
-    console.error('[Hermes CLI] session delete failed:', err.message)
+    logger.error(err, 'Hermes CLI: session delete failed')
     return false
   }
 }
@@ -206,7 +207,7 @@ export async function renameSession(id: string, title: string): Promise<boolean>
     })
     return true
   } catch (err: any) {
-    console.error('[Hermes CLI] session rename failed:', err.message)
+    logger.error(err, 'Hermes CLI: session rename failed')
     return false
   }
 }
@@ -250,7 +251,6 @@ export async function startGateway(): Promise<string> {
  * Uses "hermes gateway run" as a detached background process
  */
 export async function startGatewayBackground(): Promise<number | null> {
-  const { spawn } = require('child_process') as typeof import('child_process')
   const child = spawn(HERMES_BIN, ['gateway', 'run'], {
     detached: true,
     stdio: 'ignore',
@@ -311,7 +311,7 @@ export async function listLogFiles(): Promise<LogFileInfo[]> {
     }
     return files
   } catch (err: any) {
-    console.error('[Hermes CLI] logs list failed:', err.message)
+    logger.error(err, 'Hermes CLI: logs list failed')
     return []
   }
 }
@@ -339,7 +339,7 @@ export async function readLogs(
     })
     return stdout
   } catch (err: any) {
-    console.error('[Hermes CLI] logs read failed:', err.message)
+    logger.error(err, 'Hermes CLI: logs read failed')
     throw new Error(`Failed to read logs: ${err.message}`)
   }
 }
@@ -396,7 +396,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
 
     return profiles
   } catch (err: any) {
-    console.error('[Hermes CLI] profile list failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile list failed')
     throw new Error(`Failed to list profiles: ${err.message}`)
   }
 }
@@ -437,7 +437,7 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
     if (err.code === 1 || err.status === 1) {
       throw new Error(`Profile "${name}" not found`)
     }
-    console.error('[Hermes CLI] profile show failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile show failed')
     throw new Error(`Failed to get profile: ${err.message}`)
   }
 }
@@ -456,7 +456,7 @@ export async function createProfile(name: string, clone?: boolean): Promise<stri
     })
     return stdout || stderr
   } catch (err: any) {
-    console.error('[Hermes CLI] profile create failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile create failed')
     throw new Error(`Failed to create profile: ${err.message}`)
   }
 }
@@ -472,7 +472,7 @@ export async function deleteProfile(name: string): Promise<boolean> {
     })
     return true
   } catch (err: any) {
-    console.error('[Hermes CLI] profile delete failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile delete failed')
     return false
   }
 }
@@ -488,7 +488,7 @@ export async function renameProfile(oldName: string, newName: string): Promise<b
     })
     return true
   } catch (err: any) {
-    console.error('[Hermes CLI] profile rename failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile rename failed')
     return false
   }
 }
@@ -504,7 +504,7 @@ export async function useProfile(name: string): Promise<string> {
     })
     return stdout || stderr
   } catch (err: any) {
-    console.error('[Hermes CLI] profile use failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile use failed')
     throw new Error(`Failed to switch profile: ${err.message}`)
   }
 }
@@ -523,7 +523,7 @@ export async function exportProfile(name: string, outputPath?: string): Promise<
     })
     return stdout || stderr
   } catch (err: any) {
-    console.error('[Hermes CLI] profile export failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile export failed')
     throw new Error(`Failed to export profile: ${err.message}`)
   }
 }
@@ -539,7 +539,7 @@ export async function setupReset(): Promise<string> {
     })
     return stdout || stderr
   } catch (err: any) {
-    console.error('[Hermes CLI] setup reset failed:', err.message)
+    logger.error(err, 'Hermes CLI: setup reset failed')
     throw new Error(`Failed to reset config: ${err.message}`)
   }
 }
@@ -558,7 +558,7 @@ export async function importProfile(archivePath: string, name?: string): Promise
     })
     return stdout || stderr
   } catch (err: any) {
-    console.error('[Hermes CLI] profile import failed:', err.message)
+    logger.error(err, 'Hermes CLI: profile import failed')
     throw new Error(`Failed to import profile: ${err.message}`)
   }
 }

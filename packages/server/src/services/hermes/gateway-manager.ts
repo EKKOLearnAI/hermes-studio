@@ -33,10 +33,12 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { resolve, join } from 'path'
 import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createServer } from 'net'
+import yaml from 'js-yaml'
+import { logger } from '../logger'
 
 const execFileAsync = promisify(execFile)
 
@@ -48,7 +50,7 @@ const HERMES_BASE = resolve(homedir(), '.hermes')
 const HERMES_BIN = process.env.HERMES_BIN?.trim() || 'hermes'
 
 // WSL / Docker 没有 systemd 或 launchd，需要用 "gateway run" 代替 "gateway start"
-const isWsl = existsSync('/proc/version') && require('fs').readFileSync('/proc/version', 'utf-8').toLowerCase().includes('microsoft')
+const isWsl = existsSync('/proc/version') && readFileSync('/proc/version', 'utf-8').toLowerCase().includes('microsoft')
 const isDocker = existsSync('/.dockerenv')
 const needsRunMode = isWsl || isDocker
 
@@ -110,7 +112,6 @@ export class GatewayManager {
     if (!existsSync(configPath)) return { port: 8642, host: '127.0.0.1' }
 
     try {
-      const yaml = require('js-yaml')
       const content = readFileSync(configPath, 'utf-8')
       const cfg = yaml.load(content) as any || {}
 
@@ -225,7 +226,6 @@ export class GatewayManager {
   private writeProfilePort(name: string, port: number, host: string): void {
     const configPath = join(this.profileDir(name), 'config.yaml')
     try {
-      const yaml = require('js-yaml')
       const content = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
       const cfg = (yaml.load(content) as any) || {}
 
@@ -248,9 +248,9 @@ export class GatewayManager {
       }
 
       writeFileSync(configPath, yaml.dump(cfg, { lineWidth: -1 }), 'utf-8')
-      console.log(`[GatewayManager] Updated ${configPath}: api_server.extra.port = ${port}`)
+      logger.debug('Updated %s: api_server.extra.port = %d', configPath, port)
     } catch (err) {
-      console.error(`[GatewayManager] Failed to write config for profile "${name}":`, err)
+      logger.error(err, 'Failed to write config for profile "%s"', name)
     }
   }
 
@@ -280,7 +280,7 @@ export class GatewayManager {
     if (usedPorts.has(port)) {
       // 已管理端口冲突 → 找空闲端口
       const newPort = await this.findFreePort(port, host)
-      console.log(`[GatewayManager] Port ${port} is in use for profile "${name}", reassigning to ${newPort}`)
+      logger.info('Port %d is in use for profile "%s", reassigning to %d', port, name, newPort)
       this.writeProfilePort(name, newPort, host)
       port = newPort
     } else {
@@ -288,7 +288,7 @@ export class GatewayManager {
       const available = await this.checkPortAvailable(port, host)
       if (!available) {
         const newPort = await this.findFreePort(port, host)
-        console.log(`[GatewayManager] Port ${port} is occupied by another process for profile "${name}", reassigning to ${newPort}`)
+        logger.info('Port %d is occupied by another process for profile "%s", reassigning to %d', port, name, newPort)
         this.writeProfilePort(name, newPort, host)
         port = newPort
       } else {
@@ -354,7 +354,6 @@ export class GatewayManager {
       // CLI 不可用时回退到文件系统扫描
       const profiles = ['default']
       const profilesDir = join(HERMES_BASE, 'profiles')
-      const { existsSync, readdirSync } = require('fs')
       if (existsSync(profilesDir)) {
         for (const entry of readdirSync(profilesDir, { withFileTypes: true })) {
           if (entry.isDirectory() && existsSync(join(profilesDir, entry.name, 'config.yaml'))) {
@@ -423,7 +422,7 @@ export class GatewayManager {
         child.unref()
 
         const pid = child.pid ?? 0
-        console.log(`[GatewayManager] Starting gateway for profile "${name}" (run mode, PID: ${pid}, port: ${port})`)
+        logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
 
         this.waitForReady(name, pid, port, host, url)
           .then(resolve)
@@ -432,7 +431,7 @@ export class GatewayManager {
     }
 
     // 正常系统：先 start，失败则 restart（处理服务已运行的情况）
-    console.log(`[GatewayManager] Starting gateway for profile "${name}" (start mode, port: ${port})`)
+    logger.info('Starting gateway for profile "%s" (start mode, port: %d)', name, port)
     const env = { ...process.env, HERMES_HOME: hermesHome }
     try {
       const { stdout } = await execFileAsync(HERMES_BIN, ['gateway', 'start'], {
@@ -440,7 +439,7 @@ export class GatewayManager {
         env,
         windowsHide: true,
       })
-      console.log(`[GatewayManager] gateway start output: ${stdout?.trim()}`)
+      logger.debug('gateway start output: %s', stdout?.trim())
     } catch {
       // start 失败（可能服务已运行），用 restart
       try {
@@ -449,9 +448,9 @@ export class GatewayManager {
           env,
           windowsHide: true,
         })
-        console.log(`[GatewayManager] gateway restart output: ${stdout?.trim()}`)
+        logger.debug('gateway restart output: %s', stdout?.trim())
       } catch (err: any) {
-        console.log(`[GatewayManager] gateway start/restart (non-fatal): ${err.stderr?.trim() || err.message}`)
+        logger.warn(err, 'gateway start/restart (non-fatal)')
       }
     }
 
@@ -518,14 +517,14 @@ export class GatewayManager {
     while (Date.now() < deadline) {
       if (!(await this.checkHealth(url, 1000))) {
         this.gateways.delete(name)
-        console.log(`[GatewayManager] Stopped gateway for profile "${name}"`)
+        logger.info('Stopped gateway for profile "%s"', name)
         return
       }
       await new Promise(r => setTimeout(r, 300))
     }
     // 超时也清理
     this.gateways.delete(name)
-    console.log(`[GatewayManager] Stopped gateway for profile "${name}" (timeout)`)
+    logger.warn('Stopped gateway for profile "%s" (timeout)', name)
   }
 
   /** 停止所有已管理的网关（并行执行） */
@@ -540,15 +539,15 @@ export class GatewayManager {
 
   /** 扫描所有 profile，检测网关运行状态并注册 */
   async detectAllOnStartup(): Promise<void> {
-    console.log('[GatewayManager] Scanning profiles for running gateways...')
+    logger.info('Scanning profiles for running gateways...')
     const profiles = await this.listProfiles()
 
     for (const name of profiles) {
       const status = await this.detectStatus(name)
       if (status.running) {
-        console.log(`[GatewayManager] ✓ ${name}: running (PID: ${status.pid}, port: ${status.port})`)
+        logger.info('%s: running (PID: %s, port: %d)', name, status.pid, status.port)
       } else {
-        console.log(`[GatewayManager] ○ ${name}: stopped`)
+        logger.debug('%s: stopped', name)
       }
     }
   }
@@ -568,14 +567,14 @@ export class GatewayManager {
     for (const name of profiles) {
       const existing = this.gateways.get(name)
       if (existing && this.isProcessAlive(existing.pid)) {
-        console.log(`[GatewayManager] ${name}: already running (PID: ${existing.pid})`)
+        logger.info('%s: already running (PID: %d)', name, existing.pid)
         continue
       }
 
       // 有 PID 文件但进程未在正确端口运行 → 旧进程，先停掉
       const pid = this.readPidFile(name)
       if (pid && this.isProcessAlive(pid)) {
-        console.log(`[GatewayManager] ${name}: stale process (PID: ${pid}), stopping`)
+        logger.info('%s: stale process (PID: %d), stopping', name, pid)
         try { await this.stop(name) } catch { }
       }
 
@@ -588,7 +587,7 @@ export class GatewayManager {
       try {
         await this.start(name)
       } catch (err: any) {
-        console.error(`[GatewayManager] ✗ ${name}: failed to start — ${err.message}`)
+        logger.error(err, '%s: failed to start', name)
       }
     })
 

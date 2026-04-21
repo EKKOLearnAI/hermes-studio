@@ -6,6 +6,7 @@ import { tmpdir, homedir } from 'os'
 import YAML from 'js-yaml'
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { getGatewayManager } from './gateways'
+import { logger } from '../../services/logger'
 
 export const profileRoutes = new Router()
 
@@ -37,7 +38,7 @@ profileRoutes.post('/api/hermes/profiles', async (ctx) => {
     const mgr = getGatewayManager()
     if (mgr) {
       try { await mgr.start(name) } catch (err: any) {
-        console.error(`[Profile] Failed to start gateway for ${name}:`, err.message)
+        logger.error(err, 'Failed to start gateway for profile "%s"', name)
       }
     }
 
@@ -140,7 +141,7 @@ profileRoutes.put('/api/hermes/profiles/active', async (ctx) => {
     // 3. Ensure api_server config for new profile
     try {
       const detail = await hermesCli.getProfile(name)
-      console.log(`[Profile] detail.path = ${detail.path}`)
+      logger.debug('Profile detail.path = %s', detail.path)
       if (!existsSync(join(detail.path, 'config.yaml'))) {
         // No config.yaml — run setup --reset to create full default config
         try { await hermesCli.setupReset() } catch { }
@@ -149,10 +150,10 @@ profileRoutes.put('/api/hermes/profiles/active', async (ctx) => {
       const profileEnv = join(detail.path, '.env')
       if (!existsSync(profileEnv)) {
         writeFileSync(profileEnv, '# Hermes Agent Environment Configuration\n', 'utf-8')
-        console.log(`[Profile] Created .env for: ${detail.path}`)
+        logger.info('Created .env for: %s', detail.path)
       }
     } catch (err: any) {
-      console.error(`[Profile] Ensure config failed:`, err.message)
+      logger.error(err, 'Ensure config failed')
     }
 
     ctx.body = { success: true, message: output.trim() }

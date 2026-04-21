@@ -1,10 +1,10 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { config } from '../config'
+import { homedir } from 'os'
 
-// Token stored in project data directory
-const TOKEN_FILE = join(config.dataDir, '.token')
+const APP_HOME = join(homedir(), '.hermes-web-ui')
+const TOKEN_FILE = join(APP_HOME, '.token')
 
 function generateToken(): string {
   return randomBytes(32).toString('hex')
@@ -30,6 +30,7 @@ export async function getToken(): Promise<string | null> {
   } catch {
     // Generate a new token
     const token = generateToken()
+    await mkdir(APP_HOME, { recursive: true })
     await writeFile(TOKEN_FILE, token + '\n', { mode: 0o600 })
     return token
   }

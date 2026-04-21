@@ -6,6 +6,7 @@ import send from 'koa-send'
 import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
+import { readFileSync } from 'fs'
 import { config } from './config'
 import { hermesRoutes, setupTerminalWebSocket, proxyMiddleware } from './routes/hermes'
 import { uploadRoutes } from './routes/upload'
@@ -15,10 +16,28 @@ import { healthRoutes, startVersionCheck } from './routes/health'
 import { getToken, authMiddleware } from './services/auth'
 import { initGatewayManager } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
+import { logger } from './services/logger'
+
+// Injected by esbuild at build time; fallback to reading package.json in dev mode
+declare const __APP_VERSION__: string
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } } )()
+
+// Global error handlers — ensure all uncaught errors are logged
+process.on('uncaughtException', (err) => {
+  logger.fatal(err, 'Uncaught exception')
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason) => {
+  logger.error(reason, 'Unhandled rejection')
+})
 
 let server: any = null
 
 export async function bootstrap() {
+  console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 
@@ -27,7 +46,7 @@ export async function bootstrap() {
 
   if (authToken) {
     app.use(await authMiddleware(authToken))
-    console.log(`🔐 Auth enabled — token: ${authToken}`)
+    logger.info('Auth enabled — token: %s', authToken)
   }
 
   await initGatewayManager()
@@ -66,12 +85,15 @@ export async function bootstrap() {
   server.on('listening', () => {
     const interfaces = os.networkInterfaces()
     const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
-    console.log(`➜ Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
-    console.log(`➜ Upstream: ${config.upstream}`)
+    console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
+    console.log(`Upstream: ${config.upstream}`)
+    console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
+    logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+    logger.info('Upstream: %s', config.upstream)
   })
 
   server.on('error', (err: any) => {
-    console.error('Server error:', err.message)
+    logger.error({ err }, 'Server error')
   })
 
   bindShutdown(server)

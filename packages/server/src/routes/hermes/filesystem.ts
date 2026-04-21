@@ -5,6 +5,7 @@ import { join, resolve } from 'path'
 import YAML from 'js-yaml'
 import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import * as hermesCli from '../../services/hermes/hermes-cli'
+import { logger } from '../../services/logger'
 
 // --- Provider env var mapping (from hermes providers.py HERMES_OVERLAYS + config.py) ---
 // Maps provider key → { api_key_envs: all env var aliases for API key, base_url_env: env var for base URL }
@@ -74,17 +75,17 @@ async function fetchProviderModels(baseUrl: string, apiKey: string): Promise<str
       signal: AbortSignal.timeout(8000),
     })
     if (!res.ok) {
-      console.warn(`[available-models] ${baseUrl} returned ${res.status}`)
+      logger.warn('available-models %s returned %d', baseUrl, res.status)
       return []
     }
     const data = await res.json() as { data?: Array<{ id: string }> }
     if (!Array.isArray(data.data)) {
-      console.warn(`[available-models] ${baseUrl} returned unexpected format`)
+      logger.warn('available-models %s returned unexpected format', baseUrl)
       return []
     }
     return data.data.map(m => m.id).sort()
   } catch (err: any) {
-    console.error(`[available-models] ${baseUrl} failed: ${err.message}`)
+    logger.error(err, 'available-models %s failed', baseUrl)
     return []
   }
 }
@@ -668,7 +669,7 @@ fsRoutes.post('/api/hermes/config/providers', async (ctx) => {
     try {
       await hermesCli.restartGateway()
     } catch (e: any) {
-      console.error('[Provider] Gateway restart failed:', e.message)
+      logger.error(e, 'Gateway restart failed')
     }
 
     ctx.body = { success: true }
@@ -731,7 +732,7 @@ fsRoutes.put('/api/hermes/config/providers/:poolKey', async (ctx) => {
     try {
       await hermesCli.restartGateway()
     } catch (e: any) {
-      console.error('[Provider] Gateway restart failed:', e.message)
+      logger.error(e, 'Gateway restart failed')
     }
 
     ctx.body = { success: true }
@@ -785,7 +786,7 @@ fsRoutes.delete('/api/hermes/config/providers/:poolKey', async (ctx) => {
             await wfs(authPath, JSON.stringify(auth, null, 2) + '\n', 'utf-8')
           }
         } catch (err: any) {
-          console.error(`[Provider] Failed to clear OAuth tokens for ${poolKey}:`, err.message)
+          logger.error(err, 'Failed to clear OAuth tokens for %s', poolKey)
         }
       }
     }

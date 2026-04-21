@@ -1,3 +1,5 @@
+import { logger } from './logger'
+
 export function bindShutdown(server: any): void {
   let isShuttingDown = false
 
@@ -5,19 +7,19 @@ export function bindShutdown(server: any): void {
     if (isShuttingDown) return
     isShuttingDown = true
 
-    console.log(`\n[${signal}] shutting down...`)
+    logger.info('Shutting down (%s)...', signal)
 
     try {
       if (server) {
         await new Promise<void>((resolve) => {
           server.close(() => {
-            console.log('✓ http server closed')
+            logger.info('HTTP server closed')
             resolve()
           })
         })
       }
     } catch (err) {
-      console.error('shutdown error:', err)
+      logger.error(err, 'Shutdown error')
     }
 
     process.exit(0)
@@ -26,14 +28,4 @@ export function bindShutdown(server: any): void {
   process.once('SIGUSR2', shutdown)
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
-
-  process.on('uncaughtException', (err) => {
-    console.error('uncaughtException:', err)
-    shutdown('uncaughtException')
-  })
-
-  process.on('unhandledRejection', (err) => {
-    console.error('unhandledRejection:', err)
-    shutdown('unhandledRejection')
-  })
 }

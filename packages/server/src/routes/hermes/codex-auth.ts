@@ -4,6 +4,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
+import { logger } from '../../services/logger'
 
 // --- OAuth Constants ---
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -130,7 +131,7 @@ async function codexLoginWorker(session: CodexSession, authPath: string): Promis
 
         if (!tokenRes.ok) {
           const errText = await tokenRes.text()
-          console.error('[Codex Auth] Token exchange failed:', tokenRes.status, errText)
+          logger.error('Token exchange failed: %d %s', tokenRes.status, errText)
           session.status = 'error'
           session.error = `Token exchange failed: ${tokenRes.status}`
           return
@@ -170,7 +171,7 @@ async function codexLoginWorker(session: CodexSession, authPath: string): Promis
         // Save to ~/.codex/auth.json for CLI sync
         saveCodexCliTokens(tokenData.access_token, refreshToken)
 
-        console.log('[Codex Auth] Login successful')
+        logger.info('Login successful')
         return
       }
 
@@ -180,7 +181,7 @@ async function codexLoginWorker(session: CodexSession, authPath: string): Promis
       }
 
       // Other error status
-      console.error('[Codex Auth] Poll failed:', pollRes.status)
+      logger.error('Poll failed: %d', pollRes.status)
       session.status = 'error'
       session.error = `Poll failed: ${pollRes.status}`
       return
@@ -188,7 +189,7 @@ async function codexLoginWorker(session: CodexSession, authPath: string): Promis
       if (err.name === 'TimeoutError' || err.name === 'AbortError') {
         continue
       }
-      console.error('[Codex Auth] Poll error:', err.message)
+      logger.error(err, 'Poll error')
       session.status = 'error'
       session.error = err.message
       return
@@ -221,7 +222,7 @@ codexAuthRoutes.post('/api/hermes/auth/codex/start', async (ctx) => {
     if (!res.ok) {
       let errorBody: any = null
       try { errorBody = await res.json() } catch { /* ignore */ }
-      console.error(`[codex-auth] Device code request failed: ${res.status}`, errorBody)
+      logger.error('Device code request failed: %d %s', res.status, errorBody)
 
       let errorMessage = `Device code request failed: ${res.status}`
       if (errorBody?.error?.code === 'unsupported_country_region_territory') {
@@ -248,7 +249,7 @@ codexAuthRoutes.post('/api/hermes/auth/codex/start', async (ctx) => {
     // Start background worker
     const authPath = getActiveAuthPath()
     codexLoginWorker(session, authPath).catch(err => {
-      console.error('[Codex Auth] Worker error:', err)
+      logger.error(err, 'Worker error')
       session.status = 'error'
       session.error = err.message
     })

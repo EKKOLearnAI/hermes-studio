@@ -1,3 +1,4 @@
+import { spawn } from 'child_process'
 import Router from '@koa/router'
 
 export const updateRoutes = new Router()
@@ -18,7 +19,6 @@ updateRoutes.post('/api/hermes/update', async (ctx) => {
     ctx.body = { success: true, message: output.trim() }
 
     setTimeout(() => {
-      const { spawn } = require('child_process')
       spawn(isWin ? 'cmd' : 'sh', isWin ? ['/c', 'hermes-web-ui restart'] : ['-c', 'hermes-web-ui restart'], {
         detached: true,
         stdio: 'ignore',

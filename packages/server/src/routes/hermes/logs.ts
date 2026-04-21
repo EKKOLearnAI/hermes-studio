@@ -7,7 +7,7 @@ import * as hermesCli from '../../services/hermes/hermes-cli'
 
 export const logRoutes = new Router()
 
-const WEBUI_LOG_FILE = join(homedir(), '.hermes-web-ui', 'server.log')
+const WEBUI_LOG_FILE = join(homedir(), '.hermes-web-ui', 'logs', 'server.log')
 
 // List available log files
 logRoutes.get('/api/hermes/logs', async (ctx) => {
@@ -37,6 +37,21 @@ interface LogEntry {
 
 // Parse a single log line into structured entry
 function parseLine(line: string): LogEntry {
+  // Try pino JSON format first (webui logs)
+  try {
+    const obj = JSON.parse(line)
+    if (obj.level && obj.time) {
+      const ts = new Date(obj.time).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+      const levelMap: Record<number, string> = { 10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL' }
+      return {
+        timestamp: ts,
+        level: levelMap[obj.level] || 'INFO',
+        logger: obj.msg || '',
+        message: typeof obj.msg === 'string' ? obj.msg : JSON.stringify(obj.msg),
+        raw: line,
+      }
+    }
+  } catch {}
   // Match: 2026-04-11 20:16:16,289 INFO aiohttp.access: message (agent log format)
   let match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(\S+?):\s(.*)$/)
   if (match) {
@@ -74,7 +89,7 @@ logRoutes.get('/api/hermes/logs/:name', async (ctx) => {
         if (!line.trim()) continue
         entries.push(parseLine(line))
       }
-      ctx.body = { entries }
+      ctx.body = { entries: entries.reverse() }
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { error: err.message }
@@ -93,7 +108,7 @@ logRoutes.get('/api/hermes/logs/:name', async (ctx) => {
       entries.push(parseLine(line))
     }
 
-    ctx.body = { entries }
+    ctx.body = { entries: entries.reverse() }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

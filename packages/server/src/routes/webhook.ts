@@ -1,5 +1,6 @@
 import Router from '@koa/router'
 import { emitWebhook } from '../services/hermes/hermes'
+import { logger } from '../services/logger'
 
 export const webhookRoutes = new Router()
 
@@ -24,7 +25,7 @@ webhookRoutes.post('/webhook', async (ctx) => {
     return
   }
 
-  console.log(`[Webhook] Received event: ${payload.event}`)
+  logger.info('Received webhook event: %s', payload.event)
 
   // Emit to registered callbacks
   emitWebhook(payload)
