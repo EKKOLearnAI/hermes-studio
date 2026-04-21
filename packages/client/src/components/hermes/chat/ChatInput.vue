@@ -2,8 +2,9 @@
 import type { Attachment } from '@/stores/hermes/chat'
 import { useChatStore } from '@/stores/hermes/chat'
 import { NButton, NTooltip } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import CommandPalette from './CommandPalette.vue'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
@@ -14,8 +15,51 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const showCommandPalette = ref(false)
+const commandPaletteFilter = ref('')
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+
+// Command palette
+const commands = [
+  { id: 'vision', label: '/vision', description: t('chat.cmdVision') || 'Image understanding' },
+  { id: 'claude', label: '/claude', description: t('chat.cmdClaude') || 'Use Claude model' },
+  { id: 'gpt4', label: '/gpt4', description: t('chat.cmdGpt4') || 'Use GPT-4 model' },
+  { id: 'code', label: '/code', description: t('chat.cmdCode') || 'Code mode' },
+  { id: 'rewrite', label: '/rewrite', description: t('chat.cmdRewrite') || 'Rewrite selected text' },
+  { id: 'summarize', label: '/summarize', description: t('chat.cmdSummarize') || 'Summarize thread' },
+  { id: 'translate', label: '/translate', description: t('chat.cmdTranslate') || 'Translate to English' },
+  { id: 'jobs', label: '/jobs', description: t('chat.cmdJobs') || 'Jump to scheduled jobs' },
+  { id: 'terminal', label: '/terminal', description: t('chat.cmdTerminal') || 'Open terminal' },
+]
+
+const filteredCommands = computed(() => {
+  if (!commandPaletteFilter.value) return commands
+  const q = commandPaletteFilter.value.toLowerCase()
+  return commands.filter(c => c.id.includes(q) || c.label.toLowerCase().includes(q))
+})
+
+function handleCommandSelect(cmd: { id: string; label: string }) {
+  inputText.value = cmd.label + ' '
+  showCommandPalette.value = false
+  commandPaletteFilter.value = ''
+  nextTick(() => textareaRef.value?.focus())
+}
+
+function handleCommandClose() {
+  showCommandPalette.value = false
+  commandPaletteFilter.value = ''
+}
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.command-palette-wrapper')) {
+    handleCommandClose()
+  }
+}
+
+onMounted(() => document.addEventListener('click', handleClickOutside))
+onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 // --- Voice input (Web Speech API) ---
 // TODO: re-enable when needed — browser-native speech-to-text
@@ -112,7 +156,33 @@ function handleDrop(e: DragEvent) {
   textareaRef.value?.focus()
 }
 
-// --- Send ---
+// --- Input & keyboard ---
+
+function handleInput(e: Event) {
+  const el = e.target as HTMLTextAreaElement
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+
+  // Command palette trigger
+  if (el.value === '/') {
+    showCommandPalette.value = true
+    commandPaletteFilter.value = ''
+  } else if (el.value.startsWith('/')) {
+    showCommandPalette.value = true
+    commandPaletteFilter.value = el.value.slice(1)
+  } else {
+    showCommandPalette.value = false
+    commandPaletteFilter.value = ''
+  }
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter' || e.shiftKey) return
+  if (isImeEnter(e)) return
+
+  e.preventDefault()
+  handleSend()
+}
 
 function handleSend() {
   const text = inputText.value.trim()
@@ -125,6 +195,8 @@ function handleSend() {
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
   }
+  showCommandPalette.value = false
+  commandPaletteFilter.value = ''
 }
 
 function handleCompositionStart() {
@@ -139,20 +211,6 @@ function handleCompositionEnd() {
 
 function isImeEnter(e: KeyboardEvent): boolean {
   return isComposing.value || e.isComposing || e.keyCode === 229
-}
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Enter' || e.shiftKey) return
-  if (isImeEnter(e)) return
-
-  e.preventDefault()
-  handleSend()
-}
-
-function handleInput(e: Event) {
-  const el = e.target as HTMLTextAreaElement
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 100) + 'px'
 }
 
 function removeAttachment(id: string) {
@@ -208,6 +266,14 @@ function isImage(type: string): boolean {
       @dragleave="handleDragLeave"
       @drop="handleDrop"
     >
+      <!-- Command palette dropdown -->
+      <div class="command-palette-wrapper">
+        <CommandPalette
+          :commands="filteredCommands"
+          @select="handleCommandSelect"
+          @close="handleCommandClose"
+        />
+      </div>
       <input
         ref="fileInputRef"
         type="file"
@@ -401,5 +467,17 @@ function isImage(type: string): boolean {
   border-color: var(--accent-info);
   border-style: dashed;
   background-color: rgba(var(--accent-info-rgb), 0.04);
+}
+
+.command-palette-wrapper {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--n-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
 }
 </style>
