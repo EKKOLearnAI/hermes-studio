@@ -8,10 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     make \
     g++ \
-    && ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.gz" \
-       | tar -xz -C /usr/local --strip-components=1 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(dpkg --print-architecture) \
+    && echo "Downloading Node.js v23.11.0 for ${ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.gz" \
+       -o /tmp/node.tar.gz \
+    && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.gz \
+    && node --version
 
 WORKDIR /app
 
