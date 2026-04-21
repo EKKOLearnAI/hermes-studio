@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'http'
 import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { getToken } from '../../services/auth'
+import { logger } from '../../services/logger'
 
 let pty: any = null
 
@@ -23,11 +24,11 @@ function ensureNodePtySpawnHelperExecutable() {
         accessSync(helperPath, fsConstants.X_OK)
       } catch {
         chmodSync(helperPath, 0o755)
-        console.log(`[Terminal] Restored execute bit for node-pty helper: ${helperPath}`)
+        logger.debug('Restored execute bit for node-pty helper: %s', helperPath)
       }
     }
   } catch (err: any) {
-    console.warn(`[Terminal] Could not normalize node-pty helper permissions: ${err?.message || err}`)
+    logger.warn(err, 'Could not normalize node-pty helper permissions')
   }
 }
 
@@ -36,7 +37,7 @@ try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   pty = require('node-pty')
 } catch (err: any) {
-  console.warn(`[Terminal] node-pty failed to load, terminal feature disabled (${err?.message || 'unknown error'})`)
+  logger.warn(err, 'node-pty failed to load, terminal feature disabled')
 }
 
 // ─── Shell detection ────────────────────────────────────────────
@@ -111,7 +112,7 @@ function createSession(shell: string): PtySession {
 
 export function setupTerminalWebSocket(httpServer: HttpServer) {
   if (!pty) {
-    console.warn('[Terminal] node-pty not available, skipping terminal WebSocket setup')
+    logger.warn('node-pty not available, skipping terminal WebSocket setup')
     return
   }
 
@@ -176,7 +177,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
           ws.send(JSON.stringify({ type: 'exited', id: session.id, exitCode }))
         }
         conn.sessions.delete(session.id)
-        console.log(`[Terminal] Session ${session.id} exited (pid ${session.pid}, code ${exitCode})`)
+        logger.info('Session %s exited (pid %d, code %d)', session.id, session.pid, exitCode)
       })
     }
 
@@ -227,7 +228,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
             pid: session.pid,
             shell: shellName(shell),
           }))
-          console.log(`[Terminal] Session created: ${session.id} (${shellName(shell)}, pid ${session.pid})`)
+          logger.info('Session created: %s (%s, pid %d)', session.id, shellName(shell), session.pid)
           break
         }
 
@@ -252,7 +253,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
             conn.outputBuffers.delete(sessionId)
           }
 
-          console.log(`[Terminal] Switched to session ${sessionId}`)
+          logger.debug('Switched to session %s', sessionId)
           break
         }
 
@@ -268,7 +269,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
             const remaining = Array.from(conn.sessions.keys())
             conn.activeSessionId = remaining.length > 0 ? remaining[0] : null
           }
-          console.log(`[Terminal] Session closed: ${sessionId}`)
+          logger.info('Session closed: %s', sessionId)
           break
         }
 
@@ -290,7 +291,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
         try { session.pty.kill() } catch { }
       }
       conn.sessions.clear()
-      console.log(`[Terminal] Connection closed, all sessions killed`)
+      logger.info('Connection closed, all sessions killed')
     })
 
     ws.on('error', () => {
@@ -307,7 +308,7 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
       firstSession = createSession(defaultShell)
     } catch (err: any) {
       ws.send(JSON.stringify({ type: 'error', message: err.message }))
-      console.error(`[Terminal] Failed to create session: ${err.message}`)
+      logger.error(err, 'Failed to create session')
       ws.close()
       return
     }
@@ -320,8 +321,8 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
       pid: firstSession.pid,
       shell: shellName(defaultShell),
     }))
-    console.log(`[Terminal] First session created: ${firstSession.id} (${shellName(defaultShell)}, pid ${firstSession.pid})`)
+    logger.info('First session created: %s (%s, pid %d)', firstSession.id, shellName(defaultShell), firstSession.pid)
   })
 
-  console.log(`[Terminal] WebSocket ready at /terminal (shell: ${defaultShell}, transport: node-pty)`)
+  logger.info('WebSocket ready at /terminal (shell: %s, transport: node-pty)', defaultShell)
 }

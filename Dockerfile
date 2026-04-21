@@ -6,14 +6,18 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    gnupg \
-    python3 \
-    python3-yaml \
     make \
     g++ \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="$ARCH"; fi \
+    && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${NODE_ARCH}.tar.gz" \
+       -o /tmp/node.tar.gz \
+    && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.gz \
+    && node --version
 
 WORKDIR /app
 

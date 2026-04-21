@@ -5,6 +5,13 @@ import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { downloadFile } from "@/api/hermes/download";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
+import {
+  copyTextToClipboard,
+  handleCodeBlockCopyClick,
+  renderHighlightedCodeBlock,
+} from "./highlight";
+
+const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
 const props = defineProps<{ message: Message }>();
 const { t } = useI18n();
@@ -34,7 +41,6 @@ function formatSize(bytes: number): string {
  */
 function getFilePathFromContent(attName: string): string | null {
   const content = props.message.content || "";
-  // Match [File: <name>](<path>) pattern
   const regex = /\[File:\s*([^\]]+)\]\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
@@ -43,12 +49,7 @@ function getFilePathFromContent(attName: string): string | null {
   return null;
 }
 
-function handleAttachmentDownload(att: {
-  name: string;
-  url: string;
-  type: string;
-}) {
-  // Prefer API download when server path is available (works after page reload)
+function handleAttachmentDownload(att: { name: string; url: string; type: string }) {
   const filePath = getFilePathFromContent(att.name);
   if (filePath) {
     toast.info(t("download.downloading"));
@@ -57,7 +58,6 @@ function handleAttachmentDownload(att: {
     });
     return;
   }
-  // Fallback: blob URL (only valid in current session before page reload)
   if (att.url && att.url.startsWith("blob:")) {
     const a = document.createElement("a");
     a.href = att.url;
@@ -65,9 +65,67 @@ function handleAttachmentDownload(att: {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  }
+}
+
+type ToolPayload = {
+  full: string;
+  display: string;
+  language?: string;
+};
+
+function formatToolPayload(raw?: string): ToolPayload {
+  if (!raw) {
+    return { full: "", display: "" };
+  }
+
+  try {
+    const full = JSON.stringify(JSON.parse(raw), null, 2);
+    return {
+      full,
+      display:
+        full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? full.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : full,
+      language: "json",
+    };
+  } catch {
+    return {
+      full: raw,
+      display:
+        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : raw,
+    };
+  }
+}
+
+function renderToolPayload(content: string, language?: string): string {
+  return renderHighlightedCodeBlock(content, language, t("common.copy"), {
+    maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
+  });
+}
+
+async function handleToolDetailClick(event: MouseEvent): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+
+  const button = target.closest<HTMLElement>("[data-copy-code=\"true\"]");
+  if (!button) return;
+
+  event.preventDefault();
+
+  const source = button.closest<HTMLElement>("[data-copy-source]")?.dataset.copySource;
+  if (source === "tool-args" && fullToolArgs.value) {
+    await copyTextToClipboard(fullToolArgs.value);
     return;
   }
-  toast.warning(t("download.fileNotFound"));
+  if (source === "tool-result" && fullToolResult.value) {
+    await copyTextToClipboard(fullToolResult.value);
+    return;
+  }
+
+  await handleCodeBlockCopyClick(event);
 }
 
 const hasAttachments = computed(
@@ -78,30 +136,28 @@ const hasToolDetails = computed(
   () => !!(props.message.toolArgs || props.message.toolResult),
 );
 
-const formattedToolArgs = computed(() => {
-  if (!props.message.toolArgs) return "";
-  try {
-    return JSON.stringify(JSON.parse(props.message.toolArgs), null, 2);
-  } catch {
-    return props.message.toolArgs;
-  }
+const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
+
+const fullToolArgs = computed(() => toolArgsPayload.value.full);
+const formattedToolArgs = computed(() => toolArgsPayload.value.display);
+const fullToolResult = computed(() => toolResultPayload.value.full);
+const formattedToolResult = computed(() => toolResultPayload.value.display);
+
+const renderedToolArgs = computed(() => {
+  if (!formattedToolArgs.value) return "";
+  return renderToolPayload(
+    formattedToolArgs.value,
+    toolArgsPayload.value.language,
+  );
 });
 
-const formattedToolResult = computed(() => {
-  if (!props.message.toolResult) return "";
-  try {
-    const parsed = JSON.parse(props.message.toolResult);
-    const str = JSON.stringify(parsed, null, 2);
-    // Truncate very long output
-    if (str.length > 2000)
-      return str.slice(0, 2000) + "\n" + t("chat.truncated");
-    return str;
-  } catch {
-    const raw = props.message.toolResult;
-    if (raw.length > 2000)
-      return raw.slice(0, 2000) + "\n" + t("chat.truncated");
-    return raw;
-  }
+const renderedToolResult = computed(() => {
+  if (!formattedToolResult.value) return "";
+  return renderToolPayload(
+    formattedToolResult.value,
+    toolResultPayload.value.language,
+  );
 });
 </script>
 
@@ -154,14 +210,14 @@ const formattedToolResult = computed(() => {
           t("chat.error")
         }}</span>
       </div>
-      <div v-if="toolExpanded && hasToolDetails" class="tool-details">
-        <div v-if="formattedToolArgs" class="tool-detail-section">
+      <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+        <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolArgs }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
         </div>
-        <div v-if="formattedToolResult" class="tool-detail-section">
+        <div v-if="formattedToolResult" class="tool-detail-section" data-copy-source="tool-result">
           <div class="tool-detail-label">{{ t("chat.result") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolResult }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
         </div>
       </div>
     </template>
@@ -180,8 +236,7 @@ const formattedToolResult = computed(() => {
                 v-for="att in message.attachments"
                 :key="att.id"
                 class="msg-attachment"
-                :class="{ image: isImage(att.type), clickable: true }"
-                @click="handleAttachmentDownload(att)"
+                :class="{ image: isImage(att.type) }"
               >
                 <template v-if="isImage(att.type) && att.url">
                   <img
@@ -189,16 +244,9 @@ const formattedToolResult = computed(() => {
                     :alt="att.name"
                     class="msg-attachment-thumb"
                   />
-                  <div class="msg-attachment-download-overlay">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                      <polyline points="7 10 12 15 17 10"/>
-                      <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </div>
                 </template>
                 <template v-else>
-                  <div class="msg-attachment-file">
+                  <div class="msg-attachment-file" @click="handleAttachmentDownload(att)" style="cursor: pointer;" :title="t('download.downloadFile')">
                     <svg
                       width="16"
                       height="16"
@@ -214,10 +262,10 @@ const formattedToolResult = computed(() => {
                     </svg>
                     <span class="att-name">{{ att.name }}</span>
                     <span class="att-size">{{ formatSize(att.size) }}</span>
-                    <svg class="att-download-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                      <polyline points="7 10 12 15 17 10"/>
-                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
                     </svg>
                   </div>
                 </template>
@@ -369,46 +417,6 @@ const formattedToolResult = computed(() => {
   }
 }
 
-.msg-attachment.clickable {
-  cursor: pointer;
-  transition: opacity $transition-fast;
-
-  &:hover {
-    opacity: 0.8;
-  }
-}
-
-.msg-attachment-download-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
-  color: #fff;
-  opacity: 0;
-  transition: opacity $transition-fast;
-
-  .msg-attachment.image:hover & {
-    opacity: 1;
-  }
-}
-
-.msg-attachment.image {
-  position: relative;
-}
-
-.att-download-icon {
-  flex-shrink: 0;
-  color: $text-muted;
-  opacity: 0;
-  transition: opacity $transition-fast;
-
-  .msg-attachment:hover & {
-    opacity: 1;
-  }
-}
-
 .message-time {
   font-size: 11px;
   color: $text-muted;
@@ -498,20 +506,22 @@ const formattedToolResult = computed(() => {
   margin-bottom: 2px;
 }
 
-.tool-detail-code {
-  font-family: $font-code;
-  font-size: 11px;
-  line-height: 1.5;
-  color: $text-secondary;
-  background: $code-bg;
-  border-radius: $radius-sm;
-  padding: 6px 8px;
-  margin: 0;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
+.tool-detail-code-block {
+  :deep(.hljs-code-block) {
+    margin: 0;
+  }
+
+  :deep(.code-header) {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  :deep(code.hljs) {
+    font-size: 11px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 @keyframes spin {
