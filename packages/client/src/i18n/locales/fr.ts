@@ -49,6 +49,7 @@ export default {
     usage: 'Utilisation',
     channels: 'Canaux',
     terminal: 'Terminal',
+    tunnel: 'Accès Public',
     settings: 'Parametres',
     connected: 'Connecte',
     disconnected: 'Deconnecte',
@@ -58,6 +59,20 @@ export default {
     updateSuccess: 'Mise a jour terminee, veuillez redemarrer le serveur',
     updateFailed: 'Echec de la mise a jour',
   },
+
+  // Tunnel
+  tunnel: {
+    running: 'En cours',
+    stopped: 'Arrêté',
+    start: 'Démarrer le Tunnel',
+    stop: 'Arrêter le Tunnel',
+    copy: 'Copier',
+    copyFull: "Copier l'URL complète",
+    notInstalled: 'cloudflared non installé',
+    installHint: "Installez d'abord cloudflared pour utiliser le tunnel :",
+    tokenTitle: "Jeton d'accès",
+  },
+
 
   // Chat
   chat: {

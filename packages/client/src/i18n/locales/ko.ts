@@ -49,6 +49,7 @@ export default {
     usage: '사용량',
     channels: '채널',
     terminal: '터미널',
+    tunnel: '공개 접근',
     settings: '설정',
     connected: '연결됨',
     disconnected: '연결 끊김',
@@ -58,6 +59,20 @@ export default {
     updateSuccess: '업데이트 완료, 서버를 재시작해 주세요',
     updateFailed: '업데이트 실패',
   },
+
+  // 터널
+  tunnel: {
+    running: '실행 중',
+    stopped: '중지됨',
+    start: '터널 시작',
+    stop: '터널 중지',
+    copy: '복사',
+    copyFull: '전체 URL 복사',
+    notInstalled: 'cloudflared가 설치되지 않음',
+    installHint: '터널 기능을 사용하려면 cloudflared를 설치하세요:',
+    tokenTitle: '액세스 토큰',
+  },
+
 
   // 채팅
   chat: {

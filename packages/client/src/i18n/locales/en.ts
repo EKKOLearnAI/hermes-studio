@@ -52,6 +52,7 @@ export default {
     channels: 'Channels',
     gateways: 'Gateways',
     terminal: 'Terminal',
+    tunnel: 'Public Access',
     groupConversation: 'Conversation',
     groupPlatform: 'Platform',
     groupAgent: 'Agent',
@@ -68,6 +69,19 @@ export default {
     updating: 'Updating...',
     updateSuccess: 'Update complete, please restart the server',
     updateFailed: 'Update failed',
+  },
+
+  // Tunnel
+  tunnel: {
+    running: 'Running',
+    stopped: 'Stopped',
+    start: 'Start Tunnel',
+    stop: 'Stop Tunnel',
+    copy: 'Copy',
+    copyFull: 'Copy Full URL',
+    notInstalled: 'cloudflared not installed',
+    installHint: 'Install cloudflared first to use tunnel:',
+    tokenTitle: 'Access Token',
   },
 
   // Chat

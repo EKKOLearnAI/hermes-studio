@@ -52,6 +52,7 @@ export default {
     channels: '频道',
     gateways: '网关',
     terminal: '终端',
+    tunnel: '公网访问',
     groupConversation: '对话',
     groupPlatform: '平台',
     groupAgent: '代理',
@@ -68,6 +69,19 @@ export default {
     updating: '正在更新...',
     updateSuccess: '更新完成，请重启服务',
     updateFailed: '更新失败',
+  },
+
+  // 隧道
+  tunnel: {
+    running: '运行中',
+    stopped: '已停止',
+    start: '启动隧道',
+    stop: '停止隧道',
+    copy: '复制',
+    copyFull: '复制完整链接',
+    notInstalled: 'cloudflared 未安装',
+    installHint: '请先安装 cloudflared 才能使用隧道功能：',
+    tokenTitle: '访问 Token',
   },
 
   // 对话

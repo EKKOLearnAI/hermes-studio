@@ -1,4 +1,5 @@
 import { logger } from './logger'
+import { cleanupTunnel } from '../routes/tunnel'
 
 export function bindShutdown(server: any): void {
   let isShuttingDown = false
@@ -8,6 +9,8 @@ export function bindShutdown(server: any): void {
     isShuttingDown = true
 
     logger.info('Shutting down (%s)...', signal)
+
+    cleanupTunnel()
 
     try {
       if (server) {

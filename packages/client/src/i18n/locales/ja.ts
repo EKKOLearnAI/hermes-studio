@@ -49,6 +49,7 @@ export default {
     usage: '使用量',
     channels: 'チャンネル',
     terminal: 'ターミナル',
+    tunnel: '公開アクセス',
     settings: '設定',
     connected: '接続済み',
     disconnected: '未接続',
@@ -58,6 +59,20 @@ export default {
     updateSuccess: '更新が完了しました。サーバーを再起動してください',
     updateFailed: '更新に失敗しました',
   },
+
+  // トンネル
+  tunnel: {
+    running: '実行中',
+    stopped: '停止中',
+    start: 'トンネル開始',
+    stop: 'トンネル停止',
+    copy: 'コピー',
+    copyFull: '完全なURLをコピー',
+    notInstalled: 'cloudflared がインストールされていません',
+    installHint: 'トンネル機能を使用するには cloudflared をインストールしてください：',
+    tokenTitle: 'アクセストークン',
+  },
+
 
   // チャット
   chat: {
