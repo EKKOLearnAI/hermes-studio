@@ -6,13 +6,11 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    gnupg \
-    python3 \
-    python3-yaml \
     make \
     g++ \
-    && curl -fsSL https://deb.nodesource.com/setup_23.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${ARCH}.tar.xz" \
+       | tar -xJ -C /usr/local --strip-components=1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
