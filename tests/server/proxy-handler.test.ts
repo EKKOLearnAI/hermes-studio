@@ -5,13 +5,16 @@ vi.mock('../../packages/server/src/config', () => ({
   config: { upstream: 'http://127.0.0.1:8642' },
 }))
 
+vi.mock('../../packages/server/src/services/gateway-bootstrap', () => ({
+  getGatewayManagerInstance: () => null,
+}))
+
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 import { proxy } from '../../packages/server/src/routes/hermes/proxy-handler'
 
 function createMockCtx(overrides: Record<string, any> = {}) {
-  let headersSent = false
   const ctx: any = {
     path: '/api/hermes/jobs',
     method: 'GET',
@@ -30,6 +33,11 @@ function createMockCtx(overrides: Record<string, any> = {}) {
     set: vi.fn(),
     body: null,
     ...overrides,
+  }
+  ctx.get = (name: string) => {
+    const match = Object.entries(ctx.headers).find(([key]) => key.toLowerCase() === name.toLowerCase())
+    const value = match?.[1]
+    return Array.isArray(value) ? value[0] : value || ''
   }
   return ctx
 }
@@ -104,7 +112,7 @@ describe('Proxy Handler', () => {
     expect(options.headers.host).toBe('127.0.0.1:8642')
   })
 
-  it('forwards query string', async () => {
+  it('forwards query string while stripping the web-ui token parameter', async () => {
     mockFetch.mockResolvedValue({
       status: 200,
       headers: new Headers({ 'content-type': 'text/event-stream' }),
@@ -112,11 +120,13 @@ describe('Proxy Handler', () => {
       json: () => Promise.resolve({}),
     })
 
-    const ctx = createMockCtx({ search: '?include_disabled=true' })
+    const ctx = createMockCtx({ search: '?include_disabled=true&token=web-ui-token&profile=work' })
     await proxy(ctx)
 
     const url = mockFetch.mock.calls[0][0]
     expect(url).toContain('?include_disabled=true')
+    expect(url).toContain('profile=work')
+    expect(url).not.toContain('token=')
   })
 
   it('returns 502 on connection failure', async () => {

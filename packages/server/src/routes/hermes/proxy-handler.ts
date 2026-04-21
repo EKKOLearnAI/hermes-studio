@@ -55,7 +55,10 @@ export async function proxy(ctx: Context) {
   //   /api/hermes/v1/* -> /v1/*  (upstream uses /v1/ prefix)
   //   /api/hermes/*     -> /api/* (upstream uses /api/ prefix)
   const upstreamPath = ctx.path.replace(/^\/api\/hermes\/v1/, '/v1').replace(/^\/api\/hermes/, '/api')
-  const url = `${upstream}${upstreamPath}${ctx.search || ''}`
+  const params = new URLSearchParams(ctx.search || '')
+  params.delete('token')
+  const search = params.toString()
+  const url = `${upstream}${upstreamPath}${search ? `?${search}` : ''}`
 
   // Build headers — forward most, strip browser/web-ui specific ones
   const headers: Record<string, string> = {}
@@ -64,7 +67,7 @@ export async function proxy(ctx: Context) {
     const lower = key.toLowerCase()
     if (lower === 'host') {
       headers['host'] = new URL(upstream).host
-    } else if (lower === 'origin' || lower === 'referer' || lower === 'connection') {
+    } else if (lower === 'origin' || lower === 'referer' || lower === 'connection' || lower === 'authorization') {
       continue
     } else {
       const v = Array.isArray(value) ? value[0] : value
