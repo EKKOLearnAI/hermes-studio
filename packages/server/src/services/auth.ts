@@ -14,12 +14,10 @@ function generateToken(): string {
  * Get or create the auth token. Returns null if auth is disabled.
  */
 export async function getToken(): Promise<string | null> {
-  // Auth can be disabled via env var
   if (process.env.AUTH_DISABLED === '1' || process.env.AUTH_DISABLED === 'true') {
     return null
   }
 
-  // Custom token via env var
   if (process.env.AUTH_TOKEN) {
     return process.env.AUTH_TOKEN
   }
@@ -28,7 +26,6 @@ export async function getToken(): Promise<string | null> {
     const token = await readFile(TOKEN_FILE, 'utf-8')
     return token.trim()
   } catch {
-    // Generate a new token
     const token = generateToken()
     await mkdir(APP_HOME, { recursive: true })
     await writeFile(TOKEN_FILE, token + '\n', { mode: 0o600 })
@@ -37,23 +34,12 @@ export async function getToken(): Promise<string | null> {
 }
 
 /**
- * Koa middleware: check Authorization header for API routes.
- * Skips /health, /webhook, and static file requests.
+ * Koa middleware: check Authorization header or query token.
+ * No path whitelisting — applied globally after public routes.
  */
-export async function authMiddleware(token: string | null) {
+export function requireAuth(token: string | null) {
   return async (ctx: any, next: () => Promise<void>) => {
-    // If auth is disabled, skip
     if (!token) {
-      await next()
-      return
-    }
-
-    // Skip non-API paths (static files, health check, SPA)
-    const path = ctx.path.toLowerCase()
-    if (
-      path === '/health' ||
-      (!path.startsWith('/api') && !path.startsWith('/v1') && path !== '/webhook' && path !== '/upload')
-    ) {
       await next()
       return
     }
