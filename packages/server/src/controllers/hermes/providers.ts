@@ -33,7 +33,7 @@ export async function create(ctx: any) {
       }
       await writeConfigYaml(config)
     }
-    const envMapping = PROVIDER_ENV_MAP[poolKey] || PROVIDER_ENV_MAP[providerKey || '']
+    const envMapping = isBuiltin ? (PROVIDER_ENV_MAP[poolKey] || PROVIDER_ENV_MAP[providerKey || '']) : null
     if (envMapping) {
       await saveEnvValue(envMapping.api_key_env, api_key)
       if (envMapping.base_url_env) { await saveEnvValue(envMapping.base_url_env, base_url) }

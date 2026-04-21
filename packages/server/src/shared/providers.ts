@@ -8,12 +8,14 @@ export interface ProviderPreset {
   value: string
   base_url: string
   models: string[]
+  builtin: boolean
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Anthropic',
     value: 'anthropic',
+    builtin: true,
     base_url: 'https://api.anthropic.com',
     models: [
       'claude-opus-4-7',
@@ -29,6 +31,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Google AI Studio',
     value: 'gemini',
+    builtin: true,
     base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
     models: [
       'gemini-3.1-pro-preview',
@@ -44,18 +47,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'DeepSeek',
     value: 'deepseek',
+    builtin: true,
     base_url: 'https://api.deepseek.com',
     models: ['deepseek-chat', 'deepseek-reasoner'],
   },
   {
     label: 'Z.AI / GLM',
     value: 'zai',
+    builtin: true,
     base_url: 'https://api.z.ai/api/paas/v4',
     models: ['glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
   },
   {
+    label: 'GLMCodingPlan',
+    value: 'glm',
+    builtin: true,
+    base_url: 'https://api.z.ai/api/anthropic',
+    models: ['glm-5.1', 'glm-5', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
+  },
+  {
     label: 'Kimi for Coding',
     value: 'kimi-coding-cn',
+    builtin: true,
     base_url: 'https://api.kimi.com/coding/v1',
     models: [
       'kimi-for-coding',
@@ -68,6 +81,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Moonshot',
     value: 'moonshot',
+    builtin: true,
     base_url: 'https://api.moonshot.cn/v1',
     models: [
       'kimi-k2.5',
@@ -79,24 +93,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'xAI',
     value: 'xai',
+    builtin: true,
     base_url: 'https://api.x.ai/v1',
     models: ['grok-4.20-reasoning', 'grok-4-1-fast-reasoning'],
   },
   {
     label: 'MiniMax',
     value: 'minimax',
+    builtin: true,
     base_url: 'https://api.minimax.io/anthropic/v1',
     models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2', 'MiniMax-M2-highspeed'],
   },
   {
     label: 'MiniMax (China)',
     value: 'minimax-cn',
+    builtin: true,
     base_url: 'https://api.minimaxi.com/v1',
     models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2', 'MiniMax-M2-highspeed'],
   },
   {
     label: 'Alibaba Cloud',
     value: 'alibaba',
+    builtin: true,
     base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     models: [
       'qwen3.5-plus',
@@ -111,6 +129,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Hugging Face',
     value: 'huggingface',
+    builtin: true,
     base_url: 'https://router.huggingface.co/v1',
     models: [
       'Qwen/Qwen3.5-397B-A17B',
@@ -126,12 +145,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Xiaomi MiMo',
     value: 'xiaomi',
+    builtin: true,
     base_url: 'https://api.xiaomimimo.com/v1',
     models: ['mimo-v2-pro', 'mimo-v2-omni', 'mimo-v2-flash'],
   },
   {
     label: 'Kilo Code',
     value: 'kilocode',
+    builtin: true,
     base_url: 'https://api.kilo.ai/api/gateway',
     models: [
       'anthropic/claude-opus-4.6',
@@ -144,6 +165,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Vercel AI Gateway',
     value: 'ai-gateway',
+    builtin: true,
     base_url: 'https://ai-gateway.vercel.sh/v1',
     models: [
       'anthropic/claude-opus-4.6',
@@ -163,6 +185,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'OpenCode Zen',
     value: 'opencode-zen',
+    builtin: true,
     base_url: 'https://opencode.ai/zen/v1',
     models: [
       'gpt-5.4-pro',
@@ -206,24 +229,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'OpenCode Go',
     value: 'opencode-go',
+    builtin: true,
     base_url: 'https://opencode.ai/zen/go/v1',
     models: ['glm-5.1', 'glm-5', 'kimi-k2.5', 'mimo-v2-pro', 'mimo-v2-omni', 'minimax-m2.7', 'minimax-m2.5'],
   },
   {
     label: 'OpenAI Codex',
     value: 'openai-codex',
+    builtin: true,
     base_url: 'https://chatgpt.com/backend-api/codex',
     models: ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'],
   },
   {
     label: 'Arcee AI',
     value: 'arcee',
+    builtin: true,
     base_url: 'https://api.arcee.ai/v1',
     models: ['trinity-large-thinking', 'trinity-large-preview', 'trinity-mini'],
   },
   {
     label: 'OpenRouter',
     value: 'openrouter',
+    builtin: true,
     base_url: 'https://openrouter.ai/api/v1',
     models: [],
   },

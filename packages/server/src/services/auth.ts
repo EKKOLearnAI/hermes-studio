@@ -50,6 +50,12 @@ export function requireAuth(token: string | null) {
       : (ctx.query.token as string) || ''
 
     if (!provided || provided !== token) {
+      // Skip auth for non-API paths (SPA static files)
+      const lowerPath = ctx.path.toLowerCase()
+      if (!lowerPath.startsWith('/api') && !lowerPath.startsWith('/v1') && !lowerPath.startsWith('/upload')) {
+        await next()
+        return
+      }
       ctx.status = 401
       ctx.set('Content-Type', 'application/json')
       ctx.body = { error: 'Unauthorized' }

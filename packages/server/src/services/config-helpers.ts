@@ -178,24 +178,25 @@ export async function listFilesRecursive(dir: string, prefix: string): Promise<{
 // --- Provider model helpers ---
 
 export async function fetchProviderModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const base = baseUrl.replace(/\/+$/, '')
+  const modelsUrl = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
   try {
-    const url = baseUrl.replace(/\/+$/, '') + '/models'
-    const res = await fetch(url, {
+    const res = await fetch(modelsUrl, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     })
     if (!res.ok) {
-      logger.warn('available-models %s returned %d', baseUrl, res.status)
+      logger.warn('available-models %s returned %d', modelsUrl, res.status)
       return []
     }
     const data = await res.json() as { data?: Array<{ id: string }> }
     if (!Array.isArray(data.data)) {
-      logger.warn('available-models %s returned unexpected format', baseUrl)
+      logger.warn('available-models %s returned unexpected format', modelsUrl)
       return []
     }
     return data.data.map(m => m.id).sort()
   } catch (err: any) {
-    logger.error(err, 'available-models %s failed', baseUrl)
+    logger.error(err, 'available-models %s failed', modelsUrl)
     return []
   }
 }

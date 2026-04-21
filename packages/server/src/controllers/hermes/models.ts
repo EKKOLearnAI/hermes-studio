@@ -2,7 +2,6 @@ import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
-import { logger } from '../../services/logger'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()

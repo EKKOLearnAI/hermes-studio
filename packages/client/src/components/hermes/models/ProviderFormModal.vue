@@ -90,7 +90,8 @@ async function fetchModels() {
 
   fetchingModels.value = true
   try {
-    const url = base_url.replace(/\/+$/, '') + '/models'
+    const base = base_url.replace(/\/+$/, '')
+    const url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
     const headers: Record<string, string> = {}
     if (formData.value.api_key.trim()) {
       headers['Authorization'] = `Bearer ${formData.value.api_key.trim()}`
