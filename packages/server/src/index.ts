@@ -59,7 +59,7 @@ export async function bootstrap() {
   }
 
   // SPA fallback
-  const distDir = resolve(__dirname, '..', 'client')
+  const distDir = resolve(process.cwd(), 'dist', 'client')
   app.use(serve(distDir))
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
