@@ -163,24 +163,21 @@ hermes-web-ui start
 使用仓库内置的 compose 文件联合运行 Hermes Agent + Web UI：
 
 ```bash
+# 使用预构建镜像（推荐）
+WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest docker compose up -d hermes-agent hermes-webui
+
+# 或从源码构建
 docker compose up -d --build hermes-agent hermes-webui
+
 docker compose logs -f hermes-webui
 ```
 
 打开 **http://localhost:6060**
 
 - Hermes 持久化数据目录：`./hermes_data`
-- Web UI 服务镜像由本仓库 `Dockerfile` 本地构建
+- Web UI 认证 Token 存储在 `./hermes_data/hermes-web-ui/.token`
+- 首次启动并开启认证时，Token 会打印到容器日志中
 - 运行参数全部由 `docker-compose.yml` 环境变量驱动
-
-可直接在命令行覆盖 compose 变量（不依赖 `.env` 文件）：
-
-```bash
-PORT=16060 \
-UPSTREAM=http://127.0.0.1:8642 \
-HERMES_BIN=/opt/hermes/.venv/bin/hermes \
-docker compose up -d --build hermes-agent hermes-webui
-```
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)
 

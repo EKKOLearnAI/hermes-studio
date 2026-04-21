@@ -1,6 +1,8 @@
 import type { Context } from 'koa'
 import { config } from '../../config'
-import { getGatewayManager } from './gateways'
+import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
+
+function getGatewayManager() { return getGatewayManagerInstance() }
 
 function isTransientGatewayError(err: any): boolean {
   const msg = String(err?.message || '')

@@ -3,140 +3,62 @@ import cors from '@koa/cors'
 import bodyParser from '@koa/bodyparser'
 import serve from 'koa-static'
 import send from 'koa-send'
+import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
-import { hermesRoutes, setupTerminalWebSocket, proxyMiddleware } from './routes/hermes'
-import { uploadRoutes } from './routes/upload'
-import { webhookRoutes } from './routes/webhook'
-import * as hermesCli from './services/hermes/hermes-cli'
-import { getToken, authMiddleware } from './services/auth'
+import { getToken, requireAuth } from './services/auth'
+import { initGatewayManager } from './services/gateway-bootstrap'
+import { bindShutdown } from './services/shutdown'
+import { setupTerminalWebSocket } from './routes/hermes/terminal'
+import { startVersionCheck } from './routes/health'
+import { registerRoutes } from './routes'
+import { logger } from './services/logger'
 
-function getLocalVersion(): string {
-  // production: dist/server → ../../package.json
-  // dev: packages/server/src → ../../../package.json
-  const candidates = [
-    resolve(__dirname, '../../package.json'),
-    resolve(__dirname, '../../../package.json'),
-  ]
-  for (const p of candidates) {
-    try {
-      return JSON.parse(readFileSync(p, 'utf-8')).version
-    } catch { }
-  }
-  return '0.0.0'
-}
+// Injected by esbuild at build time; fallback to reading package.json in dev mode
+declare const __APP_VERSION__: string
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } } )()
 
-const LOCAL_VERSION = getLocalVersion()
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  logger.fatal(err, 'Uncaught exception')
+  process.exit(1)
+})
 
-let cachedLatestVersion = ''
-
-async function checkLatestVersion(): Promise<void> {
-  try {
-    const res = await fetch('https://registry.npmjs.org/hermes-web-ui/latest', {
-      signal: AbortSignal.timeout(5000),
-    })
-    if (res.ok) {
-      const data = await res.json()
-      const latest = data.version || ''
-      if (latest && latest !== cachedLatestVersion) {
-        cachedLatestVersion = latest
-        if (latest !== LOCAL_VERSION) {
-          console.log(`⬆ New version available: v${LOCAL_VERSION} → v${latest}`)
-        }
-      }
-    }
-  } catch { }
-}
-
-const app = new Koa()
-const { restartGateway, startGateway, startGatewayBackground, getVersion } = hermesCli
+process.on('unhandledRejection', (reason) => {
+  logger.error(reason, 'Unhandled rejection')
+})
 
 let server: any = null
-let isShuttingDown = false
-
-// 👉 如果你有子进程，一定要存
-let gatewayPid: number | null = null
-let gatewayManager: any = null
 
 export async function bootstrap() {
+  console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 
-  // Auth (after mkdir so data dir exists)
   const authToken = await getToken()
-  if (authToken) {
-    app.use(await authMiddleware(authToken))
-    console.log(`🔐 Auth enabled — token: ${authToken}`)
-  }
+  const app = new Koa()
 
   await initGatewayManager()
-
+  console.log('[bootstrap] gateway manager initialized')
   app.use(cors({ origin: config.corsOrigins }))
   app.use(bodyParser())
+  console.log('[bootstrap] cors + bodyParser registered')
 
-  app.use(webhookRoutes.routes())
-  app.use(uploadRoutes.routes())
-
-  // update (must be before hermesRoutes which includes proxy routes)
-  app.use(async (ctx, next) => {
-    if (ctx.path === '/api/hermes/update' && ctx.method === 'POST') {
-      const isWin = process.platform === 'win32'
-      const cmd = isWin
-        ? 'cmd /c hermes-web-ui update'
-        : 'hermes-web-ui update'
-
-      try {
-        const { execSync } = await import('child_process')
-        const output = execSync(cmd, {
-          encoding: 'utf-8',
-          timeout: 120000,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
-        ctx.body = { success: true, message: output.trim() }
-      } catch (err: any) {
-        ctx.status = 500
-        ctx.body = { success: false, message: err.stderr || err.message }
-      }
-      return
-    }
-    await next()
-  })
-
-  app.use(hermesRoutes.routes())
+  // Register all routes (handles auth internally)
+  const proxyMiddleware = registerRoutes(app, requireAuth(authToken))
   app.use(proxyMiddleware)
+  console.log('[bootstrap] routes registered')
 
-  // health
-  app.use(async (ctx, next) => {
-    if (ctx.path === '/health') {
-      const raw = await getVersion()
-      const hermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
+  if (authToken) {
+    console.log(`Auth enabled — token: ${authToken}`)
+    logger.info('Auth enabled — token: %s', authToken)
+  }
 
-      let gatewayOk = false
-      try {
-        const upstream = gatewayManager?.getUpstream() || config.upstream
-        const res = await fetch(`${upstream.replace(/\/$/, '')}/health`, {
-          signal: AbortSignal.timeout(5000),
-        })
-        gatewayOk = res.ok
-      } catch { }
-
-      ctx.body = {
-        status: gatewayOk ? 'ok' : 'error',
-        platform: 'hermes-agent',
-        version: hermesVersion,
-        gateway: gatewayOk ? 'running' : 'stopped',
-        webui_version: LOCAL_VERSION,
-        webui_latest: cachedLatestVersion,
-        webui_update_available: cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION,
-      }
-      return
-    }
-    await next()
-  })
-
-  // SPA
+  // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')
   app.use(serve(distDir))
   app.use(async (ctx) => {
@@ -147,97 +69,33 @@ export async function bootstrap() {
       await send(ctx, 'index.html', { root: distDir })
     }
   })
+  console.log('[bootstrap] SPA fallback registered')
 
-  // 🚀 启动服务
+  // Start server
+  console.log(`[bootstrap] listening on port ${config.port}`)
   server = app.listen(config.port, '0.0.0.0')
+  console.log('[bootstrap] app.listen called')
 
-  // Terminal WebSocket (must be after server is created)
   setupTerminalWebSocket(server)
+  console.log('[bootstrap] terminal websocket setup')
 
   server.on('listening', () => {
-    console.log(`➜ Server: http://localhost:${config.port}`)
-    console.log(`➜ Upstream: ${config.upstream}`)
+    const interfaces = os.networkInterfaces()
+    const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
+    console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
+    console.log(`Upstream: ${config.upstream}`)
+    console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
+    logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+    logger.info('Upstream: %s', config.upstream)
   })
 
   server.on('error', (err: any) => {
-    console.error('Server error:', err.message)
+    console.error('[bootstrap] server error:', err.code || err.message)
+    logger.error({ err }, 'Server error')
   })
 
-  // 👇 绑定退出信号
-  bindShutdown()
-
-  // Check for updates every 4 hours
-  checkLatestVersion()
-  setInterval(checkLatestVersion, 4 * 60 * 60 * 1000)
-}
-
-// ============================
-// ✅ 统一关闭逻辑（核心）
-// ============================
-function bindShutdown() {
-  const shutdown = async (signal: string) => {
-    if (isShuttingDown) return
-    isShuttingDown = true
-
-    console.log(`\n[${signal}] shutting down...`)
-
-    try {
-      // ✅ 1. 关闭 HTTP server
-      if (server) {
-        await new Promise<void>((resolve) => {
-          server.close(() => {
-            console.log('✓ http server closed')
-            resolve()
-          })
-        })
-      }
-
-      // gateway 是系统服务，不随 dev server 退出而停止
-
-    } catch (err) {
-      console.error('shutdown error:', err)
-    }
-
-    process.exit(0)
-  }
-
-  // 👉 nodemon 专用（必须 once）
-  process.once('SIGUSR2', shutdown)
-
-  // 👉 正常退出
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
-
-  // 👉 防止异常退出没处理
-  process.on('uncaughtException', (err) => {
-    console.error('uncaughtException:', err)
-    shutdown('uncaughtException')
-  })
-
-  process.on('unhandledRejection', (err) => {
-    console.error('unhandledRejection:', err)
-    shutdown('unhandledRejection')
-  })
-}
-
-// ============================
-// Gateway Manager
-// ============================
-
-async function initGatewayManager() {
-  const { GatewayManager } = await import('./services/hermes/gateway-manager')
-  const { getActiveProfileName } = await import('./services/hermes/hermes-profile')
-  const { setGatewayManager } = await import('./routes/hermes/gateways')
-
-  const activeProfile = getActiveProfileName()
-  gatewayManager = new GatewayManager(activeProfile)
-  setGatewayManager(gatewayManager)
-
-  // Detect all running gateways
-  await gatewayManager.detectAllOnStartup()
-
-  // Start all gateways that aren't running
-  await gatewayManager.startAll()
+  bindShutdown(server)
+  startVersionCheck()
 }
 
 bootstrap()

@@ -20,8 +20,11 @@ The project is designed for **multi-agent extensibility** — Hermes is the firs
 npm run dev           # Start both server (nodemon) and client (Vite) concurrently
 npm run dev:client    # Vite dev server only (proxies API to backend)
 npm run dev:server    # nodemon + ts-node for server only
-npm run build         # Type-check (vue-tsc) -> Vite build -> tsc server build
+npm run build         # Type-check (vue-tsc) -> Vite build -> esbuild server bundle
 npm run preview       # Preview production build with Vite
+npm run test          # Run tests (vitest)
+npm run test:watch    # Run tests in watch mode
+npm run test:coverage # Run tests with coverage report
 ```
 
 - **Dev port:** 8648 (client Vite dev server proxies `/api`, `/v1`, `/health`, `/upload`, `/webhook` to `http://127.0.0.1:8648`)
@@ -36,7 +39,7 @@ hermes-web-ui/
 ├── bin/                          # CLI entry point (bin/hermes-web-ui.mjs)
 ├── dist/                         # Build output
 │   ├── client/                   # Vite frontend build
-│   └── server/                   # tsc server build
+│   └── server/                   # esbuild server bundle
 ├── packages/
 │   ├── client/src/               # Vue 3 frontend
 │   │   ├── api/                  # API layer
@@ -45,20 +48,27 @@ hermes-web-ui/
 │   │   │       ├── chat.ts       # Gateway proxy: runs, SSE events, models
 │   │   │       ├── jobs.ts       # Gateway proxy: scheduled jobs CRUD
 │   │   │       ├── sessions.ts   # Local BFF: session management (wraps hermes CLI)
+│   │   │       ├── profiles.ts   # Local BFF: profile management (wraps hermes CLI)
 │   │   │       ├── config.ts     # Local BFF: app config, weixin credentials
 │   │   │       ├── logs.ts       # Local BFF: log file listing & reading
 │   │   │       ├── skills.ts     # Local BFF: skills listing, memory CRUD
+│   │   │       ├── gateways.ts   # Local BFF: gateway management
+│   │   │       ├── codex-auth.ts # Local BFF: Codex authentication
 │   │   │       └── system.ts     # Local BFF: health, model config, providers
+│   │   ├── composables/          # Vue composables
+│   │   │   ├── useKeyboard.ts    # Keyboard shortcut composable
+│   │   │   └── useTheme.ts       # Theme management composable
 │   │   ├── components/           # Vue components
-│   │   │   ├── layout/           # Shared: AppSidebar, LanguageSwitch, ModelSelector
+│   │   │   ├── layout/           # Shared: AppSidebar, LanguageSwitch, ModelSelector, ProfileSelector, ThemeSwitch
 │   │   │   └── hermes/           # Hermes-specific components
-│   │   │       ├── chat/         # ChatPanel, ChatInput, MessageList, MarkdownRenderer
+│   │   │       ├── chat/         # ChatPanel, ChatInput, MessageList, MessageItem, MarkdownRenderer
 │   │   │       ├── jobs/         # JobCard, JobFormModal, JobsPanel
-│   │   │       ├── models/       # ProviderCard, ProviderFormModal, ProvidersPanel
-│   │   │       ├── settings/     # AgentSettings, DisplaySettings, MemorySettings, etc.
+│   │   │       ├── models/       # ProviderCard, ProviderFormModal, ProvidersPanel, CodexLoginModal
+│   │   │       ├── profiles/     # ProfileCard, ProfileCreateModal, ProfileImportModal, ProfileRenameModal, ProfilesPanel
+│   │   │       ├── settings/     # AgentSettings, DisplaySettings, MemorySettings, ModelSettings, PlatformCard, PlatformSettings, PrivacySettings, SessionSettings, SettingRow
 │   │   │       ├── skills/       # SkillList, SkillDetail
 │   │   │       └── usage/        # StatCards, DailyTrend, ModelBreakdown
-│   │   ├── i18n/locales/         # en.ts, zh.ts
+│   │   ├── i18n/locales/         # en, zh, de, es, fr, ja, ko, pt
 │   │   ├── router/index.ts       # vue-router (hash history)
 │   │   ├── stores/               # Pinia stores
 │   │   │   └── hermes/           # Hermes-specific stores
@@ -67,14 +77,18 @@ hermes-web-ui/
 │   │   │       ├── jobs.ts       # Scheduled jobs CRUD
 │   │   │       ├── models.ts     # Model provider management
 │   │   │       ├── settings.ts   # App configuration
-│   │   │       └── usage.ts      # Usage statistics
-│   │   ├── styles/               # global.scss, variables.scss
+│   │   │       ├── usage.ts      # Usage statistics
+│   │   │       ├── gateways.ts   # Gateway management
+│   │   │       └── profiles.ts   # Profile management
+│   │   ├── styles/               # global.scss, variables.scss, code-block.scss, theme.ts
 │   │   └── views/                # Page-level components
 │   │       ├── LoginView.vue     # Shared: login page
 │   │       └── hermes/           # Hermes-specific pages
 │   │           ├── ChatView.vue
 │   │           ├── JobsView.vue
 │   │           ├── ModelsView.vue
+│   │           ├── ProfilesView.vue
+│   │           ├── GatewaysView.vue
 │   │           ├── LogsView.vue
 │   │           ├── UsageView.vue
 │   │           ├── SkillsView.vue
@@ -83,30 +97,69 @@ hermes-web-ui/
 │   │           ├── ChannelsView.vue
 │   │           └── TerminalView.vue
 │   ├── server/src/               # Koa BFF server
-│   │   ├── routes/hermes/        # Route modules
-│   │   │   ├── index.ts          # Aggregates all hermes sub-routers
-│   │   │   ├── sessions.ts       # Session CRUD (wraps hermes CLI)
-│   │   │   ├── profiles.ts       # Profile management (wraps hermes CLI)
-│   │   │   ├── config.ts         # App config read/write
-│   │   │   ├── filesystem.ts     # Skills, memory, model config, providers
-│   │   │   ├── logs.ts           # Log file listing & reading
-│   │   │   ├── weixin.ts         # Weixin QR code & credentials
-│   │   │   ├── terminal.ts       # WebSocket terminal (node-pty)
-│   │   │   ├── proxy.ts          # Reverse proxy routes + middleware
-│   │   │   └── proxy-handler.ts  # Proxy forwarding logic
-│   │   ├── routes/               # Shared routes
+│   │   ├── controllers/          # Request handlers (thin routes delegate to controllers)
+│   │   │   ├── health.ts         # Health check
+│   │   │   ├── update.ts         # Update check
 │   │   │   ├── upload.ts         # File upload
-│   │   │   └── webhook.ts        # Incoming webhooks
+│   │   │   ├── webhook.ts        # Incoming webhooks
+│   │   │   └── hermes/           # Hermes-specific controllers
+│   │   │       ├── sessions.ts   # Session CRUD
+│   │   │       ├── profiles.ts   # Profile management
+│   │   │       ├── config.ts     # App config read/write
+│   │   │       ├── gateways.ts   # Gateway management
+│   │   │       ├── codex-auth.ts # Codex authentication
+│   │   │       ├── memory.ts     # Memory CRUD
+│   │   │       ├── models.ts     # Model configuration
+│   │   │       ├── providers.ts  # Provider management
+│   │   │       ├── skills.ts     # Skills listing
+│   │   │       ├── logs.ts       # Log file listing & reading
+│   │   │       └── weixin.ts     # Weixin QR code & credentials
+│   │   ├── routes/               # Route modules
+│   │   │   ├── index.ts          # Route registration (public → auth → protected)
+│   │   │   ├── health.ts         # Health route
+│   │   │   ├── update.ts         # Update route
+│   │   │   ├── upload.ts         # File upload route
+│   │   │   ├── webhook.ts        # Webhook route
+│   │   │   └── hermes/           # Hermes-specific routes (thin wrappers)
+│   │   │       ├── sessions.ts   # Session routes
+│   │   │       ├── profiles.ts   # Profile routes
+│   │   │       ├── config.ts     # Config routes
+│   │   │       ├── gateways.ts   # Gateway routes
+│   │   │       ├── codex-auth.ts # Codex auth routes
+│   │   │       ├── memory.ts     # Memory routes
+│   │   │       ├── models.ts     # Model routes
+│   │   │       ├── providers.ts  # Provider routes
+│   │   │       ├── skills.ts     # Skills routes
+│   │   │       ├── logs.ts       # Log routes
+│   │   │       ├── weixin.ts     # Weixin routes
+│   │   │       ├── terminal.ts   # WebSocket terminal (node-pty)
+│   │   │       ├── proxy.ts      # Reverse proxy routes + middleware
+│   │   │       └── proxy-handler.ts  # Proxy forwarding logic
 │   │   ├── services/             # Business logic
-│   │   │   ├── hermes-cli.ts     # Hermes CLI wrapper (child_process.execFile)
 │   │   │   ├── auth.ts           # Auth middleware & token management
-│   │   │   └── hermes.ts         # Hermes gateway helpers
+│   │   │   ├── config.ts         # Server configuration
+│   │   │   ├── config-helpers.ts # Config helper utilities
+│   │   │   ├── logger.ts         # Pino logger
+│   │   │   ├── shutdown.ts       # Graceful shutdown handler
+│   │   │   ├── gateway-bootstrap.ts  # Gateway manager initialization
+│   │   │   └── hermes/           # Hermes-specific services
+│   │   │       ├── hermes-cli.ts # Hermes CLI wrapper (child_process.execFile)
+│   │   │       ├── hermes.ts     # Hermes gateway helpers
+│   │   │       ├── hermes-profile.ts  # Profile management helpers
+│   │   │       ├── gateway-manager.ts # Gateway process management
+│   │   │       └── sessions-db.ts    # SQLite-based session database
 │   │   ├── shared/providers.ts   # Provider model catalogs
-│   │   ├── config.ts             # Server configuration
 │   │   └── index.ts              # Bootstrap, middleware setup, SPA fallback
 │   └── client/src/shared/        # Frontend shared types (providers.ts)
+├── scripts/                      # Build scripts
+│   ├── build-server.mjs          # esbuild server bundling
+│   └── setup.sh                  # Setup script
+├── tests/                        # Test files
+│   ├── client/                   # Frontend tests
+│   └── server/                   # Backend tests
 ├── package.json                  # Single package — no workspaces
 ├── vite.config.ts                # root: packages/client, outDir: dist/client
+├── vitest.config.ts              # Vitest test configuration
 └── tsconfig.json                 # Root tsconfig (references for vue-tsc)
 ```
 
@@ -124,7 +177,10 @@ All agent-specific code lives under `{agent-name}/` subdirectories. Hermes is th
 | Components | `components/layout/` | `components/hermes/*/*.vue` |
 | Views | `views/LoginView.vue` | `views/hermes/*.vue` |
 | Stores | _(future: `stores/app.ts`)_ | `stores/hermes/*.ts` |
-| Routes | `path: '/'` (login) | `path: '/hermes/*'`, `name: 'hermes.*'` |
+| Controllers | `controllers/*.ts` | `controllers/hermes/*.ts` |
+| Routes | `routes/*.ts` | `routes/hermes/*.ts` |
+| Services | `services/*.ts` | `services/hermes/*.ts` |
+| Routes (URL) | `path: '/'` (login) | `path: '/hermes/*'`, `name: 'hermes.*'` |
 | API paths | `/health`, `/upload`, `/webhook` | `/api/hermes/*` |
 
 When adding a new agent, create a new directory at each layer following the same pattern.
@@ -132,7 +188,7 @@ When adding a new agent, create a new directory at each layer following the same
 ### Route Naming
 
 - **Shared routes:** `login`
-- **Agent routes:** `{agent}.{page}` — e.g., `hermes.chat`, `hermes.jobs`
+- **Agent routes:** `{agent}.{page}` — e.g., `hermes.chat`, `hermes.jobs`, `hermes.profiles`, `hermes.gateways`
 - **Route paths:** `/hermes/{page}` — e.g., `/hermes/chat`, `/hermes/jobs`
 
 ---
@@ -188,6 +244,13 @@ Key patterns:
 - Use `useI18n()` for translations, access via `t('key.path')`
 - Scoped SCSS with `@use '@/styles/variables' as *`
 
+### Vue Composables
+
+Shared composables live in `packages/client/src/composables/`:
+
+- `useKeyboard.ts` — keyboard shortcut handling
+- `useTheme.ts` — theme management (dark/light mode)
+
 ### Pinia Stores
 
 Use setup store syntax (function passed to `defineStore`):
@@ -213,7 +276,7 @@ export const useMyStore = defineStore('myStore', () => {
 })
 ```
 
-Existing stores in `packages/client/src/stores/hermes/`: `app`, `chat`, `jobs`, `models`, `settings`, `usage`.
+Existing stores in `packages/client/src/stores/hermes/`: `app`, `chat`, `jobs`, `models`, `settings`, `usage`, `gateways`, `profiles`.
 
 ### API Layer
 
@@ -244,7 +307,7 @@ export async function fetchSessions(source?: string, limit?: number): Promise<Se
 
 ### i18n
 
-Two locales: `en.ts` and `zh.ts` in `packages/client/src/i18n/locales/`. Flat nested object structure organized by feature section:
+Eight locales in `packages/client/src/i18n/locales/`: `en`, `zh`, `de`, `es`, `fr`, `ja`, `ko`, `pt`. Flat nested object structure organized by feature section:
 
 ```ts
 // en.ts
@@ -264,11 +327,13 @@ export default {
 }
 ```
 
-When adding new strings, always add to both `en.ts` and `zh.ts`.
+When adding new strings, add to all locale files.
 
 ### SCSS Styling
 
 - Global variables in `packages/client/src/styles/variables.scss` — import with `@use '@/styles/variables' as *`
+- Naive UI theme overrides in `packages/client/src/styles/theme.ts`
+- Code block styling in `packages/client/src/styles/code-block.scss`
 - Theme: "Pure Ink" (monochrome black/white/gray), no color accent
 - Mobile breakpoint: `$breakpoint-mobile: 768px`
 - Global resets and shared classes in `packages/client/src/styles/global.scss`
@@ -291,32 +356,51 @@ Hash-based routing (`createWebHashHistory`). All routes use lazy imports. Auth g
 
 ## Backend Conventions
 
+### Architecture: Routes + Controllers
+
+The backend follows a **thin-router, fat-controller** pattern:
+
+- **Routes** (`routes/`) — define URL-to-handler mappings, delegate to controller functions
+- **Controllers** (`controllers/`) — contain the actual request handling logic
+- **Services** (`services/`) — reusable business logic, CLI wrappers, utilities
+
 ### Koa Server (`packages/server/src/index.ts`)
 
 The server bootstraps in `bootstrap()`:
 1. Creates data/upload directories
-2. Sets up auth middleware (if token exists)
-3. Ensures Hermes gateway is running (auto-starts if needed)
-4. Registers CORS, body parser, all route modules
-5. Registers proxy middleware (catches unmatched `/api/hermes/*` and `/v1/*`)
-6. Serves static SPA files with fallback to `index.html`
-7. Attaches WebSocket handler for terminal
+2. Gets auth token
+3. Creates Koa app, initializes gateway manager
+4. Registers CORS, body parser
+5. Registers all routes via `registerRoutes()` (public routes → auth middleware → protected routes)
+6. Registers proxy middleware (catch-all for unmatched `/api/hermes/*` and `/v1/*`)
+7. Serves static SPA files with fallback to `index.html`
+8. Starts server, sets up WebSocket handler
+9. Binds graceful shutdown handler, starts version check
+
+### Route Registration (`packages/server/src/routes/index.ts`)
+
+All routes are registered in a specific order:
+1. **Public routes** (no auth): health, webhook
+2. **Auth middleware** (`requireAuth`)
+3. **Protected routes**: upload, update, session, profile, skill, memory, model, provider, config, log, codex-auth, gateway, weixin, proxy
+
+**Important:** Custom API endpoints handled locally (not proxied) must be registered in `routes/index.ts` **before** `proxyRoutes`. The proxy catch-all matches all `/api/hermes/*` paths.
 
 ### Route Modules
 
-Each route module exports a `Router` instance, aggregated in `routes/hermes/index.ts`:
+Each route module exports a `Router` instance with thin handler delegation:
 
 ```ts
 // packages/server/src/routes/hermes/sessions.ts
 import Router from '@koa/router'
-import * as hermesCli from '../../services/hermes-cli'
+import * as ctrl from '../../controllers/hermes/sessions'
 
 export const sessionRoutes = new Router()
 
-sessionRoutes.get('/api/hermes/sessions', async (ctx) => {
-  const sessions = await hermesCli.listSessions()
-  ctx.body = { sessions }
-})
+sessionRoutes.get('/api/hermes/sessions', ctrl.list)
+sessionRoutes.get('/api/hermes/sessions/:id', ctrl.get)
+sessionRoutes.delete('/api/hermes/sessions/:id', ctrl.remove)
+sessionRoutes.post('/api/hermes/sessions/:id/rename', ctrl.rename)
 ```
 
 **@koa/router v15 syntax** (path-to-regexp v8):
@@ -333,9 +417,7 @@ Unmatched `/api/hermes/*` and `/v1/*` requests are forwarded to the upstream Her
 
 The proxy is implemented as both a route (`proxyRoutes.all('/api/hermes/{*any}', proxy)`) and a middleware (`proxyMiddleware`) registered on the main app to catch any requests that slip through route matching.
 
-**Important:** Custom API endpoints handled locally (not proxied) must be registered **before** `hermesRoutes.routes()` in `bootstrap()`. The proxy route `proxyRoutes.all('/api/hermes/{*any}')` matches all `/api/hermes/*` paths, so any middleware registered after it will never be reached. See the `update` middleware in `index.ts` for an example.
-
-### Hermes CLI Wrapper (`packages/server/src/services/hermes-cli.ts`)
+### Hermes CLI Wrapper (`packages/server/src/services/hermes/hermes-cli.ts`)
 
 All Hermes interactions go through `child_process.execFile('hermes', [...args])`. Each function wraps a CLI subcommand:
 
@@ -353,9 +435,10 @@ CLI subcommands wrapped: `sessions export/delete/rename`, `profile list/show/cre
 
 ### Auth Middleware (`packages/server/src/services/auth.ts`)
 
-- Token stored in `{dataDir}/.token` (auto-generated on first run), or set via `AUTH_TOKEN` env var
+- Token stored in `~/.hermes-web-ui/.token` (auto-generated on first run), or set via `AUTH_TOKEN` env var
 - Auth disabled when `AUTH_DISABLED=1`
-- Middleware skips `/health`, `/webhook`, and non-API paths
+- Applied globally after public routes (health, webhook are registered before auth middleware)
+- For non-API paths (static files), auth is skipped even if no valid token is provided
 - Accepts `Authorization: Bearer <token>` header or `?token=<token>` query param
 
 ---
@@ -363,9 +446,10 @@ CLI subcommands wrapped: `sessions export/delete/rename`, `profile list/show/cre
 ## Build System
 
 - **Vite** builds the frontend: root is `packages/client`, output goes to `dist/client`
-- **tsc** compiles the server: config in `packages/server/tsconfig.json`, output goes to `dist/server`
+- **esbuild** bundles the server via `scripts/build-server.mjs`: output goes to `dist/server`
+- **tsc** type-checks both client (`vue-tsc -b`) and server (`tsc --noEmit`)
 - Path alias: `@` maps to `packages/client/src`
-- Build command: `vue-tsc -b && vite build && tsc -p packages/server/tsconfig.json`
+- Build command: `vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs`
 - TypeScript strict mode enabled for both client and server
 
 ---
@@ -409,7 +493,15 @@ Terminal uses a raw WebSocket at `/api/hermes/terminal` with JSON control messag
 
 ## Testing
 
-No test framework is currently configured. The intention is to add tests in the future.
+Tests use **Vitest** with `@vue/test-utils` and `@pinia/testing` for frontend, and `vitest` for backend:
+
+```bash
+npm run test          # Run all tests once
+npm run test:watch    # Watch mode
+npm run test:coverage # With coverage report
+```
+
+Test files live in `tests/client/` and `tests/server/`. Configuration is in root `vitest.config.ts`.
 
 ---
 
@@ -419,8 +511,11 @@ No test framework is currently configured. The intention is to add tests in the 
 |---|---|
 | `AUTH_DISABLED` | Set to `1` or `true` to disable auth |
 | `AUTH_TOKEN` | Custom auth token (overrides auto-generated token) |
-| `PORT` | Server listen port (default from config) |
+| `PORT` | Server listen port (default `8648`) |
 | `UPSTREAM` | Hermes gateway URL (default `http://127.0.0.1:8642`) |
+| `UPLOAD_DIR` | Custom upload directory path (default OS temp dir) |
+| `CORS_ORIGINS` | CORS origin configuration (default `*`) |
+| `HERMES_BIN` | Custom path to hermes CLI binary |
 
 ---
 
@@ -431,15 +526,16 @@ No test framework is currently configured. The intention is to add tests in the 
 1. Create view component in `packages/client/src/views/hermes/MyView.vue`
 2. Add route in `packages/client/src/router/index.ts` with name `hermes.myPage` and path `/hermes/my-page`
 3. Add sidebar entry in `packages/client/src/components/layout/AppSidebar.vue` with `handleNav('hermes.myPage')`
-4. Add i18n keys to both `en.ts` and `zh.ts`
+4. Add i18n keys to all locale files in `packages/client/src/i18n/locales/`
 
 ### Add a new Hermes API endpoint
 
-1. Add the route handler in `packages/server/src/routes/hermes/` (new or existing module)
-2. If it calls Hermes CLI, add a wrapper function in `packages/server/src/services/hermes-cli.ts`
-3. Register the route in `packages/server/src/routes/hermes/index.ts` via `hermesRoutes.use(myRoutes.routes())`
-4. Add the frontend API function in `packages/client/src/api/hermes/`
-5. If the endpoint should be proxied to the upstream gateway (not handled locally), ensure the path starts with `/api/hermes/` — the `proxyMiddleware` will catch it automatically
+1. Add the controller in `packages/server/src/controllers/hermes/` (request handling logic)
+2. Add the route in `packages/server/src/routes/hermes/` (thin URL-to-controller mapping)
+3. Register the route in `packages/server/src/routes/index.ts` in the protected routes section
+4. If it calls Hermes CLI, add a wrapper function in `packages/server/src/services/hermes/hermes-cli.ts`
+5. Add the frontend API function in `packages/client/src/api/hermes/`
+6. If the endpoint should be proxied to the upstream gateway (not handled locally), ensure the path starts with `/api/hermes/` — the `proxyMiddleware` will catch it automatically
 
 ### Add a new Hermes Pinia store
 
@@ -449,6 +545,7 @@ No test framework is currently configured. The intention is to add tests in the 
 ### Add a new agent integration
 
 1. Create `api/{agent}/`, `components/{agent}/`, `views/{agent}/`, `stores/{agent}/` directories
-2. Create `server/src/routes/{agent}/` for agent-specific backend routes
+2. Create `controllers/{agent}/`, `routes/{agent}/`, `services/{agent}/` for agent-specific backend
 3. Add routes with `path: '/{agent}/*'` and `name: '{agent}.*'` in the router
-4. Follow the same patterns as the Hermes integration
+4. Register routes in `routes/index.ts` following the public → auth → protected pattern
+5. Follow the same patterns as the Hermes integration

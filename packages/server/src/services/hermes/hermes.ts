@@ -1,4 +1,5 @@
 import { config } from '../../config'
+import { logger } from '../logger'
 
 const UPSTREAM = config.upstream.replace(/\/$/, '')
 
@@ -121,7 +122,7 @@ export function emitWebhook(payload: any) {
   for (const cb of webhookCallbacks) {
     const result = cb(payload)
     if (result && typeof result.catch === 'function') {
-      result.catch((err: Error) => console.error('Webhook callback error:', err))
+      result.catch((err: Error) => logger.error(err, 'Webhook callback error'))
     }
   }
 }

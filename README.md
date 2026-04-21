@@ -162,24 +162,21 @@ hermes-web-ui start
 Run Web UI together with Hermes Agent:
 
 ```bash
+# Use pre-built image (Recommended)
+WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest docker compose up -d hermes-agent hermes-webui
+
+# Or build from source
 docker compose up -d --build hermes-agent hermes-webui
+
 docker compose logs -f hermes-webui
 ```
 
 Open **http://localhost:6060**
 
 - Persistent Hermes data is stored in `./hermes_data`
-- The web UI service is built from this repository's `Dockerfile`
+- Web UI auth token is stored in `./hermes_data/hermes-web-ui/.token`
+- On first run with auth enabled, the token is printed to container logs
 - All runtime settings are environment-variable driven in `docker-compose.yml`
-
-Override compose variables directly from command line (no `.env` file required):
-
-```bash
-PORT=16060 \
-UPSTREAM=http://127.0.0.1:8642 \
-HERMES_BIN=/opt/hermes/.venv/bin/hermes \
-docker compose up -d --build hermes-agent hermes-webui
-```
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 

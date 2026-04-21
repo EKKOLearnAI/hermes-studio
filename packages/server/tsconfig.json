@@ -1,14 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2024",
     "module": "commonjs",
-    "outDir": "../../dist/server",
-    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true
+    "noEmit": true
   },
   "include": ["src/**/*.ts"]
 }
