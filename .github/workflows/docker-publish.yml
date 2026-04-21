@@ -10,32 +10,35 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    
+
     steps:
       # 1. 检出当前仓库代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 设置 Docker Buildx (用于构建镜像的高级工具)
+      # 2. 设置 QEMU (用于跨平台构建 ARM64)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 3. 设置 Docker Buildx (用于构建镜像的高级工具)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 登录到 Docker Hub (使用你截图里配置的 Secrets)
+      # 4. 登录到 Docker Hub (使用你截图里配置的 Secrets)
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. 构建并推送镜像
+      # 5. 构建并推送镜像 (支持 AMD64 和 ARM64)
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          # 根据仓库根目录的 Dockerfile 构建
-          file: ./Dockerfile 
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
-          # 这里的标签会自动加上你的 DockerHub 用户名，以及 hermes-web-ui 仓库名
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.sha }}
