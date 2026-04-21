@@ -3,6 +3,13 @@ import type { Message } from "@/stores/hermes/chat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
+import {
+  copyTextToClipboard,
+  handleCodeBlockCopyClick,
+  renderHighlightedCodeBlock,
+} from "./highlight";
+
+const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
 const props = defineProps<{ message: Message }>();
 const { t } = useI18n();
@@ -25,6 +32,66 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+type ToolPayload = {
+  full: string;
+  display: string;
+  language?: string;
+};
+
+function formatToolPayload(raw?: string): ToolPayload {
+  if (!raw) {
+    return { full: "", display: "" };
+  }
+
+  try {
+    const full = JSON.stringify(JSON.parse(raw), null, 2);
+    return {
+      full,
+      display:
+        full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? full.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : full,
+      language: "json",
+    };
+  } catch {
+    return {
+      full: raw,
+      display:
+        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : raw,
+    };
+  }
+}
+
+function renderToolPayload(content: string, language?: string): string {
+  return renderHighlightedCodeBlock(content, language, t("common.copy"), {
+    maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
+  });
+}
+
+async function handleToolDetailClick(event: MouseEvent): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+
+  const button = target.closest<HTMLElement>("[data-copy-code=\"true\"]");
+  if (!button) return;
+
+  event.preventDefault();
+
+  const source = button.closest<HTMLElement>("[data-copy-source]")?.dataset.copySource;
+  if (source === "tool-args" && fullToolArgs.value) {
+    await copyTextToClipboard(fullToolArgs.value);
+    return;
+  }
+  if (source === "tool-result" && fullToolResult.value) {
+    await copyTextToClipboard(fullToolResult.value);
+    return;
+  }
+
+  await handleCodeBlockCopyClick(event);
+}
+
 const hasAttachments = computed(
   () => (props.message.attachments?.length ?? 0) > 0,
 );
@@ -33,30 +100,28 @@ const hasToolDetails = computed(
   () => !!(props.message.toolArgs || props.message.toolResult),
 );
 
-const formattedToolArgs = computed(() => {
-  if (!props.message.toolArgs) return "";
-  try {
-    return JSON.stringify(JSON.parse(props.message.toolArgs), null, 2);
-  } catch {
-    return props.message.toolArgs;
-  }
+const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
+
+const fullToolArgs = computed(() => toolArgsPayload.value.full);
+const formattedToolArgs = computed(() => toolArgsPayload.value.display);
+const fullToolResult = computed(() => toolResultPayload.value.full);
+const formattedToolResult = computed(() => toolResultPayload.value.display);
+
+const renderedToolArgs = computed(() => {
+  if (!formattedToolArgs.value) return "";
+  return renderToolPayload(
+    formattedToolArgs.value,
+    toolArgsPayload.value.language,
+  );
 });
 
-const formattedToolResult = computed(() => {
-  if (!props.message.toolResult) return "";
-  try {
-    const parsed = JSON.parse(props.message.toolResult);
-    const str = JSON.stringify(parsed, null, 2);
-    // Truncate very long output
-    if (str.length > 2000)
-      return str.slice(0, 2000) + "\n" + t("chat.truncated");
-    return str;
-  } catch {
-    const raw = props.message.toolResult;
-    if (raw.length > 2000)
-      return raw.slice(0, 2000) + "\n" + t("chat.truncated");
-    return raw;
-  }
+const renderedToolResult = computed(() => {
+  if (!formattedToolResult.value) return "";
+  return renderToolPayload(
+    formattedToolResult.value,
+    toolResultPayload.value.language,
+  );
 });
 </script>
 
@@ -109,14 +174,14 @@ const formattedToolResult = computed(() => {
           t("chat.error")
         }}</span>
       </div>
-      <div v-if="toolExpanded && hasToolDetails" class="tool-details">
-        <div v-if="formattedToolArgs" class="tool-detail-section">
+      <div v-if="toolExpanded && hasToolDetails" class="tool-details" @click="handleToolDetailClick">
+        <div v-if="formattedToolArgs" class="tool-detail-section" data-copy-source="tool-args">
           <div class="tool-detail-label">{{ t("chat.arguments") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolArgs }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolArgs"></div>
         </div>
-        <div v-if="formattedToolResult" class="tool-detail-section">
+        <div v-if="formattedToolResult" class="tool-detail-section" data-copy-source="tool-result">
           <div class="tool-detail-label">{{ t("chat.result") }}</div>
-          <pre class="tool-detail-code">{{ formattedToolResult }}</pre>
+          <div class="tool-detail-code-block" v-html="renderedToolResult"></div>
         </div>
       </div>
     </template>
@@ -400,20 +465,22 @@ const formattedToolResult = computed(() => {
   margin-bottom: 2px;
 }
 
-.tool-detail-code {
-  font-family: $font-code;
-  font-size: 11px;
-  line-height: 1.5;
-  color: $text-secondary;
-  background: $code-bg;
-  border-radius: $radius-sm;
-  padding: 6px 8px;
-  margin: 0;
-  overflow-x: auto;
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
+.tool-detail-code-block {
+  :deep(.hljs-code-block) {
+    margin: 0;
+  }
+
+  :deep(.code-header) {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  :deep(code.hljs) {
+    font-size: 11px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 @keyframes spin {
