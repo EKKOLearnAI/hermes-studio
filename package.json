@@ -38,6 +38,7 @@
     "dev:client": "vite --host",
     "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec TS_NODE_PROJECT=packages/server/tsconfig.json node -r ts-node/register packages/server/src/index.ts",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
+    "prepare": "[ -d dist ] || npm run build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
