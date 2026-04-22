@@ -7,6 +7,7 @@ import { useTheme } from '@/composables/useTheme'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
+import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 
 const { isDark } = useTheme()
 const appStore = useAppStore()
@@ -58,6 +59,7 @@ useKeyboard()
               <router-view />
             </main>
           </div>
+          <SessionSearchModal />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

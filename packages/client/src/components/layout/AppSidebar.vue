@@ -8,6 +8,7 @@ import ModelSelector from "./ModelSelector.vue";
 import ProfileSelector from "./ProfileSelector.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
+import { useSessionSearch } from '@/composables/useSessionSearch'
 import danceVideoLight from "@/assets/dance-light.mp4";
 import danceVideoDark from "@/assets/dance-dark.mp4";
 
@@ -19,7 +20,9 @@ const message = useMessage();
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
+const { openSessionSearch } = useSessionSearch();
 const selectedKey = computed(() => route.name as string);
+const logoPath = '/logo.png';
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
@@ -48,7 +51,7 @@ async function handleUpdate() {
 <template>
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
-      <img src="/logo.png" alt="Hermes" class="logo-img" />
+      <img :src="logoPath" alt="Hermes" class="logo-img" />
       <span class="logo-text">Hermes</span>
       <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline />
     </div>
@@ -60,6 +63,14 @@ async function handleUpdate() {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
         <span>{{ t("sidebar.chat") }}</span>
+      </button>
+
+      <button class="nav-item" @click="openSessionSearch">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <span>{{ t("sidebar.search") }}</span>
       </button>
 
       <!-- Agent -->

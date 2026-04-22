@@ -1,5 +1,5 @@
 import { startRun, streamRunEvents, type ChatMessage, type RunEvent } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchSessionUsageSingle, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
@@ -155,8 +155,6 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: (s as any).billing_provider || '',
     messageCount: s.message_count,
-    inputTokens: s.input_tokens,
-    outputTokens: s.output_tokens,
   }
 }
 
@@ -231,9 +229,11 @@ function sanitizeForCache(msgs: Message[]): Message[] {
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
+  const focusMessageId = ref<string | null>(null)
   const streamStates = ref<Map<string, AbortController>>(new Map())
   const isStreaming = computed(() => activeSessionId.value != null && streamStates.value.has(activeSessionId.value))
   const isLoadingSessions = ref(false)
+  const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
   // tmux-like resume state: true when we recovered an in-flight run from
   // localStorage after a refresh and are polling fetchSession for progress.
@@ -338,8 +338,6 @@ export const useChatStore = defineStore('chat', () => {
           || (serverUsers === localUsers && serverAssistantLen >= localAssistantLen)
         if (serverIsAhead) {
           target.messages = mapped
-          target.inputTokens = detail.input_tokens
-          target.outputTokens = detail.output_tokens
           if (detail.title && !target.title) target.title = detail.title
           if (sid === activeSessionId.value) persistActiveMessages()
         }
@@ -361,8 +359,6 @@ export const useChatStore = defineStore('chat', () => {
               // our "don't retreat" guard above skipped it — the server is
               // now the authoritative source of truth.
               target.messages = mapped
-              target.inputTokens = detail.input_tokens
-              target.outputTokens = detail.output_tokens
               if (detail.title) target.title = detail.title
               if (sid === activeSessionId.value) persistActiveMessages()
               clearInFlight(sid)
@@ -428,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
       console.error('Failed to load sessions:', err)
     } finally {
       isLoadingSessions.value = false
+      sessionsLoaded.value = true
     }
   }
 
@@ -444,8 +441,6 @@ export const useChatStore = defineStore('chat', () => {
       if (!target) return false
       const mapped = mapHermesMessages(detail.messages || [])
       target.messages = mapped
-      target.inputTokens = detail.input_tokens
-      target.outputTokens = detail.output_tokens
       if (detail.title) target.title = detail.title
       persistActiveMessages()
       return true
@@ -472,8 +467,9 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, focusId?: string | null) {
     activeSessionId.value = sessionId
+    focusMessageId.value = focusId ?? null
     localStorage.setItem(storageKey(), sessionId)
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
 
@@ -527,8 +523,6 @@ export const useChatStore = defineStore('chat', () => {
         if (serverIsAhead) {
           activeSession.value.messages = mapped
         }
-        activeSession.value.inputTokens = detail.input_tokens
-        activeSession.value.outputTokens = detail.output_tokens
         // Update title: use Hermes title, or fallback to first user message
         if (detail.title) {
           activeSession.value.title = detail.title
@@ -553,6 +547,15 @@ export const useChatStore = defineStore('chat', () => {
     if (readInFlight(sessionId) && !streamStates.value.has(sessionId)) {
       startPolling(sessionId)
     }
+
+    // Fetch token usage for this session from web-ui DB
+    try {
+      const usage = await fetchSessionUsageSingle(sessionId)
+      if (usage) {
+        activeSession.value.inputTokens = usage.input_tokens
+        activeSession.value.outputTokens = usage.output_tokens
+      }
+    } catch { /* non-critical */ }
   }
 
   function newChat() {
@@ -781,9 +784,15 @@ export const useChatStore = defineStore('chat', () => {
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
+              if (evt.usage) {
+                const target = sessions.value.find(s => s.id === sid)
+                if (target) {
+                  target.inputTokens = evt.usage.input_tokens
+                  target.outputTokens = evt.usage.output_tokens
+                }
+              }
               cleanup()
               updateSessionTitle(sid)
-              // IMPORTANT ordering: persist the final cache BEFORE clearing
               // the in-flight marker. If the browser is reloading right now
               // and kills us between the two localStorage writes, we want
               // the next page load to still see in-flight === true (so
@@ -913,12 +922,15 @@ export const useChatStore = defineStore('chat', () => {
     sessions,
     activeSessionId,
     activeSession,
+    focusMessageId,
     messages,
     isStreaming,
     isRunActive,
     isSessionLive,
     isLoadingSessions,
+    sessionsLoaded,
     isLoadingMessages,
+
     newChat,
     switchSession,
     switchSessionModel,

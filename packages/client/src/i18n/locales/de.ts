@@ -61,6 +61,7 @@ export default {
 
   // Chat
   chat: {
+    contextRemaining: 'übrig',
     emptyState: 'Starten Sie eine Konversation mit Hermes Agent',
     inputPlaceholder: 'Nachricht eingeben... (Enter zum Senden, Shift+Enter fur neue Zeile)',
     attachFiles: 'Dateien anhangen',
@@ -73,6 +74,17 @@ export default {
     deleteSession: 'Diese Sitzung loschen?',
     sessionDeleted: 'Sitzung geloscht',
     rename: 'Umbenennen',
+    pin: 'Anheften',
+    unpin: 'Lösen',
+    pinned: 'Angeheftet',
+    chatMode: 'Chat',
+    liveMode: 'Live',
+    liveSessions: 'Live-Sitzungen',
+    recentBadge: 'Kürzlich',
+    linkedSessions: '{count} verknüpft',
+    noVisibleMessages: 'Keine für Menschen sichtbaren Nachrichten.',
+    monitorRoleUser: 'Benutzer',
+    monitorRoleAssistant: 'Assistent',
     copySessionId: 'Sitzungs-ID kopieren',
     renamed: 'Umbenannt',
     renameFailed: 'Umbenennung fehlgeschlagen',
@@ -338,6 +350,10 @@ export default {
       idleMinutes: 'Inaktivitats-Timeout',
       idleMinutesHint: 'Wartezeit vor automatischer Zurucksetzung (Minuten)',
       atHour: 'Geplante Zurucksetzungszeit',
+      humanOnly: 'Nur menschliche Sitzungen anzeigen',
+      humanOnlyHint: 'Unteragenten- und Sitzungsmonitor-Rauschen standardmäßig ausblenden',
+      liveMonitorHumanOnly: 'Live-Monitor: nur menschliche Sitzungen anzeigen',
+      liveMonitorHumanOnlyHint: 'Im Live-Monitor Unteragenten- und Sitzungsmonitor-Rauschen standardmäßig ausblenden',
       atHourHint: 'Sitzung taglich zu dieser Stunde zurucksetzen',
     },
     privacy: {

@@ -45,13 +45,35 @@ function scrollToBottom() {
   });
 }
 
+function scrollToMessage(messageId: string) {
+  nextTick(() => {
+    const el = document.getElementById(`message-${messageId}`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+    }
+  });
+}
+
 // Scroll to bottom once when messages are first loaded
 watch(
   () => chatStore.activeSessionId,
   (id) => {
-    if (id) scrollToBottom();
+    if (!id) return;
+    if (chatStore.focusMessageId) {
+      scrollToMessage(chatStore.focusMessageId);
+      return;
+    }
+    scrollToBottom();
   },
   { immediate: true },
+);
+
+watch(
+  () => chatStore.focusMessageId,
+  (messageId) => {
+    if (!messageId) return;
+    scrollToMessage(messageId);
+  },
 );
 
 // When a run starts (user just sent a message), always scroll to bottom once
@@ -66,12 +88,20 @@ watch(
 watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
+    if (chatStore.focusMessageId) {
+      scrollToMessage(chatStore.focusMessageId);
+      return;
+    }
     if (!chatStore.isStreaming) { scrollToBottom(); return; }
     if (!isNearBottom()) return;
     scrollToBottom();
   },
 );
 watch(currentToolCalls, () => {
+  if (chatStore.focusMessageId) {
+    scrollToMessage(chatStore.focusMessageId);
+    return;
+  }
   if (!chatStore.isStreaming) { scrollToBottom(); return; }
   if (!isNearBottom()) return;
   scrollToBottom();
@@ -84,7 +114,12 @@ watch(currentToolCalls, () => {
       <img src="/logo.png" alt="Hermes" class="empty-logo" />
       <p>{{ t("chat.emptyState") }}</p>
     </div>
-    <MessageItem v-for="msg in displayMessages" :key="msg.id" :message="msg" />
+    <MessageItem
+      v-for="msg in displayMessages"
+      :key="msg.id"
+      :message="msg"
+      :highlight="chatStore.focusMessageId === msg.id"
+    />
     <Transition name="fade">
       <div v-if="chatStore.isRunActive" class="streaming-indicator">
         <video

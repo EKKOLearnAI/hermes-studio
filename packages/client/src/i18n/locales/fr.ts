@@ -61,6 +61,7 @@ export default {
 
   // Chat
   chat: {
+    contextRemaining: 'restant',
     emptyState: 'Demarrer une conversation avec Hermes Agent',
     inputPlaceholder: 'Tapez un message... (Entree pour envoyer, Shift+Entree pour un saut de ligne)',
     attachFiles: 'Joindre des fichiers',
@@ -73,7 +74,18 @@ export default {
     deleteSession: 'Supprimer cette session ?',
     sessionDeleted: 'Session supprimee',
     rename: 'Renommer',
-    copySessionId: 'Copier l\'ID de session',
+    pin: 'Épingler',
+    unpin: 'Désépingler',
+    pinned: 'Épinglés',
+    chatMode: 'Chat',
+    liveMode: 'Direct',
+    liveSessions: 'Sessions en direct',
+    recentBadge: 'Récent',
+    linkedSessions: '{count} sessions liées',
+    noVisibleMessages: 'Aucun message visible par l’humain.',
+    monitorRoleUser: 'Utilisateur',
+    monitorRoleAssistant: 'Assistant',
+    copySessionId: "Copier l'ID de session",
     renamed: 'Renomme',
     renameFailed: 'Echec du renommage',
     renameSession: 'Renommer la session',
@@ -338,6 +350,10 @@ export default {
       idleMinutes: 'Delai d\'inactivite',
       idleMinutesHint: 'Temps d\'attente avant reinitialisation automatique (minutes)',
       atHour: 'Heure de reinitialisation planifiee',
+      humanOnly: 'Afficher uniquement les sessions humaines',
+      humanOnlyHint: 'Masquer par défaut le bruit des sous-agents et du moniteur de session',
+      liveMonitorHumanOnly: 'Moniteur live : n’afficher que les sessions humaines',
+      liveMonitorHumanOnlyHint: 'Masquer par défaut le bruit des sous-agents et du moniteur de session dans le moniteur live',
       atHourHint: 'Reinitialiser la session a cette heure chaque jour',
     },
     privacy: {

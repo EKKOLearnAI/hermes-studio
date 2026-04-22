@@ -39,7 +39,7 @@ export interface HermesSession {
   messages?: any[]
 }
 
-interface HermesSessionFull {
+export interface HermesSessionFull {
   id: string
   source: string
   user_id: string | null
@@ -67,10 +67,21 @@ interface HermesSessionFull {
   [key: string]: any
 }
 
-/**
- * List sessions from Hermes CLI (without messages)
- */
-export async function listSessions(source?: string, limit?: number): Promise<HermesSession[]> {
+function parseSessionExport(stdout: string): HermesSessionFull[] {
+  const lines = stdout.trim().split('\n').filter(Boolean)
+  const sessions: HermesSessionFull[] = []
+  for (const line of lines) {
+    try {
+      const raw: HermesSessionFull = JSON.parse(line)
+      sessions.push(raw)
+    } catch {
+      // Skip non-JSON lines such as "Session 'x' not found."
+    }
+  }
+  return sessions
+}
+
+export async function exportSessionsRaw(source?: string): Promise<HermesSessionFull[]> {
   const args = ['sessions', 'export', '-']
   if (source) args.push('--source', source)
 
@@ -80,56 +91,59 @@ export async function listSessions(source?: string, limit?: number): Promise<Her
       timeout: 30000,
       ...execOpts,
     })
-
-    const lines = stdout.trim().split('\n').filter(Boolean)
-    const sessions: HermesSession[] = []
-
-    for (const line of lines) {
-      try {
-        const raw: HermesSessionFull = JSON.parse(line)
-        let title = raw.title
-        if (!title && raw.messages) {
-          const firstUser = raw.messages.find((m: any) => m.role === 'user')
-          if (firstUser?.content) {
-            const t = String(firstUser.content).slice(0, 40)
-            title = t + (String(firstUser.content).length > 40 ? '...' : '')
-          }
-        }
-        sessions.push({
-          id: raw.id,
-          source: raw.source,
-          user_id: raw.user_id,
-          model: raw.model,
-          title,
-          started_at: raw.started_at,
-          ended_at: raw.ended_at,
-          end_reason: raw.end_reason,
-          message_count: raw.message_count,
-          tool_call_count: raw.tool_call_count,
-          input_tokens: raw.input_tokens,
-          output_tokens: raw.output_tokens,
-          cache_read_tokens: raw.cache_read_tokens || 0,
-          cache_write_tokens: raw.cache_write_tokens || 0,
-          reasoning_tokens: raw.reasoning_tokens || 0,
-          billing_provider: raw.billing_provider,
-          estimated_cost_usd: raw.estimated_cost_usd,
-          actual_cost_usd: raw.actual_cost_usd ?? null,
-          cost_status: raw.cost_status || '',
-        })
-      } catch { /* skip malformed lines */ }
-    }
-
-    // Sort by started_at descending
-    sessions.sort((a, b) => b.started_at - a.started_at)
-
-    if (limit && limit > 0) {
-      return sessions.slice(0, limit)
-    }
-    return sessions
+    return parseSessionExport(stdout)
   } catch (err: any) {
     logger.error(err, 'Hermes CLI: sessions export failed')
     throw new Error(`Failed to list sessions: ${err.message}`)
   }
+}
+
+/**
+ * List sessions from Hermes CLI (without messages)
+ */
+export async function listSessions(source?: string, limit?: number): Promise<HermesSession[]> {
+  const raws = await exportSessionsRaw(source)
+  const sessions: HermesSession[] = []
+
+  for (const raw of raws) {
+    let title = raw.title
+    if (!title && raw.messages) {
+      const firstUser = raw.messages.find((m: any) => m.role === 'user')
+      if (firstUser?.content) {
+        const t = String(firstUser.content).slice(0, 40)
+        title = t + (String(firstUser.content).length > 40 ? '...' : '')
+      }
+    }
+    sessions.push({
+      id: raw.id,
+      source: raw.source,
+      user_id: raw.user_id,
+      model: raw.model,
+      title,
+      started_at: raw.started_at,
+      ended_at: raw.ended_at,
+      end_reason: raw.end_reason,
+      message_count: raw.message_count,
+      tool_call_count: raw.tool_call_count,
+      input_tokens: raw.input_tokens,
+      output_tokens: raw.output_tokens,
+      cache_read_tokens: raw.cache_read_tokens || 0,
+      cache_write_tokens: raw.cache_write_tokens || 0,
+      reasoning_tokens: raw.reasoning_tokens || 0,
+      billing_provider: raw.billing_provider,
+      estimated_cost_usd: raw.estimated_cost_usd,
+      actual_cost_usd: raw.actual_cost_usd ?? null,
+      cost_status: raw.cost_status || '',
+    })
+  }
+
+  // Sort by started_at descending
+  sessions.sort((a, b) => b.started_at - a.started_at)
+
+  if (limit && limit > 0) {
+    return sessions.slice(0, limit)
+  }
+  return sessions
 }
 
 /**
@@ -145,12 +159,10 @@ export async function getSession(id: string): Promise<HermesSession | null> {
       ...execOpts,
     })
 
-    const lines = stdout.trim().split('\n').filter(Boolean)
-    if (lines.length === 0) return null
+    const raws = parseSessionExport(stdout)
+    if (raws.length === 0) return null
 
-    if (!lines[0].startsWith('{')) return null
-
-    const raw: HermesSessionFull = JSON.parse(lines[0])
+    const raw: HermesSessionFull = raws[0]
     return {
       id: raw.id,
       source: raw.source,

@@ -48,10 +48,79 @@ function ensureToken() {
   return token
 }
 
-function getPort() {
+function getNodeBinDir() {
+  return dirname(process.execPath)
+}
+
+function getNpmBin() {
+  return join(getNodeBinDir(), process.platform === 'win32' ? 'npm.cmd' : 'npm')
+}
+
+function getCliBin() {
+  return join(getNodeBinDir(), process.platform === 'win32' ? 'hermes-web-ui.cmd' : 'hermes-web-ui')
+}
+
+function getWindowsShell() {
+  return process.env.ComSpec || 'cmd.exe'
+}
+
+function quoteForWindowsCommand(value) {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function spawnCli(command, args, options) {
+  if (process.platform === 'win32') {
+    const commandLine = `${quoteForWindowsCommand(command)} ${args.map(arg => String(arg)).join(' ')}`
+    return spawn(getWindowsShell(), ['/d', '/s', '/c', commandLine], options)
+  }
+
+  return spawn(command, args, options)
+}
+
+function getPortFromArgs() {
   if (process.argv[3] && !isNaN(process.argv[3])) return parseInt(process.argv[3])
   if (process.argv.includes('--port')) return parseInt(process.argv[process.argv.indexOf('--port') + 1])
+  return null
+}
+
+function getRunningPort() {
+  const pid = getPid()
+  if (!pid || !isRunning(pid)) return null
+
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync(`netstat -aon -p tcp | findstr LISTENING | findstr " ${pid}$"`, { encoding: 'utf-8' }).trim()
+      const line = out.split('\n').find(Boolean)
+      const address = line?.trim().split(/\s+/)[1]
+      const port = address?.split(':').pop()
+      return port ? parseInt(port, 10) : null
+    }
+
+    const out = execSync(`lsof -Pan -p ${pid} -iTCP -sTCP:LISTEN`, { encoding: 'utf-8' }).trim()
+    const lines = out.split('\n').slice(1)
+    for (const line of lines) {
+      const match = line.match(/:(\d+)\s+\(LISTEN\)$/)
+      if (match) return parseInt(match[1], 10)
+    }
+  } catch {}
+
+  return null
+}
+
+function getUpdatePort() {
+  const argPort = getPortFromArgs()
+  if (argPort !== null) return argPort
+
+  const runningPort = getRunningPort()
+  if (runningPort !== null) return runningPort
+
+  if (process.env.PORT && !isNaN(process.env.PORT)) return parseInt(process.env.PORT)
   return DEFAULT_PORT
+}
+
+function getPort() {
+  const argPort = getPortFromArgs()
+  return argPort ?? DEFAULT_PORT
 }
 
 function getPid() {
@@ -280,14 +349,9 @@ Options:
 }
 
 function doUpdate() {
-  const isWin = process.platform === 'win32'
-  const cmd = isWin
-    ? 'cmd /c npm install -g hermes-web-ui@latest'
-    : 'npm install -g hermes-web-ui@latest'
-
   console.log('  ⬆ Updating hermes-web-ui...')
 
-  const child = spawn(isWin ? 'cmd' : 'sh', isWin ? ['/c', ...cmd.split(' ')] : ['-c', cmd], {
+  const child = spawnCli(getNpmBin(), ['install', '-g', 'hermes-web-ui@latest'], {
     stdio: 'inherit',
     windowsHide: true,
   })
@@ -295,8 +359,11 @@ function doUpdate() {
   child.on('exit', (code) => {
     if (code === 0) {
       console.log('  ✓ Update complete, restarting...')
-      stopDaemon()
-      setTimeout(() => startDaemon(getPort()), 500)
+      const restart = spawnCli(getCliBin(), ['restart', '--port', String(getUpdatePort())], {
+        stdio: 'inherit',
+        windowsHide: true,
+      })
+      restart.on('exit', (restartCode) => process.exit(restartCode ?? 1))
     } else {
       console.log('  ✗ Update failed')
     }

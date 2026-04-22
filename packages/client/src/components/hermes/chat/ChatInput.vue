@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { Attachment } from '@/stores/hermes/chat'
 import { useChatStore } from '@/stores/hermes/chat'
+import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
+import { fetchContextLength } from '@/api/hermes/sessions'
 import { NButton, NTooltip } from 'naive-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const chatStore = useChatStore()
@@ -17,25 +20,41 @@ const isComposing = ref(false)
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
 
-// --- Voice input (Web Speech API) ---
-// TODO: re-enable when needed — browser-native speech-to-text
-// const hasSpeechRecognition = ref(false)
-// let recognition: SpeechRecognition | null = null
-// let finalTranscript = ''
-// let prefixText = ''
-// onMounted(() => {
-//   const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-//   if (!SR) return
-//   recognition = new SR()
-//   recognition.continuous = false
-//   recognition.interimResults = true
-//   recognition.lang = 'en-US'
-//   hasSpeechRecognition.value = true
-//   recognition.onresult = (event: SpeechRecognitionEvent) => { ... }
-//   recognition.onend = () => { ... }
-//   recognition.onerror = (event: SpeechRecognitionErrorEvent) => { ... }
-// })
-// onUnmounted(() => { if (recognition && isRecording.value) recognition.stop() })
+// --- Context info ---
+
+const contextLength = ref(200000)
+const FALLBACK_CONTEXT = 200000
+
+async function loadContextLength() {
+  try {
+    const profile = useProfilesStore().activeProfileName || undefined
+    contextLength.value = await fetchContextLength(profile)
+  } catch {
+    contextLength.value = FALLBACK_CONTEXT
+  }
+}
+
+onMounted(loadContextLength)
+watch(() => useProfilesStore().activeProfileName, loadContextLength)
+watch(() => useAppStore().selectedModel, loadContextLength)
+
+const totalTokens = computed(() => {
+  const input = chatStore.activeSession?.inputTokens ?? 0
+  const output = chatStore.activeSession?.outputTokens ?? 0
+  return input + output
+})
+
+const remainingTokens = computed(() => contextLength.value - totalTokens.value)
+
+const usagePercent = computed(() =>
+  Math.min((totalTokens.value / contextLength.value) * 100, 100),
+)
+
+function formatTokens(n: number): string {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(n)
+}
 
 // --- File attachment helpers ---
 
@@ -176,6 +195,33 @@ function isImage(type: string): boolean {
 
 <template>
   <div class="chat-input-area">
+    <!-- Top bar: attach + context info -->
+    <div class="input-top-bar">
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <NButton quaternary size="tiny" @click="handleAttachClick" circle>
+            <template #icon>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </template>
+          </NButton>
+        </template>
+        {{ t('chat.attachFiles') }}
+      </NTooltip>
+      <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
+        {{ formatTokens(totalTokens) }} / {{ formatTokens(contextLength) }} · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+      </span>
+      <div v-if="totalTokens > 0" class="context-bar">
+        <div
+          class="context-bar-fill"
+          :class="{
+            'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
+            'context-bar-danger': usagePercent > 80,
+          }"
+          :style="{ width: `${usagePercent}%` }"
+        />
+      </div>
+    </div>
+
     <!-- Attachment previews -->
     <div v-if="attachments.length > 0" class="attachment-previews">
       <div
@@ -228,16 +274,6 @@ function isImage(type: string): boolean {
         @paste="handlePaste"
       ></textarea>
       <div class="input-actions">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton quaternary size="small" @click="handleAttachClick" circle>
-              <template #icon>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              </template>
-            </NButton>
-          </template>
-          {{ t('chat.attachFiles') }}
-        </NTooltip>
         <NButton
           v-if="chatStore.isStreaming"
           size="small"
@@ -269,6 +305,45 @@ function isImage(type: string): boolean {
   padding: 12px 20px 16px;
   border-top: 1px solid $border-color;
   flex-shrink: 0;
+}
+
+.input-top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 6px;
+}
+
+.context-info {
+  font-size: 11px;
+  color: $text-muted;
+
+  &.context-warning {
+    color: #e8a735;
+  }
+}
+
+.context-bar {
+  width: 60px;
+  height: 4px;
+  background: rgba(128, 128, 128, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.context-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(128, 128, 128, 0.3), rgba(128, 128, 128, 0.6));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+
+  &.context-bar-warn {
+    background: linear-gradient(90deg, #c98a1a, #e8a735);
+  }
+
+  &.context-bar-danger {
+    background: linear-gradient(90deg, #c43a2a, #e85d4a);
+  }
 }
 
 .attachment-previews {

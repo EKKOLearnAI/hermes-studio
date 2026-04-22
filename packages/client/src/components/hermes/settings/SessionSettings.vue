@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { NInputNumber, NSelect, useMessage } from 'naive-ui'
+import { NInputNumber, NSelect, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
+const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
 const { t } = useI18n()
 
@@ -46,6 +48,12 @@ async function save(values: Record<string, any>) {
         :min="0" :max="23" :step="1"
         size="small" class="input-sm"
         @update:value="v => v != null && save({ at_hour: v })"
+      />
+    </SettingRow>
+    <SettingRow :label="t('settings.session.liveMonitorHumanOnly')" :hint="t('settings.session.liveMonitorHumanOnlyHint')">
+      <NSwitch
+        :value="sessionBrowserPrefsStore.humanOnly"
+        @update:value="value => sessionBrowserPrefsStore.setHumanOnly(value)"
       />
     </SettingRow>
   </section>

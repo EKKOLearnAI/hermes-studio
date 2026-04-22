@@ -61,6 +61,7 @@ export default {
 
   // Chat
   chat: {
+    contextRemaining: 'restante',
     emptyState: 'Inicia una conversacion con Hermes Agent',
     inputPlaceholder: 'Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva linea)',
     attachFiles: 'Adjuntar archivos',
@@ -73,7 +74,18 @@ export default {
     deleteSession: 'Eliminar esta sesion?',
     sessionDeleted: 'Sesion eliminada',
     rename: 'Renombrar',
-    copySessionId: 'Copiar ID de sesion',
+    pin: 'Fijar',
+    unpin: 'Desfijar',
+    pinned: 'Fijados',
+    chatMode: 'Chat',
+    liveMode: 'En vivo',
+    liveSessions: 'Sesiones en vivo',
+    recentBadge: 'Reciente',
+    linkedSessions: '{count} vinculadas',
+    noVisibleMessages: 'No hay mensajes visibles para humanos.',
+    monitorRoleUser: 'Usuario',
+    monitorRoleAssistant: 'Asistente',
+    copySessionId: 'Copiar ID de sesión',
     renamed: 'Renombrada',
     renameFailed: 'Error al renombrar',
     renameSession: 'Renombrar sesion',
@@ -338,6 +350,10 @@ export default {
       idleMinutes: 'Tiempo de inactividad',
       idleMinutesHint: 'Tiempo de espera antes del reinicio automatico (minutos)',
       atHour: 'Hora de reinicio programado',
+      humanOnly: 'Mostrar solo sesiones humanas',
+      humanOnlyHint: 'Oculta por defecto el ruido de subagentes y del monitor de sesiones',
+      liveMonitorHumanOnly: 'Monitor en vivo: mostrar solo sesiones humanas',
+      liveMonitorHumanOnlyHint: 'Oculta por defecto el ruido de subagentes y del monitor de sesiones en el monitor en vivo',
       atHourHint: 'Reiniciar sesion a esta hora todos los dias',
     },
     privacy: {

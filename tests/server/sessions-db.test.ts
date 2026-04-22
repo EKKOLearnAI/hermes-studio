@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const allMock = vi.fn()
-const prepareMock = vi.fn(() => ({ all: allMock }))
+const titleAllMock = vi.fn()
+const contentAllMock = vi.fn()
+const likeAllMock = vi.fn()
+const prepareMock = vi.fn((sql: string) => {
+  if (sql.includes('messages_fts MATCH')) return ({ all: contentAllMock })
+  if (sql.includes('m.content LIKE ?')) return ({ all: likeAllMock })
+  if (sql.includes("LOWER(COALESCE(base.title, '')) LIKE ?")) return ({ all: titleAllMock })
+  return ({ all: allMock })
+})
 const closeMock = vi.fn()
 const databaseSyncMock = vi.fn(() => ({ prepare: prepareMock, close: closeMock }))
 const getActiveProfileDirMock = vi.fn(() => '/tmp/hermes-profile')
@@ -18,6 +26,9 @@ describe('session DB summaries', () => {
   beforeEach(() => {
     vi.resetModules()
     allMock.mockReset()
+    titleAllMock.mockReset()
+    contentAllMock.mockReset()
+    likeAllMock.mockReset()
     prepareMock.mockClear()
     closeMock.mockClear()
     databaseSyncMock.mockClear()
@@ -52,7 +63,7 @@ describe('session DB summaries', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.listSessionSummaries(undefined, 50)
 
     expect(databaseSyncMock).toHaveBeenCalledWith('/tmp/hermes-profile/state.db', { open: true, readOnly: true })
@@ -113,7 +124,7 @@ describe('session DB summaries', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.listSessionSummaries('telegram', 2)
 
     expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining('AND s.source = ?'))
@@ -121,5 +132,145 @@ describe('session DB summaries', () => {
     expect(rows[0].last_active).toBe(1710000100)
     expect(rows[0].source).toBe('telegram')
     expect(rows[0].title).toBe('preview text')
+  })
+
+  it('searches session titles and content with deduped results', async () => {
+    titleAllMock.mockReturnValue([
+      {
+        id: 'title-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Docker debugging',
+        started_at: 1710001000,
+        ended_at: null,
+        end_reason: '',
+        message_count: 2,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 2,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'title preview',
+        last_active: 1710001005,
+        matched_message_id: null,
+        snippet: 'Docker debugging',
+        rank: 0,
+      },
+    ])
+    contentAllMock.mockReturnValue([
+      {
+        id: 'title-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Docker debugging',
+        started_at: 1710001000,
+        ended_at: null,
+        end_reason: '',
+        message_count: 2,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 2,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'title preview',
+        last_active: 1710001005,
+        matched_message_id: 42,
+        snippet: '>>>docker<<< compose up',
+        rank: 0.25,
+      },
+      {
+        id: 'content-2',
+        source: 'telegram',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710002000,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 3,
+        output_tokens: 4,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'content preview',
+        last_active: 1710002001,
+        matched_message_id: 7,
+        snippet: '>>>docker<<< swarm',
+        rank: 0.1,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('docker', undefined, 10)
+
+    expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining('messages_fts MATCH'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0].id).toBe('title-1')
+    expect(rows[0].matched_message_id).toBeNull()
+    expect(rows[0].snippet).toBe('Docker debugging')
+    expect(rows[1].id).toBe('content-2')
+    expect(rows[1].matched_message_id).toBe(7)
+    expect(rows[1].snippet).toContain('docker')
+  })
+
+  it('falls back to LIKE search for CJK queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('fts5 tokenizer miss')
+    })
+    likeAllMock.mockReturnValue([
+      {
+        id: 'cjk-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710003000,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 3,
+        output_tokens: 4,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '中文预览',
+        last_active: 1710003002,
+        matched_message_id: 11,
+        snippet: '这是一段记忆断裂的内容',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('记忆断裂', undefined, 10)
+
+    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('cjk-1')
+    expect(rows[0].snippet).toContain('记忆断裂')
   })
 })

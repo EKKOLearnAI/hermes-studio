@@ -20,7 +20,7 @@ import { logger } from './services/logger'
 declare const __APP_VERSION__: string
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
-  : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } } )()
+  : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } })()
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
@@ -44,6 +44,12 @@ export async function bootstrap() {
 
   await initGatewayManager()
   console.log('[bootstrap] gateway manager initialized')
+
+  // Initialize web-ui SQLite tables
+  const { initUsageStore } = await import('./db/hermes/usage-store')
+  initUsageStore()
+  console.log('[bootstrap] usage store initialized')
+
   app.use(cors({ origin: config.corsOrigins }))
   app.use(bodyParser())
   console.log('[bootstrap] cors + bodyParser registered')

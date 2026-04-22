@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Web dashboard for Hermes Agent — multi-platform AI chat, session management, scheduled jobs, usage analytics & channel configuration (Telegram, Discord, Slack, WhatsApp)",
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
     "start": "vite --host --port 8648",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite --host",
-    "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec node -r ts-node/register packages/server/src/index.ts",
+    "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec TS_NODE_PROJECT=packages/server/tsconfig.json node -r ts-node/register packages/server/src/index.ts",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "preview": "vite preview",
     "test": "vitest run",

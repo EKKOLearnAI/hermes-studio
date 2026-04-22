@@ -28,6 +28,11 @@ export interface RunEvent {
   preview?: string
   timestamp?: number
   error?: string
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
 }
 
 export async function startRun(body: StartRunRequest): Promise<StartRunResponse> {

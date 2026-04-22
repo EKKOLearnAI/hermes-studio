@@ -13,8 +13,21 @@ const mockChatStore = vi.hoisted(() => ({
   deleteSession: vi.fn(),
 }))
 
+const mockPrefsStore = vi.hoisted(() => ({
+  pinnedIds: [] as string[],
+  humanOnly: true,
+  isPinned: vi.fn(() => false),
+  togglePinned: vi.fn(),
+  setHumanOnly: vi.fn(),
+  pruneMissingSessions: vi.fn(),
+}))
+
 vi.mock('@/stores/hermes/chat', () => ({
   useChatStore: () => mockChatStore,
+}))
+
+vi.mock('@/stores/hermes/session-browser-prefs', () => ({
+  useSessionBrowserPrefsStore: () => mockPrefsStore,
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
@@ -30,6 +43,12 @@ vi.mock('@/components/hermes/chat/MessageList.vue', () => ({
 vi.mock('@/components/hermes/chat/ChatInput.vue', () => ({
   default: {
     template: '<div class="chat-input-mock" />',
+  },
+}))
+
+vi.mock('@/components/hermes/chat/ConversationMonitorPane.vue', () => ({
+  default: {
+    template: '<div class="conversation-monitor-mock" />',
   },
 }))
 
@@ -128,8 +147,8 @@ describe('ChatPanel session list', () => {
     const sessionTitles = wrapper.findAll('.session-item-title').map(node => node.text())
     expect(sessionTitles.slice(0, 2)).toEqual(['Discord Active', 'Discord Older'])
 
-    const activeIndicator = wrapper.find('.session-item.active .session-item-active-indicator')
-    expect(activeIndicator.exists()).toBe(true)
+    const liveRow = wrapper.findAll('.session-item').find(node => node.text().includes('Discord Active'))
+    expect(liveRow?.find('.session-item-active-indicator').exists()).toBe(true)
 
     await wrapper.findAll('.session-item').find(node => node.text().includes('Slack Selected'))!.trigger('click')
 
@@ -137,8 +156,5 @@ describe('ChatPanel session list', () => {
 
     const groupLabelsAfterClick = wrapper.findAll('.session-group-label').map(node => node.text())
     expect(groupLabelsAfterClick[0]).toBe('Discord')
-
-    const activeTitlesAfterClick = wrapper.findAll('.session-item.active .session-item-title').map(node => node.text())
-    expect(activeTitlesAfterClick).toEqual(['Discord Active'])
   })
 })

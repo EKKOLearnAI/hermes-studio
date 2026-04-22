@@ -53,6 +53,12 @@ async function flushPromises() {
   await Promise.resolve()
 }
 
+const PROFILE = 'default'
+const ACTIVE_SESSION_KEY = `hermes_active_session_${PROFILE}`
+const SESSIONS_CACHE_KEY = `hermes_sessions_cache_v1_${PROFILE}`
+const sessionMessagesKey = (sessionId: string) => `hermes_session_msgs_v1_${PROFILE}_${sessionId}_`
+const inFlightKey = (sessionId: string) => `hermes_in_flight_v1_${PROFILE}_${sessionId}`
+
 describe('Chat Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -82,19 +88,20 @@ describe('Chat Store', () => {
       { id: 'm1', role: 'user', content: 'draft', timestamp: 1 },
     ]
 
-    window.localStorage.setItem('hermes_active_session', 'local-1')
-    window.localStorage.setItem('hermes_sessions_cache_v1', JSON.stringify([cachedSession]))
-    window.localStorage.setItem('hermes_session_msgs_v1_local-1', JSON.stringify(cachedMessages))
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'local-1')
+    window.localStorage.setItem(SESSIONS_CACHE_KEY, JSON.stringify([cachedSession]))
+    window.localStorage.setItem(sessionMessagesKey('local-1'), JSON.stringify(cachedMessages))
 
     mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('remote-1', 'Remote Session')])
     mockSessionsApi.fetchSession.mockResolvedValue(null)
 
     const store = useChatStore()
+    const loadPromise = store.loadSessions()
 
     expect(store.activeSessionId).toBe('local-1')
     expect(store.messages.map(m => m.content)).toEqual(['draft'])
 
-    await flushPromises()
+    await loadPromise
 
     expect(store.sessions.map(s => s.id)).toEqual(['local-1', 'remote-1'])
     expect(store.activeSession?.id).toBe('local-1')
@@ -109,10 +116,10 @@ describe('Chat Store', () => {
 
     const sid = store.activeSessionId
     expect(sid).toBeTruthy()
-    expect(window.localStorage.getItem('hermes_active_session')).toBe(sid)
+    expect(window.localStorage.getItem(ACTIVE_SESSION_KEY)).toBe(sid)
 
     const cachedMessages = JSON.parse(
-      window.localStorage.getItem(`hermes_session_msgs_v1_${sid}`) || '[]',
+      window.localStorage.getItem(sessionMessagesKey(sid!)) || '[]',
     )
     expect(cachedMessages).toEqual(
       expect.arrayContaining([
@@ -127,9 +134,9 @@ describe('Chat Store', () => {
   it('silently refreshes from server on SSE error instead of appending a fake error bubble', async () => {
     vi.useFakeTimers()
 
-    window.localStorage.setItem('hermes_active_session', 'sess-1')
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-1')
     window.localStorage.setItem(
-      'hermes_sessions_cache_v1',
+      SESSIONS_CACHE_KEY,
       JSON.stringify([
         {
           id: 'sess-1',
@@ -142,7 +149,7 @@ describe('Chat Store', () => {
       ]),
     )
     window.localStorage.setItem(
-      'hermes_session_msgs_v1_sess-1',
+      sessionMessagesKey('sess-1'),
       JSON.stringify([
         { id: 'old-user', role: 'user', content: 'old prompt', timestamp: 1 },
       ]),
@@ -221,6 +228,6 @@ describe('Chat Store', () => {
     expect(store.messages.some(m => m.role === 'system' && m.content.includes('SSE connection error'))).toBe(false)
     expect(store.messages.some(m => m.role === 'assistant' && m.content === 'final answer')).toBe(true)
     expect(store.isRunActive).toBe(false)
-    expect(window.localStorage.getItem('hermes_in_flight_v1_sess-1')).toBeNull()
+    expect(window.localStorage.getItem(inFlightKey('sess-1'))).toBeNull()
   })
 })
