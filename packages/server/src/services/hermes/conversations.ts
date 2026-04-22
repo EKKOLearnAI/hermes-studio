@@ -320,7 +320,7 @@ function aggregateSummary(rootId: string, byId: Map<string, ConversationSession>
   const last = chain[chain.length - 1]
   const title = root.title || excerpt(firstVisibleHumanText(chain.flatMap(sessionMessages)), 72) || null
   const preview = root.preview || excerpt(firstVisibleHumanText(chain.flatMap(sessionMessages)))
-  const costStatuses = [...new Set(chain.map(session => safeText(session.cost_status)).filter(Boolean))]
+  const costStatuses = Array.from(new Set(chain.map(session => safeText(session.cost_status)).filter(Boolean)))
 
   return {
     ...toSummary(root),
