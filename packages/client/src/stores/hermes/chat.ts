@@ -164,6 +164,8 @@ function mapHermesSession(s: SessionSummary): Session {
 // every time they open the page (esp. noticeable on mobile).
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const SESSIONS_CACHE_KEY_PREFIX = 'hermes_sessions_cache_v1_'
+const LEGACY_STORAGE_KEY = 'hermes_active_session'
+const LEGACY_SESSIONS_CACHE_KEY = 'hermes_sessions_cache_v1'
 const IN_FLIGHT_TTL_MS = 15 * 60 * 1000 // Give up after 15 minutes
 const POLL_INTERVAL_MS = 2000
 const POLL_STABLE_EXITS = 3 // 3 × 2s = 6s of no change → assume run finished
@@ -183,6 +185,10 @@ function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function sessionsCacheKey(): string { return SESSIONS_CACHE_KEY_PREFIX + getProfileName() }
 function msgsCacheKey(sid: string): string { return `hermes_session_msgs_v1_${getProfileName()}_${sid}_` }
 function inFlightKey(sid: string): string { return `hermes_in_flight_v1_${getProfileName()}_${sid}` }
+function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
+function legacySessionsCacheKey(): string | null { return getProfileName() === 'default' ? LEGACY_SESSIONS_CACHE_KEY : null }
+function legacyMsgsCacheKey(sid: string): string | null { return getProfileName() === 'default' ? `hermes_session_msgs_v1_${sid}` : null }
+function legacyInFlightKey(sid: string): string | null { return getProfileName() === 'default' ? `hermes_in_flight_v1_${sid}` : null }
 
 interface InFlightRun {
   runId: string
@@ -198,9 +204,60 @@ function loadJson<T>(key: string): T | null {
   }
 }
 
+function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const e = error as { name?: string, code?: number }
+  return e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014
+}
+
+function recoverStorageQuota() {
+  try {
+    const prefixes = [
+      sessionsCacheKey(),
+      `hermes_session_msgs_v1_${getProfileName()}_`,
+      `hermes_in_flight_v1_${getProfileName()}_`,
+    ]
+    const legacySessions = legacySessionsCacheKey()
+    if (legacySessions) prefixes.push(legacySessions)
+    if (getProfileName() === 'default') {
+      prefixes.push('hermes_session_msgs_v1_')
+      prefixes.push('hermes_in_flight_v1_')
+    }
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      if (key === storageKey() || key === LEGACY_STORAGE_KEY) continue
+      if (prefixes.some(prefix => key.startsWith(prefix))) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(key => removeItem(key))
+  } catch {
+    // ignore
+  }
+}
+
+function setItemBestEffort(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+    return
+  } catch (error) {
+    if (!isQuotaExceededError(error)) return
+  }
+
+  recoverStorageQuota()
+
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // quota exceeded or private mode — ignore, cache is best-effort
+  }
+}
+
 function saveJson(key: string, value: unknown) {
   try {
-    localStorage.setItem(key, JSON.stringify(value))
+    setItemBestEffort(key, JSON.stringify(value))
   } catch {
     // quota exceeded or private mode — ignore, cache is best-effort
   }
@@ -212,6 +269,23 @@ function removeItem(key: string) {
   } catch {
     // ignore
   }
+}
+
+function loadJsonWithFallback<T>(key: string, legacyKey?: string | null): T | null {
+  const value = loadJson<T>(key)
+  if (value != null) return value
+  if (!legacyKey) return null
+  return loadJson<T>(legacyKey)
+}
+
+function saveJsonWithLegacy(key: string, value: unknown, legacyKey?: string | null) {
+  saveJson(key, value)
+  if (legacyKey) removeItem(legacyKey)
+}
+
+function removeItemWithLegacy(key: string, legacyKey?: string | null) {
+  removeItem(key)
+  if (legacyKey) removeItem(legacyKey)
 }
 
 // Strip the circular `file: File` reference from attachments before caching —
@@ -255,9 +329,10 @@ export const useChatStore = defineStore('chat', () => {
 
   function persistSessionsList() {
     // Cache lightweight summaries only (messages are cached per-session).
-    saveJson(
+    saveJsonWithLegacy(
       sessionsCacheKey(),
       sessions.value.map(s => ({ ...s, messages: [] })),
+      legacySessionsCacheKey(),
     )
   }
 
@@ -265,22 +340,22 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (!sid) return
     const s = sessions.value.find(sess => sess.id === sid)
-    if (s) saveJson(msgsCacheKey(sid), sanitizeForCache(s.messages))
+    if (s) saveJsonWithLegacy(msgsCacheKey(sid), sanitizeForCache(s.messages), legacyMsgsCacheKey(sid))
   }
 
   function markInFlight(sid: string, runId: string) {
-    saveJson(inFlightKey(sid), { runId, startedAt: Date.now() } as InFlightRun)
+    saveJsonWithLegacy(inFlightKey(sid), { runId, startedAt: Date.now() } as InFlightRun, legacyInFlightKey(sid))
   }
 
   function clearInFlight(sid: string) {
-    removeItem(inFlightKey(sid))
+    removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
   }
 
   function readInFlight(sid: string): InFlightRun | null {
-    const rec = loadJson<InFlightRun>(inFlightKey(sid))
+    const rec = loadJsonWithFallback<InFlightRun>(inFlightKey(sid), legacyInFlightKey(sid))
     if (!rec) return null
     if (Date.now() - rec.startedAt > IN_FLIGHT_TTL_MS) {
-      removeItem(inFlightKey(sid))
+      removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
       return null
     }
     return rec
@@ -379,14 +454,14 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions.value = true
     try {
       // 从 profile 对应的缓存中恢复，实现 instant render
-      const cachedSessions = loadJson<Session[]>(sessionsCacheKey())
+      const cachedSessions = loadJsonWithFallback<Session[]>(sessionsCacheKey(), legacySessionsCacheKey())
       if (cachedSessions?.length) {
         sessions.value = cachedSessions
-        const savedId = localStorage.getItem(storageKey())
+        const savedId = localStorage.getItem(storageKey()) || (legacyStorageKey() ? localStorage.getItem(legacyStorageKey()!) : null)
         if (savedId) {
           const cachedActive = cachedSessions.find(s => s.id === savedId) || null
           if (cachedActive) {
-            const cachedMsgs = loadJson<Message[]>(msgsCacheKey(savedId))
+            const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(savedId), legacyMsgsCacheKey(savedId))
             if (cachedMsgs) cachedActive.messages = cachedMsgs
             activeSession.value = cachedActive
             activeSessionId.value = savedId
@@ -470,7 +545,9 @@ export const useChatStore = defineStore('chat', () => {
   async function switchSession(sessionId: string, focusId?: string | null) {
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
-    localStorage.setItem(storageKey(), sessionId)
+    setItemBestEffort(storageKey(), sessionId)
+    const legacyActiveKey = legacyStorageKey()
+    if (legacyActiveKey) removeItem(legacyActiveKey)
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
 
     if (!activeSession.value) return
@@ -480,7 +557,7 @@ export const useChatStore = defineStore('chat', () => {
     // loading state while we fetch.
     const hasLocalMessages = activeSession.value.messages.length > 0
     if (!hasLocalMessages) {
-      const cachedMsgs = loadJson<Message[]>(msgsCacheKey(sessionId))
+      const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(sessionId), legacyMsgsCacheKey(sessionId))
       if (cachedMsgs?.length) {
         activeSession.value.messages = cachedMsgs
       }
@@ -581,7 +658,7 @@ export const useChatStore = defineStore('chat', () => {
   async function deleteSession(sessionId: string) {
     await deleteSessionApi(sessionId)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
-    removeItem(msgsCacheKey(sessionId))
+    removeItemWithLegacy(msgsCacheKey(sessionId), legacyMsgsCacheKey(sessionId))
     persistSessionsList()
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {

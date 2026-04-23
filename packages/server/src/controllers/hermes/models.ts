@@ -46,7 +46,14 @@ export async function getAvailable(ctx: any) {
         const authPath = getActiveAuthPath()
         if (!existsSync(authPath)) return false
         const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
-        return !!auth.providers?.[providerKey]?.tokens?.access_token
+        const provider = auth.providers?.[providerKey]
+        if (!provider) return false
+        // Codex: providers.openai-codex.tokens.access_token
+        // Nous:  providers.nous.access_token
+        return !!(
+          provider.tokens?.access_token ||
+          provider.access_token
+        )
       } catch { return false }
     }
 

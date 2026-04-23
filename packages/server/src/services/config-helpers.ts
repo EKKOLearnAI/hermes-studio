@@ -27,6 +27,8 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   'opencode-go': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
   arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: '' },
+  stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: '' },
+  nous: { api_key_env: '', base_url_env: '' },
   'openai-codex': { api_key_env: '', base_url_env: '' },
 }
 

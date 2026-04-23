@@ -4,6 +4,7 @@ import { NModal, NForm, NFormItem, NInput, NButton, NSelect, useMessage } from '
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
+import NousLoginModal from './NousLoginModal.vue'
 
 const { t } = useI18n()
 
@@ -19,6 +20,7 @@ const showModal = ref(true)
 const loading = ref(false)
 const fetchingModels = ref(false)
 const showCodexLogin = ref(false)
+const showNousLogin = ref(false)
 
 const providerType = ref<'preset' | 'custom'>('preset')
 const selectedPreset = ref<string | null>(null)
@@ -32,8 +34,10 @@ const formData = ref({
 const modelOptions = ref<Array<{ label: string; value: string }>>([])
 
 const CODEX_KEY = 'openai-codex'
+const NOUS_KEY = 'nous'
 
 const isCodex = computed(() => selectedPreset.value === CODEX_KEY)
+const isNous = computed(() => selectedPreset.value === NOUS_KEY)
 
 const presetOptions = computed(() =>
   modelsStore.allProviders.map(g => ({ label: g.label, value: g.provider })),
@@ -125,6 +129,12 @@ async function handleSave() {
     return
   }
 
+  // Nous: 弹出 OAuth 设备码弹窗
+  if (isNous.value) {
+    showNousLogin.value = true
+    return
+  }
+
   if (!formData.value.base_url.trim()) {
     message.warning(t('models.baseUrlRequired'))
     return
@@ -166,6 +176,12 @@ async function handleCodexSuccess() {
   emit('saved')
 }
 
+async function handleNousSuccess() {
+  showNousLogin.value = false
+  message.success(t('models.providerAdded'))
+  emit('saved')
+}
+
 function handleClose() {
   showModal.value = false
   setTimeout(() => emit('close'), 200)
@@ -178,7 +194,7 @@ function handleClose() {
     preset="card"
     :title="t('models.addProvider')"
     :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    :mask-closable="!loading && !showCodexLogin"
+    :mask-closable="!loading && !showCodexLogin && !showNousLogin"
     @after-leave="emit('close')"
   >
     <NForm label-placement="top">
@@ -217,7 +233,7 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem v-if="!isCodex" :label="t('models.baseUrl')" required>
+      <NFormItem v-if="!isCodex && !isNous" :label="t('models.baseUrl')" required>
         <NInput
           v-model:value="formData.base_url"
           :placeholder="t('models.baseUrlPlaceholder')"
@@ -225,7 +241,7 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem v-if="!isCodex" :label="t('models.apiKey')" required>
+      <NFormItem v-if="!isCodex && !isNous" :label="t('models.apiKey')" required>
         <NInput
           v-model:value="formData.api_key"
           type="password"
@@ -269,6 +285,12 @@ function handleClose() {
       v-if="showCodexLogin"
       @close="showCodexLogin = false"
       @success="handleCodexSuccess"
+    />
+
+    <NousLoginModal
+      v-if="showNousLogin"
+      @close="showNousLogin = false"
+      @success="handleNousSuccess"
     />
   </NModal>
 </template>

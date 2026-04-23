@@ -56,8 +56,11 @@ async function flushPromises() {
 const PROFILE = 'default'
 const ACTIVE_SESSION_KEY = `hermes_active_session_${PROFILE}`
 const SESSIONS_CACHE_KEY = `hermes_sessions_cache_v1_${PROFILE}`
+const LEGACY_ACTIVE_SESSION_KEY = 'hermes_active_session'
+const LEGACY_SESSIONS_CACHE_KEY = 'hermes_sessions_cache_v1'
 const sessionMessagesKey = (sessionId: string) => `hermes_session_msgs_v1_${PROFILE}_${sessionId}_`
 const inFlightKey = (sessionId: string) => `hermes_in_flight_v1_${PROFILE}_${sessionId}`
+const legacySessionMessagesKey = (sessionId: string) => `hermes_session_msgs_v1_${sessionId}`
 
 describe('Chat Store', () => {
   beforeEach(() => {
@@ -129,6 +132,41 @@ describe('Chat Store', () => {
         }),
       ]),
     )
+  })
+
+  it('hydrates from default-profile legacy cache and migrates bulky storage to new keys only', async () => {
+    const cachedSession = {
+      id: 'legacy-1',
+      title: 'Legacy Draft',
+      source: 'api_server',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const cachedMessages = [
+      { id: 'm1', role: 'user', content: 'legacy draft', timestamp: 1 },
+    ]
+
+    window.localStorage.setItem(LEGACY_ACTIVE_SESSION_KEY, 'legacy-1')
+    window.localStorage.setItem(LEGACY_SESSIONS_CACHE_KEY, JSON.stringify([cachedSession]))
+    window.localStorage.setItem(legacySessionMessagesKey('legacy-1'), JSON.stringify(cachedMessages))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('legacy-1', 'Legacy Draft')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('legacy-1', cachedMessages))
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.activeSessionId).toBe('legacy-1')
+    expect(store.messages.map(m => m.content)).toEqual(['legacy draft'])
+
+    expect(window.localStorage.getItem(ACTIVE_SESSION_KEY)).toBe('legacy-1')
+    expect(window.localStorage.getItem(SESSIONS_CACHE_KEY)).toBeTruthy()
+    expect(window.localStorage.getItem(sessionMessagesKey('legacy-1'))).toBeTruthy()
+
+    expect(window.localStorage.getItem(LEGACY_ACTIVE_SESSION_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LEGACY_SESSIONS_CACHE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(legacySessionMessagesKey('legacy-1'))).toBeNull()
   })
 
   it('silently refreshes from server on SSE error instead of appending a fake error bubble', async () => {
