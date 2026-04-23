@@ -10,6 +10,7 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    command: gateway run
     ports:
       - "8642-8670:8642-8670"
 
