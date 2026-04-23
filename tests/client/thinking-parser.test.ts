@@ -40,4 +40,27 @@ describe('parseThinking', () => {
     expect(r.hasThinking).toBe(false)
     expect(r.body).toBe('')
   })
+
+  it('treats trailing unclosed tag as pending when streaming', () => {
+    const r = parseThinking('body<think>in-progress', { streaming: true })
+    expect(r.pending).toBe('in-progress')
+    expect(r.body).toBe('body')
+    expect(r.segments).toEqual([])
+    expect(r.hasThinking).toBe(true)
+  })
+
+  it('degrades trailing unclosed tag to body when NOT streaming (terminal state)', () => {
+    const r = parseThinking('body<think>orphan', { streaming: false })
+    expect(r.pending).toBeNull()
+    expect(r.body).toBe('body<think>orphan')
+    expect(r.segments).toEqual([])
+    expect(r.hasThinking).toBe(false)
+  })
+
+  it('combines closed segments with trailing pending (streaming)', () => {
+    const r = parseThinking('<think>done</think>mid<thinking>now', { streaming: true })
+    expect(r.segments).toEqual(['done'])
+    expect(r.pending).toBe('now')
+    expect(r.body).toBe('mid')
+  })
 })
