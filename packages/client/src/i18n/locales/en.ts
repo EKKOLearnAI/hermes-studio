@@ -595,6 +595,7 @@ export default {
     backendError: 'File operation failed',
     dragDropHint: 'Drag files here to upload',
     closeEditor: 'Close Editor',
+    closePreview: 'Close',
     saveFile: 'Save',
   },
   // Download

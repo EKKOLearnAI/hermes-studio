@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { NButton } from 'naive-ui'
+import { h } from 'vue'
+import { NButton, NIcon } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
 import { getFileDownloadUrl } from '@/api/hermes/files'
@@ -12,14 +13,24 @@ function getImageUrl(): string {
   if (!filesStore.previewFile) return ''
   return getFileDownloadUrl(filesStore.previewFile.path)
 }
+
+const CloseIcon = () =>
+  h(
+    'svg',
+    { viewBox: '0 0 24 24', width: '14', height: '14', fill: 'currentColor' },
+    [h('path', { d: 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z' })],
+  )
 </script>
 
 <template>
   <div class="file-preview" v-if="filesStore.previewFile">
     <div class="preview-header">
       <span class="preview-filename">{{ filesStore.previewFile.path }}</span>
-      <NButton size="small" @click="filesStore.closePreview()">
-        {{ t('common.cancel') }}
+      <NButton size="small" quaternary @click="filesStore.closePreview()">
+        <template #icon>
+          <NIcon><CloseIcon /></NIcon>
+        </template>
+        {{ t('files.closePreview') }}
       </NButton>
     </div>
     <div class="preview-content">

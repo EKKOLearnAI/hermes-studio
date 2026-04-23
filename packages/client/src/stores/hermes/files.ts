@@ -63,6 +63,15 @@ export function isTextFile(name: string): boolean {
   return !binaryExts.has(getFileExt(name))
 }
 
+// Returns true if `targetPath` is the same as `changedPath` or lives inside it
+// when `changedIsDir` is true. Used to invalidate preview/editor state when
+// the underlying file is deleted or renamed.
+function isAffected(targetPath: string, changedPath: string, changedIsDir: boolean): boolean {
+  if (targetPath === changedPath) return true
+  if (changedIsDir && targetPath.startsWith(changedPath + '/')) return true
+  return false
+}
+
 export const useFilesStore = defineStore('files', () => {
   const currentPath = ref('')
   const entries = ref<FileEntry[]>([])
@@ -104,6 +113,12 @@ export const useFilesStore = defineStore('files', () => {
   })
 
   async function fetchEntries(path?: string) {
+    if (path !== undefined && path !== currentPath.value) {
+      // Switching directory invalidates the current preview; close it so the
+      // file list becomes visible again. The editor has its own dirty-check
+      // (see hasUnsavedChanges), so we leave editingFile alone here.
+      previewFile.value = null
+    }
     if (path !== undefined) currentPath.value = path
     loading.value = true
     try {
@@ -167,6 +182,12 @@ export const useFilesStore = defineStore('files', () => {
 
   async function deleteEntry(entry: FileEntry) {
     await filesApi.deleteFile(entry.path, entry.isDir)
+    if (previewFile.value && isAffected(previewFile.value.path, entry.path, entry.isDir)) {
+      previewFile.value = null
+    }
+    if (editingFile.value && isAffected(editingFile.value.path, entry.path, entry.isDir)) {
+      editingFile.value = null
+    }
     await fetchEntries()
   }
 
@@ -174,6 +195,12 @@ export const useFilesStore = defineStore('files', () => {
     const parentPath = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : ''
     const newPath = parentPath ? `${parentPath}/${newName}` : newName
     await filesApi.renameFile(entry.path, newPath)
+    if (previewFile.value && isAffected(previewFile.value.path, entry.path, entry.isDir)) {
+      previewFile.value = null
+    }
+    if (editingFile.value && isAffected(editingFile.value.path, entry.path, entry.isDir)) {
+      editingFile.value = null
+    }
     await fetchEntries()
   }
 
