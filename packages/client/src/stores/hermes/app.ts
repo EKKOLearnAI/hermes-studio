@@ -20,6 +20,7 @@ export const useAppStore = defineStore('app', () => {
   const selectedModel = ref('')
   const selectedProvider = ref('')
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
+  const nodeVersion = ref('')
 
   // Settings
   const streamEnabled = ref(true)
@@ -47,6 +48,7 @@ export const useAppStore = defineStore('app', () => {
       if (res.webui_version) serverVersion.value = res.webui_version
       if (res.webui_latest) latestVersion.value = res.webui_latest
       updateAvailable.value = !!res.webui_update_available
+      if (res.node_version) nodeVersion.value = res.node_version
     } catch {
       connected.value = false
     }
@@ -115,6 +117,7 @@ export const useAppStore = defineStore('app', () => {
     connected,
     serverVersion,
     latestVersion,
+    nodeVersion,
     updateAvailable,
     updating,
     doUpdate,

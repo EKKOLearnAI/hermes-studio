@@ -84,6 +84,7 @@ export default {
     updateSuccess: 'Mise a jour terminee, veuillez redemarrer le serveur',
     updateFailed: 'Echec de la mise a jour',
     logout: 'Deconnexion',
+    nodeVersionWarning: 'Node.js v{version} detecte. La version 23+ est requise pour toutes les fonctionnalites (SQLite, node-pty).',
     changelog: 'Journal des modifications',
     noChangelog: 'Aucun journal disponible',
   },
@@ -510,6 +511,11 @@ export default {
 
   // Journal des modifications
   changelog: {
+    new_0_4_4_1: 'Ajout du navigateur de fichiers avec support multi-backend (local/Docker/SSH/Singularity)',
+    new_0_4_4_2: 'Ajout du telechargement de fichiers depuis les pieces jointes',
+    new_0_4_4_3: 'Ajout du badge en direct sur les sessions actives',
+    new_0_4_4_4: 'Ajout du support des fournisseurs StepFun et Nous Portal',
+    new_0_4_4_5: 'Correction de l\'erreur 500 lors de la recherche avec caracteres speciaux',
     new_0_4_3_1: 'Ajouter la connexion par nom d\'utilisateur/mot de passe en plus du token',
     new_0_4_3_2: 'Ajouter les parametres de compte pour gerer les identifiants',
     new_0_4_3_3: 'Ajouter le bouton de deconnexion dans la barre laterale',

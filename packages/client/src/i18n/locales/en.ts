@@ -612,6 +612,11 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_4_4_1: 'Add file browser with multi-backend support (local/Docker/SSH/Singularity)',
+    new_0_4_4_2: 'Add file download from chat message attachments',
+    new_0_4_4_3: 'Add live badge on active chat sessions',
+    new_0_4_4_4: 'Add StepFun and Nous Portal provider support',
+    new_0_4_4_5: 'Fix special character search queries causing 500 error',
     new_0_4_3_1: 'Add username/password login alongside token authentication',
     new_0_4_3_2: 'Add account settings for managing credentials (setup, change password, change username)',
     new_0_4_3_3: 'Add logout button to sidebar',

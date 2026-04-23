@@ -40,6 +40,8 @@ export interface Session {
   messageCount?: number
   inputTokens?: number
   outputTokens?: number
+  endedAt?: number | null
+  lastActiveAt?: number
 }
 
 function uid(): string {
@@ -155,6 +157,8 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: (s as any).billing_provider || '',
     messageCount: s.message_count,
+    endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
+    lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
   }
 }
 
@@ -169,6 +173,7 @@ const LEGACY_SESSIONS_CACHE_KEY = 'hermes_sessions_cache_v1'
 const IN_FLIGHT_TTL_MS = 15 * 60 * 1000 // Give up after 15 minutes
 const POLL_INTERVAL_MS = 2000
 const POLL_STABLE_EXITS = 3 // 3 × 2s = 6s of no change → assume run finished
+const LIVE_BADGE_WINDOW_MS = 5 * 60 * 1000
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -324,7 +329,11 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || resumingRuns.value.has(sessionId)
+    if (streamStates.value.has(sessionId) || resumingRuns.value.has(sessionId)) return true
+
+    const session = sessions.value.find(candidate => candidate.id === sessionId)
+    if (!session?.lastActiveAt || session.endedAt != null) return false
+    return Date.now() - session.lastActiveAt <= LIVE_BADGE_WINDOW_MS
   }
 
   function persistSessionsList() {

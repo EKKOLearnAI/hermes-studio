@@ -1,5 +1,9 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { getConversationDetail, listConversationSummaries } from '../../services/hermes/conversations'
+import {
+  getConversationDetailFromDb,
+  listConversationSummariesFromDb,
+} from '../../db/hermes/conversations-db'
 import { listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
@@ -20,6 +24,15 @@ export async function listConversations(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const humanOnly = parseHumanOnly(ctx.query.humanOnly)
   const limit = parseLimit(ctx.query.limit)
+
+  try {
+    const sessions = await listConversationSummariesFromDb({ source, humanOnly, limit })
+    ctx.body = { sessions }
+    return
+  } catch (err) {
+    logger.warn(err, 'Hermes Conversation DB: summary query failed, falling back to CLI export')
+  }
+
   const sessions = await listConversationSummaries({ source, humanOnly, limit })
   ctx.body = { sessions }
 }
@@ -27,6 +40,20 @@ export async function listConversations(ctx: any) {
 export async function getConversationMessages(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const humanOnly = parseHumanOnly(ctx.query.humanOnly)
+
+  try {
+    const detail = await getConversationDetailFromDb(ctx.params.id, { source, humanOnly })
+    if (!detail) {
+      ctx.status = 404
+      ctx.body = { error: 'Conversation not found' }
+      return
+    }
+    ctx.body = detail
+    return
+  } catch (err) {
+    logger.warn(err, 'Hermes Conversation DB: detail query failed, falling back to CLI export')
+  }
+
   const detail = await getConversationDetail(ctx.params.id, { source, humanOnly })
   if (!detail) {
     ctx.status = 404

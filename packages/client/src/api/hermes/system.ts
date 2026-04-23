@@ -6,6 +6,7 @@ export interface HealthResponse {
   webui_version?: string
   webui_latest?: string
   webui_update_available?: boolean
+  node_version?: string
 }
 
 // Config-based model types

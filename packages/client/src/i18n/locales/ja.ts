@@ -84,6 +84,7 @@ export default {
     updateSuccess: '更新が完了しました。サーバーを再起動してください',
     updateFailed: '更新に失敗しました',
     logout: 'ログアウト',
+    nodeVersionWarning: 'Node.js v{version} が検出されました。全機能にはバージョン23+が必要です（SQLite、node-pty）。',
     changelog: '更新履歴',
     noChangelog: '更新履歴はありません',
   },
@@ -510,6 +511,11 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_4_4_1: 'ファイルブラウザを追加（local/Docker/SSH/Singularity対応）',
+    new_0_4_4_2: 'チャットメッセージの添付ファイルダウンロードを追加',
+    new_0_4_4_3: 'アクティブセッションにライブバッジを表示',
+    new_0_4_4_4: 'StepFunとNous Portalプロバイダーに対応',
+    new_0_4_4_5: '特殊文字検索で500エラーになる問題を修正',
     new_0_4_3_1: 'トークン認証に加えてユーザー名/パスワードログインを追加',
     new_0_4_3_2: '資格情報管理のためのアカウント設定を追加',
     new_0_4_3_3: 'サイドバーにログアウトボタンを追加',

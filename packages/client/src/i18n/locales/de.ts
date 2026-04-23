@@ -84,6 +84,7 @@ export default {
     updateSuccess: 'Aktualisierung abgeschlossen, bitte Server neu starten',
     updateFailed: 'Aktualisierung fehlgeschlagen',
     logout: 'Abmelden',
+    nodeVersionWarning: 'Node.js v{version} erkannt. Version 23+ wird fur volle Funktionalitat benotigt (SQLite, node-pty).',
     changelog: 'Anderungsprotokoll',
     noChangelog: 'Kein Anderungsprotokoll verfugbar',
   },
@@ -510,6 +511,11 @@ export default {
 
   // Anderungsprotokoll
   changelog: {
+    new_0_4_4_1: 'Dateibrowser mit Multi-Backend-Unterstutzung hinzugefugt (local/Docker/SSH/Singularity)',
+    new_0_4_4_2: 'Dateidownload aus Chat-Nachrichtenanhangen hinzugefugt',
+    new_0_4_4_3: 'Live-Badge auf aktiven Chat-Sitzungen hinzugefugt',
+    new_0_4_4_4: 'StepFun- und Nous-Portal-Provider-Unterstutzung hinzugefugt',
+    new_0_4_4_5: 'Spezialzeichen-Suche verursacht 500-Fehler behoben',
     new_0_4_3_1: 'Benutzername/Passwort-Login neben Token-Authentifizierung hinzugefugt',
     new_0_4_3_2: 'Kontoeinstellungen fur Anmeldeinformationen hinzugefugt',
     new_0_4_3_3: 'Abmelden-Schaltflache in der Seitenleiste hinzugefugt',

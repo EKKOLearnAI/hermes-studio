@@ -97,6 +97,7 @@ export default {
     updateSuccess: '更新完成，请重启服务',
     updateFailed: '更新失败',
     logout: '退出登录',
+    nodeVersionWarning: '检测到 Node.js v{version}，请升级到23以上版本。',
     changelog: '更新日志',
     noChangelog: '暂无更新日志',
   },
@@ -614,6 +615,11 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_4_4_1: '新增文件浏览器，支持多后端（本地/Docker/SSH/Singularity）',
+    new_0_4_4_2: '新增聊天消息附件文件下载',
+    new_0_4_4_3: '活跃会话显示实时状态标签',
+    new_0_4_4_4: '新增 StepFun 和 Nous Portal Provider 支持',
+    new_0_4_4_5: '修复特殊字符搜索导致 500 错误',
     new_0_4_3_1: '新增用户名/密码登录，支持与令牌认证并存',
     new_0_4_3_2: '新增账户设置：配置密码、修改密码、修改用户名',
     new_0_4_3_3: '侧边栏新增退出登录按钮',

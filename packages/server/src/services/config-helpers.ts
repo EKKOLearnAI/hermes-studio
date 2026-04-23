@@ -182,7 +182,7 @@ export async function listFilesRecursive(dir: string, prefix: string): Promise<{
 
 export async function fetchProviderModels(baseUrl: string, apiKey: string): Promise<string[]> {
   const base = baseUrl.replace(/\/+$/, '')
-  const modelsUrl = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`
+  const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
     const res = await fetch(modelsUrl, {
       headers: { Authorization: `Bearer ${apiKey}` },

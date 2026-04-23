@@ -46,6 +46,7 @@
 - 工具调用详情展开（参数 / 结果）
 - 文件上传支持
 - 文件下载支持 — 支持下载用户上传的文件和 Agent 生成的文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
+- 会话搜索 — Ctrl+K 全局搜索所有对话
 - 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
 - 每个会话显示模型标签和上下文 Token 用量
 
@@ -88,7 +89,8 @@
 - 从凭证池自动发现模型（`~/.hermes/auth.json`）
 - 从每个 Provider 端点获取可用模型（`/v1/models`）
 - 添加、更新、删除 Provider（预设 & 自定义 OpenAI 兼容）
-- OpenAI Codex OAuth 登录，使用 Codex 模型
+- OpenAI Codex 和 Nous Portal OAuth 登录
+- Provider URL 自动检测，支持非 v1 API 版本（如 `/v4`）
 - Provider 级别模型分组，支持切换默认模型
 
 ### 多配置文件与网关
@@ -99,6 +101,13 @@
 - 多网关管理 — 按 Profile 启动、停止、监控网关
 - 自动端口冲突解决
 - 配置文件级别的配置和缓存隔离
+
+### 文件浏览器
+
+- 浏览远程后端文件（local、Docker、SSH、Singularity）
+- 上传、下载、重命名、复制、移动和删除文件
+- 创建目录
+- 查看文件内容，支持语法高亮
 
 ### 技能与记忆
 
@@ -111,6 +120,12 @@
 - 查看 Agent / Gateway / Error 日志
 - 按日志级别、日志文件和关键词过滤
 - 结构化日志解析，HTTP 访问日志高亮
+
+### 认证
+
+- 基于 Token 的认证（首次运行自动生成或通过 `AUTH_TOKEN` 环境变量设置）
+- 可选的用户名/密码登录 — 通过初始 Token 认证后在设置页面设置
+- 可通过 `AUTH_DISABLED=1` 禁用认证
 
 ### 设置
 

@@ -149,6 +149,10 @@ describe('ChatPanel session list', () => {
 
     const liveRow = wrapper.findAll('.session-item').find(node => node.text().includes('Discord Active'))
     expect(liveRow?.find('.session-item-active-indicator').exists()).toBe(true)
+    expect(liveRow?.text()).toContain('chat.liveMode')
+
+    const idleRow = wrapper.findAll('.session-item').find(node => node.text().includes('Discord Older'))
+    expect(idleRow?.text()).not.toContain('chat.liveMode')
 
     await wrapper.findAll('.session-item').find(node => node.text().includes('Slack Selected'))!.trigger('click')
 

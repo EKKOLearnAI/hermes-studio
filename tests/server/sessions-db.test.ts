@@ -231,6 +231,163 @@ describe('session DB summaries', () => {
     expect(rows[1].snippet).toContain('docker')
   })
 
+  it('falls back to LIKE search when messages_fts is missing for numeric queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+    likeAllMock.mockReturnValue([
+      {
+        id: 'numeric-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710002800,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'numeric preview',
+        last_active: 1710002805,
+        matched_message_id: 9,
+        snippet: 'ticket 12345',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+
+    expect(likeAllMock).toHaveBeenCalledWith('123', '%123%')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('numeric-1')
+    expect(rows[0].snippet).toContain('123')
+  })
+
+  it('keeps the source filter when messages_fts is missing for numeric queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+    likeAllMock.mockReturnValue([
+      {
+        id: 'numeric-telegram-1',
+        source: 'telegram',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710002850,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'telegram numeric preview',
+        last_active: 1710002855,
+        matched_message_id: 12,
+        snippet: 'telegram 123 body',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('123', 'telegram', 10)
+
+    expect(likeAllMock).toHaveBeenCalledWith('telegram', '123', '%123%')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].source).toBe('telegram')
+    expect(rows[0].id).toBe('numeric-telegram-1')
+  })
+
+  it('preserves title matches when messages_fts is missing for numeric queries', async () => {
+    titleAllMock.mockReturnValue([
+      {
+        id: 'title-123',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Issue 123',
+        started_at: 1710002900,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'title numeric preview',
+        last_active: 1710002910,
+        matched_message_id: null,
+        snippet: 'Issue 123',
+        rank: 0,
+      },
+    ])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+    likeAllMock.mockReturnValue([
+      {
+        id: 'content-123',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710002890,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'content numeric preview',
+        last_active: 1710002895,
+        matched_message_id: 10,
+        snippet: 'content 123 body',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0].id).toBe('title-123')
+    expect(rows[0].matched_message_id).toBeNull()
+    expect(rows[1].id).toBe('content-123')
+    expect(rows[1].matched_message_id).toBe(10)
+  })
+
   it('falls back to LIKE search for CJK queries', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
@@ -272,5 +429,33 @@ describe('session DB summaries', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe('cjk-1')
     expect(rows[0].snippet).toContain('记忆断裂')
+  })
+
+  it('does not fall back to LIKE when messages_fts is missing for non-numeric queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('docker', undefined, 10)).rejects.toThrow(
+      'Failed to search sessions: no such table: messages_fts',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
+  })
+
+  it('does not swallow unrelated database failures for numeric queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('database malformed')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
+      'Failed to search sessions: database malformed',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
   })
 })

@@ -84,6 +84,7 @@ export default {
     updateSuccess: 'Actualizacion completa, por favor reinicia el servidor',
     updateFailed: 'Error al actualizar',
     logout: 'Cerrar sesion',
+    nodeVersionWarning: 'Node.js v{version} detectado. Se requiere la version 23+ para todas las funcionalidades (SQLite, node-pty).',
     changelog: 'Registro de cambios',
     noChangelog: 'No hay registro de cambios',
   },
@@ -510,6 +511,11 @@ export default {
 
   // Registro de cambios
   changelog: {
+    new_0_4_4_1: 'Agregar explorador de archivos con soporte multi-backend (local/Docker/SSH/Singularity)',
+    new_0_4_4_2: 'Agregar descarga de archivos desde archivos adjuntos del chat',
+    new_0_4_4_3: 'Agregar indicador en vivo en sesiones de chat activas',
+    new_0_4_4_4: 'Agregar soporte para proveedores StepFun y Nous Portal',
+    new_0_4_4_5: 'Corregir error 500 al buscar con caracteres especiales',
     new_0_4_3_1: 'Agregar inicio de sesion con usuario/contrasena junto a autenticacion por token',
     new_0_4_3_2: 'Agregar configuracion de cuenta para gestionar credenciales',
     new_0_4_3_3: 'Agregar boton de cerrar sesion en la barra lateral',

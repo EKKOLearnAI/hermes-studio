@@ -169,6 +169,30 @@ describe('Chat Store', () => {
     expect(window.localStorage.getItem(legacySessionMessagesKey('legacy-1'))).toBeNull()
   })
 
+  it('marks recently active server sessions as live even when this tab did not start the run', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-22T19:00:00.000Z'))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([
+      {
+        ...makeSummary('remote-live', 'Remote Live'),
+        ended_at: null,
+        last_active: Math.floor(Date.now() / 1000) - 60,
+      },
+      {
+        ...makeSummary('remote-idle', 'Remote Idle'),
+        ended_at: Math.floor(Date.now() / 1000) - 600,
+        last_active: Math.floor(Date.now() / 1000) - 600,
+      },
+    ])
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.isSessionLive('remote-live')).toBe(true)
+    expect(store.isSessionLive('remote-idle')).toBe(false)
+  })
+
   it('silently refreshes from server on SSE error instead of appending a fake error bubble', async () => {
     vi.useFakeTimers()
 

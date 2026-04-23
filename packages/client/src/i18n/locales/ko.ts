@@ -84,6 +84,7 @@ export default {
     updateSuccess: '업데이트 완료, 서버를 재시작해 주세요',
     updateFailed: '업데이트 실패',
     logout: '로그아웃',
+    nodeVersionWarning: 'Node.js v{version}이(가) 감지되었습니다. 전체 기능에는 버전 23+가 필요합니다(SQLite, node-pty).',
     changelog: '변경 이력',
     noChangelog: '변경 이력이 없습니다',
   },
@@ -510,6 +511,11 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_4_4_1: '파일 브라우저 추가 (local/Docker/SSH/Singularity 지원)',
+    new_0_4_4_2: '채팅 메시지 첨부 파일 다운로드 추가',
+    new_0_4_4_3: '활성 세션에 라이브 배지 표시',
+    new_0_4_4_4: 'StepFun 및 Nous Portal 프로바이더 지원 추가',
+    new_0_4_4_5: '특수문자 검색 시 500 에러 수정',
     new_0_4_3_1: '토큰 인증과 함께 사용자 이름/비밀번호 로그인 추가',
     new_0_4_3_2: '자격 증명 관리를 위한 계정 설정 추가',
     new_0_4_3_3: '사이드바에 로그아웃 버튼 추가',

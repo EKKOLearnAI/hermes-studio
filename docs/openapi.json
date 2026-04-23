@@ -2,29 +2,110 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Hermes Web UI API",
-    "description": "BFF server API for Hermes Web UI — chat sessions, platform channels, model management, skills, memory, logs, and terminal.",
-    "version": "0.2.6"
+    "description": "BFF server API for Hermes Web UI — chat sessions, platform channels, model management, skills, memory, logs, file browser, and terminal.",
+    "version": "0.4.4"
   },
   "servers": [
     { "url": "http://localhost:8648", "description": "Local development" }
   ],
   "tags": [
+    { "name": "Auth", "description": "Authentication and password management" },
     { "name": "Health", "description": "Health check" },
     { "name": "Sessions", "description": "Chat session management" },
     { "name": "Upload", "description": "File upload" },
+    { "name": "Files", "description": "Hermes file system operations" },
+    { "name": "Download", "description": "File download" },
     { "name": "Config", "description": "Configuration management" },
     { "name": "Credentials", "description": "Platform credential management" },
     { "name": "Models", "description": "Model & provider management" },
+    { "name": "Codex Auth", "description": "OpenAI Codex device-code OAuth flow" },
+    { "name": "Nous Auth", "description": "Nous Research portal device-code OAuth flow" },
     { "name": "Skills", "description": "Skill browsing and management" },
     { "name": "Memory", "description": "Agent memory files" },
     { "name": "Logs", "description": "Log file access" },
     { "name": "Weixin", "description": "WeChat QR code login" },
     { "name": "Profiles", "description": "Hermes profile management" },
+    { "name": "Gateways", "description": "Gateway process management" },
+    { "name": "Update", "description": "Self-update management" },
     { "name": "Terminal", "description": "WebSocket terminal (node-pty)" },
     { "name": "Webhook", "description": "Webhook receiver" },
     { "name": "Proxy", "description": "Reverse proxy to Hermes API" }
   ],
   "paths": {
+    "/api/auth/status": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Check auth status",
+        "operationId": "authStatus",
+        "responses": {
+          "200": { "description": "Auth status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthStatusResponse" } } } }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Login with username and password",
+        "operationId": "login",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+        "responses": {
+          "200": { "description": "Login successful", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginResponse" } } } },
+          "401": { "description": "Invalid credentials", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/auth/setup": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Set username and password",
+        "operationId": "setupPassword",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetupPasswordRequest" } } } },
+        "responses": {
+          "200": { "description": "Password set", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Change password",
+        "operationId": "changePassword",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" } } } },
+        "responses": {
+          "200": { "description": "Password changed", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "400": { "description": "Invalid current password", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/auth/change-username": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Change username",
+        "operationId": "changeUsername",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChangeUsernameRequest" } } } },
+        "responses": {
+          "200": { "description": "Username changed", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/auth/password": {
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Remove password login",
+        "operationId": "removePassword",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Password removed", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": ["Health"],
@@ -48,10 +129,59 @@
           { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Limit results" }
         ],
         "responses": {
-          "200": {
-            "description": "List of sessions",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionListResponse" } } }
-          },
+          "200": { "description": "List of sessions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/sessions/conversations": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "List conversations from DB",
+        "operationId": "listConversations",
+        "parameters": [
+          { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "Filter by source platform" },
+          { "name": "humanOnly", "in": "query", "schema": { "type": "boolean" }, "description": "Filter human-initiated sessions only" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Limit results" }
+        ],
+        "responses": {
+          "200": { "description": "List of conversations", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/sessions/conversations/{id}/messages": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get conversation messages from DB",
+        "operationId": "getConversationMessages",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "source", "in": "query", "schema": { "type": "string" } },
+          { "name": "humanOnly", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": {
+          "200": { "description": "Conversation with messages", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionDetailResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Conversation not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/search/sessions": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Search sessions by keyword",
+        "operationId": "searchSessions",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Search query" },
+          { "name": "source", "in": "query", "schema": { "type": "string" }, "description": "Filter by source platform" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" }, "description": "Limit results" }
+        ],
+        "responses": {
+          "200": { "description": "Search results", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SearchSessionsResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         },
         "security": [{ "BearerAuth": [] }]
@@ -64,10 +194,7 @@
         "operationId": "getSession",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
-          "200": {
-            "description": "Session with messages",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionDetailResponse" } } }
-          },
+          "200": { "description": "Session with messages", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionDetailResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         },
@@ -102,6 +229,45 @@
         "security": [{ "BearerAuth": [] }]
       }
     },
+    "/api/hermes/sessions/usage": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get batch session usage",
+        "operationId": "usageBatch",
+        "parameters": [{ "name": "ids", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Comma-separated session IDs" }],
+        "responses": {
+          "200": { "description": "Usage map by session ID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageBatchResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/sessions/context-length": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get context length",
+        "operationId": "contextLength",
+        "parameters": [{ "name": "profile", "in": "query", "schema": { "type": "string" }, "description": "Profile name" }],
+        "responses": {
+          "200": { "description": "Context length", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ContextLengthResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/sessions/{id}/usage": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Get single session usage",
+        "operationId": "usageSingle",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Session usage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageSingleResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
     "/upload": {
       "post": {
         "tags": ["Upload"],
@@ -117,6 +283,152 @@
           "401": { "$ref": "#/components/responses/Unauthorized" }
         },
         "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/download": {
+      "get": {
+        "tags": ["Download"],
+        "summary": "Download a file",
+        "operationId": "downloadFile",
+        "parameters": [
+          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "File path on the Hermes backend" },
+          { "name": "name", "in": "query", "schema": { "type": "string" }, "description": "Filename for Content-Disposition header" }
+        ],
+        "responses": {
+          "200": { "description": "File content", "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "File not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/files/list": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "List directory entries",
+        "operationId": "listFiles",
+        "parameters": [{ "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Directory path" }],
+        "responses": {
+          "200": { "description": "Directory listing", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/files/stat": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Get file/directory stat",
+        "operationId": "statFile",
+        "parameters": [{ "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "File path" }],
+        "responses": {
+          "200": { "description": "File stat info", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileStatResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/files/read": {
+      "get": {
+        "tags": ["Files"],
+        "summary": "Read file content",
+        "operationId": "readFile",
+        "parameters": [{ "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "File path" }],
+        "responses": {
+          "200": { "description": "File content", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileReadResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/files/write": {
+      "put": {
+        "tags": ["Files"],
+        "summary": "Write file content",
+        "operationId": "writeFile",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileWriteRequest" } } } },
+        "responses": {
+          "200": { "description": "Written", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileOperationResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Write failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/files/delete": {
+      "delete": {
+        "tags": ["Files"],
+        "summary": "Delete file or directory",
+        "operationId": "deleteFile",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileDeleteRequest" } } } },
+        "responses": {
+          "200": { "description": "Deleted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileOperationResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Delete failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/files/rename": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Rename or move file",
+        "operationId": "renameFile",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileRenameRequest" } } } },
+        "responses": {
+          "200": { "description": "Renamed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileOperationResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Rename failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/files/mkdir": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Create directory",
+        "operationId": "mkdir",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileMkdirRequest" } } } },
+        "responses": {
+          "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileOperationResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to create", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/files/copy": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Copy file or directory",
+        "operationId": "copyFile",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileCopyRequest" } } } },
+        "responses": {
+          "200": { "description": "Copied", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FileOperationResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Copy failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/files/upload": {
+      "post": {
+        "tags": ["Files"],
+        "summary": "Upload file to Hermes backend",
+        "operationId": "uploadFileToBackend",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Target directory path" }],
+        "requestBody": {
+          "required": true,
+          "content": { "multipart/form-data": { "schema": { "type": "object", "properties": { "file": { "type": "string", "format": "binary" } }, "required": ["file"] } } }
+        },
+        "responses": {
+          "200": { "description": "Upload result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
       }
     },
     "/api/hermes/config": {
@@ -169,7 +481,7 @@
         "tags": ["Models"],
         "summary": "Fetch available models",
         "operationId": "getAvailableModels",
-        "description": "Fetches models from all credential pool endpoints in ~/.hermes/auth.json",
+        "description": "Fetches models from all credential pool endpoints in ~/.hermes/auth.json. Supports non-v1 API versions (e.g. /v4).",
         "responses": {
           "200": { "description": "Model list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AvailableModelsResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -222,6 +534,20 @@
       }
     },
     "/api/hermes/config/providers/{poolKey}": {
+      "put": {
+        "tags": ["Models"],
+        "summary": "Update provider",
+        "operationId": "updateProvider",
+        "parameters": [{ "name": "poolKey", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Credential pool key (URL-encoded)" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateProviderRequest" } } } },
+        "responses": {
+          "200": { "description": "Updated", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "description": "Provider not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Failed to update", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      },
       "delete": {
         "tags": ["Models"],
         "summary": "Delete provider",
@@ -235,6 +561,82 @@
           "500": { "description": "Failed to delete", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         },
         "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/auth/codex/start": {
+      "post": {
+        "tags": ["Codex Auth"],
+        "summary": "Start Codex OAuth device flow",
+        "operationId": "codexAuthStart",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Device code flow started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OAuthStartResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to start", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/auth/codex/poll/{sessionId}": {
+      "get": {
+        "tags": ["Codex Auth"],
+        "summary": "Poll Codex OAuth status",
+        "operationId": "codexAuthPoll",
+        "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OAuth poll result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OAuthPollResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/auth/codex/status": {
+      "get": {
+        "tags": ["Codex Auth"],
+        "summary": "Check Codex auth status",
+        "operationId": "codexAuthStatus",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Codex auth status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CodexAuthStatusResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/hermes/auth/nous/start": {
+      "post": {
+        "tags": ["Nous Auth"],
+        "summary": "Start Nous Portal OAuth device flow",
+        "operationId": "nousAuthStart",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Device code flow started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OAuthStartResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to start", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/hermes/auth/nous/poll/{sessionId}": {
+      "get": {
+        "tags": ["Nous Auth"],
+        "summary": "Poll Nous OAuth status",
+        "operationId": "nousAuthPoll",
+        "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OAuth poll result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NousOAuthPollResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/auth/nous/status": {
+      "get": {
+        "tags": ["Nous Auth"],
+        "summary": "Check Nous auth status",
+        "operationId": "nousAuthStatus",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Nous auth status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NousAuthStatusResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
       }
     },
     "/api/hermes/skills": {
@@ -471,6 +873,72 @@
         "security": [{ "BearerAuth": [] }]
       }
     },
+    "/api/hermes/gateways": {
+      "get": {
+        "tags": ["Gateways"],
+        "summary": "List gateways",
+        "operationId": "listGateways",
+        "responses": {
+          "200": { "description": "Gateway list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GatewayListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/gateways/{name}/start": {
+      "post": {
+        "tags": ["Gateways"],
+        "summary": "Start a gateway",
+        "operationId": "startGateway",
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GatewayStartResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to start", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/gateways/{name}/stop": {
+      "post": {
+        "tags": ["Gateways"],
+        "summary": "Stop a gateway",
+        "operationId": "stopGateway",
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Stopped", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Failed to stop", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/gateways/{name}/health": {
+      "get": {
+        "tags": ["Gateways"],
+        "summary": "Check gateway health",
+        "operationId": "gatewayHealth",
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Gateway health", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GatewayHealthResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    },
+    "/api/hermes/update": {
+      "post": {
+        "tags": ["Update"],
+        "summary": "Trigger self-update",
+        "operationId": "selfUpdate",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Update triggered", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "description": "Update failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
     "/api/hermes/terminal": {
       "get": {
         "tags": ["Terminal"],
@@ -643,13 +1111,62 @@
         "properties": { "error": { "type": "string" } },
         "required": ["error"]
       },
+      "AuthStatusResponse": {
+        "type": "object",
+        "properties": {
+          "hasPasswordLogin": { "type": "boolean" },
+          "username": { "type": "string", "nullable": true }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "username": { "type": "string" },
+          "password": { "type": "string" }
+        },
+        "required": ["username", "password"]
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "token": { "type": "string" }
+        }
+      },
+      "SetupPasswordRequest": {
+        "type": "object",
+        "properties": {
+          "username": { "type": "string" },
+          "password": { "type": "string" }
+        },
+        "required": ["username", "password"]
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": { "type": "string" },
+          "newPassword": { "type": "string" }
+        },
+        "required": ["currentPassword", "newPassword"]
+      },
+      "ChangeUsernameRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": { "type": "string" },
+          "newUsername": { "type": "string" }
+        },
+        "required": ["currentPassword", "newUsername"]
+      },
       "HealthResponse": {
         "type": "object",
         "properties": {
           "status": { "type": "string", "enum": ["ok", "error"] },
           "platform": { "type": "string", "example": "hermes-agent" },
           "version": { "type": "string" },
-          "gateway": { "type": "string", "enum": ["running", "stopped"] }
+          "gateway": { "type": "string", "enum": ["running", "stopped"] },
+          "webui_version": { "type": "string", "description": "Local installed version" },
+          "webui_latest": { "type": "string", "description": "Latest version on npm" },
+          "webui_update_available": { "type": "boolean" },
+          "node_version": { "type": "string", "description": "Node.js runtime version (e.g. 22.11.0)" }
         }
       },
       "UploadResponse": {
@@ -670,7 +1187,7 @@
       "SessionListResponse": {
         "type": "object",
         "properties": {
-          "sessions": { "type": "array", "items": { "type": "object" }, "description": "Array of session objects from Hermes CLI" }
+          "sessions": { "type": "array", "items": { "type": "object" }, "description": "Array of session objects" }
         }
       },
       "SessionDetailResponse": {
@@ -679,10 +1196,121 @@
           "session": { "type": "object", "description": "Session object with messages" }
         }
       },
+      "SearchSessionsResponse": {
+        "type": "object",
+        "properties": {
+          "results": { "type": "array", "items": { "type": "object" }, "description": "Array of matching session objects" }
+        }
+      },
+      "UsageBatchResponse": {
+        "type": "object",
+        "description": "Map of session ID to usage data",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "input_tokens": { "type": "integer" },
+            "output_tokens": { "type": "integer" }
+          }
+        }
+      },
+      "UsageSingleResponse": {
+        "type": "object",
+        "properties": {
+          "input_tokens": { "type": "integer", "default": 0 },
+          "output_tokens": { "type": "integer", "default": 0 }
+        }
+      },
+      "ContextLengthResponse": {
+        "type": "object",
+        "properties": {
+          "context_length": { "type": "integer" }
+        }
+      },
       "RenameRequest": {
         "type": "object",
         "properties": { "title": { "type": "string" } },
         "required": ["title"]
+      },
+      "FileListResponse": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "isDir": { "type": "boolean" },
+                "size": { "type": "integer", "nullable": true },
+                "mtime": { "type": "string", "nullable": true }
+              }
+            }
+          },
+          "path": { "type": "string" }
+        }
+      },
+      "FileStatResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "isDir": { "type": "boolean" },
+          "size": { "type": "integer" },
+          "mtime": { "type": "string" }
+        }
+      },
+      "FileReadResponse": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string" },
+          "path": { "type": "string" },
+          "size": { "type": "integer" }
+        }
+      },
+      "FileWriteRequest": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "content": { "type": "string" }
+        },
+        "required": ["path", "content"]
+      },
+      "FileDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "recursive": { "type": "boolean", "default": false }
+        },
+        "required": ["path"]
+      },
+      "FileRenameRequest": {
+        "type": "object",
+        "properties": {
+          "oldPath": { "type": "string" },
+          "newPath": { "type": "string" }
+        },
+        "required": ["oldPath", "newPath"]
+      },
+      "FileMkdirRequest": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" }
+        },
+        "required": ["path"]
+      },
+      "FileCopyRequest": {
+        "type": "object",
+        "properties": {
+          "srcPath": { "type": "string" },
+          "destPath": { "type": "string" }
+        },
+        "required": ["srcPath", "destPath"]
+      },
+      "FileOperationResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "path": { "type": "string" }
+        }
       },
       "UpdateConfigRequest": {
         "type": "object",
@@ -758,6 +1386,51 @@
           "providerKey": { "type": "string", "description": "Credential pool key (optional)" }
         },
         "required": ["name", "base_url", "api_key", "model"]
+      },
+      "UpdateProviderRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Display name" },
+          "base_url": { "type": "string", "description": "API base URL" },
+          "api_key": { "type": "string", "description": "API key" },
+          "model": { "type": "string", "description": "Model ID" }
+        }
+      },
+      "OAuthStartResponse": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "user_code": { "type": "string" },
+          "verification_url": { "type": "string" },
+          "expires_in": { "type": "integer" }
+        }
+      },
+      "OAuthPollResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "approved", "expired", "error"] },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "CodexAuthStatusResponse": {
+        "type": "object",
+        "properties": {
+          "authenticated": { "type": "boolean" },
+          "last_refresh": { "type": "string", "nullable": true }
+        }
+      },
+      "NousOAuthPollResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "approved", "denied", "expired", "error"] },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "NousAuthStatusResponse": {
+        "type": "object",
+        "properties": {
+          "authenticated": { "type": "boolean" }
+        }
       },
       "SkillsResponse": {
         "type": "object",
@@ -959,6 +1632,32 @@
           "name": { "type": "string", "description": "Profile name after import (optional)" }
         },
         "required": ["archive"]
+      },
+      "GatewayListResponse": {
+        "type": "object",
+        "properties": {
+          "gateways": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "GatewayStartResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "gateway": { "type": "object" }
+        }
+      },
+      "GatewayHealthResponse": {
+        "type": "object",
+        "properties": {
+          "gateway": { "type": "object" }
+        }
+      },
+      "UpdateResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "message": { "type": "string" }
+        }
       }
     }
   }

@@ -48,6 +48,7 @@ export async function healthCheck(ctx: any) {
     webui_version: LOCAL_VERSION,
     webui_latest: cachedLatestVersion,
     webui_update_available: cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION,
+    node_version: process.versions.node,
   }
 }
 

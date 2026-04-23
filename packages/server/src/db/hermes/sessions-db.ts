@@ -159,6 +159,42 @@ function containsCjk(text: string): boolean {
   return false
 }
 
+function isNumericQuery(text: string): boolean {
+  return /^\d+(?:\s+\d+)*$/.test(text.trim())
+}
+
+function hasUnsafeChars(text: string): boolean {
+  return /[^\w\s\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(text)
+}
+
+function runLikeContentSearch(
+  db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } },
+  source: string | undefined,
+  query: string,
+): Record<string, unknown>[] {
+  const likeBase = buildBaseSessionSql(source)
+  const likeSql = `
+    WITH base AS (
+      ${likeBase.sql}
+    )
+    SELECT
+      base.*,
+      m.id AS matched_message_id,
+      substr(
+        m.content,
+        max(1, instr(m.content, ?) - 40),
+        120
+      ) AS snippet,
+      0 AS rank
+    FROM base
+    JOIN messages m ON m.session_id = base.id
+    WHERE m.content LIKE ?
+    ORDER BY base.last_active DESC, m.timestamp DESC
+  `
+  const likeStatement = db.prepare(likeSql)
+  return likeStatement.all(...likeBase.params, query, `%${query}%`) as Record<string, unknown>[]
+}
+
 function sanitizeFtsQuery(query: string): string {
   const quotedParts: string[] = []
 
@@ -246,6 +282,7 @@ export async function searchSessionSummaries(
   const db = new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
   const normalized = sanitizeFtsQuery(trimmed)
   const prefixQuery = toPrefixQuery(normalized)
+  let titleRows: Record<string, unknown>[] = []
 
   try {
     const titleBase = buildBaseSessionSql(source)
@@ -270,7 +307,7 @@ export async function searchSessionSummaries(
     `
 
     const titleStatement = db.prepare(titleSql)
-    const titleRows = titleStatement.all(...titleBase.params, `%${trimmed.toLowerCase()}%`, limit) as Record<string, unknown>[]
+    titleRows = titleStatement.all(...titleBase.params, `%${trimmed.toLowerCase()}%`, limit) as Record<string, unknown>[]
 
     const contentSql = `
       WITH base AS (
@@ -312,28 +349,9 @@ export async function searchSessionSummaries(
     })
     return items.slice(0, limit)
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
     if (containsCjk(normalized)) {
-      const likeBase = buildBaseSessionSql(source)
-      const likeSql = `
-        WITH base AS (
-          ${likeBase.sql}
-        )
-        SELECT
-          base.*,
-          m.id AS matched_message_id,
-          substr(
-            m.content,
-            max(1, instr(m.content, ?) - 40),
-            120
-          ) AS snippet,
-          0 AS rank
-        FROM base
-        JOIN messages m ON m.session_id = base.id
-        WHERE m.content LIKE ?
-        ORDER BY base.last_active DESC, m.timestamp DESC
-      `
-      const likeStatement = db.prepare(likeSql)
-      const likeRows = likeStatement.all(...likeBase.params, trimmed, `%${trimmed}%`) as Record<string, unknown>[]
+      const likeRows = runLikeContentSearch(db, source, trimmed)
       const merged = new Map<string, HermesSessionSearchRow>()
       for (const row of likeRows) {
         const mapped = mapSearchRow(row)
@@ -344,7 +362,22 @@ export async function searchSessionSummaries(
       return [...merged.values()].slice(0, limit)
     }
 
-    const message = err instanceof Error ? err.message : String(err)
+    if (isNumericQuery(trimmed) || hasUnsafeChars(trimmed)) {
+      const likeRows = runLikeContentSearch(db, source, trimmed)
+      const merged = new Map<string, HermesSessionSearchRow>()
+      for (const row of titleRows) {
+        const mapped = mapSearchRow(row)
+        merged.set(mapped.id, mapped)
+      }
+      for (const row of likeRows) {
+        const mapped = mapSearchRow(row)
+        if (!merged.has(mapped.id)) {
+          merged.set(mapped.id, mapped)
+        }
+      }
+      return [...merged.values()].slice(0, limit)
+    }
+
     throw new Error(`Failed to search sessions: ${message}`)
   } finally {
     db.close()
