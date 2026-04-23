@@ -553,6 +553,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function switchSession(sessionId: string, focusId?: string | null) {
+    clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
     setItemBestEffort(storageKey(), sessionId)
@@ -819,12 +820,18 @@ export const useChatStore = defineStore('chat', () => {
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.role === 'assistant' && last.isStreaming) {
-                last.content += evt.delta || ''
+                const prev = last.content
+                const next = prev + (evt.delta || '')
+                noteThinkingDelta(last.id, prev, next)
+                last.content = next
               } else {
+                const newId = uid()
+                const nextContent = evt.delta || ''
+                noteThinkingDelta(newId, '', nextContent)
                 addMessage(sid, {
-                  id: uid(),
+                  id: newId,
                   role: 'assistant',
-                  content: evt.delta || '',
+                  content: nextContent,
                   timestamp: Date.now(),
                   isStreaming: true,
                 })
