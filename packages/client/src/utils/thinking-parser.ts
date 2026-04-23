@@ -80,3 +80,20 @@ export function countThinkingChars(parsed: ParsedThinking): number {
   const len = (s: string) => [...s].length
   return parsed.segments.reduce((a, s) => a + len(s), 0) + len(parsed.pending || '')
 }
+
+export interface ThinkingBoundary {
+  startedAtBoundary: boolean
+  endedAtBoundary: boolean
+}
+
+const ANY_OPEN_RE = /<(think|thinking|reasoning)>/i
+const ANY_CLOSE_RE = /<\/(think|thinking|reasoning)>/i
+
+export function detectThinkingBoundary(prev: string, next: string): ThinkingBoundary {
+  const prevMasked = protectCodeBlocks(prev).masked
+  const nextMasked = protectCodeBlocks(next).masked
+  return {
+    startedAtBoundary: !ANY_OPEN_RE.test(prevMasked) && ANY_OPEN_RE.test(nextMasked),
+    endedAtBoundary: !ANY_CLOSE_RE.test(prevMasked) && ANY_CLOSE_RE.test(nextMasked),
+  }
+}

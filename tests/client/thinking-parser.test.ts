@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseThinking, countThinkingChars } from '@/utils/thinking-parser'
+import { parseThinking, countThinkingChars, detectThinkingBoundary } from '@/utils/thinking-parser'
 
 describe('parseThinking', () => {
   it('splits a single closed <think> block from body', () => {
@@ -122,5 +122,46 @@ describe('countThinkingChars', () => {
 
   it('returns 0 when no thinking', () => {
     expect(countThinkingChars({ segments: [], pending: null, body: 'x', hasThinking: false })).toBe(0)
+  })
+})
+
+describe('detectThinkingBoundary', () => {
+  it('detects first appearance of opening tag', () => {
+    const r = detectThinkingBoundary('', '<think>x')
+    expect(r.startedAtBoundary).toBe(true)
+    expect(r.endedAtBoundary).toBe(false)
+  })
+
+  it('detects first appearance of closing tag', () => {
+    const r = detectThinkingBoundary('<think>hi', '<think>hi</think>')
+    expect(r.startedAtBoundary).toBe(false)
+    expect(r.endedAtBoundary).toBe(true)
+  })
+
+  it('detects both when both emerge in one delta', () => {
+    const r = detectThinkingBoundary('', '<think>x</think>')
+    expect(r.startedAtBoundary).toBe(true)
+    expect(r.endedAtBoundary).toBe(true)
+  })
+
+  it('reports no boundary when neither crossed', () => {
+    const r = detectThinkingBoundary('abc', 'abcdef')
+    expect(r.startedAtBoundary).toBe(false)
+    expect(r.endedAtBoundary).toBe(false)
+  })
+
+  it('ignores fake tags inside code blocks', () => {
+    const r = detectThinkingBoundary('', '```\n<think>fake</think>\n```')
+    expect(r.startedAtBoundary).toBe(false)
+    expect(r.endedAtBoundary).toBe(false)
+  })
+
+  it('is idempotent for repeated open/close after initial', () => {
+    const r = detectThinkingBoundary(
+      '<think>a</think><think>b',
+      '<think>a</think><think>b</think>',
+    )
+    expect(r.startedAtBoundary).toBe(false)
+    expect(r.endedAtBoundary).toBe(false)
   })
 })
