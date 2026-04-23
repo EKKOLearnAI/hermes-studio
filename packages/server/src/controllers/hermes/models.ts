@@ -83,7 +83,7 @@ export async function getAvailable(ctx: any) {
         const builtinPreset = PROVIDER_PRESETS.find(p => p.value === bareKey)
         let models = builtinPreset?.models?.length ? [...builtinPreset.models] : [cp.model]
         if (cp.api_key) {
-          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = fetched } catch { }
+          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
         }
         const label = builtinPreset?.label || cp.name
         const presetBaseUrl = builtinPreset?.base_url || ''
