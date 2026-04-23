@@ -91,4 +91,20 @@ describe('parseThinking', () => {
     expect(r.segments).toEqual(['real'])
     expect(r.body).toBe('text\n```\n<think>fake</think>\n```')
   })
+
+  it('same-name nesting: inner tag absorbed into first segment (documented limitation)', () => {
+    const r = parseThinking('<think>a<think>b</think>c</think>', { streaming: false })
+    expect(r.segments).toEqual(['a<think>b'])
+    expect(r.body).toBe('c</think>')
+  })
+
+  it('handles chunk boundary: partial opening tag not yet identified', () => {
+    const mid = parseThinking('<thin', { streaming: true })
+    expect(mid.hasThinking).toBe(false)
+    expect(mid.body).toBe('<thin')
+
+    const after = parseThinking('<think>hi</think>done', { streaming: true })
+    expect(after.segments).toEqual(['hi'])
+    expect(after.body).toBe('done')
+  })
 })
