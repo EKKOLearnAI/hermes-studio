@@ -75,3 +75,8 @@ export function parseThinking(content: string, opts: ParseOptions): ParsedThinki
     hasThinking: segments.length > 0 || pending !== null,
   }
 }
+
+export function countThinkingChars(parsed: ParsedThinking): number {
+  const len = (s: string) => [...s].length
+  return parsed.segments.reduce((a, s) => a + len(s), 0) + len(parsed.pending || '')
+}

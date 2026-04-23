@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseThinking } from '@/utils/thinking-parser'
+import { parseThinking, countThinkingChars } from '@/utils/thinking-parser'
 
 describe('parseThinking', () => {
   it('splits a single closed <think> block from body', () => {
@@ -106,5 +106,21 @@ describe('parseThinking', () => {
     const after = parseThinking('<think>hi</think>done', { streaming: true })
     expect(after.segments).toEqual(['hi'])
     expect(after.body).toBe('done')
+  })
+})
+
+describe('countThinkingChars', () => {
+  it('counts all segments + pending as Unicode chars', () => {
+    const n = countThinkingChars({
+      segments: ['abc', '你好'],
+      pending: '🎉!',
+      body: '',
+      hasThinking: true,
+    })
+    expect(n).toBe(7)
+  })
+
+  it('returns 0 when no thinking', () => {
+    expect(countThinkingChars({ segments: [], pending: null, body: 'x', hasThinking: false })).toBe(0)
   })
 })
