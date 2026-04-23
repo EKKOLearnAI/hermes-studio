@@ -6,6 +6,7 @@ import { NButton, NDropdown, NInput, NModal, NTooltip, useMessage } from 'naive-
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
+import { copyToClipboard } from '@/utils/clipboard'
 import ChatInput from './ChatInput.vue'
 import ConversationMonitorPane from './ConversationMonitorPane.vue'
 import MessageList from './MessageList.vue'
@@ -177,11 +178,12 @@ function handleNewChat() {
   chatStore.newChat()
 }
 
-function copySessionId(id?: string) {
+async function copySessionId(id?: string) {
   const sessionId = id || chatStore.activeSessionId
   if (sessionId) {
-    navigator.clipboard.writeText(sessionId)
-    message.success(t('common.copied'))
+    const ok = await copyToClipboard(sessionId)
+    if (ok) message.success(t('common.copied'))
+    else message.error(t('common.copied') + ' ✗')
   }
 }
 

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useFilesStore, isTextFile, isImageFile, isMarkdownFile } from '@/stores/hermes/files'
 import { downloadFile } from '@/api/hermes/download'
 import type { FileEntry } from '@/api/hermes/files'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -72,10 +73,15 @@ async function handleSelect(key: string) {
     case 'download':
       try { await downloadFile(entry.path, entry.name) } catch (err: any) { message.error(err.message) }
       break
-    case 'copyPath':
-      navigator.clipboard.writeText(entry.path)
-      message.success(t('files.pathCopied'))
+    case 'copyPath': {
+      const ok = await copyToClipboard(entry.path)
+      if (ok) {
+        message.success(t('files.pathCopied'))
+      } else {
+        message.error(t('files.pathCopied') + ' ✗')
+      }
       break
+    }
     case 'rename':
       emit('rename', entry)
       break
