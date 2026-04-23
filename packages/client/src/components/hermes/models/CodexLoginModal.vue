@@ -3,6 +3,7 @@ import { ref, onUnmounted } from 'vue'
 import { NModal, NButton, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { startCodexLogin, pollCodexLogin } from '@/api/hermes/codex-auth'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const { t } = useI18n()
 const emit = defineEmits<{ close: []; success: [] }>()
@@ -85,9 +86,10 @@ function handleClose() {
   setTimeout(() => emit('close'), 200)
 }
 
-function copyCode() {
-  navigator.clipboard.writeText(userCode.value)
-  message.success(t('models.codexCopyCode'))
+async function copyCode() {
+  const ok = await copyToClipboard(userCode.value)
+  if (ok) message.success(t('models.codexCopyCode'))
+  else message.error(t('models.codexCopyCode') + ' ✗')
 }
 
 function openLink() {
