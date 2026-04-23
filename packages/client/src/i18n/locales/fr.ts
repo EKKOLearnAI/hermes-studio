@@ -127,6 +127,12 @@ export default {
     arguments: 'Arguments',
     result: 'Resultat',
     truncated: '... (tronque)',
+    thinkingLabel: 'Raisonnement',
+    thinkingInProgress: 'En réflexion…',
+    thinkingShow: 'Afficher le raisonnement',
+    thinkingHide: 'Masquer le raisonnement',
+    thinkingDuration: 'Observé {duration}',
+    thinkingChars: '{count} caractères',
   },
 
   // Jobs

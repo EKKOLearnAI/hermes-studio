@@ -151,6 +151,12 @@ export default {
     arguments: 'Arguments',
     result: 'Result',
     truncated: '... (truncated)',
+    thinkingLabel: 'Thinking',
+    thinkingInProgress: 'Thinking…',
+    thinkingShow: 'Show thinking',
+    thinkingHide: 'Hide thinking',
+    thinkingDuration: 'Observed {duration}',
+    thinkingChars: '{count} chars',
   },
 
   // Jobs

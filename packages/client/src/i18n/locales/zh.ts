@@ -152,6 +152,12 @@ export default {
     arguments: '参数',
     result: '结果',
     truncated: '... (已截断)',
+    thinkingLabel: '思考过程',
+    thinkingInProgress: '思考中…',
+    thinkingShow: '展开思考过程',
+    thinkingHide: '收起思考过程',
+    thinkingDuration: '已观察 {duration}',
+    thinkingChars: '{count} 字',
   },
 
   // 定时任务

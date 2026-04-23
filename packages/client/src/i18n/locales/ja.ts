@@ -127,6 +127,12 @@ export default {
     arguments: '引数',
     result: '結果',
     truncated: '... (省略)',
+    thinkingLabel: '思考過程',
+    thinkingInProgress: '思考中…',
+    thinkingShow: '思考過程を表示',
+    thinkingHide: '思考過程を隠す',
+    thinkingDuration: '観測 {duration}',
+    thinkingChars: '{count} 文字',
   },
 
   // スケジュールジョブ
