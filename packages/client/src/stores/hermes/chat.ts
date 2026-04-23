@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 export interface Attachment {
   id: string
@@ -1004,6 +1005,33 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  // Transient observation of <think> boundaries during active streaming.
+  // Not persisted; cleared on session switch. See spec §5.3.
+  const thinkingObservation = new Map<string, { startedAt?: number; endedAt?: number }>()
+
+  function getThinkingObservation(messageId: string) {
+    return thinkingObservation.get(messageId)
+  }
+
+  function noteThinkingDelta(messageId: string, prevContent: string, nextContent: string) {
+    const { startedAtBoundary, endedAtBoundary } = detectThinkingBoundary(prevContent, nextContent)
+    if (!startedAtBoundary && !endedAtBoundary) return
+    const existing = thinkingObservation.get(messageId) || {}
+    if (startedAtBoundary && existing.startedAt === undefined) {
+      existing.startedAt = Date.now()
+    }
+    if (endedAtBoundary && existing.endedAt === undefined) {
+      existing.endedAt = Date.now()
+    }
+    thinkingObservation.set(messageId, existing)
+  }
+
+  function clearThinkingObservationFor(_sessionId: string) {
+    // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
+    // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
+    thinkingObservation.clear()
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -1025,5 +1053,8 @@ export const useChatStore = defineStore('chat', () => {
     stopStreaming,
     loadSessions,
     refreshActiveSession,
+    getThinkingObservation,
+    noteThinkingDelta,
+    clearThinkingObservationFor,
   }
 })
