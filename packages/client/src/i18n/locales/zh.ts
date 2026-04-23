@@ -598,6 +598,7 @@ export default {
     backendError: '文件操作失败',
     dragDropHint: '拖拽文件到此处上传',
     closeEditor: '关闭编辑器',
+    closePreview: '关闭',
     saveFile: '保存',
   },
   // 下载
