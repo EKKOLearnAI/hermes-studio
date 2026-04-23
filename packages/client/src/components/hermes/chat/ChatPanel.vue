@@ -623,26 +623,35 @@ async function handleRenameConfirm() {
 
 :deep(.session-item-active-spinner) {
   animation: session-spin 1.1s linear infinite;
-  filter: drop-shadow(0 0 6px rgba(var(--accent-primary-rgb), 0.35));
 }
 
 :deep(.session-item-live-badge) {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 4px;
   flex-shrink: 0;
-  padding: 0 8px;
-  min-height: 20px;
+  padding: 1px 7px;
   border-radius: 999px;
-  font-size: 11px;
-  line-height: 20px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: $accent-primary;
-  background: rgba(var(--accent-primary-rgb), 0.18);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.34);
-  box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.06), 0 0 10px rgba(var(--accent-primary-rgb), 0.14);
+  background: rgba(var(--accent-primary-rgb), 0.10);
+}
+
+:deep(.live-dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: $accent-primary;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
 }
 
 :deep(.session-item-pin) {
