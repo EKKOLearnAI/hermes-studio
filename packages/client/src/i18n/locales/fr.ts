@@ -85,6 +85,7 @@ export default {
     updateSuccess: 'Mise a jour terminee, veuillez redemarrer le serveur',
     updateFailed: 'Echec de la mise a jour',
     logout: 'Deconnexion',
+    nodeVersionWarning: 'Node.js v{version} detecte. Veuillez passer a la version 23 ou ulterieure.',
     changelog: 'Journal des modifications',
     noChangelog: 'Aucun journal disponible',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: 'Le backend de terminal actuel ne prend pas en charge le telechargement de fichiers',
     invalidPath: 'Chemin de fichier invalide',
     download: 'Telecharger',
+    downloadFile: 'Telecharger le fichier',
   },
 }

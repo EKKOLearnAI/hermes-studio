@@ -85,6 +85,7 @@ export default {
     updateSuccess: '업데이트 완료, 서버를 재시작해 주세요',
     updateFailed: '업데이트 실패',
     logout: '로그아웃',
+    nodeVersionWarning: 'Node.js v{version}이 감지되었습니다. 버전 23 이상으로 업그레이드하세요.',
     changelog: '변경 이력',
     noChangelog: '변경 이력이 없습니다',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: '현재 터미널 백엔드는 파일 다운로드를 지원하지 않습니다',
     invalidPath: '잘못된 파일 경로',
     download: '다운로드',
+    downloadFile: '파일 다운로드',
   },
 }

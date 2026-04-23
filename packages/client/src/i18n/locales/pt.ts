@@ -85,6 +85,7 @@ export default {
     updateSuccess: 'Atualizacao concluida, por favor reinicie o servidor',
     updateFailed: 'Falha na atualizacao',
     logout: 'Sair',
+    nodeVersionWarning: 'Node.js v{version} detectado. Atualize para a versao 23 ou posterior.',
     changelog: 'Registro de alteracoes',
     noChangelog: 'Nenhum registro disponivel',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: 'O backend de terminal atual nao suporta download de arquivos',
     invalidPath: 'Caminho de arquivo invalido',
     download: 'Baixar',
+    downloadFile: 'Baixar arquivo',
   },
 }

@@ -85,6 +85,7 @@ export default {
     updateSuccess: 'Actualizacion completa, por favor reinicia el servidor',
     updateFailed: 'Error al actualizar',
     logout: 'Cerrar sesion',
+    nodeVersionWarning: 'Se detecto Node.js v{version}. Actualiza a la version 23 o posterior.',
     changelog: 'Registro de cambios',
     noChangelog: 'No hay registro de cambios',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: 'El backend del terminal actual no admite la descarga de archivos',
     invalidPath: 'Ruta de archivo invalida',
     download: 'Descargar',
+    downloadFile: 'Descargar archivo',
   },
 }

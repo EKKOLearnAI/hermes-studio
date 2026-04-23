@@ -85,6 +85,7 @@ export default {
     updateSuccess: '更新が完了しました。サーバーを再起動してください',
     updateFailed: '更新に失敗しました',
     logout: 'ログアウト',
+    nodeVersionWarning: 'Node.js v{version} が検出されました。バージョン23以降にアップグレードしてください。',
     changelog: '更新履歴',
     noChangelog: '更新履歴はありません',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: '現在のターミナルバックエンドはファイルのダウンロードに対応していません',
     invalidPath: '無効なファイルパス',
     download: 'ダウンロード',
+    downloadFile: 'ファイルをダウンロード',
   },
 }

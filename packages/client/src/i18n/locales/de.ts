@@ -85,6 +85,7 @@ export default {
     updateSuccess: 'Aktualisierung abgeschlossen, bitte Server neu starten',
     updateFailed: 'Aktualisierung fehlgeschlagen',
     logout: 'Abmelden',
+    nodeVersionWarning: 'Node.js v{version} erkannt. Bitte aktualisieren Sie auf Version 23 oder neuer.',
     changelog: 'Anderungsprotokoll',
     noChangelog: 'Kein Anderungsprotokoll verfugbar',
   },
@@ -584,5 +585,6 @@ export default {
     unsupportedBackend: 'Aktuelles Terminal-Backend unterstutzt keine Datei-Downloads',
     invalidPath: 'Ungultiger Dateipfad',
     download: 'Herunterladen',
+    downloadFile: 'Datei herunterladen',
   },
 }
