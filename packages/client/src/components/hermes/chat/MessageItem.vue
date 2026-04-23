@@ -2,6 +2,8 @@
 import type { Message } from "@/stores/hermes/chat";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useMessage } from "naive-ui";
+import { downloadFile } from "@/api/hermes/download";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import {
   copyTextToClipboard,
@@ -13,6 +15,7 @@ const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
 const props = defineProps<{ message: Message; highlight?: boolean }>();
 const { t } = useI18n();
+const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
 const toolExpanded = ref(false);
@@ -30,6 +33,39 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+/**
+ * Extract the upload file path from message content for a given attachment.
+ * Upload format in content: [File: name.txt](/tmp/hermes-uploads/abc123.txt)
+ */
+function getFilePathFromContent(attName: string): string | null {
+  const content = props.message.content || "";
+  const regex = /\[File:\s*([^\]]+)\]\(([^)]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(content)) !== null) {
+    if (match[1].trim() === attName.trim()) return match[2];
+  }
+  return null;
+}
+
+function handleAttachmentDownload(att: { name: string; url: string; type: string }) {
+  const filePath = getFilePathFromContent(att.name);
+  if (filePath) {
+    toast.info(t("download.downloading"));
+    downloadFile(filePath, att.name).catch((err: Error) => {
+      toast.error(err.message || t("download.downloadFailed"));
+    });
+    return;
+  }
+  if (att.url && att.url.startsWith("blob:")) {
+    const a = document.createElement("a");
+    a.href = att.url;
+    a.download = att.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 }
 
 type ToolPayload = {
@@ -214,7 +250,7 @@ const renderedToolResult = computed(() => {
                   />
                 </template>
                 <template v-else>
-                  <div class="msg-attachment-file">
+                  <div class="msg-attachment-file" @click="handleAttachmentDownload(att)" style="cursor: pointer;" :title="t('download.downloadFile')">
                     <svg
                       width="16"
                       height="16"
@@ -230,6 +266,11 @@ const renderedToolResult = computed(() => {
                     </svg>
                     <span class="att-name">{{ att.name }}</span>
                     <span class="att-size">{{ formatSize(att.size) }}</span>
+                    <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                   </div>
                 </template>
               </div>

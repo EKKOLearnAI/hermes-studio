@@ -30,3 +30,4 @@ hermes-dependencies.md
 *.njsproj
 *.sln
 *.sw?
+.superpowers/

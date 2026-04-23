@@ -20,6 +20,8 @@ import { codexAuthRoutes } from './hermes/codex-auth'
 import { nousAuthRoutes } from './hermes/nous-auth'
 import { gatewayRoutes } from './hermes/gateways'
 import { weixinRoutes } from './hermes/weixin'
+import { fileRoutes } from './hermes/files'
+import { downloadRoutes } from './hermes/download'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 
 /**
@@ -52,6 +54,8 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(nousAuthRoutes.routes())
   app.use(gatewayRoutes.routes())
   app.use(weixinRoutes.routes())
+  app.use(fileRoutes.routes())              // Must be before proxy (proxy catch-all matches everything)
+  app.use(downloadRoutes.routes())          // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)

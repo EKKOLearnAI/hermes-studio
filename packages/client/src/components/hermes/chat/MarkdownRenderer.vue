@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useMessage } from 'naive-ui'
 import MarkdownIt from 'markdown-it'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
+import { downloadFile } from '@/api/hermes/download'
 
 const props = defineProps<{ content: string }>()
 const { t } = useI18n()
+const message = useMessage()
 
 const md: MarkdownIt = new MarkdownIt({
   html: false,
@@ -20,6 +23,33 @@ const renderedHtml = computed(() => md.render(props.content))
 
 function handleMarkdownClick(event: MouseEvent): void {
   void handleCodeBlockCopyClick(event)
+
+  // Handle file path link clicks for download
+  const target = event.target as HTMLElement
+  const link = target.closest('a') as HTMLAnchorElement | null
+  if (!link) return
+
+  const href = link.getAttribute('href')
+  if (!href) return
+
+  // Let http(s) links behave normally
+  if (href.startsWith('http://') || href.startsWith('https://')) {
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    return
+  }
+
+  // File path links: intercept and download
+  if (href.startsWith('/')) {
+    event.preventDefault()
+    event.stopPropagation()
+    const linkText = link.textContent || ''
+    const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+    message.info(t('download.downloading'))
+    downloadFile(href, fileName || undefined).catch((err: Error) => {
+      message.error(err.message || t('download.downloadFailed'))
+    })
+  }
 }
 </script>
 

@@ -45,6 +45,7 @@
 - Markdown 渲染，支持语法高亮和代码复制
 - 工具调用详情展开（参数 / 结果）
 - 文件上传支持
+- 文件下载支持 — 支持下载用户上传的文件和 Agent 生成的文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
 - 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
 - 每个会话显示模型标签和上下文 Token 用量
 
@@ -236,7 +237,7 @@ npm run build   # 构建输出到 dist/
 
 前端采用 **多 Agent 可扩展架构** — 所有 Hermes 相关代码都按命名空间组织在 `hermes/` 目录下（API、组件、视图、Store），可以方便地并行接入新的 Agent。
 
-BFF 层负责：API 代理（含路径重写）、SSE 流式推送、文件上传、通过 CLI 管理会话 CRUD、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
+BFF 层负责：API 代理（含路径重写）、SSE 流式推送、文件上传与下载（多 Backend 支持：local/Docker/SSH/Singularity）、通过 CLI 管理会话 CRUD、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
 
 ## 技术栈
 
