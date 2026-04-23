@@ -358,7 +358,7 @@ export async function searchSessionSummaries(
       return [...merged.values()].slice(0, limit)
     }
 
-    if (message.includes('no such table: messages_fts') && isNumericQuery(trimmed)) {
+    if (isNumericQuery(trimmed)) {
       const likeRows = runLikeContentSearch(db, source, trimmed)
       const merged = new Map<string, HermesSessionSearchRow>()
       for (const row of titleRows) {
