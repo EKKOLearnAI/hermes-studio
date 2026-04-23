@@ -63,4 +63,32 @@ describe('parseThinking', () => {
     expect(r.pending).toBe('now')
     expect(r.body).toBe('mid')
   })
+
+  it('does NOT recognize <think> inside fenced code block', () => {
+    const src = 'before\n```\n<think>fake</think>\n```\nafter'
+    const r = parseThinking(src, { streaming: false })
+    expect(r.hasThinking).toBe(false)
+    expect(r.body).toBe(src)
+  })
+
+  it('does NOT recognize <think> inside tilde-fenced code block', () => {
+    const src = '~~~\n<think>fake</think>\n~~~'
+    const r = parseThinking(src, { streaming: false })
+    expect(r.hasThinking).toBe(false)
+    expect(r.body).toBe(src)
+  })
+
+  it('does NOT recognize <think> inside inline code', () => {
+    const src = 'the tag `<think>x</think>` is a literal'
+    const r = parseThinking(src, { streaming: false })
+    expect(r.hasThinking).toBe(false)
+    expect(r.body).toBe(src)
+  })
+
+  it('parses real <think> outside code blocks even when code blocks contain fake ones', () => {
+    const src = '<think>real</think>text\n```\n<think>fake</think>\n```'
+    const r = parseThinking(src, { streaming: false })
+    expect(r.segments).toEqual(['real'])
+    expect(r.body).toBe('text\n```\n<think>fake</think>\n```')
+  })
 })

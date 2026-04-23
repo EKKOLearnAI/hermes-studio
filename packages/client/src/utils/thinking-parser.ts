@@ -11,7 +11,36 @@ export interface ParseOptions {
 
 const TAG_RE = /<(think|thinking|reasoning)>([\s\S]*?)<\/\1>/gi
 
+const PLACEHOLDER_PREFIX = '\u0000THKCODE'
+const PLACEHOLDER_SUFFIX = '\u0000'
+
+const FENCED_RE = /(```|~~~)([\s\S]*?)\1/g
+const INLINE_CODE_RE = /`[^`\n]*`/g
+
+function protectCodeBlocks(input: string): { masked: string; blocks: string[] } {
+  const blocks: string[] = []
+  let masked = input.replace(FENCED_RE, (m) => {
+    blocks.push(m)
+    return `${PLACEHOLDER_PREFIX}${blocks.length - 1}${PLACEHOLDER_SUFFIX}`
+  })
+  masked = masked.replace(INLINE_CODE_RE, (m) => {
+    blocks.push(m)
+    return `${PLACEHOLDER_PREFIX}${blocks.length - 1}${PLACEHOLDER_SUFFIX}`
+  })
+  return { masked, blocks }
+}
+
+function restoreCodeBlocks(text: string, blocks: string[]): string {
+  if (blocks.length === 0) return text
+  return text.replace(
+    new RegExp(`${PLACEHOLDER_PREFIX}(\\d+)${PLACEHOLDER_SUFFIX}`, 'g'),
+    (_, idx) => blocks[Number(idx)] ?? '',
+  )
+}
+
 export function parseThinking(content: string, opts: ParseOptions): ParsedThinking {
+  const { masked, blocks } = protectCodeBlocks(content)
+
   const segments: string[] = []
   let pending: string | null = null
   let body = ''
@@ -19,12 +48,12 @@ export function parseThinking(content: string, opts: ParseOptions): ParsedThinki
 
   TAG_RE.lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = TAG_RE.exec(content)) !== null) {
-    body += content.slice(lastIndex, m.index)
+  while ((m = TAG_RE.exec(masked)) !== null) {
+    body += masked.slice(lastIndex, m.index)
     segments.push(m[2])
     lastIndex = m.index + m[0].length
   }
-  const rest = content.slice(lastIndex)
+  const rest = masked.slice(lastIndex)
 
   const openRe = /<(think|thinking|reasoning)>([\s\S]*)$/i
   const openMatch = rest.match(openRe)
@@ -40,9 +69,9 @@ export function parseThinking(content: string, opts: ParseOptions): ParsedThinki
   }
 
   return {
-    segments,
-    pending,
-    body,
+    segments: segments.map(s => restoreCodeBlocks(s, blocks)),
+    pending: pending === null ? null : restoreCodeBlocks(pending, blocks),
+    body: restoreCodeBlocks(body, blocks),
     hasThinking: segments.length > 0 || pending !== null,
   }
 }
