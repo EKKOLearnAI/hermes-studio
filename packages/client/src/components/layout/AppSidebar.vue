@@ -13,7 +13,6 @@ import danceVideoLight from "@/assets/dance-light.mp4";
 import danceVideoDark from "@/assets/dance-dark.mp4";
 
 import { useTheme } from "@/composables/useTheme";
-import { clearApiKey } from "@/api/client";
 import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
@@ -50,7 +49,7 @@ async function handleUpdate() {
 }
 
 function handleLogout() {
-  clearApiKey();
+  localStorage.clear();
   router.replace({ name: 'login' });
 }
 
