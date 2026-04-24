@@ -74,9 +74,7 @@ export function streamRunEvents(
         onDone()
       }
     } catch {
-      // Some SSE adapters may deliver raw text frames. Treat them as
-      // assistant deltas so they render instead of being silently ignored.
-      onEvent({ event: 'message.delta', delta: e.data })
+      onEvent({ event: 'message', delta: e.data })
     }
   }
 
