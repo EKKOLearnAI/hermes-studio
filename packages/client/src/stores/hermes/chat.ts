@@ -312,6 +312,26 @@ function sanitizeForCache(msgs: Message[]): Message[] {
   })
 }
 
+// Heals assistant messages whose `reasoning` field was polluted by the
+// old bug where `reasoning.available` clobbered it with the assistant
+// content. Detection heuristic: reasoning is a prefix of content (the
+// bug always derived `reasoning` from `content[:500]` with tags stripped).
+// Legitimate reasoning is almost never a prefix of the final answer.
+function scrubBuggyReasoningInCache(msgs: Message[] | null | undefined): Message[] {
+  if (!msgs) return []
+  return msgs.map(m => {
+    if (m.role !== 'assistant' || !m.reasoning || !m.content) return m
+    const r = m.reasoning.trim()
+    const c = m.content.trim()
+    if (!r || !c) return m
+    if (c === r || c.startsWith(r)) {
+      const { reasoning: _drop, ...rest } = m
+      return rest as Message
+    }
+    return m
+  })
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
@@ -478,7 +498,7 @@ export const useChatStore = defineStore('chat', () => {
           const cachedActive = cachedSessions.find(s => s.id === savedId) || null
           if (cachedActive) {
             const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(savedId), legacyMsgsCacheKey(savedId))
-            if (cachedMsgs) cachedActive.messages = cachedMsgs
+            if (cachedMsgs) cachedActive.messages = scrubBuggyReasoningInCache(cachedMsgs)
             activeSession.value = cachedActive
             activeSessionId.value = savedId
           }
@@ -585,7 +605,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!hasLocalMessages) {
       const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(sessionId), legacyMsgsCacheKey(sessionId))
       if (cachedMsgs?.length) {
-        activeSession.value.messages = cachedMsgs
+        activeSession.value.messages = scrubBuggyReasoningInCache(cachedMsgs)
       }
     }
 
@@ -857,12 +877,14 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'reasoning.available': {
-              const text = evt.text || ''
+              // Upstream run_agent.py fires reasoning.available with
+              // `assistant_message.content[:500]` as the preview — i.e.,
+              // the main answer, not real reasoning. Ignore the payload
+              // and only use this event as a "thinking ended" signal so
+              // the duration counter stops.
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.role === 'assistant' && last.isStreaming) {
-                // reasoning.available 是最终完整版本，覆盖流式累积。
-                if (text) last.reasoning = text
                 // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
                 // 否则（上游未转发 delta，只发这一次 available）不显示时长。
                 noteReasoningEnd(last.id)
