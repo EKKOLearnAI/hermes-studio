@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — Conectar",
+    "heading": "Hermes Web UI",
+    "subtitle": "Introduce la misma URL de la interfaz web que usarías en un navegador. La autenticación se completa dentro de la página cargada.",
+    "labelUrl": "URL de la interfaz web",
+    "hintUrl": "Usa la URL raíz del servicio (consulta el marcador de posición para un ejemplo local). Esta aplicación usa enrutamiento hash; normalmente no necesitas <code>/#/</code> en la URL raíz. Incluye <code>#</code> y la ruta solo para marcadores o enlaces directos.",
+    "buttonConnect": "Conectar",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Por favor, introduce la URL de la interfaz web.",
+    "language": "Idioma",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "Archivo",
+    "view": "Vista",
+    "preferences": "Configuración…",
+    "reopen": "Reiniciar",
+    "resetShell": "Restablecer",
+    "reload": "Recargar",
+    "forceReload": "Forzar recarga",
+    "devTools": "Herramientas de desarrollo",
+    "resetZoom": "Restablecer zoom",
+    "zoomIn": "Acercar",
+    "zoomOut": "Alejar",
+    "quit": "Salir",
+    "about": "Acerca de",
+    "hide": "Ocultar",
+    "hideOthers": "Ocultar otros",
+    "unhide": "Mostrar todo"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — Lanzador",
+    "heading": "Servicio no iniciado",
+    "subtitle": "El servicio backend de la interfaz web no parece estar en ejecución. Puedes iniciarlo con el siguiente comando.",
+    "labelCommand": "Comando de inicio",
+    "buttonStart": "Iniciar servicio",
+    "buttonStop": "Detener",
+    "saveConfig": "Guardar configuración",
+    "saveSuccess": "Configuración guardada.",
+    "saveFailed": "Error al guardar la configuración.",
+    "statusStarting": "Iniciando…",
+    "statusReady": "¡Servicio listo! Abriendo aplicación…",
+    "statusFailed": "Error al iniciar el servicio.",
+    "openApp": "Abrir aplicación",
+    "logPlaceholder": "La salida del comando aparecerá aquí…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "No se pudo cargar la página:\n{message}"
+  }
+}

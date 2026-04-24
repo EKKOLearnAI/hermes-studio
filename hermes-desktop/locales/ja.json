@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — 接続",
+    "heading": "Hermes Web UI",
+    "subtitle": "ブラウザで使用するのと同じ Web UI の URL を入力してください。認証は読み込まれたページ内で行われます。",
+    "labelUrl": "Web UI URL",
+    "hintUrl": "サービスのルート URL を使用してください（ローカルの例はプレースホルダーを参照）。このアプリはハッシュルーティングを使用しているため、通常はルート URL に <code>/#/</code> を含める必要はありません。ブックマークやディープリンクの場合のみ <code>#</code> とパスを含めてください。",
+    "buttonConnect": "接続",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Web UI の URL を入力してください。",
+    "language": "言語",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "ファイル",
+    "view": "表示",
+    "preferences": "設定…",
+    "reopen": "再起動",
+    "resetShell": "リセット",
+    "reload": "リロード",
+    "forceReload": "強制リロード",
+    "devTools": "開発者ツール",
+    "resetZoom": "ズームをリセット",
+    "zoomIn": "拡大",
+    "zoomOut": "縮小",
+    "quit": "終了",
+    "about": "バージョン情報",
+    "hide": "隠す",
+    "hideOthers": "他を隠す",
+    "unhide": "すべて表示"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — ランチャー",
+    "heading": "サービス未起動",
+    "subtitle": "Web UI のバックエンドサービスが起動していないようです。以下のコマンドで起動できます。",
+    "labelCommand": "起動コマンド",
+    "buttonStart": "サービスを起動",
+    "buttonStop": "停止",
+    "saveConfig": "設定を保存",
+    "saveSuccess": "設定を保存しました。",
+    "saveFailed": "設定の保存に失敗しました。",
+    "statusStarting": "起動中…",
+    "statusReady": "サービス準備完了！アプリケーションを開いています…",
+    "statusFailed": "サービスの起動に失敗しました。",
+    "openApp": "アプリケーションを開く",
+    "logPlaceholder": "コマンドの出力がここに表示されます…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "ページを読み込めませんでした:\n{message}"
+  }
+}

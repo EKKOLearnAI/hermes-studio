@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="./assets/hermes.ico" />
+  <title>Hermes Web UI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #12121a;
+      color: #e8e8ef;
+      min-height: 100vh;
+      padding: 28px 20px 36px;
+      display: flex;
+      flex-direction: column;
+    }
+    h1 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin: 0 0 6px;
+    }
+    .sub {
+      font-size: 0.82rem;
+      color: #8b8b9e;
+      margin-bottom: 18px;
+      line-height: 1.45;
+    }
+    .lang-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+      font-size: 0.78rem;
+      color: #b4b4c4;
+    }
+    .lang-row label { margin: 0; flex-shrink: 0; }
+    .lang-row select {
+      flex: 1;
+      max-width: 200px;
+      padding: 8px 10px;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      background: #1a1a26;
+      color: #f0f0f5;
+      font-size: 0.82rem;
+    }
+    label.field-label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: #b4b4c4;
+      margin-bottom: 6px;
+    }
+    .field { margin-bottom: 16px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      background: #1a1a26;
+      color: #f0f0f5;
+      font-size: 0.88rem;
+      font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #5c6cf0;
+    }
+    input[type="text"]:disabled {
+      opacity: 0.55;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .btn-primary {
+      flex: 1;
+      padding: 11px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #e8e8ef;
+      color: #12121a;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary:hover { opacity: 0.92; }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-danger {
+      padding: 11px 18px;
+      border: 1px solid #f87171;
+      border-radius: 8px;
+      background: transparent;
+      color: #f87171;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: none;
+    }
+    .btn-danger:hover { background: rgba(248, 113, 113, 0.1); }
+    .btn-success {
+      flex: 1;
+      padding: 11px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #34d399;
+      color: #12121a;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: none;
+    }
+    .btn-success:hover { opacity: 0.92; }
+    .status {
+      font-size: 0.82rem;
+      margin-bottom: 10px;
+      min-height: 1.2em;
+    }
+    .status.starting { color: #fbbf24; }
+    .status.ready { color: #34d399; }
+    .status.failed { color: #f87171; }
+    .log-area {
+      flex: 1;
+      min-height: 120px;
+      max-height: 400px;
+      background: #0d0d14;
+      border: 1px solid #2a2a3a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      overflow-y: auto;
+      font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      color: #a0a0b8;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-area .placeholder-text {
+      color: #4a4a5e;
+      font-style: italic;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #fbbf24;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1 id="heading">Service Not Running</h1>
+  <p class="sub" id="subtitle"></p>
+
+  <div class="lang-row">
+    <label id="langLabel" for="lang"></label>
+    <select id="lang" aria-label="Language">
+      <option value="zh-CN">中文</option>
+      <option value="en">English</option>
+      <option value="de">Deutsch</option>
+      <option value="es">Español</option>
+      <option value="fr">Français</option>
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+      <option value="pt">Português</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label class="field-label" id="labelUrl" for="startUrl"></label>
+    <input id="startUrl" type="text" placeholder="http://localhost:8648/" />
+  </div>
+
+  <div class="field">
+    <label class="field-label" id="labelCommand" for="command"></label>
+    <input id="command" type="text" placeholder="npx hermes-web-ui restart" />
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-primary" id="btnStart"></button>
+    <button class="btn-danger" id="btnStop"></button>
+    <button class="btn-success" id="btnOpen"></button>
+    <button class="btn-success" id="btnSave"></button>
+  </div>
+
+  <p class="status" id="status"></p>
+  <div class="log-area" id="logArea">
+    <span class="placeholder-text" id="logPlaceholder"></span>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+    const logArea = $('logArea')
+    const logPlaceholder = $('logPlaceholder')
+    const initialMode = new URLSearchParams(window.location.search).get('mode') || 'launch'
+    let viewMode = initialMode === 'preferences' ? 'preferences' : 'launch'
+    let currentState = 'idle' // idle | starting | ready | failed
+    let isUrlHealthy = false
+    let healthCheckSeq = 0
+
+    function pick(obj, dotPath) {
+      const parts = dotPath.split('.')
+      let cur = obj
+      for (const p of parts) {
+        if (cur == null || typeof cur !== 'object') return ''
+        cur = cur[p]
+      }
+      return cur == null ? '' : String(cur)
+    }
+
+    let cachedStrings = null
+
+    function applyI18n(payload) {
+      const { locale, strings: s } = payload
+      cachedStrings = s
+      document.documentElement.lang = locale
+      document.title = pick(s, 'launcher.pageTitle')
+      $('heading').textContent = pick(s, 'launcher.heading')
+      $('subtitle').textContent = pick(s, 'launcher.subtitle')
+      $('langLabel').textContent = pick(s, 'setup.language')
+      $('labelUrl').textContent = pick(s, 'setup.labelUrl')
+      $('labelCommand').textContent = pick(s, 'launcher.labelCommand')
+      $('btnStart').textContent = pick(s, 'launcher.buttonStart')
+      $('btnStop').textContent = pick(s, 'launcher.buttonStop')
+      $('btnOpen').textContent = pick(s, 'launcher.openApp')
+      $('btnSave').textContent = pick(s, 'launcher.saveConfig')
+      if (logPlaceholder && currentState === 'idle') {
+        logPlaceholder.textContent = pick(s, 'launcher.logPlaceholder')
+      }
+      // language selector labels
+      const langKeys = { 'zh-CN': 'langZh', 'en': 'langEn', 'de': 'langDe', 'es': 'langEs', 'fr': 'langFr', 'ja': 'langJa', 'ko': 'langKo', 'pt': 'langPt' }
+      for (const [val, key] of Object.entries(langKeys)) {
+        const opt = $('lang').querySelector(`option[value="${val}"]`)
+        if (opt) opt.textContent = pick(s, `setup.${key}`)
+      }
+      $('lang').value = locale
+      // refresh status text
+      updateStatusText()
+    }
+
+    function updateStatusText() {
+      const s = cachedStrings
+      if (!s) return
+      const el = $('status')
+      el.className = 'status'
+      if (currentState === 'starting') {
+        el.innerHTML = '<span class="spinner"></span>' + pick(s, 'launcher.statusStarting')
+        el.classList.add('starting')
+      } else if (currentState === 'ready') {
+        el.textContent = pick(s, 'launcher.statusReady')
+        el.classList.add('ready')
+      } else if (currentState === 'failed') {
+        el.textContent = pick(s, 'launcher.statusFailed')
+        el.classList.add('failed')
+      } else {
+        el.textContent = ''
+      }
+    }
+
+    function showSaveStatus(ok, message) {
+      const el = $('status')
+      el.className = 'status'
+      if (ok) el.classList.add('ready')
+      else el.classList.add('failed')
+      el.textContent = message
+      el.style.display = ''
+    }
+
+    function setState(newState) {
+      currentState = newState
+      const isStarting = newState === 'starting'
+      const isPreferences = viewMode === 'preferences'
+
+      $('startUrl').disabled = isStarting
+      $('command').disabled = isStarting || isPreferences
+      $('btnStart').disabled = isStarting || newState === 'ready'
+      $('btnStart').style.display = isPreferences ? 'none' : ''
+      $('btnStop').style.display = isPreferences ? 'none' : (isStarting ? 'inline-block' : 'none')
+      $('btnOpen').style.display = !isPreferences && isUrlHealthy && !isStarting ? 'inline-block' : 'none'
+      $('btnOpen').disabled = isStarting
+      $('btnSave').style.display = isPreferences ? 'inline-block' : 'none'
+      $('status').style.display = ''
+      logArea.style.display = isPreferences ? 'none' : ''
+
+      updateStatusText()
+    }
+
+    function appendLog(text) {
+      // Remove placeholder on first log
+      if (logPlaceholder && logPlaceholder.parentNode) {
+        logPlaceholder.remove()
+      }
+      logArea.textContent += text
+      logArea.scrollTop = logArea.scrollHeight
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms))
+    }
+
+    async function refreshHealth() {
+      const seq = ++healthCheckSeq
+      const startUrl = $('startUrl').value.trim()
+      if (!startUrl || viewMode === 'preferences') {
+        isUrlHealthy = false
+        setState(currentState)
+        return
+      }
+      try {
+        const ok = await window.shellLauncher.checkHealth({ startUrl })
+        if (seq !== healthCheckSeq) return
+        isUrlHealthy = Boolean(ok)
+      } catch (_) {
+        if (seq !== healthCheckSeq) return
+        isUrlHealthy = false
+      }
+      setState(currentState)
+    }
+
+    // Language switch
+    $('lang').addEventListener('change', async () => {
+      try {
+        const payload = await window.shellLauncher.setLocale($('lang').value)
+        applyI18n(payload)
+      } catch (_) {}
+    })
+
+    // Start button
+    $('btnStart').addEventListener('click', async () => {
+      const startUrl = $('startUrl').value.trim()
+      const cmd = $('command').value.trim()
+      if (!startUrl || !cmd) return
+      // Clear log
+      logArea.textContent = ''
+      setState('starting')
+      try {
+        await window.shellLauncher.startServer({ startUrl, command: cmd })
+        const maxAttempts = 30
+        for (let i = 0; i < maxAttempts; i++) {
+          const ok = await window.shellLauncher.checkHealth({ startUrl: $('startUrl').value.trim() })
+          if (ok) {
+            isUrlHealthy = true
+            setState('ready')
+            try {
+              await window.shellLauncher.openMainWindow({
+                startUrl: $('startUrl').value.trim(),
+                launchCommand: $('command').value.trim(),
+              })
+            } catch (_) {}
+            return
+          }
+          await sleep(2000)
+        }
+        appendLog('\n[ERROR] Health check timeout (60s)\n')
+        setState('failed')
+        refreshHealth()
+      } catch (e) {
+        appendLog('\n[ERROR] ' + (e.message || String(e)) + '\n')
+        setState('failed')
+        refreshHealth()
+      }
+    })
+
+    // Stop button
+    $('btnStop').addEventListener('click', async () => {
+      try {
+        await window.shellLauncher.stopServer()
+      } catch (_) {}
+      setState('idle')
+      refreshHealth()
+    })
+
+    // Open app button
+    $('btnOpen').addEventListener('click', async () => {
+      try {
+        await window.shellLauncher.openMainWindow({
+          startUrl: $('startUrl').value.trim(),
+          launchCommand: $('command').value.trim(),
+        })
+      } catch (_) {}
+    })
+
+    $('btnSave').addEventListener('click', async () => {
+      const startUrl = $('startUrl').value.trim()
+      const launchCommand = $('command').value.trim()
+      if (!startUrl) return
+      $('btnSave').disabled = true
+      try {
+        await window.shellLauncher.saveConfig({ startUrl, launchCommand })
+        showSaveStatus(true, pick(cachedStrings || {}, 'launcher.saveSuccess') || 'Settings saved.')
+      } catch (e) {
+        showSaveStatus(
+          false,
+          (pick(cachedStrings || {}, 'launcher.saveFailed') || 'Failed to save settings.') +
+            ' ' +
+            (e.message || String(e)),
+        )
+      } finally {
+        $('btnSave').disabled = false
+      }
+    })
+
+    $('startUrl').addEventListener('input', () => {
+      refreshHealth()
+    })
+
+    // IPC listeners
+    window.shellLauncher.onLog((data) => {
+      appendLog(data)
+    })
+
+    window.shellLauncher.onDetectedUrl((url) => {
+      if (!url) return
+      const detected = String(url).trim()
+      const current = $('startUrl').value.trim()
+      if (!current) {
+        $('startUrl').value = detected
+        refreshHealth()
+        return
+      }
+      try {
+        const cur = new URL(current)
+        const det = new URL(detected)
+        const currentHasExtra = Boolean((cur.hash && cur.hash !== '#') || cur.search)
+        // Keep user-provided deep-link URL (token/hash/query) from being overwritten by plain origins.
+        if (currentHasExtra) return
+        if (cur.origin === det.origin) {
+          const detectedHasExtra = Boolean((det.hash && det.hash !== '#') || det.search)
+          if (!detectedHasExtra) return
+        }
+      } catch (_) {}
+      $('startUrl').value = detected
+      refreshHealth()
+    })
+
+    window.shellLauncher.onServerFailed((msg) => {
+      if (msg) appendLog('\n[ERROR] ' + msg + '\n')
+      setState('failed')
+      refreshHealth()
+    })
+
+    window.shellLauncher.onModeChanged((mode) => {
+      viewMode = mode === 'preferences' ? 'preferences' : 'launch'
+      setState('idle')
+      refreshHealth()
+    })
+
+    // Init
+    ;(async () => {
+      try {
+        const [i18n, cfg] = await Promise.all([
+          window.shellLauncher.getI18n(),
+          window.shellLauncher.getConfig(),
+        ])
+        applyI18n(i18n)
+        const savedUrl = (cfg.startUrl && String(cfg.startUrl).trim()) || ''
+        $('startUrl').value = savedUrl || 'http://localhost:8648/'
+        const saved = (cfg.launchCommand && String(cfg.launchCommand).trim()) || ''
+        const def = (cfg.defaultCommand && String(cfg.defaultCommand).trim()) || 'npx hermes-web-ui restart'
+        $('command').value = saved || def
+        setState('idle')
+        await refreshHealth()
+      } catch (_) {
+        $('startUrl').value = 'http://localhost:8648/'
+        $('command').value = 'npx hermes-web-ui restart'
+        setState('idle')
+        await refreshHealth()
+      }
+    })()
+  </script>
+</body>
+</html>

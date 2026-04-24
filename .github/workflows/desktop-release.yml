@@ -1,0 +1,103 @@
+name: Build Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.4.4). Leave empty to use package.json version.'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # Build desktop app on each platform in parallel
+  # ------------------------------------------------------------------
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            dist_script: dist:win
+            artifact: Hermes-Web-UI-win32-x64.zip
+          - os: macos-latest
+            dist_script: dist:mac
+            artifact: Hermes-Web-UI-darwin-x64.zip
+          - os: macos-latest
+            dist_script: dist:mac
+            artifact: Hermes-Web-UI-darwin-arm64.zip
+          - os: ubuntu-latest
+            dist_script: dist:linux
+            artifact: Hermes-Web-UI-linux-x64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 23
+
+      - name: Install desktop dependencies
+        working-directory: hermes-desktop
+        run: npm install
+
+      - name: Package desktop app
+        working-directory: hermes-desktop
+        run: npm run ${{ matrix.dist_script }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: hermes-desktop/release/${{ matrix.artifact }}
+          retention-days: 7
+
+  # ------------------------------------------------------------------
+  # Create GitHub Release with all artifacts
+  # ------------------------------------------------------------------
+  create-release:
+    needs: build-desktop
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh release-artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Hermes Web UI Desktop ${{ steps.version.outputs.tag }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: release-artifacts/*.zip

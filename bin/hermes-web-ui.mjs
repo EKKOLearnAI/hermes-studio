@@ -244,9 +244,11 @@ function startDaemon(port) {
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
-        const isWin = process.platform === 'win32'
-        const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
-        try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        if (!process.env.HERMES_NO_BROWSER) {
+          const isWin = process.platform === 'win32'
+          const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
+          try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        }
       } else if (waited < maxWait) {
         setTimeout(poll, interval)
       } else {

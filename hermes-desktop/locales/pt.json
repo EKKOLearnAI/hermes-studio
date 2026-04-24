@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — Conectar",
+    "heading": "Hermes Web UI",
+    "subtitle": "Insira a mesma URL da interface web que você usaria no navegador. A autenticação é feita dentro da página carregada.",
+    "labelUrl": "URL da interface web",
+    "hintUrl": "Use a URL raiz do serviço (veja o marcador para um exemplo local). Este aplicativo usa roteamento por hash; normalmente não é necessário incluir <code>/#/</code> na URL raiz. Inclua <code>#</code> e o caminho apenas para favoritos ou links diretos.",
+    "buttonConnect": "Conectar",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Por favor, insira a URL da interface web.",
+    "language": "Idioma",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "Arquivo",
+    "view": "Visualizar",
+    "preferences": "Configurações…",
+    "reopen": "Reiniciar",
+    "resetShell": "Redefinir",
+    "reload": "Recarregar",
+    "forceReload": "Forçar recarga",
+    "devTools": "Ferramentas de desenvolvedor",
+    "resetZoom": "Redefinir zoom",
+    "zoomIn": "Aumentar",
+    "zoomOut": "Diminuir",
+    "quit": "Sair",
+    "about": "Sobre",
+    "hide": "Ocultar",
+    "hideOthers": "Ocultar outros",
+    "unhide": "Mostrar tudo"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — Inicializador",
+    "heading": "Serviço não iniciado",
+    "subtitle": "O serviço backend da interface web não parece estar em execução. Você pode iniciá-lo com o comando abaixo.",
+    "labelCommand": "Comando de início",
+    "buttonStart": "Iniciar serviço",
+    "buttonStop": "Parar",
+    "saveConfig": "Salvar configurações",
+    "saveSuccess": "Configurações salvas.",
+    "saveFailed": "Falha ao salvar as configurações.",
+    "statusStarting": "Iniciando…",
+    "statusReady": "Serviço pronto! Abrindo aplicação…",
+    "statusFailed": "Falha ao iniciar o serviço.",
+    "openApp": "Abrir aplicação",
+    "logPlaceholder": "A saída do comando aparecerá aqui…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "Não foi possível carregar a página:\n{message}"
+  }
+}

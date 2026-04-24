@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — Connect",
+    "heading": "Hermes Web UI",
+    "subtitle": "Enter the same Web UI URL you would use in a browser. Authentication is completed inside the loaded page.",
+    "labelUrl": "Web UI URL",
+    "hintUrl": "Use the service root URL (see the placeholder for a local example). This app uses hash routing; you usually do not need <code>/#/</code> in the root URL. Include <code>#</code> and the path only for bookmarks or deep links.",
+    "buttonConnect": "Connect",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Please enter the Web UI URL.",
+    "language": "Language",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "File",
+    "view": "View",
+    "preferences": "Settings…",
+    "reopen": "Relaunch",
+    "resetShell": "Reset",
+    "reload": "Reload",
+    "forceReload": "Force Reload",
+    "devTools": "Developer Tools",
+    "resetZoom": "Reset Zoom",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out",
+    "quit": "Quit",
+    "about": "About",
+    "hide": "Hide",
+    "hideOthers": "Hide Others",
+    "unhide": "Show All"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — Launcher",
+    "heading": "Service Not Running",
+    "subtitle": "The Web UI backend service does not appear to be running. You can start it using the command below.",
+    "labelCommand": "Start Command",
+    "buttonStart": "Start Service",
+    "buttonStop": "Stop",
+    "saveConfig": "Save Settings",
+    "saveSuccess": "Settings saved.",
+    "saveFailed": "Failed to save settings.",
+    "statusStarting": "Starting…",
+    "statusReady": "Service is ready! Opening application…",
+    "statusFailed": "Failed to start the service.",
+    "openApp": "Open Application",
+    "logPlaceholder": "Command output will appear here…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "Unable to load the page:\n{message}"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — 연결",
+    "heading": "Hermes Web UI",
+    "subtitle": "브라우저에서 사용하는 것과 동일한 Web UI URL을 입력하세요. 인증은 로드된 페이지 내에서 완료됩니다.",
+    "labelUrl": "Web UI URL",
+    "hintUrl": "서비스 루트 URL을 사용하세요 (로컬 예시는 플레이스홀더 참조). 이 앱은 해시 라우팅을 사용하므로 루트 URL에 <code>/#/</code>를 포함할 필요가 없습니다. 북마크나 딥링크의 경우에만 <code>#</code>과 경로를 포함하세요.",
+    "buttonConnect": "연결",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Web UI URL을 입력해 주세요.",
+    "language": "언어",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "파일",
+    "view": "보기",
+    "preferences": "설정…",
+    "reopen": "다시 시작",
+    "resetShell": "초기화",
+    "reload": "새로고침",
+    "forceReload": "강제 새로고침",
+    "devTools": "개발자 도구",
+    "resetZoom": "확대/축소 초기화",
+    "zoomIn": "확대",
+    "zoomOut": "축소",
+    "quit": "종료",
+    "about": "정보",
+    "hide": "숨기기",
+    "hideOthers": "다른 항목 숨기기",
+    "unhide": "모두 표시"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — 런처",
+    "heading": "서비스 미실행",
+    "subtitle": "Web UI 백엔드 서비스가 실행 중이지 않은 것 같습니다. 아래 명령어로 시작할 수 있습니다.",
+    "labelCommand": "시작 명령어",
+    "buttonStart": "서비스 시작",
+    "buttonStop": "중지",
+    "saveConfig": "설정 저장",
+    "saveSuccess": "설정이 저장되었습니다.",
+    "saveFailed": "설정 저장에 실패했습니다.",
+    "statusStarting": "시작 중…",
+    "statusReady": "서비스 준비 완료! 애플리케이션을 여는 중…",
+    "statusFailed": "서비스 시작에 실패했습니다.",
+    "openApp": "애플리케이션 열기",
+    "logPlaceholder": "명령어 출력이 여기에 표시됩니다…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "페이지를 로드할 수 없습니다:\n{message}"
+  }
+}

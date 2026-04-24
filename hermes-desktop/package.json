@@ -1,0 +1,25 @@
+{
+  "name": "hermes-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hermes Web UI desktop host: open a Web UI URL (optional locale). Does not modify packages/client.",
+  "main": "main.cjs",
+  "author": "Hermes Web UI",
+  "scripts": {
+    "start": "electron .",
+    "dist": "npm run dist:pack && npm run dist:zip",
+    "dist:win": "npm run dist:pack:win && npm run dist:zip",
+    "dist:mac": "npm run dist:pack:mac && npm run dist:zip",
+    "dist:linux": "npm run dist:pack:linux && npm run dist:zip",
+    "dist:all": "npm run dist:pack:win && npm run dist:pack:mac && npm run dist:pack:linux && npm run dist:zip",
+    "dist:pack": "npm run dist:pack:win",
+    "dist:pack:win": "electron-packager . \"Hermes Web UI\" --platform=win32 --arch=x64 --out=release --overwrite --asar --icon=assets/hermes.ico",
+    "dist:pack:mac": "electron-packager . \"Hermes Web UI\" --platform=darwin --arch=x64,arm64 --out=release --overwrite --asar --icon=assets/hermes.png",
+    "dist:pack:linux": "electron-packager . \"Hermes Web UI\" --platform=linux --arch=x64 --out=release --overwrite --asar --icon=assets/hermes.png",
+    "dist:zip": "node scripts/zip-release.cjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^19.0.1",
+    "electron": "^35.7.5"
+  }
+}

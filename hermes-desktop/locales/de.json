@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — Verbinden",
+    "heading": "Hermes Web UI",
+    "subtitle": "Geben Sie die gleiche Web-UI-URL ein, die Sie im Browser verwenden würden. Die Authentifizierung erfolgt innerhalb der geladenen Seite.",
+    "labelUrl": "Web-UI-URL",
+    "hintUrl": "Verwenden Sie die Service-Root-URL (siehe Platzhalter für ein lokales Beispiel). Diese App verwendet Hash-Routing; Sie benötigen normalerweise kein <code>/#/</code> in der Root-URL. Verwenden Sie <code>#</code> und den Pfad nur für Lesezeichen oder Direktlinks.",
+    "buttonConnect": "Verbinden",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Bitte geben Sie die Web-UI-URL ein.",
+    "language": "Sprache",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "Datei",
+    "view": "Ansicht",
+    "preferences": "Einstellungen…",
+    "reopen": "Neu starten",
+    "resetShell": "Zurücksetzen",
+    "reload": "Neu laden",
+    "forceReload": "Erzwungenes Neuladen",
+    "devTools": "Entwicklertools",
+    "resetZoom": "Zoom zurücksetzen",
+    "zoomIn": "Vergrößern",
+    "zoomOut": "Verkleinern",
+    "quit": "Beenden",
+    "about": "Über",
+    "hide": "Ausblenden",
+    "hideOthers": "Andere ausblenden",
+    "unhide": "Alle einblenden"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — Launcher",
+    "heading": "Dienst nicht gestartet",
+    "subtitle": "Der Web-UI-Backend-Dienst scheint nicht zu laufen. Sie können ihn mit dem folgenden Befehl starten.",
+    "labelCommand": "Startbefehl",
+    "buttonStart": "Dienst starten",
+    "buttonStop": "Stoppen",
+    "saveConfig": "Einstellungen speichern",
+    "saveSuccess": "Einstellungen gespeichert.",
+    "saveFailed": "Einstellungen konnten nicht gespeichert werden.",
+    "statusStarting": "Wird gestartet…",
+    "statusReady": "Dienst ist bereit! Anwendung wird geöffnet…",
+    "statusFailed": "Dienst konnte nicht gestartet werden.",
+    "openApp": "Anwendung öffnen",
+    "logPlaceholder": "Befehlsausgabe wird hier angezeigt…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "Seite konnte nicht geladen werden:\n{message}"
+  }
+}

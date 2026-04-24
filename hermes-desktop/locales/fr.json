@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — Connexion",
+    "heading": "Hermes Web UI",
+    "subtitle": "Entrez la même URL de l'interface web que celle que vous utiliseriez dans un navigateur. L'authentification se fait dans la page chargée.",
+    "labelUrl": "URL de l'interface web",
+    "hintUrl": "Utilisez l'URL racine du service (voir le champ indicatif pour un exemple local). Cette application utilise le routage par hash ; vous n'avez généralement pas besoin de <code>/#/</code> dans l'URL racine. Incluez <code>#</code> et le chemin uniquement pour les favoris ou les liens directs.",
+    "buttonConnect": "Connecter",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "Veuillez entrer l'URL de l'interface web.",
+    "language": "Langue",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "Fichier",
+    "view": "Affichage",
+    "preferences": "Paramètres…",
+    "reopen": "Relancer",
+    "resetShell": "Réinitialiser",
+    "reload": "Recharger",
+    "forceReload": "Forcer le rechargement",
+    "devTools": "Outils de développement",
+    "resetZoom": "Réinitialiser le zoom",
+    "zoomIn": "Agrandir",
+    "zoomOut": "Réduire",
+    "quit": "Quitter",
+    "about": "À propos",
+    "hide": "Masquer",
+    "hideOthers": "Masquer les autres",
+    "unhide": "Tout afficher"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — Lanceur",
+    "heading": "Service non démarré",
+    "subtitle": "Le service backend de l'interface web ne semble pas être en cours d'exécution. Vous pouvez le démarrer avec la commande ci-dessous.",
+    "labelCommand": "Commande de démarrage",
+    "buttonStart": "Démarrer le service",
+    "buttonStop": "Arrêter",
+    "saveConfig": "Enregistrer les paramètres",
+    "saveSuccess": "Paramètres enregistrés.",
+    "saveFailed": "Échec de l'enregistrement des paramètres.",
+    "statusStarting": "Démarrage…",
+    "statusReady": "Le service est prêt ! Ouverture de l'application…",
+    "statusFailed": "Échec du démarrage du service.",
+    "openApp": "Ouvrir l'application",
+    "logPlaceholder": "La sortie de la commande apparaîtra ici…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "Impossible de charger la page :\n{message}"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "setup": {
+    "pageTitle": "Hermes Web UI — 连接",
+    "heading": "Hermes Web UI",
+    "subtitle": "请输入 Web 界面地址，与在浏览器中访问的 URL 保持一致。身份验证在加载后的页面内完成。",
+    "labelUrl": "Web 界面地址",
+    "hintUrl": "填写 Web 服务的根地址即可（本地开发示例见占位符）。本应用为 Hash 路由，根地址一般无需带 <code>/#/</code>；若需书签或直达某屏，可在地址中保留 <code>#</code> 及后续路径。",
+    "buttonConnect": "连接",
+    "placeholderUrl": "http://localhost:8648/",
+    "errorRequired": "请填写 Web 界面地址",
+    "language": "语言",
+    "langZh": "中文",
+    "langEn": "English",
+    "langDe": "Deutsch",
+    "langEs": "Español",
+    "langFr": "Français",
+    "langJa": "日本語",
+    "langKo": "한국어",
+    "langPt": "Português"
+  },
+  "menu": {
+    "file": "文件",
+    "view": "视图",
+    "preferences": "设置…",
+    "reopen": "重新运行",
+    "resetShell": "清理重置",
+    "reload": "刷新",
+    "forceReload": "强制重新加载",
+    "devTools": "开发者工具",
+    "resetZoom": "重置缩放",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "quit": "退出",
+    "about": "关于",
+    "hide": "隐藏",
+    "hideOthers": "隐藏其他",
+    "unhide": "显示全部"
+  },
+  "launcher": {
+    "pageTitle": "Hermes Web UI — 启动器",
+    "heading": "服务未启动",
+    "subtitle": "Web UI 后端服务似乎未在运行。你可以使用下方命令启动它。",
+    "labelCommand": "启动命令",
+    "buttonStart": "启动服务",
+    "buttonStop": "停止",
+    "saveConfig": "保存配置",
+    "saveSuccess": "配置已保存。",
+    "saveFailed": "保存配置失败。",
+    "statusStarting": "启动中…",
+    "statusReady": "服务已就绪！正在打开应用…",
+    "statusFailed": "服务启动失败。",
+    "openApp": "打开应用",
+    "logPlaceholder": "命令输出将显示在此处…"
+  },
+  "dialog": {
+    "loadFailedTitle": "Hermes Web UI",
+    "loadFailedBody": "无法加载页面：\n{message}"
+  }
+}
