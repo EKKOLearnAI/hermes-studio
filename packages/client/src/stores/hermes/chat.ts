@@ -27,6 +27,11 @@ export interface Message {
   toolStatus?: 'running' | 'done' | 'error'
   isStreaming?: boolean
   attachments?: Attachment[]
+  // 思考/推理文本。两条来源：
+  //   1) 历史消息：来自 HermesMessage.reasoning 字段
+  //   2) 流式：由 reasoning.delta / thinking.delta / reasoning.available 事件累加
+  // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
+  reasoning?: string
 }
 
 export interface Session {
@@ -142,6 +147,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       role: msg.role,
       content: msg.content || '',
       timestamp: Math.round(msg.timestamp * 1000),
+      reasoning: msg.reasoning ? msg.reasoning : undefined,
     })
   }
   return result
@@ -816,6 +822,46 @@ export const useChatStore = defineStore('chat', () => {
             case 'run.started':
               break
 
+            case 'reasoning.delta':
+            case 'thinking.delta': {
+              const text = evt.text || evt.delta || ''
+              if (!text) break
+              const msgs = getSessionMsgs(sid)
+              const last = msgs[msgs.length - 1]
+              if (last?.role === 'assistant' && last.isStreaming) {
+                last.reasoning = (last.reasoning || '') + text
+                noteReasoningStart(last.id)
+              } else {
+                const newId = uid()
+                addMessage(sid, {
+                  id: newId,
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                  isStreaming: true,
+                  reasoning: text,
+                })
+                noteReasoningStart(newId)
+              }
+              schedulePersist()
+              break
+            }
+
+            case 'reasoning.available': {
+              const text = evt.text || ''
+              const msgs = getSessionMsgs(sid)
+              const last = msgs[msgs.length - 1]
+              if (last?.role === 'assistant' && last.isStreaming) {
+                // reasoning.available 是最终完整版本，覆盖流式累积。
+                if (text) last.reasoning = text
+                // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
+                // 否则（上游未转发 delta，只发这一次 available）不显示时长。
+                noteReasoningEnd(last.id)
+              }
+              schedulePersist()
+              break
+            }
+
             case 'message.delta': {
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
@@ -823,6 +869,8 @@ export const useChatStore = defineStore('chat', () => {
                 const prev = last.content
                 const next = prev + (evt.delta || '')
                 noteThinkingDelta(last.id, prev, next)
+                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
+                if (last.reasoning) noteReasoningEnd(last.id)
                 last.content = next
               } else {
                 const newId = uid()
@@ -1033,6 +1081,25 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.set(messageId, existing)
   }
 
+  /** 第一次见到某条消息的 reasoning 文本时，标记 startedAt。 */
+  function noteReasoningStart(messageId: string) {
+    const existing = thinkingObservation.get(messageId) || {}
+    if (existing.startedAt === undefined) {
+      existing.startedAt = Date.now()
+      thinkingObservation.set(messageId, existing)
+    }
+  }
+
+  /** 内容首次到达（视为推理结束）或显式收到 reasoning.available 时，标记 endedAt。 */
+  function noteReasoningEnd(messageId: string) {
+    const existing = thinkingObservation.get(messageId)
+    if (!existing || existing.startedAt === undefined) return
+    if (existing.endedAt === undefined) {
+      existing.endedAt = Date.now()
+      thinkingObservation.set(messageId, existing)
+    }
+  }
+
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
     // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
@@ -1062,6 +1129,8 @@ export const useChatStore = defineStore('chat', () => {
     refreshActiveSession,
     getThinkingObservation,
     noteThinkingDelta,
+    noteReasoningStart,
+    noteReasoningEnd,
     clearThinkingObservationFor,
   }
 })

@@ -30,12 +30,38 @@ const parsedThinking = computed(() =>
   parseThinking(props.message.content || "", { streaming: !!props.message.isStreaming }),
 );
 
-const thinkingCharCount = computed(() => countThinkingChars(parsedThinking.value));
+// 优先使用来自 reasoning 字段/事件的思考文本；否则回退到从 content 解析的 <think> 标签。
+// 若两者共存，则拼接展示（罕见，但保持信息不丢）。
+const hasReasoningField = computed(() => !!(props.message.reasoning && props.message.reasoning.length > 0));
+
+const hasThinking = computed(() => hasReasoningField.value || parsedThinking.value.hasThinking);
+
+const thinkingFullText = computed(() => {
+  const parts: string[] = [];
+  if (props.message.reasoning) parts.push(props.message.reasoning);
+  parts.push(...parsedThinking.value.segments);
+  if (parsedThinking.value.pending) parts.push(parsedThinking.value.pending);
+  return parts.join("\n\n");
+});
+
+const thinkingCharCount = computed(() => {
+  let count = countThinkingChars(parsedThinking.value);
+  if (props.message.reasoning) count += props.message.reasoning.length;
+  return count;
+});
+
+// 流式思考态：仍有未闭合 <think> 标签，或 reasoning 有内容但正文尚未开始。
+const thinkingStreamingNow = computed(() => {
+  if (!props.message.isStreaming) return false;
+  if (parsedThinking.value.pending !== null) return true;
+  if (hasReasoningField.value && !props.message.content) return true;
+  return false;
+});
 
 const thinkingOverride = ref<boolean | null>(null);
 
 const thinkingExpanded = computed(() => {
-  if (props.message.isStreaming && parsedThinking.value.pending !== null) return true;
+  if (thinkingStreamingNow.value) return true;
   if (thinkingOverride.value !== null) return thinkingOverride.value;
   return !!settingsStore.display.show_reasoning;
 });
@@ -84,12 +110,6 @@ function formatDuration(ms: number): string {
   const r = s % 60;
   return r === 0 ? `${m}m` : `${m}m ${r}s`;
 }
-
-const thinkingFullText = computed(() => {
-  const parts = parsedThinking.value.segments.slice();
-  if (parsedThinking.value.pending) parts.push(parsedThinking.value.pending);
-  return parts.join("\n\n");
-});
 
 const timeStr = computed(() => {
   const d = new Date(props.message.timestamp);
@@ -347,7 +367,7 @@ const renderedToolResult = computed(() => {
               </div>
             </div>
             <div
-              v-if="parsedThinking.hasThinking"
+              v-if="hasThinking"
               class="thinking-block"
               :class="{ expanded: thinkingExpanded }"
             >
@@ -367,12 +387,12 @@ const renderedToolResult = computed(() => {
                 <span class="thinking-icon">💭</span>
                 <span class="thinking-label">
                   {{
-                    message.isStreaming && parsedThinking.pending !== null
+                    thinkingStreamingNow
                       ? t('chat.thinkingInProgress')
                       : t('chat.thinkingLabel')
                   }}
                 </span>
-                <span v-if="thinkingDurationMs !== null" class="thinking-meta">
+                <span v-if="thinkingDurationMs !== null && thinkingDurationMs > 0" class="thinking-meta">
                   · {{ t('chat.thinkingDuration', { duration: formatDuration(thinkingDurationMs) }) }}
                 </span>
                 <span class="thinking-meta">

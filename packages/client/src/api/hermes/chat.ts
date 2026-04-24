@@ -23,6 +23,8 @@ export interface RunEvent {
   event: string
   run_id?: string
   delta?: string
+  /** Payload text for `reasoning.delta` / `thinking.delta` / `reasoning.available` events. */
+  text?: string
   tool?: string
   name?: string
   preview?: string

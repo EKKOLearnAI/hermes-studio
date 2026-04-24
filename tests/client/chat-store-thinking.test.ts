@@ -60,4 +60,31 @@ describe('chat store thinkingObservation', () => {
     store.clearThinkingObservationFor('any-session')
     expect(store.getThinkingObservation('m')).toBeUndefined()
   })
+
+  it('noteReasoningStart records startedAt only once', () => {
+    const store = useChatStore()
+    store.noteReasoningStart('r1')
+    const t1 = store.getThinkingObservation('r1')!.startedAt
+    expect(typeof t1).toBe('number')
+    store.noteReasoningStart('r1')
+    expect(store.getThinkingObservation('r1')!.startedAt).toBe(t1)
+  })
+
+  it('noteReasoningEnd requires prior start', () => {
+    const store = useChatStore()
+    store.noteReasoningEnd('r2')
+    expect(store.getThinkingObservation('r2')).toBeUndefined()
+    store.noteReasoningStart('r2')
+    store.noteReasoningEnd('r2')
+    expect(store.getThinkingObservation('r2')!.endedAt).toBeDefined()
+  })
+
+  it('noteReasoningEnd is idempotent', () => {
+    const store = useChatStore()
+    store.noteReasoningStart('r3')
+    store.noteReasoningEnd('r3')
+    const end1 = store.getThinkingObservation('r3')!.endedAt
+    store.noteReasoningEnd('r3')
+    expect(store.getThinkingObservation('r3')!.endedAt).toBe(end1)
+  })
 })
