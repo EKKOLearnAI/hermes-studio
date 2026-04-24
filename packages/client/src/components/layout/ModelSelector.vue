@@ -126,7 +126,7 @@ function openModal() {
               @click="handleSelect(model, group.provider)"
             >
               <span class="model-item-name">{{ model }}</span>
-              <span v-if="customModelSet.has(model)" class="model-badge-custom">CUSTOM</span>
+              <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -146,14 +146,14 @@ function openModal() {
             />
             <NInput
               v-model:value="customInput"
-              placeholder="Custom model name"
+              :placeholder="t('models.customModelPlaceholder')"
               size="small"
               class="model-custom-input"
               @keydown.enter="handleCustomSubmit"
             />
           </div>
           <div class="model-custom-hint">
-            Enter to load
+            {{ t('models.customModelHint') }}
           </div>
         </div>
       </div>
