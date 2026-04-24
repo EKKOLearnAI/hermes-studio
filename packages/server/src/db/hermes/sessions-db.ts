@@ -159,20 +159,73 @@ function containsCjk(text: string): boolean {
   return false
 }
 
-function isNumericQuery(text: string): boolean {
-  return /^\d+(?:\s+\d+)*$/.test(text.trim())
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`)
 }
 
-function hasUnsafeChars(text: string): boolean {
-  return /[^\w\s\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(text)
+function buildLikePattern(value: string): string {
+  return `%${escapeLikePattern(value)}%`
 }
 
-function runLikeContentSearch(
+function normalizeTitleLikeQuery(query: string): string {
+  const tokens = query.match(/"[^"]*"\*?|\S+/g)
+  if (!tokens) return query
+
+  const normalizedTokens = tokens
+    .map((token) => {
+      let value = token.endsWith('*') ? token.slice(0, -1) : token
+      if (value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1)
+      }
+      return value
+    })
+    .filter(Boolean)
+
+  return normalizedTokens.join(' ').trim() || query
+}
+
+function shouldUseLiteralContentSearch(query: string): boolean {
+  const trimmed = query.trim()
+  if (!trimmed) return false
+  if (/[^\p{L}\p{N}\s"*.-]/u.test(trimmed)) return true
+
+  const tokens = trimmed.match(/"[^"]*"\*?|\S+/g)
+  if (!tokens) return true
+
+  for (const token of tokens) {
+    if (/^(AND|OR|NOT)$/i.test(token)) continue
+
+    const raw = token.endsWith('*') ? token.slice(0, -1) : token
+    if (!raw) return true
+
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      const inner = raw.slice(1, -1)
+      if (!inner.trim()) return true
+      if (!/^[\p{L}\p{N}\s.-]+$/u.test(inner)) return true
+      if ((inner.includes('.') || inner.includes('-')) && !/^[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)*(?:\s+[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)*)*$/u.test(inner)) return true
+      continue
+    }
+
+    if (raw.includes('.') || raw.includes('-')) {
+      if (!/^[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)*$/u.test(raw)) return true
+      continue
+    }
+
+    if (!/^[\p{L}\p{N}]+$/u.test(raw)) return true
+  }
+
+  return false
+}
+
+function runLiteralContentSearch(
   db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } },
   source: string | undefined,
   query: string,
+  limit: number,
 ): Record<string, unknown>[] {
   const likeBase = buildBaseSessionSql(source)
+  const loweredQuery = query.toLowerCase()
+  const likePattern = buildLikePattern(loweredQuery)
   const likeSql = `
     WITH base AS (
       ${likeBase.sql}
@@ -182,17 +235,17 @@ function runLikeContentSearch(
       m.id AS matched_message_id,
       substr(
         m.content,
-        max(1, instr(m.content, ?) - 40),
+        max(1, instr(LOWER(m.content), ?) - 40),
         120
       ) AS snippet,
       0 AS rank
     FROM base
     JOIN messages m ON m.session_id = base.id
-    WHERE m.content LIKE ?
+    WHERE LOWER(m.content) LIKE ? ESCAPE '\\'
     ORDER BY base.last_active DESC, m.timestamp DESC
+    LIMIT ?
   `
-  const likeStatement = db.prepare(likeSql)
-  return likeStatement.all(...likeBase.params, query, `%${query}%`) as Record<string, unknown>[]
+  return db.prepare(likeSql).all(...likeBase.params, loweredQuery, likePattern, limit * 4) as Record<string, unknown>[]
 }
 
 function sanitizeFtsQuery(query: string): string {
@@ -208,7 +261,7 @@ function sanitizeFtsQuery(query: string): string {
   sanitized = sanitized.replace(/(^|\s)\*/g, '$1')
   sanitized = sanitized.trim().replace(/^(AND|OR|NOT)\b\s*/i, '')
   sanitized = sanitized.trim().replace(/\s+(AND|OR|NOT)\s*$/i, '')
-  sanitized = sanitized.replace(/\b(\w+(?:[.-]\w+)+)\b/g, '"$1"')
+  sanitized = sanitized.replace(/\b([\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)+)\b/gu, '"$1"')
 
   for (let i = 0; i < quotedParts.length; i += 1) {
     sanitized = sanitized.replace(`\u0000Q${i}\u0000`, quotedParts[i])
@@ -218,7 +271,7 @@ function sanitizeFtsQuery(query: string): string {
 }
 
 function toPrefixQuery(query: string): string {
-  const tokens = query.match(/"[^"]*"|\S+/g)
+  const tokens = query.match(/"[^"]*"\*?|\S+/g)
   if (!tokens) return ''
   return tokens
     .map((token) => {
@@ -282,6 +335,8 @@ export async function searchSessionSummaries(
   const db = new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
   const normalized = sanitizeFtsQuery(trimmed)
   const prefixQuery = toPrefixQuery(normalized)
+  const titlePattern = buildLikePattern(normalizeTitleLikeQuery(trimmed).toLowerCase())
+  const useLiteralContentSearch = containsCjk(trimmed) || shouldUseLiteralContentSearch(trimmed)
   let titleRows: Record<string, unknown>[] = []
 
   try {
@@ -301,13 +356,13 @@ export async function searchSessionSummaries(
         END AS snippet,
         0 AS rank
       FROM base
-      WHERE LOWER(COALESCE(base.title, '')) LIKE ?
+      WHERE LOWER(COALESCE(base.title, '')) LIKE ? ESCAPE '\\'
       ORDER BY base.last_active DESC
       LIMIT ?
     `
 
     const titleStatement = db.prepare(titleSql)
-    titleRows = titleStatement.all(...titleBase.params, `%${trimmed.toLowerCase()}%`, limit) as Record<string, unknown>[]
+    titleRows = titleStatement.all(...titleBase.params, titlePattern, limit) as Record<string, unknown>[]
 
     const contentSql = `
       WITH base AS (
@@ -326,9 +381,11 @@ export async function searchSessionSummaries(
       LIMIT ?
     `
 
-    const contentRows = prefixQuery
-      ? (db.prepare(contentSql).all(...contentBase.params, prefixQuery, limit * 4) as Record<string, unknown>[])
-      : []
+    const contentRows = useLiteralContentSearch
+      ? runLiteralContentSearch(db, source, trimmed, limit)
+      : prefixQuery
+        ? (db.prepare(contentSql).all(...contentBase.params, prefixQuery, limit * 4) as Record<string, unknown>[])
+        : []
 
     const merged = new Map<string, HermesSessionSearchRow>()
     for (const row of titleRows) {
@@ -351,19 +408,7 @@ export async function searchSessionSummaries(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (containsCjk(normalized)) {
-      const likeRows = runLikeContentSearch(db, source, trimmed)
-      const merged = new Map<string, HermesSessionSearchRow>()
-      for (const row of likeRows) {
-        const mapped = mapSearchRow(row)
-        if (!merged.has(mapped.id)) {
-          merged.set(mapped.id, mapped)
-        }
-      }
-      return [...merged.values()].slice(0, limit)
-    }
-
-    if (isNumericQuery(trimmed) || hasUnsafeChars(trimmed)) {
-      const likeRows = runLikeContentSearch(db, source, trimmed)
+      const likeRows = runLiteralContentSearch(db, source, trimmed, limit)
       const merged = new Map<string, HermesSessionSearchRow>()
       for (const row of titleRows) {
         const mapped = mapSearchRow(row)
@@ -375,7 +420,12 @@ export async function searchSessionSummaries(
           merged.set(mapped.id, mapped)
         }
       }
-      return [...merged.values()].slice(0, limit)
+      const items = [...merged.values()]
+      items.sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank
+        return b.last_active - a.last_active
+      })
+      return items.slice(0, limit)
     }
 
     throw new Error(`Failed to search sessions: ${message}`)

@@ -7,6 +7,9 @@ import {
 import { listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
+import type { ConversationDetail, ConversationSummary } from '../../services/hermes/conversations'
+import { getActiveProfileName } from '../../services/hermes/hermes-profile'
+import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 
 function parseHumanOnly(value: unknown): boolean {
@@ -20,6 +23,35 @@ function parseLimit(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
 }
 
+function getPendingDeletedSessionIds(): Set<string> {
+  return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
+}
+
+function isPendingDeletedSession(sessionId: string): boolean {
+  return getPendingDeletedSessionIds().has(sessionId)
+}
+
+function filterPendingDeletedSessions<T extends { id: string }>(items: T[]): T[] {
+  const pendingIds = getPendingDeletedSessionIds()
+  if (pendingIds.size === 0) return items
+  return items.filter(item => !pendingIds.has(item.id))
+}
+
+function filterPendingDeletedConversationSummaries(items: ConversationSummary[]): ConversationSummary[] {
+  return filterPendingDeletedSessions(items)
+}
+
+function hasPendingDeletedConversation(detail: ConversationDetail): boolean {
+  const pendingIds = getPendingDeletedSessionIds()
+  if (pendingIds.size === 0) return false
+  if (pendingIds.has(detail.session_id)) return true
+  return detail.messages.some(message => pendingIds.has(message.session_id))
+}
+
+function getGroupChatStorage() {
+  return getGroupChatServer()?.getStorage() || null
+}
+
 export async function listConversations(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const humanOnly = parseHumanOnly(ctx.query.humanOnly)
@@ -27,14 +59,14 @@ export async function listConversations(ctx: any) {
 
   try {
     const sessions = await listConversationSummariesFromDb({ source, humanOnly, limit })
-    ctx.body = { sessions }
+    ctx.body = { sessions: filterPendingDeletedConversationSummaries(sessions) }
     return
   } catch (err) {
     logger.warn(err, 'Hermes Conversation DB: summary query failed, falling back to CLI export')
   }
 
   const sessions = await listConversationSummaries({ source, humanOnly, limit })
-  ctx.body = { sessions }
+  ctx.body = { sessions: filterPendingDeletedConversationSummaries(sessions) }
 }
 
 export async function getConversationMessages(ctx: any) {
@@ -43,7 +75,7 @@ export async function getConversationMessages(ctx: any) {
 
   try {
     const detail = await getConversationDetailFromDb(ctx.params.id, { source, humanOnly })
-    if (!detail) {
+    if (!detail || hasPendingDeletedConversation(detail)) {
       ctx.status = 404
       ctx.body = { error: 'Conversation not found' }
       return
@@ -55,7 +87,7 @@ export async function getConversationMessages(ctx: any) {
   }
 
   const detail = await getConversationDetail(ctx.params.id, { source, humanOnly })
-  if (!detail) {
+  if (!detail || hasPendingDeletedConversation(detail)) {
     ctx.status = 404
     ctx.body = { error: 'Conversation not found' }
     return
@@ -69,14 +101,14 @@ export async function list(ctx: any) {
 
   try {
     const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
-    ctx.body = { sessions }
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
     return
   } catch (err) {
     logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
   }
 
   const sessions = await hermesCli.listSessions(source, limit)
-  ctx.body = { sessions }
+  ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
 }
 
 export async function search(ctx: any) {
@@ -88,7 +120,7 @@ export async function search(ctx: any) {
 
   try {
     const results = await searchSessionSummaries(q, source, limit && limit > 0 ? limit : 20)
-    ctx.body = { results }
+    ctx.body = { results: filterPendingDeletedSessions(results) }
   } catch (err) {
     logger.error(err, 'Hermes Session DB: search failed')
     ctx.status = 500
@@ -97,6 +129,12 @@ export async function search(ctx: any) {
 }
 
 export async function get(ctx: any) {
+  if (isPendingDeletedSession(ctx.params.id)) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+
   const session = await hermesCli.getSession(ctx.params.id)
   if (!session) {
     ctx.status = 404
@@ -107,14 +145,44 @@ export async function get(ctx: any) {
 }
 
 export async function remove(ctx: any) {
-  const ok = await hermesCli.deleteSession(ctx.params.id)
-  if (!ok) {
-    ctx.status = 500
-    ctx.body = { error: 'Failed to delete session' }
+  const sessionId = ctx.params.id
+  const storage = getGroupChatStorage()
+  const currentProfile = getActiveProfileName()
+  const mapped = storage?.getSessionProfile(sessionId) || null
+
+  logger.info('[remove] sessionId=%s, currentProfile=%s, mapped=%j', sessionId, currentProfile, mapped)
+
+  if (!mapped) {
+    logger.info('[remove] no mapping found, deleting directly')
+    const ok = await hermesCli.deleteSession(sessionId)
+    if (!ok) {
+      ctx.status = 500
+      ctx.body = { error: 'Failed to delete session' }
+      return
+    }
+    deleteUsage(sessionId)
+    ctx.body = { ok: true }
     return
   }
-  deleteUsage(ctx.params.id)
-  ctx.body = { ok: true }
+
+  if (mapped.profile_name === currentProfile) {
+    logger.info('[remove] same profile, deleting directly')
+    const ok = await hermesCli.deleteSession(sessionId)
+    if (!ok) {
+      ctx.status = 500
+      ctx.body = { error: 'Failed to delete session' }
+      return
+    }
+    storage?.deleteSessionProfile(sessionId)
+    deleteUsage(sessionId)
+    ctx.body = { ok: true }
+    return
+  }
+
+  logger.info('[remove] cross-profile detected, enqueued deferred delete for profile=%s', mapped.profile_name)
+  storage?.enqueuePendingSessionDelete(sessionId, mapped.profile_name)
+  deleteUsage(sessionId)
+  ctx.body = { ok: true, deferred: true }
 }
 
 export async function usageBatch(ctx: any) {

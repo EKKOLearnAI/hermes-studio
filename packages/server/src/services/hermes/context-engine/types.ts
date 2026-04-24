@@ -1,0 +1,111 @@
+// ─── Message Types ──────────────────────────────────────────
+
+/** Raw message from SQLite messages table */
+export interface StoredMessage {
+    id: string
+    roomId: string
+    senderId: string
+    senderName: string
+    content: string
+    timestamp: number
+}
+
+// ─── Compression Config ────────────────────────────────────
+
+export interface CompressionConfig {
+    /** Token threshold to trigger compression (estimate all messages) */
+    triggerTokens: number
+    /** Max tokens for the final compressed context sent to LLM */
+    maxHistoryTokens: number
+    /** Number of recent messages to keep verbatim after compression */
+    tailMessageCount: number
+    /** Characters per token for estimation */
+    charsPerToken: number
+    /** Timeout for summarization LLM call in ms */
+    summarizationTimeoutMs: number
+}
+
+export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
+    triggerTokens: 100_000,
+    maxHistoryTokens: 32_000,
+    tailMessageCount: 20,
+    charsPerToken: 4,
+    summarizationTimeoutMs: 30_000,
+}
+
+// ─── Compression Output ────────────────────────────────────
+
+export interface CompressedContext {
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+    instructions: string
+    meta: {
+        totalMessages: number
+        verbatimCount: number
+        hadSnapshot: boolean
+        compressed: boolean
+        summaryTokenEstimate: number
+    }
+}
+
+// ─── Context Snapshot (persisted in SQLite) ────────────────
+
+export interface ContextSnapshot {
+    roomId: string
+    summary: string
+    lastMessageId: string
+    lastMessageTimestamp: number
+    updatedAt: number
+}
+
+// ─── Summary Cache ──────────────────────────────────────────
+
+export interface SummaryCacheEntry {
+    summary: string
+    lastMessageId: string
+    lastMessageTimestamp: number
+    createdAt: number
+}
+
+// ─── Dependency Injection ──────────────────────────────────
+
+export interface MessageFetcher {
+    getMessages(roomId: string, limit?: number): StoredMessage[]
+    getContextSnapshot(roomId: string): ContextSnapshot | null
+    saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number): void
+    deleteContextSnapshot(roomId: string): void
+}
+
+export interface GatewayCaller {
+    summarize(
+        upstream: string,
+        apiKey: string | null,
+        systemPrompt: string,
+        messages: StoredMessage[],
+        previousSummary?: string,
+    ): Promise<{ summary: string; sessionId: string }>
+}
+
+export type SessionCleaner = (sessionId: string) => void
+
+// ─── Build Context Input ───────────────────────────────────
+
+export interface MemberInfo {
+    userId: string
+    name: string
+    description: string
+}
+
+export interface BuildContextInput {
+    roomId: string
+    agentId: string
+    agentName: string
+    agentDescription: string
+    agentSocketId: string
+    roomName: string
+    memberNames: string[]
+    members: MemberInfo[]
+    upstream: string
+    apiKey: string | null
+    currentMessage: StoredMessage
+    compression?: Partial<CompressionConfig>
+}

@@ -23,7 +23,7 @@ function rotateIfNeeded() {
       truncateSync(logFile, 0)
       writeFileSync(logFile, buf)
     }
-  } catch {}
+  } catch { }
 }
 
 // Rotate on startup
@@ -36,5 +36,5 @@ export const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
 }, pino.destination({
   dest: logFile,
-  sync: false,
+  sync: true,
 }))

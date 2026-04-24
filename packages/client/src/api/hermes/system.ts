@@ -45,6 +45,7 @@ export interface CustomProvider {
   base_url: string
   api_key: string
   model: string
+  context_length?: number
   providerKey?: string | null
 }
 

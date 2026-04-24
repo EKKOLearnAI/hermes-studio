@@ -8,6 +8,15 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
+vi.mock('naive-ui', () => ({
+  useMessage: () => ({
+    error: vi.fn(),
+    success: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+  }),
+}))
+
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 
 describe('MarkdownRenderer', () => {

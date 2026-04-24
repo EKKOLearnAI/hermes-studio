@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
   "repository": {
     "type": "git",
@@ -61,13 +61,18 @@
     "dist/"
   ],
   "dependencies": {
-    "node-pty": "^1.1.0"
+    "eventsource": "^4.1.0",
+    "node-pty": "^1.1.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@multiavatar/multiavatar": "^1.0.7",
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.4.0",
     "@pinia/testing": "^1.0.3",
+    "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",
     "@types/koa": "^2.15.0",
     "@types/koa__cors": "^5.0.0",

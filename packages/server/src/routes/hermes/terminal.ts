@@ -122,7 +122,6 @@ export function setupTerminalWebSocket(httpServer: HttpServer) {
   httpServer.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`)
     if (url.pathname !== '/api/hermes/terminal') {
-      socket.destroy()
       return
     }
 

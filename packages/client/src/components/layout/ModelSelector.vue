@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NModal, NInput } from 'naive-ui'
+import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useI18n } from 'vue-i18n'
 
@@ -10,11 +10,37 @@ const appStore = useAppStore()
 const showModal = ref(false)
 const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
+const customInput = ref('')
+const customProvider = ref('')
+
+const providerOptions = computed(() => {
+  const current = appStore.selectedProvider
+  customProvider.value = current
+  return appStore.modelGroups.map(g => ({ label: g.label, value: g.provider }))
+})
+
+const modelGroupsWithCustom = computed(() =>
+  appStore.modelGroups.map(g => ({
+    ...g,
+    models: [
+      ...g.models,
+      ...(appStore.customModels[g.provider] || []).filter(m => !g.models.includes(m)),
+    ],
+  }))
+)
+
+const customModelSet = computed(() => {
+  const set = new Set<string>()
+  for (const models of Object.values(appStore.customModels)) {
+    models.forEach(m => set.add(m))
+  }
+  return set
+})
 
 const filteredGroups = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return appStore.modelGroups
-  return appStore.modelGroups
+  if (!q) return modelGroupsWithCustom.value
+  return modelGroupsWithCustom.value
     .map(g => ({
       ...g,
       models: g.models.filter(m => m.toLowerCase().includes(q)),
@@ -36,9 +62,20 @@ function handleSelect(model: string, provider: string) {
   searchQuery.value = ''
 }
 
+function handleCustomSubmit() {
+  const model = customInput.value.trim()
+  if (!model || !customProvider.value) return
+  appStore.switchModel(model, customProvider.value)
+  showModal.value = false
+  searchQuery.value = ''
+  customInput.value = ''
+}
+
 function openModal() {
   collapsedGroups.value = {}
   searchQuery.value = ''
+  customInput.value = ''
+  customProvider.value = appStore.selectedProvider
   showModal.value = true
 }
 </script>
@@ -89,6 +126,7 @@ function openModal() {
               @click="handleSelect(model, group.provider)"
             >
               <span class="model-item-name">{{ model }}</span>
+              <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -97,6 +135,26 @@ function openModal() {
         </div>
         <div v-if="filteredGroups.length === 0" class="model-empty">
           {{ searchQuery ? 'No results' : 'No models' }}
+        </div>
+        <div class="model-custom">
+          <div class="model-custom-row">
+            <NSelect
+              v-model:value="customProvider"
+              :options="providerOptions"
+              size="small"
+              class="model-custom-provider"
+            />
+            <NInput
+              v-model:value="customInput"
+              :placeholder="t('models.customModelPlaceholder')"
+              size="small"
+              class="model-custom-input"
+              @keydown.enter="handleCustomSubmit"
+            />
+          </div>
+          <div class="model-custom-hint">
+            {{ t('models.customModelHint') }}
+          </div>
         </div>
       </div>
     </NModal>
@@ -243,10 +301,48 @@ function openModal() {
   color: $accent-primary;
 }
 
+.model-badge-custom {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  background: $accent-primary;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  letter-spacing: 0.03em;
+}
+
 .model-empty {
   padding: 24px 0;
   text-align: center;
   font-size: 13px;
+  color: $text-muted;
+}
+
+.model-custom {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid $border-color;
+}
+
+.model-custom-row {
+  display: flex;
+  gap: 8px;
+}
+
+.model-custom-provider {
+  width: 160px;
+  flex-shrink: 0;
+}
+
+.model-custom-input {
+  flex: 1;
+}
+
+.model-custom-hint {
+  margin-top: 6px;
+  font-size: 11px;
   color: $text-muted;
 }
 </style>

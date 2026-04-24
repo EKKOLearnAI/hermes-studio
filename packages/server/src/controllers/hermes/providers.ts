@@ -5,9 +5,17 @@ import * as hermesCli from '../../services/hermes/hermes-cli'
 import { readConfigYaml, writeConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 
+function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number) {
+  const entry: any = { name, base_url, api_key, model }
+  if (context_length && context_length > 0) {
+    entry.models = { [model]: { context_length } }
+  }
+  return entry
+}
+
 export async function create(ctx: any) {
-  const { name, base_url, api_key, model, providerKey } = ctx.request.body as {
-    name: string; base_url: string; api_key: string; model: string; providerKey?: string | null
+  const { name, base_url, api_key, model, context_length, providerKey } = ctx.request.body as {
+    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null
   }
   console.log(name, base_url, api_key, model, providerKey)
   if (!name || !base_url || !model) {
@@ -30,8 +38,13 @@ export async function create(ctx: any) {
         existing.base_url = base_url
         existing.api_key = api_key
         existing.model = model
+        if (context_length && context_length > 0) {
+          if (!existing.models) existing.models = {}
+          existing.models[model] = existing.models[model] || {}
+          existing.models[model].context_length = context_length
+        }
       } else {
-        config.custom_providers.push({ name: name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model })
+        config.custom_providers.push(buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length))
       }
       config.model.default = model
       config.model.provider = poolKey
@@ -51,8 +64,13 @@ export async function create(ctx: any) {
           existing.base_url = base_url
           existing.api_key = api_key
           existing.model = model
+          if (context_length && context_length > 0) {
+            if (!existing.models) existing.models = {}
+            existing.models[model] = existing.models[model] || {}
+            existing.models[model].context_length = context_length
+          }
         } else {
-          config.custom_providers.push({ name: poolKey, base_url, api_key, model })
+          config.custom_providers.push(buildProviderEntry(poolKey, base_url, api_key, model, context_length))
         }
         config.model.default = model
         config.model.provider = `custom:${poolKey}`

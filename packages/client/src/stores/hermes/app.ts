@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { checkHealth, fetchAvailableModels, updateDefaultModel, triggerUpdate, type AvailableModelGroup } from '@/api/hermes/system'
+import { checkHealth, fetchConfigModels, updateDefaultModel, triggerUpdate, type AvailableModelGroup } from '@/api/hermes/system'
 
 const WEB_UI_VERSION = __APP_VERSION__
 
@@ -19,6 +19,7 @@ export const useAppStore = defineStore('app', () => {
   const modelGroups = ref<AvailableModelGroup[]>([])
   const selectedModel = ref('')
   const selectedProvider = ref('')
+  const customModels = ref<Record<string, string[]>>({})
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
 
@@ -56,10 +57,16 @@ export const useAppStore = defineStore('app', () => {
 
   async function loadModels() {
     try {
-      const res = await fetchAvailableModels()
-      modelGroups.value = res.groups
+      const res = await fetchConfigModels()
+      modelGroups.value = res.groups.map(g => ({
+        provider: g.provider,
+        label: g.provider,
+        base_url: '',
+        models: g.models.map(m => typeof m === 'string' ? m : m.id),
+        api_key: '',
+      }))
       selectedModel.value = res.default
-      selectedProvider.value = res.default_provider || ''
+      selectedProvider.value = ''
     } catch {
       // ignore
     }
@@ -73,6 +80,13 @@ export const useAppStore = defineStore('app', () => {
       await updateDefaultModel({ default: modelId, provider })
       selectedModel.value = modelId
       selectedProvider.value = provider || ''
+      // Track as custom if not already in the server-fetched list
+      if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
+        if (!customModels.value[provider]) customModels.value[provider] = []
+        if (!customModels.value[provider].includes(modelId)) {
+          customModels.value[provider] = [...customModels.value[provider], modelId]
+        }
+      }
     } catch (err: any) {
       console.error('Failed to switch model:', err)
     }
@@ -122,6 +136,7 @@ export const useAppStore = defineStore('app', () => {
     updating,
     doUpdate,
     modelGroups,
+    customModels,
     selectedModel,
     selectedProvider,
     streamEnabled,

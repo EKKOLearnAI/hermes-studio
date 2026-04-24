@@ -108,6 +108,17 @@ Unified configuration for **8 platforms** in one page:
 - Create directories
 - View file content with syntax highlighting
 
+### Group Chat
+
+- Multi-agent chat rooms with real-time messaging via Socket.IO
+- @mention routing — mention an agent to trigger a contextual reply
+- Context compression — automatic conversation summarization when history exceeds token threshold
+- Typing status and reply progress indicators
+- Room creation, deletion, and invite code management
+- Agent management — add/remove agents from rooms with per-agent profiles
+- SQLite message persistence
+- Mobile responsive with collapsible sidebar
+
 ### Skills & Memory
 
 - Browse and search installed skills

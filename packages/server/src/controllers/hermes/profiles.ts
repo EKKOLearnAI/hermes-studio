@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'fs/promises'
 import { basename, join } from 'path'
 import { tmpdir } from 'os'
 import * as hermesCli from '../../services/hermes/hermes-cli'
+import { drainPendingSessionDeletes } from '../../services/hermes/group-chat'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { logger } from '../../services/logger'
 
@@ -118,7 +119,17 @@ export async function switchProfile(ctx: any) {
     } catch (err: any) {
       logger.error(err, 'Ensure config failed')
     }
-    ctx.body = { success: true, message: output.trim() }
+    const drainResult = await drainPendingSessionDeletes(name)
+    logger.info('[switchProfile] drain result for profile "%s": %d deleted, %d failed', name, drainResult.deleted.length, drainResult.failed.length)
+    if (drainResult.failed.length > 0) {
+      logger.warn({ profile: name, failed: drainResult.failed }, 'Failed to drain some pending session deletes after profile switch')
+    }
+    ctx.body = {
+      success: true,
+      message: output.trim(),
+      drained_session_deletes: drainResult.deleted.length,
+      failed_session_deletes: drainResult.failed.length,
+    }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

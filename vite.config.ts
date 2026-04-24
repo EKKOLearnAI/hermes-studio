@@ -48,6 +48,10 @@ export default defineConfig({
       '/health': createProxyConfig(),
       '/upload': createProxyConfig(),
       '/webhook': createProxyConfig(),
+      '/socket.io': {
+        target: BACKEND,
+        ws: true,
+      },
     },
   },
 })

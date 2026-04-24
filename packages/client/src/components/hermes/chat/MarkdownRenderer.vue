@@ -6,7 +6,13 @@ import MarkdownIt from 'markdown-it'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
 import { downloadFile } from '@/api/hermes/download'
 
-const props = defineProps<{ content: string }>()
+const props = withDefaults(defineProps<{
+    content: string
+    mentionNames?: string[]
+}>(), {
+    mentionNames: () => [],
+})
+
 const { t } = useI18n()
 const message = useMessage()
 
@@ -19,7 +25,15 @@ const md: MarkdownIt = new MarkdownIt({
   },
 })
 
-const renderedHtml = computed(() => md.render(props.content))
+const renderedHtml = computed(() => {
+  let html = md.render(props.content)
+  if (props.mentionNames && props.mentionNames.length > 0) {
+    const escaped = props.mentionNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const re = new RegExp(`(?<=[\\s>]|^)@(${escaped.join('|')})(?=\\s|$)`, 'gi')
+    html = html.replace(re, '<span class="mention-highlight">@$1</span>')
+  }
+  return html
+})
 
 function handleMarkdownClick(event: MouseEvent): void {
   void handleCodeBlockCopyClick(event)

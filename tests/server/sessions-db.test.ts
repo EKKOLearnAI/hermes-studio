@@ -6,8 +6,8 @@ const contentAllMock = vi.fn()
 const likeAllMock = vi.fn()
 const prepareMock = vi.fn((sql: string) => {
   if (sql.includes('messages_fts MATCH')) return ({ all: contentAllMock })
-  if (sql.includes('m.content LIKE ?')) return ({ all: likeAllMock })
-  if (sql.includes("LOWER(COALESCE(base.title, '')) LIKE ?")) return ({ all: titleAllMock })
+  if (sql.includes('JOIN messages m') && sql.includes('LIKE')) return ({ all: likeAllMock })
+  if (sql.includes('base.title') && sql.includes('LIKE')) return ({ all: titleAllMock })
   return ({ all: allMock })
 })
 const closeMock = vi.fn()
@@ -231,25 +231,25 @@ describe('session DB summaries', () => {
     expect(rows[1].snippet).toContain('docker')
   })
 
-  it('falls back to LIKE search when messages_fts is missing for numeric queries', async () => {
+  it('falls back to literal content search for punctuation-only queries instead of unsafe FTS', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
-      throw new Error('no such table: messages_fts')
+      throw new Error('fts5: syntax error near "."')
     })
     likeAllMock.mockReturnValue([
       {
-        id: 'numeric-1',
+        id: 'dot-1',
         source: 'cli',
         user_id: '',
         model: 'openai/gpt-5.4',
         title: '',
-        started_at: 1710002800,
+        started_at: 1710004000,
         ended_at: null,
         end_reason: '',
         message_count: 1,
         tool_call_count: 0,
-        input_tokens: 2,
-        output_tokens: 3,
+        input_tokens: 1,
+        output_tokens: 1,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         reasoning_tokens: 0,
@@ -257,42 +257,39 @@ describe('session DB summaries', () => {
         estimated_cost_usd: 0,
         actual_cost_usd: null,
         cost_status: '',
-        preview: 'numeric preview',
-        last_active: 1710002805,
-        matched_message_id: 9,
-        snippet: 'ticket 12345',
+        preview: 'punctuation preview',
+        last_active: 1710004001,
+        matched_message_id: 21,
+        snippet: 'value.with.dot',
         rank: 0,
       },
     ])
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
-    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+    const rows = await mod.searchSessionSummaries('.', undefined, 10)
 
-    expect(likeAllMock).toHaveBeenCalledWith('123', '%123%')
+    expect(contentAllMock).not.toHaveBeenCalled()
+    expect(likeAllMock).toHaveBeenCalled()
     expect(rows).toHaveLength(1)
-    expect(rows[0].id).toBe('numeric-1')
-    expect(rows[0].snippet).toContain('123')
+    expect(rows[0].id).toBe('dot-1')
   })
 
-  it('keeps the source filter when messages_fts is missing for numeric queries', async () => {
+  it('keeps safe dotted queries on the FTS path', async () => {
     titleAllMock.mockReturnValue([])
-    contentAllMock.mockImplementation(() => {
-      throw new Error('no such table: messages_fts')
-    })
-    likeAllMock.mockReturnValue([
+    contentAllMock.mockReturnValue([
       {
-        id: 'numeric-telegram-1',
-        source: 'telegram',
+        id: 'node-1',
+        source: 'cli',
         user_id: '',
         model: 'openai/gpt-5.4',
-        title: '',
-        started_at: 1710002850,
+        title: 'Node.js notes',
+        started_at: 1710004500,
         ended_at: null,
         end_reason: '',
         message_count: 1,
         tool_call_count: 0,
-        input_tokens: 2,
-        output_tokens: 3,
+        input_tokens: 1,
+        output_tokens: 1,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         reasoning_tokens: 0,
@@ -300,38 +297,38 @@ describe('session DB summaries', () => {
         estimated_cost_usd: 0,
         actual_cost_usd: null,
         cost_status: '',
-        preview: 'telegram numeric preview',
-        last_active: 1710002855,
-        matched_message_id: 12,
-        snippet: 'telegram 123 body',
-        rank: 0,
+        preview: 'dotted preview',
+        last_active: 1710004501,
+        matched_message_id: 22,
+        snippet: '>>>node.js<<< runtime',
+        rank: 0.2,
       },
     ])
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
-    const rows = await mod.searchSessionSummaries('123', 'telegram', 10)
+    const rows = await mod.searchSessionSummaries('node.js', undefined, 10)
 
-    expect(likeAllMock).toHaveBeenCalledWith('telegram', '123', '%123%')
+    expect(contentAllMock).toHaveBeenCalled()
+    expect(likeAllMock).not.toHaveBeenCalled()
     expect(rows).toHaveLength(1)
-    expect(rows[0].source).toBe('telegram')
-    expect(rows[0].id).toBe('numeric-telegram-1')
+    expect(rows[0].id).toBe('node-1')
   })
 
-  it('preserves title matches when messages_fts is missing for numeric queries', async () => {
+  it('keeps explicit wildcard dotted queries on the FTS path with valid syntax', async () => {
     titleAllMock.mockReturnValue([
       {
-        id: 'title-123',
+        id: 'node-wildcard-title-1',
         source: 'cli',
         user_id: '',
         model: 'openai/gpt-5.4',
-        title: 'Issue 123',
-        started_at: 1710002900,
+        title: 'Node.js wildcard notes',
+        started_at: 1710004590,
         ended_at: null,
         end_reason: '',
         message_count: 1,
         tool_call_count: 0,
-        input_tokens: 2,
-        output_tokens: 3,
+        input_tokens: 1,
+        output_tokens: 1,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         reasoning_tokens: 0,
@@ -339,30 +336,27 @@ describe('session DB summaries', () => {
         estimated_cost_usd: 0,
         actual_cost_usd: null,
         cost_status: '',
-        preview: 'title numeric preview',
-        last_active: 1710002910,
+        preview: 'wildcard title preview',
+        last_active: 1710004595,
         matched_message_id: null,
-        snippet: 'Issue 123',
+        snippet: 'Node.js wildcard notes',
         rank: 0,
       },
     ])
-    contentAllMock.mockImplementation(() => {
-      throw new Error('no such table: messages_fts')
-    })
-    likeAllMock.mockReturnValue([
+    contentAllMock.mockReturnValue([
       {
-        id: 'content-123',
+        id: 'node-wildcard-1',
         source: 'cli',
         user_id: '',
         model: 'openai/gpt-5.4',
-        title: '',
-        started_at: 1710002890,
+        title: 'Node.js wildcard notes',
+        started_at: 1710004600,
         ended_at: null,
         end_reason: '',
         message_count: 1,
         tool_call_count: 0,
-        input_tokens: 2,
-        output_tokens: 3,
+        input_tokens: 1,
+        output_tokens: 1,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         reasoning_tokens: 0,
@@ -370,26 +364,243 @@ describe('session DB summaries', () => {
         estimated_cost_usd: 0,
         actual_cost_usd: null,
         cost_status: '',
-        preview: 'content numeric preview',
-        last_active: 1710002895,
-        matched_message_id: 10,
-        snippet: 'content 123 body',
+        preview: 'wildcard dotted preview',
+        last_active: 1710004601,
+        matched_message_id: 24,
+        snippet: '>>>node.js<<< runtime',
+        rank: 0.15,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('node.js*', undefined, 10)
+
+    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 10)
+    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 40)
+    expect(likeAllMock).not.toHaveBeenCalled()
+    expect(rows).toHaveLength(2)
+    expect(rows[0].id).toBe('node-wildcard-title-1')
+    expect(rows[1].id).toBe('node-wildcard-1')
+  })
+
+  it('keeps quoted wildcard dotted queries on the FTS path with valid syntax', async () => {
+    titleAllMock.mockReturnValue([
+      {
+        id: 'node-quoted-title-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Quoted Node.js wildcard notes',
+        started_at: 1710004640,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'quoted title preview',
+        last_active: 1710004645,
+        matched_message_id: null,
+        snippet: 'Quoted Node.js wildcard notes',
+        rank: 0,
+      },
+    ])
+    contentAllMock.mockReturnValue([
+      {
+        id: 'node-quoted-wildcard-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Quoted Node.js wildcard notes',
+        started_at: 1710004650,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'quoted wildcard dotted preview',
+        last_active: 1710004651,
+        matched_message_id: 25,
+        snippet: '>>>node.js<<< runtime',
+        rank: 0.12,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('"node.js"*', undefined, 10)
+
+    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 10)
+    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 40)
+    expect(likeAllMock).not.toHaveBeenCalled()
+    expect(rows).toHaveLength(2)
+    expect(rows[0].id).toBe('node-quoted-title-1')
+    expect(rows[1].id).toBe('node-quoted-wildcard-1')
+  })
+
+  it('keeps non-ASCII dotted queries on the safe quoted FTS path', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockReturnValue([
+      {
+        id: 'unicode-dot-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'naïve.js note',
+        started_at: 1710004700,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'unicode dotted preview',
+        last_active: 1710004701,
+        matched_message_id: 23,
+        snippet: 'naïve.js runtime',
         rank: 0,
       },
     ])
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
-    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+    const rows = await mod.searchSessionSummaries('naïve.js', undefined, 10)
 
-    expect(rows).toHaveLength(2)
-    expect(rows[0].id).toBe('title-123')
-    expect(rows[0].matched_message_id).toBeNull()
-    expect(rows[1].id).toBe('content-123')
-    expect(rows[1].matched_message_id).toBe(10)
+    expect(contentAllMock).toHaveBeenCalledWith('"naïve.js"', 40)
+    expect(likeAllMock).not.toHaveBeenCalled()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('unicode-dot-1')
   })
 
-  it('falls back to LIKE search for CJK queries', async () => {
+  it('escapes LIKE wildcards for literal special-character searches', async () => {
     titleAllMock.mockReturnValue([])
+    likeAllMock.mockReturnValue([
+      {
+        id: 'percent-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '100% reproducible',
+        started_at: 1710005000,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'literal percent preview',
+        last_active: 1710005001,
+        matched_message_id: 31,
+        snippet: '100% reproducible',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('100%', undefined, 10)
+
+    expect(titleAllMock).toHaveBeenCalledWith('%100\\%%', 10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('percent-1')
+  })
+
+  it('uses literal search for CJK queries even when FTS returns no rows', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockReturnValue([])
+    likeAllMock.mockReturnValue([
+      {
+        id: 'cjk-literal-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '',
+        started_at: 1710002980,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '中文内容预览',
+        last_active: 1710002985,
+        matched_message_id: 10,
+        snippet: '这里也有记忆断裂',
+        rank: 0,
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const rows = await mod.searchSessionSummaries('记忆断裂', undefined, 10)
+
+    expect(contentAllMock).not.toHaveBeenCalled()
+    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 40)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('cjk-literal-1')
+  })
+
+  it('falls back to LIKE search for CJK queries while preserving title matches', async () => {
+    titleAllMock.mockReturnValue([
+      {
+        id: 'cjk-title-1',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: '记忆断裂标题',
+        started_at: 1710002990,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 2,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'title preview',
+        last_active: 1710002995,
+        matched_message_id: null,
+        snippet: '记忆断裂标题',
+        rank: 0,
+      },
+    ])
     contentAllMock.mockImplementation(() => {
       throw new Error('fts5 tokenizer miss')
     })
@@ -425,10 +636,94 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('记忆断裂', undefined, 10)
 
-    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%')
-    expect(rows).toHaveLength(1)
+    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 40)
+    expect(rows).toHaveLength(2)
     expect(rows[0].id).toBe('cjk-1')
+    expect(rows[1].id).toBe('cjk-title-1')
     expect(rows[0].snippet).toContain('记忆断裂')
+  })
+
+  it('does not hide real database failures for safe FTS queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('database malformed')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('docker', undefined, 10)).rejects.toThrow(
+      'Failed to search sessions: database malformed',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when messages_fts is missing for numeric queries', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
+      'Failed to search sessions: no such table: messages_fts',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when messages_fts is missing for numeric queries with source filter', async () => {
+    titleAllMock.mockReturnValue([])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('123', 'telegram', 10)).rejects.toThrow(
+      'Failed to search sessions: no such table: messages_fts',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when messages_fts is missing for numeric queries even with title matches', async () => {
+    titleAllMock.mockReturnValue([
+      {
+        id: 'title-123',
+        source: 'cli',
+        user_id: '',
+        model: 'openai/gpt-5.4',
+        title: 'Issue 123',
+        started_at: 1710002900,
+        ended_at: null,
+        end_reason: '',
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 2,
+        output_tokens: 3,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: '',
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: 'title numeric preview',
+        last_active: 1710002910,
+        matched_message_id: null,
+        snippet: 'Issue 123',
+        rank: 0,
+      },
+    ])
+    contentAllMock.mockImplementation(() => {
+      throw new Error('no such table: messages_fts')
+    })
+
+    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+
+    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
+      'Failed to search sessions: no such table: messages_fts',
+    )
+    expect(likeAllMock).not.toHaveBeenCalled()
   })
 
   it('does not fall back to LIKE when messages_fts is missing for non-numeric queries', async () => {

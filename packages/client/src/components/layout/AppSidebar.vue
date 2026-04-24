@@ -9,14 +9,9 @@ import ProfileSelector from "./ProfileSelector.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
 import { useSessionSearch } from '@/composables/useSessionSearch'
-import danceVideoLight from "@/assets/dance-light.mp4";
-import danceVideoDark from "@/assets/dance-dark.mp4";
-
-import { useTheme } from "@/composables/useTheme";
 import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
-const { isDark } = useTheme();
 const message = useMessage();
 const route = useRoute();
 const router = useRouter();
@@ -66,25 +61,43 @@ function openChangelog() {
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
       <img :src="logoPath" alt="Hermes" class="logo-img" />
       <span class="logo-text">Hermes</span>
-      <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline />
+      <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
 
     <nav class="sidebar-nav">
-      <!-- Chat (standalone) -->
-      <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <span>{{ t("sidebar.chat") }}</span>
-      </button>
-
-      <button class="nav-item" @click="openSessionSearch">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7" />
-          <path d="m20 20-3.5-3.5" />
-        </svg>
-        <span>{{ t("sidebar.search") }}</span>
-      </button>
+      <!-- Conversation -->
+      <div class="nav-group">
+        <div class="nav-group-label" @click="toggleGroup('conversation')">
+          <span>{{ t("sidebar.groupConversation") }}</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('conversation') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+        <div v-show="!isGroupCollapsed('conversation')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span>{{ t("sidebar.chat") }}</span>
+          </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.groupChat' }" @click="handleNav('hermes.groupChat')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span>{{ t("sidebar.groupChat") }}<span class="beta-tag">(beta)</span></span>
+          </button>
+          <button class="nav-item" @click="openSessionSearch">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <span>{{ t("sidebar.search") }}</span>
+          </button>
+        </div>
+      </div>
 
       <!-- Agent -->
       <div class="nav-group">
@@ -434,6 +447,12 @@ function openChangelog() {
   &.active {
     background-color: rgba(var(--accent-primary-rgb), 0.12);
     color: $accent-primary;
+  }
+
+  .beta-tag {
+    font-size: 10px;
+    color: $text-muted;
+    margin-left: 2px;
   }
 }
 
