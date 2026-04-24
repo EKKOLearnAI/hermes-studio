@@ -72,7 +72,7 @@ function buildProxyHeaders(ctx: Context, upstream: string): Record<string, strin
     const lower = key.toLowerCase()
     if (lower === 'host') {
       headers['host'] = new URL(upstream).host
-    } else if (lower === 'origin' || lower === 'referer' || lower === 'connection' || lower === 'authorization') {
+    } else if (lower === 'origin' || lower === 'referer' || lower === 'connection') {
       continue
     } else {
       const v = Array.isArray(value) ? value[0] : value

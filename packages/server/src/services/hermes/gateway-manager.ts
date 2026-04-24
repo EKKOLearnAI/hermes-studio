@@ -591,11 +591,21 @@ export class GatewayManager {
     }
 
     // Phase 2: 并行启动
+    const { config } = await import('../../config')
     const tasks = toStart.map(async (name) => {
       try {
         await this.start(name)
       } catch (err: any) {
         logger.error(err, '%s: failed to start', name)
+        // 嵌入式网关启动失败时，如果 config.upstream 指向的网关已经健康，
+        // 直接注册它作为该 profile 的上游（支持外部网关模式）
+        const { port, host } = this.readProfilePort(name)
+        const configUpstream = config.upstream.replace(/\/$/, '')
+        const healthOk = await this.checkHealth(configUpstream, 2000)
+        if (healthOk) {
+          logger.info('%s: embedded gateway failed, using config upstream %s', name, configUpstream)
+          this.gateways.set(name, { port, host, url: configUpstream })
+        }
       }
     })
 
