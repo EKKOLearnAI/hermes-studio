@@ -28,19 +28,30 @@ export function hasApiKey(): boolean {
 
 /**
  * Get the effective base URL and API key.
- * Always routes through the local BFF — the BFF resolves the correct
- * upstream backend per profile (via X-Hermes-Profile header).
- * This prevents the browser from needing direct access to remote backends.
+ * If the active profile has a backend_url, route directly to that remote backend.
+ * Otherwise, route through the local BFF.
  */
 function getEffectiveConfig(): { baseUrl: string; apiKey: string } {
+  const backendUrl = localStorage.getItem('hermes_profile_backend_url')
+  const backendToken = localStorage.getItem('hermes_profile_backend_token')
+
+  if (backendUrl) {
+    return {
+      baseUrl: backendUrl,
+      apiKey: backendToken || getApiKey(),
+    }
+  }
+
   return {
     baseUrl: getBaseUrl(),
     apiKey: getApiKey(),
   }
 }
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const { baseUrl, apiKey } = getEffectiveConfig()
+export async function request<T>(path: string, options: RequestInit & { forceLocal?: boolean } = {}): Promise<T> {
+  const { baseUrl: effectiveBaseUrl, apiKey: effectiveApiKey } = getEffectiveConfig()
+  const baseUrl = options.forceLocal ? getBaseUrl() : effectiveBaseUrl
+  const apiKey = options.forceLocal ? getApiKey() : effectiveApiKey
   const url = `${baseUrl}${path}`
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

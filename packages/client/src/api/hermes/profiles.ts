@@ -22,12 +22,12 @@ export interface HermesProfileDetail {
 }
 
 export async function fetchProfiles(): Promise<HermesProfile[]> {
-  const res = await request<{ profiles: HermesProfile[] }>('/api/hermes/profiles')
+  const res = await request<{ profiles: HermesProfile[] }>('/api/hermes/profiles', { forceLocal: true })
   return res.profiles
 }
 
 export async function fetchProfileDetail(name: string): Promise<HermesProfileDetail> {
-  const res = await request<{ profile: HermesProfileDetail }>(`/api/hermes/profiles/${encodeURIComponent(name)}`)
+  const res = await request<{ profile: HermesProfileDetail }>(`/api/hermes/profiles/${encodeURIComponent(name)}`, { forceLocal: true })
   return res.profile
 }
 
@@ -36,6 +36,7 @@ export async function createProfile(name: string, clone?: boolean): Promise<bool
     await request('/api/hermes/profiles', {
       method: 'POST',
       body: JSON.stringify({ name, clone }),
+      forceLocal: true,
     })
     return true
   } catch {
@@ -45,7 +46,7 @@ export async function createProfile(name: string, clone?: boolean): Promise<bool
 
 export async function deleteProfile(name: string): Promise<boolean> {
   try {
-    await request(`/api/hermes/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    await request(`/api/hermes/profiles/${encodeURIComponent(name)}`, { method: 'DELETE', forceLocal: true })
     return true
   } catch {
     return false
@@ -57,6 +58,7 @@ export async function renameProfile(name: string, newName: string): Promise<bool
     await request(`/api/hermes/profiles/${encodeURIComponent(name)}/rename`, {
       method: 'POST',
       body: JSON.stringify({ new_name: newName }),
+      forceLocal: true,
     })
     return true
   } catch {
@@ -69,6 +71,7 @@ export async function switchProfile(name: string): Promise<boolean> {
     await request('/api/hermes/profiles/active', {
       method: 'PUT',
       body: JSON.stringify({ name }),
+      forceLocal: true,
     })
     return true
   } catch {

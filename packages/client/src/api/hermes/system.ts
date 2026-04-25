@@ -50,19 +50,19 @@ export interface CustomProvider {
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health')
+  return request<HealthResponse>('/health', { forceLocal: true })
 }
 
 export async function triggerUpdate(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/api/hermes/update', { method: 'POST' })
+  return request<{ success: boolean; message: string }>('/api/hermes/update', { method: 'POST', forceLocal: true })
 }
 
 export async function fetchConfigModels(): Promise<ConfigModelsResponse> {
-  return request<ConfigModelsResponse>('/api/hermes/config/models')
+  return request<ConfigModelsResponse>('/api/hermes/config/models', { forceLocal: true })
 }
 
 export async function fetchAvailableModels(): Promise<AvailableModelsResponse> {
-  return request<AvailableModelsResponse>('/api/hermes/available-models')
+  return request<AvailableModelsResponse>('/api/hermes/available-models', { forceLocal: true })
 }
 
 export async function updateDefaultModel(data: {
@@ -74,6 +74,7 @@ export async function updateDefaultModel(data: {
   await request('/api/hermes/config/model', {
     method: 'PUT',
     body: JSON.stringify(data),
+    forceLocal: true,
   })
 }
 
@@ -81,12 +82,14 @@ export async function addCustomProvider(data: CustomProvider): Promise<void> {
   await request('/api/hermes/config/providers', {
     method: 'POST',
     body: JSON.stringify(data),
+    forceLocal: true,
   })
 }
 
 export async function removeCustomProvider(name: string): Promise<void> {
   await request(`/api/hermes/config/providers/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+    forceLocal: true,
   })
 }
 
@@ -99,5 +102,6 @@ export async function updateProvider(poolKey: string, data: {
   await request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+    forceLocal: true,
   })
 }
