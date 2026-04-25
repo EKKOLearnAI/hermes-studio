@@ -14,6 +14,47 @@ const listRef = ref<HTMLElement>();
 const isTransitioning = ref(false);
 let transitionTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Custom thinking animation
+const customAnimSrc = ref<string | null>(null)
+const customAnimType = ref<'video' | 'gif' | null>(null)
+const customAnimFailed = ref(false)
+
+function getToken(): string {
+  const pk = localStorage.getItem('hermes_profiles_key')
+  const ak = localStorage.getItem('hermes_api_key')
+  return (pk || ak || '').replace(/"/g, '')
+}
+
+async function loadCustomAnimation() {
+  try {
+    const res = await fetch('/api/hermes/thinking-animation/status', {
+      headers: { Authorization: `Bearer ${getToken()}` }
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.hasCustom) {
+      customAnimSrc.value = '/api/hermes/thinking-animation/file'
+      customAnimType.value = data.type === 'gif' ? 'gif' : 'video'
+      customAnimFailed.value = false
+    } else {
+      customAnimSrc.value = null
+      customAnimType.value = null
+    }
+  } catch { /* ignore */ }
+}
+
+function onCustomAnimError() {
+  customAnimFailed.value = true
+}
+
+// Load on mount
+loadCustomAnimation()
+
+// Also reload when streaming starts (to pick up any recent changes)
+watch(() => chatStore.isStreaming, (streaming) => {
+  if (streaming) loadCustomAnimation()
+})
+
 const displayMessages = computed(() =>
   chatStore.messages.filter((m) => m.role !== "tool"),
 );
@@ -172,14 +213,15 @@ watch(currentToolCalls, () => {
     />
     <Transition name="fade">
       <div v-if="chatStore.isRunActive" class="streaming-indicator">
-        <video
-          :src="isDark ? thinkingVideoDark : thinkingVideoLight"
-          autoplay
-          loop
-          muted
-          playsinline
-          class="thinking-video"
-        />
+        <template v-if="customAnimSrc && customAnimType === 'gif' && !customAnimFailed">
+          <img :src="customAnimSrc" class="thinking-video" @error="onCustomAnimError" />
+        </template>
+        <template v-else-if="customAnimSrc && customAnimType === 'video' && !customAnimFailed">
+          <video :src="customAnimSrc" autoplay loop muted playsinline class="thinking-video" @error="onCustomAnimError" />
+        </template>
+        <template v-else>
+          <video :src="isDark ? thinkingVideoDark : thinkingVideoLight" autoplay loop muted playsinline class="thinking-video" />
+        </template>
         <div v-if="currentToolCalls.length > 0" class="tool-calls-panel">
           <div
             v-for="tc in currentToolCalls"
@@ -275,8 +317,8 @@ watch(currentToolCalls, () => {
   gap: 12px;
   padding: 4px;
   .thinking-video {
-    width: 120px;
-    height: 213px;
+    width: 320px;
+    height: 180px;
     border-radius: $radius-md;
     object-fit: contain;
     flex-shrink: 0;

@@ -367,6 +367,32 @@ export const useChatStore = defineStore('chat', () => {
     }
   })
 
+  // --- Avatar state ---
+  const userAvatar = ref<string | null>(localStorage.getItem('hermes_user_avatar'))
+  const aiAvatar = ref<string | null>(null)
+
+  function setUserAvatar(dataUrl: string) {
+    userAvatar.value = dataUrl
+    localStorage.setItem('hermes_user_avatar', dataUrl)
+  }
+
+  function setAiAvatar(dataUrl: string) {
+    const profile = getProfileName()
+    aiAvatar.value = dataUrl
+    localStorage.setItem(`hermes_ai_avatar_${profile}`, dataUrl)
+  }
+
+  function updateAiAvatar() {
+    aiAvatar.value = null
+    try {
+      const profile = getProfileName()
+      const saved = localStorage.getItem(`hermes_ai_avatar_${profile}`)
+      if (saved) {
+        aiAvatar.value = saved
+      }
+    } catch { /* ignore */ }
+  }
+
   const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
   const pollSignatures = new Map<string, { sig: string, stableTicks: number }>()
 
@@ -1371,6 +1397,11 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingMessages,
     busyInputMode,
     pendingMessage,
+    userAvatar,
+    aiAvatar,
+    setUserAvatar,
+    setAiAvatar,
+    updateAiAvatar,
 
     newChat,
     switchSession,

@@ -21,6 +21,7 @@ onMounted(async () => {
   // 先加载 profile，确保缓存 key 使用正确的 profile name
   await profilesStore.fetchProfiles()
   chatStore.loadSessions()
+  chatStore.updateAiAvatar()
 })
 
 // Profile 切换时保存当前状态并加载新 profile 的会话和模型列表
@@ -37,6 +38,8 @@ watch(
       if (seq !== _switchSeq) return
       // Re-fetch models from the new profile's gateway
       appStore.loadModels()
+      // Update AI avatar for the new profile
+      chatStore.updateAiAvatar()
     }
   },
 )

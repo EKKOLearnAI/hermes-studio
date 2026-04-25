@@ -25,6 +25,7 @@ import { downloadRoutes } from './hermes/download'
 import { jobRoutes } from './hermes/jobs'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
+import { thinkingRoutes } from './hermes/thinking-animation'
 
 /**
  * Register all routes on the Koa app.
@@ -35,6 +36,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
+  app.use(thinkingRoutes.routes())
   app.use(authPublicRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
