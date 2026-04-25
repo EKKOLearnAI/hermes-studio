@@ -27,26 +27,40 @@ function getSessionForRun(runId: string): string | undefined {
 
 const HERMES_BASE = join(homedir(), '.hermes')
 
-/** Read backend.url and backend.token from a profile's config.yaml */
-function readProfileBackendUrl(profileName: string): { url: string; token: string } {
+/** Read backend config from a profile's config.yaml. Exported for use by sessions controller. */
+export function readProfileBackendUrl(profileName: string): { url: string; token: string; bff_url: string; bff_token: string } {
   const configPath = profileName === 'default'
     ? join(HERMES_BASE, 'config.yaml')
     : join(HERMES_BASE, 'profiles', profileName, 'config.yaml')
-  if (!existsSync(configPath)) return { url: '', token: '' }
+  if (!existsSync(configPath)) return { url: '', token: '', bff_url: '', bff_token: '' }
   try {
     const content = readFileSync(configPath, 'utf-8')
     const cfg = yaml.load(content) as any || {}
     const url = cfg?.backend?.url?.trim() || ''
     const token = cfg?.backend?.token?.trim() || ''
-    return { url, token }
+    const bff_url = cfg?.backend?.bff_url?.trim() || ''
+    const bff_token = cfg?.backend?.bff_token?.trim() || ''
+    return { url, token, bff_url, bff_token }
   } catch {
-    return { url: '', token: '' }
+    return { url: '', token: '', bff_url: '', bff_token: '' }
   }
 }
 
-/** Resolve profile name from request */
+/** Normalize profile name to match actual directory name (case-insensitive). Exported for sessions controller. */
+export function normalizeProfileName(name: string): string {
+  if (name === 'default') return name
+  const exactDir = join(HERMES_BASE, 'profiles', name)
+  if (existsSync(exactDir)) return name
+  const lower = name.toLowerCase()
+  const lowerDir = join(HERMES_BASE, 'profiles', lower)
+  if (existsSync(lowerDir)) return lower
+  return name
+}
+
+/** Resolve profile name from request (normalizes to match actual directory name) */
 function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  const raw = ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  return normalizeProfileName(raw)
 }
 
 /** Resolve upstream URL for a request based on profile header/query */

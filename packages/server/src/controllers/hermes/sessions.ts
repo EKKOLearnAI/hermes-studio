@@ -1,4 +1,5 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
+import { readProfileBackendUrl, normalizeProfileName } from '../../routes/hermes/proxy-handler'
 import { getConversationDetail, listConversationSummaries } from '../../services/hermes/conversations'
 import {
   getConversationDetailFromDb,
@@ -108,6 +109,34 @@ export async function getConversationMessages(ctx: any) {
 export async function list(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
+
+  // Check if active profile is remote — proxy to remote BFF
+  // Priority: X-Hermes-Profile header > active_profile file
+  const profileName = normalizeProfileName((ctx.headers['x-hermes-profile'] as string) || getActiveProfileName())
+  if (profileName && profileName !== 'default') {
+    try {
+      // Use bff_url (remote BFF) for session requests, not backend.url (gateway)
+      const backend = readProfileBackendUrl(profileName)
+      const bffUrl = backend.bff_url || backend.url
+      const bffToken = backend.bff_token || backend.token
+      if (bffUrl) {
+        const url = `${bffUrl}/api/hermes/sessions?limit=${limit || 2000}`
+        const headers: Record<string, string> = {}
+        if (bffToken) headers['Authorization'] = `Bearer ${bffToken}`
+        const res = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(5000),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          ctx.body = { sessions: data.sessions || [] }
+          return
+        }
+      }
+    } catch (err) {
+      logger.warn(err, 'Remote sessions fetch failed, falling back to local')
+    }
+  }
 
   try {
     const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)

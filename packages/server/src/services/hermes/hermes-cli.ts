@@ -368,6 +368,8 @@ export interface HermesProfile {
   alias: string
   backend_url?: string
   backend_token?: string
+  bff_url?: string
+  bff_token?: string
 }
 
 export interface HermesProfileDetail {
@@ -419,8 +421,12 @@ export async function listProfiles(): Promise<HermesProfile[]> {
             const content = readFileSync(configPath, 'utf-8')
             const urlMatch = content.match(/(?:^|\n)\s+url:\s*(.+)$/m)
             const tokenMatch = content.match(/(?:^|\n)\s+token:\s*(.+)$/m)
+            const bffUrlMatch = content.match(/(?:^|\n)\s+bff_url:\s*(.+)$/m)
+            const bffTokenMatch = content.match(/(?:^|\n)\s+bff_token:\s*(.+)$/m)
             if (urlMatch) profile.backend_url = urlMatch[1].trim()
             if (tokenMatch) profile.backend_token = tokenMatch[1].trim()
+            if (bffUrlMatch) profile.bff_url = bffUrlMatch[1].trim()
+            if (bffTokenMatch) profile.bff_token = bffTokenMatch[1].trim()
           } catch { /* ignore parse errors */ }
         }
 

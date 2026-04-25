@@ -578,14 +578,15 @@ export class GatewayManager {
         try { await this.stop(name) } catch { }
       }
 
-      await this.resolvePort(name)
-
       // Skip remote profiles — local hermes command cannot start remote gateways
+      // Must check BEFORE resolvePort to avoid trying to find free ports on local machine
       const { host } = this.readProfilePort(name)
       if (host && host !== '127.0.0.1' && host !== 'localhost') {
         logger.info('%s: remote profile (host=%s), skipping auto-start', name, host)
         continue
       }
+
+      await this.resolvePort(name)
 
       toStart.push(name)
     }

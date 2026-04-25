@@ -1298,8 +1298,7 @@ export const useChatStore = defineStore('chat', () => {
     messages: Map<string, Message[]>
   }>>(new Map())
 
-  function saveCurrentProfileState() {
-    const profileName = getProfileName()
+  function saveProfileState(profileName: string) {
     // Build a messages map from the current sessions
     const msgsMap = new Map<string, Message[]>()
     for (const s of sessions.value) {
@@ -1312,6 +1311,10 @@ export const useChatStore = defineStore('chat', () => {
       activeSessionId: activeSessionId.value,
       messages: msgsMap,
     })
+  }
+
+  function saveCurrentProfileState() {
+    saveProfileState(getProfileName())
   }
 
   function loadProfileState(profileName: string) {
@@ -1337,9 +1340,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function switchChatProfile(profileName: string) {
-    // 1. Save current profile's in-memory state
-    saveCurrentProfileState()
+  async function switchChatProfile(profileName: string, fromProfile?: string) {
+    // 1. Save current profile's in-memory state under the OLD profile name.
+    //    When called from ChatView's watcher, `fromProfile` is the previous
+    //    profile name (before activeProfileName changed). Without this,
+    //    saveCurrentProfileState() would use the already-changed activeProfileName
+    //    and save the old profile's data under the wrong key.
+    if (fromProfile) {
+      saveProfileState(fromProfile)
+    } else {
+      saveCurrentProfileState()
+    }
     // 2. Load the target profile's state from the map (or empty)
     loadProfileState(profileName)
     // 3. Refresh sessions from the API for the new profile

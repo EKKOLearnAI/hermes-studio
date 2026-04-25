@@ -8,6 +8,8 @@ export interface HermesProfile {
   alias: string
   backend_url?: string
   backend_token?: string
+  bff_url?: string
+  bff_token?: string
 }
 
 export interface HermesProfileDetail {
