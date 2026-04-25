@@ -195,21 +195,29 @@ describe('conversation DB service', () => {
     const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
     expect(summaries).toHaveLength(1)
     expect(summaries[0]).toEqual(expect.objectContaining({
-      id: 'root',
+      id: 'root-cont',
+      title: 'Continuation',
+      started_at: 100,
       thread_session_count: 2,
       ended_at: 111,
       cost_status: 'mixed',
       actual_cost_usd: 0.30000000000000004,
     }))
 
-    const detail = await mod.getConversationDetailFromDb('root', { humanOnly: true })
-    expect(detail?.thread_session_count).toBe(2)
-    expect(detail?.messages.map((message: any) => message.content)).toEqual([
+    const detailFromTip = await mod.getConversationDetailFromDb('root-cont', { humanOnly: true })
+    expect(detailFromTip?.session_id).toBe('root-cont')
+    expect(detailFromTip?.thread_session_count).toBe(2)
+    expect(detailFromTip?.messages.map((message: any) => message.content)).toEqual([
       'Start here',
       'Assistant reply',
       'Continue with more detail',
       'Continued answer',
     ])
+
+    const detailFromRoot = await mod.getConversationDetailFromDb('root', { humanOnly: true })
+    expect(detailFromRoot?.messages.map((message: any) => message.content)).toEqual(
+      detailFromTip?.messages.map((message: any) => message.content),
+    )
   })
 
   it('treats branched children as their own visible conversations', async () => {
@@ -272,6 +280,69 @@ describe('conversation DB service', () => {
 
     const detail = await mod.getConversationDetailFromDb('branch-child', { humanOnly: true })
     expect(detail?.messages.map((message: any) => message.content)).toEqual(['Branch prompt', 'Branch answer'])
+  })
+
+  it('keeps non-compression child sessions visible instead of hiding them under their parent', async () => {
+    ensureSqliteAvailable()
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(profileDirState.value, 'state.db'))
+    createSchema(db)
+
+    insertSession(db, {
+      id: 'parent',
+      parent_session_id: null,
+      source: 'cli',
+      model: 'openai/gpt-5.4',
+      title: 'Parent',
+      started_at: 100,
+      ended_at: 150,
+      end_reason: null,
+      message_count: 1,
+      tool_call_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: 'openai',
+      estimated_cost_usd: 0,
+      actual_cost_usd: 0,
+      cost_status: 'estimated',
+    })
+    insertSession(db, {
+      id: 'review-child',
+      parent_session_id: 'parent',
+      source: 'cli',
+      model: 'openai/gpt-5.4',
+      title: 'Independent review',
+      started_at: 300,
+      ended_at: 320,
+      end_reason: null,
+      message_count: 2,
+      tool_call_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: 'openai',
+      estimated_cost_usd: 0,
+      actual_cost_usd: 0,
+      cost_status: 'estimated',
+    })
+
+    insertMessage(db, { id: 1, session_id: 'parent', role: 'user', content: 'Parent prompt', timestamp: 101 })
+    insertMessage(db, { id: 2, session_id: 'review-child', role: 'user', content: 'Review prompt', timestamp: 301 })
+    insertMessage(db, { id: 3, session_id: 'review-child', role: 'assistant', content: 'Review answer', timestamp: 302 })
+    db.close()
+
+    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
+    expect(summaries.map((summary: any) => summary.id)).toEqual(['review-child', 'parent'])
+
+    const detail = await mod.getConversationDetailFromDb('review-child', { humanOnly: true })
+    expect(detail?.thread_session_count).toBe(1)
+    expect(detail?.messages.map((message: any) => message.content)).toEqual(['Review prompt', 'Review answer'])
   })
 
   it('excludes synthetic-only roots from human-only summaries and details', async () => {

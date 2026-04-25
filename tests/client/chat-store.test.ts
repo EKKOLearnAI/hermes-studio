@@ -113,6 +113,149 @@ describe('Chat Store', () => {
     expect(store.messages.map(m => m.content)).toEqual(['draft'])
   })
 
+  it('does not let a stale server refresh erase a newer local assistant reply', async () => {
+    const cachedMessages = [
+      { id: 'u1', role: 'user', content: 'expensive task', timestamp: 1 },
+      { id: 'a1', role: 'assistant', content: 'final answer that already streamed', timestamp: 2 },
+    ]
+
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-stale')
+    window.localStorage.setItem(
+      SESSIONS_CACHE_KEY,
+      JSON.stringify([
+        {
+          id: 'sess-stale',
+          title: 'Stale refresh',
+          source: 'api_server',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ]),
+    )
+    window.localStorage.setItem(sessionMessagesKey('sess-stale'), JSON.stringify(cachedMessages))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-stale', 'Stale refresh')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-stale', [
+      {
+        id: 1,
+        session_id: 'sess-stale',
+        role: 'user',
+        content: 'expensive task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+    expect(store.messages.map(m => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+
+    await store.refreshActiveSession()
+
+    expect(store.messages.map(m => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+    const persistedMessages = JSON.parse(window.localStorage.getItem(sessionMessagesKey('sess-stale')) || '[]')
+    expect(persistedMessages.map((m: any) => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+  })
+
+  it('does not let stale resume polling erase a newer local assistant reply', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-22T19:00:00.000Z'))
+
+    const cachedMessages = [
+      { id: 'u0', role: 'user', content: 'previous task', timestamp: 1 },
+      { id: 'a0', role: 'assistant', content: 'a much longer previous assistant answer', timestamp: 2 },
+      { id: 'u1', role: 'user', content: 'long task', timestamp: 3 },
+      { id: 'a1', role: 'assistant', content: 'local final answer', timestamp: 4 },
+    ]
+
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-poll-stale')
+    window.localStorage.setItem(
+      SESSIONS_CACHE_KEY,
+      JSON.stringify([
+        {
+          id: 'sess-poll-stale',
+          title: 'Polling stale refresh',
+          source: 'api_server',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ]),
+    )
+    window.localStorage.setItem(sessionMessagesKey('sess-poll-stale'), JSON.stringify(cachedMessages))
+    window.localStorage.setItem(inFlightKey('sess-poll-stale'), JSON.stringify({ runId: 'run-1', startedAt: Date.now() }))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-poll-stale', 'Polling stale refresh')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-poll-stale', [
+      {
+        id: 1,
+        session_id: 'sess-poll-stale',
+        role: 'user',
+        content: 'previous task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+      {
+        id: 2,
+        session_id: 'sess-poll-stale',
+        role: 'assistant',
+        content: 'a much longer previous assistant answer',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000001,
+        token_count: null,
+        finish_reason: 'stop',
+        reasoning: null,
+      },
+      {
+        id: 3,
+        session_id: 'sess-poll-stale',
+        role: 'user',
+        content: 'long task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000002,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+    expect(store.messages.map(m => m.content)).toEqual([
+      'previous task',
+      'a much longer previous assistant answer',
+      'long task',
+      'local final answer',
+    ])
+
+    await vi.advanceTimersByTimeAsync(9000)
+    await flushPromises()
+
+    expect(store.messages.map(m => m.content)).toEqual([
+      'previous task',
+      'a much longer previous assistant answer',
+      'long task',
+      'local final answer',
+    ])
+    expect(store.isRunActive).toBe(false)
+    expect(window.localStorage.getItem(inFlightKey('sess-poll-stale'))).toBeNull()
+  })
+
   it('persists the user message immediately before any SSE delta arrives', async () => {
     const store = useChatStore()
 

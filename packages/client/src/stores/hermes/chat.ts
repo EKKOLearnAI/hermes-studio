@@ -397,6 +397,39 @@ export const useChatStore = defineStore('chat', () => {
     return rec
   }
 
+  function compareServerMessages(local: Message[], server: Message[]) {
+    const localUserIndexes = local.map((m, i) => (m.role === 'user' ? i : -1)).filter(i => i >= 0)
+    const serverUserIndexes = server.map((m, i) => (m.role === 'user' ? i : -1)).filter(i => i >= 0)
+    const localUsers = localUserIndexes.length
+    const serverUsers = serverUserIndexes.length
+
+    if (serverUsers > localUsers) return { serverIsCaughtUp: true, serverIsAhead: true }
+    if (serverUsers < localUsers) return { serverIsCaughtUp: false, serverIsAhead: false }
+
+    const localLastUserIndex = localUserIndexes[localUserIndexes.length - 1] ?? -1
+    const serverLastUserIndex = serverUserIndexes[serverUserIndexes.length - 1] ?? -1
+    const sameCurrentTurn =
+      localLastUserIndex < 0
+      || serverLastUserIndex < 0
+      || local[localLastUserIndex]?.content === server[serverLastUserIndex]?.content
+
+    if (!sameCurrentTurn) return { serverIsCaughtUp: false, serverIsAhead: false }
+
+    const localCurrentAssistantLen = local
+      .slice(localLastUserIndex + 1)
+      .filter(m => m.role === 'assistant')
+      .reduce((total, m) => total + (m.content?.length || 0), 0)
+    const serverCurrentAssistantLen = server
+      .slice(serverLastUserIndex + 1)
+      .filter(m => m.role === 'assistant')
+      .reduce((total, m) => total + (m.content?.length || 0), 0)
+
+    return {
+      serverIsCaughtUp: true,
+      serverIsAhead: serverCurrentAssistantLen >= localCurrentAssistantLen,
+    }
+  }
+
   function stopPolling(sid: string) {
     const t = pollTimers.get(sid)
     if (t) {
@@ -430,23 +463,11 @@ export const useChatStore = defineStore('chat', () => {
         const mapped = mapHermesMessages(detail.messages || [])
         const target = sessions.value.find(s => s.id === sid)
         if (!target) return
-        // Use the same "content-aware" comparison as switchSession: server
-        // is ahead iff it knows about at least as many user turns and its
-        // last assistant text is at least as long as ours.
+        // Use the same current-turn comparison as switchSession: server is
+        // ahead only when it has a newer user turn or the assistant output
+        // after the current user turn has caught up.
         const local = target.messages
-        const localLastAssistant = [...local].reverse().find(m => m.role === 'assistant')
-        const serverLastAssistant = [...mapped].reverse().find(m => m.role === 'assistant')
-        const localAssistantLen = localLastAssistant?.content?.length ?? 0
-        const serverAssistantLen = serverLastAssistant?.content?.length ?? 0
-        const localUsers = local.filter(m => m.role === 'user').length
-        const serverUsers = mapped.filter(m => m.role === 'user').length
-        const serverIsCaughtUp = serverUsers >= localUsers
-        // Same rationale as switchSession: strictly more user turns means
-        // server is ahead (new turn complete). Equal user turns + longer
-        // assistant means server caught up on the current turn.
-        const serverIsAhead =
-          serverUsers > localUsers
-          || (serverUsers === localUsers && serverAssistantLen >= localAssistantLen)
+        const { serverIsAhead, serverIsCaughtUp } = compareServerMessages(local, mapped)
         if (serverIsAhead) {
           target.messages = mapped
           if (detail.title && !target.title) target.title = detail.title
@@ -466,12 +487,14 @@ export const useChatStore = defineStore('chat', () => {
           if (prev && prev.sig === sig) {
             prev.stableTicks += 1
             if (prev.stableTicks >= POLL_STABLE_EXITS) {
-              // Run is done on the server. Force-apply server view even if
-              // our "don't retreat" guard above skipped it — the server is
-              // now the authoritative source of truth.
-              target.messages = mapped
-              if (detail.title) target.title = detail.title
-              if (sid === activeSessionId.value) persistActiveMessages()
+              // The server view has stopped changing. If it is still behind
+              // the locally streamed assistant reply, end recovery without
+              // retreating local state; otherwise commit the server view.
+              if (serverIsAhead) {
+                target.messages = mapped
+                if (detail.title) target.title = detail.title
+                if (sid === activeSessionId.value) persistActiveMessages()
+              }
               clearInFlight(sid)
               stopPolling(sid)
             }
@@ -548,9 +571,10 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Re-pull active session from server and overwrite local messages. Used on
-  // SSE drop and on tab-visible events — mobile browsers kill EventSource
-  // while backgrounded, but the backend run usually completes anyway.
+  // Re-pull active session from server without retreating newer locally
+  // streamed output. Used on SSE drop and on tab-visible events — mobile
+  // browsers kill EventSource while backgrounded, but the backend run usually
+  // completes anyway.
   async function refreshActiveSession(): Promise<boolean> {
     const sid = activeSessionId.value
     if (!sid) return false
@@ -560,9 +584,12 @@ export const useChatStore = defineStore('chat', () => {
       const target = sessions.value.find(s => s.id === sid)
       if (!target) return false
       const mapped = mapHermesMessages(detail.messages || [])
-      target.messages = mapped
+      const { serverIsAhead } = compareServerMessages(target.messages, mapped)
+      if (serverIsAhead) {
+        target.messages = mapped
+        persistActiveMessages()
+      }
       if (detail.title) target.title = detail.title
-      persistActiveMessages()
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -616,33 +643,14 @@ export const useChatStore = defineStore('chat', () => {
       const detail = await fetchSession(sessionId)
       if (detail && detail.messages) {
         const mapped = mapHermesMessages(detail.messages)
-        // Pick whichever view has more information. Simple length comparison
-        // is wrong because mapHermesMessages folds tool_call-only assistant
-        // msgs and matches them with tool-result msgs — so post-fold `mapped`
-        // can be SHORTER than the raw SSE-built local array even when the
-        // server is strictly ahead. Instead, compare the last assistant
-        // message content: if the server's is at least as long, the server
-        // is up-to-date (and has the final complete text); otherwise keep
-        // local (in-flight window where server hasn't flushed the new turn).
+        // Pick whichever view has more information for the current turn.
+        // Simple message-count comparison is wrong because mapHermesMessages
+        // folds tool_call-only assistant messages; global last-assistant
+        // comparison is also wrong across turns. Trust server only when it has
+        // a newer user turn or its assistant output after the current user turn
+        // has caught up.
         const local = activeSession.value.messages
-        const localLastAssistant = [...local].reverse().find(m => m.role === 'assistant')
-        const serverLastAssistant = [...mapped].reverse().find(m => m.role === 'assistant')
-        const localAssistantLen = localLastAssistant?.content?.length ?? 0
-        const serverAssistantLen = serverLastAssistant?.content?.length ?? 0
-        const localUsers = local.filter(m => m.role === 'user').length
-        const serverUsers = mapped.filter(m => m.role === 'user').length
-        // Trust server when:
-        //   - it has STRICTLY MORE user turns than we do (new turn landed),
-        //     OR
-        //   - same user-turn count AND server's last assistant is at least
-        //     as long as ours (same turn, server caught up or further)
-        // Otherwise keep local (protects against the server-not-yet-flushed
-        // race during in-flight runs). Length comparison alone is wrong
-        // across different turns because each turn's last assistant is
-        // unrelated to the previous turn's.
-        const serverIsAhead =
-          serverUsers > localUsers
-          || (serverUsers === localUsers && serverAssistantLen >= localAssistantLen)
+        const { serverIsAhead } = compareServerMessages(local, mapped)
         if (serverIsAhead) {
           activeSession.value.messages = mapped
         }
