@@ -1,5 +1,7 @@
 import { execFile, spawn } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
 import { promisify } from 'util'
 import { logger } from '../logger'
 
@@ -364,6 +366,8 @@ export interface HermesProfile {
   model: string
   gateway: string
   alias: string
+  backend_url?: string
+  backend_token?: string
 }
 
 export interface HermesProfileDetail {
@@ -389,6 +393,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
 
     const lines = stdout.trim().split('\n').filter(Boolean)
     const profiles: HermesProfile[] = []
+    const hermesBase = join(homedir(), '.hermes')
 
     // Skip header lines (starts with " Profile" or " ─")
     for (const line of lines) {
@@ -396,13 +401,30 @@ export async function listProfiles(): Promise<HermesProfile[]> {
 
       const match = line.match(/^\s+(◆)?(\S+)\s{2,}(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
       if (match) {
-        profiles.push({
-          name: match[2],
+        const name = match[2]
+        const profile: HermesProfile = {
+          name,
           active: !!match[1],
           model: match[3],
           gateway: match[4],
           alias: match[5].trim() === '—' ? '' : match[5].trim(),
-        })
+        }
+
+        // Read backend config from profile's config.yaml
+        const configPath = name === 'default'
+          ? join(hermesBase, 'config.yaml')
+          : join(hermesBase, 'profiles', name, 'config.yaml')
+        if (existsSync(configPath)) {
+          try {
+            const content = readFileSync(configPath, 'utf-8')
+            const urlMatch = content.match(/(?:^|\n)\s+url:\s*(.+)$/m)
+            const tokenMatch = content.match(/(?:^|\n)\s+token:\s*(.+)$/m)
+            if (urlMatch) profile.backend_url = urlMatch[1].trim()
+            if (tokenMatch) profile.backend_token = tokenMatch[1].trim()
+          } catch { /* ignore parse errors */ }
+        }
+
+        profiles.push(profile)
       }
     }
 

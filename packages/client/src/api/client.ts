@@ -26,15 +26,27 @@ export function hasApiKey(): boolean {
   return !!getApiKey()
 }
 
+/**
+ * Get the effective base URL and API key.
+ * Always routes through the local BFF — the BFF resolves the correct
+ * upstream backend per profile (via X-Hermes-Profile header).
+ * This prevents the browser from needing direct access to remote backends.
+ */
+function getEffectiveConfig(): { baseUrl: string; apiKey: string } {
+  return {
+    baseUrl: getBaseUrl(),
+    apiKey: getApiKey(),
+  }
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const base = getBaseUrl()
-  const url = `${base}${path}`
+  const { baseUrl, apiKey } = getEffectiveConfig()
+  const url = `${baseUrl}${path}`
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...options.headers as Record<string, string>,
   }
 
-  const apiKey = getApiKey()
   if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`
   }

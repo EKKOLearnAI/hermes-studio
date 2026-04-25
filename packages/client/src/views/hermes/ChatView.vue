@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -11,6 +11,9 @@ const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
 
+// Guard against overlapping switchChatProfile calls
+let _switchSeq = 0
+
 onMounted(async () => {
   // Load settings first so busyInputMode is available immediately
   settingsStore.fetchSettings()
@@ -19,6 +22,21 @@ onMounted(async () => {
   await profilesStore.fetchProfiles()
   chatStore.loadSessions()
 })
+
+// Profile 切换时保存当前状态并加载新 profile 的会话和模型列表
+watch(
+  () => profilesStore.activeProfileName,
+  async (newName, oldName) => {
+    if (newName && newName !== oldName) {
+      const seq = ++_switchSeq
+      await chatStore.switchChatProfile(newName)
+      // If another switch happened while we were loading, skip stale result
+      if (seq !== _switchSeq) return
+      // Re-fetch models from the new profile's gateway
+      appStore.loadModels()
+    }
+  },
+)
 </script>
 
 <template>

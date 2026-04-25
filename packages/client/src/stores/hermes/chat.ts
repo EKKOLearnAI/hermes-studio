@@ -1289,6 +1289,63 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.clear()
   }
 
+  // ── Multi-profile state switching ──────────────────────────────────────
+  // In-memory map that caches each profile's sessions/activeSessionId/messages
+  // so switching profiles is instant without a page reload.
+  const profileStateMap = ref<Map<string, {
+    sessions: Session[]
+    activeSessionId: string | null
+    messages: Map<string, Message[]>
+  }>>(new Map())
+
+  function saveCurrentProfileState() {
+    const profileName = getProfileName()
+    // Build a messages map from the current sessions
+    const msgsMap = new Map<string, Message[]>()
+    for (const s of sessions.value) {
+      if (s.messages.length > 0) {
+        msgsMap.set(s.id, [...s.messages])
+      }
+    }
+    profileStateMap.value.set(profileName, {
+      sessions: sessions.value.map(s => ({ ...s, messages: [] })),
+      activeSessionId: activeSessionId.value,
+      messages: msgsMap,
+    })
+  }
+
+  function loadProfileState(profileName: string) {
+    const cached = profileStateMap.value.get(profileName)
+    if (cached) {
+      // Restore sessions with their messages from the in-memory cache
+      sessions.value = cached.sessions.map(s => ({
+        ...s,
+        messages: cached.messages.get(s.id) || [],
+      }))
+      activeSessionId.value = cached.activeSessionId
+      // Restore activeSession ref
+      if (cached.activeSessionId) {
+        activeSession.value = sessions.value.find(s => s.id === cached.activeSessionId) || null
+      } else {
+        activeSession.value = null
+      }
+    } else {
+      // No cached state — start fresh
+      sessions.value = []
+      activeSessionId.value = null
+      activeSession.value = null
+    }
+  }
+
+  async function switchChatProfile(profileName: string) {
+    // 1. Save current profile's in-memory state
+    saveCurrentProfileState()
+    // 2. Load the target profile's state from the map (or empty)
+    loadProfileState(profileName)
+    // 3. Refresh sessions from the API for the new profile
+    await loadSessions()
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -1317,5 +1374,6 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
+    switchChatProfile,
   }
 })

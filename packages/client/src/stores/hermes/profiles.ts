@@ -13,6 +13,10 @@ export const useProfilesStore = defineStore('profiles', () => {
   const detailMap = ref<Record<string, HermesProfileDetail>>({})
   const loading = ref(false)
   const switching = ref(false)
+  // Guard: when true, fetchProfiles() must NOT overwrite activeProfileName.
+  // Set by switchProfileSmooth to prevent the watcher in ChatView from
+  // firing multiple times during a profile switch.
+  let _suppressActiveoverwrite = false
 
   async function fetchProfiles() {
     loading.value = true
@@ -20,9 +24,12 @@ export const useProfilesStore = defineStore('profiles', () => {
       profiles.value = await profilesApi.fetchProfiles()
       activeProfile.value = profiles.value.find(p => p.active) ?? null
       // 同步缓存 profile name，供其他 store 启动时读取
-      if (activeProfile.value) {
+      // Skip if a smooth switch is in progress — the caller sets the correct value.
+      if (!_suppressActiveoverwrite && activeProfile.value) {
         activeProfileName.value = activeProfile.value.name
         localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeProfile.value.name)
+        // Also update backend config for the active profile
+        updateProfileBackendConfig(activeProfile.value.name)
       }
     } catch (err) {
       console.error('Failed to fetch profiles:', err)
@@ -99,6 +106,60 @@ export const useProfilesStore = defineStore('profiles', () => {
     }
   }
 
+  /**
+   * Smooth profile switch — no page reload.
+   * Calls the API, updates local state & localStorage, then returns.
+   * The caller (chat store) is responsible for refreshing sessions.
+   */
+  async function switchProfileSmooth(name: string): Promise<boolean> {
+    if (name === activeProfileName.value) return true
+    switching.value = true
+    _suppressActiveoverwrite = true
+    try {
+      const ok = await profilesApi.switchProfile(name)
+      if (!ok) return false
+
+      // Update backend config FIRST — before activeProfileName changes,
+      // so ChatView's watcher reads the correct backend_url from localStorage.
+      updateProfileBackendConfig(name)
+
+      // Persist for other stores / cold-start
+      localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
+
+      // Update local reactive state — this triggers ChatView's watcher
+      activeProfileName.value = name
+      activeProfile.value = profiles.value.find(p => p.name === name) ?? null
+
+      // Refresh the profiles list so the "active" flag is correct server-side.
+      // fetchProfiles() will NOT overwrite activeProfileName because the guard is set.
+      await fetchProfiles()
+
+      return true
+    } catch (err) {
+      console.error('Smooth profile switch failed:', err)
+      return false
+    } finally {
+      _suppressActiveoverwrite = false
+      switching.value = false
+    }
+  }
+
+  /**
+   * Update localStorage with the backend config for the given profile.
+   * If the profile has a backend_url, all API requests will be sent there.
+   * If not, requests go to the default server URL (local BFF).
+   */
+  function updateProfileBackendConfig(name: string) {
+    const profile = profiles.value.find(p => p.name === name)
+    if (profile?.backend_url) {
+      localStorage.setItem('hermes_profile_backend_url', profile.backend_url)
+      localStorage.setItem('hermes_profile_backend_token', profile.backend_token || '')
+    } else {
+      localStorage.removeItem('hermes_profile_backend_url')
+      localStorage.removeItem('hermes_profile_backend_token')
+    }
+  }
+
   async function exportProfile(name: string) {
     return profilesApi.exportProfile(name)
   }
@@ -122,7 +183,9 @@ export const useProfilesStore = defineStore('profiles', () => {
     deleteProfile,
     renameProfile,
     switchProfile,
+    switchProfileSmooth,
     exportProfile,
     importProfile,
+    updateProfileBackendConfig,
   }
 })

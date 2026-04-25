@@ -6,6 +6,8 @@ export interface HermesProfile {
   model: string
   gateway: string
   alias: string
+  backend_url?: string
+  backend_token?: string
 }
 
 export interface HermesProfileDetail {

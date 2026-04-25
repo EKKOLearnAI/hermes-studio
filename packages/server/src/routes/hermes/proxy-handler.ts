@@ -2,6 +2,10 @@ import type { Context } from 'koa'
 import { config } from '../../config'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { updateUsage } from '../../db/hermes/usage-store'
+import { readFileSync, existsSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
+import yaml from 'js-yaml'
 
 function getGatewayManager() { return getGatewayManagerInstance() }
 
@@ -17,6 +21,53 @@ export function setRunSession(runId: string, sessionId: string): void {
 
 function getSessionForRun(runId: string): string | undefined {
   return runSessionMap.get(runId)
+}
+
+// --- Profile backend_url resolution ---
+
+const HERMES_BASE = join(homedir(), '.hermes')
+
+/** Read backend.url and backend.token from a profile's config.yaml */
+function readProfileBackendUrl(profileName: string): { url: string; token: string } {
+  const configPath = profileName === 'default'
+    ? join(HERMES_BASE, 'config.yaml')
+    : join(HERMES_BASE, 'profiles', profileName, 'config.yaml')
+  if (!existsSync(configPath)) return { url: '', token: '' }
+  try {
+    const content = readFileSync(configPath, 'utf-8')
+    const cfg = yaml.load(content) as any || {}
+    const url = cfg?.backend?.url?.trim() || ''
+    const token = cfg?.backend?.token?.trim() || ''
+    return { url, token }
+  } catch {
+    return { url: '', token: '' }
+  }
+}
+
+/** Resolve profile name from request */
+function resolveProfile(ctx: Context): string {
+  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+}
+
+/** Resolve upstream URL for a request based on profile header/query */
+function resolveUpstream(ctx: Context): string {
+  const profile = resolveProfile(ctx)
+
+  // 1. Check profile's backend.url (remote backend configured in config.yaml)
+  const { url: backendUrl } = readProfileBackendUrl(profile)
+  if (backendUrl) return backendUrl.replace(/\/$/, '')
+
+  // 2. Fall back to GatewayManager (local gateway)
+  const mgr = getGatewayManager()
+  if (mgr) {
+    if (profile && profile !== 'default') {
+      return mgr.getUpstream(profile)
+    }
+    return mgr.getUpstream()
+  }
+
+  // 3. Default upstream
+  return config.upstream.replace(/\/$/, '')
 }
 
 // --- Helpers ---
@@ -47,23 +98,7 @@ async function waitForGatewayReady(upstream: string, timeoutMs: number = 5000): 
   return false
 }
 
-/** Resolve profile name from request */
-function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
-}
 
-/** Resolve upstream URL for a request based on profile header/query */
-function resolveUpstream(ctx: Context): string {
-  const mgr = getGatewayManager()
-  if (mgr) {
-    const profile = resolveProfile(ctx)
-    if (profile && profile !== 'default') {
-      return mgr.getUpstream(profile)
-    }
-    return mgr.getUpstream()
-  }
-  return config.upstream.replace(/\/$/, '')
-}
 
 function buildProxyHeaders(ctx: Context, upstream: string): Record<string, string> {
   const headers: Record<string, string> = {}
@@ -80,11 +115,20 @@ function buildProxyHeaders(ctx: Context, upstream: string): Record<string, strin
     }
   }
 
+  const profile = resolveProfile(ctx)
   const mgr = getGatewayManager()
   if (mgr) {
-    const apiKey = mgr.getApiKey(resolveProfile(ctx))
+    const apiKey = mgr.getApiKey(profile)
     if (apiKey) {
       headers['authorization'] = `Bearer ${apiKey}`
+    }
+  }
+
+  // Fall back to profile's backend.token for remote backends
+  if (!headers['authorization']) {
+    const { token } = readProfileBackendUrl(profile)
+    if (token) {
+      headers['authorization'] = `Bearer ${token}`
     }
   }
 

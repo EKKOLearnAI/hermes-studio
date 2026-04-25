@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { NButton, NModal, useMessage } from "naive-ui";
 import { useAppStore } from "@/stores/hermes/app";
 import ModelSelector from "./ModelSelector.vue";
-import ProfileSelector from "./ProfileSelector.vue";
+import GatewayTabs from "./GatewayTabs.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
 import { useSessionSearch } from '@/composables/useSessionSearch'
@@ -247,7 +247,7 @@ function openChangelog() {
       </div>
     </nav>
 
-    <ProfileSelector />
+    <GatewayTabs />
     <ModelSelector />
 
     <div class="sidebar-footer">

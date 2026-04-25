@@ -10,21 +10,19 @@ const profilesStore = useProfilesStore()
 
 const options = computed(() =>
   profilesStore.profiles.map(p => ({
-    label: p.name,
+    label: p.backend_url ? `${p.name} → ${p.backend_url}` : p.name,
     value: p.name,
   })),
 )
 
 const activeName = computed(() => profilesStore.activeProfile?.name ?? '')
 
-function handleChange(value: string | number | Array<string | number>) {
+async function handleChange(value: string | number | Array<string | number>) {
   if (typeof value === 'string' && value !== activeName.value) {
-    profilesStore.switchProfile(value).then(ok => {
-      if (ok) {
-        message.success(t('profiles.switchSuccess', { name: value }))
-        window.location.reload()
-      }
-    })
+    const ok = await profilesStore.switchProfileSmooth(value)
+    if (ok) {
+      message.success(t('profiles.switchSuccess', { name: value }))
+    }
   }
 }
 
