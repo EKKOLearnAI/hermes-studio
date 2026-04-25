@@ -94,6 +94,10 @@ export function streamRunEvents(
       if (!closed) {
         closed = true
         source.close()
+        // Trigger onError so the store can clean up stream state and flush
+        // any pending busy-input message. Use a distinct error so the store
+        // can skip server-resync (the run is being interrupted intentionally).
+        onError(new Error('aborted'))
       }
     },
   } as unknown as AbortController

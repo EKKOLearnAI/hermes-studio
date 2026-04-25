@@ -20,6 +20,13 @@ const isComposing = ref(false)
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
 
+// Whether the send button should be enabled (respects busy input mode)
+const canSendNow = computed(() => {
+  if (!canSend.value) return false
+  if (!chatStore.isStreaming) return true
+  return chatStore.busyInputMode
+})
+
 // --- Context info ---
 
 const contextLength = ref(200000)
@@ -265,7 +272,7 @@ function isImage(type: string): boolean {
         ref="textareaRef"
         v-model="inputText"
         class="input-textarea"
-        :placeholder="t('chat.inputPlaceholder')"
+        :placeholder="chatStore.isStreaming && chatStore.busyInputMode ? t('chat.interruptPlaceholder') : t('chat.inputPlaceholder')"
         rows="1"
         @keydown="handleKeydown"
         @compositionstart="handleCompositionStart"
@@ -284,14 +291,15 @@ function isImage(type: string): boolean {
         </NButton>
         <NButton
           size="small"
-          type="primary"
-          :disabled="!canSend || chatStore.isStreaming"
+          :type="chatStore.isStreaming && chatStore.busyInputMode ? 'warning' : 'primary'"
+          :disabled="!canSendNow"
           @click="handleSend"
         >
           <template #icon>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <svg v-if="chatStore.isStreaming && chatStore.busyInputMode" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </template>
-          {{ t('chat.send') }}
+          {{ chatStore.isStreaming && chatStore.busyInputMode ? t('chat.interrupt') : t('chat.send') }}
         </NButton>
       </div>
     </div>

@@ -101,6 +101,8 @@ export default {
     attachFiles: 'ファイルを添付',
     stop: '停止',
     send: '送信',
+    interrupt: '中断',
+    interruptPlaceholder: '入力してAIを中断... (Enter で中断, Esc でキャンセル)',
     contextUsed: 'コンテキスト使用量:',
     sessions: 'セッション',
     noSessions: 'セッションがありません',

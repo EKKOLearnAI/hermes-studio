@@ -101,6 +101,8 @@ export default {
     attachFiles: '파일 첨부',
     stop: '중지',
     send: '전송',
+    interrupt: '중단',
+    interruptPlaceholder: '입력하여 AI 중단... (Enter 중단, Esc 취소)',
     contextUsed: '사용된 컨텍스트:',
     sessions: '세션',
     noSessions: '세션 없음',

@@ -5,6 +5,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { useSettingsStore } from './settings'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 export interface Attachment {
@@ -350,6 +351,22 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value
     || (activeSessionId.value != null && resumingRuns.value.has(activeSessionId.value))
   )
+
+  // --- Busy input mode: queue messages during streaming ---
+  // When the user sends a message while streaming, we:
+  // 1. Immediately show the user message in the chat (so it's visible)
+  // 2. Abort the current SSE stream (triggers gateway's agent.interrupt())
+  // 3. When the run ends (onDone/onError), start a new run with the queued content
+  const pendingMessage = ref<{ content: string; attachments?: Attachment[] } | null>(null)
+  const busyInputMode = computed(() => {
+    try {
+      const settings = useSettingsStore()
+      return settings.display.busy_input_mode === 'interrupt'
+    } catch {
+      return false
+    }
+  })
+
   const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
   const pollSignatures = new Map<string, { sig: string, stableTicks: number }>()
 
@@ -759,8 +776,57 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
-  async function sendMessage(content: string, attachments?: Attachment[]) {
-    if ((!content.trim() && !(attachments && attachments.length > 0)) || isStreaming.value) return
+  // Flush any pending message queued during busy input mode.
+  // The user message is already visible in the chat (added immediately in
+  // sendMessage's interrupt branch). This only starts the new run.
+  // skipUserMessage=true tells sendMessage to skip adding the user message
+  // again (it's already in the chat).
+  function flushPendingMessage() {
+    const pending = pendingMessage.value
+    if (!pending) return
+    pendingMessage.value = null
+    // Small delay to let the stream cleanup finish before starting a new run
+    setTimeout(() => {
+      void sendMessage(pending.content, pending.attachments, { skipUserMessage: true })
+    }, 100)
+  }
+
+  async function sendMessage(content: string, attachments?: Attachment[], opts?: { skipUserMessage?: boolean }) {
+    if (!content.trim() && !(attachments && attachments.length > 0)) return
+
+    // Busy input mode: if streaming, immediately show the user message,
+    // abort the current run, and queue a new run for after the abort completes.
+    if (isStreaming.value) {
+      if (busyInputMode.value) {
+        // 1. Immediately add the user message to the chat so it's visible
+        if (!activeSession.value) {
+          const session = createSession()
+          switchSession(session.id)
+        }
+        const sid = activeSessionId.value!
+        const userMsg: Message = {
+          id: uid(),
+          role: 'user',
+          content: content.trim(),
+          timestamp: Date.now(),
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+        }
+        addMessage(sid, userMsg)
+        updateSessionTitle(sid)
+        if (sid === activeSessionId.value) {
+          persistActiveMessages()
+          persistSessionsList()
+        }
+
+        // 2. Save the message content for the new run (after abort completes)
+        pendingMessage.value = { content, attachments }
+
+        // 3. Abort SSE — this triggers gateway's agent.interrupt() on disconnect
+        const ctrl = streamStates.value.get(sid)
+        if (ctrl) ctrl.abort()
+      }
+      return
+    }
 
     if (!activeSession.value) {
       const session = createSession()
@@ -770,21 +836,24 @@ export const useChatStore = defineStore('chat', () => {
     // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
 
-    const userMsg: Message = {
-      id: uid(),
-      role: 'user',
-      content: content.trim(),
-      timestamp: Date.now(),
-      attachments: attachments && attachments.length > 0 ? attachments : undefined,
-    }
-    addMessage(sid, userMsg)
-    updateSessionTitle(sid)
-    // Persist immediately so a refresh before the first SSE event (e.g. the
-    // user closes the tab right after sending) still has the user's message
-    // and session title in the cache.
-    if (sid === activeSessionId.value) {
-      persistActiveMessages()
-      persistSessionsList()
+    // Skip adding user message if it was already added during interrupt
+    if (!opts?.skipUserMessage) {
+      const userMsg: Message = {
+        id: uid(),
+        role: 'user',
+        content: content.trim(),
+        timestamp: Date.now(),
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      }
+      addMessage(sid, userMsg)
+      updateSessionTitle(sid)
+      // Persist immediately so a refresh before the first SSE event (e.g. the
+      // user closes the tab right after sending) still has the user's message
+      // and session title in the cache.
+      if (sid === activeSessionId.value) {
+        persistActiveMessages()
+        persistSessionsList()
+      }
     }
 
     try {
@@ -1090,6 +1159,8 @@ export const useChatStore = defineStore('chat', () => {
           }
           cleanup()
           updateSessionTitle(sid)
+          // Send pending message if busy input mode queued one during this run
+          flushPendingMessage()
         },
         // onError
         // Mobile browsers drop EventSource when the tab backgrounds / screen
@@ -1099,7 +1170,10 @@ export const useChatStore = defineStore('chat', () => {
         // the real final answer. If the server fetch itself fails, we leave
         // whatever text we already streamed in place — no visible error.
         (err) => {
-          console.warn('SSE connection dropped, resyncing from server:', err.message)
+          const isAbort = err.message === 'aborted'
+          if (!isAbort) {
+            console.warn('SSE connection dropped, resyncing from server:', err.message)
+          }
           const msgs = getSessionMsgs(sid)
           const last = msgs[msgs.length - 1]
           if (last?.isStreaming) {
@@ -1113,15 +1187,19 @@ export const useChatStore = defineStore('chat', () => {
             }
           })
           cleanup()
-          if (sid === activeSessionId.value) {
+          // Skip server resync on intentional abort — the run was interrupted
+          // by the user and a new run is about to start.
+          if (!isAbort && sid === activeSessionId.value) {
             void refreshActiveSession()
           }
           // The run might still be going on the server side (SSE drop doesn't
           // abort it). If we still have an in-flight record, fall back to
           // polling fetchSession to keep the user updated.
-          if (readInFlight(sid)) {
+          if (!isAbort && readInFlight(sid)) {
             startPolling(sid)
           }
+          // Send pending message if busy input mode queued one during this run
+          flushPendingMessage()
         },
       )
 
@@ -1223,6 +1301,8 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions,
     sessionsLoaded,
     isLoadingMessages,
+    busyInputMode,
+    pendingMessage,
 
     newChat,
     switchSession,

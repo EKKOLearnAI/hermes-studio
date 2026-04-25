@@ -114,6 +114,8 @@ export default {
     start: '启动',
     stopGateway: '停止网关',
     send: '发送',
+    interrupt: '插话',
+    interruptPlaceholder: '输入以中断 AI... (Enter 中断, Esc 取消)',
     contextUsed: '上下文已用:',
     sessions: '会话',
     noSessions: '暂无会话',

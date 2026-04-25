@@ -114,6 +114,8 @@ export default {
     start: 'Start',
     stopGateway: 'Stop Gateway',
     send: 'Send',
+    interrupt: 'Interrupt',
+    interruptPlaceholder: 'Type to interrupt AI... (Enter to interrupt, Esc to cancel)',
     contextUsed: 'Context used:',
     sessions: 'Sessions',
     noSessions: 'No sessions',

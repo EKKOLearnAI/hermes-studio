@@ -101,6 +101,8 @@ export default {
     attachFiles: 'Dateien anhangen',
     stop: 'Stopp',
     send: 'Senden',
+    interrupt: 'Unterbrechen',
+    interruptPlaceholder: 'Tippen Sie, um die KI zu unterbrechen... (Enter unterbrechen, Esc abbrechen)',
     contextUsed: 'Kontext verwendet:',
     sessions: 'Sitzungen',
     noSessions: 'Keine Sitzungen',

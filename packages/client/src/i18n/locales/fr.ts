@@ -101,6 +101,8 @@ export default {
     attachFiles: 'Joindre des fichiers',
     stop: 'Arreter',
     send: 'Envoyer',
+    interrupt: 'Interrompre',
+    interruptPlaceholder: 'Tapez pour interrompre l\'IA... (Entree interrompre, Esc annuler)',
     contextUsed: 'Contexte utilise :',
     sessions: 'Sessions',
     noSessions: 'Aucune session',

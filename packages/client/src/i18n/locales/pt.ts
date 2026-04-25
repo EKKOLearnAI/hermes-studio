@@ -101,6 +101,8 @@ export default {
     attachFiles: 'Anexar arquivos',
     stop: 'Parar',
     send: 'Enviar',
+    interrupt: 'Interromper',
+    interruptPlaceholder: 'Digite para interromper a IA... (Enter interromper, Esc cancelar)',
     contextUsed: 'Contexto utilizado:',
     sessions: 'Sessoes',
     noSessions: 'Sem sessoes',
