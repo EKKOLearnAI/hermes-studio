@@ -110,6 +110,7 @@ export default {
     emptyState: 'Start a conversation with Hermes Agent',
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     attachFiles: 'Attach files',
+    dropFilesToAttach: 'Drop files to attach',
     stop: 'Stop',
     start: 'Start',
     stopGateway: 'Stop Gateway',

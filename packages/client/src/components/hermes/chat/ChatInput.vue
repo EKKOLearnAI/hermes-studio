@@ -101,16 +101,21 @@ function handlePaste(e: ClipboardEvent) {
 
 // --- Drag and drop ---
 
+function isFileDrag(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer?.types || []).includes('Files')
+}
+
 function handleDragOver(e: DragEvent) {
+  if (!isFileDrag(e)) return
   e.preventDefault()
 }
 
 function handleDragEnter(e: DragEvent) {
+  if (!isFileDrag(e)) return
+
   e.preventDefault()
-  if (e.dataTransfer?.types.includes('Files')) {
-    dragCounter.value++
-    isDragging.value = true
-  }
+  dragCounter.value++
+  isDragging.value = true
 }
 
 function handleDragLeave() {
@@ -122,6 +127,8 @@ function handleDragLeave() {
 }
 
 function handleDrop(e: DragEvent) {
+  if (!isFileDrag(e)) return
+
   e.preventDefault()
   dragCounter.value = 0
   isDragging.value = false
@@ -194,7 +201,18 @@ function isImage(type: string): boolean {
 </script>
 
 <template>
-  <div class="chat-input-area">
+  <div
+    class="chat-input-area"
+    :class="{ 'drag-over': isDragging }"
+    @dragover="handleDragOver"
+    @dragenter="handleDragEnter"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
+    <div v-if="isDragging" class="drop-overlay" aria-live="polite">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.5"/></svg>
+      <span>{{ t('chat.dropFilesToAttach') }}</span>
+    </div>
     <!-- Top bar: attach + context info -->
     <div class="input-top-bar">
       <NTooltip trigger="hover">
@@ -249,10 +267,6 @@ function isImage(type: string): boolean {
     <div
       class="input-wrapper"
       :class="{ 'drag-over': isDragging }"
-      @dragover="handleDragOver"
-      @dragenter="handleDragEnter"
-      @dragleave="handleDragLeave"
-      @drop="handleDrop"
     >
       <input
         ref="fileInputRef"
@@ -302,9 +316,27 @@ function isImage(type: string): boolean {
 @use '@/styles/variables' as *;
 
 .chat-input-area {
+  position: relative;
   padding: 12px 20px 16px;
   border-top: 1px solid $border-color;
   flex-shrink: 0;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 8px 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--accent-info);
+  border-radius: $radius-md;
+  background-color: rgba(var(--accent-info-rgb), 0.08);
+  color: var(--accent-info);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
 }
 
 .input-top-bar {

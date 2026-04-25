@@ -99,6 +99,7 @@ export default {
     emptyState: 'Hermes Agent와 대화를 시작하세요',
     inputPlaceholder: '메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)',
     attachFiles: '파일 첨부',
+    dropFilesToAttach: '파일을 드롭하여 첨부',
     stop: '중지',
     send: '전송',
     contextUsed: '사용된 컨텍스트:',

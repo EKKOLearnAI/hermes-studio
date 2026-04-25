@@ -99,6 +99,7 @@ export default {
     emptyState: 'Inicie uma conversa com o Hermes Agent',
     inputPlaceholder: 'Digite uma mensagem... (Enter para enviar, Shift+Enter para nova linha)',
     attachFiles: 'Anexar arquivos',
+    dropFilesToAttach: 'Solte arquivos para anexar',
     stop: 'Parar',
     send: 'Enviar',
     contextUsed: 'Contexto utilizado:',
