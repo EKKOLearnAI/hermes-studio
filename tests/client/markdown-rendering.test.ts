@@ -86,6 +86,41 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.find('code.hljs').text()).toContain('INFO Starting server')
   })
 
+  it('renders outer markdown draft fences as markdown while preserving nested fenced examples', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: [
+          '下面是可直接手动编辑的 PR draft。',
+          '',
+          '```md',
+          '标题: fix(chat): 保留附件在同一聊天后续轮次的上下文',
+          '',
+          '## Summary',
+          '',
+          '附件上传后，首轮 `startRun()` 的 `input` 已包含上传文件引用:',
+          '',
+          '```md',
+          '[File: screenshot.png](/uploaded/path)',
+          '```',
+          '',
+          '但本地保存的用户消息只保留 UI 可见文本。',
+          '',
+          '## Fix',
+          '- Preserve context.',
+          '```',
+        ].join('\n'),
+      },
+    })
+
+    expect(wrapper.findAll('.hljs-code-block')).toHaveLength(1)
+    expect(wrapper.find('.code-lang').text()).toBe('md')
+    expect(wrapper.find('code.hljs').text()).toContain('[File: screenshot.png](/uploaded/path)')
+    expect(wrapper.find('.markdown-body').findAll('h2')).toHaveLength(2)
+    expect(wrapper.find('.markdown-body').find('h2').text()).toBe('Summary')
+    expect(wrapper.find('.markdown-body').text()).toContain('但本地保存的用户消息只保留 UI 可见文本。')
+    expect(wrapper.find('.markdown-body').text()).toContain('Preserve context.')
+  })
+
   it('copies code through the delegated click handler', async () => {
     const writeText = vi.mocked(navigator.clipboard.writeText)
     const wrapper = mount(MarkdownRenderer, {

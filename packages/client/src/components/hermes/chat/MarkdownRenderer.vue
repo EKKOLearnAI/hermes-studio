@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import MarkdownIt from 'markdown-it'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
+import { repairNestedMarkdownFences } from './markdownFenceRepair'
 import { downloadFile } from '@/api/hermes/download'
 
 const props = withDefaults(defineProps<{
@@ -26,7 +27,7 @@ const md: MarkdownIt = new MarkdownIt({
 })
 
 const renderedHtml = computed(() => {
-  let html = md.render(props.content)
+  let html = md.render(repairNestedMarkdownFences(props.content))
   if (props.mentionNames && props.mentionNames.length > 0) {
     const escaped = props.mentionNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     const re = new RegExp(`(?<=[\\s>]|^)@(${escaped.join('|')})(?=\\s|$)`, 'gi')
