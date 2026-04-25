@@ -145,6 +145,7 @@ describe('Chat Store', () => {
     }))
 
     const store = useChatStore()
+    localStorage.setItem('hermes_api_key', 'test-token')
     await store.sendMessage('please inspect this', [{
       id: 'att-1',
       name: 'screenshot.png',
@@ -182,11 +183,47 @@ describe('Chat Store', () => {
     expect(cachedMessages[0].content).toBe('please inspect this')
     expect(cachedMessages[0].contextContent).toContain('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
     expect(cachedMessages[0].attachments[0].file).toBeUndefined()
+    expect(cachedMessages[0].attachments[0].uploadPath).toBe('/tmp/uploaded-screenshot.png')
+    expect(cachedMessages[0].attachments[0].url).toBe('')
+    expect(JSON.stringify(cachedMessages)).not.toContain('test-token')
 
     vi.unstubAllGlobals()
   })
 
-  it('converts server-returned upload markdown into hidden context before follow-ups', async () => {
+  it('keeps duplicate uploaded filenames mapped by upload order', async () => {
+    const first = new File(['first'], 'same.png', { type: 'image/png' })
+    const second = new File(['second'], 'same.png', { type: 'image/png' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        files: [
+          { name: 'same.png', path: '/tmp/uploaded-first.png' },
+          { name: 'same.png', path: '/tmp/uploaded-second.png' },
+        ],
+      }),
+    }))
+
+    const store = useChatStore()
+    await store.sendMessage('compare both', [
+      { id: 'att-1', name: 'same.png', type: 'image/png', size: first.size, url: 'blob:first', file: first },
+      { id: 'att-2', name: 'same.png', type: 'image/png', size: second.size, url: 'blob:second', file: second },
+    ])
+
+    const sid = store.activeSessionId
+    const cachedMessages = JSON.parse(
+      window.localStorage.getItem(sessionMessagesKey(sid!)) || '[]',
+    )
+    expect(cachedMessages[0].attachments.map((att: any) => att.uploadPath)).toEqual([
+      '/tmp/uploaded-first.png',
+      '/tmp/uploaded-second.png',
+    ])
+    expect(mockChatApi.startRun.mock.calls[0][0].input).toContain('[File: same.png](/tmp/uploaded-first.png)')
+    expect(mockChatApi.startRun.mock.calls[0][0].input).toContain('[File: same.png](/tmp/uploaded-second.png)')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('converts server-returned upload markdown into hidden context and restored attachments before follow-ups', async () => {
     mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-file', 'File Session')])
     mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-file', [
       {
@@ -210,6 +247,16 @@ describe('Chat Store', () => {
     expect(store.messages[0].content).toBe('please inspect this')
     expect(store.messages[0].content).not.toContain('[File:')
     expect(store.messages[0].contextContent).toContain('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
+    expect(store.messages[0].attachments).toEqual([
+      expect.objectContaining({
+        name: 'screenshot.png',
+        type: 'image/png',
+        size: 0,
+        uploadPath: '/tmp/uploaded-screenshot.png',
+        url: expect.stringContaining('/api/hermes/download?'),
+      }),
+    ])
+    expect(store.messages[0].attachments?.[0].url).toContain('path=%2Ftmp%2Fuploaded-screenshot.png')
 
     await store.sendMessage('can you still see it?')
 

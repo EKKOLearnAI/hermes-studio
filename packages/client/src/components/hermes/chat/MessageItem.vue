@@ -130,18 +130,19 @@ function formatSize(bytes: number): string {
  * Extract the upload file path from message content for a given attachment.
  * Upload format in content: [File: name.txt](/tmp/hermes-uploads/abc123.txt)
  */
-function getFilePathFromContent(attName: string): string | null {
-  const content = props.message.content || "";
+function getFilePathFromAttachment(att: { name: string; uploadPath?: string }): string | null {
+  if (att.uploadPath) return att.uploadPath;
+  const content = props.message.contextContent || props.message.content || "";
   const regex = /\[File:\s*([^\]]+)\]\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
-    if (match[1].trim() === attName.trim()) return match[2];
+    if (match[1].trim() === att.name.trim()) return match[2];
   }
   return null;
 }
 
-function handleAttachmentDownload(att: { name: string; url: string; type: string }) {
-  const filePath = getFilePathFromContent(att.name);
+function handleAttachmentDownload(att: { name: string; url: string; type: string; uploadPath?: string }) {
+  const filePath = getFilePathFromAttachment(att);
   if (filePath) {
     toast.info(t("download.downloading"));
     downloadFile(filePath, att.name).catch((err: Error) => {

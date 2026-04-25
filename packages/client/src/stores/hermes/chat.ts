@@ -1,5 +1,6 @@
 import { startRun, streamRunEvents, type ChatMessage, type RunEvent } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchSessionUsageSingle, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
@@ -12,6 +13,7 @@ export interface Attachment {
   type: string
   size: number
   url: string
+  uploadPath?: string
   file?: File
 }
 
@@ -74,18 +76,45 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   return data.files
 }
 
-function splitUploadContext(content: string): { content: string; contextContent?: string } {
-  const fileRefPattern = /^\[File: (.+)\]\([^)]+\)$/
+const UPLOAD_MIME_BY_EXTENSION: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+}
+
+function inferUploadMimeType(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  return UPLOAD_MIME_BY_EXTENSION[ext] || 'application/octet-stream'
+}
+
+function attachmentFromUploadRef(name: string, path: string, index: number, size = 0): Attachment {
+  return {
+    id: `upload-${index}-${path}`,
+    name,
+    type: inferUploadMimeType(name),
+    size,
+    url: getDownloadUrl(path, name),
+    uploadPath: path,
+  }
+}
+
+function splitUploadContext(content: string): { content: string; contextContent?: string; attachments?: Attachment[] } {
+  const fileRefPattern = /^\[File: (.+)\]\(([^)]+)\)$/
   const lines = content.split(/\r?\n/)
   let end = lines.length
   while (end > 0 && lines[end - 1].trim() === '') end -= 1
 
   let start = end
-  const fileNames: string[] = []
+  const fileRefs: Array<{ name: string; path: string }> = []
   while (start > 0) {
     const match = lines[start - 1].trim().match(fileRefPattern)
     if (!match) break
-    fileNames.unshift(match[1])
+    fileRefs.unshift({ name: match[1], path: match[2] })
     start -= 1
   }
   if (start === end) return { content }
@@ -93,8 +122,9 @@ function splitUploadContext(content: string): { content: string; contextContent?
   while (start > 0 && lines[start - 1].trim() === '') start -= 1
   const visibleContent = lines.slice(0, start).join('\n').trim()
   return {
-    content: visibleContent || fileNames.join(', '),
+    content: visibleContent || fileRefs.map(ref => ref.name).join(', '),
     contextContent: content,
+    attachments: fileRefs.map((ref, index) => attachmentFromUploadRef(ref.name, ref.path, index)),
   }
 }
 
@@ -177,6 +207,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       role: msg.role,
       content: mappedContent.content,
       contextContent: mappedContent.contextContent,
+      attachments: mappedContent.attachments,
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,
     })
@@ -338,7 +369,27 @@ function sanitizeForCache(msgs: Message[]): Message[] {
     if (!m.attachments?.length) return m
     return {
       ...m,
-      attachments: m.attachments.map(a => ({ id: a.id, name: a.name, type: a.type, size: a.size, url: a.url })),
+      attachments: m.attachments.map(a => ({
+        id: a.id,
+        name: a.name,
+        type: a.type,
+        size: a.size,
+        url: a.uploadPath ? '' : a.url,
+        uploadPath: a.uploadPath,
+      })),
+    }
+  })
+}
+
+function reviveCachedAttachments(msgs: Message[]): Message[] {
+  return msgs.map(m => {
+    if (!m.attachments?.length) return m
+    return {
+      ...m,
+      attachments: m.attachments.map(a => ({
+        ...a,
+        url: a.uploadPath ? getDownloadUrl(a.uploadPath, a.name) : a.url,
+      })),
     }
   })
 }
@@ -350,7 +401,7 @@ function sanitizeForCache(msgs: Message[]): Message[] {
 // Legitimate reasoning is almost never a prefix of the final answer.
 function scrubBuggyReasoningInCache(msgs: Message[] | null | undefined): Message[] {
   if (!msgs) return []
-  return msgs.map(m => {
+  return reviveCachedAttachments(msgs).map(m => {
     if (m.role !== 'assistant' || !m.reasoning || !m.content) return m
     const r = m.reasoning.trim()
     const c = m.content.trim()
@@ -824,6 +875,18 @@ export const useChatStore = defineStore('chat', () => {
         const pathParts = uploaded.map(f => `[File: ${f.name}](${f.path})`)
         inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
         userMsg.contextContent = inputText
+        userMsg.attachments = attachments.map((att, index) => {
+          const uploadedFile = uploaded[index]
+          if (!uploadedFile) return { id: att.id, name: att.name, type: att.type, size: att.size, url: att.url }
+          return {
+            id: att.id,
+            name: att.name,
+            type: att.type,
+            size: att.size,
+            url: getDownloadUrl(uploadedFile.path, uploadedFile.name),
+            uploadPath: uploadedFile.path,
+          }
+        })
         if (sid === activeSessionId.value) {
           persistActiveMessages()
         }
