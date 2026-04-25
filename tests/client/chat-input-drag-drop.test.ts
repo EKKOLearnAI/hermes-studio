@@ -83,11 +83,11 @@ describe('ChatInput drag-in attachments', () => {
     })
   })
 
-  it('shows the drag affordance when files enter the full composer area', async () => {
+  it('shows the drag affordance when files enter anywhere in the window', async () => {
     const wrapper = mountInput()
     const composer = wrapper.find('.chat-input-area')
 
-    fireDragEvent(composer.element, 'dragenter', {
+    fireDragEvent(document.body, 'dragenter', {
       types: ['Files'],
       files: [] as any,
     })
@@ -98,13 +98,13 @@ describe('ChatInput drag-in attachments', () => {
     expect(wrapper.text()).toContain('chat.dropFilesToAttach')
   })
 
-  it('attaches files dropped on the full composer area', async () => {
+  it('attaches files dropped anywhere in the window', async () => {
     const wrapper = mountInput()
     const composer = wrapper.find('.chat-input-area')
     const textFile = new File(['hello'], 'notes.txt', { type: 'text/plain' })
     const imageFile = new File(['png'], 'diagram.png', { type: 'image/png' })
 
-    fireDragEvent(composer.element, 'drop', {
+    fireDragEvent(document.body, 'drop', {
       types: ['Files'],
       files: [textFile, imageFile] as any,
     })
@@ -115,11 +115,28 @@ describe('ChatInput drag-in attachments', () => {
     expect(composer.classes()).not.toContain('drag-over')
   })
 
-  it('ignores non-file drags over the composer area', async () => {
+  it('attaches files even when an inner page element stops drag event bubbling', async () => {
+    const wrapper = mountInput()
+    const blocker = document.createElement('div')
+    document.body.appendChild(blocker)
+    blocker.addEventListener('drop', event => event.stopPropagation())
+
+    const blockedFile = new File(['blocked'], 'blocked.txt', { type: 'text/plain' })
+    fireDragEvent(blocker, 'drop', {
+      types: ['Files'],
+      files: [blockedFile] as any,
+    })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('blocked.txt')
+    blocker.remove()
+  })
+
+  it('ignores non-file drags over the window', async () => {
     const wrapper = mountInput()
     const composer = wrapper.find('.chat-input-area')
 
-    fireDragEvent(composer.element, 'dragenter', {
+    fireDragEvent(document.body, 'dragenter', {
       types: ['text/plain'],
       files: [] as any,
     })
@@ -129,13 +146,12 @@ describe('ChatInput drag-in attachments', () => {
     expect(wrapper.find('.drop-overlay').exists()).toBe(false)
   })
 
-  it('keeps existing duplicate-name attachment behavior for composer drops', async () => {
+  it('keeps existing duplicate-name attachment behavior for window drops', async () => {
     const wrapper = mountInput()
-    const composer = wrapper.find('.chat-input-area')
     const first = new File(['first'], 'same.txt', { type: 'text/plain' })
     const second = new File(['second'], 'same.txt', { type: 'text/plain' })
 
-    fireDragEvent(composer.element, 'drop', {
+    fireDragEvent(document.body, 'drop', {
       types: ['Files'],
       files: [first, second] as any,
     })

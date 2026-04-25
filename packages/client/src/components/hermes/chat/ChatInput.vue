@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { NButton, NTooltip } from 'naive-ui'
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const chatStore = useChatStore()
@@ -15,7 +15,6 @@ const textareaRef = ref<HTMLTextAreaElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
-const dragCounter = ref(0)
 const isComposing = ref(false)
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
@@ -114,14 +113,20 @@ function handleDragEnter(e: DragEvent) {
   if (!isFileDrag(e)) return
 
   e.preventDefault()
-  dragCounter.value++
   isDragging.value = true
 }
 
-function handleDragLeave() {
-  dragCounter.value--
-  if (dragCounter.value <= 0) {
-    dragCounter.value = 0
+function handleDragLeave(e: DragEvent) {
+  if (!isFileDrag(e)) return
+
+  // Window-level drags fire dragleave while crossing child elements. Only hide
+  // the affordance when the pointer actually leaves the viewport.
+  if (
+    e.clientX <= 0
+    || e.clientY <= 0
+    || e.clientX >= window.innerWidth
+    || e.clientY >= window.innerHeight
+  ) {
     isDragging.value = false
   }
 }
@@ -130,13 +135,26 @@ function handleDrop(e: DragEvent) {
   if (!isFileDrag(e)) return
 
   e.preventDefault()
-  dragCounter.value = 0
   isDragging.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (!files.length) return
   for (const file of files) addFile(file)
   textareaRef.value?.focus()
 }
+
+onMounted(() => {
+  window.addEventListener('dragover', handleDragOver, true)
+  window.addEventListener('dragenter', handleDragEnter, true)
+  window.addEventListener('dragleave', handleDragLeave, true)
+  window.addEventListener('drop', handleDrop, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('dragover', handleDragOver, true)
+  window.removeEventListener('dragenter', handleDragEnter, true)
+  window.removeEventListener('dragleave', handleDragLeave, true)
+  window.removeEventListener('drop', handleDrop, true)
+})
 
 // --- Send ---
 
@@ -204,10 +222,6 @@ function isImage(type: string): boolean {
   <div
     class="chat-input-area"
     :class="{ 'drag-over': isDragging }"
-    @dragover="handleDragOver"
-    @dragenter="handleDragEnter"
-    @dragleave="handleDragLeave"
-    @drop="handleDrop"
   >
     <div v-if="isDragging" class="drop-overlay" aria-live="polite">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16.5V19a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2.5"/></svg>
@@ -323,9 +337,9 @@ function isImage(type: string): boolean {
 }
 
 .drop-overlay {
-  position: absolute;
-  inset: 8px 16px;
-  z-index: 2;
+  position: fixed;
+  inset: 16px;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
