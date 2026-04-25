@@ -14,7 +14,7 @@ const TAG_RE = /<(think|thinking|reasoning)>([\s\S]*?)<\/\1>/gi
 const PLACEHOLDER_PREFIX = '\u0000THKCODE'
 const PLACEHOLDER_SUFFIX = '\u0000'
 
-const FENCED_RE = /(```|~~~)([\s\S]*?)\1/g
+const FENCED_RE = /(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g
 const INLINE_CODE_RE = /`[^`\n]*`/g
 
 function protectCodeBlocks(input: string): { masked: string; blocks: string[] } {
@@ -32,10 +32,20 @@ function protectCodeBlocks(input: string): { masked: string; blocks: string[] } 
 
 function restoreCodeBlocks(text: string, blocks: string[]): string {
   if (blocks.length === 0) return text
-  return text.replace(
-    new RegExp(`${PLACEHOLDER_PREFIX}(\\d+)${PLACEHOLDER_SUFFIX}`, 'g'),
-    (_, idx) => blocks[Number(idx)] ?? '',
-  )
+
+  const placeholderRe = new RegExp(`${PLACEHOLDER_PREFIX}(\\d+)${PLACEHOLDER_SUFFIX}`, 'g')
+  let restored = text
+
+  for (let i = 0; i < blocks.length; i += 1) {
+    const next = restored.replace(
+      placeholderRe,
+      (_, idx) => blocks[Number(idx)] ?? '',
+    )
+    if (next === restored) break
+    restored = next
+  }
+
+  return restored
 }
 
 export function parseThinking(content: string, opts: ParseOptions): ParsedThinking {

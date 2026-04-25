@@ -92,6 +92,24 @@ describe('parseThinking', () => {
     expect(r.body).toBe('text\n```\n<think>fake</think>\n```')
   })
 
+  it('does not leak code-protection placeholders for inline mentions of markdown fences', () => {
+    const src = [
+      'Previous fix kept the outer ` ```md ` block as code.',
+      '',
+      '````md',
+      '下面是可直接手动编辑的 PR draft。',
+      '```md',
+      '标题',
+      '```',
+      '````',
+    ].join('\n')
+    const r = parseThinking(src, { streaming: false })
+    expect(r.hasThinking).toBe(false)
+    expect(r.body).toBe(src)
+    expect(r.body).not.toContain('THKCODE')
+    expect(r.body).not.toContain('\u0000')
+  })
+
   it('same-name nesting: inner tag absorbed into first segment (documented limitation)', () => {
     const r = parseThinking('<think>a<think>b</think>c</think>', { streaming: false })
     expect(r.segments).toEqual(['a<think>b'])
