@@ -66,6 +66,7 @@ describe('Chat Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
     vi.useRealTimers()
     window.localStorage.clear()
     mockSessionsApi.fetchSessions.mockResolvedValue([])
@@ -134,6 +135,119 @@ describe('Chat Store', () => {
         }),
       ]),
     )
+  })
+
+  it('preserves uploaded file references for later same-chat follow-up context without showing raw markdown', async () => {
+    const attachment = new File(['screenshot-bytes'], 'screenshot.png', { type: 'image/png' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ files: [{ name: 'screenshot.png', path: '/tmp/uploaded-screenshot.png' }] }),
+    }))
+
+    const store = useChatStore()
+    await store.sendMessage('please inspect this', [{
+      id: 'att-1',
+      name: 'screenshot.png',
+      type: 'image/png',
+      size: attachment.size,
+      url: 'blob:screenshot',
+      file: attachment,
+    }])
+
+    const sid = store.activeSessionId
+    expect(sid).toBeTruthy()
+    expect(mockChatApi.startRun).toHaveBeenCalledTimes(1)
+    expect(mockChatApi.startRun.mock.calls[0][0].input).toContain('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
+    expect(store.messages[0].content).toBe('please inspect this')
+
+    store.stopStreaming()
+    await store.sendMessage('do you still see the attached file?')
+
+    expect(mockChatApi.startRun).toHaveBeenCalledTimes(2)
+    const secondPayload = mockChatApi.startRun.mock.calls[1][0]
+    expect(secondPayload.conversation_history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('[File: screenshot.png](/tmp/uploaded-screenshot.png)'),
+        }),
+      ]),
+    )
+    expect(store.messages[0].content).toBe('please inspect this')
+    expect(store.messages[0].content).not.toContain('[File:')
+
+    const cachedMessages = JSON.parse(
+      window.localStorage.getItem(sessionMessagesKey(sid!)) || '[]',
+    )
+    expect(cachedMessages[0].content).toBe('please inspect this')
+    expect(cachedMessages[0].contextContent).toContain('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
+    expect(cachedMessages[0].attachments[0].file).toBeUndefined()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('converts server-returned upload markdown into hidden context before follow-ups', async () => {
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-file', 'File Session')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-file', [
+      {
+        id: 1,
+        session_id: 'sess-file',
+        role: 'user',
+        content: 'please inspect this\n\n[File: screenshot.png](/tmp/uploaded-screenshot.png)',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.messages[0].content).toBe('please inspect this')
+    expect(store.messages[0].content).not.toContain('[File:')
+    expect(store.messages[0].contextContent).toContain('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
+
+    await store.sendMessage('can you still see it?')
+
+    expect(mockChatApi.startRun).toHaveBeenCalledTimes(1)
+    expect(mockChatApi.startRun.mock.calls[0][0].conversation_history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('[File: screenshot.png](/tmp/uploaded-screenshot.png)'),
+        }),
+      ]),
+    )
+  })
+
+  it('keeps attachment-only server messages visible while preserving hidden upload context', async () => {
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-file-only', 'File Only')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-file-only', [
+      {
+        id: 1,
+        session_id: 'sess-file-only',
+        role: 'user',
+        content: '[File: screenshot.png](/tmp/uploaded-screenshot.png)',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.messages[0].content).toBe('screenshot.png')
+    expect(store.messages[0].content).not.toContain('[File:')
+    expect(store.messages[0].contextContent).toBe('[File: screenshot.png](/tmp/uploaded-screenshot.png)')
   })
 
   it('hydrates from default-profile legacy cache and migrates bulky storage to new keys only', async () => {

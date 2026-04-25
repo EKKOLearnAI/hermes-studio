@@ -19,6 +19,9 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
+  // Agent-facing content used when reconstructing conversation history.
+  // This can include hidden upload references while `content` stays UI-friendly.
+  contextContent?: string
   timestamp: number
   toolName?: string
   toolPreview?: string
@@ -69,6 +72,30 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
   return data.files
+}
+
+function splitUploadContext(content: string): { content: string; contextContent?: string } {
+  const fileRefPattern = /^\[File: (.+)\]\([^)]+\)$/
+  const lines = content.split(/\r?\n/)
+  let end = lines.length
+  while (end > 0 && lines[end - 1].trim() === '') end -= 1
+
+  let start = end
+  const fileNames: string[] = []
+  while (start > 0) {
+    const match = lines[start - 1].trim().match(fileRefPattern)
+    if (!match) break
+    fileNames.unshift(match[1])
+    start -= 1
+  }
+  if (start === end) return { content }
+
+  while (start > 0 && lines[start - 1].trim() === '') start -= 1
+  const visibleContent = lines.slice(0, start).join('\n').trim()
+  return {
+    content: visibleContent || fileNames.join(', '),
+    contextContent: content,
+  }
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
@@ -142,10 +169,14 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     }
 
     // Normal user/assistant messages
+    const mappedContent = msg.role === 'user'
+      ? splitUploadContext(msg.content || '')
+      : { content: msg.content || '' }
     result.push({
       id: String(msg.id),
       role: msg.role,
-      content: msg.content || '',
+      content: mappedContent.content,
+      contextContent: mappedContent.contextContent,
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,
     })
@@ -782,6 +813,7 @@ export const useChatStore = defineStore('chat', () => {
       // Build conversation history from past messages
       const sessionMsgs = getSessionMsgs(sid)
       const history: ChatMessage[] = sessionMsgs
+        .map(m => ({ ...m, content: m.contextContent ?? m.content }))
         .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
         .map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content }))
 
@@ -791,6 +823,10 @@ export const useChatStore = defineStore('chat', () => {
         const uploaded = await uploadFiles(attachments)
         const pathParts = uploaded.map(f => `[File: ${f.name}](${f.path})`)
         inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
+        userMsg.contextContent = inputText
+        if (sid === activeSessionId.value) {
+          persistActiveMessages()
+        }
       }
 
       const appStore = useAppStore()
