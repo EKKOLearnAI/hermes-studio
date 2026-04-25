@@ -125,18 +125,52 @@ function lookupCustomProviderContextLength(config: any, modelName: string, provi
 
 // --- Context lookup ---
 
-function lookupContextFromCache(modelName: string): number | null {
+const CACHE_PROVIDER_ALIASES: Record<string, string[]> = {
+  gemini: ['google'],
+  moonshot: ['moonshotai'],
+  kilocode: ['kilo'],
+  'ai-gateway': ['vercel'],
+  'opencode-zen': ['opencode'],
+  'opencode-go': ['opencode'],
+  'glm-coding-plan': ['zai-coding-plan'],
+  'kimi-coding': ['kimi-for-coding'],
+  'kimi-coding-cn': ['kimi-for-coding'],
+}
+
+function getContextFromProvider(prov: ProviderEntry | undefined, modelName: string): number | null {
+  const models = prov?.models || {}
+  const exact = models[modelName]
+  if (exact?.limit?.context) return exact.limit.context
+
+  const lower = modelName.toLowerCase()
+  for (const [name, entry] of Object.entries(models)) {
+    if (name.toLowerCase() === lower && entry?.limit?.context) {
+      return entry.limit.context
+    }
+  }
+  return null
+}
+
+function lookupContextFromCache(modelName: string, provider: string | null): number | null {
   const data = loadModelsDevCache()
   if (!data) return null
 
-  // Exact match first
+  if (provider) {
+    const providers = [provider, ...(CACHE_PROVIDER_ALIASES[provider] || [])]
+    for (const providerName of providers) {
+      const ctx = getContextFromProvider(data[providerName], modelName)
+      if (ctx) return ctx
+    }
+    return null
+  }
+
+  // Legacy providerless lookup: exact model-name match across all providers.
   for (const prov of Object.values(data)) {
-    const models = prov.models || {}
-    const entry = models[modelName]
+    const entry = prov.models?.[modelName]
     if (entry?.limit?.context) return entry.limit.context
   }
 
-  // Case-insensitive fallback
+  // Legacy providerless case-insensitive fallback across all providers.
   const lower = modelName.toLowerCase()
   for (const prov of Object.values(data)) {
     const models = prov.models || {}
@@ -175,7 +209,7 @@ export function getModelContextLength(profile?: string): number {
   if (customCtx && customCtx > 0) return customCtx
 
   // 3. models_dev_cache.json
-  const cached = lookupContextFromCache(model)
+  const cached = lookupContextFromCache(model, provider)
   if (cached) return cached
 
   // 4. Fallback
