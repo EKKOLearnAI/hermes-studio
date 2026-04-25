@@ -4,7 +4,7 @@ import {
   getConversationDetailFromDb,
   listConversationSummariesFromDb,
 } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
+import { getSessionDetailFromDb, listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import type { ConversationDetail, ConversationSummary } from '../../services/hermes/conversations'
@@ -46,6 +46,16 @@ function hasPendingDeletedConversation(detail: ConversationDetail): boolean {
   if (pendingIds.size === 0) return false
   if (pendingIds.has(detail.session_id)) return true
   return detail.messages.some(message => pendingIds.has(message.session_id))
+}
+
+function hasPendingDeletedSessionDetail(session: { id: string; messages?: Array<{ session_id?: string | null }> }): boolean {
+  const pendingIds = getPendingDeletedSessionIds()
+  if (pendingIds.size === 0) return false
+  if (pendingIds.has(session.id)) return true
+  return (session.messages || []).some(message => {
+    const messageSessionId = message.session_id || session.id
+    return pendingIds.has(messageSessionId)
+  })
 }
 
 function getGroupChatStorage() {
@@ -133,6 +143,21 @@ export async function get(ctx: any) {
     ctx.status = 404
     ctx.body = { error: 'Session not found' }
     return
+  }
+
+  try {
+    const session = await getSessionDetailFromDb(ctx.params.id)
+    if (session) {
+      if (hasPendingDeletedSessionDetail(session)) {
+        ctx.status = 404
+        ctx.body = { error: 'Session not found' }
+        return
+      }
+      ctx.body = { session }
+      return
+    }
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
   }
 
   const session = await hermesCli.getSession(ctx.params.id)
