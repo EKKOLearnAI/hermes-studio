@@ -948,8 +948,8 @@ export const useChatStore = defineStore('chat', () => {
       // Build conversation history from past messages
       const sessionMsgs = getSessionMsgs(sid)
       const history: ChatMessage[] = sessionMsgs
-        .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
-        .map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content }))
+        .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content.trim())
+        .map(m => ({ role: m.role as 'user' | 'assistant' | 'system' | 'tool', content: m.content }))
 
       // Upload attachments and build input with file paths
       let inputText = content.trim()
