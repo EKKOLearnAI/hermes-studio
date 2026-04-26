@@ -67,10 +67,10 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "@multiavatar/multiavatar": "^1.0.7",
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.4.0",
+    "@multiavatar/multiavatar": "^1.0.7",
     "@pinia/testing": "^1.0.3",
     "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",

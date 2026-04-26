@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile)
 
 const thinkingRoutes = new Router()
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
 const ANIMATION_DIR = path.join(config.uploadDir, 'thinking-animations')
 
 // Allowed output filenames — prevents path traversal

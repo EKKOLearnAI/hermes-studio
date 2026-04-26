@@ -97,6 +97,25 @@ function toggleThinking() {
   thinkingOverride.value = !thinkingExpanded.value;
 }
 
+// Copy entire bubble content
+const copyableContent = computed(() => {
+  if (props.message.role === 'tool') return null
+  const content = props.message.content || ''
+  if (!content.trim()) return null
+  return content
+})
+
+async function copyBubbleContent() {
+  const text = copyableContent.value
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.success(t('chat.copiedBubble'))
+  } catch {
+    toast.error(t('chat.copyFailed'))
+  }
+}
+
 const nowTick = ref(Date.now());
 let tickTimer: number | null = null;
 
@@ -444,7 +463,20 @@ const renderedToolResult = computed(() => {
               <span></span><span></span><span></span>
             </span>
           </div>
-          <div class="message-time">{{ timeStr }}</div>
+          <div class="message-meta">
+            <button
+              v-if="copyableContent"
+              class="copy-bubble-btn"
+              @click="copyBubbleContent"
+              :title="t('chat.copyBubble')"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            </button>
+            <span class="message-time">{{ timeStr }}</span>
+          </div>
         </div>
       </div>
     </template>
@@ -651,11 +683,53 @@ const renderedToolResult = computed(() => {
   }
 }
 
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 0 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+
+  .message:hover & {
+    opacity: 1;
+  }
+}
+
+.copy-bubble-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  border-radius: $radius-sm;
+  padding: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+
+  &:hover {
+    color: $text-secondary;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .dark & {
+    color: #999999;
+
+    &:hover {
+      color: #cccccc;
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
 .message-time {
   font-size: 11px;
   color: $text-muted;
-  margin-top: 4px;
-  padding: 0 4px;
+  user-select: none;
 
   .dark & {
     color: #999999;

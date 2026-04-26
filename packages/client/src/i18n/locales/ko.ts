@@ -144,6 +144,9 @@ export default {
     thinkingHide: '사고 과정 접기',
     thinkingDuration: '관측 {duration}',
     thinkingChars: '{count}자',
+    copyBubble: 'Copy message',
+    copiedBubble: 'Copied',
+    copyFailed: 'Copy failed',
   },
 
   // 예약 작업

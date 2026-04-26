@@ -41,9 +41,18 @@ export interface RunEvent {
 }
 
 export async function startRun(body: StartRunRequest): Promise<StartRunResponse> {
+  const headers: Record<string, string> = {}
+  // Pass session_id as a header so the gateway loads full conversation
+  // history (including tool messages) from the session DB instead of
+  // relying on the stripped user/assistant-only history in the body.
+  // This fixes the "lazy agent" bug where tool context is lost between turns.
+  if (body.session_id) {
+    headers['X-Hermes-Session-Id'] = body.session_id
+  }
   return request<StartRunResponse>('/api/hermes/v1/runs', {
     method: 'POST',
     body: JSON.stringify(body),
+    headers,
   })
 }
 

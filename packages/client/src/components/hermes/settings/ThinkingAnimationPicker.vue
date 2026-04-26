@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { NButton, NAlert, NSpin } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const hasCustom = ref(false)
 const customType = ref('')
 const loading = ref(false)
@@ -40,8 +42,8 @@ function openPicker() {
 async function onFileChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
-  if (file.size > 20 * 1024 * 1024) {
-    error.value = 'File too large (max 20MB)'
+  if (file.size > 100 * 1024 * 1024) {
+    error.value = t('display.taFileTooLarge')
     return
   }
   uploading.value = true
@@ -56,11 +58,11 @@ async function onFileChange(e: Event) {
     })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || `Upload failed (${res.status})`)
+      throw new Error(data.error || `${t('display.taUploadFailed')} (${res.status})`)
     }
     await fetchStatus()
   } catch (e: any) {
-    error.value = e.message || 'Upload failed'
+    error.value = e.message || t('display.taUploadFailed')
   } finally {
     uploading.value = false
     if (fileInput.value) fileInput.value.value = ''
@@ -75,7 +77,7 @@ async function resetAnimation() {
     })
     await fetchStatus()
   } catch (e: any) {
-    error.value = e.message || 'Reset failed'
+    error.value = e.message || t('display.taResetFailed')
   }
 }
 
@@ -90,22 +92,17 @@ onMounted(fetchStatus)
     <template v-else>
       <div class="ta-row">
         <span class="ta-status">
-          {{ hasCustom ? `Custom animation loaded (${customType.toUpperCase()})` : 'Using default animation' }}
+          {{ hasCustom ? `${t('display.taCustomLoaded')} (${customType.toUpperCase()})` : t('display.taDefault') }}
         </span>
         <NButton size="small" @click="openPicker" :loading="uploading">
-          {{ hasCustom ? 'Change' : 'Upload Animation' }}
+          {{ hasCustom ? t('display.taChange') : t('display.taUpload') }}
         </NButton>
         <NButton v-if="hasCustom" size="small" @click="resetAnimation" :loading="uploading">
-          Reset to Default
+          {{ t('display.taResetDefault') }}
         </NButton>
       </div>
       <div class="ta-help">
-        <strong>Upload Requirements</strong><br/>
-        Format: GIF, MP4, WebM, MOV, AVI, MKV<br/>
-        Size: ≤ 20MB<br/>
-        Duration: Any (auto-trimmed to 3s)<br/>
-        Resolution: Any (auto-resize to 200×200)<br/><br/>
-        ✨ Non-MP4/GIF formats auto-convert via ffmpeg
+        {{ t('display.taHelp') }}
       </div>
       <NAlert v-if="error" type="error" style="margin-top:8px" closable @close="error=''">
         {{ error }}
