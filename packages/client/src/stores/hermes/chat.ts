@@ -1205,6 +1205,20 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function clearProviderFromSessions(provider: string) {
+    if (!provider) return
+    const target = provider.toLowerCase()
+    let dirty = false
+    for (const s of sessions.value) {
+      if ((s.provider || '').toLowerCase() === target) {
+        s.model = undefined
+        s.provider = ''
+        dirty = true
+      }
+    }
+    if (dirty) persistSessionsList()
+  }
+
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
     // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
@@ -1227,6 +1241,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     switchSession,
     switchSessionModel,
+    clearProviderFromSessions,
     deleteSession,
     sendMessage,
     stopStreaming,

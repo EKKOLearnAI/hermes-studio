@@ -4,6 +4,7 @@ import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/herme
 import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
+import { readAppConfig } from '../../services/app-config'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
@@ -86,10 +87,24 @@ export async function getAvailable(ctx: any) {
       return copilotLiveModels
     }
 
+    // Copilot 显式 opt-in：即便能解析到 token，未通过 web-ui Add Provider 显式启用
+    // 时也不返回。避免误把 VS Code/gh CLI 用户的全局凭证当作 hermes provider。
+    const appConfig = await readAppConfig()
+    const copilotEnabled = appConfig.copilotEnabled === true
+
+    // 兼容老用户：上一版本会"自动 fallback discovery"出 Copilot；升级后这些用户的
+    // config.yaml 可能仍把 model.default 指向某个 copilot 模型。若此时 copilot 已不
+    // 启用，把返回的 default 清掉，让前端兜底自动选剩余 provider 的第一个 model。
+    if (!copilotEnabled && currentDefaultProvider.toLowerCase() === 'copilot') {
+      currentDefault = ''
+      currentDefaultProvider = ''
+    }
+
     for (const [providerKey, envMapping] of Object.entries(PROVIDER_ENV_MAP)) {
       if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env)) continue
       if (!envMapping.api_key_env) {
         if (providerKey === 'copilot') {
+          if (!copilotEnabled) continue
           if (!(await isCopilotAuthorized(envContent))) continue
         } else if (!isOAuthAuthorized(providerKey)) {
           continue
@@ -157,7 +172,8 @@ export async function getAvailable(ctx: any) {
     for (const g of groups) { g.models = Array.from(new Set(g.models)) }
 
     // 动态拉一次 copilot 模型用于 allProviders 展示（同一请求复用缓存）
-    const liveCopilotModels = await getCopilotLive()
+    // 未启用 Copilot 时跳过拉取，避免空跑网络请求。
+    const liveCopilotModels = copilotEnabled ? await getCopilotLive() : []
     const liveCopilotIds = liveCopilotModels.map((m) => m.id)
 
     const allProvidersBase = PROVIDER_PRESETS.map((p: any) => ({

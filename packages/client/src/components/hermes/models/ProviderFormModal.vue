@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage, useDialog } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
 import CopilotLoginModal from './CopilotLoginModal.vue'
+import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
 
 const { t } = useI18n()
 
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 
 const modelsStore = useModelsStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const showModal = ref(true)
 const loading = ref(false)
@@ -23,6 +25,7 @@ const fetchingModels = ref(false)
 const showCodexLogin = ref(false)
 const showNousLogin = ref(false)
 const showCopilotLogin = ref(false)
+const copilotChecking = ref(false)
 
 const providerType = ref<'preset' | 'custom'>('preset')
 const selectedPreset = ref<string | null>(null)
@@ -78,7 +81,8 @@ watch(selectedPreset, (val) => {
       }
     }
     if (val === COPILOT_KEY) {
-      showCopilotLogin.value = true
+      // 判断是否已能解析到 token：有 → 弹简单确认；无 → 走 in-app device flow
+      void triggerCopilotAdd()
     }
   }
 })
@@ -157,9 +161,9 @@ async function handleSave() {
     return
   }
 
-  // Copilot: 引导用户在终端 gh auth login
+  // Copilot: 走 token-aware 的添加流程（已有 token → 确认窗；否则 device flow）
   if (isCopilot.value) {
-    showCopilotLogin.value = true
+    void triggerCopilotAdd()
     return
   }
 
@@ -216,6 +220,56 @@ async function handleCopilotSuccess() {
   showCopilotLogin.value = false
   message.success(t('models.providerAdded'))
   emit('saved')
+}
+
+function copilotSourceLabel(source: CopilotTokenSource): string {
+  if (source === 'env') return t('models.copilotAddSourceEnv')
+  if (source === 'gh-cli') return t('models.copilotAddSourceGhCli')
+  if (source === 'apps-json') return t('models.copilotAddSourceAppsJson')
+  return ''
+}
+
+async function triggerCopilotAdd() {
+  if (copilotChecking.value) return
+  copilotChecking.value = true
+  try {
+    const status = await checkCopilotToken()
+    if (status.has_token) {
+      // 已能解析到 token：弹确认窗，用户点 [添加] → enable + saved
+      const sourceText = copilotSourceLabel(status.source)
+      dialog.success({
+        title: t('models.copilotAddDetectedTitle'),
+        content: sourceText
+          ? `${t('models.copilotAddDetected')}\n\n${sourceText}`
+          : t('models.copilotAddDetected'),
+        positiveText: t('common.add'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          try {
+            await enableCopilot()
+            message.success(t('models.providerAdded'))
+            emit('saved')
+          } catch (e: any) {
+            message.error(e?.message ?? String(e))
+          }
+        },
+        onNegativeClick: () => {
+          selectedPreset.value = null
+        },
+        onClose: () => {
+          selectedPreset.value = null
+        },
+      })
+    } else {
+      // 无 token：device flow
+      showCopilotLogin.value = true
+    }
+  } catch (e: any) {
+    message.error(e?.message ?? String(e))
+    selectedPreset.value = null
+  } finally {
+    copilotChecking.value = false
+  }
 }
 
 function handleCopilotClose() {

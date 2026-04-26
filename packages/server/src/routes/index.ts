@@ -18,6 +18,7 @@ import { configRoutes } from './hermes/config'
 import { logRoutes } from './hermes/logs'
 import { codexAuthRoutes } from './hermes/codex-auth'
 import { nousAuthRoutes } from './hermes/nous-auth'
+import { copilotAuthRoutes } from './hermes/copilot-auth'
 import { gatewayRoutes } from './hermes/gateways'
 import { weixinRoutes } from './hermes/weixin'
 import { fileRoutes } from './hermes/files'
@@ -54,6 +55,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(logRoutes.routes())
   app.use(codexAuthRoutes.routes())
   app.use(nousAuthRoutes.routes())
+  app.use(copilotAuthRoutes.routes())
   app.use(gatewayRoutes.routes())
   app.use(weixinRoutes.routes())
   app.use(groupChatRoutes.routes())       // Must be before proxy

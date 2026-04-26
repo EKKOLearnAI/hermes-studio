@@ -113,19 +113,28 @@ async function readGhAppsToken(): Promise<string> {
  * 跳过 classic PAT (ghp_)，与上游 hermes-agent copilot_auth.py 行为对齐。
  * 这是单一事实来源 —— 授权检测和模型拉取都应使用此函数。
  */
-export async function resolveCopilotOAuthToken(envContent: string): Promise<string> {
+export type CopilotTokenSource = 'env' | 'gh-cli' | 'apps-json' | null
+
+export async function resolveCopilotOAuthTokenWithSource(
+  envContent: string,
+): Promise<{ token: string; source: CopilotTokenSource }> {
   for (const key of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']) {
     const v = readEnvVar(envContent, key)
-    if (isUsableOAuthToken(v)) return v
+    if (isUsableOAuthToken(v)) return { token: v, source: 'env' }
   }
   const appsToken = await readGhAppsToken()
-  if (appsToken) return appsToken
+  if (appsToken) return { token: appsToken, source: 'apps-json' }
   try {
     const { stdout } = await execFileAsync('gh', ['auth', 'token'], { timeout: 3000 })
     const v = stdout.trim()
-    if (isUsableOAuthToken(v)) return v
+    if (isUsableOAuthToken(v)) return { token: v, source: 'gh-cli' }
   } catch { /* ignore */ }
-  return ''
+  return { token: '', source: null }
+}
+
+export async function resolveCopilotOAuthToken(envContent: string): Promise<string> {
+  const { token } = await resolveCopilotOAuthTokenWithSource(envContent)
+  return token
 }
 
 async function exchangeForCopilotToken(oauthToken: string): Promise<string> {
@@ -244,6 +253,16 @@ export async function getCopilotModels(envContent: string): Promise<string[]> {
 
 /** 仅供测试使用：清空所有缓存与 inflight 状态。 */
 export function __resetCopilotModelsCacheForTest(): void {
+  cacheByToken.clear()
+  inflightByToken.clear()
+}
+
+/**
+ * 注销 / 切换账号后必须调用：清空所有 token 桶下的模型列表缓存与 inflight。
+ * 否则下一次查询仍会命中旧账号的 cache（key 是 token 哈希；删除 token 后
+ * key 变为 "__none__" 不会撞，但旧 key 的旧数据仍残留并继续返回过期模型）。
+ */
+export function invalidateAllCaches(): void {
   cacheByToken.clear()
   inflightByToken.clear()
 }

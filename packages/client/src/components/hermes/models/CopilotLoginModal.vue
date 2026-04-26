@@ -1,51 +1,118 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { NModal, NButton, useMessage } from 'naive-ui'
+import { ref, onUnmounted } from 'vue'
+import { NModal, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useModelsStore } from '@/stores/hermes/models'
-import { useAppStore } from '@/stores/hermes/app'
+import { startCopilotLogin, pollCopilotLogin } from '@/api/hermes/copilot-auth'
 import { copyToClipboard } from '@/utils/clipboard'
 
 const { t } = useI18n()
 const emit = defineEmits<{ close: []; success: [] }>()
 const message = useMessage()
-const modelsStore = useModelsStore()
-const appStore = useAppStore()
 
 const showModal = ref(true)
-const checking = ref(false)
-const COMMAND = 'gh auth login --web'
+const status = ref<'idle' | 'loading' | 'waiting' | 'approved' | 'expired' | 'error'>('idle')
+const userCode = ref('')
+const verificationUrl = ref('')
+const sessionId = ref('')
+const errorMessage = ref('')
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-async function copyCommand() {
-  const ok = await copyToClipboard(COMMAND)
-  if (ok) message.success(t('models.copilotCopied'))
-  else message.error(t('models.copilotCopied') + ' ✗')
+async function startLogin() {
+  status.value = 'loading'
+  errorMessage.value = ''
+
+  try {
+    const data = await startCopilotLogin()
+    userCode.value = data.user_code
+    verificationUrl.value = data.verification_url
+    sessionId.value = data.session_id
+    status.value = 'waiting'
+    startPolling()
+  } catch (err: any) {
+    status.value = 'error'
+    const msg = err?.message || ''
+    try {
+      const match = msg.match(/\{[\s\S]*\}$/)
+      if (match) {
+        const body = JSON.parse(match[0])
+        errorMessage.value = body.error || msg
+      } else {
+        errorMessage.value = msg
+      }
+    } catch {
+      errorMessage.value = msg
+    }
+    message.error(errorMessage.value)
+  }
 }
 
-async function refreshDetect() {
-  checking.value = true
-  try {
-    await Promise.all([modelsStore.fetchProviders(), appStore.loadModels()])
-    // 已授权 providers（modelsStore.providers，对应后端 /available-models 的 groups）
-    // 才是事实来源；allProviders 是 PRESETS 全量，Copilot 一直在里面，不能用作判定。
-    const found = modelsStore.providers.some(g => g.provider === 'copilot')
-    if (found) {
-      message.success(t('models.copilotDetected'))
-      emit('success')
-    } else {
-      message.warning(t('models.copilotNotDetected'))
+function startPolling() {
+  stopPolling()
+  pollTimer = setTimeout(async () => {
+    try {
+      const result = await pollCopilotLogin(sessionId.value)
+      if (result.status === 'pending') {
+        startPolling()
+      } else if (result.status === 'approved') {
+        status.value = 'approved'
+        message.success(t('models.copilotApproved'))
+        setTimeout(() => {
+          showModal.value = false
+          setTimeout(() => emit('success'), 200)
+        }, 1000)
+      } else if (result.status === 'expired') {
+        status.value = 'expired'
+      } else if (result.status === 'denied') {
+        status.value = 'error'
+        errorMessage.value = t('models.copilotDenied')
+      } else if (result.status === 'error') {
+        status.value = 'error'
+        errorMessage.value = result.error || 'Unknown error'
+      }
+    } catch {
+      startPolling()
     }
-  } catch (e: any) {
-    message.error(e?.message || t('models.copilotNotDetected'))
-  } finally {
-    checking.value = false
+  }, 3000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
   }
 }
 
 function handleClose() {
+  stopPolling()
   showModal.value = false
   setTimeout(() => emit('close'), 200)
 }
+
+async function copyCode() {
+  const ok = await copyToClipboard(userCode.value)
+  if (ok) message.success(t('models.copilotCopyCode'))
+  else message.error(t('models.copilotCopyCode') + ' ✗')
+}
+
+function openLink() {
+  window.open(verificationUrl.value, '_blank')
+}
+
+function retry() {
+  status.value = 'idle'
+  userCode.value = ''
+  verificationUrl.value = ''
+  sessionId.value = ''
+  errorMessage.value = ''
+  startLogin()
+}
+
+onUnmounted(() => {
+  stopPolling()
+})
+
+// Auto-start when modal opens
+startLogin()
 </script>
 
 <template>
@@ -53,34 +120,53 @@ function handleClose() {
     v-model:show="showModal"
     preset="card"
     :title="t('models.copilotLoginTitle')"
-    :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    :mask-closable="!checking"
+    :style="{ width: 'min(440px, calc(100vw - 32px))' }"
+    :mask-closable="status !== 'waiting'"
     @after-leave="emit('close')"
   >
     <div class="copilot-login">
-      <p class="hint">{{ t('models.copilotLoginIntro') }}</p>
+      <!-- Idle / Loading -->
+      <div v-if="status === 'idle' || status === 'loading'" class="copilot-login__state">
+        <NSpin size="small" />
+      </div>
 
-      <ol class="steps">
-        <li>{{ t('models.copilotStep1') }}</li>
-        <li>
-          {{ t('models.copilotStep2') }}
-          <div class="cmd-row">
-            <code class="cmd">{{ COMMAND }}</code>
-            <NButton size="small" @click="copyCommand">{{ t('common.copy') }}</NButton>
-          </div>
-        </li>
-        <li>{{ t('models.copilotStep3') }}</li>
-      </ol>
+      <!-- Waiting for authorization -->
+      <div v-else-if="status === 'waiting'" class="copilot-login__state">
+        <p class="copilot-login__hint">{{ t('models.copilotWaiting') }}</p>
+        <div class="copilot-login__code" @click="copyCode">
+          <span class="copilot-login__code-text">{{ userCode }}</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </div>
+        <NButton type="primary" block @click="openLink">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </template>
+          {{ t('models.copilotOpenLink') }}
+        </NButton>
+      </div>
 
-      <p class="note">{{ t('models.copilotLoginNote') }}</p>
+      <!-- Approved -->
+      <div v-else-if="status === 'approved'" class="copilot-login__state copilot-login__state--success">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <p>{{ t('models.copilotApproved') }}</p>
+      </div>
+
+      <!-- Expired -->
+      <div v-else-if="status === 'expired'" class="copilot-login__state">
+        <p class="copilot-login__error">{{ t('models.copilotExpired') }}</p>
+        <NButton size="small" @click="retry">{{ t('common.retry') }}</NButton>
+      </div>
+
+      <!-- Error -->
+      <div v-else-if="status === 'error'" class="copilot-login__state">
+        <p class="copilot-login__error">{{ errorMessage }}</p>
+        <NButton size="small" @click="retry">{{ t('common.retry') }}</NButton>
+      </div>
     </div>
 
     <template #footer>
       <div class="modal-footer">
-        <NButton @click="handleClose">{{ t('common.cancel') }}</NButton>
-        <NButton type="primary" :loading="checking" @click="refreshDetect">
-          {{ t('models.copilotRefresh') }}
-        </NButton>
+        <NButton :disabled="status === 'waiting'" @click="handleClose">{{ t('common.cancel') }}</NButton>
       </div>
     </template>
   </NModal>
@@ -90,46 +176,63 @@ function handleClose() {
 .copilot-login {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
 }
 
-.hint {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.steps {
-  margin: 0;
-  padding-left: 20px;
+.copilot-login__state {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  font-size: 13px;
-  line-height: 1.5;
+  align-items: center;
+  gap: 16px;
+  min-height: 120px;
+  justify-content: center;
+  width: 100%;
 }
 
-.cmd-row {
+.copilot-login__hint {
+  font-size: 14px;
+  color: var(--n-text-color, inherit);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.copilot-login__code {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 12px;
+  padding: 12px 20px;
+  border: 1px solid var(--n-border-color, #e0e0e6);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  background: var(--n-color, #fafafa);
+
+  &:hover {
+    border-color: var(--n-primary-color, #18a058);
+  }
 }
 
-.cmd {
-  flex: 1;
-  padding: 6px 10px;
-  background: var(--code-block-bg, rgba(0, 0, 0, 0.04));
-  border-radius: 4px;
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
-  user-select: all;
+.copilot-login__code-text {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: monospace;
+  letter-spacing: 4px;
+  color: var(--n-text-color, inherit);
 }
 
-.note {
-  margin: 0;
-  font-size: 12px;
-  opacity: 0.7;
+.copilot-login__state--success {
+  color: #18a058;
+
+  svg {
+    stroke: #18a058;
+  }
+}
+
+.copilot-login__error {
+  color: #d03050;
+  text-align: center;
+  font-size: 13px;
 }
 
 .modal-footer {
