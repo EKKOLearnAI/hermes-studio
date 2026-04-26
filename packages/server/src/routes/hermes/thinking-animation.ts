@@ -51,7 +51,7 @@ async function parseMultipartBody(
   for await (const chunk of req) {
     totalSize += chunk.length
     if (totalSize > MAX_FILE_SIZE) return null
-    chunks.push(chunk)
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
   }
 
   const raw = Buffer.concat(chunks)
