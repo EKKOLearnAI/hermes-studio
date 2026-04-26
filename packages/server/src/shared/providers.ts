@@ -321,6 +321,31 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     base_url: 'https://openrouter.ai/api/v1',
     models: [],
   },
+  {
+    label: 'GitHub Copilot',
+    value: 'copilot',
+    builtin: true,
+    base_url: 'https://api.githubcopilot.com',
+    models: [
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5-mini',
+      'gpt-5.3-codex',
+      'gpt-5.2-codex',
+      'gpt-4.1',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'claude-sonnet-4.6',
+      'claude-sonnet-4',
+      'claude-sonnet-4.5',
+      'claude-haiku-4.5',
+      'gemini-3.1-pro-preview',
+      'gemini-3-pro-preview',
+      'gemini-3-flash-preview',
+      'gemini-2.5-pro',
+      'grok-code-fast-1',
+    ],
+  },
 ]
 
 /** Build a Record<providerKey, models[]> for backend lookup */

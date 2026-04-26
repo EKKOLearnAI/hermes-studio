@@ -13,6 +13,10 @@ const message = useMessage()
 const dialog = useDialog()
 
 const isCustom = computed(() => props.provider.provider.startsWith('custom:'))
+// OAuth-only builtin providers：凭证不存在 auth.json，删除按钮对其无效，故隐藏
+const OAUTH_ONLY_BUILTINS = new Set(['copilot', 'codex', 'nous'])
+const isOAuthOnlyBuiltin = computed(() => OAUTH_ONLY_BUILTINS.has(props.provider.provider))
+const canDelete = computed(() => !isOAuthOnlyBuiltin.value)
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
 
@@ -57,7 +61,7 @@ async function handleDelete() {
       </div>
     </div>
 
-    <div class="card-actions">
+    <div v-if="canDelete" class="card-actions">
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ t('common.delete') }}</NButton>
     </div>
   </div>

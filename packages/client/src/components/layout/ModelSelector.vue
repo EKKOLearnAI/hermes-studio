@@ -57,6 +57,8 @@ function isGroupCollapsed(provider: string) {
 }
 
 function handleSelect(model: string, provider: string) {
+  const meta = appStore.modelGroups.find(g => g.provider === provider)?.model_meta?.[model]
+  if (meta?.disabled) return
   appStore.switchModel(model, provider)
   showModal.value = false
   searchQuery.value = ''
@@ -65,6 +67,9 @@ function handleSelect(model: string, provider: string) {
 function handleCustomSubmit() {
   const model = customInput.value.trim()
   if (!model || !customProvider.value) return
+  // 拦截 disabled 模型，避免 custom input 绕过列表里的灰显限制
+  const meta = appStore.modelGroups.find(g => g.provider === customProvider.value)?.model_meta?.[model]
+  if (meta?.disabled) return
   appStore.switchModel(model, customProvider.value)
   showModal.value = false
   searchQuery.value = ''
@@ -122,10 +127,16 @@ function openModal() {
               v-for="model in group.models"
               :key="model"
               class="model-item"
-              :class="{ active: model === appStore.selectedModel && group.provider === appStore.selectedProvider }"
+              :class="{
+                active: model === appStore.selectedModel && group.provider === appStore.selectedProvider,
+                disabled: !!group.model_meta?.[model]?.disabled,
+              }"
+              :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
               @click="handleSelect(model, group.provider)"
             >
               <span class="model-item-name">{{ model }}</span>
+              <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
+              <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
               <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
@@ -285,6 +296,16 @@ function openModal() {
     color: $accent-primary;
     font-weight: 500;
   }
+
+  &.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+
+    &:hover {
+      background-color: transparent;
+      color: $text-secondary;
+    }
+  }
 }
 
 .model-item-name {
@@ -308,6 +329,31 @@ function openModal() {
   color: #fff;
   background: $accent-primary;
   padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  letter-spacing: 0.03em;
+}
+
+.model-badge-preview {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  background: #d97706;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  letter-spacing: 0.03em;
+}
+
+.model-badge-disabled {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  color: $text-muted;
+  background: transparent;
+  border: 1px solid $border-color;
+  padding: 0 5px;
   border-radius: 3px;
   margin-right: 4px;
   letter-spacing: 0.03em;

@@ -5,6 +5,7 @@ import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
+import CopilotLoginModal from './CopilotLoginModal.vue'
 
 const { t } = useI18n()
 
@@ -21,6 +22,7 @@ const loading = ref(false)
 const fetchingModels = ref(false)
 const showCodexLogin = ref(false)
 const showNousLogin = ref(false)
+const showCopilotLogin = ref(false)
 
 const providerType = ref<'preset' | 'custom'>('preset')
 const selectedPreset = ref<string | null>(null)
@@ -36,6 +38,7 @@ const modelOptions = ref<Array<{ label: string; value: string }>>([])
 
 const CODEX_KEY = 'openai-codex'
 const NOUS_KEY = 'nous'
+const COPILOT_KEY = 'copilot'
 const ALIBABA_CODING_KEY = 'alibaba-coding-plan'
 const ALIBABA_CODING_REGIONS = {
   intl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
@@ -44,6 +47,7 @@ const ALIBABA_CODING_REGIONS = {
 
 const isCodex = computed(() => selectedPreset.value === CODEX_KEY)
 const isNous = computed(() => selectedPreset.value === NOUS_KEY)
+const isCopilot = computed(() => selectedPreset.value === COPILOT_KEY)
 const isAlibabaCoding = computed(() => selectedPreset.value === ALIBABA_CODING_KEY)
 const alibabaCodingRegion = ref<'intl' | 'cn'>('intl')
 
@@ -72,6 +76,9 @@ watch(selectedPreset, (val) => {
       if (group.models.length > 0) {
         formData.value.model = group.models[0]
       }
+    }
+    if (val === COPILOT_KEY) {
+      showCopilotLogin.value = true
     }
   }
 })
@@ -150,6 +157,12 @@ async function handleSave() {
     return
   }
 
+  // Copilot: 引导用户在终端 gh auth login
+  if (isCopilot.value) {
+    showCopilotLogin.value = true
+    return
+  }
+
   if (!formData.value.base_url.trim()) {
     message.warning(t('models.baseUrlRequired'))
     return
@@ -199,6 +212,18 @@ async function handleNousSuccess() {
   emit('saved')
 }
 
+async function handleCopilotSuccess() {
+  showCopilotLogin.value = false
+  message.success(t('models.providerAdded'))
+  emit('saved')
+}
+
+function handleCopilotClose() {
+  showCopilotLogin.value = false
+  // 用户取消 Copilot 引导时，清空选择避免卡在无 api_key 状态
+  selectedPreset.value = null
+}
+
 function handleClose() {
   showModal.value = false
   setTimeout(() => emit('close'), 200)
@@ -211,7 +236,7 @@ function handleClose() {
     preset="card"
     :title="t('models.addProvider')"
     :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    :mask-closable="!loading && !showCodexLogin && !showNousLogin"
+    :mask-closable="!loading && !showCodexLogin && !showNousLogin && !showCopilotLogin"
     @after-leave="emit('close')"
   >
     <NForm label-placement="top">
@@ -325,6 +350,12 @@ function handleClose() {
       v-if="showNousLogin"
       @close="showNousLogin = false"
       @success="handleNousSuccess"
+    />
+
+    <CopilotLoginModal
+      v-if="showCopilotLogin"
+      @close="handleCopilotClose"
+      @success="handleCopilotSuccess"
     />
   </NModal>
 </template>

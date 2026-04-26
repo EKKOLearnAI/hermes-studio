@@ -3,8 +3,15 @@ import { existsSync, readFileSync } from 'fs'
 import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
+import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
+
+// Copilot 授权检测：复用同一套 token 解析逻辑（含 ~/.config/github-copilot/apps.json
+// 与 ghp_ PAT 跳过），与 getCopilotModels 行为一致，避免出现"模型能拉到却被判未授权"。
+async function isCopilotAuthorized(envContent: string): Promise<boolean> {
+  return !!(await resolveCopilotOAuthToken(envContent))
+}
 
 export async function getAvailable(ctx: any) {
   try {
@@ -31,7 +38,7 @@ export async function getAvailable(ctx: any) {
       currentDefault = modelSection.trim()
     }
 
-    const groups: Array<{ provider: string; label: string; base_url: string; models: string[]; api_key: string }> = []
+    const groups: Array<{ provider: string; label: string; base_url: string; models: string[]; api_key: string; model_meta?: Record<string, { preview?: boolean; disabled?: boolean }> }> = []
     const seenProviders = new Set<string>()
 
     let envContent = ''
@@ -47,10 +54,10 @@ export async function getAvailable(ctx: any) {
       const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
       return match?.[1]?.trim() || ''
     }
-    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string) => {
+    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, model_meta?: Record<string, { preview?: boolean; disabled?: boolean }>) => {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
-      groups.push({ provider, label, base_url, models: [...models], api_key })
+      groups.push({ provider, label, base_url, models: [...models], api_key, ...(model_meta ? { model_meta } : {}) })
     }
 
     const isOAuthAuthorized = (providerKey: string): boolean => {
@@ -69,9 +76,25 @@ export async function getAvailable(ctx: any) {
       } catch { return false }
     }
 
+    // 同一请求内复用 copilot 动态模型（getCopilotModelsDetailed 内部有 inflight + 缓存，
+    // 这里再缓存到局部变量进一步减少分支）
+    let copilotLiveModels: CopilotModelMeta[] | null = null
+    const getCopilotLive = async (): Promise<CopilotModelMeta[]> => {
+      if (copilotLiveModels !== null) return copilotLiveModels
+      try { copilotLiveModels = await getCopilotModelsDetailed(envContent) }
+      catch { copilotLiveModels = [] }
+      return copilotLiveModels
+    }
+
     for (const [providerKey, envMapping] of Object.entries(PROVIDER_ENV_MAP)) {
       if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env)) continue
-      if (!envMapping.api_key_env && !isOAuthAuthorized(providerKey)) continue
+      if (!envMapping.api_key_env) {
+        if (providerKey === 'copilot') {
+          if (!(await isCopilotAuthorized(envContent))) continue
+        } else if (!isOAuthAuthorized(providerKey)) {
+          continue
+        }
+      }
       const preset = PROVIDER_PRESETS.find((p: any) => p.value === providerKey)
       const label = preset?.label || providerKey.replace(/^custom:/, '')
       let baseUrl = preset?.base_url || ''
@@ -79,9 +102,27 @@ export async function getAvailable(ctx: any) {
         baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
       }
       const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
-      if (catalogModels && catalogModels.length > 0) {
+      let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
+      let modelMeta: Record<string, { preview?: boolean; disabled?: boolean }> | undefined
+      if (providerKey === 'copilot') {
+        const live = await getCopilotLive()
+        if (live.length > 0) {
+          modelsList = live.map((m) => m.id)
+          modelMeta = {}
+          for (const m of live) {
+            if (m.preview || m.disabled) {
+              modelMeta[m.id] = {
+                ...(m.preview ? { preview: true } : {}),
+                ...(m.disabled ? { disabled: true } : {}),
+              }
+            }
+          }
+          if (Object.keys(modelMeta).length === 0) modelMeta = undefined
+        }
+      }
+      if (modelsList.length > 0) {
         const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
-        addGroup(providerKey, label, baseUrl, catalogModels, apiKey)
+        addGroup(providerKey, label, baseUrl, modelsList, apiKey, modelMeta)
       }
     }
 
@@ -115,15 +156,24 @@ export async function getAvailable(ctx: any) {
 
     for (const g of groups) { g.models = Array.from(new Set(g.models)) }
 
+    // 动态拉一次 copilot 模型用于 allProviders 展示（同一请求复用缓存）
+    const liveCopilotModels = await getCopilotLive()
+    const liveCopilotIds = liveCopilotModels.map((m) => m.id)
+
+    const allProvidersBase = PROVIDER_PRESETS.map((p: any) => ({
+      provider: p.value,
+      label: p.label,
+      base_url: p.base_url,
+      models: p.value === 'copilot' && liveCopilotIds.length > 0 ? liveCopilotIds : p.models,
+    }))
+
     if (groups.length === 0) {
       const fallback = buildModelGroups(config)
-      const allProviders = PROVIDER_PRESETS.map((p: any) => ({ provider: p.value, label: p.label, base_url: p.base_url, models: p.models }))
-      ctx.body = { ...fallback, allProviders }
+      ctx.body = { ...fallback, allProviders: allProvidersBase }
       return
     }
 
-    const allProviders = PROVIDER_PRESETS.map((p: any) => ({ provider: p.value, label: p.label, base_url: p.base_url, models: p.models }))
-    ctx.body = { default: currentDefault, default_provider: currentDefaultProvider, groups, allProviders }
+    ctx.body = { default: currentDefault, default_provider: currentDefaultProvider, groups, allProviders: allProvidersBase }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
