@@ -98,6 +98,7 @@
     "koa-send": "^5.0.1",
     "koa-static": "^5.0.0",
     "markdown-it": "^14.1.1",
+    "mermaid": "^11.14.0",
     "monaco-editor": "^0.55.1",
     "naive-ui": "^2.44.1",
     "nodemon": "^3.1.14",

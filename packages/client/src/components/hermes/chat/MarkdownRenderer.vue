@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
-import MarkdownIt from 'markdown-it'
+import type MarkdownIt from 'markdown-it'
+import MarkdownItConstructor from 'markdown-it'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
 import { repairNestedMarkdownFences } from './markdownFenceRepair'
+import {
+  MERMAID_MAX_DIAGRAMS_PER_MESSAGE,
+  MERMAID_MAX_SOURCE_LENGTH,
+  MERMAID_RENDER_TIMEOUT_MS,
+  decodeMermaidSource,
+  isMermaidFence,
+  renderMermaidPlaceholder,
+} from './mermaidRenderer'
 import { downloadFile } from '@/api/hermes/download'
 
 const props = withDefaults(defineProps<{
@@ -17,7 +26,7 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 const message = useMessage()
 
-const md: MarkdownIt = new MarkdownIt({
+const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
   linkify: true,
   typographer: true,
@@ -25,6 +34,26 @@ const md: MarkdownIt = new MarkdownIt({
     return renderHighlightedCodeBlock(str, lang, t('common.copy'))
   },
 })
+
+const defaultFenceRenderer = md.renderer.rules.fence?.bind(md.renderer.rules)
+
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  if (isMermaidFence(token.info)) {
+    return renderMermaidPlaceholder(token.content)
+  }
+
+  if (defaultFenceRenderer) {
+    return defaultFenceRenderer(tokens, idx, options, env, self)
+  }
+
+  return self.renderToken(tokens, idx, options)
+}
+
+const markdownBody = ref<HTMLElement | null>(null)
+const componentId = `hermes-mermaid-${Math.random().toString(36).slice(2)}`
+let renderGeneration = 0
+let unmounted = false
 
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
@@ -34,6 +63,120 @@ const renderedHtml = computed(() => {
     html = html.replace(re, '<span class="mention-highlight">@$1</span>')
   }
   return html
+})
+
+function renderMermaidFallback(element: HTMLElement, source: string): void {
+  element.outerHTML = renderHighlightedCodeBlock(source, 'mermaid', t('common.copy'))
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId)
+    }
+  })
+}
+
+function cleanupMermaidRenderArtifacts(id: string): void {
+  document.getElementById(id)?.remove()
+  document.getElementById(`d${id}`)?.remove()
+}
+
+async function renderMermaidDiagrams(): Promise<void> {
+  const generation = ++renderGeneration
+  await nextTick()
+
+  const root = markdownBody.value
+  if (unmounted || generation !== renderGeneration || !root) return
+
+  const pendingDiagrams = Array.from(root.querySelectorAll<HTMLElement>('[data-mermaid-pending="true"]'))
+  if (pendingDiagrams.length === 0) return
+
+  const diagramsToRender = pendingDiagrams.slice(0, MERMAID_MAX_DIAGRAMS_PER_MESSAGE)
+  const diagramsToFallback = pendingDiagrams.slice(MERMAID_MAX_DIAGRAMS_PER_MESSAGE)
+
+  for (const element of diagramsToFallback) {
+    renderMermaidFallback(element, decodeMermaidSource(element.getAttribute('data-mermaid-source')))
+  }
+
+  const renderCandidates = diagramsToRender
+    .map(element => ({
+      element,
+      source: decodeMermaidSource(element.getAttribute('data-mermaid-source')),
+    }))
+
+  const validDiagrams = [] as typeof renderCandidates
+  for (const candidate of renderCandidates) {
+    if (unmounted || generation !== renderGeneration || !root.contains(candidate.element)) return
+
+    if (!candidate.source || candidate.source.length > MERMAID_MAX_SOURCE_LENGTH) {
+      renderMermaidFallback(candidate.element, candidate.source)
+      continue
+    }
+
+    validDiagrams.push(candidate)
+  }
+
+  if (validDiagrams.length === 0) return
+
+  let mermaid: typeof import('mermaid').default
+
+  try {
+    mermaid = (await withTimeout(import('mermaid'), MERMAID_RENDER_TIMEOUT_MS, 'Mermaid import')).default
+    if (unmounted || generation !== renderGeneration) return
+
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+    })
+  } catch {
+    if (unmounted || generation !== renderGeneration) return
+    for (const { element, source } of validDiagrams) {
+      if (root.contains(element)) {
+        renderMermaidFallback(element, source)
+      }
+    }
+    return
+  }
+
+  for (const [index, { element, source }] of validDiagrams.entries()) {
+    if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+
+    try {
+      const id = `${componentId}-${generation}-${index}`
+      const result = await withTimeout(mermaid.render(id, source), MERMAID_RENDER_TIMEOUT_MS, 'Mermaid render')
+      cleanupMermaidRenderArtifacts(id)
+      if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+
+      element.removeAttribute('data-mermaid-pending')
+      element.removeAttribute('data-mermaid-source')
+      element.innerHTML = result.svg
+    } catch {
+      cleanupMermaidRenderArtifacts(`${componentId}-${generation}-${index}`)
+      if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+      renderMermaidFallback(element, source)
+    }
+  }
+}
+
+onMounted(() => {
+  void renderMermaidDiagrams()
+})
+
+watch(renderedHtml, () => {
+  void renderMermaidDiagrams()
+}, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  unmounted = true
+  renderGeneration += 1
 })
 
 function handleMarkdownClick(event: MouseEvent): void {
@@ -69,7 +212,7 @@ function handleMarkdownClick(event: MouseEvent): void {
 </script>
 
 <template>
-  <div class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
+  <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
 </template>
 
 <style lang="scss">
@@ -78,6 +221,9 @@ function handleMarkdownClick(event: MouseEvent): void {
 .markdown-body {
   font-size: 14px;
   line-height: 1.65;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
 
   p {
@@ -161,6 +307,28 @@ function handleMarkdownClick(event: MouseEvent): void {
     border: none;
     border-top: 1px solid $border-color;
     margin: 12px 0;
+  }
+
+  .mermaid-diagram {
+    margin: 10px 0;
+    padding: 14px;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+    background: rgba(var(--accent-primary-rgb), 0.04);
+    overflow-x: auto;
+
+    svg {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+  }
+
+  .mermaid-loading {
+    color: $text-secondary;
+    font-size: 13px;
+    font-family: $font-code;
   }
 }
 </style>
