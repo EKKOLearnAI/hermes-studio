@@ -961,13 +961,15 @@ export const useChatStore = defineStore('chat', () => {
           const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
           return [f.name, token ? `${base}&token=${encodeURIComponent(token)}` : base]
         }))
-        const msgs = getSessionMsgs(sid)
-        const lastUser = msgs.findLast(m => m.id === userMsg.id)
-        if (lastUser?.attachments) {
-          lastUser.attachments = lastUser.attachments.map(a => {
-            const dl = urlMap.get(a.name)
-            return dl ? { ...a, url: dl } : a
-          })
+        if (!opts?.skipUserMessage) {
+          const msgs = getSessionMsgs(sid)
+          const lastUser = msgs.findLast(m => m.role === 'user')
+          if (lastUser?.attachments) {
+            lastUser.attachments = lastUser.attachments.map(a => {
+              const dl = urlMap.get(a.name)
+              return dl ? { ...a, url: dl } : a
+            })
+          }
         }
         const pathParts = uploaded.map(f => `[File: ${f.name}](${urlMap.get(f.name)})`)
         inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
