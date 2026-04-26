@@ -308,12 +308,18 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
 
-  // Hide scrollbar but keep scrollable
+  // Thin subtle scrollbar for desktop, hidden for mobile
   &::-webkit-scrollbar {
-    display: none;
+    height: 3px;
   }
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+  &::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.3);
+    border-radius: 2px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  scrollbar-width: thin;
 }
 
 .tabs-empty {
@@ -334,9 +340,9 @@ onMounted(() => {
   font-family: $font-ui;
   cursor: pointer;
   white-space: nowrap;
-  max-width: 130px;
+  min-width: 0;
+  flex-shrink: 1;
   transition: all $transition-fast;
-  flex-shrink: 0;
 
   &:hover:not(:disabled) {
     background: var(--bg-card-hover);
@@ -392,6 +398,7 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .add-btn {
@@ -419,6 +426,16 @@ onMounted(() => {
   .tooltip-detail {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.7);
+  }
+}
+
+// Mobile: hide scrollbar, rely on touch scrolling
+@media (max-width: 768px) {
+  .tabs-list {
+    &::-webkit-scrollbar {
+      height: 0;
+    }
+    scrollbar-width: none;
   }
 }
 </style>
