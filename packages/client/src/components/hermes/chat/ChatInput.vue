@@ -29,15 +29,17 @@ function onAvatarFileChange(e: Event) {
   // Check if animated (GIF/APNG) — skip crop, use directly
   if (file.type === 'image/gif' || file.type === 'image/apng') {
     if (file.size > 5 * 1024 * 1024) { return }
-    const reader = new FileReader()
-    reader.onload = () => { chatStore.setUserAvatar(reader.result as string) }
-    reader.readAsDataURL(file)
+    chatStore.uploadAvatar('user', file)
     return
   }
   showCropDialog.value = true
 }
 function onAvatarCropped(dataUrl: string) {
-  chatStore.setUserAvatar(dataUrl)
+  // Convert cropped data URL to File and upload to server
+  fetch(dataUrl).then(r => r.blob()).then(blob => {
+    const file = new File([blob], 'avatar.png', { type: blob.type })
+    chatStore.uploadAvatar('user', file)
+  }).catch(() => {})
   showCropDialog.value = false
 }
 

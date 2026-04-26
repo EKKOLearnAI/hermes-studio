@@ -22,6 +22,7 @@ onMounted(async () => {
   await profilesStore.fetchProfiles()
   chatStore.loadSessions()
   chatStore.updateAiAvatar()
+  chatStore.loadUserAvatar()
 })
 
 // Profile 切换时保存当前状态并加载新 profile 的会话和模型列表

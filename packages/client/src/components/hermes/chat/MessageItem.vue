@@ -39,15 +39,17 @@ function onAiAvatarFileChange(e: Event) {
   if (!file) return
   if (file.type === 'image/gif' || file.type === 'image/apng') {
     if (file.size > 5 * 1024 * 1024) return
-    const reader = new FileReader()
-    reader.onload = () => { chatStore.setAiAvatar(reader.result as string) }
-    reader.readAsDataURL(file)
+    chatStore.uploadAvatar('ai', file)
     return
   }
   showCropDialog.value = true
 }
 function onAiAvatarCropped(dataUrl: string) {
-  chatStore.setAiAvatar(dataUrl)
+  // Convert cropped data URL to File and upload to server
+  fetch(dataUrl).then(r => r.blob()).then(blob => {
+    const file = new File([blob], 'avatar.png', { type: blob.type })
+    chatStore.uploadAvatar('ai', file)
+  }).catch(() => {})
   showCropDialog.value = false
 }
 

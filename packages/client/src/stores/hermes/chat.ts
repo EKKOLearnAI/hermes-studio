@@ -367,30 +367,92 @@ export const useChatStore = defineStore('chat', () => {
     }
   })
 
-  // --- Avatar state ---
-  const userAvatar = ref<string | null>(localStorage.getItem('hermes_user_avatar'))
+  // --- Avatar state (server-side storage) ---
+  const userAvatar = ref<string | null>(null)
   const aiAvatar = ref<string | null>(null)
 
+  function getAuthToken(): string {
+    const pk = localStorage.getItem('hermes_profiles_key')
+    const ak = localStorage.getItem('hermes_api_key')
+    return (pk || ak || '').replace(/"/g, '')
+  }
+
+  async function uploadAvatar(type: 'ai' | 'user', file: File): Promise<boolean> {
+    try {
+      const profile = type === 'ai' ? getProfileName() : 'default'
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/hermes/avatar/${type}?profile=${encodeURIComponent(profile)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+        body: formData
+      })
+      if (!res.ok) return false
+      // Set the URL for immediate display (with cache-busting)
+      const url = `/api/hermes/avatar/${type}?profile=${encodeURIComponent(profile)}&_t=${Date.now()}`
+      if (type === 'ai') aiAvatar.value = url
+      else userAvatar.value = url
+      return true
+    } catch {
+      return false
+    }
+  }
+
   function setUserAvatar(dataUrl: string) {
+    // Legacy: accept data URL and convert to File for upload
     userAvatar.value = dataUrl
-    localStorage.setItem('hermes_user_avatar', dataUrl)
+    // Try to upload to server in background
+    if (dataUrl.startsWith('data:')) {
+      fetch(dataUrl).then(r => r.blob()).then(blob => {
+        const file = new File([blob], 'avatar.png', { type: blob.type })
+        uploadAvatar('user', file)
+      }).catch(() => {})
+    }
   }
 
   function setAiAvatar(dataUrl: string) {
-    const profile = getProfileName()
+    // Legacy: accept data URL and convert to File for upload
     aiAvatar.value = dataUrl
-    localStorage.setItem(`hermes_ai_avatar_${profile}`, dataUrl)
+    // Try to upload to server in background
+    if (dataUrl.startsWith('data:')) {
+      fetch(dataUrl).then(r => r.blob()).then(blob => {
+        const file = new File([blob], 'avatar.png', { type: blob.type })
+        uploadAvatar('ai', file)
+      }).catch(() => {})
+    }
   }
 
-  function updateAiAvatar() {
-    aiAvatar.value = null
+  async function updateAiAvatar() {
     try {
       const profile = getProfileName()
-      const saved = localStorage.getItem(`hermes_ai_avatar_${profile}`)
-      if (saved) {
-        aiAvatar.value = saved
+      const res = await fetch(`/api/hermes/avatar/status/ai?profile=${encodeURIComponent(profile)}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.hasCustom) {
+          aiAvatar.value = `/api/hermes/avatar/ai?profile=${encodeURIComponent(profile)}&_t=${Date.now()}`
+          return
+        }
       }
     } catch { /* ignore */ }
+    aiAvatar.value = null
+  }
+
+  async function loadUserAvatar() {
+    try {
+      const res = await fetch('/api/hermes/avatar/status/user?profile=default', {
+        headers: { Authorization: `Bearer ${getAuthToken()}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.hasCustom) {
+          userAvatar.value = `/api/hermes/avatar/user?profile=default&_t=${Date.now()}`
+          return
+        }
+      }
+    } catch { /* ignore */ }
+    userAvatar.value = null
   }
 
   const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
@@ -1402,6 +1464,8 @@ export const useChatStore = defineStore('chat', () => {
     setUserAvatar,
     setAiAvatar,
     updateAiAvatar,
+    loadUserAvatar,
+    uploadAvatar,
 
     newChat,
     switchSession,
