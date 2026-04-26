@@ -1446,6 +1446,19 @@ export const useChatStore = defineStore('chat', () => {
     // 3. Refresh sessions from the API for the new profile
     await loadSessions()
   }
+  function clearProviderFromSessions(provider: string) {
+    if (!provider) return
+    const target = provider.toLowerCase()
+    let dirty = false
+    for (const s of sessions.value) {
+      if ((s.provider || '').toLowerCase() === target) {
+        s.model = undefined
+        s.provider = ''
+        dirty = true
+      }
+    }
+    if (dirty) persistSessionsList()
+  }
 
   return {
     sessions,
@@ -1482,6 +1495,7 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
+    clearProviderFromSessions,
     switchChatProfile,
   }
 })
