@@ -27,20 +27,41 @@ function getSessionForRun(runId: string): string | undefined {
 
 const HERMES_BASE = join(homedir(), '.hermes')
 
+// In-memory cache for profile backend config (avoids repeated sync disk reads)
+const profileConfigCache = new Map<string, { data: { url: string; token: string; bff_url: string; bff_token: string }; mtime: number }>()
+const CONFIG_CACHE_TTL_MS = 5000 // 5 seconds
+
 /** Read backend config from a profile's config.yaml. Exported for use by sessions controller. */
 export function readProfileBackendUrl(profileName: string): { url: string; token: string; bff_url: string; bff_token: string } {
   const configPath = profileName === 'default'
     ? join(HERMES_BASE, 'config.yaml')
     : join(HERMES_BASE, 'profiles', profileName, 'config.yaml')
+
+  // Check cache (only for existing files)
+  const cached = profileConfigCache.get(profileName)
+  if (cached) {
+    try {
+      const stat = require('fs').statSync(configPath)
+      if (stat.mtimeMs === cached.mtime) return cached.data
+    } catch { /* file may not exist, fall through */ }
+  }
+
   if (!existsSync(configPath)) return { url: '', token: '', bff_url: '', bff_token: '' }
   try {
     const content = readFileSync(configPath, 'utf-8')
     const cfg = yaml.load(content) as any || {}
-    const url = cfg?.backend?.url?.trim() || ''
-    const token = cfg?.backend?.token?.trim() || ''
-    const bff_url = cfg?.backend?.bff_url?.trim() || ''
-    const bff_token = cfg?.backend?.bff_token?.trim() || ''
-    return { url, token, bff_url, bff_token }
+    const data = {
+      url: cfg?.backend?.url?.trim() || '',
+      token: cfg?.backend?.token?.trim() || '',
+      bff_url: cfg?.backend?.bff_url?.trim() || '',
+      bff_token: cfg?.backend?.bff_token?.trim() || '',
+    }
+    // Cache with file mtime for invalidation
+    try {
+      const stat = require('fs').statSync(configPath)
+      profileConfigCache.set(profileName, { data, mtime: stat.mtimeMs })
+    } catch { /* ignore */ }
+    return data
   } catch {
     return { url: '', token: '', bff_url: '', bff_token: '' }
   }

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { NModal, NButton } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{
   (e: 'confirm', dataUrl: string): void
@@ -30,7 +32,7 @@ function onFileChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   if (file.size > 5 * 1024 * 1024) {
-    alert('Image must be under 5MB')
+    alert(t('chat.imageTooLarge'))
     return
   }
   loadImage(file)
@@ -43,11 +45,9 @@ function loadImage(file: File) {
     const img = new Image()
     img.onload = () => {
       image.value = img
-      // Calculate dynamic zoom range based on image size
       const minFit = Math.min(256 / img.width, 256 / img.height)
       minZoom.value = Math.max(0.05, minFit * 0.3)
       maxZoom.value = Math.min(8, Math.max(3, minFit * 10))
-      // Start at a reasonable zoom level
       zoom.value = Math.max(minFit * 1.5, minZoom.value)
       offsetX.value = 0
       offsetY.value = 0
@@ -57,7 +57,6 @@ function loadImage(file: File) {
   reader.readAsDataURL(file)
 }
 
-// Mouse wheel zoom
 function onWheel(e: WheelEvent) {
   e.preventDefault()
   const step = (maxZoom.value - minZoom.value) * 0.03
@@ -100,7 +99,6 @@ function confirm() {
   const imgH = image.value.height * scale
   const centerX = containerSize / 2 + offsetX.value
   const centerY = containerSize / 2 + offsetY.value
-  // Clip to circle
   ctx.beginPath()
   ctx.arc(containerSize / 2, containerSize / 2, containerSize / 2, 0, Math.PI * 2)
   ctx.clip()
@@ -120,10 +118,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 <template>
   <NModal :show="show" @mask-click="emit('close')">
     <div class="crop-dialog">
-      <div class="crop-header">Crop Avatar</div>
+      <div class="crop-header">{{ t('chat.cropAvatar') }}</div>
       <div v-if="!image" class="crop-empty" @click="openFilePicker">
         <div class="crop-empty-icon">📷</div>
-        <div>Click to select an image</div>
+        <div>{{ t('chat.clickToSelectImage') }}</div>
         <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
       </div>
       <div v-else class="crop-body">
@@ -157,10 +155,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
             class="crop-slider"
           />
         </div>
-        <div class="crop-hint">Drag to position · Scroll or slider to zoom</div>
+        <div class="crop-hint">{{ t('chat.dragToPosition') }}</div>
         <div class="crop-actions">
-          <NButton @click="emit('close')">Cancel</NButton>
-          <NButton type="primary" @click="confirm">Confirm</NButton>
+          <NButton @click="emit('close')">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="confirm">{{ t('common.confirm') }}</NButton>
         </div>
       </div>
     </div>

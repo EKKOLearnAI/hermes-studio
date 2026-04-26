@@ -16,6 +16,14 @@ vi.mock('naive-ui', () => ({
     warning: vi.fn(),
     info: vi.fn(),
   }),
+  NModal: {
+    template: '<div><slot /></div>',
+    props: ['show'],
+  },
+  NButton: {
+    template: '<button><slot /></button>',
+    props: ['type'],
+  },
 }))
 
 import MessageItem from '@/components/hermes/chat/MessageItem.vue'

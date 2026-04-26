@@ -4,6 +4,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { promisify } from 'util'
 import { logger } from '../logger'
+import yaml from 'js-yaml'
 
 const execFileAsync = promisify(execFile)
 
@@ -419,14 +420,15 @@ export async function listProfiles(): Promise<HermesProfile[]> {
         if (existsSync(configPath)) {
           try {
             const content = readFileSync(configPath, 'utf-8')
-            const urlMatch = content.match(/(?:^|\n)\s+url:\s*(.+)$/m)
-            const tokenMatch = content.match(/(?:^|\n)\s+token:\s*(.+)$/m)
-            const bffUrlMatch = content.match(/(?:^|\n)\s+bff_url:\s*(.+)$/m)
-            const bffTokenMatch = content.match(/(?:^|\n)\s+bff_token:\s*(.+)$/m)
-            if (urlMatch) profile.backend_url = urlMatch[1].trim()
-            if (tokenMatch) profile.backend_token = tokenMatch[1].trim()
-            if (bffUrlMatch) profile.bff_url = bffUrlMatch[1].trim()
-            if (bffTokenMatch) profile.bff_token = bffTokenMatch[1].trim()
+            const cfg = yaml.load(content) as any || {}
+            const url = cfg?.backend?.url?.trim() || ''
+            const token = cfg?.backend?.token?.trim() || ''
+            const bff_url = cfg?.backend?.bff_url?.trim() || ''
+            const bff_token = cfg?.backend?.bff_token?.trim() || ''
+            if (url) profile.backend_url = url
+            if (token) profile.backend_token = token
+            if (bff_url) profile.bff_url = bff_url
+            if (bff_token) profile.bff_token = bff_token
           } catch { /* ignore parse errors */ }
         }
 

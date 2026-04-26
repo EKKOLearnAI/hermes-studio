@@ -76,6 +76,7 @@ describe('AppSidebar search entry', () => {
         stubs: {
           ProfileSelector: true,
           ModelSelector: true,
+          GatewayTabs: true,
           LanguageSwitch: true,
           ThemeSwitch: true,
           NButton: true,
