@@ -314,15 +314,25 @@ export class GatewayManager {
     return `http://${host}:${port}`
   }
 
-  /** 读取 profile 的 API_SERVER_KEY（从 .env 文件） */
+  /** 读取 profile 的 API_SERVER_KEY（优先 .env，回退到 config.yaml） */
   getApiKey(profileName?: string): string | null {
     const name = profileName || this.activeProfile
     try {
+      // 优先从 .env 读取
       const envPath = join(this.profileDir(name), '.env')
-      if (!existsSync(envPath)) return null
-      const content = readFileSync(envPath, 'utf-8')
-      const match = content.match(/^API_SERVER_KEY\s*=\s*"?([^"\n]+)"?/m)
-      return match?.[1]?.trim() || null
+      if (existsSync(envPath)) {
+        const content = readFileSync(envPath, 'utf-8')
+        const match = content.match(/^API_SERVER_KEY\s*=\s*"?([^"\n]+)"?/m)
+        if (match?.[1]?.trim()) return match[1].trim()
+      }
+      // 回退到 config.yaml 的 platforms.api_server.key
+      const configPath = join(this.profileDir(name), 'config.yaml')
+      if (existsSync(configPath)) {
+        const cfg = yaml.load(readFileSync(configPath, 'utf-8')) as any
+        const key = cfg?.platforms?.api_server?.key
+        if (key) return String(key)
+      }
+      return null
     } catch {
       return null
     }
@@ -599,10 +609,12 @@ export class GatewayManager {
         logger.error(err, '%s: failed to start', name)
         // 嵌入式网关启动失败时，如果 config.upstream 指向的网关已经健康，
         // 直接注册它作为该 profile 的上游（支持外部网关模式）
-        const { port, host } = this.readProfilePort(name)
         const configUpstream = config.upstream.replace(/\/$/, '')
         const healthOk = await this.checkHealth(configUpstream, 2000)
         if (healthOk) {
+          const urlObj = new URL(configUpstream)
+          const port = parseInt(urlObj.port) || 8642
+          const host = urlObj.hostname || '127.0.0.1'
           logger.info('%s: embedded gateway failed, using config upstream %s', name, configUpstream)
           this.gateways.set(name, { port, host, url: configUpstream })
         }
