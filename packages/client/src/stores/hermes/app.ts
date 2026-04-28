@@ -19,7 +19,9 @@ export const useAppStore = defineStore('app', () => {
   const modelGroups = ref<AvailableModelGroup[]>([])
   const selectedModel = ref('')
   const selectedProvider = ref('')
+  const customModels = ref<Record<string, string[]>>({})
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
+  const nodeVersion = ref('')
 
   // Settings
   const streamEnabled = ref(true)
@@ -47,6 +49,7 @@ export const useAppStore = defineStore('app', () => {
       if (res.webui_version) serverVersion.value = res.webui_version
       if (res.webui_latest) latestVersion.value = res.webui_latest
       updateAvailable.value = !!res.webui_update_available
+      if (res.node_version) nodeVersion.value = res.node_version
     } catch {
       connected.value = false
     }
@@ -71,6 +74,13 @@ export const useAppStore = defineStore('app', () => {
       await updateDefaultModel({ default: modelId, provider })
       selectedModel.value = modelId
       selectedProvider.value = provider || ''
+      // Track as custom if not already in the server-fetched list
+      if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
+        if (!customModels.value[provider]) customModels.value[provider] = []
+        if (!customModels.value[provider].includes(modelId)) {
+          customModels.value[provider] = [...customModels.value[provider], modelId]
+        }
+      }
     } catch (err: any) {
       console.error('Failed to switch model:', err)
     }
@@ -115,10 +125,12 @@ export const useAppStore = defineStore('app', () => {
     connected,
     serverVersion,
     latestVersion,
+    nodeVersion,
     updateAvailable,
     updating,
     doUpdate,
     modelGroups,
+    customModels,
     selectedModel,
     selectedProvider,
     streamEnabled,

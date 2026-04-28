@@ -23,17 +23,32 @@ export interface RunEvent {
   event: string
   run_id?: string
   delta?: string
+  /** Payload text for `reasoning.delta` / `thinking.delta` / `reasoning.available` events. */
+  text?: string
   tool?: string
   name?: string
   preview?: string
   timestamp?: number
   error?: string
+  /** Final response text on `run.completed`. May be empty/null if the agent
+   * silently swallowed an upstream error — see chat store for fallback. */
+  output?: string | null
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
 }
 
 export async function startRun(body: StartRunRequest): Promise<StartRunResponse> {
+  const headers: Record<string, string> = {}
+  if (body.session_id) {
+    headers['X-Hermes-Session-Id'] = body.session_id
+  }
   return request<StartRunResponse>('/api/hermes/v1/runs', {
     method: 'POST',
     body: JSON.stringify(body),
+    headers,
   })
 }
 

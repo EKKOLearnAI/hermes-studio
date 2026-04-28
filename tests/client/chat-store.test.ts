@@ -53,6 +53,15 @@ async function flushPromises() {
   await Promise.resolve()
 }
 
+const PROFILE = 'default'
+const ACTIVE_SESSION_KEY = `hermes_active_session_${PROFILE}`
+const SESSIONS_CACHE_KEY = `hermes_sessions_cache_v1_${PROFILE}`
+const LEGACY_ACTIVE_SESSION_KEY = 'hermes_active_session'
+const LEGACY_SESSIONS_CACHE_KEY = 'hermes_sessions_cache_v1'
+const sessionMessagesKey = (sessionId: string) => `hermes_session_msgs_v1_${PROFILE}_${sessionId}_`
+const inFlightKey = (sessionId: string) => `hermes_in_flight_v1_${PROFILE}_${sessionId}`
+const legacySessionMessagesKey = (sessionId: string) => `hermes_session_msgs_v1_${sessionId}`
+
 describe('Chat Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -82,23 +91,169 @@ describe('Chat Store', () => {
       { id: 'm1', role: 'user', content: 'draft', timestamp: 1 },
     ]
 
-    window.localStorage.setItem('hermes_active_session', 'local-1')
-    window.localStorage.setItem('hermes_sessions_cache_v1', JSON.stringify([cachedSession]))
-    window.localStorage.setItem('hermes_session_msgs_v1_local-1', JSON.stringify(cachedMessages))
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'local-1')
+    window.localStorage.setItem(SESSIONS_CACHE_KEY, JSON.stringify([cachedSession]))
+    window.localStorage.setItem(sessionMessagesKey('local-1'), JSON.stringify(cachedMessages))
+    // Mark local-1 as in-flight so loadSessions preserves it
+    window.localStorage.setItem(inFlightKey('local-1'), JSON.stringify({ runId: 'run-1', startedAt: Date.now() }))
 
     mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('remote-1', 'Remote Session')])
     mockSessionsApi.fetchSession.mockResolvedValue(null)
 
     const store = useChatStore()
+    const loadPromise = store.loadSessions()
 
     expect(store.activeSessionId).toBe('local-1')
     expect(store.messages.map(m => m.content)).toEqual(['draft'])
 
-    await flushPromises()
+    await loadPromise
 
     expect(store.sessions.map(s => s.id)).toEqual(['local-1', 'remote-1'])
     expect(store.activeSession?.id).toBe('local-1')
     expect(store.messages.map(m => m.content)).toEqual(['draft'])
+  })
+
+  it('does not let a stale server refresh erase a newer local assistant reply', async () => {
+    const cachedMessages = [
+      { id: 'u1', role: 'user', content: 'expensive task', timestamp: 1 },
+      { id: 'a1', role: 'assistant', content: 'final answer that already streamed', timestamp: 2 },
+    ]
+
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-stale')
+    window.localStorage.setItem(
+      SESSIONS_CACHE_KEY,
+      JSON.stringify([
+        {
+          id: 'sess-stale',
+          title: 'Stale refresh',
+          source: 'api_server',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ]),
+    )
+    window.localStorage.setItem(sessionMessagesKey('sess-stale'), JSON.stringify(cachedMessages))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-stale', 'Stale refresh')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-stale', [
+      {
+        id: 1,
+        session_id: 'sess-stale',
+        role: 'user',
+        content: 'expensive task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+    expect(store.messages.map(m => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+
+    await store.refreshActiveSession()
+
+    expect(store.messages.map(m => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+    const persistedMessages = JSON.parse(window.localStorage.getItem(sessionMessagesKey('sess-stale')) || '[]')
+    expect(persistedMessages.map((m: any) => m.content)).toEqual(['expensive task', 'final answer that already streamed'])
+  })
+
+  it('does not let stale resume polling erase a newer local assistant reply', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-22T19:00:00.000Z'))
+
+    const cachedMessages = [
+      { id: 'u0', role: 'user', content: 'previous task', timestamp: 1 },
+      { id: 'a0', role: 'assistant', content: 'a much longer previous assistant answer', timestamp: 2 },
+      { id: 'u1', role: 'user', content: 'long task', timestamp: 3 },
+      { id: 'a1', role: 'assistant', content: 'local final answer', timestamp: 4 },
+    ]
+
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-poll-stale')
+    window.localStorage.setItem(
+      SESSIONS_CACHE_KEY,
+      JSON.stringify([
+        {
+          id: 'sess-poll-stale',
+          title: 'Polling stale refresh',
+          source: 'api_server',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ]),
+    )
+    window.localStorage.setItem(sessionMessagesKey('sess-poll-stale'), JSON.stringify(cachedMessages))
+    window.localStorage.setItem(inFlightKey('sess-poll-stale'), JSON.stringify({ runId: 'run-1', startedAt: Date.now() }))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('sess-poll-stale', 'Polling stale refresh')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('sess-poll-stale', [
+      {
+        id: 1,
+        session_id: 'sess-poll-stale',
+        role: 'user',
+        content: 'previous task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000000,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+      {
+        id: 2,
+        session_id: 'sess-poll-stale',
+        role: 'assistant',
+        content: 'a much longer previous assistant answer',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000001,
+        token_count: null,
+        finish_reason: 'stop',
+        reasoning: null,
+      },
+      {
+        id: 3,
+        session_id: 'sess-poll-stale',
+        role: 'user',
+        content: 'long task',
+        tool_call_id: null,
+        tool_calls: null,
+        tool_name: null,
+        timestamp: 1710000002,
+        token_count: null,
+        finish_reason: null,
+        reasoning: null,
+      },
+    ]))
+
+    const store = useChatStore()
+    await store.loadSessions()
+    expect(store.messages.map(m => m.content)).toEqual([
+      'previous task',
+      'a much longer previous assistant answer',
+      'long task',
+      'local final answer',
+    ])
+
+    await vi.advanceTimersByTimeAsync(9000)
+    await flushPromises()
+
+    expect(store.messages.map(m => m.content)).toEqual([
+      'previous task',
+      'a much longer previous assistant answer',
+      'long task',
+      'local final answer',
+    ])
+    expect(store.isRunActive).toBe(false)
+    expect(window.localStorage.getItem(inFlightKey('sess-poll-stale'))).toBeNull()
   })
 
   it('persists the user message immediately before any SSE delta arrives', async () => {
@@ -109,10 +264,10 @@ describe('Chat Store', () => {
 
     const sid = store.activeSessionId
     expect(sid).toBeTruthy()
-    expect(window.localStorage.getItem('hermes_active_session')).toBe(sid)
+    expect(window.localStorage.getItem(ACTIVE_SESSION_KEY)).toBe(sid)
 
     const cachedMessages = JSON.parse(
-      window.localStorage.getItem(`hermes_session_msgs_v1_${sid}`) || '[]',
+      window.localStorage.getItem(sessionMessagesKey(sid!)) || '[]',
     )
     expect(cachedMessages).toEqual(
       expect.arrayContaining([
@@ -124,12 +279,71 @@ describe('Chat Store', () => {
     )
   })
 
+  it('hydrates from default-profile legacy cache and migrates bulky storage to new keys only', async () => {
+    const cachedSession = {
+      id: 'legacy-1',
+      title: 'Legacy Draft',
+      source: 'api_server',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const cachedMessages = [
+      { id: 'm1', role: 'user', content: 'legacy draft', timestamp: 1 },
+    ]
+
+    window.localStorage.setItem(LEGACY_ACTIVE_SESSION_KEY, 'legacy-1')
+    window.localStorage.setItem(LEGACY_SESSIONS_CACHE_KEY, JSON.stringify([cachedSession]))
+    window.localStorage.setItem(legacySessionMessagesKey('legacy-1'), JSON.stringify(cachedMessages))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([makeSummary('legacy-1', 'Legacy Draft')])
+    mockSessionsApi.fetchSession.mockResolvedValue(makeDetail('legacy-1', cachedMessages))
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.activeSessionId).toBe('legacy-1')
+    expect(store.messages.map(m => m.content)).toEqual(['legacy draft'])
+
+    expect(window.localStorage.getItem(ACTIVE_SESSION_KEY)).toBe('legacy-1')
+    expect(window.localStorage.getItem(SESSIONS_CACHE_KEY)).toBeTruthy()
+    expect(window.localStorage.getItem(sessionMessagesKey('legacy-1'))).toBeTruthy()
+
+    expect(window.localStorage.getItem(LEGACY_ACTIVE_SESSION_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LEGACY_SESSIONS_CACHE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(legacySessionMessagesKey('legacy-1'))).toBeNull()
+  })
+
+  it('marks recently active server sessions as live even when this tab did not start the run', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-22T19:00:00.000Z'))
+
+    mockSessionsApi.fetchSessions.mockResolvedValue([
+      {
+        ...makeSummary('remote-live', 'Remote Live'),
+        ended_at: null,
+        last_active: Math.floor(Date.now() / 1000) - 60,
+      },
+      {
+        ...makeSummary('remote-idle', 'Remote Idle'),
+        ended_at: Math.floor(Date.now() / 1000) - 600,
+        last_active: Math.floor(Date.now() / 1000) - 600,
+      },
+    ])
+
+    const store = useChatStore()
+    await store.loadSessions()
+
+    expect(store.isSessionLive('remote-live')).toBe(true)
+    expect(store.isSessionLive('remote-idle')).toBe(false)
+  })
+
   it('silently refreshes from server on SSE error instead of appending a fake error bubble', async () => {
     vi.useFakeTimers()
 
-    window.localStorage.setItem('hermes_active_session', 'sess-1')
+    window.localStorage.setItem(ACTIVE_SESSION_KEY, 'sess-1')
     window.localStorage.setItem(
-      'hermes_sessions_cache_v1',
+      SESSIONS_CACHE_KEY,
       JSON.stringify([
         {
           id: 'sess-1',
@@ -142,7 +356,7 @@ describe('Chat Store', () => {
       ]),
     )
     window.localStorage.setItem(
-      'hermes_session_msgs_v1_sess-1',
+      sessionMessagesKey('sess-1'),
       JSON.stringify([
         { id: 'old-user', role: 'user', content: 'old prompt', timestamp: 1 },
       ]),
@@ -221,6 +435,6 @@ describe('Chat Store', () => {
     expect(store.messages.some(m => m.role === 'system' && m.content.includes('SSE connection error'))).toBe(false)
     expect(store.messages.some(m => m.role === 'assistant' && m.content === 'final answer')).toBe(true)
     expect(store.isRunActive).toBe(false)
-    expect(window.localStorage.getItem('hermes_in_flight_v1_sess-1')).toBeNull()
+    expect(window.localStorage.getItem(inFlightKey('sess-1'))).toBeNull()
   })
 })

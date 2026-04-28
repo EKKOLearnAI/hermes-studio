@@ -1,25 +1,24 @@
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NButton, useMessage } from "naive-ui";
+import { NButton, NModal, useMessage } from "naive-ui";
 import { useAppStore } from "@/stores/hermes/app";
 import ModelSelector from "./ModelSelector.vue";
 import ProfileSelector from "./ProfileSelector.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
-import danceVideoLight from "@/assets/dance-light.mp4";
-import danceVideoDark from "@/assets/dance-dark.mp4";
-
-import { useTheme } from "@/composables/useTheme";
+import { useSessionSearch } from '@/composables/useSessionSearch'
+import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
-const { isDark } = useTheme();
 const message = useMessage();
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
+const { openSessionSearch } = useSessionSearch();
 const selectedKey = computed(() => route.name as string);
+const logoPath = '/logo.png';
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
@@ -43,24 +42,62 @@ async function handleUpdate() {
     message.error(t('sidebar.updateFailed'));
   }
 }
+
+function handleLogout() {
+  localStorage.clear();
+  router.replace({ name: 'login' });
+}
+
+// Changelog
+const showChangelog = ref(false);
+
+function openChangelog() {
+  showChangelog.value = true;
+}
 </script>
 
 <template>
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
-      <img src="/logo.png" alt="Hermes" class="logo-img" />
+      <img :src="logoPath" alt="Hermes" class="logo-img" />
       <span class="logo-text">Hermes</span>
-      <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline />
+      <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
 
     <nav class="sidebar-nav">
-      <!-- Chat (standalone) -->
-      <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <span>{{ t("sidebar.chat") }}</span>
-      </button>
+      <!-- Conversation -->
+      <div class="nav-group">
+        <div class="nav-group-label" @click="toggleGroup('conversation')">
+          <span>{{ t("sidebar.groupConversation") }}</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('conversation') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+        <div v-show="!isGroupCollapsed('conversation')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span>{{ t("sidebar.chat") }}</span>
+          </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.groupChat' }" @click="handleNav('hermes.groupChat')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span>{{ t("sidebar.groupChat") }}<span class="beta-tag">(beta)</span></span>
+          </button>
+          <button class="nav-item" @click="openSessionSearch">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <span>{{ t("sidebar.search") }}</span>
+          </button>
+        </div>
+      </div>
 
       <!-- Agent -->
       <div class="nav-group">
@@ -165,13 +202,11 @@ async function handleUpdate() {
             </svg>
             <span>{{ t("sidebar.terminal") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.tunnels' }" @click="handleNav('hermes.tunnels')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.files' }" @click="handleNav('hermes.files')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12h6" />
-              <path d="M15 12h6" />
-              <path d="M9 8l4 4-4 4" />
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
-            <span>{{ t("sidebar.tunnels") }}</span>
+            <span>{{ t("sidebar.files") }}</span>
           </button>
         </div>
       </div>
@@ -216,6 +251,14 @@ async function handleUpdate() {
     <ModelSelector />
 
     <div class="sidebar-footer">
+      <button class="nav-item logout-item" @click="handleLogout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+        <span>{{ t("sidebar.logout") }}</span>
+      </button>
       <div class="status-row">
         <div
           class="status-indicator"
@@ -237,13 +280,28 @@ async function handleUpdate() {
         <a class="github-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener noreferrer" title="GitHub">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
         </a>
-        <span>Hermes Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
+        <span class="version-text" @click="openChangelog">Hermes Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
       <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
         {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
       </NButton>
     </div>
+
+    <!-- Changelog modal -->
+    <NModal v-model:show="showChangelog" preset="dialog" :title="t('sidebar.changelog')" style="width: 520px;">
+      <div class="changelog-list">
+        <div v-for="entry in changelog" :key="entry.version" class="changelog-version-block">
+          <div class="changelog-version-header">
+            <span class="changelog-version-tag">v{{ entry.version }}</span>
+            <span class="changelog-date">{{ entry.date }}</span>
+          </div>
+          <ul class="changelog-changes">
+            <li v-for="(change, idx) in entry.changes" :key="idx">{{ t(change) }}</li>
+          </ul>
+        </div>
+      </div>
+    </NModal>
   </aside>
 </template>
 
@@ -390,11 +448,30 @@ async function handleUpdate() {
     background-color: rgba(var(--accent-primary-rgb), 0.12);
     color: $accent-primary;
   }
+
+  .beta-tag {
+    font-size: 10px;
+    color: $text-muted;
+    margin-left: 2px;
+  }
 }
 
 .sidebar-footer {
-  padding-top: 16px;
+  padding-top: 8px;
   border-top: 1px solid $border-color;
+}
+
+.logout-item {
+  margin: 0 -12px;
+  padding: 10px 12px;
+  border-radius: 0;
+  font-size: 13px;
+  color: $text-muted;
+
+  &:hover {
+    color: $error;
+    background: rgba(var(--error-rgb, 239, 68, 68), 0.06);
+  }
 }
 
 .status-row {
@@ -456,6 +533,66 @@ async function handleUpdate() {
 .update-btn {
   margin: 4px 0 0;
   border-radius: 4px;
+}
+
+.version-text {
+  cursor: pointer;
+  transition: color 0.2s;
+
+  &:hover {
+    color: $accent-primary;
+  }
+}
+
+.changelog-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.changelog-version-block {
+  margin-bottom: 20px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.changelog-version-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.changelog-version-tag {
+  font-weight: 600;
+  font-size: 14px;
+  color: $text-primary;
+  font-family: $font-code;
+}
+
+.changelog-changes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+
+  li {
+    font-size: 13px;
+    color: $text-secondary;
+    padding: 4px 0 4px 16px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 12px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: $text-muted;
+    }
+  }
 }
 
 @media (max-width: $breakpoint-mobile) {

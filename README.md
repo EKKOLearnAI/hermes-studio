@@ -14,14 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/output.gif" alt="Hermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
-  <strong>Mobile</strong>
-</p>
-<p align="center">
-  <video src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/video.mp4?raw=true" width="360" controls></video>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
@@ -44,6 +41,8 @@
 - Markdown rendering with syntax highlighting and code copy
 - Tool call detail expansion (arguments / result)
 - File upload support
+- File download support — download user-uploaded files and agent-generated files across local, Docker, SSH, and Singularity backends
+- Session search — Ctrl+K global search across all conversations
 - Global model selector — discovers models from `~/.hermes/auth.json` credential pool
 - Per-session model display badge and context token usage
 
@@ -51,16 +50,16 @@
 
 Unified configuration for **8 platforms** in one page:
 
-| Platform | Features |
-|---|---|
-| Telegram | Bot token, mention control, reactions, free-response chats |
-| Discord | Bot token, mention, auto-thread, reactions, channel allow/ignore lists |
-| Slack | Bot token, mention control, bot message handling |
-| WhatsApp | Enable/disable, mention control, mention patterns |
-| Matrix | Access token, homeserver, auto-thread, DM mention threads |
-| Feishu (Lark) | App ID / Secret, mention control |
-| WeChat | QR code login (scan in browser, auto-save credentials) |
-| WeCom | Bot ID / Secret |
+| Platform      | Features                                                               |
+| ------------- | ---------------------------------------------------------------------- |
+| Telegram      | Bot token, mention control, reactions, free-response chats             |
+| Discord       | Bot token, mention, auto-thread, reactions, channel allow/ignore lists |
+| Slack         | Bot token, mention control, bot message handling                       |
+| WhatsApp      | Enable/disable, mention control, mention patterns                      |
+| Matrix        | Access token, homeserver, auto-thread, DM mention threads              |
+| Feishu (Lark) | App ID / Secret, mention control                                       |
+| WeChat        | QR code login (scan in browser, auto-save credentials)                 |
+| WeCom         | Bot ID / Secret                                                        |
 
 - Credential management writes to `~/.hermes/.env`
 - Channel behavior settings write to `~/.hermes/config.yaml`
@@ -86,7 +85,8 @@ Unified configuration for **8 platforms** in one page:
 - Auto-discover models from credential pool (`~/.hermes/auth.json`)
 - Fetch available models from each provider endpoint (`/v1/models`)
 - Add, update, and delete providers (preset & custom OpenAI-compatible)
-- OpenAI Codex OAuth login for Codex models
+- OpenAI Codex & Nous Portal OAuth login
+- Provider URL auto-detection for non-v1 API versions (e.g. `/v4`)
 - Provider-level model grouping with default model switching
 
 ### Multi-Profile & Gateway
@@ -97,6 +97,24 @@ Unified configuration for **8 platforms** in one page:
 - Multi-gateway management — start, stop, and monitor gateway per profile
 - Auto port conflict resolution
 - Profile-scoped configuration and cache isolation
+
+### File Browser
+
+- Browse files on remote backends (local, Docker, SSH, Singularity)
+- Upload, download, rename, copy, move, and delete files
+- Create directories
+- View file content with syntax highlighting
+
+### Group Chat
+
+- Multi-agent chat rooms with real-time messaging via Socket.IO
+- @mention routing — mention an agent to trigger a contextual reply
+- Context compression — automatic conversation summarization when history exceeds token threshold
+- Typing status and reply progress indicators
+- Room creation, deletion, and invite code management
+- Agent management — add/remove agents from rooms with per-agent profiles
+- SQLite message persistence
+- Mobile responsive with collapsible sidebar
 
 ### Skills & Memory
 
@@ -109,6 +127,12 @@ Unified configuration for **8 platforms** in one page:
 - View agent / gateway / error logs
 - Filter by log level, log file, and keyword
 - Structured log parsing with HTTP access log highlighting
+
+### Authentication
+
+- Token-based auth (auto-generated on first run or set via `AUTH_TOKEN` env var)
+- Optional username/password login — set via settings page after initial token auth
+- Auth can be disabled with `AUTH_DISABLED=1`
 
 ### Settings
 
@@ -162,39 +186,36 @@ hermes-web-ui start
 Run Web UI together with Hermes Agent:
 
 ```bash
+# Use pre-built image (Recommended)
+WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest docker compose up -d hermes-agent hermes-webui
+
+# Or build from source
 docker compose up -d --build hermes-agent hermes-webui
+
 docker compose logs -f hermes-webui
 ```
 
 Open **http://localhost:6060**
 
 - Persistent Hermes data is stored in `./hermes_data`
-- The web UI service is built from this repository's `Dockerfile`
+- Web UI auth token is stored in `./hermes_data/hermes-web-ui/.token`
+- On first run with auth enabled, the token is printed to container logs
 - All runtime settings are environment-variable driven in `docker-compose.yml`
-
-Override compose variables directly from command line (no `.env` file required):
-
-```bash
-PORT=16060 \
-UPSTREAM=http://127.0.0.1:8642 \
-HERMES_BIN=/opt/hermes/.venv/bin/hermes \
-docker compose up -d --build hermes-agent hermes-webui
-```
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 
 ### CLI Commands
 
-| Command | Description |
-|---|---|
-| `hermes-web-ui start` | Start in background (daemon mode) |
-| `hermes-web-ui start --port 9000` | Start on custom port |
-| `hermes-web-ui stop` | Stop background process |
-| `hermes-web-ui restart` | Restart background process |
-| `hermes-web-ui status` | Check if running |
-| `hermes-web-ui update` | Update to latest version & restart |
-| `hermes-web-ui -v` | Show version number |
-| `hermes-web-ui -h` | Show help message |
+| Command                           | Description                        |
+| --------------------------------- | ---------------------------------- |
+| `hermes-web-ui start`             | Start in background (daemon mode)  |
+| `hermes-web-ui start --port 9000` | Start on custom port               |
+| `hermes-web-ui stop`              | Stop background process            |
+| `hermes-web-ui restart`           | Restart background process         |
+| `hermes-web-ui status`            | Check if running                   |
+| `hermes-web-ui update`            | Update to latest version & restart |
+| `hermes-web-ui -v`                | Show version number                |
+| `hermes-web-ui -h`                | Show help message                  |
 
 ### Auto Configuration
 
@@ -238,7 +259,7 @@ Browser → BFF (Koa, :8648) → Hermes Gateway (:8642)
 
 The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
 
-The BFF layer handles API proxy (with path rewriting), SSE streaming, file upload, session CRUD via CLI, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
+The BFF layer handles API proxy (with path rewriting), SSE streaming, file upload and download (multi-backend: local/Docker/SSH/Singularity), session CRUD via CLI, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
 
 ## Tech Stack
 
@@ -251,6 +272,12 @@ The BFF layer handles API proxy (with path rewriting), SSE streaming, file uploa
 [![Star History Chart](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-web-ui&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-web-ui&Date)
 
 <!-- If the chart above doesn't load, visit https://star-history.com/#EKKOLearnAI/hermes-web-ui -->
+
+## Sponsor
+
+如果你觉得这个项目对你有帮助，欢迎支持我：
+
+<a href="https://ifdian.net/a/ekko8888"><img src="https://img.shields.io/badge/Sponsor-%E7%88%B1%E5%8F%91%E7%94%B5-orange?style=flat-square" alt="Sponsor"/></a>
 
 ## License
 

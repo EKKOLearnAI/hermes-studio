@@ -3,29 +3,65 @@ import { ref, computed } from 'vue'
 import { NButton, useMessage, useDialog } from 'naive-ui'
 import type { AvailableModelGroup } from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
+import { useAppStore } from '@/stores/hermes/app'
+import { useChatStore } from '@/stores/hermes/chat'
+import { checkCopilotToken, disableCopilot } from '@/api/hermes/copilot-auth'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ provider: AvailableModelGroup }>()
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
+const appStore = useAppStore()
+const chatStore = useChatStore()
 const message = useMessage()
 const dialog = useDialog()
 
 const isCustom = computed(() => props.provider.provider.startsWith('custom:'))
+const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
 
 async function handleDelete() {
+  let copilotMsg = ''
+  if (isCopilot.value) {
+    // 提前查 source，让用户清楚移除会不会影响 VS Code/gh CLI 等其他工具的登录态
+    try {
+      const status = await checkCopilotToken()
+      if (status.source === 'env') copilotMsg = t('models.copilotDeleteHintEnv')
+      else if (status.source === 'gh-cli') copilotMsg = t('models.copilotDeleteHintGhCli')
+      else if (status.source === 'apps-json') copilotMsg = t('models.copilotDeleteHintAppsJson')
+    } catch { /* ignore — fall back to generic confirm copy */ }
+  }
   dialog.warning({
     title: t('models.deleteProvider'),
-    content: t('models.deleteConfirm', { name: displayName.value }),
+    content: isCopilot.value && copilotMsg
+      ? `${t('models.deleteConfirm', { name: displayName.value })}\n\n${copilotMsg}`
+      : t('models.deleteConfirm', { name: displayName.value }),
     positiveText: t('common.delete'),
     negativeText: t('common.cancel'),
     onPositiveClick: async () => {
       deleting.value = true
       try {
-        await modelsStore.removeProvider(props.provider.provider)
+        if (isCopilot.value) {
+          // Copilot 走显式 opt-in 模型：disable 把 enabled 置 false，
+          // 仅当 token 来自 ~/.hermes/.env 时才清掉，gh-cli / apps.json 不动。
+          await disableCopilot()
+          // 服务端会在默认模型属于 copilot 时清掉 model.default，这里再清理本地
+          // 会话级 model/provider，避免 Chat 页继续显示已下架的 copilot 模型。
+          chatStore.clearProviderFromSessions('copilot')
+          await Promise.all([modelsStore.fetchProviders(), appStore.loadModels()])
+        } else {
+          await modelsStore.removeProvider(props.provider.provider)
+        }
+        // 删完之后若已没有默认模型，自动从剩余 provider 里挑一个，避免 chat 页
+        // "无默认模型"的尴尬态。与 hermes CLI `model` 子命令的隐含行为对齐。
+        if (!appStore.selectedModel && appStore.modelGroups.length > 0) {
+          const first = appStore.modelGroups.find(g => g.models.length > 0)
+          if (first) {
+            await appStore.switchModel(first.models[0], first.provider)
+          }
+        }
         message.success(t('models.providerDeleted'))
       } catch (e: any) {
         message.error(e.message)

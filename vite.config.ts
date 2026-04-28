@@ -4,7 +4,7 @@ import type { ProxyOptions } from 'vite'
 import { resolve } from 'path'
 import pkg from './package.json'
 
-const BACKEND = 'http://127.0.0.1:8650'
+const BACKEND = 'http://127.0.0.1:8648'
 
 function createProxyConfig(): ProxyOptions {
   return {
@@ -38,6 +38,9 @@ export default defineConfig({
     outDir: '../../dist/client',
     emptyOutDir: true,
   },
+  optimizeDeps: {
+    include: ['monaco-editor'],
+  },
   server: {
     proxy: {
       '/api': createProxyConfig(),
@@ -45,6 +48,10 @@ export default defineConfig({
       '/health': createProxyConfig(),
       '/upload': createProxyConfig(),
       '/webhook': createProxyConfig(),
+      '/socket.io': {
+        target: BACKEND,
+        ws: true,
+      },
     },
   },
 })

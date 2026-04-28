@@ -1,33 +1,6 @@
 import Router from '@koa/router'
-import { emitWebhook } from '../services/hermes/hermes'
+import * as ctrl from '../controllers/webhook'
 
 export const webhookRoutes = new Router()
 
-/**
- * POST /webhook — receive callbacks from Hermes Agent
- *
- * Expected body:
- * {
- *   "event": "run.completed" | "job.completed" | ...,
- *   "run_id": "...",
- *   "data": { ... }
- * }
- *
- * TODO: Add signature verification when Hermes supports webhook signing
- */
-webhookRoutes.post('/webhook', async (ctx) => {
-  const payload = ctx.request.body
-
-  if (!payload || !payload.event) {
-    ctx.status = 400
-    ctx.body = { error: 'Missing event field' }
-    return
-  }
-
-  console.log(`[Webhook] Received event: ${payload.event}`)
-
-  // Emit to registered callbacks
-  emitWebhook(payload)
-
-  ctx.body = { ok: true }
-})
+webhookRoutes.post('/webhook', ctrl.handleWebhook)

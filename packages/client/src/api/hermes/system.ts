@@ -6,6 +6,7 @@ export interface HealthResponse {
   webui_version?: string
   webui_latest?: string
   webui_update_available?: boolean
+  node_version?: string
 }
 
 // Config-based model types
@@ -30,6 +31,8 @@ export interface AvailableModelGroup {
   base_url: string
   models: string[]
   api_key: string
+  /** 可选：模型 ID -> 元数据（preview/disabled）。目前仅 Copilot 提供。 */
+  model_meta?: Record<string, { preview?: boolean; disabled?: boolean }>
 }
 
 export interface AvailableModelsResponse {
@@ -44,6 +47,7 @@ export interface CustomProvider {
   base_url: string
   api_key: string
   model: string
+  context_length?: number
   providerKey?: string | null
 }
 

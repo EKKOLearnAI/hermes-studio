@@ -16,6 +16,7 @@ const dialog = useDialog()
 const expanded = ref(false)
 const detailLoading = ref(false)
 const exporting = ref(false)
+const switching = ref(false)
 const detail = ref<HermesProfileDetail | null>(null)
 
 const isDefault = computed(() => props.profile.name === 'default')
@@ -34,14 +35,18 @@ async function toggleDetail() {
   }
 }
 
-function handleSwitch() {
-  profilesStore.switchProfile(props.profile.name).then(ok => {
+async function handleSwitch() {
+  switching.value = true
+  try {
+    const ok = await profilesStore.switchProfile(props.profile.name)
     if (ok) {
       window.location.reload()
     } else {
       message.error(t('profiles.switchFailed'))
     }
-  })
+  } finally {
+    switching.value = false
+  }
 }
 
 function handleDelete() {
@@ -139,7 +144,7 @@ async function handleExport() {
       <NButton
         v-if="!profile.active"
         size="tiny"
-        :loading="profilesStore.switching"
+        :loading="switching"
         quaternary
         type="primary"
         @click="handleSwitch"

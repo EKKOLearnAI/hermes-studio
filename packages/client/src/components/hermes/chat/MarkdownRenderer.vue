@@ -1,33 +1,238 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import { useMessage } from 'naive-ui'
+import type MarkdownIt from 'markdown-it'
+import MarkdownItConstructor from 'markdown-it'
+import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
+import { repairNestedMarkdownFences } from './markdownFenceRepair'
+import {
+  MERMAID_MAX_DIAGRAMS_PER_MESSAGE,
+  MERMAID_MAX_SOURCE_LENGTH,
+  MERMAID_RENDER_TIMEOUT_MS,
+  decodeMermaidSource,
+  isMermaidFence,
+  renderMermaidPlaceholder,
+} from './mermaidRenderer'
+import { downloadFile } from '@/api/hermes/download'
 
-const props = defineProps<{ content: string }>()
+const props = withDefaults(defineProps<{
+    content: string
+    mentionNames?: string[]
+}>(), {
+    mentionNames: () => [],
+})
+
 const { t } = useI18n()
+const message = useMessage()
 
-const md: MarkdownIt = new MarkdownIt({
+const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
   linkify: true,
   typographer: true,
   highlight(str: string, lang: string): string {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return `<pre class="hljs-code-block"><div class="code-header"><span class="code-lang">${lang}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('.hljs-code-block').querySelector('code').textContent)">${t('common.copy')}</button></div><code class="hljs language-${lang}">${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`
-      } catch {
-        // fall through
-      }
-    }
-    return `<pre class="hljs-code-block"><div class="code-header"><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('.hljs-code-block').querySelector('code').textContent)">${t('common.copy')}</button></div><code class="hljs">${md.utils.escapeHtml(str)}</code></pre>`
+    return renderHighlightedCodeBlock(str, lang, t('common.copy'))
   },
 })
 
-const renderedHtml = computed(() => md.render(props.content))
+const defaultFenceRenderer = md.renderer.rules.fence?.bind(md.renderer.rules)
+
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]
+  if (isMermaidFence(token.info)) {
+    return renderMermaidPlaceholder(token.content)
+  }
+
+  if (defaultFenceRenderer) {
+    return defaultFenceRenderer(tokens, idx, options, env, self)
+  }
+
+  return self.renderToken(tokens, idx, options)
+}
+
+const markdownBody = ref<HTMLElement | null>(null)
+const componentId = `hermes-mermaid-${Math.random().toString(36).slice(2)}`
+let renderGeneration = 0
+let unmounted = false
+
+const renderedHtml = computed(() => {
+  let html = md.render(repairNestedMarkdownFences(props.content))
+  if (props.mentionNames && props.mentionNames.length > 0) {
+    const escaped = props.mentionNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const re = new RegExp(`(?<=[\\s>]|^)@(${escaped.join('|')})(?=\\s|$)`, 'gi')
+    html = html.replace(re, '<span class="mention-highlight">@$1</span>')
+  }
+  return html
+})
+
+function renderMermaidFallback(element: HTMLElement, source: string): void {
+  element.outerHTML = renderHighlightedCodeBlock(source, 'mermaid', t('common.copy'))
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId)
+    }
+  })
+}
+
+function getScrollParent(el: HTMLElement | null): HTMLElement | null {
+  if (!el) return null
+  let current: HTMLElement | null = el.parentElement
+  while (current) {
+    const { overflow, overflowY } = getComputedStyle(current)
+    if (overflow === 'auto' || overflow === 'scroll' || overflowY === 'auto' || overflowY === 'scroll') {
+      return current
+    }
+    current = current.parentElement
+  }
+  return null
+}
+
+function cleanupMermaidRenderArtifacts(id: string): void {
+  document.getElementById(id)?.remove()
+  document.getElementById(`d${id}`)?.remove()
+}
+
+async function renderMermaidDiagrams(): Promise<void> {
+  const generation = ++renderGeneration
+  await nextTick()
+
+  const root = markdownBody.value
+  if (unmounted || generation !== renderGeneration || !root) return
+
+  const pendingDiagrams = Array.from(root.querySelectorAll<HTMLElement>('[data-mermaid-pending="true"]'))
+  if (pendingDiagrams.length === 0) return
+
+  const diagramsToRender = pendingDiagrams.slice(0, MERMAID_MAX_DIAGRAMS_PER_MESSAGE)
+  const diagramsToFallback = pendingDiagrams.slice(MERMAID_MAX_DIAGRAMS_PER_MESSAGE)
+
+  for (const element of diagramsToFallback) {
+    renderMermaidFallback(element, decodeMermaidSource(element.getAttribute('data-mermaid-source')))
+  }
+
+  const renderCandidates = diagramsToRender
+    .map(element => ({
+      element,
+      source: decodeMermaidSource(element.getAttribute('data-mermaid-source')),
+    }))
+
+  const validDiagrams = [] as typeof renderCandidates
+  for (const candidate of renderCandidates) {
+    if (unmounted || generation !== renderGeneration || !root.contains(candidate.element)) return
+
+    if (!candidate.source || candidate.source.length > MERMAID_MAX_SOURCE_LENGTH) {
+      renderMermaidFallback(candidate.element, candidate.source)
+      continue
+    }
+
+    validDiagrams.push(candidate)
+  }
+
+  if (validDiagrams.length === 0) return
+
+  let mermaid: typeof import('mermaid').default
+
+  try {
+    mermaid = (await withTimeout(import('mermaid'), MERMAID_RENDER_TIMEOUT_MS, 'Mermaid import')).default
+    if (unmounted || generation !== renderGeneration) return
+
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+    })
+  } catch {
+    if (unmounted || generation !== renderGeneration) return
+    for (const { element, source } of validDiagrams) {
+      if (root.contains(element)) {
+        renderMermaidFallback(element, source)
+      }
+    }
+    return
+  }
+
+  for (const [index, { element, source }] of validDiagrams.entries()) {
+    if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+
+    try {
+      const id = `${componentId}-${generation}-${index}`
+      const result = await withTimeout(mermaid.render(id, source), MERMAID_RENDER_TIMEOUT_MS, 'Mermaid render')
+      cleanupMermaidRenderArtifacts(id)
+      if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+
+      element.removeAttribute('data-mermaid-pending')
+      element.removeAttribute('data-mermaid-source')
+      element.innerHTML = result.svg
+      // After mermaid renders, scroll the nearest scrollable ancestor to bottom
+      nextTick(() => {
+        const scrollParent = getScrollParent(markdownBody.value)
+        if (scrollParent) {
+          scrollParent.scrollTop = scrollParent.scrollHeight
+        }
+      })
+    } catch {
+      cleanupMermaidRenderArtifacts(`${componentId}-${generation}-${index}`)
+      if (unmounted || generation !== renderGeneration || !root.contains(element)) return
+      renderMermaidFallback(element, source)
+    }
+  }
+}
+
+onMounted(() => {
+  void renderMermaidDiagrams()
+})
+
+watch(renderedHtml, () => {
+  void renderMermaidDiagrams()
+}, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  unmounted = true
+  renderGeneration += 1
+})
+
+function handleMarkdownClick(event: MouseEvent): void {
+  void handleCodeBlockCopyClick(event)
+
+  // Handle file path link clicks for download
+  const target = event.target as HTMLElement
+  const link = target.closest('a') as HTMLAnchorElement | null
+  if (!link) return
+
+  const href = link.getAttribute('href')
+  if (!href) return
+
+  // Let http(s) links behave normally
+  if (href.startsWith('http://') || href.startsWith('https://')) {
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    return
+  }
+
+  // File path links: intercept and download
+  if (href.startsWith('/')) {
+    event.preventDefault()
+    event.stopPropagation()
+    const linkText = link.textContent || ''
+    const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+    message.info(t('download.downloading'))
+    downloadFile(href, fileName || undefined).catch((err: Error) => {
+      message.error(err.message || t('download.downloadFailed'))
+    })
+  }
+}
 </script>
 
 <template>
-  <div class="markdown-body" v-html="renderedHtml"></div>
+  <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
 </template>
 
 <style lang="scss">
@@ -36,6 +241,9 @@ const renderedHtml = computed(() => md.render(props.content))
 .markdown-body {
   font-size: 14px;
   line-height: 1.65;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
 
   p {
@@ -120,89 +328,31 @@ const renderedHtml = computed(() => md.render(props.content))
     border-top: 1px solid $border-color;
     margin: 12px 0;
   }
-}
 
-.hljs-code-block {
-  margin: 8px 0;
-  border-radius: $radius-sm;
-  overflow: hidden;
-  background: $code-bg;
-  border: 1px solid $border-color;
-
-  .code-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 12px;
-    background: rgba(0, 0, 0, 0.03);
-    border-bottom: 1px solid $border-color;
-
-    .code-lang {
-      font-size: 11px;
-      color: $text-muted;
-      text-transform: uppercase;
-    }
-
-    .copy-btn {
-      font-size: 11px;
-      color: $text-muted;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 3px;
-      transition: all $transition-fast;
-
-      &:hover {
-        color: $text-primary;
-        background: rgba(0, 0, 0, 0.05);
-      }
-    }
-  }
-
-  code.hljs {
-    display: block;
-    padding: 12px;
-    font-family: $font-code;
-    font-size: 13px;
-    line-height: 1.5;
+  .mermaid-diagram {
+    margin: 10px 0;
+    padding: 14px;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+    background: rgba(var(--accent-primary-rgb), 0.04);
     overflow-x: auto;
+
+    svg {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+  }
+
+  .mermaid-loading {
+    color: $text-secondary;
+    font-size: 13px;
+    font-family: $font-code;
+    min-height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 }
-
-// highlight.js theme override — pure ink B&W
-.hljs {
-  color: #2a2a2a;
-  background: none;
-}
-
-.hljs-keyword,
-.hljs-selector-tag { color: #1a1a1a; font-weight: 600; }
-.hljs-string,
-.hljs-attr { color: #555555; }
-.hljs-number { color: #333333; }
-.hljs-comment { color: #999999; font-style: italic; }
-.hljs-built_in { color: #444444; }
-.hljs-type { color: #3a3a3a; }
-.hljs-variable { color: #1a1a1a; }
-.hljs-title,
-.hljs-title\.function_ { color: #1a1a1a; }
-.hljs-params { color: #2a2a2a; }
-.hljs-meta { color: #999999; }
-
-// Dark mode highlight.js — inverted pure ink
-.dark .hljs { color: #d0d0d0; }
-.dark .hljs-keyword,
-.dark .hljs-selector-tag { color: #f0f0f0; font-weight: 600; }
-.dark .hljs-string,
-.dark .hljs-attr { color: #aaaaaa; }
-.dark .hljs-number { color: #cccccc; }
-.dark .hljs-comment { color: #666666; font-style: italic; }
-.dark .hljs-built_in { color: #bbbbbb; }
-.dark .hljs-type { color: #c6c6c6; }
-.dark .hljs-variable { color: #f0f0f0; }
-.dark .hljs-title,
-.dark .hljs-title\.function_ { color: #f0f0f0; }
-.dark .hljs-params { color: #d0d0d0; }
-.dark .hljs-meta { color: #666666; }
 </style>

@@ -1,9 +1,11 @@
 import { startRun, streamRunEvents, type ChatMessage, type RunEvent } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchSessionUsageSingle, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 export interface Attachment {
   id: string
@@ -26,6 +28,11 @@ export interface Message {
   toolStatus?: 'running' | 'done' | 'error'
   isStreaming?: boolean
   attachments?: Attachment[]
+  // 思考/推理文本。两条来源：
+  //   1) 历史消息：来自 HermesMessage.reasoning 字段
+  //   2) 流式：由 reasoning.delta / thinking.delta / reasoning.available 事件累加
+  // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
+  reasoning?: string
 }
 
 export interface Session {
@@ -40,6 +47,8 @@ export interface Session {
   messageCount?: number
   inputTokens?: number
   outputTokens?: number
+  endedAt?: number | null
+  lastActiveAt?: number
 }
 
 function uid(): string {
@@ -139,6 +148,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       role: msg.role,
       content: msg.content || '',
       timestamp: Math.round(msg.timestamp * 1000),
+      reasoning: msg.reasoning ? msg.reasoning : undefined,
     })
   }
   return result
@@ -155,8 +165,8 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: (s as any).billing_provider || '',
     messageCount: s.message_count,
-    inputTokens: s.input_tokens,
-    outputTokens: s.output_tokens,
+    endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
+    lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
   }
 }
 
@@ -166,9 +176,12 @@ function mapHermesSession(s: SessionSummary): Session {
 // every time they open the page (esp. noticeable on mobile).
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const SESSIONS_CACHE_KEY_PREFIX = 'hermes_sessions_cache_v1_'
+const LEGACY_STORAGE_KEY = 'hermes_active_session'
+const LEGACY_SESSIONS_CACHE_KEY = 'hermes_sessions_cache_v1'
 const IN_FLIGHT_TTL_MS = 15 * 60 * 1000 // Give up after 15 minutes
 const POLL_INTERVAL_MS = 2000
 const POLL_STABLE_EXITS = 3 // 3 × 2s = 6s of no change → assume run finished
+const LIVE_BADGE_WINDOW_MS = 5 * 60 * 1000
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -185,6 +198,10 @@ function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function sessionsCacheKey(): string { return SESSIONS_CACHE_KEY_PREFIX + getProfileName() }
 function msgsCacheKey(sid: string): string { return `hermes_session_msgs_v1_${getProfileName()}_${sid}_` }
 function inFlightKey(sid: string): string { return `hermes_in_flight_v1_${getProfileName()}_${sid}` }
+function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
+function legacySessionsCacheKey(): string | null { return getProfileName() === 'default' ? LEGACY_SESSIONS_CACHE_KEY : null }
+function legacyMsgsCacheKey(sid: string): string | null { return getProfileName() === 'default' ? `hermes_session_msgs_v1_${sid}` : null }
+function legacyInFlightKey(sid: string): string | null { return getProfileName() === 'default' ? `hermes_in_flight_v1_${sid}` : null }
 
 interface InFlightRun {
   runId: string
@@ -200,9 +217,60 @@ function loadJson<T>(key: string): T | null {
   }
 }
 
+function isQuotaExceededError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const e = error as { name?: string, code?: number }
+  return e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014
+}
+
+function recoverStorageQuota() {
+  try {
+    const prefixes = [
+      sessionsCacheKey(),
+      `hermes_session_msgs_v1_${getProfileName()}_`,
+      `hermes_in_flight_v1_${getProfileName()}_`,
+    ]
+    const legacySessions = legacySessionsCacheKey()
+    if (legacySessions) prefixes.push(legacySessions)
+    if (getProfileName() === 'default') {
+      prefixes.push('hermes_session_msgs_v1_')
+      prefixes.push('hermes_in_flight_v1_')
+    }
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      if (key === storageKey() || key === LEGACY_STORAGE_KEY) continue
+      if (prefixes.some(prefix => key.startsWith(prefix))) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(key => removeItem(key))
+  } catch {
+    // ignore
+  }
+}
+
+function setItemBestEffort(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+    return
+  } catch (error) {
+    if (!isQuotaExceededError(error)) return
+  }
+
+  recoverStorageQuota()
+
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // quota exceeded or private mode — ignore, cache is best-effort
+  }
+}
+
 function saveJson(key: string, value: unknown) {
   try {
-    localStorage.setItem(key, JSON.stringify(value))
+    setItemBestEffort(key, JSON.stringify(value))
   } catch {
     // quota exceeded or private mode — ignore, cache is best-effort
   }
@@ -214,6 +282,23 @@ function removeItem(key: string) {
   } catch {
     // ignore
   }
+}
+
+function loadJsonWithFallback<T>(key: string, legacyKey?: string | null): T | null {
+  const value = loadJson<T>(key)
+  if (value != null) return value
+  if (!legacyKey) return null
+  return loadJson<T>(legacyKey)
+}
+
+function saveJsonWithLegacy(key: string, value: unknown, legacyKey?: string | null) {
+  saveJson(key, value)
+  if (legacyKey) removeItem(legacyKey)
+}
+
+function removeItemWithLegacy(key: string, legacyKey?: string | null) {
+  removeItem(key)
+  if (legacyKey) removeItem(legacyKey)
 }
 
 // Strip the circular `file: File` reference from attachments before caching —
@@ -228,12 +313,34 @@ function sanitizeForCache(msgs: Message[]): Message[] {
   })
 }
 
+// Heals assistant messages whose `reasoning` field was polluted by the
+// old bug where `reasoning.available` clobbered it with the assistant
+// content. Detection heuristic: reasoning is a prefix of content (the
+// bug always derived `reasoning` from `content[:500]` with tags stripped).
+// Legitimate reasoning is almost never a prefix of the final answer.
+function scrubBuggyReasoningInCache(msgs: Message[] | null | undefined): Message[] {
+  if (!msgs) return []
+  return msgs.map(m => {
+    if (m.role !== 'assistant' || !m.reasoning || !m.content) return m
+    const r = m.reasoning.trim()
+    const c = m.content.trim()
+    if (!r || !c) return m
+    if (c === r || c.startsWith(r)) {
+      const { reasoning: _drop, ...rest } = m
+      return rest as Message
+    }
+    return m
+  })
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
+  const focusMessageId = ref<string | null>(null)
   const streamStates = ref<Map<string, AbortController>>(new Map())
   const isStreaming = computed(() => activeSessionId.value != null && streamStates.value.has(activeSessionId.value))
   const isLoadingSessions = ref(false)
+  const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
   // tmux-like resume state: true when we recovered an in-flight run from
   // localStorage after a refresh and are polling fetchSession for progress.
@@ -250,14 +357,19 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || resumingRuns.value.has(sessionId)
+    if (streamStates.value.has(sessionId) || resumingRuns.value.has(sessionId)) return true
+
+    const session = sessions.value.find(candidate => candidate.id === sessionId)
+    if (!session?.lastActiveAt || session.endedAt != null) return false
+    return Date.now() - session.lastActiveAt <= LIVE_BADGE_WINDOW_MS
   }
 
   function persistSessionsList() {
     // Cache lightweight summaries only (messages are cached per-session).
-    saveJson(
+    saveJsonWithLegacy(
       sessionsCacheKey(),
       sessions.value.map(s => ({ ...s, messages: [] })),
+      legacySessionsCacheKey(),
     )
   }
 
@@ -265,25 +377,58 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (!sid) return
     const s = sessions.value.find(sess => sess.id === sid)
-    if (s) saveJson(msgsCacheKey(sid), sanitizeForCache(s.messages))
+    if (s) saveJsonWithLegacy(msgsCacheKey(sid), sanitizeForCache(s.messages), legacyMsgsCacheKey(sid))
   }
 
   function markInFlight(sid: string, runId: string) {
-    saveJson(inFlightKey(sid), { runId, startedAt: Date.now() } as InFlightRun)
+    saveJsonWithLegacy(inFlightKey(sid), { runId, startedAt: Date.now() } as InFlightRun, legacyInFlightKey(sid))
   }
 
   function clearInFlight(sid: string) {
-    removeItem(inFlightKey(sid))
+    removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
   }
 
   function readInFlight(sid: string): InFlightRun | null {
-    const rec = loadJson<InFlightRun>(inFlightKey(sid))
+    const rec = loadJsonWithFallback<InFlightRun>(inFlightKey(sid), legacyInFlightKey(sid))
     if (!rec) return null
     if (Date.now() - rec.startedAt > IN_FLIGHT_TTL_MS) {
-      removeItem(inFlightKey(sid))
+      removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
       return null
     }
     return rec
+  }
+
+  function compareServerMessages(local: Message[], server: Message[]) {
+    const localUserIndexes = local.map((m, i) => (m.role === 'user' ? i : -1)).filter(i => i >= 0)
+    const serverUserIndexes = server.map((m, i) => (m.role === 'user' ? i : -1)).filter(i => i >= 0)
+    const localUsers = localUserIndexes.length
+    const serverUsers = serverUserIndexes.length
+
+    if (serverUsers > localUsers) return { serverIsCaughtUp: true, serverIsAhead: true }
+    if (serverUsers < localUsers) return { serverIsCaughtUp: false, serverIsAhead: false }
+
+    const localLastUserIndex = localUserIndexes[localUserIndexes.length - 1] ?? -1
+    const serverLastUserIndex = serverUserIndexes[serverUserIndexes.length - 1] ?? -1
+    const sameCurrentTurn =
+      localLastUserIndex < 0
+      || serverLastUserIndex < 0
+      || local[localLastUserIndex]?.content === server[serverLastUserIndex]?.content
+
+    if (!sameCurrentTurn) return { serverIsCaughtUp: false, serverIsAhead: false }
+
+    const localCurrentAssistantLen = local
+      .slice(localLastUserIndex + 1)
+      .filter(m => m.role === 'assistant')
+      .reduce((total, m) => total + (m.content?.length || 0), 0)
+    const serverCurrentAssistantLen = server
+      .slice(serverLastUserIndex + 1)
+      .filter(m => m.role === 'assistant')
+      .reduce((total, m) => total + (m.content?.length || 0), 0)
+
+    return {
+      serverIsCaughtUp: true,
+      serverIsAhead: serverCurrentAssistantLen >= localCurrentAssistantLen,
+    }
   }
 
   function stopPolling(sid: string) {
@@ -319,27 +464,13 @@ export const useChatStore = defineStore('chat', () => {
         const mapped = mapHermesMessages(detail.messages || [])
         const target = sessions.value.find(s => s.id === sid)
         if (!target) return
-        // Use the same "content-aware" comparison as switchSession: server
-        // is ahead iff it knows about at least as many user turns and its
-        // last assistant text is at least as long as ours.
+        // Use the same current-turn comparison as switchSession: server is
+        // ahead only when it has a newer user turn or the assistant output
+        // after the current user turn has caught up.
         const local = target.messages
-        const localLastAssistant = [...local].reverse().find(m => m.role === 'assistant')
-        const serverLastAssistant = [...mapped].reverse().find(m => m.role === 'assistant')
-        const localAssistantLen = localLastAssistant?.content?.length ?? 0
-        const serverAssistantLen = serverLastAssistant?.content?.length ?? 0
-        const localUsers = local.filter(m => m.role === 'user').length
-        const serverUsers = mapped.filter(m => m.role === 'user').length
-        const serverIsCaughtUp = serverUsers >= localUsers
-        // Same rationale as switchSession: strictly more user turns means
-        // server is ahead (new turn complete). Equal user turns + longer
-        // assistant means server caught up on the current turn.
-        const serverIsAhead =
-          serverUsers > localUsers
-          || (serverUsers === localUsers && serverAssistantLen >= localAssistantLen)
+        const { serverIsAhead, serverIsCaughtUp } = compareServerMessages(local, mapped)
         if (serverIsAhead) {
           target.messages = mapped
-          target.inputTokens = detail.input_tokens
-          target.outputTokens = detail.output_tokens
           if (detail.title && !target.title) target.title = detail.title
           if (sid === activeSessionId.value) persistActiveMessages()
         }
@@ -357,14 +488,14 @@ export const useChatStore = defineStore('chat', () => {
           if (prev && prev.sig === sig) {
             prev.stableTicks += 1
             if (prev.stableTicks >= POLL_STABLE_EXITS) {
-              // Run is done on the server. Force-apply server view even if
-              // our "don't retreat" guard above skipped it — the server is
-              // now the authoritative source of truth.
-              target.messages = mapped
-              target.inputTokens = detail.input_tokens
-              target.outputTokens = detail.output_tokens
-              if (detail.title) target.title = detail.title
-              if (sid === activeSessionId.value) persistActiveMessages()
+              // The server view has stopped changing. If it is still behind
+              // the locally streamed assistant reply, end recovery without
+              // retreating local state; otherwise commit the server view.
+              if (serverIsAhead) {
+                target.messages = mapped
+                if (detail.title) target.title = detail.title
+                if (sid === activeSessionId.value) persistActiveMessages()
+              }
               clearInFlight(sid)
               stopPolling(sid)
             }
@@ -383,15 +514,15 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions.value = true
     try {
       // 从 profile 对应的缓存中恢复，实现 instant render
-      const cachedSessions = loadJson<Session[]>(sessionsCacheKey())
+      const cachedSessions = loadJsonWithFallback<Session[]>(sessionsCacheKey(), legacySessionsCacheKey())
       if (cachedSessions?.length) {
         sessions.value = cachedSessions
-        const savedId = localStorage.getItem(storageKey())
+        const savedId = localStorage.getItem(storageKey()) || (legacyStorageKey() ? localStorage.getItem(legacyStorageKey()!) : null)
         if (savedId) {
           const cachedActive = cachedSessions.find(s => s.id === savedId) || null
           if (cachedActive) {
-            const cachedMsgs = loadJson<Message[]>(msgsCacheKey(savedId))
-            if (cachedMsgs) cachedActive.messages = cachedMsgs
+            const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(savedId), legacyMsgsCacheKey(savedId))
+            if (cachedMsgs) cachedActive.messages = scrubBuggyReasoningInCache(cachedMsgs)
             activeSession.value = cachedActive
             activeSessionId.value = savedId
           }
@@ -412,7 +543,16 @@ export const useChatStore = defineStore('chat', () => {
       // that was just created and whose first run is still in-flight. Without
       // this, refreshing mid-run would wipe the session and fall back to
       // sessions[0], which is exactly what the user reported.
-      const localOnly = sessions.value.filter(s => !freshIds.has(s.id))
+      // Sessions without an active in-flight run are considered deleted and
+      // cleaned up along with their cached messages.
+      const localOnly = sessions.value.filter(s => {
+        if (freshIds.has(s.id)) return false
+        if (readInFlight(s.id)) return true
+        // Session no longer exists on server and no active run — clean up cache
+        removeItemWithLegacy(msgsCacheKey(s.id), legacyMsgsCacheKey(s.id))
+        removeItemWithLegacy(inFlightKey(s.id), legacyInFlightKey(s.id))
+        return false
+      })
       sessions.value = [...localOnly, ...fresh]
       persistSessionsList()
 
@@ -428,12 +568,14 @@ export const useChatStore = defineStore('chat', () => {
       console.error('Failed to load sessions:', err)
     } finally {
       isLoadingSessions.value = false
+      sessionsLoaded.value = true
     }
   }
 
-  // Re-pull active session from server and overwrite local messages. Used on
-  // SSE drop and on tab-visible events — mobile browsers kill EventSource
-  // while backgrounded, but the backend run usually completes anyway.
+  // Re-pull active session from server without retreating newer locally
+  // streamed output. Used on SSE drop and on tab-visible events — mobile
+  // browsers kill EventSource while backgrounded, but the backend run usually
+  // completes anyway.
   async function refreshActiveSession(): Promise<boolean> {
     const sid = activeSessionId.value
     if (!sid) return false
@@ -443,11 +585,12 @@ export const useChatStore = defineStore('chat', () => {
       const target = sessions.value.find(s => s.id === sid)
       if (!target) return false
       const mapped = mapHermesMessages(detail.messages || [])
-      target.messages = mapped
-      target.inputTokens = detail.input_tokens
-      target.outputTokens = detail.output_tokens
+      const { serverIsAhead } = compareServerMessages(target.messages, mapped)
+      if (serverIsAhead) {
+        target.messages = mapped
+        persistActiveMessages()
+      }
       if (detail.title) target.title = detail.title
-      persistActiveMessages()
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -472,9 +615,13 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, focusId?: string | null) {
+    clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
-    localStorage.setItem(storageKey(), sessionId)
+    focusMessageId.value = focusId ?? null
+    setItemBestEffort(storageKey(), sessionId)
+    const legacyActiveKey = legacyStorageKey()
+    if (legacyActiveKey) removeItem(legacyActiveKey)
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
 
     if (!activeSession.value) return
@@ -484,9 +631,9 @@ export const useChatStore = defineStore('chat', () => {
     // loading state while we fetch.
     const hasLocalMessages = activeSession.value.messages.length > 0
     if (!hasLocalMessages) {
-      const cachedMsgs = loadJson<Message[]>(msgsCacheKey(sessionId))
+      const cachedMsgs = loadJsonWithFallback<Message[]>(msgsCacheKey(sessionId), legacyMsgsCacheKey(sessionId))
       if (cachedMsgs?.length) {
-        activeSession.value.messages = cachedMsgs
+        activeSession.value.messages = scrubBuggyReasoningInCache(cachedMsgs)
       }
     }
 
@@ -497,38 +644,17 @@ export const useChatStore = defineStore('chat', () => {
       const detail = await fetchSession(sessionId)
       if (detail && detail.messages) {
         const mapped = mapHermesMessages(detail.messages)
-        // Pick whichever view has more information. Simple length comparison
-        // is wrong because mapHermesMessages folds tool_call-only assistant
-        // msgs and matches them with tool-result msgs — so post-fold `mapped`
-        // can be SHORTER than the raw SSE-built local array even when the
-        // server is strictly ahead. Instead, compare the last assistant
-        // message content: if the server's is at least as long, the server
-        // is up-to-date (and has the final complete text); otherwise keep
-        // local (in-flight window where server hasn't flushed the new turn).
+        // Pick whichever view has more information for the current turn.
+        // Simple message-count comparison is wrong because mapHermesMessages
+        // folds tool_call-only assistant messages; global last-assistant
+        // comparison is also wrong across turns. Trust server only when it has
+        // a newer user turn or its assistant output after the current user turn
+        // has caught up.
         const local = activeSession.value.messages
-        const localLastAssistant = [...local].reverse().find(m => m.role === 'assistant')
-        const serverLastAssistant = [...mapped].reverse().find(m => m.role === 'assistant')
-        const localAssistantLen = localLastAssistant?.content?.length ?? 0
-        const serverAssistantLen = serverLastAssistant?.content?.length ?? 0
-        const localUsers = local.filter(m => m.role === 'user').length
-        const serverUsers = mapped.filter(m => m.role === 'user').length
-        // Trust server when:
-        //   - it has STRICTLY MORE user turns than we do (new turn landed),
-        //     OR
-        //   - same user-turn count AND server's last assistant is at least
-        //     as long as ours (same turn, server caught up or further)
-        // Otherwise keep local (protects against the server-not-yet-flushed
-        // race during in-flight runs). Length comparison alone is wrong
-        // across different turns because each turn's last assistant is
-        // unrelated to the previous turn's.
-        const serverIsAhead =
-          serverUsers > localUsers
-          || (serverUsers === localUsers && serverAssistantLen >= localAssistantLen)
+        const { serverIsAhead } = compareServerMessages(local, mapped)
         if (serverIsAhead) {
           activeSession.value.messages = mapped
         }
-        activeSession.value.inputTokens = detail.input_tokens
-        activeSession.value.outputTokens = detail.output_tokens
         // Update title: use Hermes title, or fallback to first user message
         if (detail.title) {
           activeSession.value.title = detail.title
@@ -553,6 +679,15 @@ export const useChatStore = defineStore('chat', () => {
     if (readInFlight(sessionId) && !streamStates.value.has(sessionId)) {
       startPolling(sessionId)
     }
+
+    // Fetch token usage for this session from web-ui DB
+    try {
+      const usage = await fetchSessionUsageSingle(sessionId)
+      if (usage) {
+        activeSession.value.inputTokens = usage.input_tokens
+        activeSession.value.outputTokens = usage.output_tokens
+      }
+    } catch { /* non-critical */ }
   }
 
   function newChat() {
@@ -578,7 +713,7 @@ export const useChatStore = defineStore('chat', () => {
   async function deleteSession(sessionId: string) {
     await deleteSessionApi(sessionId)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
-    removeItem(msgsCacheKey(sessionId))
+    removeItemWithLegacy(msgsCacheKey(sessionId), legacyMsgsCacheKey(sessionId))
     persistSessionsList()
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {
@@ -642,6 +777,14 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
     }
+    // Build conversation history BEFORE adding the new message, so the
+    // user's current message appears only in `input` — not duplicated in
+    // `conversation_history` as well.
+    const sessionMsgs = getSessionMsgs(sid)
+    const history: ChatMessage[] = sessionMsgs
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
+      .map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content }))
+
     addMessage(sid, userMsg)
     updateSessionTitle(sid)
     // Persist immediately so a refresh before the first SSE event (e.g. the
@@ -653,17 +796,26 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     try {
-      // Build conversation history from past messages
-      const sessionMsgs = getSessionMsgs(sid)
-      const history: ChatMessage[] = sessionMsgs
-        .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
-        .map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content }))
 
       // Upload attachments and build input with file paths
       let inputText = content.trim()
       if (attachments && attachments.length > 0) {
         const uploaded = await uploadFiles(attachments)
-        const pathParts = uploaded.map(f => `[File: ${f.name}](${f.path})`)
+        // Replace blob URLs with persistent download URLs on the user message
+        const token = getApiKey()
+        const urlMap = new Map(uploaded.map(f => {
+          const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
+          return [f.name, token ? `${base}&token=${encodeURIComponent(token)}` : base]
+        }))
+        const msgs = getSessionMsgs(sid)
+        const lastUser = msgs.findLast(m => m.id === userMsg.id)
+        if (lastUser?.attachments) {
+          lastUser.attachments = lastUser.attachments.map(a => {
+            const dl = urlMap.get(a.name)
+            return dl ? { ...a, url: dl } : a
+          })
+        }
+        const pathParts = uploaded.map(f => `[File: ${f.name}](${urlMap.get(f.name)})`)
         inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
       }
 
@@ -708,6 +860,15 @@ export const useChatStore = defineStore('chat', () => {
       // the partial reply. 800ms keeps quota pressure low while guaranteeing
       // at most ~1s of unsaved delta on reload.
       let persistTimer: ReturnType<typeof setTimeout> | null = null
+      // Per-run flags used to detect silently-swallowed errors at run.completed.
+      // hermes-agent occasionally emits run.completed with empty output and no
+      // usage when the agent layer caught an upstream error (e.g. invalid API
+      // key). We need to distinguish: (a) run with assistant text produced,
+      // (b) run with only tool activity, (c) run with truly nothing visible.
+      // Reset per send() call — closures captured by SSE callbacks are scoped
+      // to this run, so there is no cross-run contamination.
+      let runProducedAssistantText = false
+      let runHadToolActivity = false
       const schedulePersist = () => {
         if (sid !== activeSessionId.value || persistTimer) return
         persistTimer = setTimeout(() => {
@@ -725,16 +886,68 @@ export const useChatStore = defineStore('chat', () => {
             case 'run.started':
               break
 
-            case 'message.delta': {
+            case 'reasoning.delta':
+            case 'thinking.delta': {
+              const text = evt.text || evt.delta || ''
+              if (!text) break
+              runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.role === 'assistant' && last.isStreaming) {
-                last.content += evt.delta || ''
+                last.reasoning = (last.reasoning || '') + text
+                noteReasoningStart(last.id)
               } else {
+                const newId = uid()
                 addMessage(sid, {
-                  id: uid(),
+                  id: newId,
                   role: 'assistant',
-                  content: evt.delta || '',
+                  content: '',
+                  timestamp: Date.now(),
+                  isStreaming: true,
+                  reasoning: text,
+                })
+                noteReasoningStart(newId)
+              }
+              schedulePersist()
+              break
+            }
+
+            case 'reasoning.available': {
+              // Upstream run_agent.py fires reasoning.available with
+              // `assistant_message.content[:500]` as the preview — i.e.,
+              // the main answer, not real reasoning. Ignore the payload
+              // and only use this event as a "thinking ended" signal so
+              // the duration counter stops.
+              const msgs = getSessionMsgs(sid)
+              const last = msgs[msgs.length - 1]
+              if (last?.role === 'assistant' && last.isStreaming) {
+                // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
+                // 否则（上游未转发 delta，只发这一次 available）不显示时长。
+                noteReasoningEnd(last.id)
+              }
+              schedulePersist()
+              break
+            }
+
+            case 'message.delta': {
+              if (evt.delta) runProducedAssistantText = true
+              const msgs = getSessionMsgs(sid)
+              const last = msgs[msgs.length - 1]
+              if (last?.role === 'assistant' && last.isStreaming) {
+                const prev = last.content
+                const next = prev + (evt.delta || '')
+                noteThinkingDelta(last.id, prev, next)
+                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
+                if (last.reasoning) noteReasoningEnd(last.id)
+                last.content = next
+              } else {
+                const newId = uid()
+                const nextContent = evt.delta || ''
+                noteThinkingDelta(newId, '', nextContent)
+                addMessage(sid, {
+                  id: newId,
+                  role: 'assistant',
+                  content: nextContent,
                   timestamp: Date.now(),
                   isStreaming: true,
                 })
@@ -744,6 +957,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'tool.started': {
+              runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.isStreaming) {
@@ -763,6 +977,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'tool.completed': {
+              runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
               const toolMsgs = msgs.filter(
                 m => m.role === 'tool' && m.toolStatus === 'running',
@@ -781,9 +996,53 @@ export const useChatStore = defineStore('chat', () => {
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
+              if (evt.usage) {
+                const target = sessions.value.find(s => s.id === sid)
+                if (target) {
+                  target.inputTokens = evt.usage.input_tokens
+                  target.outputTokens = evt.usage.output_tokens
+                }
+              }
+              // Belt-and-suspenders: some providers may deliver the final
+              // assistant text only via run.completed.output (no message.delta
+              // stream). If we never produced assistant text but the gateway
+              // reports a non-empty output, fall back to rendering it as a
+              // single assistant message so the user actually sees the reply.
+              const finalOutput =
+                typeof evt.output === 'string' ? evt.output : ''
+              const finalOutputTrimmed = finalOutput.trim()
+              if (!runProducedAssistantText && finalOutputTrimmed !== '') {
+                addMessage(sid, {
+                  id: uid(),
+                  role: 'assistant',
+                  content: finalOutput,
+                  timestamp: Date.now(),
+                })
+                runProducedAssistantText = true
+              }
+              // Workaround for upstream hermes-agent bug: when the agent
+              // layer silently swallows an error (e.g. invalid API key,
+              // unsupported model), the gateway still emits run.completed
+              // with an empty output. Without surfacing it here the chat UI
+              // looks frozen / "succeeded with no reply". Detect by the
+              // combination of: no assistant text AND no tool activity AND
+              // empty final output. Usage being zero is a *supporting*
+              // signal but not required, since some providers/local models
+              // legitimately omit usage.
+              const swallowedError =
+                !runProducedAssistantText &&
+                !runHadToolActivity &&
+                finalOutputTrimmed === ''
+              if (swallowedError) {
+                addMessage(sid, {
+                  id: uid(),
+                  role: 'system',
+                  content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
+                  timestamp: Date.now(),
+                })
+              }
               cleanup()
               updateSessionTitle(sid)
-              // IMPORTANT ordering: persist the final cache BEFORE clearing
               // the in-flight marker. If the browser is reloading right now
               // and kills us between the two localStorage writes, we want
               // the next page load to still see in-flight === true (so
@@ -909,23 +1168,92 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  // Transient observation of <think> boundaries during active streaming.
+  // Not persisted; cleared on session switch. See spec §5.3.
+  const thinkingObservation = new Map<string, { startedAt?: number; endedAt?: number }>()
+
+  function getThinkingObservation(messageId: string) {
+    return thinkingObservation.get(messageId)
+  }
+
+  function noteThinkingDelta(messageId: string, prevContent: string, nextContent: string) {
+    const { startedAtBoundary, endedAtBoundary } = detectThinkingBoundary(prevContent, nextContent)
+    if (!startedAtBoundary && !endedAtBoundary) return
+    const existing = thinkingObservation.get(messageId) || {}
+    if (startedAtBoundary && existing.startedAt === undefined) {
+      existing.startedAt = Date.now()
+    }
+    if (endedAtBoundary && existing.endedAt === undefined) {
+      existing.endedAt = Date.now()
+    }
+    thinkingObservation.set(messageId, existing)
+  }
+
+  /** 第一次见到某条消息的 reasoning 文本时，标记 startedAt。 */
+  function noteReasoningStart(messageId: string) {
+    const existing = thinkingObservation.get(messageId) || {}
+    if (existing.startedAt === undefined) {
+      existing.startedAt = Date.now()
+      thinkingObservation.set(messageId, existing)
+    }
+  }
+
+  /** 内容首次到达（视为推理结束）或显式收到 reasoning.available 时，标记 endedAt。 */
+  function noteReasoningEnd(messageId: string) {
+    const existing = thinkingObservation.get(messageId)
+    if (!existing || existing.startedAt === undefined) return
+    if (existing.endedAt === undefined) {
+      existing.endedAt = Date.now()
+      thinkingObservation.set(messageId, existing)
+    }
+  }
+
+  function clearProviderFromSessions(provider: string) {
+    if (!provider) return
+    const target = provider.toLowerCase()
+    let dirty = false
+    for (const s of sessions.value) {
+      if ((s.provider || '').toLowerCase() === target) {
+        s.model = undefined
+        s.provider = ''
+        dirty = true
+      }
+    }
+    if (dirty) persistSessionsList()
+  }
+
+  function clearThinkingObservationFor(_sessionId: string) {
+    // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
+    // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
+    thinkingObservation.clear()
+  }
+
   return {
     sessions,
     activeSessionId,
     activeSession,
+    focusMessageId,
     messages,
     isStreaming,
     isRunActive,
     isSessionLive,
     isLoadingSessions,
+    sessionsLoaded,
     isLoadingMessages,
+
     newChat,
     switchSession,
     switchSessionModel,
+    clearProviderFromSessions,
     deleteSession,
     sendMessage,
     stopStreaming,
     loadSessions,
     refreshActiveSession,
+    getThinkingObservation,
+    noteThinkingDelta,
+    noteReasoningStart,
+    noteReasoningEnd,
+    clearThinkingObservationFor,
   }
 })

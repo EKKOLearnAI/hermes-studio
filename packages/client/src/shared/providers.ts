@@ -121,6 +121,26 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'Alibaba Cloud (Coding Plan)',
+    value: 'alibaba-coding-plan',
+    // NOTE: This is the international (intl) DashScope endpoint, matching upstream
+    // hermes-agent (auth.py:255). Mainland China DashScope accounts (sk-sp-* keys
+    // issued by dashscope.aliyun.com) must override via ALIBABA_CODING_PLAN_BASE_URL=
+    // https://coding.dashscope.aliyuncs.com/v1 (no -intl), since the -intl endpoint
+    // returns HTTP 401 for those keys.
+    base_url: 'https://coding-intl.dashscope.aliyuncs.com/v1',
+    models: [
+      'qwen3.5-plus',
+      'qwen3-max-2026-01-23',
+      'qwen3-coder-next',
+      'qwen3-coder-plus',
+      'glm-5',
+      'glm-4.7',
+      'kimi-k2.5',
+      'MiniMax-M2.5',
+    ],
+  },
+  {
     label: 'Hugging Face',
     value: 'huggingface',
     base_url: 'https://router.huggingface.co/v1',
@@ -225,7 +245,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: 'OpenAI Codex',
     value: 'openai-codex',
     base_url: 'https://chatgpt.com/backend-api/codex',
-    models: ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'],
+    models: ['gpt-5.5', 'gpt-5.4-mini', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini'],
   },
   {
     label: 'Arcee AI',
@@ -238,6 +258,30 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'openrouter',
     base_url: 'https://openrouter.ai/api/v1',
     models: [],
+  },
+  {
+    label: 'GitHub Copilot',
+    value: 'copilot',
+    base_url: 'https://api.githubcopilot.com',
+    models: [
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5-mini',
+      'gpt-5.3-codex',
+      'gpt-5.2-codex',
+      'gpt-4.1',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'claude-sonnet-4.6',
+      'claude-sonnet-4',
+      'claude-sonnet-4.5',
+      'claude-haiku-4.5',
+      'gemini-3.1-pro-preview',
+      'gemini-3-pro-preview',
+      'gemini-3-flash-preview',
+      'gemini-2.5-pro',
+      'grok-code-fast-1',
+    ],
   },
 ]
 

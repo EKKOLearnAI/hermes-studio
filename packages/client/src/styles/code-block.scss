@@ -1,0 +1,170 @@
+@use 'variables' as *;
+
+// Shared code-block styles used by markdown rendering and tool payload details.
+// Keep these global so v-html output in both MarkdownRenderer.vue and MessageItem.vue
+// stays styled even though the HTML is not compiled as Vue template content.
+
+.hljs-code-block {
+  margin: 8px 0;
+  border-radius: $radius-sm;
+  overflow: hidden;
+  background: $code-bg;
+  border: 1px solid $border-color;
+
+  .code-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid $border-color;
+
+    .code-lang {
+      font-size: 11px;
+      color: $text-muted;
+      text-transform: uppercase;
+    }
+
+    .copy-btn {
+      font-size: 11px;
+      color: $text-muted;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 3px;
+      transition: all $transition-fast;
+
+      &:hover {
+        color: $text-primary;
+        background: rgba(0, 0, 0, 0.05);
+      }
+    }
+  }
+
+  code.hljs {
+    display: block;
+    padding: 12px;
+    font-family: $font-code;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+  }
+}
+
+// highlight.js theme override — higher-contrast, still calm
+.hljs-code-block {
+  .hljs {
+    color: #1f2937;
+    background: none;
+  }
+
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-meta .hljs-keyword {
+    color: #7c3aed;
+    font-weight: 600;
+  }
+
+  .hljs-string,
+  .hljs-attr,
+  .hljs-regexp,
+  .hljs-template-variable {
+    color: #0f766e;
+  }
+
+  .hljs-number,
+  .hljs-literal,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: #b45309;
+  }
+
+  .hljs-comment,
+  .hljs-quote {
+    color: #6b7280;
+    font-style: italic;
+  }
+
+  .hljs-built_in,
+  .hljs-title.class_,
+  .hljs-title.function_ {
+    color: #2563eb;
+  }
+
+  .hljs-type,
+  .hljs-variable,
+  .hljs-property,
+  .hljs-params {
+    color: #b91c1c;
+  }
+
+  .hljs-tag,
+  .hljs-name,
+  .hljs-section,
+  .hljs-title {
+    color: #1f2937;
+  }
+
+  .hljs-meta {
+    color: #6b7280;
+  }
+}
+
+// Dark mode highlight.js — clearer separation without neon
+.dark .hljs-code-block {
+  .hljs {
+    color: #e5e7eb;
+  }
+
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-meta .hljs-keyword {
+    color: #c084fc;
+    font-weight: 600;
+  }
+
+  .hljs-string,
+  .hljs-attr,
+  .hljs-regexp,
+  .hljs-template-variable {
+    color: #5eead4;
+  }
+
+  .hljs-number,
+  .hljs-literal,
+  .hljs-symbol,
+  .hljs-bullet {
+    color: #fbbf24;
+  }
+
+  .hljs-comment,
+  .hljs-quote {
+    color: #94a3b8;
+    font-style: italic;
+  }
+
+  .hljs-built_in,
+  .hljs-title.class_,
+  .hljs-title.function_ {
+    color: #93c5fd;
+  }
+
+  .hljs-type,
+  .hljs-variable,
+  .hljs-property,
+  .hljs-params {
+    color: #fca5a5;
+  }
+
+  .hljs-tag,
+  .hljs-name,
+  .hljs-section,
+  .hljs-title {
+    color: #f3f4f6;
+  }
+
+  .hljs-meta {
+    color: #94a3b8;
+  }
+}

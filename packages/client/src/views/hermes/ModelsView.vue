@@ -6,13 +6,17 @@ import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
+import { checkCopilotToken } from '@/api/hermes/copilot-auth'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
 const appStore = useAppStore()
 const showModal = ref(false)
 
-onMounted(() => {
+onMounted(async () => {
+  // 先 invalidate 后端 copilot 缓存（gh logout / VS Code 退出后下一次 list 立刻反映），
+  // 再拉 providers。check-token 失败不阻断。
+  try { await checkCopilotToken() } catch { /* ignore */ }
   modelsStore.fetchProviders()
 })
 
