@@ -4,7 +4,7 @@ import { promisify } from 'util'
 import { readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { config } from '../../config'
-import { getGatewayManager } from './gateways'
+import { getGatewayManagerInstance as getGatewayManager } from '../../services/gateway-bootstrap'
 
 const execFileAsync = promisify(execFile)
 

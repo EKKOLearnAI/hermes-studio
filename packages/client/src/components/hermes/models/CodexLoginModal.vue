@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue'
-import { NModal, NButton, useMessage } from 'naive-ui'
+import { NModal, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { startCodexLogin, pollCodexLogin } from '@/api/hermes/codex-auth'
 import { copyToClipboard } from '@/utils/clipboard'
+
+const props = defineProps<{
+  preferredModel?: string
+}>()
 
 const { t } = useI18n()
 const emit = defineEmits<{ close: []; success: [] }>()
@@ -13,6 +17,7 @@ const showModal = ref(true)
 const status = ref<'idle' | 'loading' | 'waiting' | 'approved' | 'expired' | 'error'>('idle')
 const userCode = ref('')
 const verificationUrl = ref('')
+const openUrl = ref('')
 const sessionId = ref('')
 const errorMessage = ref('')
 let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -22,16 +27,16 @@ async function startLogin() {
   errorMessage.value = ''
 
   try {
-    const data = await startCodexLogin()
+    const data = await startCodexLogin(props.preferredModel)
     userCode.value = data.user_code
     verificationUrl.value = data.verification_url
+    openUrl.value = data.open_url || data.verification_url
     sessionId.value = data.session_id
     status.value = 'waiting'
     startPolling()
   } catch (err: any) {
     status.value = 'error'
     const msg = err.message || ''
-    // Try to extract friendly error from response
     try {
       const match = msg.match(/\{[\s\S]*\}$/)
       if (match) {
@@ -93,13 +98,14 @@ async function copyCode() {
 }
 
 function openLink() {
-  window.open(verificationUrl.value, '_blank')
+  window.open(openUrl.value || verificationUrl.value, '_blank')
 }
 
 function retry() {
   status.value = 'idle'
   userCode.value = ''
   verificationUrl.value = ''
+  openUrl.value = ''
   sessionId.value = ''
   errorMessage.value = ''
   startLogin()
@@ -109,7 +115,6 @@ onUnmounted(() => {
   stopPolling()
 })
 
-// Auto-start when modal opens
 startLogin()
 </script>
 
@@ -123,12 +128,10 @@ startLogin()
     @after-leave="emit('close')"
   >
     <div class="codex-login">
-      <!-- Idle / Loading -->
       <div v-if="status === 'idle' || status === 'loading'" class="codex-login__state">
         <NSpin size="small" />
       </div>
 
-      <!-- Waiting for authorization -->
       <div v-else-if="status === 'waiting'" class="codex-login__state">
         <p class="codex-login__hint">{{ t('models.codexWaiting') }}</p>
         <div class="codex-login__code" @click="copyCode">
@@ -143,19 +146,16 @@ startLogin()
         </NButton>
       </div>
 
-      <!-- Approved -->
       <div v-else-if="status === 'approved'" class="codex-login__state codex-login__state--success">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         <p>{{ t('models.codexApproved') }}</p>
       </div>
 
-      <!-- Expired -->
       <div v-else-if="status === 'expired'" class="codex-login__state">
         <p class="codex-login__error">{{ t('models.codexExpired') }}</p>
         <NButton size="small" @click="retry">{{ t('common.retry') }}</NButton>
       </div>
 
-      <!-- Error -->
       <div v-else-if="status === 'error'" class="codex-login__state">
         <p class="codex-login__error">{{ errorMessage }}</p>
         <NButton size="small" @click="retry">{{ t('common.retry') }}</NButton>

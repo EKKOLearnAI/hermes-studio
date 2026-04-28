@@ -1,24 +1,44 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { NInput, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { computed, ref, onMounted } from 'vue'
+import { NInput, NButton, NSpin, NEmpty, NSelect, useDialog, useMessage } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { updateProvider } from '@/api/hermes/system'
+import {
+  deleteCodexAccount,
+  getCodexAuthStatus,
+  switchCodexAccount,
+  type CodexStatusResult,
+} from '@/api/hermes/codex-auth'
+import CodexLoginModal from '@/components/hermes/models/CodexLoginModal.vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const savingKey = ref<string | null>(null)
 const editKeys = ref<Record<string, string>>({})
 
-onMounted(() => {
-  if (modelsStore.providers.length === 0) {
-    modelsStore.fetchProviders()
-  }
-})
+const showCodexLogin = ref(false)
+const codexStatusLoading = ref(false)
+const codexActionLoading = ref(false)
+const codexStatus = ref<CodexStatusResult>({ authenticated: false, accounts: [] })
+const selectedCodexAccountId = ref<string | null>(null)
 
 const isCustom = (provider: string) => provider.startsWith('custom:')
+const isCodex = (provider: string) => provider === 'openai-codex'
+
+const codexProvider = computed(() =>
+  modelsStore.providers.find(item => item.provider === 'openai-codex'),
+)
+
+const codexAccountOptions = computed(() =>
+  (codexStatus.value.accounts || []).map(item => ({
+    label: item.email ? `${item.label} (${item.email})` : item.label,
+    value: item.id,
+  })),
+)
 
 function getEditKey(provider: string): string {
   if (!(provider in editKeys.value)) {
@@ -27,6 +47,26 @@ function getEditKey(provider: string): string {
   }
   return editKeys.value[provider]
 }
+
+async function refreshCodexStatus() {
+  codexStatusLoading.value = true
+  try {
+    const result = await getCodexAuthStatus()
+    codexStatus.value = result
+    selectedCodexAccountId.value = result.active_account_id || result.accounts?.[0]?.id || null
+  } catch (e: any) {
+    message.error(e.message || t('models.codexStatusLoadFailed'))
+  } finally {
+    codexStatusLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  if (modelsStore.providers.length === 0) {
+    await modelsStore.fetchProviders()
+  }
+  await refreshCodexStatus()
+})
 
 async function handleSaveApiKey(providerKey: string) {
   const key = getEditKey(providerKey)
@@ -59,11 +99,64 @@ async function handleSaveCustom(providerKey: string) {
     savingKey.value = null
   }
 }
+
+async function handleCodexSwitch() {
+  const credentialId = selectedCodexAccountId.value
+  if (!credentialId) {
+    message.warning(t('models.codexSelectAccount'))
+    return
+  }
+
+  codexActionLoading.value = true
+  try {
+    await switchCodexAccount(credentialId, modelsStore.defaultModel || undefined)
+    await Promise.all([refreshCodexStatus(), modelsStore.fetchProviders()])
+    message.success(t('models.codexSwitchSuccess'))
+  } catch (e: any) {
+    message.error(e.message || t('models.codexSwitchFailed'))
+  } finally {
+    codexActionLoading.value = false
+  }
+}
+
+function confirmDeleteCodexAccount() {
+  const credentialId = selectedCodexAccountId.value
+  if (!credentialId) {
+    message.warning(t('models.codexSelectAccount'))
+    return
+  }
+
+  const account = codexStatus.value.accounts.find(item => item.id === credentialId)
+  dialog.warning({
+    title: t('models.codexDeleteAccount'),
+    content: t('models.codexDeleteConfirm', { name: account?.label || credentialId }),
+    positiveText: t('common.delete'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => {
+      codexActionLoading.value = true
+      try {
+        await deleteCodexAccount(credentialId)
+        await Promise.all([refreshCodexStatus(), modelsStore.fetchProviders()])
+        message.success(t('models.codexDeleteSuccess'))
+      } catch (e: any) {
+        message.error(e.message || t('models.codexDeleteFailed'))
+      } finally {
+        codexActionLoading.value = false
+      }
+    },
+  })
+}
+
+async function handleCodexLoginSuccess() {
+  showCodexLogin.value = false
+  await Promise.all([refreshCodexStatus(), modelsStore.fetchProviders()])
+  message.success(t('models.codexApproved'))
+}
 </script>
 
 <template>
   <section class="settings-section">
-    <NSpin :show="modelsStore.loading">
+    <NSpin :show="modelsStore.loading || codexStatusLoading">
       <div v-if="modelsStore.providers.length === 0" class="empty-hint">
         <NEmpty :description="t('settings.models.noProviders')" />
       </div>
@@ -76,8 +169,47 @@ async function handleSaveCustom(providerKey: string) {
           </span>
         </div>
 
-        <!-- Built-in provider: only API key -->
-        <div v-if="!isCustom(g.provider)" class="provider-fields">
+        <div v-if="isCodex(g.provider)" class="provider-fields codex-panel">
+          <p class="codex-status-line">
+            {{ codexStatus.authenticated ? t('models.codexLoggedIn') : t('models.codexNotLoggedIn') }}
+          </p>
+
+          <div class="field-row codex-actions-row">
+            <NButton type="primary" size="small" @click="showCodexLogin = true">
+              {{ codexStatus.accounts.length > 0 ? t('models.codexAddAccount') : t('models.codexLogin') }}
+            </NButton>
+          </div>
+
+          <template v-if="codexStatus.accounts.length > 0">
+            <div class="field-row">
+              <NSelect
+                v-model:value="selectedCodexAccountId"
+                :options="codexAccountOptions"
+                :placeholder="t('models.codexSelectAccount')"
+              />
+            </div>
+            <div class="field-row codex-actions-row">
+              <NButton
+                size="small"
+                :loading="codexActionLoading"
+                @click="handleCodexSwitch"
+              >
+                {{ t('models.codexSwitchAccount') }}
+              </NButton>
+              <NButton
+                size="small"
+                type="error"
+                ghost
+                :loading="codexActionLoading"
+                @click="confirmDeleteCodexAccount"
+              >
+                {{ t('models.codexDeleteAccount') }}
+              </NButton>
+            </div>
+          </template>
+        </div>
+
+        <div v-else-if="!isCustom(g.provider)" class="provider-fields">
           <div class="field-row">
             <NInput
               :value="getEditKey(g.provider)"
@@ -98,7 +230,6 @@ async function handleSaveCustom(providerKey: string) {
           </div>
         </div>
 
-        <!-- Custom provider: API key -->
         <div v-else class="provider-fields">
           <div class="field-row">
             <NInput
@@ -120,7 +251,27 @@ async function handleSaveCustom(providerKey: string) {
           </div>
         </div>
       </div>
+
+      <div v-if="!codexProvider" class="provider-section codex-provider-fallback">
+        <div class="provider-header">
+          <h4 class="provider-name">OpenAI Codex</h4>
+          <span class="type-badge builtin">{{ t('models.builtIn') }}</span>
+        </div>
+        <div class="provider-fields codex-panel">
+          <p class="codex-status-line">{{ t('models.codexNotEnabledHint') }}</p>
+          <NButton type="primary" size="small" @click="showCodexLogin = true">
+            {{ t('models.codexLogin') }}
+          </NButton>
+        </div>
+      </div>
     </NSpin>
+
+    <CodexLoginModal
+      v-if="showCodexLogin"
+      :preferred-model="modelsStore.defaultModel || undefined"
+      @close="showCodexLogin = false"
+      @success="handleCodexLoginSuccess"
+    />
   </section>
 </template>
 
@@ -185,8 +336,25 @@ async function handleSaveCustom(providerKey: string) {
   align-items: center;
   gap: 10px;
 
-  .n-input {
+  .n-input,
+  .n-select {
     flex: 1;
   }
+}
+
+.codex-panel {
+  .codex-status-line {
+    margin: 0;
+    font-size: 12px;
+    color: $text-muted;
+  }
+}
+
+.codex-actions-row {
+  justify-content: flex-start;
+}
+
+.codex-provider-fallback {
+  border-style: dashed;
 }
 </style>

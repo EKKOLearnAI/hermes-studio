@@ -174,3 +174,162 @@ export async function status(ctx: any) {
     ctx.body = { authenticated: true, last_refresh: codexProvider.last_refresh }
   } catch { ctx.body = { authenticated: false } }
 }
+
+// --- Account Management ---
+
+interface CodexCredential {
+  id: string; label: string; base_url: string; access_token: string
+  refresh_token?: string; account_id?: string; email?: string
+  last_status?: string | null; last_refresh?: string
+}
+
+function getCredentialPool(auth: AuthJson): CodexCredential[] {
+  return (auth.credential_pool?.['openai-codex'] || []) as CodexCredential[]
+}
+
+function resolveActiveCredentialId(auth: AuthJson): string | null {
+  const pool = getCredentialPool(auth)
+  const tokens = auth.providers?.['openai-codex']?.tokens
+  if (!tokens?.access_token) return null
+  const match = pool.find(c => c.access_token === tokens.access_token)
+  return match?.id || pool[0]?.id || null
+}
+
+function clearCodexCliTokens() {
+  try {
+    const codexHome = process.env.CODEX_HOME || CODEX_HOME
+    const codexAuthPath = join(codexHome, 'auth.json')
+    if (existsSync(codexAuthPath)) {
+      writeFileSync(codexAuthPath, '{}', { mode: 0o600 })
+    }
+  } catch { }
+}
+
+function activateCredential(auth: AuthJson, credential: CodexCredential) {
+  if (!auth.providers) auth.providers = {}
+  auth.providers['openai-codex'] = {
+    tokens: { access_token: credential.access_token, refresh_token: credential.refresh_token || '' },
+    last_refresh: new Date().toISOString(),
+    auth_mode: 'chatgpt',
+  }
+  saveCodexCliTokens(credential.access_token, credential.refresh_token || '')
+}
+
+export async function statusEnhanced(ctx: any) {
+  try {
+    const authPath = getActiveAuthPath()
+    const auth = loadAuthJson(authPath)
+    const pool = getCredentialPool(auth)
+    const activeId = resolveActiveCredentialId(auth)
+    const tokens = auth.providers?.['openai-codex']?.tokens
+
+    if (!tokens?.access_token || pool.length === 0) {
+      ctx.body = { authenticated: false, accounts: [], active_account_id: null }
+      return
+    }
+
+    const exp = decodeJwtExp(tokens.access_token)
+    if (exp && exp <= Date.now() / 1000 + 120) {
+      if (tokens.refresh_token) {
+        try {
+          const refreshRes = await fetch(CODEX_OAUTH_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'refresh_token',
+              refresh_token: tokens.refresh_token,
+              client_id: CODEX_CLIENT_ID,
+            }).toString(),
+            signal: AbortSignal.timeout(15000),
+          })
+          if (refreshRes.ok) {
+            const newTokens = await refreshRes.json() as { access_token: string; refresh_token?: string }
+            const codexProvider = auth.providers!['openai-codex']!
+            codexProvider.tokens.access_token = newTokens.access_token
+            if (newTokens.refresh_token) codexProvider.tokens.refresh_token = newTokens.refresh_token
+            codexProvider.last_refresh = new Date().toISOString()
+            // Update active credential in pool
+            const active = pool.find(c => c.id === activeId)
+            if (active) {
+              active.access_token = newTokens.access_token
+              if (newTokens.refresh_token) active.refresh_token = newTokens.refresh_token
+              active.last_refresh = codexProvider.last_refresh
+            }
+            saveAuthJson(authPath, auth)
+            saveCodexCliTokens(newTokens.access_token, newTokens.refresh_token || tokens.refresh_token)
+          }
+        } catch { }
+      }
+    }
+
+    const accounts = pool.map(c => ({
+      id: c.id,
+      label: c.label || 'Codex Account',
+      email: c.email || null,
+      account_id: c.account_id || null,
+      last_refresh: c.last_refresh || null,
+      active: c.id === activeId,
+    }))
+
+    ctx.body = {
+      authenticated: true,
+      last_refresh: auth.providers?.['openai-codex']?.last_refresh,
+      active_account_id: activeId,
+      accounts,
+    }
+  } catch {
+    ctx.body = { authenticated: false, accounts: [], active_account_id: null }
+  }
+}
+
+export async function switchAccount(ctx: any) {
+  try {
+    const { credential_id } = ctx.request.body as { credential_id: string }
+    if (!credential_id) { ctx.status = 400; ctx.body = { error: 'credential_id required' }; return }
+
+    const authPath = getActiveAuthPath()
+    const auth = loadAuthJson(authPath)
+    const pool = getCredentialPool(auth)
+    const target = pool.find(c => c.id === credential_id)
+
+    if (!target) { ctx.status = 404; ctx.body = { error: 'Account not found' }; return }
+
+    activateCredential(auth, target)
+    saveAuthJson(authPath, auth)
+    logger.info('Switched to Codex account: %s', target.label)
+    ctx.body = { success: true, active_account_id: target.id }
+  } catch (err: any) {
+    ctx.status = 500; ctx.body = { error: err.message }
+  }
+}
+
+export async function deleteAccount(ctx: any) {
+  try {
+    const { credentialId } = ctx.params
+    const authPath = getActiveAuthPath()
+    const auth = loadAuthJson(authPath)
+    const pool = getCredentialPool(auth)
+    const idx = pool.findIndex(c => c.id === credentialId)
+
+    if (idx === -1) { ctx.status = 404; ctx.body = { error: 'Account not found' }; return }
+
+    const wasActive = resolveActiveCredentialId(auth) === credentialId
+    pool.splice(idx, 1)
+
+    if (pool.length === 0) {
+      delete auth.providers?.['openai-codex']
+      delete auth.credential_pool?.['openai-codex']
+      clearCodexCliTokens()
+    } else {
+      if (!auth.credential_pool) auth.credential_pool = {}
+      auth.credential_pool['openai-codex'] = pool
+      if (wasActive) activateCredential(auth, pool[0])
+    }
+
+    saveAuthJson(authPath, auth)
+    logger.info('Deleted Codex account: %s', credentialId)
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500; ctx.body = { error: err.message }
+  }
+}

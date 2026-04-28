@@ -4,6 +4,7 @@ import { NButton, NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
+import CodexAccountsPanel from '@/components/hermes/models/CodexAccountsPanel.vue'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
@@ -49,6 +50,7 @@ async function handleSaved() {
 
     <div class="models-content">
       <NSpin :show="modelsStore.loading && modelsStore.providers.length === 0">
+        <CodexAccountsPanel @refreshed="handleSaved" />
         <ProvidersPanel />
       </NSpin>
     </div>
