@@ -165,6 +165,17 @@ export default {
     copyFailed: '复制失败',
   },
 
+  // 代理情绪
+  moods: {
+    thinking: '思考中',
+    success: '完成',
+    failed: '失败',
+    happy: '开心',
+    curious: '好奇',
+    excited: '兴奋',
+    sad: '难过',
+  },
+
   // 定时任务
   jobs: {
     title: '定时任务',

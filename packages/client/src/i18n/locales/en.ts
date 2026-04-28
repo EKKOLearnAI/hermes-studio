@@ -165,6 +165,17 @@ export default {
     copyFailed: 'Copy failed',
   },
 
+  // Agent moods
+  moods: {
+    thinking: 'Thinking',
+    success: 'Done',
+    failed: 'Failed',
+    happy: 'Happy',
+    curious: 'Curious',
+    excited: 'Excited',
+    sad: 'Sad',
+  },
+
   // Jobs
   jobs: {
     title: 'Scheduled Jobs',

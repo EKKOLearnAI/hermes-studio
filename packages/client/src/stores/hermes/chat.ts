@@ -333,6 +333,10 @@ function scrubBuggyReasoningInCache(msgs: Message[] | null | undefined): Message
   })
 }
 
+export type AgentMood = 'idle' | 'thinking' | 'success' | 'failed' | 'happy' | 'curious' | 'excited' | 'sad'
+
+const POSITIVE_WORDS = /\b(success|done|great|complete|perfect|excellent|awesome|搞定|完成|成功|太好了|完美)\b/i
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
@@ -342,6 +346,24 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingSessions = ref(false)
   const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
+
+  const agentMood = ref<AgentMood>('idle')
+  const completedToolCount = ref(0)
+  let moodResetTimer: ReturnType<typeof setTimeout> | null = null
+
+  function setMood(mood: AgentMood, autoReset = false) {
+    if (moodResetTimer) {
+      clearTimeout(moodResetTimer)
+      moodResetTimer = null
+    }
+    agentMood.value = mood
+    if (autoReset && mood !== 'idle') {
+      moodResetTimer = setTimeout(() => {
+        agentMood.value = 'idle'
+        moodResetTimer = null
+      }, 3000)
+    }
+  }
   // tmux-like resume state: true when we recovered an in-flight run from
   // localStorage after a refresh and are polling fetchSession for progress.
   // UI shows the thinking indicator while this is set.
@@ -884,6 +906,8 @@ export const useChatStore = defineStore('chat', () => {
         (evt: RunEvent) => {
           switch (evt.event) {
             case 'run.started':
+              completedToolCount.value = 0
+              setMood('thinking')
               break
 
             case 'reasoning.delta':
@@ -958,6 +982,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.started': {
               runHadToolActivity = true
+              if (agentMood.value === 'thinking') setMood('curious')
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.isStreaming) {
@@ -978,6 +1003,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.completed': {
               runHadToolActivity = true
+              completedToolCount.value += 1
               const msgs = getSessionMsgs(sid)
               const toolMsgs = msgs.filter(
                 m => m.role === 'tool' && m.toolStatus === 'running',
@@ -1041,6 +1067,20 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                 })
               }
+
+              // Determine final mood based on outcome
+              if (swallowedError) {
+                setMood('failed', true)
+              } else if (completedToolCount.value >= 3) {
+                setMood('excited', true)
+              } else {
+                const lastAssistant = [...getSessionMsgs(sid)].reverse().find(m => m.role === 'assistant')
+                if (lastAssistant?.content && POSITIVE_WORDS.test(lastAssistant.content)) {
+                  setMood('happy', true)
+                } else {
+                  setMood('success', true)
+                }
+              }
               cleanup()
               updateSessionTitle(sid)
               // the in-flight marker. If the browser is reloading right now
@@ -1055,6 +1095,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              setMood('failed', true)
               const msgs = getSessionMsgs(sid)
               const lastErr = msgs[msgs.length - 1]
               if (lastErr?.isStreaming) {
@@ -1240,6 +1281,7 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions,
     sessionsLoaded,
     isLoadingMessages,
+    agentMood,
 
     newChat,
     switchSession,
