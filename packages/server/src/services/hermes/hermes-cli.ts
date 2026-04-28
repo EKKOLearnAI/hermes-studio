@@ -5,7 +5,7 @@ import { logger } from '../logger'
 
 const execFileAsync = promisify(execFile)
 
-const execOpts = { windowsHide: true }
+const execOpts = { windowsHide: true, env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'HERMES_HOME')) }
 const isDocker = existsSync('/.dockerenv')
 
 function resolveHermesBin(): string {
