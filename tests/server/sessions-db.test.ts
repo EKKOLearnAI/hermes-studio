@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const allMock = vi.fn()
+const indexAllMock = vi.fn()
 const titleAllMock = vi.fn()
 const contentAllMock = vi.fn()
 const likeAllMock = vi.fn()
@@ -8,6 +9,8 @@ const prepareMock = vi.fn((sql: string) => {
   if (sql.includes('messages_fts MATCH')) return ({ all: contentAllMock })
   if (sql.includes('JOIN messages m') && sql.includes('LIKE')) return ({ all: likeAllMock })
   if (sql.includes('base.title') && sql.includes('LIKE')) return ({ all: titleAllMock })
+  // loadAllSessions: full table scan — contains parent_session_id but NOT base/CTE/WHERE
+  if (sql.includes('parent_session_id AS parent_session_id') && !sql.includes('base') && !sql.includes('parent_session_id IS NULL')) return ({ all: indexAllMock })
   return ({ all: allMock })
 })
 const closeMock = vi.fn()
@@ -26,6 +29,8 @@ describe('session DB summaries', () => {
   beforeEach(() => {
     vi.resetModules()
     allMock.mockReset()
+    indexAllMock.mockReset()
+    indexAllMock.mockReturnValue([])
     titleAllMock.mockReset()
     contentAllMock.mockReset()
     likeAllMock.mockReset()
@@ -67,8 +72,8 @@ describe('session DB summaries', () => {
     const rows = await mod.listSessionSummaries(undefined, 50)
 
     expect(databaseSyncMock).toHaveBeenCalledWith('/tmp/hermes-profile/state.db', { open: true, readOnly: true })
-    expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("AND s.source != 'tool'"))
-    expect(allMock).toHaveBeenCalledWith(50)
+    expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
+    expect(allMock).toHaveBeenCalledWith(200)
     expect(closeMock).toHaveBeenCalled()
     expect(rows).toEqual([
       {
@@ -127,8 +132,8 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.listSessionSummaries('telegram', 2)
 
-    expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining('AND s.source = ?'))
-    expect(allMock).toHaveBeenCalledWith('telegram', 2)
+    expect(prepareMock).toHaveBeenCalledWith(expect.stringContaining("s.source != 'tool'"))
+    expect(allMock).toHaveBeenCalledWith('telegram', 8)
     expect(rows[0].last_active).toBe(1710000100)
     expect(rows[0].source).toBe('telegram')
     expect(rows[0].title).toBe('preview text')
@@ -375,8 +380,8 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('node.js*', undefined, 10)
 
-    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 10)
-    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 40)
+    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 200)
+    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 200)
     expect(likeAllMock).not.toHaveBeenCalled()
     expect(rows).toHaveLength(2)
     expect(rows[0].id).toBe('node-wildcard-title-1')
@@ -444,8 +449,8 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('"node.js"*', undefined, 10)
 
-    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 10)
-    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 40)
+    expect(titleAllMock).toHaveBeenCalledWith('%node.js%', 200)
+    expect(contentAllMock).toHaveBeenCalledWith('"node.js"*', 200)
     expect(likeAllMock).not.toHaveBeenCalled()
     expect(rows).toHaveLength(2)
     expect(rows[0].id).toBe('node-quoted-title-1')
@@ -486,7 +491,7 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('naïve.js', undefined, 10)
 
-    expect(contentAllMock).toHaveBeenCalledWith('"naïve.js"', 40)
+    expect(contentAllMock).toHaveBeenCalledWith('"naïve.js"', 200)
     expect(likeAllMock).not.toHaveBeenCalled()
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe('unicode-dot-1')
@@ -526,7 +531,7 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('100%', undefined, 10)
 
-    expect(titleAllMock).toHaveBeenCalledWith('%100\\%%', 10)
+    expect(titleAllMock).toHaveBeenCalledWith('%100\\%%', 200)
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe('percent-1')
   })
@@ -567,7 +572,7 @@ describe('session DB summaries', () => {
     const rows = await mod.searchSessionSummaries('记忆断裂', undefined, 10)
 
     expect(contentAllMock).not.toHaveBeenCalled()
-    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 40)
+    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 200)
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe('cjk-literal-1')
   })
@@ -636,14 +641,14 @@ describe('session DB summaries', () => {
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
     const rows = await mod.searchSessionSummaries('记忆断裂', undefined, 10)
 
-    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 40)
+    expect(likeAllMock).toHaveBeenCalledWith('记忆断裂', '%记忆断裂%', 200)
     expect(rows).toHaveLength(2)
     expect(rows[0].id).toBe('cjk-1')
     expect(rows[1].id).toBe('cjk-title-1')
     expect(rows[0].snippet).toContain('记忆断裂')
   })
 
-  it('does not hide real database failures for safe FTS queries', async () => {
+  it('falls back to title results when FTS content query fails', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
       throw new Error('database malformed')
@@ -651,13 +656,12 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('docker', undefined, 10)).rejects.toThrow(
-      'Failed to search sessions: database malformed',
-    )
+    const rows = await mod.searchSessionSummaries('docker', undefined, 10)
+    expect(rows).toEqual([])
     expect(likeAllMock).not.toHaveBeenCalled()
   })
 
-  it('throws when messages_fts is missing for numeric queries', async () => {
+  it('falls back to title results for numeric queries when FTS fails', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
       throw new Error('no such table: messages_fts')
@@ -665,13 +669,12 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
-      'Failed to search sessions: no such table: messages_fts',
-    )
+    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+    expect(rows).toEqual([])
     expect(likeAllMock).not.toHaveBeenCalled()
   })
 
-  it('throws when messages_fts is missing for numeric queries with source filter', async () => {
+  it('falls back to title results for numeric queries with source filter when FTS fails', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
       throw new Error('no such table: messages_fts')
@@ -679,13 +682,11 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('123', 'telegram', 10)).rejects.toThrow(
-      'Failed to search sessions: no such table: messages_fts',
-    )
-    expect(likeAllMock).not.toHaveBeenCalled()
+    const rows = await mod.searchSessionSummaries('123', 'telegram', 10)
+    expect(rows).toEqual([])
   })
 
-  it('throws when messages_fts is missing for numeric queries even with title matches', async () => {
+  it('returns title matches for numeric queries even when content search fails', async () => {
     titleAllMock.mockReturnValue([
       {
         id: 'title-123',
@@ -720,13 +721,13 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
-      'Failed to search sessions: no such table: messages_fts',
-    )
-    expect(likeAllMock).not.toHaveBeenCalled()
+    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe('title-123')
+    expect(rows[0].title).toBe('Issue 123')
   })
 
-  it('does not fall back to LIKE when messages_fts is missing for non-numeric queries', async () => {
+  it('falls back to title results for non-numeric queries when FTS fails', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
       throw new Error('no such table: messages_fts')
@@ -734,13 +735,11 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('docker', undefined, 10)).rejects.toThrow(
-      'Failed to search sessions: no such table: messages_fts',
-    )
-    expect(likeAllMock).not.toHaveBeenCalled()
+    const rows = await mod.searchSessionSummaries('docker', undefined, 10)
+    expect(rows).toEqual([])
   })
 
-  it('does not swallow unrelated database failures for numeric queries', async () => {
+  it('falls back to title results for any query when FTS has unrelated database failure', async () => {
     titleAllMock.mockReturnValue([])
     contentAllMock.mockImplementation(() => {
       throw new Error('database malformed')
@@ -748,9 +747,8 @@ describe('session DB summaries', () => {
 
     const mod = await import('../../packages/server/src/db/hermes/sessions-db')
 
-    await expect(mod.searchSessionSummaries('123', undefined, 10)).rejects.toThrow(
-      'Failed to search sessions: database malformed',
-    )
+    const rows = await mod.searchSessionSummaries('123', undefined, 10)
+    expect(rows).toEqual([])
     expect(likeAllMock).not.toHaveBeenCalled()
   })
 })

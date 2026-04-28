@@ -519,7 +519,6 @@ export default defineComponent({ components: { CreateRoomForm } })
 .room-sidebar {
     width: 220px;
     flex-shrink: 0;
-    background-color: $bg-sidebar;
     border-right: 1px solid $border-color;
     display: flex;
     flex-direction: column;

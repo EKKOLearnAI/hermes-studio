@@ -1,24 +1,61 @@
+import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
 import { getGatewayManagerInstance } from '../services/gateway-bootstrap'
 import { config } from '../config'
 
 declare const __APP_VERSION__: string
+
+type PackageInfo = {
+  name: string
+  version: string
+}
+
+function readPackageInfo(): PackageInfo | null {
+  const candidatePaths = [
+    // ts-node dev: packages/server/src/controllers -> repo root
+    resolve(__dirname, '../../../../package.json'),
+    // bundled server: dist/server -> repo root/package root
+    resolve(__dirname, '../../package.json'),
+    // fallback for dev/test processes started at the repo root
+    resolve(process.cwd(), 'package.json'),
+  ]
+
+  for (const packagePath of candidatePaths) {
+    if (!existsSync(packagePath)) continue
+
+    try {
+      const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'))
+      if (pkg?.name && pkg?.version) {
+        return {
+          name: String(pkg.name),
+          version: String(pkg.version),
+        }
+      }
+    } catch {
+      // Try the next candidate path.
+    }
+  }
+
+  return null
+}
+
+const PACKAGE_INFO = readPackageInfo()
 const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
-  : (() => { try { const { readFileSync } = require('fs'); const { resolve } = require('path'); return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return '0.0.0' } })()
+  : PACKAGE_INFO?.version || ''
 
 let cachedLatestVersion = ''
 
 export async function checkLatestVersion(): Promise<void> {
   try {
-    const { readFileSync } = require('fs')
-    const pkg = JSON.parse(readFileSync(resolve(require('path').join(__dirname, '../../package.json')), 'utf-8'))
-    const name = pkg.name
-    const res = await fetch(`https://registry.npmjs.org/${name}/latest`, { signal: AbortSignal.timeout(10000) })
+    const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
+    const registryName = encodeURIComponent(packageName)
+    const res = await fetch(`https://registry.npmjs.org/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
     if (res.ok) {
       const data = await res.json() as { version: string }
       cachedLatestVersion = data.version
-      if (cachedLatestVersion !== LOCAL_VERSION) {
+      if (LOCAL_VERSION && cachedLatestVersion !== LOCAL_VERSION) {
         console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
       }
     }
@@ -47,9 +84,7 @@ export async function healthCheck(ctx: any) {
     gateway: gatewayOk ? 'running' : 'stopped',
     webui_version: LOCAL_VERSION,
     webui_latest: cachedLatestVersion,
-    webui_update_available: cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION,
+    webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
   }
 }
-
-function resolve(p: string) { return p }

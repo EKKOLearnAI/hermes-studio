@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage, useDialog } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
+import CopilotLoginModal from './CopilotLoginModal.vue'
+import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
 
 const { t } = useI18n()
 
@@ -15,12 +17,15 @@ const emit = defineEmits<{
 
 const modelsStore = useModelsStore()
 const message = useMessage()
+const dialog = useDialog()
 
 const showModal = ref(true)
 const loading = ref(false)
 const fetchingModels = ref(false)
 const showCodexLogin = ref(false)
 const showNousLogin = ref(false)
+const showCopilotLogin = ref(false)
+const copilotChecking = ref(false)
 
 const providerType = ref<'preset' | 'custom'>('preset')
 const selectedPreset = ref<string | null>(null)
@@ -36,6 +41,7 @@ const modelOptions = ref<Array<{ label: string; value: string }>>([])
 
 const CODEX_KEY = 'openai-codex'
 const NOUS_KEY = 'nous'
+const COPILOT_KEY = 'copilot'
 const ALIBABA_CODING_KEY = 'alibaba-coding-plan'
 const ALIBABA_CODING_REGIONS = {
   intl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
@@ -44,6 +50,7 @@ const ALIBABA_CODING_REGIONS = {
 
 const isCodex = computed(() => selectedPreset.value === CODEX_KEY)
 const isNous = computed(() => selectedPreset.value === NOUS_KEY)
+const isCopilot = computed(() => selectedPreset.value === COPILOT_KEY)
 const isAlibabaCoding = computed(() => selectedPreset.value === ALIBABA_CODING_KEY)
 const alibabaCodingRegion = ref<'intl' | 'cn'>('intl')
 
@@ -72,6 +79,10 @@ watch(selectedPreset, (val) => {
       if (group.models.length > 0) {
         formData.value.model = group.models[0]
       }
+    }
+    if (val === COPILOT_KEY) {
+      // 判断是否已能解析到 token：有 → 弹简单确认；无 → 走 in-app device flow
+      void triggerCopilotAdd()
     }
   }
 })
@@ -150,6 +161,12 @@ async function handleSave() {
     return
   }
 
+  // Copilot: 走 token-aware 的添加流程（已有 token → 确认窗；否则 device flow）
+  if (isCopilot.value) {
+    void triggerCopilotAdd()
+    return
+  }
+
   if (!formData.value.base_url.trim()) {
     message.warning(t('models.baseUrlRequired'))
     return
@@ -199,6 +216,68 @@ async function handleNousSuccess() {
   emit('saved')
 }
 
+async function handleCopilotSuccess() {
+  showCopilotLogin.value = false
+  message.success(t('models.providerAdded'))
+  emit('saved')
+}
+
+function copilotSourceLabel(source: CopilotTokenSource): string {
+  if (source === 'env') return t('models.copilotAddSourceEnv')
+  if (source === 'gh-cli') return t('models.copilotAddSourceGhCli')
+  if (source === 'apps-json') return t('models.copilotAddSourceAppsJson')
+  return ''
+}
+
+async function triggerCopilotAdd() {
+  if (copilotChecking.value) return
+  copilotChecking.value = true
+  try {
+    const status = await checkCopilotToken()
+    if (status.has_token) {
+      // 已能解析到 token：弹确认窗，用户点 [添加] → enable + saved
+      const sourceText = copilotSourceLabel(status.source)
+      dialog.success({
+        title: t('models.copilotAddDetectedTitle'),
+        content: sourceText
+          ? `${t('models.copilotAddDetected')}\n\n${sourceText}`
+          : t('models.copilotAddDetected'),
+        positiveText: t('common.add'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          try {
+            await enableCopilot()
+            message.success(t('models.providerAdded'))
+            emit('saved')
+          } catch (e: any) {
+            message.error(e?.message ?? String(e))
+          }
+        },
+        onNegativeClick: () => {
+          selectedPreset.value = null
+        },
+        onClose: () => {
+          selectedPreset.value = null
+        },
+      })
+    } else {
+      // 无 token：device flow
+      showCopilotLogin.value = true
+    }
+  } catch (e: any) {
+    message.error(e?.message ?? String(e))
+    selectedPreset.value = null
+  } finally {
+    copilotChecking.value = false
+  }
+}
+
+function handleCopilotClose() {
+  showCopilotLogin.value = false
+  // 用户取消 Copilot 引导时，清空选择避免卡在无 api_key 状态
+  selectedPreset.value = null
+}
+
 function handleClose() {
   showModal.value = false
   setTimeout(() => emit('close'), 200)
@@ -211,7 +290,7 @@ function handleClose() {
     preset="card"
     :title="t('models.addProvider')"
     :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    :mask-closable="!loading && !showCodexLogin && !showNousLogin"
+    :mask-closable="!loading && !showCodexLogin && !showNousLogin && !showCopilotLogin"
     @after-leave="emit('close')"
   >
     <NForm label-placement="top">
@@ -325,6 +404,12 @@ function handleClose() {
       v-if="showNousLogin"
       @close="showNousLogin = false"
       @success="handleNousSuccess"
+    />
+
+    <CopilotLoginModal
+      v-if="showCopilotLogin"
+      @close="handleCopilotClose"
+      @success="handleCopilotSuccess"
     />
   </NModal>
 </template>

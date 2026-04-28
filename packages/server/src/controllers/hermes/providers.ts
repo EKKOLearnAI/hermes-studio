@@ -143,6 +143,7 @@ export async function remove(ctx: any) {
       const envMapping = PROVIDER_ENV_MAP[poolKey]
       if (envMapping?.api_key_env) {
         await saveEnvValue(envMapping.api_key_env, '')
+        if (envMapping.base_url_env) { await saveEnvValue(envMapping.base_url_env, '') }
       } else if (!envMapping?.api_key_env) {
         try {
           const authPath = getActiveAuthPath()

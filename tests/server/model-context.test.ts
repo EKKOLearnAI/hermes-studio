@@ -1,87 +1,160 @@
-import { mkdirSync, writeFileSync } from 'fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-function makeHome() {
-  const root = join(tmpdir(), `wui-model-context-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-  const hermes = join(root, '.hermes')
-  mkdirSync(hermes, { recursive: true })
-  return { root, hermes }
+let homeDir = ''
+
+function hermesPath(...parts: string[]) {
+  return join(homeDir, '.hermes', ...parts)
 }
 
-function writeConfig(hermes: string, yaml: string) {
-  writeFileSync(join(hermes, 'config.yaml'), yaml)
+function writeConfig(content: string) {
+  mkdirSync(hermesPath(), { recursive: true })
+  writeFileSync(hermesPath('config.yaml'), content)
 }
 
-function writeModelsCache(hermes: string) {
-  writeFileSync(join(hermes, 'models_dev_cache.json'), JSON.stringify({
-    openai: {
-      models: {
-        'gpt-5.5': { limit: { context: 1_050_000 } },
-        'gpt-5.4': { limit: { context: 1_050_000 } },
-      },
-    },
-    google: {
-      models: {
-        'gemini-3.1-pro-preview': { limit: { context: 1_000_000 } },
-      },
-    },
-  }))
+function writeModelsCache(data: Record<string, unknown>) {
+  mkdirSync(hermesPath(), { recursive: true })
+  writeFileSync(hermesPath('models_dev_cache.json'), JSON.stringify(data))
 }
 
-async function importContextService(home: string) {
+async function loadModelContext() {
   vi.resetModules()
-  vi.stubEnv('HOME', home)
-  return await import('../../packages/server/src/services/hermes/model-context')
+  vi.doMock('os', async () => ({
+    ...(await vi.importActual<typeof import('os')>('os')),
+    homedir: () => homeDir,
+  }))
+  return import('../../packages/server/src/services/hermes/model-context')
 }
 
-describe('model context length resolution', () => {
+describe('getModelContextLength', () => {
   beforeEach(() => {
-    vi.unstubAllEnvs()
+    homeDir = mkdtempSync(join(tmpdir(), 'hwui-model-context-'))
   })
 
   afterEach(() => {
-    vi.unstubAllEnvs()
-    vi.resetModules()
+    vi.doUnmock('os')
+    if (homeDir) rmSync(homeDir, { recursive: true, force: true })
+    homeDir = ''
   })
 
-  it('does not borrow OpenAI context metadata for an openai-codex model with the same name', async () => {
-    const { root, hermes } = makeHome()
-    writeConfig(hermes, 'model:\n  provider: openai-codex\n  default: gpt-5.5\n')
-    writeModelsCache(hermes)
+  it('does not borrow a same-named model context from another provider when the configured provider is uncached', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n  provider: openai-codex\n`)
+    writeModelsCache({
+      openai: {
+        models: {
+          'gpt-5.5': { limit: { context: 1_050_000 } },
+        },
+      },
+    })
 
-    const { getModelContextLength } = await importContextService(root)
+    const { getModelContextLength } = await loadModelContext()
 
     expect(getModelContextLength()).toBe(200_000)
   })
 
-  it('still honors explicit model.context_length before provider-aware cache lookup', async () => {
-    const { root, hermes } = makeHome()
-    writeConfig(hermes, 'model:\n  provider: openai-codex\n  default: gpt-5.5\n  context_length: 272000\n')
-    writeModelsCache(hermes)
+  it('does not scan other providers when the configured provider exists without that model', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n  provider: openai-codex\n`)
+    writeModelsCache({
+      'openai-codex': {
+        models: {
+          'gpt-5.4': { limit: { context: 200_000 } },
+        },
+      },
+      openai: {
+        models: {
+          'gpt-5.5': { limit: { context: 1_050_000 } },
+        },
+      },
+    })
 
-    const { getModelContextLength } = await importContextService(root)
+    const { getModelContextLength } = await loadModelContext()
 
-    expect(getModelContextLength()).toBe(272_000)
+    expect(getModelContextLength()).toBe(200_000)
   })
 
-  it('preserves providerless legacy lookup by model name', async () => {
-    const { root, hermes } = makeHome()
-    writeConfig(hermes, 'model:\n  default: gpt-5.5\n')
-    writeModelsCache(hermes)
+  it('uses the configured provider cache entry when the provider matches', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n  provider: openai\n`)
+    writeModelsCache({
+      openai: {
+        models: {
+          'gpt-5.5': { limit: { context: 1_050_000 } },
+        },
+      },
+    })
 
-    const { getModelContextLength } = await importContextService(root)
+    const { getModelContextLength } = await loadModelContext()
 
     expect(getModelContextLength()).toBe(1_050_000)
   })
 
-  it('uses intentional cache provider aliases without conflating openai-codex with openai', async () => {
-    const { root, hermes } = makeHome()
-    writeConfig(hermes, 'model:\n  provider: gemini\n  default: gemini-3.1-pro-preview\n')
-    writeModelsCache(hermes)
+  it('keeps legacy model-name cache lookup when no provider is configured', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n`)
+    writeModelsCache({
+      openai: {
+        models: {
+          'gpt-5.5': { limit: { context: 1_050_000 } },
+        },
+      },
+    })
 
-    const { getModelContextLength } = await importContextService(root)
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength()).toBe(1_050_000)
+  })
+
+  it('keeps providerless legacy lookup on global exact matches before prefixed suffix matches', async () => {
+    writeConfig(`model:\n  default: gpt-5\n`)
+    writeModelsCache({
+      vercel: {
+        models: {
+          'openai/gpt-5': { limit: { context: 1_000_000 } },
+        },
+      },
+      openai: {
+        models: {
+          'gpt-5': { limit: { context: 400_000 } },
+        },
+      },
+    })
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength()).toBe(400_000)
+  })
+
+  it('maps WUI provider keys to model-cache provider keys before looking up limits', async () => {
+    writeConfig(`model:\n  default: gemini-3.1-pro-preview\n  provider: gemini\n`)
+    writeModelsCache({
+      google: {
+        models: {
+          'gemini-3.1-pro-preview': { limit: { context: 1_000_000 } },
+        },
+      },
+    })
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength()).toBe(1_000_000)
+  })
+
+  it('uses gateway provider aliases with prefixed model names inside the aliased provider only', async () => {
+    writeConfig(`model:\n  default: openai/gpt-5\n  provider: ai-gateway\n`)
+    writeModelsCache({
+      vercel: {
+        models: {
+          'openai/gpt-5': { limit: { context: 1_000_000 } },
+        },
+      },
+      openai: {
+        models: {
+          'gpt-5': { limit: { context: 400_000 } },
+        },
+      },
+    })
+
+    const { getModelContextLength } = await loadModelContext()
 
     expect(getModelContextLength()).toBe(1_000_000)
   })

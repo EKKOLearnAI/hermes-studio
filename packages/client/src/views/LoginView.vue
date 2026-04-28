@@ -57,7 +57,7 @@ async function handleTokenLogin() {
   errorMsg.value = "";
 
   try {
-    const res = await fetch("/api/sessions", {
+    const res = await fetch("/api/hermes/sessions", {
       headers: { Authorization: `Bearer ${key}` },
     });
 

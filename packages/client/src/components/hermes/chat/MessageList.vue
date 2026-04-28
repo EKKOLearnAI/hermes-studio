@@ -54,16 +54,16 @@ function scrollToMessage(messageId: string) {
   });
 }
 
-// Scroll to bottom once when messages are first loaded
+// Scroll to bottom on session switch
 watch(
   () => chatStore.activeSessionId,
   (id) => {
     if (!id) return;
     if (chatStore.focusMessageId) {
-      scrollToMessage(chatStore.focusMessageId);
+      nextTick(() => scrollToMessage(chatStore.focusMessageId!));
       return;
     }
-    scrollToBottom();
+    nextTick(() => scrollToBottom());
   },
   { immediate: true },
 );
@@ -92,7 +92,6 @@ watch(
       scrollToMessage(chatStore.focusMessageId);
       return;
     }
-    if (!chatStore.isStreaming) { scrollToBottom(); return; }
     if (!isNearBottom()) return;
     scrollToBottom();
   },
@@ -102,7 +101,6 @@ watch(currentToolCalls, () => {
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
-  if (!chatStore.isStreaming) { scrollToBottom(); return; }
   if (!isNearBottom()) return;
   scrollToBottom();
 });

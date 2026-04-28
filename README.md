@@ -14,14 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/output.gif" alt="Hermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
-  <strong>Mobile</strong>
-</p>
-<p align="center">
-  <video src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/video.mp4?raw=true" width="360" controls></video>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
@@ -53,16 +50,16 @@
 
 Unified configuration for **8 platforms** in one page:
 
-| Platform | Features |
-|---|---|
-| Telegram | Bot token, mention control, reactions, free-response chats |
-| Discord | Bot token, mention, auto-thread, reactions, channel allow/ignore lists |
-| Slack | Bot token, mention control, bot message handling |
-| WhatsApp | Enable/disable, mention control, mention patterns |
-| Matrix | Access token, homeserver, auto-thread, DM mention threads |
-| Feishu (Lark) | App ID / Secret, mention control |
-| WeChat | QR code login (scan in browser, auto-save credentials) |
-| WeCom | Bot ID / Secret |
+| Platform      | Features                                                               |
+| ------------- | ---------------------------------------------------------------------- |
+| Telegram      | Bot token, mention control, reactions, free-response chats             |
+| Discord       | Bot token, mention, auto-thread, reactions, channel allow/ignore lists |
+| Slack         | Bot token, mention control, bot message handling                       |
+| WhatsApp      | Enable/disable, mention control, mention patterns                      |
+| Matrix        | Access token, homeserver, auto-thread, DM mention threads              |
+| Feishu (Lark) | App ID / Secret, mention control                                       |
+| WeChat        | QR code login (scan in browser, auto-save credentials)                 |
+| WeCom         | Bot ID / Secret                                                        |
 
 - Credential management writes to `~/.hermes/.env`
 - Channel behavior settings write to `~/.hermes/config.yaml`
@@ -209,16 +206,16 @@ For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md)
 
 ### CLI Commands
 
-| Command | Description |
-|---|---|
-| `hermes-web-ui start` | Start in background (daemon mode) |
-| `hermes-web-ui start --port 9000` | Start on custom port |
-| `hermes-web-ui stop` | Stop background process |
-| `hermes-web-ui restart` | Restart background process |
-| `hermes-web-ui status` | Check if running |
-| `hermes-web-ui update` | Update to latest version & restart |
-| `hermes-web-ui -v` | Show version number |
-| `hermes-web-ui -h` | Show help message |
+| Command                           | Description                        |
+| --------------------------------- | ---------------------------------- |
+| `hermes-web-ui start`             | Start in background (daemon mode)  |
+| `hermes-web-ui start --port 9000` | Start on custom port               |
+| `hermes-web-ui stop`              | Stop background process            |
+| `hermes-web-ui restart`           | Restart background process         |
+| `hermes-web-ui status`            | Check if running                   |
+| `hermes-web-ui update`            | Update to latest version & restart |
+| `hermes-web-ui -v`                | Show version number                |
+| `hermes-web-ui -h`                | Show help message                  |
 
 ### Auto Configuration
 

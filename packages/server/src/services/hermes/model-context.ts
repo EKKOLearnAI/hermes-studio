@@ -15,11 +15,24 @@ interface ModelLimit {
 
 interface ModelEntry {
   id?: string
+  name?: string
   limit?: ModelLimit
 }
 
 interface ProviderEntry {
   models?: Record<string, ModelEntry>
+}
+
+const MODEL_CACHE_PROVIDER_ALIASES: Record<string, string[]> = {
+  gemini: ['google'],
+  moonshot: ['moonshotai'],
+  kilocode: ['kilo'],
+  'ai-gateway': ['vercel'],
+  'opencode-zen': ['opencode'],
+  'opencode-go': ['opencode'],
+  'glm-coding-plan': ['zai-coding-plan'],
+  'kimi-coding': ['kimi-for-coding'],
+  'kimi-coding-cn': ['kimi-for-coding'],
 }
 
 // --- Config YAML helpers (js-yaml) ---
@@ -125,29 +138,79 @@ function lookupCustomProviderContextLength(config: any, modelName: string, provi
 
 // --- Context lookup ---
 
-const CACHE_PROVIDER_ALIASES: Record<string, string[]> = {
-  gemini: ['google'],
-  moonshot: ['moonshotai'],
-  kilocode: ['kilo'],
-  'ai-gateway': ['vercel'],
-  'opencode-zen': ['opencode'],
-  'opencode-go': ['opencode'],
-  'glm-coding-plan': ['zai-coding-plan'],
-  'kimi-coding': ['kimi-for-coding'],
-  'kimi-coding-cn': ['kimi-for-coding'],
+function getCachedContext(entry: ModelEntry | undefined): number | null {
+  const context = entry?.limit?.context
+  return typeof context === 'number' && Number.isFinite(context) && context > 0 ? context : null
 }
 
-function getContextFromProvider(prov: ProviderEntry | undefined, modelName: string): number | null {
-  const models = prov?.models || {}
+function normalizeProviderKey(provider: string): string {
+  return provider.trim().toLowerCase()
+}
+
+function getProviderCandidates(provider: string): string[] {
+  const normalized = normalizeProviderKey(provider)
+  return [normalized, ...(MODEL_CACHE_PROVIDER_ALIASES[normalized] || [])]
+}
+
+function getProviderEntry(data: Record<string, ProviderEntry>, provider: string): ProviderEntry | null {
+  const candidates = getProviderCandidates(provider)
+
+  for (const candidate of candidates) {
+    const exact = data[candidate]
+    if (exact) return exact
+  }
+
+  const entries = Object.entries(data)
+  for (const candidate of candidates) {
+    const match = entries.find(([name]) => name.toLowerCase() === candidate)
+    if (match) return match[1]
+  }
+
+  return null
+}
+
+function findModelEntry(models: Record<string, ModelEntry>, modelName: string): ModelEntry | undefined {
   const exact = models[modelName]
-  if (exact?.limit?.context) return exact.limit.context
+  if (exact) return exact
 
   const lower = modelName.toLowerCase()
   for (const [name, entry] of Object.entries(models)) {
-    if (name.toLowerCase() === lower && entry?.limit?.context) {
-      return entry.limit.context
+    if (name.toLowerCase() === lower) return entry
+    if (entry.id?.toLowerCase() === lower) return entry
+    if (entry.name?.toLowerCase() === lower) return entry
+  }
+
+  const suffix = `/${lower}`
+  for (const [name, entry] of Object.entries(models)) {
+    if (name.toLowerCase().endsWith(suffix)) return entry
+    if (entry.id?.toLowerCase().endsWith(suffix)) return entry
+  }
+
+  return undefined
+}
+
+function lookupContextInProvider(provider: ProviderEntry | null, modelName: string): number | null {
+  const models = provider?.models || {}
+  return getCachedContext(findModelEntry(models, modelName))
+}
+
+function lookupContextGloballyByModelName(data: Record<string, ProviderEntry>, modelName: string): number | null {
+  for (const prov of Object.values(data)) {
+    const context = getCachedContext(prov.models?.[modelName])
+    if (context) return context
+  }
+
+  const lower = modelName.toLowerCase()
+  for (const prov of Object.values(data)) {
+    const models = prov.models || {}
+    for (const [name, entry] of Object.entries(models)) {
+      if (name.toLowerCase() === lower) {
+        const context = getCachedContext(entry)
+        if (context) return context
+      }
     }
   }
+
   return null
 }
 
@@ -156,31 +219,11 @@ function lookupContextFromCache(modelName: string, provider: string | null): num
   if (!data) return null
 
   if (provider) {
-    const providers = [provider, ...(CACHE_PROVIDER_ALIASES[provider] || [])]
-    for (const providerName of providers) {
-      const ctx = getContextFromProvider(data[providerName], modelName)
-      if (ctx) return ctx
-    }
-    return null
+    return lookupContextInProvider(getProviderEntry(data, provider), modelName)
   }
 
-  // Legacy providerless lookup: exact model-name match across all providers.
-  for (const prov of Object.values(data)) {
-    const entry = prov.models?.[modelName]
-    if (entry?.limit?.context) return entry.limit.context
-  }
-
-  // Legacy providerless case-insensitive fallback across all providers.
-  const lower = modelName.toLowerCase()
-  for (const prov of Object.values(data)) {
-    const models = prov.models || {}
-    for (const [name, entry] of Object.entries(models)) {
-      if (name.toLowerCase() === lower && entry?.limit?.context) {
-        return entry.limit.context
-      }
-    }
-  }
-  return null
+  // Legacy configs may omit model.provider; preserve the old global exact/CI lookup semantics.
+  return lookupContextGloballyByModelName(data, modelName)
 }
 
 /**
@@ -188,7 +231,7 @@ function lookupContextFromCache(modelName: string, provider: string | null): num
  * Resolution order:
  *   1. config.yaml model.context_length (highest priority, user override)
  *   2. custom_providers models.<model>.context_length
- *   3. models_dev_cache.json (built-in model database)
+ *   3. models_dev_cache.json, scoped to model.provider when configured
  *   4. DEFAULT_CONTEXT_LENGTH (200K hardcoded fallback)
  */
 export function getModelContextLength(profile?: string): number {
