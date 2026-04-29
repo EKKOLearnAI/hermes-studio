@@ -167,6 +167,7 @@ export default {
     origin: '출처',
     local: '로컬',
     repeatCount: '반복 횟수 (선택)',
+    modelPlaceholder: 'Default model',
     repeatPlaceholder: '비워두면 무한 반복',
     jobCreated: '작업이 생성되었습니다',
     jobUpdated: '작업이 업데이트되었습니다',
@@ -176,6 +177,7 @@ export default {
     jobPaused: '작업이 일시 정지되었습니다',
     jobResumed: '작업이 재개되었습니다',
     jobTriggered: '작업이 실행되었습니다',
+    modelUpdated: 'Model updated',
     jobDeleted: '작업이 삭제되었습니다',
     status: {
       running: '실행 중',
@@ -184,7 +186,8 @@ export default {
       scheduled: '예약됨',
     },
     info: {
-      schedule: '스케줄',
+      model: 'Model',
+      schedule: 'Schedule',
       lastRun: '마지막 실행',
       nextRun: '다음 실행',
       deliver: '전송',
@@ -197,6 +200,11 @@ export default {
       resumeJob: '작업 재개',
       runNow: '즉시 실행',
       triggerImmediately: '즉시 실행',
+    },
+    runHistory: {
+      title: '실행 기록',
+      runs: '회 실행',
+      noRuns: '실행 기록이 없습니다.',
     },
   },
 

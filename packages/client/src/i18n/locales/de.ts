@@ -167,6 +167,7 @@ export default {
     origin: 'Herkunft',
     local: 'Lokal',
     repeatCount: 'Wiederholungsanzahl (optional)',
+    modelPlaceholder: 'Standardmodell',
     repeatPlaceholder: 'Leer lassen fur unendlich',
     jobCreated: 'Aufgabe erstellt',
     jobUpdated: 'Aufgabe aktualisiert',
@@ -175,7 +176,8 @@ export default {
     loadFailed: 'Laden der Aufgabe fehlgeschlagen',
     jobPaused: 'Aufgabe pausiert',
     jobResumed: 'Aufgabe fortgesetzt',
-    jobTriggered: 'Aufgabe ausgelost',
+jobTriggered: 'Job ausgelost',
+    modelUpdated: 'Modell aktualisiert',
     jobDeleted: 'Aufgabe geloscht',
     status: {
       running: 'Lauft',
@@ -184,6 +186,7 @@ export default {
       scheduled: 'Geplant',
     },
     info: {
+      model: 'Modell',
       schedule: 'Zeitplan',
       lastRun: 'Letzte Ausfuhrung',
       nextRun: 'Nachste Ausfuhrung',
@@ -196,7 +199,12 @@ export default {
       resume: 'Fortsetzen',
       resumeJob: 'Aufgabe fortsetzen',
       runNow: 'Jetzt ausfuhren',
-      triggerImmediately: 'Sofort auslosen',
+      triggerImmediately: 'Sofort auslösen',
+    },
+    runHistory: {
+      title: 'Verlauf',
+      runs: 'Läufe',
+      noRuns: 'Kein Verlauf gefunden.',
     },
   },
 

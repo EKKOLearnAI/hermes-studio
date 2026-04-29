@@ -167,6 +167,7 @@ export default {
     origin: '配信元',
     local: 'ローカル',
     repeatCount: '繰り返し回数（任意）',
+    modelPlaceholder: 'Default model',
     repeatPlaceholder: '空白の場合は無制限',
     jobCreated: 'ジョブを作成しました',
     jobUpdated: 'ジョブを更新しました',
@@ -176,6 +177,7 @@ export default {
     jobPaused: 'ジョブを一時停止しました',
     jobResumed: 'ジョブを再開しました',
     jobTriggered: 'ジョブをトリガーしました',
+    modelUpdated: 'Model updated',
     jobDeleted: 'ジョブを削除しました',
     status: {
       running: '実行中',
@@ -184,7 +186,8 @@ export default {
       scheduled: 'スケジュール済み',
     },
     info: {
-      schedule: 'スケジュール',
+      model: 'Model',
+      schedule: 'Schedule',
       lastRun: '前回実行',
       nextRun: '次回実行',
       deliver: '配信',
@@ -197,6 +200,11 @@ export default {
       resumeJob: 'ジョブを再開',
       runNow: '今すぐ実行',
       triggerImmediately: 'すぐにトリガー',
+    },
+    runHistory: {
+      title: '実行履歴',
+      runs: '件',
+      noRuns: '実行履歴がありません。',
     },
   },
 

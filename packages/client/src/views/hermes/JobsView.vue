@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { NButton, NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import JobsPanel from '@/components/hermes/jobs/JobsPanel.vue'
+import JobRunHistory from '@/components/hermes/jobs/JobRunHistory.vue'
 import JobFormModal from '@/components/hermes/jobs/JobFormModal.vue'
 import { useJobsStore } from '@/stores/hermes/jobs'
 
@@ -10,6 +11,16 @@ const { t } = useI18n()
 const jobsStore = useJobsStore()
 const showModal = ref(false)
 const editingJob = ref<string | null>(null)
+const selectedJobId = ref<string | null>(null)
+
+const jobNameMap = computed(() => {
+  const map: Record<string, string> = {}
+  for (const job of jobsStore.jobs) {
+    const id = job.job_id || job.id
+    map[id] = job.name
+  }
+  return map
+})
 
 onMounted(() => {
   jobsStore.fetchJobs()
@@ -34,6 +45,10 @@ async function handleSave() {
   await jobsStore.fetchJobs()
   handleModalClose()
 }
+
+function handleSelectJob(jobId: string | null) {
+  selectedJobId.value = selectedJobId.value === jobId ? null : jobId
+}
 </script>
 
 <template>
@@ -48,10 +63,25 @@ async function handleSave() {
       </NButton>
     </header>
 
-    <div class="jobs-content">
-      <NSpin :show="jobsStore.loading && jobsStore.jobs.length === 0">
-        <JobsPanel @edit="openEditModal" />
-      </NSpin>
+    <div class="jobs-split">
+      <div class="jobs-top">
+        <NSpin :show="jobsStore.loading && jobsStore.jobs.length === 0">
+          <JobsPanel
+            :selected-job-id="selectedJobId"
+            @edit="openEditModal"
+            @select="handleSelectJob"
+          />
+        </NSpin>
+      </div>
+
+      <div class="splitter" />
+
+      <div class="jobs-bottom">
+        <JobRunHistory
+          :selected-job-id="selectedJobId"
+          :job-name-map="jobNameMap"
+        />
+      </div>
     </div>
 
     <JobFormModal
@@ -72,9 +102,29 @@ async function handleSave() {
   flex-direction: column;
 }
 
-.jobs-content {
+.jobs-split {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.jobs-top {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
+  min-height: 120px;
+}
+
+.splitter {
+  height: 1px;
+  background: $border-light;
+  flex-shrink: 0;
+}
+
+.jobs-bottom {
+  flex: 1;
+  min-height: 120px;
+  overflow: hidden;
 }
 </style>

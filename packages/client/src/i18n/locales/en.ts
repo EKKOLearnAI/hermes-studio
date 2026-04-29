@@ -190,6 +190,7 @@ export default {
     origin: 'Origin',
     local: 'Local',
     repeatCount: 'Repeat Count (optional)',
+    modelPlaceholder: 'Default model',
     repeatPlaceholder: 'Leave empty for infinite',
     jobCreated: 'Job created',
     jobUpdated: 'Job updated',
@@ -199,6 +200,7 @@ export default {
     jobPaused: 'Job paused',
     jobResumed: 'Job resumed',
     jobTriggered: 'Job triggered',
+    modelUpdated: 'Model updated',
     jobDeleted: 'Job deleted',
     status: {
       running: 'Running',
@@ -207,6 +209,7 @@ export default {
       scheduled: 'Scheduled',
     },
     info: {
+      model: 'Model',
       schedule: 'Schedule',
       lastRun: 'Last Run',
       nextRun: 'Next Run',
@@ -220,6 +223,11 @@ export default {
       resumeJob: 'Resume job',
       runNow: 'Run Now',
       triggerImmediately: 'Trigger immediately',
+    },
+    runHistory: {
+      title: 'Run History',
+      runs: 'runs',
+      noRuns: 'No run history found.',
     },
   },
 

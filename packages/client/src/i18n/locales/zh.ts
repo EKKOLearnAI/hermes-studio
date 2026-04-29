@@ -190,6 +190,7 @@ export default {
     origin: '来源',
     local: '本地',
     repeatCount: '重复次数（可选）',
+    modelPlaceholder: 'Default model',
     repeatPlaceholder: '留空表示无限重复',
     jobCreated: '任务已创建',
     jobUpdated: '任务已更新',
@@ -199,6 +200,7 @@ export default {
     jobPaused: '任务已暂停',
     jobResumed: '任务已恢复',
     jobTriggered: '任务已触发',
+    modelUpdated: 'Model updated',
     jobDeleted: '任务已删除',
     status: {
       running: '运行中',
@@ -207,7 +209,8 @@ export default {
       scheduled: '已调度',
     },
     info: {
-      schedule: '调度',
+      model: 'Model',
+      schedule: 'Schedule',
       lastRun: '上次运行',
       nextRun: '下次运行',
       deliver: '投递',
@@ -220,6 +223,11 @@ export default {
       resumeJob: '恢复任务',
       runNow: '立即运行',
       triggerImmediately: '立即触发',
+    },
+    runHistory: {
+      title: '运行历史',
+      runs: '次运行',
+      noRuns: '暂无运行历史。',
     },
   },
 

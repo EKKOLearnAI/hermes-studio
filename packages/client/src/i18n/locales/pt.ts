@@ -167,6 +167,7 @@ export default {
     origin: 'Origem',
     local: 'Local',
     repeatCount: 'Contagem de repeticoes (opcional)',
+    modelPlaceholder: 'Modelo padrao',
     repeatPlaceholder: 'Deixar vazio para infinito',
     jobCreated: 'Tarefa criada',
     jobUpdated: 'Tarefa atualizada',
@@ -175,7 +176,8 @@ export default {
     loadFailed: 'Falha ao carregar a tarefa',
     jobPaused: 'Tarefa pausada',
     jobResumed: 'Tarefa retomada',
-    jobTriggered: 'Tarefa acionada',
+jobTriggered: 'Job acionado',
+    modelUpdated: 'Modelo atualizado',
     jobDeleted: 'Tarefa excluida',
     status: {
       running: 'Em execucao',
@@ -184,6 +186,7 @@ export default {
       scheduled: 'Agendada',
     },
     info: {
+      model: 'Modelo',
       schedule: 'Agendamento',
       lastRun: 'Ultima execucao',
       nextRun: 'Proxima execucao',
@@ -197,6 +200,11 @@ export default {
       resumeJob: 'Retomar tarefa',
       runNow: 'Executar agora',
       triggerImmediately: 'Acionar imediatamente',
+    },
+    runHistory: {
+      title: 'Histórico',
+      runs: 'execuções',
+      noRuns: 'Nenhum histórico encontrado.',
     },
   },
 
