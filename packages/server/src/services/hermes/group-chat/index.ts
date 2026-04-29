@@ -4,8 +4,8 @@ import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { getDb, ensureTable } from '../../../db'
 import { AgentClients } from './agent-clients'
-import { deleteSession as hermesDeleteSession } from '../hermes-cli'
 import { ContextEngine } from '../context-engine/compressor'
+import { SessionDeleter } from '../session-deleter'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -408,28 +408,11 @@ class ChatStorage {
 }
 
 export async function drainPendingSessionDeletes(profileName: string): Promise<PendingSessionDeleteDrainResult> {
-    const storage = new ChatStorage()
-    storage.init()
-    const claimed = storage.claimPendingSessionDeletes(profileName)
-    const result: PendingSessionDeleteDrainResult = { deleted: [], failed: [] }
-
-    for (const item of claimed) {
-        try {
-            const ok = await hermesDeleteSession(item.session_id)
-            if (!ok) {
-                throw new Error('Failed to delete session')
-            }
-            storage.removePendingSessionDelete(item.session_id)
-            storage.deleteSessionProfile(item.session_id)
-            result.deleted.push(item.session_id)
-        } catch (err: any) {
-            const message = err?.message || 'Failed to delete session'
-            storage.markPendingSessionDeleteFailed(item.session_id, message)
-            result.failed.push({ sessionId: item.session_id, error: message })
-        }
+    const deleterResult = await SessionDeleter.getInstance().drain(profileName)
+    return {
+        deleted: deleterResult.deleted,
+        failed: deleterResult.failed.map(id => ({ sessionId: id, error: 'unknown' })),
     }
-
-    return result
 }
 
 // ─── ChatRoom (in-memory, for online members) ─────────────────
@@ -532,9 +515,11 @@ export class GroupChatServer {
             messageFetcher: this.storage,
             sessionCleaner: async (sessionId: string) => {
                 try {
-                    await hermesDeleteSession(sessionId)
+                    const profile = this.storage.getSessionProfile(sessionId)
+                    const profileName = profile?.profile_name || 'default'
+                    this.storage.enqueuePendingSessionDelete(sessionId, profileName)
                 } catch (err: any) {
-                    logger.warn(`[GroupChat] failed to delete compression session ${sessionId}: ${err.message}`)
+                    logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
                 }
             },
         })

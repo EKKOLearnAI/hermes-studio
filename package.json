@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
   "repository": {
     "type": "git",
@@ -51,7 +51,7 @@
     "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec TS_NODE_PROJECT=packages/server/tsconfig.json node -r ts-node/register packages/server/src/index.ts",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "prepare": "[ -d dist ] || npm run build",
-    "preview": "vite preview",
+    "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -62,15 +62,16 @@
   ],
   "dependencies": {
     "eventsource": "^4.1.0",
+    "js-tiktoken": "^1.0.21",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "@multiavatar/multiavatar": "^1.0.7",
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.4.0",
+    "@multiavatar/multiavatar": "^1.0.7",
     "@pinia/testing": "^1.0.3",
     "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",

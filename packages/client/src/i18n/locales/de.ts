@@ -550,6 +550,8 @@ export default {
 
   // Anderungsprotokoll
   changelog: {
+    new_0_5_0_1: 'Self-built chat database and context compression: empty chat history on first entry is expected',
+    new_0_5_0_2: 'Sessions use WebSocket form, enhanced resume capability',
     new_0_4_8_1: 'Safe Mermaid diagram rendering with async render and timeout fallback',
     new_0_4_8_2: 'Fix nested markdown fence rendering truncation',
     new_0_4_8_3: 'Fix compressed session lineage projection and search',

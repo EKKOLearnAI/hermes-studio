@@ -5,6 +5,9 @@ import {
     buildFullSummaryPrompt,
     buildIncrementalUpdatePrompt,
 } from './prompt'
+import { updateUsage } from '../../../db/hermes/usage-store'
+import { getSessionDetailFromDbWithProfile } from '../../../db/hermes/sessions-db'
+import { logger } from '../../logger'
 
 /**
  * Calls Hermes /v1/runs to produce LLM-generated summaries.
@@ -22,6 +25,8 @@ export class GatewaySummarizer implements GatewayCaller {
         apiKey: string | null,
         systemPrompt: string,
         messages: StoredMessage[],
+        roomId: string,
+        profile: string,
         previousSummary?: string,
     ): Promise<{ summary: string; sessionId: string }> {
         // Build conversation_history from messages
@@ -67,14 +72,14 @@ export class GatewaySummarizer implements GatewayCaller {
         const { run_id } = await res.json() as { run_id: string }
 
         try {
-            const output = await this.pollForResult(upstream, apiKey, run_id)
+            const output = await this.pollForResult(upstream, apiKey, run_id, sessionId, roomId, profile)
             return { summary: output, sessionId }
         } finally {
             // Note: session cleanup is handled by the caller (compressor.ts)
         }
     }
 
-    private pollForResult(upstream: string, apiKey: string | null, runId: string): Promise<string> {
+    private pollForResult(upstream: string, apiKey: string | null, runId: string, sessionId: string, roomId: string, profile: string): Promise<string> {
         return new Promise<string>((resolve, reject) => {
             const timer = setTimeout(() => {
                 source.close()
@@ -86,12 +91,36 @@ export class GatewaySummarizer implements GatewayCaller {
 
             const source = new EventSource(eventsUrl.toString())
 
-            source.onmessage = (event: MessageEvent) => {
+            source.onmessage = async (event: MessageEvent) => {
                 try {
                     const parsed = JSON.parse(event.data)
                     if (parsed.event === 'run.completed') {
                         clearTimeout(timer)
+
+                        // Record usage data from Hermes state.db BEFORE closing source
+                        // This ensures we fetch usage before sessionCleaner can delete it
+                        try {
+                            const detail = await getSessionDetailFromDbWithProfile(sessionId, profile)
+                            if (detail) {
+                                updateUsage(roomId, {
+                                    inputTokens: detail.input_tokens,
+                                    outputTokens: detail.output_tokens,
+                                    cacheReadTokens: detail.cache_read_tokens,
+                                    cacheWriteTokens: detail.cache_write_tokens,
+                                    reasoningTokens: detail.reasoning_tokens,
+                                    model: detail.model,
+                                    profile,
+                                })
+                                logger.debug(`[GatewaySummarizer] Recorded usage for compression room ${roomId} (session ${sessionId}, profile=${profile}): input=${detail.input_tokens}, output=${detail.output_tokens}`)
+                            } else {
+                                logger.warn(`[GatewaySummarizer] Failed to get session detail for ${sessionId} (profile=${profile})`)
+                            }
+                        } catch (err: any) {
+                            logger.warn(err, '[GatewaySummarizer] Failed to record usage from DB')
+                        }
+
                         source.close()
+
                         const output = parsed.output
                         if (!output || typeof output !== 'string' || output.trim() === '') {
                             reject(new Error('Empty summarization response'))

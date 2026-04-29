@@ -5,6 +5,8 @@ import type { GatewayManager } from '../gateway-manager'
 import { deleteSession as hermesDeleteSession } from '../hermes-cli'
 import { getActiveProfileName } from '../hermes-profile'
 import { logger } from '../../../services/logger'
+import { updateUsage } from '../../../db/hermes/usage-store'
+import { getSessionDetailFromDbWithProfile } from '../../../db/hermes/sessions-db'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -272,6 +274,7 @@ class AgentClient {
                         apiKey,
                         currentMessage: msg,
                         compression,
+                        profile: this.profile,
                     })
                     conversationHistory = ctx.conversationHistory
                     instructions = ctx.instructions
@@ -336,12 +339,34 @@ class AgentClient {
 
             let fullContent = ''
 
-            source.onmessage = (e: any) => {
+            source.onmessage = async (e: any) => {
                 try {
                     const parsed = JSON.parse(e.data)
                     logger.debug(`[AgentClients] ${this.name}: event=${parsed.event}`)
 
                     if (parsed.event === 'run.completed') {
+                        // Record usage data from Hermes state.db BEFORE closing source
+                        // This ensures we fetch usage before deleteSession can delete it
+                        try {
+                            const detail = await getSessionDetailFromDbWithProfile(actualSessionId, this.profile)
+                            if (detail) {
+                                updateUsage(roomId, {
+                                    inputTokens: detail.input_tokens,
+                                    outputTokens: detail.output_tokens,
+                                    cacheReadTokens: detail.cache_read_tokens,
+                                    cacheWriteTokens: detail.cache_write_tokens,
+                                    reasoningTokens: detail.reasoning_tokens,
+                                    model: detail.model,
+                                    profile: this.profile,
+                                })
+                                logger.debug(`[AgentClients] Recorded usage for room ${roomId} (session ${actualSessionId}, profile=${this.profile}): input=${detail.input_tokens}, output=${detail.output_tokens}`)
+                            } else {
+                                logger.warn(`[AgentClients] Failed to get session detail for ${actualSessionId} (profile=${this.profile})`)
+                            }
+                        } catch (err: any) {
+                            logger.warn(err, '[AgentClients] Failed to record usage from DB')
+                        }
+
                         source.close()
                         logger.debug(`[AgentClients] ${this.name}: run completed, content length=${fullContent.length}`)
                         if (fullContent) {

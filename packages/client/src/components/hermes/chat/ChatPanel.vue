@@ -28,24 +28,12 @@ const currentMode = ref<'chat' | 'live'>('chat')
 const showSessions = ref(
   typeof window === 'undefined' || !window.matchMedia('(max-width: 768px)').matches,
 )
-const lastChatSessionsVisibility = ref(showSessions.value)
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
 function handleSessionClick(sessionId: string) {
   chatStore.switchSession(sessionId)
   if (mobileQuery?.matches) showSessions.value = false
-}
-
-function handleModeChange(mode: 'chat' | 'live') {
-  if (mode === currentMode.value) return
-  if (mode === 'live') {
-    lastChatSessionsVisibility.value = showSessions.value
-    showSessions.value = false
-  } else {
-    showSessions.value = mobileQuery?.matches ? false : lastChatSessionsVisibility.value
-  }
-  currentMode.value = mode
 }
 
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
@@ -79,9 +67,6 @@ function sourceSortKey(source: string): number {
 
 function sortSessionsWithActiveFirst(items: Session[]): Session[] {
   return [...items].sort((a, b) => {
-    const aLive = chatStore.isSessionLive(a.id)
-    const bLive = chatStore.isSessionLive(b.id)
-    if (aLive !== bLive) return aLive ? -1 : 1
     return (b.updatedAt || 0) - (a.updatedAt || 0)
   })
 }
@@ -107,9 +92,6 @@ const groupedSessions = computed<SessionGroup[]>(() => {
   }
 
   const keys = [...map.keys()].sort((a, b) => {
-    const aHasLive = map.get(a)?.some(s => chatStore.isSessionLive(s.id)) || false
-    const bHasLive = map.get(b)?.some(s => chatStore.isSessionLive(s.id)) || false
-    if (aHasLive !== bHasLive) return aHasLive ? -1 : 1
     const ka = sourceSortKey(a)
     const kb = sourceSortKey(b)
     if (ka !== kb) return ka - kb
@@ -288,9 +270,9 @@ async function handleRenameConfirm() {
             :key="`pinned-${s.id}`"
             :session="s"
             :active="s.id === chatStore.activeSessionId"
-            :live="chatStore.isSessionLive(s.id)"
             :pinned="true"
             :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+            :streaming="chatStore.isSessionLive(s.id)"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
@@ -309,9 +291,9 @@ async function handleRenameConfirm() {
               :key="s.id"
               :session="s"
               :active="s.id === chatStore.activeSessionId"
-              :live="chatStore.isSessionLive(s.id)"
               :pinned="false"
               :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
+              :streaming="chatStore.isSessionLive(s.id)"
               @select="handleSessionClick(s.id)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id)"
@@ -360,20 +342,7 @@ async function handleRenameConfirm() {
           <span v-if="activeSessionSource" class="source-badge">{{ getSourceLabel(activeSessionSource) }}</span>
         </div>
         <div class="header-actions">
-          <div class="chat-mode-toggle">
-            <NButton
-              size="small"
-              :type="currentMode === 'chat' ? 'primary' : 'default'"
-              :aria-pressed="currentMode === 'chat'"
-              @click="handleModeChange('chat')"
-            >{{ t('chat.chatMode') }}</NButton>
-            <NButton
-              size="small"
-              :type="currentMode === 'live' ? 'primary' : 'default'"
-              :aria-pressed="currentMode === 'live'"
-              @click="handleModeChange('live')"
-            >{{ t('chat.liveMode') }}</NButton>
-          </div>
+          <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">
               <template #trigger>
@@ -587,10 +556,6 @@ async function handleRenameConfirm() {
   &.active .session-item-title {
     color: $accent-primary;
   }
-
-  &.live .session-item-title {
-    color: $accent-primary;
-  }
 }
 
 :deep(.session-item-content) {
@@ -615,45 +580,18 @@ async function handleRenameConfirm() {
   text-overflow: ellipsis;
 }
 
-:deep(.session-item-active-indicator) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+:deep(.session-item-streaming) {
+  display: inline-block;
   flex-shrink: 0;
+  margin-right: 4px;
+  vertical-align: middle;
+  animation: spin 1.2s linear infinite;
   color: $accent-primary;
 }
 
-:deep(.session-item-active-spinner) {
-  animation: session-spin 1.1s linear infinite;
-}
-
-:deep(.session-item-live-badge) {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: $accent-primary;
-  background: rgba(var(--accent-primary-rgb), 0.10);
-}
-
-:deep(.live-dot) {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: $accent-primary;
-  animation: live-pulse 2s ease-in-out infinite;
-}
-
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 :deep(.session-item-pin) {
@@ -704,16 +642,6 @@ async function handleRenameConfirm() {
   &:hover {
     color: $error;
     background: rgba($error, 0.1);
-  }
-}
-
-@keyframes session-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
   }
 }
 

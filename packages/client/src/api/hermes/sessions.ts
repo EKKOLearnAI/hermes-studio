@@ -95,6 +95,36 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export interface UsageStatsResponse {
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cache_read_tokens: number
+  total_cache_write_tokens: number
+  total_reasoning_tokens: number
+  total_sessions: number
+  total_cost: number
+  model_usage: Array<{
+    model: string
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    reasoning_tokens: number
+    sessions: number
+  }>
+  daily_usage: Array<{
+    date: string
+    tokens: number
+    cache: number
+    sessions: number
+    cost: number
+  }>
+}
+
+export async function fetchUsageStats(): Promise<UsageStatsResponse> {
+  return request<UsageStatsResponse>('/api/hermes/usage/stats')
+}
+
 export async function fetchSessionUsage(ids: string[]): Promise<Record<string, { input_tokens: number; output_tokens: number }>> {
   if (ids.length === 0) return {}
   const params = new URLSearchParams()

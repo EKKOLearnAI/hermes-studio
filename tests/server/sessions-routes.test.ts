@@ -9,6 +9,7 @@ const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
+const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
 const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 200000 } })
 
 vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
@@ -21,6 +22,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   rename: renameMock,
   usageBatch: usageBatchMock,
   usageSingle: usageSingleMock,
+  usageStats: usageStatsMock,
   contextLength: contextLengthMock,
 }))
 
