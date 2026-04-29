@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
   "repository": {
     "type": "git",

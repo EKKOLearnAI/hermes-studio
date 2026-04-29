@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NTag } from 'naive-ui'
+import { NTag, NAlert } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
@@ -8,6 +8,7 @@ const props = defineProps<{
   icon: string
   config: Record<string, any>
   credentials?: Record<string, any>
+  exclusive?: boolean
 }>()
 
 const expanded = ref(true)
@@ -41,6 +42,9 @@ const configured = computed(() => {
       <span class="expand-icon" :class="{ expanded }">&#9662;</span>
     </div>
     <div v-if="expanded" class="platform-card-body">
+      <NAlert v-if="exclusive" type="warning" :show-icon="true" class="exclusive-alert">
+        {{ t('platform.exclusiveTokenWarning') }}
+      </NAlert>
       <slot />
     </div>
   </div>
@@ -110,5 +114,10 @@ const configured = computed(() => {
 .platform-card-body {
   padding: 0 16px 12px;
   border-top: 1px solid $border-light;
+}
+
+.exclusive-alert {
+  margin: 12px 0 4px;
+  font-size: 12px;
 }
 </style>

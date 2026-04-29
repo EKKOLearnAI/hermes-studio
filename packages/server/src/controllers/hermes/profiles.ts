@@ -6,6 +6,7 @@ import * as hermesCli from '../../services/hermes/hermes-cli'
 import { SessionDeleter } from '../../services/hermes/session-deleter'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { logger } from '../../services/logger'
+import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
 
 export async function list(ctx: any) {
   try {
@@ -26,13 +27,52 @@ export async function create(ctx: any) {
   }
   try {
     const output = await hermesCli.createProfile(name, clone)
+
+    // clone=true 时执行智能清理：
+    //   - 删除 .env 中的独占平台凭据（Weixin / Telegram / Slack / ...）
+    //   - 禁用 config.yaml 中对应的平台节点
+    // 避免新 profile 与源 profile 共享同一个 bot token 导致互斥冲突。
+    let strippedCredentials: string[] = []
+    let disabledPlatforms: string[] = []
+    let strippedConfigCredentials: string[] = []
+    if (clone) {
+      try {
+        const cleanup = smartCloneCleanup(name)
+        strippedCredentials = cleanup.strippedCredentials
+        disabledPlatforms = cleanup.disabledPlatforms
+        strippedConfigCredentials = cleanup.strippedConfigCredentials
+        if (
+          strippedCredentials.length > 0 ||
+          disabledPlatforms.length > 0 ||
+          strippedConfigCredentials.length > 0
+        ) {
+          logger.info(
+            'Smart clone cleanup for "%s": stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
+            name,
+            strippedCredentials.length, strippedCredentials.join(','),
+            disabledPlatforms.length, disabledPlatforms.join(','),
+            strippedConfigCredentials.length, strippedConfigCredentials.join(','),
+          )
+        }
+      } catch (err: any) {
+        // 清理失败不应阻断 profile 创建，仅记日志
+        logger.error(err, 'Smart clone cleanup failed for "%s"', name)
+      }
+    }
+
     const mgr = getGatewayManagerInstance()
     if (mgr) {
       try { await mgr.start(name) } catch (err: any) {
         logger.error(err, 'Failed to start gateway for profile "%s"', name)
       }
     }
-    ctx.body = { success: true, message: output.trim() }
+    ctx.body = {
+      success: true,
+      message: output.trim(),
+      strippedCredentials,
+      disabledPlatforms,
+      strippedConfigCredentials,
+    }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
