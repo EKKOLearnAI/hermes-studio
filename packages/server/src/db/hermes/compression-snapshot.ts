@@ -6,23 +6,8 @@
  * the previous one left off.
  */
 
-import { isSqliteAvailable, ensureTable, getDb } from '../index'
-
-const TABLE = 'chat_compression_snapshots'
-
-const SCHEMA: Record<string, string> = {
-  session_id: 'TEXT PRIMARY KEY',
-  summary: 'TEXT NOT NULL DEFAULT \'\'',
-  last_message_index: 'INTEGER NOT NULL DEFAULT 0',
-  message_count_at_time: 'INTEGER NOT NULL DEFAULT 0',
-  updated_at: 'INTEGER NOT NULL',
-}
-
-export function initCompressionSnapshotStore(): void {
-  if (isSqliteAvailable()) {
-    ensureTable(TABLE, SCHEMA)
-  }
-}
+import { isSqliteAvailable, getDb } from '../index'
+import { COMPRESSION_SNAPSHOT_TABLE as TABLE } from './schemas'
 
 export function getCompressionSnapshot(sessionId: string): { summary: string; lastMessageIndex: number; messageCountAtTime: number } | null {
   if (!isSqliteAvailable()) return null

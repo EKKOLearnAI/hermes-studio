@@ -1,6 +1,5 @@
-import { isSqliteAvailable, ensureTable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../index'
-
-const TABLE = 'session_usage'
+import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../index'
+import { USAGE_TABLE as TABLE } from './schemas'
 
 export interface UsageRecord {
   input_tokens: number
@@ -11,61 +10,6 @@ export interface UsageRecord {
   model: string
   profile: string
   created_at: number
-}
-
-const SCHEMA = {
-  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
-  session_id: 'TEXT NOT NULL',
-  input_tokens: 'INTEGER NOT NULL DEFAULT 0',
-  output_tokens: 'INTEGER NOT NULL DEFAULT 0',
-  cache_read_tokens: 'INTEGER NOT NULL DEFAULT 0',
-  cache_write_tokens: 'INTEGER NOT NULL DEFAULT 0',
-  reasoning_tokens: 'INTEGER NOT NULL DEFAULT 0',
-  model: "TEXT NOT NULL DEFAULT ''",
-  profile: "TEXT NOT NULL DEFAULT 'default'",
-  created_at: 'INTEGER NOT NULL',
-}
-
-export function initUsageStore(): void {
-  if (!isSqliteAvailable()) return
-  const db = getDb()!
-
-  // Migration: if session_id is still PRIMARY KEY (no separate id column), recreate table
-  // Must run BEFORE ensureTable, because ensureTable can't ALTER TABLE ADD a PRIMARY KEY column
-  const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(TABLE)
-  const cols = (tableExists
-    ? db.prepare(`PRAGMA table_info("${TABLE}")`).all() as Array<{ name: string; pk: number }>
-    : [])
-  const hasId = cols.some(c => c.name === 'id')
-  if (!hasId && tableExists) {
-    const oldCols = new Set(cols.map(c => c.name))
-    const insertCols = ['session_id', 'input_tokens', 'output_tokens']
-    const selectCols = [...insertCols]
-    if (oldCols.has('cache_read_tokens')) { insertCols.push('cache_read_tokens'); selectCols.push('cache_read_tokens') }
-    if (oldCols.has('cache_write_tokens')) { insertCols.push('cache_write_tokens'); selectCols.push('cache_write_tokens') }
-    if (oldCols.has('reasoning_tokens')) { insertCols.push('reasoning_tokens'); selectCols.push('reasoning_tokens') }
-    if (oldCols.has('created_at')) { insertCols.push('created_at'); selectCols.push('created_at') }
-    if (oldCols.has('model')) { insertCols.push('model'); selectCols.push('model') }
-    const defaults = {
-      cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
-      created_at: Date.now(), model: '', profile: 'default',
-    }
-    const insertValues = insertCols.map(c => c)
-    const selectValues = selectCols.map(c => c)
-    // Columns in new schema but not in old table — use defaults
-    for (const [col, def] of Object.entries(SCHEMA)) {
-      if (!oldCols.has(col) && col !== 'id') {
-        insertValues.push(col)
-        selectValues.push(String(defaults[col as keyof typeof defaults] ?? 0))
-      }
-    }
-    db.exec(`ALTER TABLE "${TABLE}" RENAME TO "${TABLE}_old"`)
-    db.exec(`CREATE TABLE "${TABLE}" (${Object.entries(SCHEMA).map(([col, def]) => `"${col}" ${def}`).join(', ')})`)
-    db.exec(`INSERT INTO "${TABLE}" (${insertValues.join(', ')}) SELECT ${selectValues.join(', ')} FROM "${TABLE}_old"`)
-    db.exec(`DROP TABLE "${TABLE}_old"`)
-  }
-
-  ensureTable(TABLE, SCHEMA)
 }
 
 export function updateUsage(

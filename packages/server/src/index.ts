@@ -51,7 +51,7 @@ export async function bootstrap() {
 
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
-  await initAllStores()
+  initAllStores()
   console.log('[bootstrap] all stores initialized')
 
   // Sync Hermes sessions from all profiles (only if local DB is empty)

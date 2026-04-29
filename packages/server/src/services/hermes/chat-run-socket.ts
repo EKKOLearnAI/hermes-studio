@@ -125,7 +125,7 @@ export class ChatRunSocket {
           const messages = detail?.messages?.length
             ? detail.messages
               .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined)
-              .map(m => {
+              .map((m, idx, arr) => {
                 const msg: any = {
                   id: m.id,
                   session_id: sid,
@@ -134,11 +134,35 @@ export class ChatRunSocket {
                   timestamp: m.timestamp,
                 }
                 if (m.tool_calls?.length) msg.tool_calls = m.tool_calls
-                if (m.tool_call_id) msg.tool_call_id = m.tool_call_id
+
+                // For tool messages, ensure tool_call_id exists
+                if (m.role === 'tool') {
+                  if (m.tool_call_id) {
+                    msg.tool_call_id = m.tool_call_id
+                  } else {
+                    // Try to reconstruct tool_call_id from previous assistant message
+                    const prevMsg = arr[idx - 1]
+                    if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
+                      // Find matching tool_call by tool_name
+                      const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
+                      if (tc?.id) {
+                        msg.tool_call_id = tc.id
+                      } else {
+                        // Cannot reconstruct - skip this tool message
+                        return null
+                      }
+                    } else {
+                      // No previous assistant message with tool_calls - skip
+                      return null
+                    }
+                  }
+                }
+
                 if (m.tool_name) msg.tool_name = m.tool_name
                 if (m.reasoning) msg.reasoning = m.reasoning
                 return msg
               })
+              .filter(m => m !== null)
             : []
 
           // Calculate context tokens — aware of compression snapshot
@@ -278,15 +302,36 @@ export class ChatRunSocket {
               tool_call_id?: string
               name?: string
             }> = (lastUserMsgIndex >= 0
-                ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
-                : validMessages
-              ).map(m => {
-                const msg: any = { role: m.role, content: m.content || '' }
-                if (m.tool_calls?.length) msg.tool_calls = m.tool_calls
-                if (m.tool_call_id) msg.tool_call_id = m.tool_call_id
-                if (m.tool_name) msg.name = m.tool_name
-                return msg
-              })
+              ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
+              : validMessages
+            ).map((m, idx, arr) => {
+              const msg: any = { role: m.role, content: m.content || '' }
+              if (m.tool_calls?.length) msg.tool_calls = m.tool_calls
+
+              // For tool messages, ensure tool_call_id exists
+              if (m.role === 'tool') {
+                if (m.tool_call_id) {
+                  msg.tool_call_id = m.tool_call_id
+                } else {
+                  // Try to reconstruct tool_call_id from previous assistant message
+                  const prevMsg = arr[idx - 1]
+                  if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
+                    const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
+                    if (tc?.id) {
+                      msg.tool_call_id = tc.id
+                    } else {
+                      return null // Cannot reconstruct
+                    }
+                  } else {
+                    return null // No assistant message to reconstruct from
+                  }
+                }
+              }
+
+              if (m.tool_name) msg.name = m.tool_name
+              return msg
+            })
+              .filter(m => m !== null)
 
             // Context compression with snapshot awareness
             const contextLength = getModelContextLength(profile)
@@ -490,7 +535,6 @@ export class ChatRunSocket {
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-
       const res = await fetch(`${upstream}/v1/runs`, {
         method: 'POST',
         headers,

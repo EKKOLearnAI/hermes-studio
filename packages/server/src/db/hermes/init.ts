@@ -1,15 +1,14 @@
 /**
  * Unified initializer for all Hermes SQLite stores.
  * Call this once at bootstrap to create/migrate all tables.
+ *
+ * All table schemas, creation, and migration logic are now centralized
+ * in schemas.ts to avoid duplication and ensure consistency.
  */
 
-export async function initAllStores(): Promise<void> {
-  const { initUsageStore } = await import('./usage-store')
-  initUsageStore()
+import { initAllHermesTables } from './schemas'
 
-  const { initSessionStore } = await import('./session-store')
-  initSessionStore()
-
-  const { initCompressionSnapshotStore } = await import('./compression-snapshot')
-  initCompressionSnapshotStore()
+export function initAllStores(): void {
+  // Initialize all tables with centralized schema definitions and migrations
+  initAllHermesTables()
 }
