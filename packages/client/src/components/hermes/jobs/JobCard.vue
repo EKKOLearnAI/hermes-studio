@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { NButton, NTooltip, useMessage } from 'naive-ui'
 import type { Job } from '@/api/hermes/jobs'
+import { scheduleToDisplayText } from '@/api/hermes/jobs'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
@@ -35,11 +36,7 @@ const statusType = computed(() => {
   return 'success' as const
 })
 
-const scheduleExpr = computed(() => {
-  const s = props.job.schedule
-  if (typeof s === 'string') return s
-  return s?.expr || props.job.schedule_display || '—'
-})
+const scheduleExpr = computed(() => scheduleToDisplayText(props.job.schedule, props.job.schedule_display || '—'))
 
 const formatTime = (t?: string | null) => {
   if (!t) return '—'
