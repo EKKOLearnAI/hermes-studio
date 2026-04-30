@@ -150,7 +150,6 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-  db.prepare(
     `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, title, started_at, last_active, workspace)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(data.id, data.profile || 'default', data.source || 'api_server', data.model || '', data.title || null, now, now, data.workspace || null)
