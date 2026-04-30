@@ -178,6 +178,105 @@ export const GC_SESSION_PROFILES_SCHEMA: Record<string, string> = {
 
 import { ensureTable, getDb } from '../index'
 
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`
+}
+
+function sqlLiteral(value: string | number): string {
+  if (typeof value === 'number') return String(value)
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function usageSchemaDefinitionSql(): string {
+  return Object.entries(USAGE_SCHEMA)
+    .map(([col, def]) => `${quoteIdentifier(col)} ${def}`)
+    .join(', ')
+}
+
+function sqliteTableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): boolean {
+  return Boolean(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(tableName))
+}
+
+function sqliteTableColumns(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
+  return new Set(rows.map(row => row.name))
+}
+
+function legacyUsageValueSql(
+  sourceAlias: string,
+  oldCols: Set<string>,
+  col: string,
+  defaults: Record<string, string | number>,
+): string {
+  const sourceColumn = (sourceCol: string) => `${quoteIdentifier(sourceAlias)}.${quoteIdentifier(sourceCol)}`
+
+  if (col === 'created_at' && oldCols.has('updated_at')) {
+    return `COALESCE(${sourceColumn('updated_at')}, ${sqlLiteral(defaults.created_at)})`
+  }
+
+  if (oldCols.has(col)) {
+    return `COALESCE(${sourceColumn(col)}, ${sqlLiteral(defaults[col] ?? 0)})`
+  }
+
+  return sqlLiteral(defaults[col] ?? 0)
+}
+
+function insertUsageRowsFromLegacyTable(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  oldTableName: string,
+  oldCols: Set<string>,
+  skipExistingSessionIds = false,
+): void {
+  const defaults: Record<string, string | number> = {
+    session_id: '',
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    created_at: Date.now(),
+    model: '',
+    profile: 'default',
+  }
+  const sourceAlias = 'old_usage'
+  const sourceColumn = (col: string) => `${quoteIdentifier(sourceAlias)}.${quoteIdentifier(col)}`
+  const insertValues: string[] = []
+  const selectValues: string[] = []
+
+  for (const col of Object.keys(USAGE_SCHEMA)) {
+    if (col === 'id') continue
+
+    insertValues.push(quoteIdentifier(col))
+    selectValues.push(legacyUsageValueSql(sourceAlias, oldCols, col, defaults))
+  }
+
+  const skipExistingWhere = skipExistingSessionIds && oldCols.has('session_id')
+    ? ` WHERE NOT EXISTS (SELECT 1 FROM ${quoteIdentifier(USAGE_TABLE)} WHERE ${quoteIdentifier(USAGE_TABLE)}.${quoteIdentifier('session_id')} = ${sourceColumn('session_id')})`
+    : ''
+
+  db.exec(
+    `INSERT INTO ${quoteIdentifier(USAGE_TABLE)} (${insertValues.join(', ')}) ` +
+    `SELECT ${selectValues.join(', ')} FROM ${quoteIdentifier(oldTableName)} AS ${quoteIdentifier(sourceAlias)}` +
+    skipExistingWhere,
+  )
+}
+
+function recoverInterruptedUsageMigration(db: NonNullable<ReturnType<typeof getDb>>): void {
+  const oldUsageTable = `${USAGE_TABLE}_old`
+  if (!sqliteTableExists(db, oldUsageTable)) return
+
+  const oldCols = sqliteTableColumns(db, oldUsageTable)
+  db.exec('BEGIN')
+  try {
+    insertUsageRowsFromLegacyTable(db, oldUsageTable, oldCols, true)
+    db.exec(`DROP TABLE ${quoteIdentifier(oldUsageTable)}`)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 /**
  * Initialize all Hermes SQLite tables with proper schemas.
  * This function creates tables and adds missing columns if schemas change.
@@ -188,38 +287,29 @@ export function initAllHermesTables(): void {
   if (!db) return
 
   // Usage store - with special migration logic
-  const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(USAGE_TABLE)
-  const cols = (tableExists
-    ? db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string; pk: number }>
-    : [])
+  const tableExists = sqliteTableExists(db, USAGE_TABLE)
+  const cols = tableExists
+    ? db.prepare(`PRAGMA table_info(${quoteIdentifier(USAGE_TABLE)})`).all() as Array<{ name: string; pk: number }>
+    : []
   const hasId = cols.some(c => c.name === 'id')
   if (!hasId && tableExists) {
     // Migration: if session_id is still PRIMARY KEY (no separate id column), recreate table
     const oldCols = new Set(cols.map(c => c.name))
-    const insertCols = ['session_id', 'input_tokens', 'output_tokens']
-    const selectCols = [...insertCols]
-    if (oldCols.has('cache_read_tokens')) { insertCols.push('cache_read_tokens'); selectCols.push('cache_read_tokens') }
-    if (oldCols.has('cache_write_tokens')) { insertCols.push('cache_write_tokens'); selectCols.push('cache_write_tokens') }
-    if (oldCols.has('reasoning_tokens')) { insertCols.push('reasoning_tokens'); selectCols.push('reasoning_tokens') }
-    if (oldCols.has('created_at')) { insertCols.push('created_at'); selectCols.push('created_at') }
-    if (oldCols.has('model')) { insertCols.push('model'); selectCols.push('model') }
-    const defaults = {
-      cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
-      created_at: Date.now(), model: '', profile: 'default',
+    const oldUsageTable = `${USAGE_TABLE}_old`
+
+    db.exec('BEGIN')
+    try {
+      db.exec(`ALTER TABLE ${quoteIdentifier(USAGE_TABLE)} RENAME TO ${quoteIdentifier(oldUsageTable)}`)
+      db.exec(`CREATE TABLE ${quoteIdentifier(USAGE_TABLE)} (${usageSchemaDefinitionSql()})`)
+      insertUsageRowsFromLegacyTable(db, oldUsageTable, oldCols)
+      db.exec(`DROP TABLE ${quoteIdentifier(oldUsageTable)}`)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
-    const insertValues = insertCols.map(c => c)
-    const selectValues = selectCols.map(c => c)
-    // Columns in new schema but not in old table — use defaults
-    for (const [col] of Object.entries(USAGE_SCHEMA)) {
-      if (!oldCols.has(col) && col !== 'id') {
-        insertValues.push(col)
-        selectValues.push(String(defaults[col as keyof typeof defaults] ?? 0))
-      }
-    }
-    db.exec(`ALTER TABLE "${USAGE_TABLE}" RENAME TO "${USAGE_TABLE}_old"`)
-    db.exec(`CREATE TABLE "${USAGE_TABLE}" (${Object.entries(USAGE_SCHEMA).map(([col, def]) => `"${col}" ${def}`).join(', ')})`)
-    db.exec(`INSERT INTO "${USAGE_TABLE}" (${insertValues.join(', ')}) SELECT ${selectValues.join(', ')} FROM "${USAGE_TABLE}_old"`)
-    db.exec(`DROP TABLE "${USAGE_TABLE}_old"`)
+  } else if (hasId) {
+    recoverInterruptedUsageMigration(db)
   }
   ensureTable(USAGE_TABLE, USAGE_SCHEMA)
 
