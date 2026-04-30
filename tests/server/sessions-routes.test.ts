@@ -2,25 +2,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listConversationsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'conversation-1' }] } })
 const getConversationMessagesMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
+const getConversationMessagesPaginatedMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [], pagination: {} } })
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true, workspace_path: ctx.request?.body?.workspace_path ?? null } })
+const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
+const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
 const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 200000 } })
 
 vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   listConversations: listConversationsMock,
   getConversationMessages: getConversationMessagesMock,
+  getConversationMessagesPaginated: getConversationMessagesPaginatedMock,
   list: listMock,
   search: searchMock,
   get: getMock,
   remove: removeMock,
   rename: renameMock,
+  setWorkspace: setWorkspaceMock,
+  listWorkspaceFolders: listWorkspaceFoldersMock,
   usageBatch: usageBatchMock,
   usageSingle: usageSingleMock,
+  usageStats: usageStatsMock,
   contextLength: contextLengthMock,
 }))
 
@@ -29,11 +37,14 @@ describe('session routes', () => {
     vi.resetModules()
     listConversationsMock.mockClear()
     getConversationMessagesMock.mockClear()
+    getConversationMessagesPaginatedMock.mockClear()
     listMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
     removeMock.mockClear()
     renameMock.mockClear()
+    setWorkspaceMock.mockClear()
+    listWorkspaceFoldersMock.mockClear()
   })
 
   it('registers conversations, session list, and search routes', async () => {
@@ -43,14 +54,18 @@ describe('session routes', () => {
     expect(paths).toEqual(expect.arrayContaining([
       '/api/hermes/sessions/conversations',
       '/api/hermes/sessions/conversations/:id/messages',
+      '/api/hermes/sessions/conversations/:id/messages/paginated',
       '/api/hermes/sessions',
       '/api/hermes/search/sessions',
       '/api/hermes/sessions/search',
       '/api/hermes/sessions/usage',
+      '/api/hermes/usage/stats',
       '/api/hermes/sessions/context-length',
       '/api/hermes/sessions/:id',
       '/api/hermes/sessions/:id/usage',
       '/api/hermes/sessions/:id/rename',
+      '/api/hermes/sessions/:id/workspace',
+      '/api/hermes/workspace/folders',
     ]))
   })
 

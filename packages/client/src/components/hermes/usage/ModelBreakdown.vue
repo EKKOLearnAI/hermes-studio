@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUsageStore } from '@/stores/hermes/usage'
 
 const { t } = useI18n()
 const usageStore = useUsageStore()
+const maxModelTokens = computed(() => Math.max(usageStore.modelUsage[0]?.totalTokens || 0, 1))
 
 function formatTokens(n: number): string {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
@@ -21,7 +23,7 @@ function formatTokens(n: number): string {
         <div class="model-bar-wrap">
           <div
             class="model-bar"
-            :style="{ width: (m.totalTokens / usageStore.modelUsage[0].totalTokens * 100) + '%' }"
+            :style="{ width: (m.totalTokens / maxModelTokens * 100) + '%' }"
           />
         </div>
         <span class="model-tokens">{{ formatTokens(m.totalTokens) }}</span>

@@ -1,14 +1,14 @@
 import { getApiKey, getBaseUrlValue } from '../client'
 
 /**
- * Construct a download URL with auth token as query parameter.
- * Token is passed via query param because <a> tags cannot set headers.
+ * Construct a download URL. Token is included by default because <a>/<img>
+ * tags cannot set Authorization headers; omit it for persisted message state.
  */
-export function getDownloadUrl(filePath: string, fileName?: string): string {
+export function getDownloadUrl(filePath: string, fileName?: string, options?: { includeToken?: boolean }): string {
   const base = getBaseUrlValue()
   const params = new URLSearchParams({ path: filePath })
   if (fileName) params.set('name', fileName)
-  const token = getApiKey()
+  const token = options?.includeToken === false ? '' : getApiKey()
   if (token) params.set('token', token)
   return `${base}/api/hermes/download?${params.toString()}`
 }

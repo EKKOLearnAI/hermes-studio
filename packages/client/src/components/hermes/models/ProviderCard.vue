@@ -91,6 +91,20 @@ async function handleDelete() {
         <span class="info-label">{{ t('models.baseUrl') }}</span>
         <code class="info-value mono">{{ provider.base_url }}</code>
       </div>
+      <div class="info-row models-row">
+        <span class="info-label">{{ t('models.models') }}</span>
+        <span class="info-value models-count">{{ provider.models.length }} {{ t('models.count') }}</span>
+      </div>
+      <div class="models-list">
+        <span
+          v-for="model in provider.models.slice(0, 20)"
+          :key="model"
+          class="model-tag"
+        >{{ model }}</span>
+        <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
+          +{{ provider.models.length - 20 }} {{ t('models.more') }}
+        </span>
+      </div>
     </div>
 
     <div class="card-actions">
@@ -174,6 +188,47 @@ async function handleDelete() {
 .mono {
   font-family: $font-code;
   font-size: 12px;
+}
+
+.models-row {
+  margin-top: 4px;
+}
+
+.models-count {
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.models-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+  height: 100px;
+  overflow-y: auto;
+  align-content: flex-start;
+}
+
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  font-size: 10px;
+  font-family: $font-code;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  color: $text-secondary;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &-more {
+    background: rgba(var(--accent-primary-rgb), 0.15);
+    color: $accent-primary;
+    font-weight: 500;
+  }
 }
 
 .card-actions {

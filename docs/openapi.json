@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Hermes Web UI API",
-    "description": "BFF server API for Hermes Web UI — chat sessions, platform channels, model management, skills, memory, logs, file browser, and terminal.",
-    "version": "0.4.4"
+    "description": "BFF server API for Hermes Web UI — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
+    "version": "0.5.0"
   },
   "servers": [
     { "url": "http://localhost:8648", "description": "Local development" }
@@ -27,9 +27,12 @@
     { "name": "Profiles", "description": "Hermes profile management" },
     { "name": "Gateways", "description": "Gateway process management" },
     { "name": "Update", "description": "Self-update management" },
+    { "name": "Jobs", "description": "Scheduled job management (cron, one-time tasks)" },
     { "name": "Terminal", "description": "WebSocket terminal (node-pty)" },
     { "name": "Webhook", "description": "Webhook receiver" },
-    { "name": "Proxy", "description": "Reverse proxy to Hermes API" }
+    { "name": "Proxy", "description": "Reverse proxy to Hermes API" },
+    { "name": "Copilot Auth", "description": "GitHub Copilot device-code OAuth flow" },
+    { "name": "Group Chat", "description": "Multi-agent group chat rooms" }
   ],
   "paths": {
     "/api/auth/status": {
@@ -1091,6 +1094,336 @@
       }
     }
   },
+  "/api/hermes/jobs": {
+    "get": {
+      "tags": ["Jobs"],
+      "summary": "List all scheduled jobs",
+      "operationId": "listJobs",
+      "responses": {
+        "200": { "description": "Job list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobListResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "post": {
+      "tags": ["Jobs"],
+      "summary": "Create a new scheduled job",
+      "operationId": "createJob",
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateJobRequest" } } } },
+      "responses": {
+        "200": { "description": "Job created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/jobs/{id}": {
+    "get": {
+      "tags": ["Jobs"],
+      "summary": "Get job detail",
+      "operationId": "getJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Job detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "patch": {
+      "tags": ["Jobs"],
+      "summary": "Update job",
+      "operationId": "updateJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateJobRequest" } } } },
+      "responses": {
+        "200": { "description": "Job updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "400": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "delete": {
+      "tags": ["Jobs"],
+      "summary": "Delete job",
+      "operationId": "deleteJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Job deleted", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/jobs/{id}/pause": {
+    "post": {
+      "tags": ["Jobs"],
+      "summary": "Pause a job",
+      "operationId": "pauseJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Job paused", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/jobs/{id}/resume": {
+    "post": {
+      "tags": ["Jobs"],
+      "summary": "Resume a paused job",
+      "operationId": "resumeJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Job resumed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/jobs/{id}/run": {
+    "post": {
+      "tags": ["Jobs"],
+      "summary": "Trigger a job run immediately",
+      "operationId": "runJob",
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Job triggered", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/auth/copilot/start": {
+    "post": {
+      "tags": ["Copilot Auth"],
+      "summary": "Start GitHub Copilot OAuth device flow",
+      "operationId": "copilotAuthStart",
+      "security": [{ "BearerAuth": [] }],
+      "responses": {
+        "200": { "description": "Device code flow started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OAuthStartResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "500": { "description": "Failed to start", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      }
+    }
+  },
+  "/api/hermes/auth/copilot/poll/{sessionId}": {
+    "get": {
+      "tags": ["Copilot Auth"],
+      "summary": "Poll GitHub Copilot OAuth status",
+      "operationId": "copilotAuthPoll",
+      "parameters": [{ "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "OAuth poll result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CopilotOAuthPollResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/auth/copilot/check-token": {
+    "get": {
+      "tags": ["Copilot Auth"],
+      "summary": "Check GitHub Copilot token validity",
+      "operationId": "copilotCheckToken",
+      "security": [{ "BearerAuth": [] }],
+      "responses": {
+        "200": { "description": "Token status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CopilotTokenStatusResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      }
+    }
+  },
+  "/api/hermes/auth/copilot/enable": {
+    "post": {
+      "tags": ["Copilot Auth"],
+      "summary": "Enable GitHub Copilot auth",
+      "operationId": "copilotEnable",
+      "security": [{ "BearerAuth": [] }],
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "enabled": { "type": "boolean" } }, "required": ["enabled"] } } } },
+      "responses": {
+        "200": { "description": "Auth enabled", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      }
+    }
+  },
+  "/api/hermes/group-chat/rooms": {
+    "get": {
+      "tags": ["Group Chat"],
+      "summary": "List all group chat rooms",
+      "operationId": "listGroupChatRooms",
+      "responses": {
+        "200": { "description": "Room list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatRoomListResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "post": {
+      "tags": ["Group Chat"],
+      "summary": "Create a new group chat room",
+      "operationId": "createGroupChatRoom",
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateGroupChatRoomRequest" } } } },
+      "responses": {
+        "200": { "description": "Room created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatRoomDetailResponse" } } } } },
+        "400": { "description": "Missing required fields", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}": {
+    "get": {
+      "tags": ["Group Chat"],
+      "summary": "Get group chat room detail",
+      "operationId": "getGroupChatRoom",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Room detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatRoomDetailResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Room not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "delete": {
+      "tags": ["Group Chat"],
+      "summary": "Delete a group chat room",
+      "operationId": "deleteGroupChatRoom",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Room deleted", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/join/{code}": {
+    "get": {
+      "tags": ["Group Chat"],
+      "summary": "Get room by invite code",
+      "operationId": "joinGroupChatRoom",
+      "parameters": [{ "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Room detail", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatRoomResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Room not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}/invite-code": {
+    "put": {
+      "tags": ["Group Chat"],
+      "summary": "Update room invite code",
+      "operationId": "updateRoomInviteCode",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "inviteCode": { "type": "string" } }, "required": ["inviteCode"] } } } },
+      "responses": {
+        "200": { "description": "Invite code updated", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "400": { "description": "Missing inviteCode", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}/agents": {
+    "get": {
+      "tags": ["Group Chat"],
+      "summary": "List agents in room",
+      "operationId": "listRoomAgents",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Agent list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatAgentListResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    },
+    "post": {
+      "tags": ["Group Chat"],
+      "summary": "Add agent to room",
+      "operationId": "addRoomAgent",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AddRoomAgentRequest" } } } },
+      "responses": {
+        "200": { "description": "Agent added", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatAgentResponse" } } } } },
+        "400": { "description": "Missing profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "409": { "description": "Agent already in room", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}/agents/{agentId}": {
+    "delete": {
+      "tags": ["Group Chat"],
+      "summary": "Remove agent from room",
+      "operationId": "removeRoomAgent",
+      "parameters": [
+        { "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } },
+        { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "responses": {
+        "200": { "description": "Agent removed", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}/config": {
+    "put": {
+      "tags": ["Group Chat"],
+      "summary": "Update room compression config",
+      "operationId": "updateRoomConfig",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateRoomConfigRequest" } } } },
+      "responses": {
+        "200": { "description": "Room config updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GroupChatRoomResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/group-chat/rooms/{roomId}/compress": {
+    "post": {
+      "tags": ["Group Chat"],
+      "summary": "Force compress room context",
+      "operationId": "compressRoomContext",
+      "parameters": [{ "name": "roomId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "responses": {
+        "200": { "description": "Context compressed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CompressRoomResponse" } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" },
+        "404": { "description": "Room not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+        "503": { "description": "Group chat not initialized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+      },
+      "security": [{ "BearerAuth": [] }]
+    }
+  },
+  "/api/hermes/auth/copilot/disable": {
+    "post": {
+      "tags": ["Copilot Auth"],
+      "summary": "Disable GitHub Copilot auth",
+      "operationId": "copilotDisable",
+      "security": [{ "BearerAuth": [] }],
+      "responses": {
+        "200": { "description": "Auth disabled", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" } } } } } },
+        "401": { "$ref": "#/components/responses/Unauthorized" }
+      }
+    }
+  },
+  "components": {
   "components": {
     "securitySchemes": {
       "BearerAuth": {
@@ -1657,6 +1990,139 @@
         "properties": {
           "success": { "type": "boolean" },
           "message": { "type": "string" }
+        }
+      },
+      "JobListResponse": {
+        "type": "object",
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        }
+      },
+      "JobResponse": {
+        "type": "object",
+        "properties": {
+          "job": { "type": "object" }
+        }
+      },
+      "CreateJobRequest": {
+        "type": "object",
+        "properties": {
+          "cron": { "type": "string", "description": "Cron expression (e.g. \"0 9 * * *\" for daily at 9am)" },
+          "prompt": { "type": "string", "description": "Task prompt to execute" },
+          "recurring": { "type": "boolean", "description": "Whether this is a recurring job" }
+        },
+        "required": ["cron", "prompt"]
+      },
+      "UpdateJobRequest": {
+        "type": "object",
+        "properties": {
+          "cron": { "type": "string" },
+          "prompt": { "type": "string" },
+          "recurring": { "type": "boolean" }
+        }
+      },
+      "CopilotOAuthPollResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "approved", "expired", "error"] },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "CopilotTokenStatusResponse": {
+        "type": "object",
+        "properties": {
+          "valid": { "type": "boolean" }
+        }
+      },
+      "GroupChatRoomListResponse": {
+        "type": "object",
+        "properties": {
+          "rooms": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "GroupChatRoomDetailResponse": {
+        "type": "object",
+        "properties": {
+          "room": { "type": "object", "description": "Room detail" },
+          "messages": { "type": "array", "items": { "type": "object" }, "description": "Room messages" },
+          "agents": { "type": "array", "items": { "type": "object" }, "description": "Room agents" },
+          "members": { "type": "array", "items": { "type": "object" }, "description": "Room members" }
+        }
+      },
+      "GroupChatRoomResponse": {
+        "type": "object",
+        "properties": {
+          "room": { "type": "object" }
+        }
+      },
+      "CreateGroupChatRoomRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Room name" },
+          "inviteCode": { "type": "string", "description": "Invite code for joining" },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "profile": { "type": "string" },
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "invited": { "type": "boolean" }
+              }
+            },
+            "description": "Initial agents to add"
+          },
+          "compression": {
+            "type": "object",
+            "properties": {
+              "triggerTokens": { "type": "number" },
+              "maxHistoryTokens": { "type": "number" },
+              "tailMessageCount": { "type": "number" }
+            },
+            "description": "Compression configuration"
+          }
+        },
+        "required": ["name", "inviteCode"]
+      },
+      "GroupChatAgentListResponse": {
+        "type": "object",
+        "properties": {
+          "agents": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "GroupChatAgentResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "object" }
+        }
+      },
+      "AddRoomAgentRequest": {
+        "type": "object",
+        "properties": {
+          "profile": { "type": "string", "description": "Hermes profile name" },
+          "name": { "type": "string", "description": "Agent display name" },
+          "description": { "type": "string", "description": "Agent description" },
+          "invited": { "type": "boolean", "description": "Whether agent is invited" }
+        },
+        "required": ["profile"]
+      },
+      "UpdateRoomConfigRequest": {
+        "type": "object",
+        "properties": {
+          "triggerTokens": { "type": "number" },
+          "maxHistoryTokens": { "type": "number" },
+          "tailMessageCount": { "type": "number" }
+        }
+      },
+      "CompressRoomResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "summary": { "type": "string", "description": "Compression summary" }
         }
       }
     }

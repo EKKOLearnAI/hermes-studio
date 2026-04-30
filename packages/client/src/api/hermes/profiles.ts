@@ -29,15 +29,35 @@ export async function fetchProfileDetail(name: string): Promise<HermesProfileDet
   return res.profile
 }
 
-export async function createProfile(name: string, clone?: boolean): Promise<boolean> {
+export interface CreateProfileResult {
+  success: boolean
+  /** clone=true 时被清理的独占平台凭据 KEY 名 */
+  strippedCredentials?: string[]
+  /** clone=true 时被禁用的独占平台名 */
+  disabledPlatforms?: string[]
+  /** clone=true 时在 config.yaml 中被清理的内嵌凭据字段路径 */
+  strippedConfigCredentials?: string[]
+}
+
+export async function createProfile(name: string, clone?: boolean): Promise<CreateProfileResult> {
   try {
-    await request('/api/hermes/profiles', {
+    const res = await request<{
+      success: boolean
+      strippedCredentials?: string[]
+      disabledPlatforms?: string[]
+      strippedConfigCredentials?: string[]
+    }>('/api/hermes/profiles', {
       method: 'POST',
       body: JSON.stringify({ name, clone }),
     })
-    return true
+    return {
+      success: !!res.success,
+      strippedCredentials: res.strippedCredentials,
+      disabledPlatforms: res.disabledPlatforms,
+      strippedConfigCredentials: res.strippedConfigCredentials,
+    }
   } catch {
-    return false
+    return { success: false }
   }
 }
 

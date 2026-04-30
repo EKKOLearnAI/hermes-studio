@@ -25,11 +25,11 @@ onMounted(() => {
     </header>
 
     <div class="usage-content">
-      <div v-if="usageStore.isLoading && usageStore.sessions.length === 0" class="usage-loading">
+      <div v-if="usageStore.isLoading && !usageStore.hasData" class="usage-loading">
         {{ t('common.loading') }}
       </div>
 
-      <template v-else-if="usageStore.sessions.length > 0">
+      <template v-else-if="usageStore.hasData">
         <StatCards />
         <ModelBreakdown />
         <DailyTrend />

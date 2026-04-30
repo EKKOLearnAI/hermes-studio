@@ -49,7 +49,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'deepseek',
     builtin: true,
     base_url: 'https://api.deepseek.com',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
   },
   {
     label: 'Z.AI / GLM',
@@ -255,6 +255,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     builtin: true,
     base_url: 'https://opencode.ai/zen/go/v1',
     models: ['glm-5.1', 'glm-5', 'kimi-k2.5', 'mimo-v2-pro', 'mimo-v2-omni', 'minimax-m2.7', 'minimax-m2.5'],
+  },
+  {
+    label: 'LongCat',
+    value: 'longcat',
+    builtin: true,
+    base_url: 'https://api.longcat.chat/openai',
+    models: ['LongCat-Flash-Lite', 'LongCat-2.0-Preview'],
   },
   {
     label: 'OpenAI Codex',

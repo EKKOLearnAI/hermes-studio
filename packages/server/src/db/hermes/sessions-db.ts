@@ -1,4 +1,5 @@
-import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
+import { getActiveProfileDir, getProfileDir } from '../../services/hermes/hermes-profile'
+import type { LocalUsageStats } from './usage-store'
 
 const SQLITE_AVAILABLE = (() => {
   const [major, minor] = process.versions.node.split('.').map(Number)
@@ -242,7 +243,7 @@ function runLiteralContentSearch(
         ${SESSION_SELECT},
         s.parent_session_id AS parent_session_id
       FROM sessions s
-      WHERE s.source != 'tool'
+      WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
         ${sourceClause}
     )
     SELECT
@@ -411,7 +412,7 @@ function loadAllSessions(db: { prepare: (sql: string) => { all: (...params: any[
       ${SESSION_SELECT},
       s.parent_session_id AS parent_session_id
     FROM sessions s
-    WHERE s.source != 'tool'
+    WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
   `).all() as Record<string, unknown>[]
   const sessions = rows.map(mapInternalSessionRow)
   const byId = new Map(sessions.map(s => [s.id, s]))
@@ -571,7 +572,49 @@ async function openSessionDb() {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
   const { DatabaseSync } = await import('node:sqlite')
-  return new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
+  const dbPath = sessionDbPath()
+  console.log(`[sessions-db] Opening session db: ${dbPath}`)
+  try {
+    return new DatabaseSync(dbPath, { open: true, readOnly: true })
+  } catch (err: any) {
+    console.error(`[sessions-db] Failed to open session db at ${dbPath}:`, err.message)
+    throw err
+  }
+}
+
+/**
+ * Lightweight alternative: get messages + session row for a single session ID
+ * without chain traversal. Used by syncFromHermes for ephemeral sessions.
+ */
+export async function getSessionMessagesFromDb(sessionId: string): Promise<{
+  messages: HermesMessageRow[]
+  session: HermesSessionRow | null
+} | null> {
+  const db = await openSessionDb()
+  try {
+    const sessionRow = db.prepare(`
+      SELECT ${SESSION_SELECT}
+      FROM sessions s
+      WHERE s.id = ?
+    `).get(sessionId) as Record<string, unknown> | undefined
+
+    const messageRows = db.prepare(`
+      SELECT
+        id, session_id, role, content, tool_call_id, tool_calls, tool_name,
+        timestamp, token_count, finish_reason, reasoning, reasoning_details,
+        codex_reasoning_items, reasoning_content
+      FROM messages
+      WHERE session_id = ?
+      ORDER BY timestamp, id
+    `).all(sessionId) as Record<string, unknown>[]
+
+    return {
+      messages: messageRows.map(mapMessageRow),
+      session: sessionRow ? mapRow(sessionRow) : null,
+    }
+  } finally {
+    db.close()
+  }
 }
 
 export async function getSessionDetailFromDb(sessionId: string): Promise<HermesSessionDetailRow | null> {
@@ -606,7 +649,6 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
       WHERE session_id IN (${placeholders})
       ORDER BY timestamp, id
     `).all(...ids) as Record<string, unknown>[]
-
     const messages = messageRows.map(mapMessageRow)
     return aggregateSessionDetail(chain, messages, sessionId)
   } finally {
@@ -614,16 +656,177 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
   }
 }
 
-export async function listSessionSummaries(source?: string, limit = 2000): Promise<HermesSessionRow[]> {
+export async function getSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dbPath = `${getProfileDir(profile)}/state.db`
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
+  try {
+    const idx = loadAllSessions(db)
+    const requested = idx.byId.get(sessionId) || null
+    if (!requested) return null
+
+    const chain = collectSessionChainForMatchedSession(requested, idx)
+    if (!chain.length) return null
+
+    const ids = chain.map(session => session.id)
+    const placeholders = ids.map(() => '?').join(', ')
+    const messageRows = db.prepare(`
+      SELECT
+        id,
+        session_id,
+        role,
+        content,
+        tool_call_id,
+        tool_calls,
+        tool_name,
+        timestamp,
+        token_count,
+        finish_reason,
+        reasoning,
+        reasoning_details,
+        codex_reasoning_items,
+        reasoning_content
+      FROM messages
+      WHERE session_id IN (${placeholders})
+      ORDER BY timestamp, id
+    `).all(...ids) as Record<string, unknown>[]
+    const messages = messageRows.map(mapMessageRow)
+    return aggregateSessionDetail(chain, messages, sessionId)
+  } finally {
+    db.close()
+  }
+}
+
+export interface HermesUsageStats extends LocalUsageStats {
+  cost: number
+  total_api_calls: number
+}
+
+function tableHasColumn(
+  db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } },
+  tableName: string,
+  columnName: string,
+): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all()
+  return columns.some(column => String(column.name || '') === columnName)
+}
+
+export async function getUsageStatsFromDb(
+  days = 30,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): Promise<HermesUsageStats> {
+  const empty: HermesUsageStats = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    sessions: 0,
+    by_model: [],
+    by_day: [],
+    cost: 0,
+    total_api_calls: 0,
+  }
+
+  const normalizedDays = Number.isFinite(days) ? days : 30
+  const safeDays = Math.max(1, Math.floor(normalizedDays))
+  const since = nowSeconds - safeDays * 24 * 60 * 60
+  const db = await openSessionDb()
+
+  try {
+    const apiCallsExpr = tableHasColumn(db, 'sessions', 'api_call_count')
+      ? 'COALESCE(SUM(api_call_count), 0)'
+      : '0'
+    const sourceFilter = tableHasColumn(db, 'sessions', 'source')
+      ? " AND COALESCE(source, '') != 'api_server'"
+      : ''
+
+    const totals = db.prepare(`
+      SELECT
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+        COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+        COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd, 0)), 0) AS cost,
+        COUNT(*) AS sessions,
+        ${apiCallsExpr} AS total_api_calls
+      FROM sessions
+      WHERE started_at > ?${sourceFilter}
+    `).get(since) as Record<string, unknown> | undefined
+
+    if (!totals) return empty
+
+    const byModel = db.prepare(`
+      SELECT
+        COALESCE(model, '') AS model,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+        COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+        COUNT(*) AS sessions
+      FROM sessions
+      WHERE started_at > ?${sourceFilter} AND model IS NOT NULL
+      GROUP BY model
+      ORDER BY COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) DESC
+    `).all(since).map(row => ({
+      model: String(row.model || ''),
+      input_tokens: normalizeNumber(row.input_tokens),
+      output_tokens: normalizeNumber(row.output_tokens),
+      cache_read_tokens: normalizeNumber(row.cache_read_tokens),
+      cache_write_tokens: normalizeNumber(row.cache_write_tokens),
+      reasoning_tokens: normalizeNumber(row.reasoning_tokens),
+      sessions: normalizeNumber(row.sessions),
+    }))
+
+    const byDay = db.prepare(`
+      SELECT
+        date(started_at, 'unixepoch') AS date,
+        COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) AS tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache,
+        COUNT(*) AS sessions,
+        COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd, 0)), 0) AS cost
+      FROM sessions
+      WHERE started_at > ?${sourceFilter}
+      GROUP BY date
+      ORDER BY date ASC
+    `).all(since).map(row => ({
+      date: String(row.date || ''),
+      tokens: normalizeNumber(row.tokens),
+      cache: normalizeNumber(row.cache),
+      sessions: normalizeNumber(row.sessions),
+      cost: normalizeNumber(row.cost),
+    }))
+
+    return {
+      input_tokens: normalizeNumber(totals.input_tokens),
+      output_tokens: normalizeNumber(totals.output_tokens),
+      cache_read_tokens: normalizeNumber(totals.cache_read_tokens),
+      cache_write_tokens: normalizeNumber(totals.cache_write_tokens),
+      reasoning_tokens: normalizeNumber(totals.reasoning_tokens),
+      sessions: normalizeNumber(totals.sessions),
+      by_model: byModel,
+      by_day: byDay,
+      cost: normalizeNumber(totals.cost),
+      total_api_calls: normalizeNumber(totals.total_api_calls),
+    }
+  } finally {
+    db.close()
+  }
+}
+
+export async function listSessionSummaries(source?: string, limit = 2000, profile?: string): Promise<HermesSessionRow[]> {
   if (!SQLITE_AVAILABLE) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
 
   const { DatabaseSync } = await import('node:sqlite')
-  const db = new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
+  const dbPath = profile ? `${getProfileDir(profile)}/state.db` : sessionDbPath()
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
 
   try {
-    const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'"]
+    const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'", "s.id NOT LIKE 'compress_%'"]
     const params: any[] = []
     if (source) {
       clauses.push('s.source = ?')
@@ -689,7 +892,7 @@ export async function searchSessionSummaries(
         ${SESSION_SELECT},
         s.parent_session_id AS parent_session_id
       FROM sessions s
-      WHERE s.source != 'tool'
+      WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
         ${sourceClause}
     `
 

@@ -56,8 +56,9 @@ function handleClose() {
     <NForm label-placement="top">
       <NFormItem :label="t('profiles.newName')" required>
         <NInput
-          v-model:value="newName"
+          :value="newName"
           :placeholder="t('profiles.newNamePlaceholder')"
+          @input="newName = $event.toLowerCase().replace(/[^a-z0-9_-]/g, '')"
           @keyup.enter="handleSave"
         />
       </NFormItem>

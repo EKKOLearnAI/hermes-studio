@@ -12,6 +12,20 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const listRef = ref<HTMLElement>();
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+function formatToolDuration(seconds: number): string {
+  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.round(seconds % 60)
+  return `${mins}m ${secs}s`
+}
+
 const displayMessages = computed(() =>
   chatStore.messages.filter((m) => m.role !== "tool"),
 );
@@ -128,7 +142,48 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0" class="tool-calls-panel">
+        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState" class="tool-calls-panel">
+          <!-- Compression indicator -->
+          <div v-if="chatStore.compressionState" class="tool-call-item compression-item">
+            <svg
+              v-if="chatStore.compressionState.compressing"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <svg
+              v-else-if="chatStore.compressionState.compressed"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+            <span class="tool-call-name">
+              {{
+                chatStore.compressionState.compressing
+                  ? `Compressing... (${chatStore.compressionState.messageCount} msgs, ~${formatTokens(chatStore.compressionState.beforeTokens)} tokens)`
+                  : chatStore.compressionState.compressed
+                    ? `Compressed ${chatStore.compressionState.messageCount} msgs: ~${formatTokens(chatStore.compressionState.beforeTokens)} → ~${formatTokens(chatStore.compressionState.afterTokens)} tokens`
+                    : `Compression skipped`
+              }}
+            </span>
+            <span
+              v-if="chatStore.compressionState.compressing"
+              class="tool-call-spinner"
+            ></span>
+          </div>
+          <!-- Tool calls -->
           <div
             v-for="tc in currentToolCalls"
             :key="tc.id"
@@ -152,12 +207,51 @@ watch(currentToolCalls, () => {
               tc.toolPreview
             }}</span>
             <span
+              v-if="tc.toolDuration && tc.toolStatus !== 'running'"
+              class="tool-call-duration"
+              :title="$t('chat.executionDuration')"
+            >{{ formatToolDuration(tc.toolDuration) }}</span
+            >
+            <svg
+              v-if="tc.toolStatus === 'done'"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              class="tool-call-success-icon"
+            >
+              <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15"/>
+              <path
+                d="M8 12L11 15L16 9"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+              />
+            </svg>
+            <span
               v-if="tc.toolStatus === 'running'"
               class="tool-call-spinner"
             ></span>
-            <span v-if="tc.toolStatus === 'error'" class="tool-call-error">{{
-              t("chat.error")
-            }}</span>
+            <svg
+              v-if="tc.toolStatus === 'error'"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              class="tool-call-error-icon"
+            >
+              <circle cx="12" cy="12" r="10" fill="currentColor" fill-opacity="0.15"/>
+              <path
+                d="M15 9L9 15M9 9L15 15"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+              />
+            </svg>
           </div>
         </div>
       </div>
@@ -253,6 +347,11 @@ watch(currentToolCalls, () => {
     background: rgba(255, 255, 255, 0.06);
   }
 
+  &.compression-item {
+    color: $text-muted;
+    font-size: 10px;
+  }
+
   .tool-call-icon {
     flex-shrink: 0;
     color: $text-muted;
@@ -282,13 +381,30 @@ watch(currentToolCalls, () => {
   flex-shrink: 0;
 }
 
-.tool-call-error {
-  font-size: 9px;
-  color: $error;
-  background: rgba($error, 0.08);
-  padding: 0 4px;
-  border-radius: 3px;
-  line-height: 14px;
+.tool-call-error-icon {
+  color: #ff4d4f;
+  flex-shrink: 0;
+  margin-left: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-call-duration {
+  font-size: 10px;
+  color: $text-muted;
+  font-family: $font-code;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.tool-call-success-icon {
+  color: #52c41a;
+  flex-shrink: 0;
+  margin-left: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @keyframes spin {

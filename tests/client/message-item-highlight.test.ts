@@ -24,6 +24,11 @@ import type { Message } from '@/stores/hermes/chat'
 describe('MessageItem tool details', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    window.localStorage.clear()
+    Object.defineProperty(window, 'isSecureContext', {
+      configurable: true,
+      value: true,
+    })
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {

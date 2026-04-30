@@ -29,7 +29,7 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
     triggerTokens: 100_000,
     maxHistoryTokens: 32_000,
     tailMessageCount: 20,
-    charsPerToken: 4,
+    charsPerToken: 6,
     summarizationTimeoutMs: 30_000,
 }
 
@@ -81,6 +81,8 @@ export interface GatewayCaller {
         apiKey: string | null,
         systemPrompt: string,
         messages: StoredMessage[],
+        roomId: string,
+        profile: string,
         previousSummary?: string,
     ): Promise<{ summary: string; sessionId: string }>
 }
@@ -108,4 +110,5 @@ export interface BuildContextInput {
     apiKey: string | null
     currentMessage: StoredMessage
     compression?: Partial<CompressionConfig>
+    profile?: string
 }

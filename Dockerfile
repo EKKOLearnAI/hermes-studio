@@ -22,7 +22,7 @@ RUN ARCH=$(dpkg --print-architecture) \
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --ignore-scripts
+RUN npm install --ignore-scripts && npm rebuild node-pty
 
 COPY . .
 

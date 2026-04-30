@@ -261,9 +261,9 @@ onMounted(async () => {
 
 .log-message {
   color: $text-secondary;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  white-space: normal;
+  word-break: break-word;
   min-width: 0;
 }
 

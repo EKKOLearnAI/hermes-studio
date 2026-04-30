@@ -35,6 +35,7 @@
 
 - Real-time streaming via SSE with async run support
 - Multi-session management — create, rename, delete, switch between sessions
+- **Self-built session database** — local SQLite storage with automatic sync from Hermes state.db on first startup
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
 - Active session indicator — live sessions pin to top with spinner icon
 - Sessions sorted by latest message time
