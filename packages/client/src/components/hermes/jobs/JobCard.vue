@@ -5,9 +5,14 @@ import type { Job } from '@/api/hermes/jobs'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps<{ job: Job }>()
+const props = defineProps<{
+  job: Job
+  selected?: boolean
+}>()
+
 const emit = defineEmits<{
   edit: [jobId: string]
+  select: [jobId: string]
 }>()
 
 const { t } = useI18n()
@@ -76,10 +81,16 @@ async function handleDelete() {
     message.error(e.message)
   }
 }
+
+function handleCardClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (target.closest('.card-actions')) return
+  emit('select', jobId.value)
+}
 </script>
 
 <template>
-  <div class="job-card">
+  <div class="job-card" :class="{ selected }" @click="handleCardClick">
     <div class="card-header">
       <h3 class="job-name">{{ job.name }}</h3>
       <span class="status-badge" :class="statusType">{{ statusLabel }}</span>
@@ -89,6 +100,10 @@ async function handleDelete() {
       <div class="info-row">
         <span class="info-label">{{ t('jobs.info.schedule') }}</span>
         <code class="info-value mono">{{ scheduleExpr }}</code>
+      </div>
+      <div class="info-row">
+        <span class="info-label">{{ t('jobs.info.model') }}</span>
+        <span class="info-value mono">{{ job.model || '—' }}</span>
       </div>
       <div class="info-row">
         <span class="info-label">{{ t('jobs.info.lastRun') }}</span>
@@ -119,24 +134,24 @@ async function handleDelete() {
     <div class="card-actions">
       <NTooltip v-if="job.state !== 'paused' && job.enabled">
         <template #trigger>
-          <NButton size="tiny" quaternary @click="handlePause">{{ t('jobs.action.pause') }}</NButton>
+          <NButton size="tiny" quaternary @click.stop="handlePause">{{ t('jobs.action.pause') }}</NButton>
         </template>
         {{ t('jobs.action.pauseJob') }}
       </NTooltip>
       <NTooltip v-else-if="job.state === 'paused'">
         <template #trigger>
-          <NButton size="tiny" quaternary @click="handleResume">{{ t('jobs.action.resume') }}</NButton>
+          <NButton size="tiny" quaternary @click.stop="handleResume">{{ t('jobs.action.resume') }}</NButton>
         </template>
         {{ t('jobs.action.resumeJob') }}
       </NTooltip>
       <NTooltip>
         <template #trigger>
-          <NButton size="tiny" quaternary @click="handleRun">{{ t('jobs.action.runNow') }}</NButton>
+          <NButton size="tiny" quaternary @click.stop="handleRun">{{ t('jobs.action.runNow') }}</NButton>
         </template>
         {{ t('jobs.action.triggerImmediately') }}
       </NTooltip>
-      <NButton size="tiny" quaternary @click="emit('edit', jobId)">{{ t('common.edit') }}</NButton>
-      <NButton size="tiny" quaternary type="error" @click="handleDelete">{{ t('common.delete') }}</NButton>
+      <NButton size="tiny" quaternary @click.stop="emit('edit', jobId)">{{ t('common.edit') }}</NButton>
+      <NButton size="tiny" quaternary type="error" @click.stop="handleDelete">{{ t('common.delete') }}</NButton>
     </div>
   </div>
 </template>
@@ -150,9 +165,15 @@ async function handleDelete() {
   border-radius: $radius-md;
   padding: 16px;
   transition: border-color $transition-fast;
+  cursor: pointer;
 
   &:hover {
     border-color: rgba(var(--accent-primary-rgb), 0.3);
+  }
+
+  &.selected {
+    border-color: rgba(var(--accent-primary-rgb), 0.6);
+    background-color: rgba(var(--accent-primary-rgb), 0.04);
   }
 }
 

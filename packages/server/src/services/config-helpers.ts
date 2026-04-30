@@ -32,6 +32,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   nous: { api_key_env: '', base_url_env: '' },
   'openai-codex': { api_key_env: '', base_url_env: '' },
   copilot: { api_key_env: '', base_url_env: '' },
+  longcat: { api_key_env: 'LONGCAT_API_KEY', base_url_env: 'LONGCAT_BASE_URL' },
 }
 
 // --- Types ---
@@ -182,7 +183,7 @@ export async function listFilesRecursive(dir: string, prefix: string): Promise<{
 
 // --- Provider model helpers ---
 
-export async function fetchProviderModels(baseUrl: string, apiKey: string): Promise<string[]> {
+export async function fetchProviderModels(baseUrl: string, apiKey: string, freeOnly = false): Promise<string[]> {
   const base = baseUrl.replace(/\/+$/, '')
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
@@ -199,7 +200,9 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string): Prom
       logger.warn('available-models %s returned unexpected format', modelsUrl)
       return []
     }
-    return data.data.map(m => m.id).sort()
+    let models = data.data.map(m => m.id)
+    if (freeOnly) models = models.filter(m => m.endsWith(':free'))
+    return models.sort()
   } catch (err: any) {
     logger.error(err, 'available-models %s failed', modelsUrl)
     return []

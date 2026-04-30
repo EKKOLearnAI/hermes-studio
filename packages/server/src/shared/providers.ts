@@ -257,6 +257,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: ['glm-5.1', 'glm-5', 'kimi-k2.5', 'mimo-v2-pro', 'mimo-v2-omni', 'minimax-m2.7', 'minimax-m2.5'],
   },
   {
+    label: 'LongCat',
+    value: 'longcat',
+    builtin: true,
+    base_url: 'https://api.longcat.chat/openai',
+    models: ['LongCat-Flash-Lite', 'LongCat-2.0-Preview'],
+  },
+  {
     label: 'OpenAI Codex',
     value: 'openai-codex',
     builtin: true,

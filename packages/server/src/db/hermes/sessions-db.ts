@@ -1,4 +1,4 @@
-import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
+import { getActiveProfileDir, getProfileDir } from '../../services/hermes/hermes-profile'
 
 const SQLITE_AVAILABLE = (() => {
   const [major, minor] = process.versions.node.split('.').map(Number)
@@ -242,7 +242,7 @@ function runLiteralContentSearch(
         ${SESSION_SELECT},
         s.parent_session_id AS parent_session_id
       FROM sessions s
-      WHERE s.source != 'tool'
+      WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
         ${sourceClause}
     )
     SELECT
@@ -411,7 +411,7 @@ function loadAllSessions(db: { prepare: (sql: string) => { all: (...params: any[
       ${SESSION_SELECT},
       s.parent_session_id AS parent_session_id
     FROM sessions s
-    WHERE s.source != 'tool'
+    WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
   `).all() as Record<string, unknown>[]
   const sessions = rows.map(mapInternalSessionRow)
   const byId = new Map(sessions.map(s => [s.id, s]))
@@ -571,7 +571,49 @@ async function openSessionDb() {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
   const { DatabaseSync } = await import('node:sqlite')
-  return new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
+  const dbPath = sessionDbPath()
+  console.log(`[sessions-db] Opening session db: ${dbPath}`)
+  try {
+    return new DatabaseSync(dbPath, { open: true, readOnly: true })
+  } catch (err: any) {
+    console.error(`[sessions-db] Failed to open session db at ${dbPath}:`, err.message)
+    throw err
+  }
+}
+
+/**
+ * Lightweight alternative: get messages + session row for a single session ID
+ * without chain traversal. Used by syncFromHermes for ephemeral sessions.
+ */
+export async function getSessionMessagesFromDb(sessionId: string): Promise<{
+  messages: HermesMessageRow[]
+  session: HermesSessionRow | null
+} | null> {
+  const db = await openSessionDb()
+  try {
+    const sessionRow = db.prepare(`
+      SELECT ${SESSION_SELECT}
+      FROM sessions s
+      WHERE s.id = ?
+    `).get(sessionId) as Record<string, unknown> | undefined
+
+    const messageRows = db.prepare(`
+      SELECT
+        id, session_id, role, content, tool_call_id, tool_calls, tool_name,
+        timestamp, token_count, finish_reason, reasoning, reasoning_details,
+        codex_reasoning_items, reasoning_content
+      FROM messages
+      WHERE session_id = ?
+      ORDER BY timestamp, id
+    `).all(sessionId) as Record<string, unknown>[]
+
+    return {
+      messages: messageRows.map(mapMessageRow),
+      session: sessionRow ? mapRow(sessionRow) : null,
+    }
+  } finally {
+    db.close()
+  }
 }
 
 export async function getSessionDetailFromDb(sessionId: string): Promise<HermesSessionDetailRow | null> {
@@ -606,7 +648,47 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
       WHERE session_id IN (${placeholders})
       ORDER BY timestamp, id
     `).all(...ids) as Record<string, unknown>[]
+    const messages = messageRows.map(mapMessageRow)
+    return aggregateSessionDetail(chain, messages, sessionId)
+  } finally {
+    db.close()
+  }
+}
 
+export async function getSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dbPath = `${getProfileDir(profile)}/state.db`
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
+  try {
+    const idx = loadAllSessions(db)
+    const requested = idx.byId.get(sessionId) || null
+    if (!requested) return null
+
+    const chain = collectSessionChainForMatchedSession(requested, idx)
+    if (!chain.length) return null
+
+    const ids = chain.map(session => session.id)
+    const placeholders = ids.map(() => '?').join(', ')
+    const messageRows = db.prepare(`
+      SELECT
+        id,
+        session_id,
+        role,
+        content,
+        tool_call_id,
+        tool_calls,
+        tool_name,
+        timestamp,
+        token_count,
+        finish_reason,
+        reasoning,
+        reasoning_details,
+        codex_reasoning_items,
+        reasoning_content
+      FROM messages
+      WHERE session_id IN (${placeholders})
+      ORDER BY timestamp, id
+    `).all(...ids) as Record<string, unknown>[]
     const messages = messageRows.map(mapMessageRow)
     return aggregateSessionDetail(chain, messages, sessionId)
   } finally {
@@ -623,7 +705,7 @@ export async function listSessionSummaries(source?: string, limit = 2000): Promi
   const db = new DatabaseSync(sessionDbPath(), { open: true, readOnly: true })
 
   try {
-    const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'"]
+    const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'", "s.id NOT LIKE 'compress_%'"]
     const params: any[] = []
     if (source) {
       clauses.push('s.source = ?')
@@ -689,7 +771,7 @@ export async function searchSessionSummaries(
         ${SESSION_SELECT},
         s.parent_session_id AS parent_session_id
       FROM sessions s
-      WHERE s.source != 'tool'
+      WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
         ${sourceClause}
     `
 

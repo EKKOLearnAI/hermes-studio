@@ -52,6 +52,8 @@ export interface UpdateJobRequest {
   skill?: string
   repeat?: number
   enabled?: boolean
+  model?: string
+  provider?: string
 }
 
 function unwrap(res: { job: Job }): Job {

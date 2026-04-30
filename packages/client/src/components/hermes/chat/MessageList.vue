@@ -12,6 +12,12 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const listRef = ref<HTMLElement>();
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
 const displayMessages = computed(() =>
   chatStore.messages.filter((m) => m.role !== "tool"),
 );
@@ -128,7 +134,48 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0" class="tool-calls-panel">
+        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState" class="tool-calls-panel">
+          <!-- Compression indicator -->
+          <div v-if="chatStore.compressionState" class="tool-call-item compression-item">
+            <svg
+              v-if="chatStore.compressionState.compressing"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <svg
+              v-else-if="chatStore.compressionState.compressed"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+            <span class="tool-call-name">
+              {{
+                chatStore.compressionState.compressing
+                  ? `Compressing... (${chatStore.compressionState.messageCount} msgs, ~${formatTokens(chatStore.compressionState.beforeTokens)} tokens)`
+                  : chatStore.compressionState.compressed
+                    ? `Compressed ${chatStore.compressionState.messageCount} msgs: ~${formatTokens(chatStore.compressionState.beforeTokens)} → ~${formatTokens(chatStore.compressionState.afterTokens)} tokens`
+                    : `Compression skipped`
+              }}
+            </span>
+            <span
+              v-if="chatStore.compressionState.compressing"
+              class="tool-call-spinner"
+            ></span>
+          </div>
+          <!-- Tool calls -->
           <div
             v-for="tc in currentToolCalls"
             :key="tc.id"
@@ -251,6 +298,11 @@ watch(currentToolCalls, () => {
 
   .dark & {
     background: rgba(255, 255, 255, 0.06);
+  }
+
+  &.compression-item {
+    color: $text-muted;
+    font-size: 10px;
   }
 
   .tool-call-icon {

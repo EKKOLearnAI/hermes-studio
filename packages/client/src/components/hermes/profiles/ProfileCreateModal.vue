@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NButton, NSwitch, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NButton, NSwitch, NText, useMessage } from 'naive-ui'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
@@ -26,9 +26,20 @@ async function handleSave() {
 
   loading.value = true
   try {
-    const ok = await profilesStore.createProfile(name.value.trim(), clone.value)
-    if (ok) {
-      message.success(t('profiles.createSuccess', { name: name.value.trim() }))
+    const res = await profilesStore.createProfile(name.value.trim(), clone.value)
+    if (res.success) {
+      const stripped = res.strippedCredentials ?? []
+      const disabled = res.disabledPlatforms ?? []
+      const cfgStripped = res.strippedConfigCredentials ?? []
+      if (clone.value && (stripped.length > 0 || disabled.length > 0 || cfgStripped.length > 0)) {
+        const parts: string[] = []
+        if (stripped.length > 0) parts.push(t('profiles.cloneStrippedCredentials', { count: stripped.length, list: stripped.join(', ') }))
+        if (disabled.length > 0) parts.push(t('profiles.cloneDisabledPlatforms', { count: disabled.length, list: disabled.join(', ') }))
+        if (cfgStripped.length > 0) parts.push(t('profiles.cloneStrippedConfigCredentials', { count: cfgStripped.length, list: cfgStripped.join(', ') }))
+        message.info(`${t('profiles.createSuccess', { name: name.value.trim() })}\n${parts.join('\n')}`, { duration: 6000 })
+      } else {
+        message.success(t('profiles.createSuccess', { name: name.value.trim() }))
+      }
       emit('saved')
     } else {
       message.error(t('profiles.createFailed'))
@@ -58,7 +69,7 @@ function handleClose() {
         <NInput
           :value="name"
           :placeholder="t('profiles.namePlaceholder')"
-          @input="name = $event.replace(/[^a-zA-Z0-9_-]/g, '')"
+          @input="name = $event.toLowerCase().replace(/[^a-z0-9_-]/g, '')"
           @keyup.enter="handleSave"
         />
       </NFormItem>
@@ -66,6 +77,9 @@ function handleClose() {
       <NFormItem :label="t('profiles.cloneFromCurrent')">
         <NSwitch v-model:value="clone" />
       </NFormItem>
+      <NText v-if="clone" depth="3" style="font-size: 12px;">
+        {{ t('profiles.cloneCleanupNotice') }}
+      </NText>
     </NForm>
 
     <template #footer>
@@ -78,6 +92,14 @@ function handleClose() {
     </template>
   </NModal>
 </template>
+
+<style scoped lang="scss">
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>
 
 <style scoped lang="scss">
 .modal-footer {

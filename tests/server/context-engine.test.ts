@@ -289,9 +289,12 @@ describe('ContextEngine.buildContext', () => {
         })
 
         expect(mockSummarize).toHaveBeenCalledTimes(1)
-        // First call: no previousSummary (4 args, index 4 is undefined)
+        // First call: no previousSummary
+        // GatewayCaller.summarize signature: upstream, apiKey, systemPrompt, messages, roomId, profile, previousSummary
         const firstCallArgs = mockSummarize.mock.calls[0]
-        expect(firstCallArgs[4]).toBeUndefined() // previousSummary not passed
+        expect(firstCallArgs[4]).toBe('room-1') // roomId
+        expect(firstCallArgs[5]).toBe('default') // profile
+        expect(firstCallArgs[6]).toBeUndefined() // previousSummary not passed
 
         // Insert a new message
         const middleInsert = makeMessage({
@@ -313,7 +316,7 @@ describe('ContextEngine.buildContext', () => {
         expect(mockSummarize).toHaveBeenCalledTimes(2)
         // Second call: has previousSummary
         const secondCallArgs = mockSummarize.mock.calls[1]
-        expect(secondCallArgs[4]).toBe('Summary of conversation.')
+        expect(secondCallArgs[6]).toBe('Summary of conversation.')
     })
 
     it('falls back to no-summary on LLM failure', async () => {
@@ -339,7 +342,7 @@ describe('ContextEngine.buildContext', () => {
     it('trims tail when over token budget', async () => {
         const engine = new ContextEngine({
             config: {
-                maxHistoryTokens: 50, // very small budget
+                maxHistoryTokens: 200, // small budget
                 tailMessageCount: 10,
                 triggerTokens: 10, // force compression
                 charsPerToken: 4,
@@ -359,10 +362,13 @@ describe('ContextEngine.buildContext', () => {
             currentMessage: messages[messages.length - 1],
         })
 
-        // History should be trimmed to fit within 50 tokens
+        // History should be trimmed to fit within 200 tokens
+        // Use same estimation logic as compressor: CJK * 1.5 + other / charsPerToken
         const totalChars = result.conversationHistory.reduce((sum, m) => sum + m.content.length, 0)
-        const estimatedTokens = Math.ceil(totalChars / 4)
-        expect(estimatedTokens).toBeLessThanOrEqual(50)
+        const cjk = (result.conversationHistory.map(m => m.content).join('').match(/[⺀-鿿가-힯　-〿＀-￯]/g) || []).length
+        const other = totalChars - cjk
+        const estimatedTokens = Math.ceil(cjk * 1.5 + other / 4)
+        expect(estimatedTokens).toBeLessThanOrEqual(200)
     })
 
     it('maps agent messages to assistant role', async () => {

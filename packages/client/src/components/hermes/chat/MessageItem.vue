@@ -545,6 +545,7 @@ const renderedToolResult = computed(() => {
   line-height: 1.65;
   word-break: break-word;
   border-radius: 10px;
+  max-width: 100%;
 }
 
 .msg-attachments {

@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NButton, NSelect, NInputNumber, useMessage } from 'naive-ui'
 import { useJobsStore } from '@/stores/hermes/jobs'
+import type { CreateJobRequest, UpdateJobRequest } from '@/api/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -83,26 +84,32 @@ async function handleSave() {
 
   loading.value = true
   try {
-    const payload = {
-      name: formData.value.name,
-      schedule: formData.value.schedule,
-      prompt: formData.value.prompt,
-      deliver: formData.value.deliver,
-      repeat: formData.value.repeat_times ?? undefined,
-    }
-
-    if (isEdit.value && originalSchedule.value) {
-      (payload as any).schedule = {
-        kind: originalSchedule.value.kind,
-        expr: formData.value.schedule,
-        display: formData.value.schedule,
-      }
-    }
-
     if (isEdit.value) {
+      const payload: UpdateJobRequest = {
+        name: formData.value.name,
+        prompt: formData.value.prompt,
+        deliver: formData.value.deliver,
+        repeat: formData.value.repeat_times ?? undefined,
+      }
+      if (originalSchedule.value) {
+        payload.schedule = {
+          kind: originalSchedule.value.kind,
+          expr: formData.value.schedule,
+          display: formData.value.schedule,
+        }
+      } else {
+        payload.schedule = formData.value.schedule
+      }
       await jobsStore.updateJob(props.jobId!, payload)
       message.success(t('jobs.jobUpdated'))
     } else {
+      const payload: CreateJobRequest = {
+        name: formData.value.name,
+        schedule: formData.value.schedule,
+        prompt: formData.value.prompt,
+        deliver: formData.value.deliver,
+        repeat: formData.value.repeat_times ?? undefined,
+      }
       await jobsStore.createJob(payload)
       message.success(t('jobs.jobCreated'))
     }

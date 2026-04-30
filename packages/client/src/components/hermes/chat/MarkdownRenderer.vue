@@ -210,10 +210,11 @@ function handleMarkdownClick(event: MouseEvent): void {
   const href = link.getAttribute('href')
   if (!href) return
 
-  // Let http(s) links behave normally
+  // Let http(s) links behave normally — use window.open to prevent
+  // the hash-based router from intercepting the click
   if (href.startsWith('http://') || href.startsWith('https://')) {
-    link.target = '_blank'
-    link.rel = 'noopener noreferrer'
+    event.preventDefault()
+    window.open(href, '_blank', 'noopener,noreferrer')
     return
   }
 

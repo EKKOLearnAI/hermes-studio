@@ -2,10 +2,11 @@ import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
-import { getDb, ensureTable } from '../../../db'
+import { getDb } from '../../../db'
+import { GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, GC_CONTEXT_SNAPSHOTS_TABLE, GC_ROOM_MEMBERS_TABLE, GC_PENDING_SESSION_DELETES_TABLE, GC_SESSION_PROFILES_TABLE } from '../../../db/hermes/schemas'
 import { AgentClients } from './agent-clients'
-import { deleteSession as hermesDeleteSession } from '../hermes-cli'
 import { ContextEngine } from '../context-engine/compressor'
+import { SessionDeleter } from '../session-deleter'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -139,14 +140,8 @@ class ChatStorage {
         if (_tablesEnsured) return
         const db = this.db()
         if (!db) return
-        ensureTable('gc_rooms', GC_ROOMS_SCHEMA)
-        ensureTable('gc_messages', GC_MESSAGES_SCHEMA)
-        ensureTable('gc_room_agents', GC_ROOM_AGENTS_SCHEMA)
-        ensureTable('gc_context_snapshots', GC_CONTEXT_SNAPSHOTS_SCHEMA)
-        ensureTable('gc_room_members', GC_ROOM_MEMBERS_SCHEMA)
-        ensureTable('gc_pending_session_deletes', GC_PENDING_SESSION_DELETES_SCHEMA)
-        ensureTable('gc_session_profiles', GC_SESSION_PROFILES_SCHEMA)
-        // Indexes (safe to run multiple times — CREATE INDEX IF NOT EXISTS)
+        // Tables are now created centrally in initAllHermesTables()
+        // Only create indexes here
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
         try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
@@ -408,28 +403,11 @@ class ChatStorage {
 }
 
 export async function drainPendingSessionDeletes(profileName: string): Promise<PendingSessionDeleteDrainResult> {
-    const storage = new ChatStorage()
-    storage.init()
-    const claimed = storage.claimPendingSessionDeletes(profileName)
-    const result: PendingSessionDeleteDrainResult = { deleted: [], failed: [] }
-
-    for (const item of claimed) {
-        try {
-            const ok = await hermesDeleteSession(item.session_id)
-            if (!ok) {
-                throw new Error('Failed to delete session')
-            }
-            storage.removePendingSessionDelete(item.session_id)
-            storage.deleteSessionProfile(item.session_id)
-            result.deleted.push(item.session_id)
-        } catch (err: any) {
-            const message = err?.message || 'Failed to delete session'
-            storage.markPendingSessionDeleteFailed(item.session_id, message)
-            result.failed.push({ sessionId: item.session_id, error: message })
-        }
+    const deleterResult = await SessionDeleter.getInstance().drain(profileName)
+    return {
+        deleted: deleterResult.deleted,
+        failed: deleterResult.failed.map(id => ({ sessionId: id, error: 'unknown' })),
     }
-
-    return result
 }
 
 // ─── ChatRoom (in-memory, for online members) ─────────────────
@@ -532,9 +510,11 @@ export class GroupChatServer {
             messageFetcher: this.storage,
             sessionCleaner: async (sessionId: string) => {
                 try {
-                    await hermesDeleteSession(sessionId)
+                    const profile = this.storage.getSessionProfile(sessionId)
+                    const profileName = profile?.profile_name || 'default'
+                    this.storage.enqueuePendingSessionDelete(sessionId, profileName)
                 } catch (err: any) {
-                    logger.warn(`[GroupChat] failed to delete compression session ${sessionId}: ${err.message}`)
+                    logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
                 }
             },
         })
