@@ -3,13 +3,28 @@ import JobCard from './JobCard.vue'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const props = defineProps<{
+  selectedJobId: string | null
+}>()
 
 const emit = defineEmits<{
   edit: [jobId: string]
+  select: [jobId: string | null]
 }>()
 
+const { t } = useI18n()
+
 const jobsStore = useJobsStore()
+
+function handleSelect(jobId: string) {
+  emit('select', props.selectedJobId === jobId ? null : jobId)
+}
+
+function handleDeselect() {
+  if (props.selectedJobId) {
+    emit('select', null)
+  }
+}
 </script>
 
 <template>
@@ -27,9 +42,17 @@ const jobsStore = useJobsStore()
       v-for="job in jobsStore.jobs"
       :key="job.id"
       :job="job"
+      :selected="selectedJobId === (job.job_id || job.id)"
       @edit="emit('edit', job.id)"
+      @select="handleSelect"
     />
   </div>
+  <!-- Click outside cards to deselect -->
+  <div
+    v-if="selectedJobId"
+    class="deselect-overlay"
+    @click="handleDeselect"
+  />
 </template>
 
 <style scoped lang="scss">
@@ -57,5 +80,9 @@ const jobsStore = useJobsStore()
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
   gap: 14px;
+}
+
+.deselect-overlay {
+  display: none;
 }
 </style>

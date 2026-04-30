@@ -7,4 +7,6 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || resolve(homedir(), '.hermes-web-ui', 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: process.env.CORS_ORIGINS || '*',
+  /** Session store: 'local' (self-built SQLite) or 'remote' (Hermes CLI) */
+  sessionStore: (process.env.SESSION_STORE || 'local') as 'local' | 'remote',
 }

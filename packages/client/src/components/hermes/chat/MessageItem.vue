@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { downloadFile } from "@/api/hermes/download";
+import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
@@ -38,12 +39,12 @@ const copyableContent = computed(() => {
 async function copyBubbleContent() {
   const text = copyableContent.value
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
+  const ok = await copyToClipboard(text)
+  if (ok) {
     toast.success(t('chat.copiedBubble'))
-  } catch {
-    toast.error(t('chat.copyFailed'))
+    return
   }
+  toast.error(t('chat.copyFailed'))
 }
 
 const parsedThinking = computed(() =>
@@ -119,8 +120,9 @@ onBeforeUnmount(() => {
 const thinkingDurationMs = computed<number | null>(() => {
   const ob = chatStore.getThinkingObservation(props.message.id);
   if (!ob?.startedAt) return null;
-  const end = ob.endedAt ?? (props.message.isStreaming ? nowTick.value : ob.startedAt);
-  return Math.max(0, end - ob.startedAt);
+  const startedAt = ob.startedAt!; // Non-null assertion after check
+  const end = ob?.endedAt ?? (props.message.isStreaming ? nowTick.value : startedAt);
+  return Math.max(0, end - startedAt);
 });
 
 function formatDuration(ms: number): string {
@@ -228,15 +230,21 @@ async function handleToolDetailClick(event: MouseEvent): Promise<void> {
 
   const source = button.closest<HTMLElement>("[data-copy-source]")?.dataset.copySource;
   if (source === "tool-args" && fullToolArgs.value) {
-    await copyTextToClipboard(fullToolArgs.value);
+    const ok = await copyTextToClipboard(fullToolArgs.value);
+    if (ok) toast.success(t("common.copied"));
+    else toast.error(t("chat.copyFailed"));
     return;
   }
   if (source === "tool-result" && fullToolResult.value) {
-    await copyTextToClipboard(fullToolResult.value);
+    const ok = await copyTextToClipboard(fullToolResult.value);
+    if (ok) toast.success(t("common.copied"));
+    else toast.error(t("chat.copyFailed"));
     return;
   }
 
-  await handleCodeBlockCopyClick(event);
+  const copyResult = await handleCodeBlockCopyClick(event);
+  if (copyResult) toast.success(t("common.copied"));
+  else if (copyResult === false) toast.error(t("chat.copyFailed"));
 }
 
 const hasAttachments = computed(
@@ -545,6 +553,7 @@ const renderedToolResult = computed(() => {
   line-height: 1.65;
   word-break: break-word;
   border-radius: 10px;
+  max-width: 100%;
 }
 
 .msg-attachments {
@@ -761,6 +770,7 @@ const renderedToolResult = computed(() => {
   padding: 0 4px;
   border-radius: 3px;
   line-height: 14px;
+  margin-left: 4px;
 }
 
 .tool-details {

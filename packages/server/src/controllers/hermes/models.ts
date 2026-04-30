@@ -134,6 +134,17 @@ export async function getAvailable(ctx: any) {
           }
           if (Object.keys(modelMeta).length === 0) modelMeta = undefined
         }
+      } else if (providerKey === 'openrouter') {
+        // OpenRouter has 200+ models — fetch dynamically like Copilot
+        if (envMapping.api_key_env) {
+          const orKey = envGetValue(envMapping.api_key_env)
+          if (orKey) {
+            try {
+              const fetched = await fetchProviderModels(baseUrl, orKey, true)
+              if (fetched.length > 0) modelsList = fetched
+            } catch { /* ignore — leave empty, won't show */ }
+          }
+        }
       }
       if (modelsList.length > 0) {
         const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
