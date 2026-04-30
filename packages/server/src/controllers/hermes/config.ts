@@ -6,7 +6,7 @@ import { saveEnvValue } from '../../services/config-helpers'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
-  'weixin', 'wecom', 'feishu', 'dingtalk',
+  'weixin', 'wecom', 'feishu', 'dingtalk', 'qq',
 ])
 
 const configPath = () => getActiveConfigPath()
@@ -29,6 +29,8 @@ const envPlatformMap: Record<string, [string, string]> = {
   WEIXIN_ACCOUNT_ID: ['weixin', 'extra.account_id'],
   WEIXIN_BASE_URL: ['weixin', 'extra.base_url'],
   WHATSAPP_ENABLED: ['whatsapp', 'enabled'],
+  QQ_APP_ID: ['qq', 'extra.app_id'],
+  QQ_APP_SECRET: ['qq', 'extra.app_secret'],
 }
 
 const platformEnvMap: Record<string, Record<string, string>> = {}
