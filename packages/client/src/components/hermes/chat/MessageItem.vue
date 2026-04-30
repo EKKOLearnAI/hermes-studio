@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { downloadFile } from "@/api/hermes/download";
+import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
@@ -38,12 +39,12 @@ const copyableContent = computed(() => {
 async function copyBubbleContent() {
   const text = copyableContent.value
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
+  const ok = await copyToClipboard(text)
+  if (ok) {
     toast.success(t('chat.copiedBubble'))
-  } catch {
-    toast.error(t('chat.copyFailed'))
+    return
   }
+  toast.error(t('chat.copyFailed'))
 }
 
 const parsedThinking = computed(() =>
@@ -228,15 +229,21 @@ async function handleToolDetailClick(event: MouseEvent): Promise<void> {
 
   const source = button.closest<HTMLElement>("[data-copy-source]")?.dataset.copySource;
   if (source === "tool-args" && fullToolArgs.value) {
-    await copyTextToClipboard(fullToolArgs.value);
+    const ok = await copyTextToClipboard(fullToolArgs.value);
+    if (ok) toast.success(t("common.copied"));
+    else toast.error(t("chat.copyFailed"));
     return;
   }
   if (source === "tool-result" && fullToolResult.value) {
-    await copyTextToClipboard(fullToolResult.value);
+    const ok = await copyTextToClipboard(fullToolResult.value);
+    if (ok) toast.success(t("common.copied"));
+    else toast.error(t("chat.copyFailed"));
     return;
   }
 
-  await handleCodeBlockCopyClick(event);
+  const copyResult = await handleCodeBlockCopyClick(event);
+  if (copyResult) toast.success(t("common.copied"));
+  else if (copyResult === false) toast.error(t("chat.copyFailed"));
 }
 
 const hasAttachments = computed(

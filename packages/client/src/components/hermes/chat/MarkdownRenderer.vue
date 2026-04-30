@@ -199,8 +199,16 @@ onBeforeUnmount(() => {
   renderGeneration += 1
 })
 
-function handleMarkdownClick(event: MouseEvent): void {
-  void handleCodeBlockCopyClick(event)
+async function handleMarkdownClick(event: MouseEvent): Promise<void> {
+  const copyResult = await handleCodeBlockCopyClick(event)
+  if (copyResult !== null) {
+    if (copyResult) {
+      message.success(t('common.copied'))
+    } else {
+      message.error(t('chat.copyFailed'))
+    }
+    return
+  }
 
   // Handle file path link clicks for download
   const target = event.target as HTMLElement
