@@ -26,6 +26,7 @@ import { getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import { getModelContextLength } from './model-context'
 import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
+import { inFlightHermesSessionIds } from './session-deleter'
 import { logger } from '../logger'
 
 const compressor = new ChatContextCompressor()
@@ -1201,10 +1202,16 @@ export class ChatRunSocket {
    * After sync, enqueues the ephemeral session for deletion.
    */
   private syncFromHermes(socket: Socket, localSessionId: string, hermesSessionId: string, profile?: string) {
+    // Mark this Hermes session as in-flight so SessionDeleter.drain will defer
+    // any pending deletion until after we finish reading messages — see #352.
+    inFlightHermesSessionIds.add(hermesSessionId)
     getSessionDetailFromDb(hermesSessionId)
       .then((detail) => {
         if (!detail || !detail.messages?.length) {
           logger.warn('[chat-run-socket] syncFromHermes: no data for Hermes session %s', hermesSessionId)
+          // No data to sync — drop the in-flight guard so the empty Hermes
+          // session can still be cleaned up by drain on its own schedule.
+          inFlightHermesSessionIds.delete(hermesSessionId)
           return
         }
 
@@ -1307,10 +1314,18 @@ export class ChatRunSocket {
           this.calcAndUpdateUsage(localSessionId, state, emit)
         }
 
-        // Enqueue ephemeral session for deferred deletion
+        // Enqueue ephemeral session for deferred deletion.
+        // IMPORTANT: enqueue BEFORE clearing the in-flight guard so the drain
+        // loop never sees the row without the guard — see #352.
         this.enqueueEphemeralDelete(hermesSessionId, profile)
+        inFlightHermesSessionIds.delete(hermesSessionId)
       })
       .catch((err: any) => {
+        // Release the guard so a stuck id doesn't block deletion forever.
+        // We deliberately do NOT enqueue on failure; if the run truly produced
+        // a Hermes session worth deleting, the next successful sync (or a
+        // restart-time scan) will pick it up.
+        inFlightHermesSessionIds.delete(hermesSessionId)
         logger.warn(err, '[chat-run-socket] syncFromHermes failed for session %s (hermesId: %s, profile: %s)', localSessionId, hermesSessionId, profile || 'default')
       })
   }

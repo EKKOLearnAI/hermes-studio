@@ -4,6 +4,14 @@
  * Reads from gc_pending_session_deletes table, executes deletion via
  * Hermes CLI, tracks failures (max 3 attempts), and auto-drains on
  * a timer + profile switch.
+ *
+ * Race-condition guard: callers that are still ASYNCHRONOUSLY reading
+ * a Hermes session (e.g. chat-run-socket.syncFromHermes) must register
+ * the hermes session id in `inFlightHermesSessionIds` BEFORE the read
+ * starts and remove it AFTER the read completes (success or failure).
+ * The drain loop will skip any id present in that set, so the periodic
+ * timer / profile-switch tick cannot delete a session out from under
+ * an in-flight reader. See issue #352.
  */
 import { getDb } from '../../db/index'
 import { deleteSession as hermesDeleteSession } from './hermes-cli'
@@ -11,6 +19,18 @@ import { logger } from '../logger'
 
 const MAX_ATTEMPTS = 3
 const DRAIN_INTERVAL_MS = 300_000
+
+/**
+ * Hermes session ids currently being read by an async consumer
+ * (e.g. syncFromHermes). The drain loop skips any id in this set so
+ * that periodic deletion cannot race with an in-flight read and leave
+ * the local DB missing assistant/tool messages. See issue #352.
+ *
+ * Producers must:
+ *   inFlightHermesSessionIds.add(id)
+ *   try { ...read... } finally { inFlightHermesSessionIds.delete(id) }
+ */
+export const inFlightHermesSessionIds = new Set<string>()
 
 export class SessionDeleter {
   private static _instance: SessionDeleter | null = null
@@ -74,11 +94,30 @@ export class SessionDeleter {
 
     if (rows.length === 0) return { deleted: [], skipped: [], failed: [] }
 
+    // Skip any session that an async reader (e.g. syncFromHermes) is still
+    // pulling messages out of. Without this guard, drain can delete a session
+    // before the reader finishes, dropping assistant/tool messages from the
+    // local mirror — see issue #352.
+    const eligibleRows = rows.filter(r => !inFlightHermesSessionIds.has(r.session_id))
+    if (eligibleRows.length === 0) {
+      logger.debug(
+        '[SessionDeleter] all %d candidate(s) deferred (in-flight reads in progress)',
+        rows.length,
+      )
+      return { deleted: [], skipped: rows.map(r => r.session_id), failed: [] }
+    }
+    if (eligibleRows.length < rows.length) {
+      logger.debug(
+        '[SessionDeleter] deferred %d candidate(s) due to in-flight reads',
+        rows.length - eligibleRows.length,
+      )
+    }
+
     const deleted: string[] = []
     const skipped: string[] = []
     const failed: string[] = []
 
-    for (const row of rows) {
+    for (const row of eligibleRows) {
       try {
         const ok = await hermesDeleteSession(row.session_id)
         if (ok) {
