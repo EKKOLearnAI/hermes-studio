@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
+import ApprovalDialog from '@/components/hermes/chat/ApprovalDialog.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -20,6 +21,7 @@ onMounted(async () => {
 <template>
   <div class="chat-view">
     <ChatPanel />
+    <ApprovalDialog />
   </div>
 </template>
 

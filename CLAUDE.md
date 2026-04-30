@@ -549,3 +549,74 @@ Test files live in `tests/client/` and `tests/server/`. Configuration is in root
 3. Add routes with `path: '/{agent}/*'` and `name: '{agent}.*'` in the router
 4. Register routes in `routes/index.ts` following the public → auth → protected pattern
 5. Follow the same patterns as the Hermes integration
+
+---
+
+## Local Modifications (二开记录)
+
+### 1. Custom Model Persistence (自定义模型持久化)
+
+**File:** `packages/client/src/stores/hermes/app.ts`
+
+**Problem:** Custom models added via `ModelSelector` custom input were lost after page refresh because `customModels` ref was initialized as empty `{}` and never persisted.
+
+**Fix:**
+- Added `CUSTOM_MODELS_KEY = 'hermes_custom_models'` localStorage key constant
+- Added `loadCustomModels()` / `saveCustomModels()` helper functions (lines 18-37)
+- Changed `customModels` initialization: `ref(loadCustomModels())` instead of `ref({})` (line 52)
+- Added `saveCustomModels(customModels.value)` call in `switchModel()` after appending a new custom model (lines 117-118)
+
+### 2. Tool Call Records Disappearing (工具调用记录丢失)
+
+**File:** `packages/client/src/stores/hermes/chat.ts`
+
+#### Fix A: `mapHermesMessages()` — Historical Message Loading (历史消息加载)
+
+**Problem:** When loading session history from server, assistant messages that only had `tool_calls` (no text content) were completely skipped via `continue`. Tool result messages (`role: "tool"`) tried to match and `splice()` the placeholder, but the ID mismatch caused the entire tool record chain to be lost.
+
+**Old behavior:**
+```
+assistant with tool_calls → SKIP (continue) → only create tool placeholder
+tool result arrives → find placeholder → splice (delete) it → push new message
+→ Result: assistant message lost, tool messages may disappear on ID mismatch
+```
+
+**New behavior (lines 99-170):**
+```
+assistant with tool_calls → push assistant message → push tool placeholders (status: 'running')
+tool result arrives → find placeholder → UPDATE in-place (preserve original ID) → set status: 'done'
+tool result arrives (no placeholder found) → push as standalone tool message
+→ Result: full conversation preserved with correct ordering
+```
+
+Key changes:
+- Removed `!msg.content?.trim()` condition — assistant messages with tool_calls are ALWAYS emitted
+- Tool placeholders created with `toolStatus: 'running'` (previously was `'done'`)
+- Tool results UPDATE the existing placeholder instead of `splice` + `push` — preserving the generated ID `String(msg.id) + '_' + tc.id`
+- Added fallback branch for standalone tool messages when no placeholder matches
+
+#### Fix B: SSE `tool.completed` Handler — Live Streaming (实时流处理)
+
+**Problem:** Handler always matched `toolMsgs[toolMsgs.length - 1]` (last running tool), which is wrong when multiple tools run in parallel. Also ignored the `error` field from the SSE event.
+
+**Server-side SSE event format** (from `api_server.py`):
+```json
+{ "event": "tool.completed", "run_id": "...", "timestamp": ..., "tool": "...", "duration": ..., "error": false }
+```
+
+**Fix (lines 1003-1020):**
+- Match by `toolName` using `findLast()` instead of blindly taking the last element
+- Set `toolStatus` based on `evt.error`: `'error'` or `'done'`
+
+### Important: Browser Cache
+
+The `mapHermesMessages` fix only applies when messages are freshly fetched from the server. The chat store caches messages in localStorage under keys like `hermes_session_msgs_v1_*`. If a session's messages were cached **before** the fix, the old (broken) data will still be used. To apply the fix to existing sessions, clear localStorage entries starting with `hermes_session_msgs_v1_`:
+
+```js
+// Run in browser DevTools Console
+for (let i = localStorage.length - 1; i >= 0; i--) {
+  const k = localStorage.key(i)
+  if (k && k.startsWith('hermes_session_msgs_v1_')) localStorage.removeItem(k)
+}
+location.reload()
+```

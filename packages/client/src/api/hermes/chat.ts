@@ -38,6 +38,18 @@ export interface RunEvent {
     output_tokens: number
     total_tokens: number
   }
+  /** Approval-related fields for `approval.required` and `approval.resolved` events. */
+  id?: string
+  type?: string
+  title?: string
+  message?: string
+  choices?: string[]
+  command?: string
+  description?: string
+  pattern_key?: string
+  session_key?: string
+  choice?: string
+  count?: number
 }
 
 export async function startRun(body: StartRunRequest): Promise<StartRunResponse> {
@@ -106,4 +118,36 @@ export function streamRunEvents(
 
 export async function fetchModels(): Promise<{ data: Array<{ id: string }> }> {
   return request('/api/hermes/v1/models')
+}
+
+export interface ApproveRunRequest {
+  choice?: 'once' | 'session' | 'always'
+  resolve_all?: boolean
+}
+
+export interface ApproveRunResponse {
+  approved: number
+  choice: string
+}
+
+export async function approveRun(runId: string, body: ApproveRunRequest = {}): Promise<ApproveRunResponse> {
+  return request<ApproveRunResponse>(`/api/hermes/v1/runs/${runId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export interface DenyRunRequest {
+  resolve_all?: boolean
+}
+
+export interface DenyRunResponse {
+  denied: number
+}
+
+export async function denyRun(runId: string, body: DenyRunRequest = {}): Promise<DenyRunResponse> {
+  return request<DenyRunResponse>(`/api/hermes/v1/runs/${runId}/deny`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }

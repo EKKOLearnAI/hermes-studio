@@ -64,6 +64,8 @@ export default {
     collapse: 'Collapse',
     start: 'Start',
     stop: 'Stop',
+    approve: 'Approve',
+    deny: 'Deny',
   },
 
   // Sidebar
@@ -163,6 +165,15 @@ export default {
     copyBubble: 'Copy message',
     copiedBubble: 'Message copied',
     copyFailed: 'Copy failed',
+    approvalRequired: 'Approval Required',
+    approvalOnce: 'Once',
+    approvalSession: 'This session',
+    approvalAlways: 'Always',
+    approvalResolveAll: 'Resolve all pending approvals',
+    approvalFailed: 'Approval failed',
+    denyFailed: 'Deny failed',
+    approvalCommand: 'Command to execute',
+    approvalScope: 'Approval scope',
   },
 
   // Jobs

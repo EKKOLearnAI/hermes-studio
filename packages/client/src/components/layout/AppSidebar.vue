@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { useI18n } from "vue-i18n";
-import { NButton, NModal, useMessage } from "naive-ui";
+import { useSessionSearch } from '@/composables/useSessionSearch';
+import { changelog } from "@/data/changelog";
 import { useAppStore } from "@/stores/hermes/app";
+import { NButton, NModal, useMessage } from "naive-ui";
+import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
+import LanguageSwitch from "./LanguageSwitch.vue";
 import ModelSelector from "./ModelSelector.vue";
 import ProfileSelector from "./ProfileSelector.vue";
-import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
-import { useSessionSearch } from '@/composables/useSessionSearch'
-import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -60,7 +60,7 @@ function openChangelog() {
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
       <img :src="logoPath" alt="Hermes" class="logo-img" />
-      <span class="logo-text">Hermes</span>
+      <span class="logo-text">虾王</span>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
 

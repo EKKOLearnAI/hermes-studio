@@ -4,7 +4,37 @@ import { checkHealth, fetchAvailableModels, updateDefaultModel, triggerUpdate, t
 
 const WEB_UI_VERSION = __APP_VERSION__
 
+/** localStorage key for sidebar collapsed state */
 const SIDEBAR_COLLAPSED_KEY = 'hermes_sidebar_collapsed'
+
+/** localStorage key for custom models persistence (model names added via custom input) */
+const CUSTOM_MODELS_KEY = 'hermes_custom_models'
+
+/**
+ * Load custom models from localStorage.
+ * Returns a Record mapping provider names to arrays of custom model names.
+ * Falls back to empty object on parse errors or missing data.
+ */
+function loadCustomModels(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(CUSTOM_MODELS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Persist custom models to localStorage.
+ * Silently ignores quota/security errors to avoid breaking the UI.
+ */
+function saveCustomModels(customModels: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(customModels))
+  } catch {
+    // ignore quota or security errors — custom models remain in-memory only
+  }
+}
 
 export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
@@ -19,7 +49,7 @@ export const useAppStore = defineStore('app', () => {
   const modelGroups = ref<AvailableModelGroup[]>([])
   const selectedModel = ref('')
   const selectedProvider = ref('')
-  const customModels = ref<Record<string, string[]>>({})
+  const customModels = ref<Record<string, string[]>>(loadCustomModels())
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
 
@@ -66,6 +96,11 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Switch the default model and persist the selection.
+   * If the model is not in the server-fetched list, it's tracked as a custom model
+   * and persisted to localStorage so it survives page refreshes.
+   */
   async function switchModel(modelId: string, providerOverride?: string) {
     try {
       // Find the group containing this model to get provider info
@@ -79,6 +114,8 @@ export const useAppStore = defineStore('app', () => {
         if (!customModels.value[provider]) customModels.value[provider] = []
         if (!customModels.value[provider].includes(modelId)) {
           customModels.value[provider] = [...customModels.value[provider], modelId]
+          // Persist custom models to localStorage so they survive page refresh
+          saveCustomModels(customModels.value)
         }
       }
     } catch (err: any) {

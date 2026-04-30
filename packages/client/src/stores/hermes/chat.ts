@@ -1,4 +1,4 @@
-import { startRun, streamRunEvents, type ChatMessage, type RunEvent } from '@/api/hermes/chat'
+import { startRun, streamRunEvents, approveRun, denyRun, type ChatMessage, type RunEvent } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, fetchSessionUsageSingle, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -72,6 +72,11 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   return data.files
 }
 
+/**
+ * Map HermesMessage array from server to frontend Message array.
+ * Handles tool_call assistant messages, tool results, and normal messages.
+ * Preserves tool call records in the correct order with proper metadata.
+ */
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
@@ -89,9 +94,19 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
 
   const result: Message[] = []
   for (const msg of msgs) {
-    // Skip assistant messages that only contain tool_calls (no meaningful content)
-    if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
-      // Emit a tool.started message for each tool call
+    // Assistant messages with tool_calls: emit both the assistant message
+    // (even if content is empty, to show tool invocation context) and tool placeholders
+    if (msg.role === 'assistant' && msg.tool_calls?.length) {
+      // Add the assistant message itself (may have content + tool_calls)
+      result.push({
+        id: String(msg.id),
+        role: 'assistant',
+        content: msg.content || '',
+        timestamp: Math.round(msg.timestamp * 1000),
+        reasoning: msg.reasoning ? msg.reasoning : undefined,
+      })
+
+      // Emit a tool message for each tool call
       for (const tc of msg.tool_calls) {
         result.push({
           id: String(msg.id) + '_' + tc.id,
@@ -100,7 +115,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           timestamp: Math.round(msg.timestamp * 1000),
           toolName: tc.function?.name || 'tool',
           toolArgs: tc.function?.arguments || undefined,
-          toolStatus: 'done',
+          toolStatus: 'running', // Mark as running initially, will be updated by tool result
         })
       }
       continue
@@ -121,28 +136,37 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           preview = msg.content.slice(0, 80)
         }
       }
-      // Find and remove the matching placeholder from tool_calls above
+      // Find and update the matching placeholder instead of removing it
       const placeholderIdx = result.findIndex(
         m => m.role === 'tool' && m.toolName === toolName && !m.toolResult && m.id.includes('_' + tcId)
       )
       if (placeholderIdx !== -1) {
-        result.splice(placeholderIdx, 1)
+        // Update the existing tool message with result data instead of replacing
+        result[placeholderIdx] = {
+          ...result[placeholderIdx],
+          toolArgs,
+          toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
+          toolResult: msg.content || undefined,
+          toolStatus: 'done',
+        }
+      } else {
+        // No placeholder found, add as standalone tool message
+        result.push({
+          id: String(msg.id),
+          role: 'tool',
+          content: '',
+          timestamp: Math.round(msg.timestamp * 1000),
+          toolName,
+          toolArgs,
+          toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
+          toolResult: msg.content || undefined,
+          toolStatus: 'done',
+        })
       }
-      result.push({
-        id: String(msg.id),
-        role: 'tool',
-        content: '',
-        timestamp: Math.round(msg.timestamp * 1000),
-        toolName,
-        toolArgs,
-        toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-        toolResult: msg.content || undefined,
-        toolStatus: 'done',
-      })
       continue
     }
 
-    // Normal user/assistant messages
+    // Normal user/assistant/system messages
     result.push({
       id: String(msg.id),
       role: msg.role,
@@ -333,6 +357,22 @@ function scrubBuggyReasoningInCache(msgs: Message[] | null | undefined): Message
   })
 }
 
+export interface ApprovalRequest {
+  id: string
+  runId: string
+  sessionId: string
+  type: string
+  title: string
+  message: string
+  choices?: string[]
+  timestamp: number
+  // Backend fields for command approval
+  command?: string
+  description?: string
+  patternKey?: string
+  sessionKey?: string
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
@@ -342,6 +382,9 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingSessions = ref(false)
   const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
+  // Approval state: pending approval requests from the agent
+  const pendingApprovals = ref<ApprovalRequest[]>([])
+  const currentApproval = computed(() => pendingApprovals.value.length > 0 ? pendingApprovals.value[0] : null)
   // tmux-like resume state: true when we recovered an in-flight run from
   // localStorage after a refresh and are polling fetchSession for progress.
   // UI shows the thinking indicator while this is set.
@@ -979,12 +1022,17 @@ export const useChatStore = defineStore('chat', () => {
             case 'tool.completed': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
+              // Match the correct tool message by name, since multiple tools may be running
               const toolMsgs = msgs.filter(
                 m => m.role === 'tool' && m.toolStatus === 'running',
               )
               if (toolMsgs.length > 0) {
-                const last = toolMsgs[toolMsgs.length - 1]
-                updateMessage(sid, last.id, { toolStatus: 'done' })
+                const matchedTool = toolMsgs.findLast(
+                  m => m.toolName === (evt.tool || evt.name),
+                ) || toolMsgs[toolMsgs.length - 1]
+                // Set status based on error flag from SSE event
+                const status = evt.error ? 'error' : 'done'
+                updateMessage(sid, matchedTool.id, { toolStatus: status })
               }
               schedulePersist()
               break
@@ -1080,6 +1128,27 @@ export const useChatStore = defineStore('chat', () => {
               if (sid === activeSessionId.value) persistActiveMessages()
               clearInFlight(sid)
               stopPolling(sid)
+              break
+            }
+
+            case 'approval.required': {
+              // Agent is requesting user approval for a dangerous command
+              const approvalId = uid()
+              const approval: ApprovalRequest = {
+                id: approvalId,
+                runId: evt.run_id || runId,
+                sessionId: sid,
+                type: 'command_approval',
+                title: 'Command Approval Required',
+                message: evt.description || 'Agent wants to execute a potentially dangerous command',
+                choices: ['once', 'session', 'always'],
+                timestamp: Date.now(),
+                command: evt.command,
+                description: evt.description,
+                patternKey: evt.pattern_key,
+                sessionKey: evt.session_key,
+              }
+              pendingApprovals.value.push(approval)
               break
             }
           }
@@ -1228,6 +1297,34 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.clear()
   }
 
+  // Approval handling functions
+  async function handleApprove(choice?: 'once' | 'session' | 'always', resolveAll?: boolean) {
+    const approval = pendingApprovals.value[0]
+    if (!approval) return
+    try {
+      await approveRun(approval.runId, { choice, resolve_all: resolveAll })
+      pendingApprovals.value.shift()
+    } catch (err: any) {
+      console.error('Approval failed:', err.message)
+    }
+  }
+
+  async function handleDeny(resolveAll?: boolean) {
+    const approval = pendingApprovals.value[0]
+    if (!approval) return
+    try {
+      await denyRun(approval.runId, { resolve_all: resolveAll })
+      pendingApprovals.value.shift()
+    } catch (err: any) {
+      console.error('Deny failed:', err.message)
+    }
+  }
+
+  function clearApproval(approvalId: string) {
+    const idx = pendingApprovals.value.findIndex(a => a.id === approvalId)
+    if (idx !== -1) pendingApprovals.value.splice(idx, 1)
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -1240,6 +1337,8 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions,
     sessionsLoaded,
     isLoadingMessages,
+    pendingApprovals,
+    currentApproval,
 
     newChat,
     switchSession,
@@ -1255,5 +1354,8 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
+    handleApprove,
+    handleDeny,
+    clearApproval,
   }
 })

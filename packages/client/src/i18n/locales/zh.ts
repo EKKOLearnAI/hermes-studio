@@ -64,6 +64,8 @@ export default {
     collapse: '收起',
     start: '启动',
     stop: '停止',
+    approve: '批准',
+    deny: '拒绝',
   },
 
   // 侧边栏
@@ -163,6 +165,15 @@ export default {
     copyBubble: '复制消息',
     copiedBubble: '已复制',
     copyFailed: '复制失败',
+    approvalRequired: '需要批准',
+    approvalOnce: '仅本次',
+    approvalSession: '本次会话',
+    approvalAlways: '始终允许',
+    approvalResolveAll: '同时处理所有待批准项',
+    approvalFailed: '批准失败',
+    denyFailed: '拒绝失败',
+    approvalCommand: '待执行命令',
+    approvalScope: '批准范围',
   },
 
   // 定时任务
