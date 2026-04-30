@@ -1,7 +1,7 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listConversationSummariesFromDb, getConversationDetailFromDb } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -289,104 +289,70 @@ export async function contextLength(ctx: any) {
 }
 
 export async function usageStats(ctx: any) {
-  // Get current active profile
+  const rawDays = parseInt(String(ctx.query?.days ?? '30'), 10)
+  const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30
+
+  // Local Web UI chat usage is kept in the dashboard DB and must be merged
+  // with Hermes' native state.db analytics for the same period.
   const currentProfile = getActiveProfileName()
+  const local = getLocalUsageStats(currentProfile, days)
 
-  // 1. Local session_usage (web UI chat runs) - filtered by current profile
-  const local = getLocalUsageStats(currentProfile)
-
-  // 2. Hermes state.db sessions (exclude api_server source)
-  let hermesSessions: Array<{
-    model: string
-    input_tokens: number
-    output_tokens: number
-    cache_read_tokens: number
-    cache_write_tokens: number
-    reasoning_tokens: number
-    started_at: number
-    estimated_cost_usd: number
-    actual_cost_usd: number | null
-  }> = []
+  let hermes = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    sessions: 0,
+    by_model: [] as UsageStatsModelRow[],
+    by_day: [] as UsageStatsDailyRow[],
+    cost: 0,
+    total_api_calls: 0,
+  }
 
   try {
-    const allSessions = await listSessionSummaries(undefined, 100000)
-    // Only include sessions from current profile
-    // Note: Hermes sessions don't have profile field, so we include all
-    // This could be improved in the future by filtering by some criteria
-    hermesSessions = allSessions.filter(s => s.source !== 'api_server')
+    hermes = await getUsageStatsFromDb(days)
   } catch (err) {
-    logger.warn(err, 'usageStats: failed to load Hermes sessions')
+    logger.warn(err, 'usageStats: failed to load Hermes usage analytics from state.db')
   }
 
-  // Aggregate Hermes sessions
-  const hModelMap = new Map<string, UsageStatsModelRow>()
-  const hDayMap = new Map<string, UsageStatsDailyRow>()
-  let hInput = 0, hOutput = 0, hCacheRead = 0, hCacheWrite = 0, hReasoning = 0, hSessions = 0, hCost = 0
+  const totalInput = local.input_tokens + hermes.input_tokens
+  const totalOutput = local.output_tokens + hermes.output_tokens
+  const totalCacheRead = local.cache_read_tokens + hermes.cache_read_tokens
+  const totalCacheWrite = local.cache_write_tokens + hermes.cache_write_tokens
+  const totalReasoning = local.reasoning_tokens + hermes.reasoning_tokens
+  const totalSessions = local.sessions + hermes.sessions
 
-  for (const s of hermesSessions) {
-    const iTokens = s.input_tokens || 0
-    const oTokens = s.output_tokens || 0
-    const crTokens = s.cache_read_tokens || 0
-    const cwTokens = s.cache_write_tokens || 0
-    const rTokens = s.reasoning_tokens || 0
-    const cost = s.actual_cost_usd ?? s.estimated_cost_usd ?? 0
-    const model = s.model || ''
-
-    hInput += iTokens; hOutput += oTokens; hCacheRead += crTokens
-    hCacheWrite += cwTokens; hReasoning += rTokens; hCost += cost
-    hSessions++
-
-    // By model
-    const me = hModelMap.get(model) || { model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0 }
-    me.input_tokens += iTokens; me.output_tokens += oTokens; me.cache_read_tokens += crTokens
-    me.cache_write_tokens += cwTokens; me.reasoning_tokens += rTokens; me.sessions++
-    hModelMap.set(model, me)
-
-    // By day (last 30 days)
-    const d = new Date(s.started_at * 1000)
-    const key = d.toISOString().slice(0, 10)
-    if (d.getTime() > Date.now() - 30 * 24 * 60 * 60 * 1000) {
-      const de = hDayMap.get(key) || { date: key, tokens: 0, cache: 0, sessions: 0, cost: 0 }
-      de.tokens += iTokens + oTokens; de.cache += crTokens; de.sessions++; de.cost += cost
-      hDayMap.set(key, de)
-    }
-  }
-
-  // Merge local + Hermes
-  const totalInput = local.input_tokens + hInput
-  const totalOutput = local.output_tokens + hOutput
-  const totalCacheRead = local.cache_read_tokens + hCacheRead
-  const totalCacheWrite = local.cache_write_tokens + hCacheWrite
-  const totalReasoning = local.reasoning_tokens + hReasoning
-  const totalSessions = local.sessions + hSessions
-  const totalCost = hCost // local has no cost data
-
-  // Merge by_model
   const modelMap = new Map<string, UsageStatsModelRow>()
-  for (const m of [...local.by_model, ...hModelMap.values()].filter(m => m.model)) {
+  for (const m of [...local.by_model, ...hermes.by_model].filter(m => m.model)) {
     const existing = modelMap.get(m.model)
     if (existing) {
-      existing.input_tokens += m.input_tokens; existing.output_tokens += m.output_tokens
-      existing.cache_read_tokens += m.cache_read_tokens; existing.cache_write_tokens += m.cache_write_tokens
-      existing.reasoning_tokens += m.reasoning_tokens; existing.sessions += m.sessions
+      existing.input_tokens += m.input_tokens
+      existing.output_tokens += m.output_tokens
+      existing.cache_read_tokens += m.cache_read_tokens
+      existing.cache_write_tokens += m.cache_write_tokens
+      existing.reasoning_tokens += m.reasoning_tokens
+      existing.sessions += m.sessions
     } else {
       modelMap.set(m.model, { ...m })
     }
   }
 
-  // Merge by_day
   const dayMap = new Map<string, UsageStatsDailyRow>()
-  // Initialize last 30 days
   const now = new Date()
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now); d.setDate(d.getDate() - i)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
     const key = d.toISOString().slice(0, 10)
     dayMap.set(key, { date: key, tokens: 0, cache: 0, sessions: 0, cost: 0 })
   }
-  for (const d of [...local.by_day, ...hDayMap.values()]) {
+  for (const d of [...local.by_day, ...hermes.by_day]) {
     const existing = dayMap.get(d.date)
     if (existing) {
-      existing.tokens += d.tokens; existing.cache += d.cache; existing.sessions += d.sessions; existing.cost += d.cost
+      existing.tokens += d.tokens
+      existing.cache += d.cache
+      existing.sessions += d.sessions
+      existing.cost += d.cost
     }
   }
 
@@ -397,7 +363,9 @@ export async function usageStats(ctx: any) {
     total_cache_write_tokens: totalCacheWrite,
     total_reasoning_tokens: totalReasoning,
     total_sessions: totalSessions,
-    total_cost: totalCost,
+    total_cost: hermes.cost,
+    total_api_calls: hermes.total_api_calls,
+    period_days: days,
     model_usage: [...modelMap.values()].sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
     daily_usage: [...dayMap.values()],
   }

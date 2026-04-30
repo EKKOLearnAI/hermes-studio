@@ -103,6 +103,8 @@ export interface UsageStatsResponse {
   total_reasoning_tokens: number
   total_sessions: number
   total_cost: number
+  total_api_calls?: number
+  period_days?: number
   model_usage: Array<{
     model: string
     input_tokens: number
@@ -121,8 +123,11 @@ export interface UsageStatsResponse {
   }>
 }
 
-export async function fetchUsageStats(): Promise<UsageStatsResponse> {
-  return request<UsageStatsResponse>('/api/hermes/usage/stats')
+export async function fetchUsageStats(days = 30): Promise<UsageStatsResponse> {
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 30
+  const params = new URLSearchParams()
+  params.set('days', String(safeDays))
+  return request<UsageStatsResponse>(`/api/hermes/usage/stats?${params}`)
 }
 
 export async function fetchSessionUsage(ids: string[]): Promise<Record<string, { input_tokens: number; output_tokens: number }>> {

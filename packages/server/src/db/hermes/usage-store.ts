@@ -154,7 +154,7 @@ export interface LocalUsageStats {
   by_day: UsageStatsDailyRow[]
 }
 
-export function getLocalUsageStats(profile?: string): LocalUsageStats {
+export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats {
   const empty: LocalUsageStats = {
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
     cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0,
@@ -163,7 +163,15 @@ export function getLocalUsageStats(profile?: string): LocalUsageStats {
   if (!isSqliteAvailable()) return empty
 
   const db = getDb()!
-  const profileFilter = profile ? `WHERE profile = ?` : ''
+  const safeDays = Math.max(1, Math.floor(Number.isFinite(days) ? days : 30))
+  const cutoffMs = Date.now() - safeDays * 24 * 60 * 60 * 1000
+  const filters: string[] = ['created_at > ?']
+  const params: any[] = [cutoffMs]
+  if (profile) {
+    filters.unshift('profile = ?')
+    params.unshift(profile)
+  }
+  const whereClause = `WHERE ${filters.join(' AND ')}`
 
   const totals = db.prepare(`
     SELECT COALESCE(SUM(input_tokens),0) as input_tokens,
@@ -173,42 +181,33 @@ export function getLocalUsageStats(profile?: string): LocalUsageStats {
       COALESCE(SUM(reasoning_tokens),0) as reasoning_tokens,
       COUNT(DISTINCT session_id) as sessions
     FROM ${TABLE}
-    ${profileFilter}
-  `).get(...(profile ? [profile] : [])) as any
+    ${whereClause}
+  `).get(...params) as any
 
   const byModel = db.prepare(`
     SELECT model,
-      SUM(input_tokens) as input_tokens,
-      SUM(output_tokens) as output_tokens,
-      SUM(cache_read_tokens) as cache_read_tokens,
-      SUM(cache_write_tokens) as cache_write_tokens,
-      SUM(reasoning_tokens) as reasoning_tokens,
+      COALESCE(SUM(input_tokens),0) as input_tokens,
+      COALESCE(SUM(output_tokens),0) as output_tokens,
+      COALESCE(SUM(cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens,
+      COALESCE(SUM(reasoning_tokens),0) as reasoning_tokens,
       COUNT(DISTINCT session_id) as sessions
     FROM ${TABLE}
-    ${profileFilter}
+    ${whereClause}
     GROUP BY model
-    ORDER BY sessions DESC
-  `).all(...(profile ? [profile] : [])) as unknown as UsageStatsModelRow[]
+    ORDER BY COALESCE(SUM(input_tokens),0) + COALESCE(SUM(output_tokens),0) DESC
+  `).all(...params) as unknown as UsageStatsModelRow[]
 
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const byDayStmt = profile
-    ? `SELECT DATE(created_at / 1000, 'unixepoch') as date,
-      SUM(input_tokens + output_tokens) as tokens,
-      SUM(cache_read_tokens) as cache,
+  const byDay = db.prepare(`
+    SELECT DATE(created_at / 1000, 'unixepoch') as date,
+      COALESCE(SUM(input_tokens + output_tokens),0) as tokens,
+      COALESCE(SUM(cache_read_tokens),0) as cache,
       COUNT(DISTINCT session_id) as sessions
-      FROM ${TABLE}
-      WHERE profile = ? AND created_at > ?
-      GROUP BY date
-      ORDER BY date`
-    : `SELECT DATE(created_at / 1000, 'unixepoch') as date,
-      SUM(input_tokens + output_tokens) as tokens,
-      SUM(cache_read_tokens) as cache,
-      COUNT(DISTINCT session_id) as sessions
-      FROM ${TABLE}
-      WHERE created_at > ?
-      GROUP BY date
-      ORDER BY date`
-  const byDay = db.prepare(byDayStmt).all(...(profile ? [profile, thirtyDaysAgo] : [thirtyDaysAgo])) as Array<{ date: string; tokens: number; cache: number; sessions: number }>
+    FROM ${TABLE}
+    ${whereClause}
+    GROUP BY date
+    ORDER BY date
+  `).all(...params) as Array<{ date: string; tokens: number; cache: number; sessions: number }>
 
   return {
     input_tokens: totals.input_tokens,
