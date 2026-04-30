@@ -68,7 +68,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.27.0",
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.4.0",
