@@ -112,3 +112,36 @@ export async function saveWeixinCredentials(data: {
     body: JSON.stringify(data),
   })
 }
+// ---------------------------------------------------------------------------
+// QQ Bot QR code onboard
+// ---------------------------------------------------------------------------
+
+export interface QqQrCode {
+  qrcode: string       // task_id
+  qrcode_url: string   // URL to open in QQ for scanning
+}
+
+export interface QqQrStatus {
+  status: 'wait' | 'scaned' | 'expired' | 'confirmed'
+  app_id?: string
+  client_secret?: string
+  user_openid?: string
+}
+
+export async function fetchQqQrCode(): Promise<QqQrCode> {
+  return request<QqQrCode>('/api/hermes/qq/qrcode')
+}
+
+export async function pollQrStatus(qrcode: string): Promise<QqQrStatus> {
+  return request<QqQrStatus>(`/api/hermes/qq/qrcode/status?qrcode=${encodeURIComponent(qrcode)}`)
+}
+
+export async function saveQqCredentials(data: {
+  app_id: string
+  client_secret: string
+}): Promise<void> {
+  await request('/api/hermes/qq/save', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
