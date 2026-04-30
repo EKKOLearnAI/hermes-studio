@@ -131,6 +131,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
 export function createSession(data: {
   id: string
   profile?: string
+  source?: string
   model?: string
   title?: string
   workspace?: string
@@ -138,7 +139,7 @@ export function createSession(data: {
   const now = Math.floor(Date.now() / 1000)
   if (!isSqliteAvailable()) {
     return {
-      id: data.id, profile: data.profile || 'default', source: 'api_server',
+      id: data.id, profile: data.profile || 'default', source: data.source || 'api_server',
       user_id: null, model: data.model || '', title: data.title || null,
       started_at: now, ended_at: null, end_reason: null,
       message_count: 0, tool_call_count: 0,
@@ -150,8 +151,8 @@ export function createSession(data: {
   const db = getDb()!
   db.prepare(
     `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, title, started_at, last_active, workspace)
-     VALUES (?, ?, 'api_server', ?, ?, ?, ?, ?)`,
-  ).run(data.id, data.profile || 'default', data.model || '', data.title || null, now, now, data.workspace || null)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(data.id, data.profile || 'default', data.source || 'api_server', data.model || '', data.title || null, now, now, data.workspace || null)
   return getSession(data.id)!
 }
 

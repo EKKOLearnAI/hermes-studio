@@ -122,16 +122,23 @@ function toggleGroup(source: string) {
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
 }
 
-watch(groupedSessions, groups => {
+watch(groupedSessions, () => {
   if (localStorage.getItem('hermes_collapsed_groups') !== null) {
     const activeSource = chatStore.activeSession?.source
-    if (activeSource && collapsedGroups.value.has(activeSource)) {
-      collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== activeSource))
+    const nextCollapsed = new Set(
+      [...collapsedGroups.value].filter(source => source !== 'feishu'),
+    )
+    if (activeSource && nextCollapsed.has(activeSource)) {
+      nextCollapsed.delete(activeSource)
+    }
+    if (nextCollapsed.size !== collapsedGroups.value.size) {
+      collapsedGroups.value = nextCollapsed
       localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
     }
     return
   }
-  collapsedGroups.value = new Set(groups.slice(1).map(group => group.source))
+  // Default to expanded groups so non-api_server sources like feishu stay visible.
+  collapsedGroups.value = new Set()
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
 }, { once: true })
 
