@@ -30,7 +30,7 @@ const envPlatformMap: Record<string, [string, string]> = {
   WEIXIN_BASE_URL: ['weixin', 'extra.base_url'],
   WHATSAPP_ENABLED: ['whatsapp', 'enabled'],
   QQ_APP_ID: ['qq', 'extra.app_id'],
-  QQ_APP_SECRET: ['qq', 'extra.app_secret'],
+  QQ_CLIENT_SECRET: ['qq', 'extra.client_secret'],
 }
 
 const platformEnvMap: Record<string, Record<string, string>> = {}

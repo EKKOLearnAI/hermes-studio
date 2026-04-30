@@ -184,7 +184,7 @@ export async function save(ctx: any) {
 
     const entries: Record<string, string> = {
       QQ_APP_ID: app_id,
-      QQ_APP_SECRET: client_secret,
+      QQ_CLIENT_SECRET: client_secret,
     }
 
     const lines = raw.split('\n')
