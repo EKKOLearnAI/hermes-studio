@@ -403,6 +403,33 @@ const platforms = [
         </SettingRow>
       </template>
 
+      <!-- QQ Bot -->
+      <template v-if="p.key === 'qq'">
+        <div class="weixin-qr-section">
+          <NButton
+            v-if="qqQrStatus === 'idle' || qqQrStatus === 'error' || qqQrStatus === 'expired' || qqQrStatus === 'confirmed'"
+            type="primary"
+            size="small"
+            @click="startQqQrLogin"
+          >
+            {{ qqQrStatus === 'confirmed' ? t('platform.qrRelogin') : 'QQ Bot 扫码接入' }}
+          </NButton>
+          <div v-if="qqQrStatus === 'loading'" class="weixin-qr-loading">
+            <NSpin size="small" />
+            <span>{{ t('platform.qrFetching') }}</span>
+          </div>
+          <div v-if="qqQrStatus === 'waiting' || qqQrStatus === 'scaned'" class="weixin-qr-hint">
+            {{ qqQrStatus === 'scaned' ? t('platform.qrScanedHint') : '请使用手机QQ扫描二维码' }}
+          </div>
+        </div>
+        <SettingRow :label="t('platform.appId')" :hint="'QQ 机器人 App ID'">
+          <NInput :default-value="getCreds('qq').extra?.app_id || ''" :loading="isSaving('qq', 'app_id')" clearable size="small" class="input-lg" placeholder="App ID" @change="v => saveCredentials('qq', 'app_id', { extra: { ...getCreds('qq').extra, app_id: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.appSecret')" :hint="'QQ 机器人 App Secret'">
+          <NInput :default-value="getCreds('qq').extra?.client_secret || ''" :loading="isSaving('qq', 'client_secret')" clearable size="small" class="input-lg" placeholder="App Secret" @change="v => saveCredentials('qq', 'client_secret', { extra: { ...getCreds('qq').extra, client_secret: v } })" />
+        </SettingRow>
+      </template>
+
       <!-- WeCom -->
       <template v-if="p.key === 'wecom'">
         <SettingRow :label="t('platform.botId')" :hint="t('platform.botIdHint')">
