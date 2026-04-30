@@ -10,10 +10,11 @@
 import axios from 'axios'
 import { readFile, writeFile, chmod } from 'fs/promises'
 import crypto from 'crypto'
-import { getActiveEnvPath } from '../../services/hermes/hermes-profile'
 import { restartGateway } from '../../services/hermes/hermes-cli'
-import { HERMES_BASE } from '../../services/hermes/hermes-profile'
 import { join } from 'path'
+import { homedir } from 'os'
+
+const HERMES_BASE = join(homedir(), '.hermes')
 
 const envPath = () => join(process.env.HERMES_HOME || HERMES_BASE, '.env')
 
