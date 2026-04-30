@@ -103,6 +103,11 @@ export class GatewayManager {
     return join(HERMES_BASE, 'profiles', name)
   }
 
+  /** 构造显式 profile 的 hermes CLI 参数，避免受当前 active_profile 污染 */
+  private hermesArgs(name: string, args: string[]): string[] {
+    return ['--profile', name, ...args]
+  }
+
   /**
    * 从 profile 的 config.yaml 读取 api_server 端口和主机
    * 读取路径：platforms.api_server.extra.port / extra.host
@@ -339,7 +344,7 @@ export class GatewayManager {
   /** 列出所有已知 profile 名称（通过 hermes CLI 或文件系统扫描） */
   async listProfiles(): Promise<string[]> {
     try {
-      const { stdout } = await execFileAsync(HERMES_BIN, ['profile', 'list'], {
+      const { stdout } = await execFileAsync(HERMES_BIN, this.hermesArgs('default', ['profile', 'list']), {
         timeout: 10000,
         windowsHide: true,
       })
@@ -411,30 +416,14 @@ export class GatewayManager {
 
     if (needsRunMode) {
       // WSL / Docker：无 systemd/launchd，用 "gateway run" 作为 detached 子进程
-      return new Promise((resolve, reject) => {
-        const env = { ...process.env, HERMES_HOME: hermesHome }
-        const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-          env,
-        })
-        child.unref()
-
-        const pid = child.pid ?? 0
-        logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
-
-        this.waitForReady(name, pid, port, host, url)
-          .then(resolve)
-          .catch(reject)
-      })
+      return this.startDetached(name, hermesHome, port, host, url)
     }
 
     // 正常系统：先 start，失败则 restart（处理服务已运行的情况）
     logger.info('Starting gateway for profile "%s" (start mode, port: %d)', name, port)
     const env = { ...process.env, HERMES_HOME: hermesHome }
     try {
-      const { stdout } = await execFileAsync(HERMES_BIN, ['gateway', 'start'], {
+      const { stdout } = await execFileAsync(HERMES_BIN, this.hermesArgs(name, ['gateway', 'start']), {
         timeout: 30000,
         env,
         windowsHide: true,
@@ -443,7 +432,7 @@ export class GatewayManager {
     } catch {
       // start 失败（可能服务已运行），用 restart
       try {
-        const { stdout } = await execFileAsync(HERMES_BIN, ['gateway', 'restart'], {
+        const { stdout } = await execFileAsync(HERMES_BIN, this.hermesArgs(name, ['gateway', 'restart']), {
           timeout: 30000,
           env,
           windowsHide: true,
@@ -454,7 +443,35 @@ export class GatewayManager {
       }
     }
 
-    return this.waitForReady(name, 0, port, host, url)
+    try {
+      return await this.waitForReady(name, 0, port, host, url)
+    } catch (err: any) {
+      logger.warn(err, 'gateway service mode failed for profile "%s", falling back to detached run mode', name)
+      try {
+        await this.stop(name, 3000)
+      } catch { }
+      return this.startDetached(name, hermesHome, port, host, url)
+    }
+  }
+
+  private startDetached(name: string, hermesHome: string, port: number, host: string, url: string): Promise<GatewayStatus> {
+    return new Promise((resolve, reject) => {
+      const env = { ...process.env, HERMES_HOME: hermesHome }
+      const child = spawn(HERMES_BIN, this.hermesArgs(name, ['gateway', 'run', '--replace']), {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env,
+      })
+      child.unref()
+
+      const pid = child.pid ?? 0
+      logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
+
+      this.waitForReady(name, pid, port, host, url)
+        .then(resolve)
+        .catch(reject)
+    })
   }
 
   /** 等待网关健康检查通过，最多 15 秒 */
@@ -493,7 +510,7 @@ export class GatewayManager {
       try {
         const hermesHome = this.profileDir(name)
         const env = { ...process.env, HERMES_HOME: hermesHome }
-        await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
+        await execFileAsync(HERMES_BIN, this.hermesArgs(name, ['gateway', 'stop']), {
           timeout: 10000,
           env,
           windowsHide: true,
