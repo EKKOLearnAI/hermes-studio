@@ -1,33 +1,16 @@
 /**
  * Sync Hermes sessions from all profiles on startup.
- * Reads api_server sessions from Hermes state.db and imports into local DB.
- * Only runs when local DB is empty (first startup).
+ * Reads Hermes state.db sessions from every profile and imports them into the
+ * web-ui local DB with their original source preserved.
  */
 import { readdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { homedir } from 'os'
 import { DatabaseSync } from 'node:sqlite'
-import { randomBytes } from 'crypto'
 import { getProfileDir } from './hermes-profile'
 import { createSession, addMessage, updateSession, getSession } from '../../db/hermes/session-store'
 import { getDb } from '../../db/index'
 import { logger } from '../logger'
-
-/**
- * Generate a UUID v4 without external dependencies
- */
-function generateUuid(): string {
-  const bytes = randomBytes(16)
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40 // Version 4
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80 // Variant 10
-  return [
-    bytes.subarray(0, 4).toString('hex'),
-    bytes.subarray(4, 6).toString('hex'),
-    bytes.subarray(6, 8).toString('hex'),
-    bytes.subarray(8, 10).toString('hex'),
-    bytes.subarray(10, 16).toString('hex'),
-  ].join('-')
-}
 
 const HERMES_BASE = resolve(homedir(), '.hermes')
 const PROFILES_DIR = join(HERMES_BASE, 'profiles')
@@ -99,7 +82,7 @@ function openHermesStateDb(profile: string): DatabaseSync {
 }
 
 /**
- * Sync api_server sessions from a single profile
+ * Sync Hermes sessions from a single profile.
  */
 function syncProfileSessions(profile: string): {
   synced: number
@@ -119,7 +102,7 @@ function syncProfileSessions(profile: string): {
       // Build SELECT query - only include estimated_cost_usd if column exists
       const estimatedCostCol = hasEstimatedCost ? ', COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd' : ', 0 AS estimated_cost_usd'
 
-      // Get all api_server sessions
+      // Get all Hermes sessions except tool/compression internals.
       const sessions = db.prepare(`
         SELECT
           id,
@@ -137,27 +120,26 @@ function syncProfileSessions(profile: string): {
           cache_write_tokens,
           reasoning_tokens${estimatedCostCol}
         FROM sessions
-        WHERE source = 'api_server'
+        WHERE source != 'tool'
+          AND source != 'api_server'
         ORDER BY started_at ASC
       `).all() as unknown as Omit<HermesSessionRow, 'preview' | 'last_active'>[]
 
-      logger.info(`[session-sync] profile '${profile}': found ${sessions.length} api_server sessions`)
+      logger.info(`[session-sync] profile '${profile}': found ${sessions.length} Hermes sessions to import`)
       for (const hermesSession of sessions) {
         try {
-          // Check if this Hermes session ID already exists in local DB
+          // Use the Hermes session ID as the local ID so sync stays idempotent.
           const existing = getSession(hermesSession.id)
           if (existing) {
             result.skipped++
             continue
           }
 
-          // Generate new session ID
-          const newSessionId = generateUuid()
-
           // Create session in local DB
           createSession({
-            id: newSessionId,
+            id: hermesSession.id,
             profile,
+            source: hermesSession.source,
             model: hermesSession.model,
             title: hermesSession.title || undefined,
           })
@@ -187,7 +169,7 @@ function syncProfileSessions(profile: string): {
           // Insert all messages
           for (const msg of messages) {
             addMessage({
-              session_id: newSessionId,
+              session_id: hermesSession.id,
               role: msg.role,
               content: msg.content,
               tool_call_id: msg.tool_call_id,
@@ -219,7 +201,7 @@ function syncProfileSessions(profile: string): {
             ? hermesSession.estimated_cost_usd
             : 0
 
-          updateSession(newSessionId, {
+          updateSession(hermesSession.id, {
             started_at: hermesSession.started_at,
             ended_at: hermesSession.ended_at,
             end_reason: hermesSession.end_reason,
@@ -234,7 +216,7 @@ function syncProfileSessions(profile: string): {
           })
 
           result.synced++
-          logger.info(`[session-sync] synced Hermes session ${hermesSession.id} -> ${newSessionId} (${messages.length} messages)`)
+          logger.info(`[session-sync] synced Hermes session ${hermesSession.id} (${messages.length} messages)`)
         } catch (err: any) {
           result.errors.push(`session ${hermesSession.id}: ${err.message}`)
           logger.warn(err, `[session-sync] failed to sync session ${hermesSession.id}`)
@@ -254,26 +236,17 @@ function syncProfileSessions(profile: string): {
 }
 
 /**
- * Main entry point: sync all profiles on startup
- * Only runs if local DB is empty (first startup or after DB reset)
+ * Main entry point: sync all profiles on startup.
+ * Keeps importing Hermes sessions into the local UI DB and preserves their source.
  */
 export function syncAllHermesSessionsOnStartup(): void {
-  // Check if local DB has any sessions - only sync if completely empty
   const db = getDb()
   if (!db) {
     logger.info('[session-sync] SQLite not available, skipping Hermes sync')
     return
   }
-
   const countResult = db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number } | undefined
-  const hasExistingSessions = countResult && countResult.count > 0
-
-  if (hasExistingSessions) {
-    logger.info('[session-sync] local DB has %d sessions, skipping Hermes sync', countResult!.count)
-    return
-  }
-
-  logger.info('[session-sync] local DB is empty, starting Hermes session sync...')
+  logger.info('[session-sync] local DB has %d sessions, starting Hermes session sync...', countResult?.count || 0)
 
   const profiles = getAllProfiles()
   logger.info(`[session-sync] found ${profiles.length} profiles: ${profiles.join(', ')}`)
