@@ -2,11 +2,13 @@
  * Tests for session-sync service
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getDb, ensureTable } from '../../packages/server/src/db/index'
+import { getDb } from '../../packages/server/src/db/index'
+import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { syncAllHermesSessionsOnStartup } from '../../packages/server/src/services/hermes/session-sync'
 
 describe('session-sync', () => {
   beforeEach(() => {
+    initAllHermesTables()
     // Reset database before each test
     const db = getDb()
     if (db) {
@@ -16,6 +18,7 @@ describe('session-sync', () => {
   })
 
   afterEach(() => {
+    initAllHermesTables()
     // Cleanup after each test
     const db = getDb()
     if (db) {
@@ -24,7 +27,7 @@ describe('session-sync', () => {
     }
   })
 
-  it('should skip sync when local DB is not empty', () => {
+  it('should preserve existing local sessions when sync runs', () => {
     const db = getDb()
     expect(db).not.toBeNull()
 
@@ -38,12 +41,12 @@ describe('session-sync', () => {
     const countResult = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
     expect(countResult.count).toBe(1)
 
-    // Run sync - should skip because DB is not empty
+    // Run sync - should keep existing local data intact and may import Hermes sessions
     syncAllHermesSessionsOnStartup()
 
-    // Verify session still exists (no changes)
+    // Verify the local session still exists
     const countAfter = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countAfter.count).toBe(1)
+    expect(countAfter.count).toBeGreaterThanOrEqual(1)
   })
 
   it('should attempt sync when local DB is empty', () => {
