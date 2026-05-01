@@ -63,7 +63,7 @@ async function syncProfileSessions(profile: string): Promise<{
   try {
     // Use listSessionSummaries to get aggregated session chains
     // This returns only root sessions with aggregated stats from the entire chain
-    const summaries = await listHermesSessionSummaries('api_server', 10000, profile)
+    const summaries = await listHermesSessionSummaries(undefined, 10000, profile)
 
     logger.info(`[session-sync] profile '${profile}': found ${summaries.length} aggregated session chains`)
 
@@ -77,6 +77,7 @@ async function syncProfileSessions(profile: string): Promise<{
           id: newSessionId,
           profile,
           model: hermesSession.model,
+          source: hermesSession.source,
           title: hermesSession.title || undefined,
         })
 
