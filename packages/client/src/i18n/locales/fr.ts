@@ -220,7 +220,18 @@ jobTriggered: 'Job declenche',
     attachedFiles: 'Fichiers joints',
     loadFailed: 'Echec du chargement de la competence',
     fileLoadFailed: 'Echec du chargement du fichier',
+    modified: "Modifi\u00e9 par l'utilisateur",
+    archived: 'Archivé',
+    pinned: 'Épinglé',
+    pin: 'Épingler la compétence',
+    unpin: 'Désépingler la compétence',
+    pinFailed: "Impossible de changer le statut d'épinglage",
     toggleFailed: 'Echec de l\'activation/desactivation de la competence',
+    source: {
+      builtin: 'Intégré',
+      hub: 'Hub',
+      local: 'Local',
+    },
   },
 
   // Memory

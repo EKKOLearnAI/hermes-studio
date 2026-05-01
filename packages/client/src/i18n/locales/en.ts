@@ -249,7 +249,18 @@ export default {
     attachedFiles: 'Attached Files',
     loadFailed: 'Failed to load skill',
     fileLoadFailed: 'Failed to load file',
+    modified: 'Modified',
+    archived: 'Archived',
+    pinned: 'Pinned',
+    pin: 'Pin skill',
+    unpin: 'Unpin skill',
+    pinFailed: 'Failed to change pin status',
     toggleFailed: 'Failed to toggle skill',
+    source: {
+      builtin: 'Builtin',
+      hub: 'Hub',
+      local: 'Local',
+    },
   },
 
   // Memory

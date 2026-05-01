@@ -1,14 +1,25 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
-import { fetchSkillContent, fetchSkillFiles, type SkillFileEntry } from '@/api/hermes/skills'
+import { fetchSkillContent, fetchSkillFiles, pinSkillApi, type SkillFileEntry } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
+import { useMessage } from 'naive-ui'
 
 const { t } = useI18n()
+const message = useMessage()
 
 const props = defineProps<{
   category: string
   skill: string
+  skillName: string
+  patchCount?: number
+  useCount?: number
+  viewCount?: number
+  pinned?: boolean
+}>()
+
+const emit = defineEmits<{
+  pinToggled: [name: string, pinned: boolean]
 }>()
 
 const content = ref('')
@@ -67,6 +78,22 @@ function backToSkill() {
   fileContent.value = ''
 }
 
+const pinLoading = ref(false)
+
+async function handlePinToggle() {
+  if (pinLoading.value) return
+  pinLoading.value = true
+  try {
+    const newPinned = !props.pinned
+    await pinSkillApi(props.skillName, newPinned)
+    emit('pinToggled', props.skillName, newPinned)
+  } catch (err: any) {
+    message.error(t('skills.pinFailed') + `: ${err.message}`)
+  } finally {
+    pinLoading.value = false
+  }
+}
+
 watch(() => `${props.category}/${props.skill}`, loadSkill, { immediate: true })
 </script>
 
@@ -77,6 +104,23 @@ watch(() => `${props.category}/${props.skill}`, loadSkill, { immediate: true })
       <span class="detail-category">{{ category }}</span>
       <span class="detail-separator">/</span>
       <span class="detail-name">{{ skill }}</span>
+      <div class="usage-stats">
+        <button class="pin-toggle" :class="{ active: pinned }" :disabled="pinLoading" :title="pinned ? t('skills.unpin') : t('skills.pin')" @click="handlePinToggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" :fill="pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+        </button>
+        <span v-if="viewCount != null" class="usage-stat" title="Views">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          {{ viewCount }}
+        </span>
+        <span v-if="useCount != null" class="usage-stat" title="Uses">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          {{ useCount }}
+        </span>
+        <span v-if="patchCount != null" class="usage-stat" title="Patches">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          {{ patchCount }}
+        </span>
+      </div>
     </div>
 
     <div v-if="loading && !content" class="detail-loading">{{ t('common.loading') }}</div>
@@ -136,6 +180,8 @@ watch(() => `${props.category}/${props.skill}`, loadSkill, { immediate: true })
   border-bottom: 1px solid $border-color;
   margin-bottom: 12px;
   font-size: 15px;
+  display: flex;
+  align-items: center;
 }
 
 .detail-category {
@@ -151,6 +197,59 @@ watch(() => `${props.category}/${props.skill}`, loadSkill, { immediate: true })
 .detail-name {
   color: $text-primary;
   font-weight: 600;
+}
+
+.usage-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.usage-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: $text-secondary;
+  white-space: nowrap;
+
+  svg {
+    opacity: 0.7;
+  }
+}
+
+.pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: none;
+  color: $text-muted;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  opacity: 0.5;
+  transition: all $transition-fast;
+
+  &:hover {
+    opacity: 1;
+    color: $accent-primary;
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    border-color: rgba(var(--accent-primary-rgb), 0.15);
+  }
+
+  &.active {
+    opacity: 1;
+    color: $accent-primary;
+  }
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.3;
+  }
 }
 
 .detail-loading {

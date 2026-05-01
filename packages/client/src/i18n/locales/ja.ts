@@ -220,7 +220,18 @@ export default {
     attachedFiles: '添付ファイル',
     loadFailed: 'スキルの読み込みに失敗しました',
     fileLoadFailed: 'ファイルの読み込みに失敗しました',
+    modified: 'ユーザー変更あり',
+    archived: 'アーカイブ済み',
+    pinned: 'ピン留め',
+    pin: 'スキルをピン留め',
+    unpin: 'ピン留めを解除',
+    pinFailed: 'ピン留め状態の変更に失敗しました',
     toggleFailed: 'スキルの切り替えに失敗しました',
+    source: {
+      builtin: '組み込み',
+      hub: 'Hub',
+      local: 'ローカル',
+    },
   },
 
   // メモリ
