@@ -75,6 +75,41 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
+export const CHAT_SESSION_RUNS_TABLE = 'chat_session_runs'
+
+export const CHAT_SESSION_RUNS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  wui_session_id: 'TEXT NOT NULL',
+  hermes_session_id: 'TEXT NOT NULL',
+  run_id: 'TEXT',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  status: "TEXT NOT NULL DEFAULT 'started'",
+  started_at: 'INTEGER NOT NULL',
+  completed_at: 'INTEGER',
+  last_sync_at: 'INTEGER',
+  sync_error: 'TEXT',
+}
+
+export const CHAT_SESSION_RUNS_HERMES_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_session_runs_hermes_session_id ON chat_session_runs(hermes_session_id)'
+export const CHAT_SESSION_RUNS_WUI_STATUS_INDEX = 'CREATE INDEX IF NOT EXISTS idx_chat_session_runs_wui_status ON chat_session_runs(wui_session_id, status, started_at)'
+export const CHAT_SESSION_RUNS_RUN_INDEX = 'CREATE INDEX IF NOT EXISTS idx_chat_session_runs_run_id ON chat_session_runs(run_id)'
+
+export const CHAT_SYNCED_MESSAGES_TABLE = 'chat_synced_messages'
+
+export const CHAT_SYNCED_MESSAGES_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  wui_session_id: 'TEXT NOT NULL',
+  hermes_session_id: 'TEXT NOT NULL',
+  hermes_message_id: 'TEXT NOT NULL',
+  local_message_id: 'TEXT NOT NULL',
+  role: 'TEXT NOT NULL',
+  synced_at: 'INTEGER NOT NULL',
+}
+
+export const CHAT_SYNCED_MESSAGES_SOURCE_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_synced_messages_source ON chat_synced_messages(hermes_session_id, hermes_message_id)'
+export const CHAT_SYNCED_MESSAGES_WUI_INDEX = 'CREATE INDEX IF NOT EXISTS idx_chat_synced_messages_wui ON chat_synced_messages(wui_session_id)'
+export const CHAT_SYNCED_MESSAGES_WUI_LOCAL_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_synced_messages_wui_local ON chat_synced_messages(wui_session_id, local_message_id)'
+
 // ============================================================================
 // Compression Snapshot (compression-snapshot.ts)
 // ============================================================================
@@ -375,7 +410,7 @@ function syncIndexes(
 
   // 删除多余索引
   for (const name of existingNames) {
-    if (expectedNames.has(name)) {
+    if (!expectedNames.has(name)) {
       try { db.exec(`DROP INDEX ${quoteIdentifier(name)}`) } catch { }
     }
   }
@@ -463,6 +498,22 @@ export function initAllHermesTables(retryCount = 0): void {
     syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+
+    // Durable chat run/session sync mapping
+    syncTable(CHAT_SESSION_RUNS_TABLE, CHAT_SESSION_RUNS_SCHEMA, {
+      indexes: {
+        idx_chat_session_runs_hermes_session_id: CHAT_SESSION_RUNS_HERMES_INDEX,
+        idx_chat_session_runs_wui_status: CHAT_SESSION_RUNS_WUI_STATUS_INDEX,
+        idx_chat_session_runs_run_id: CHAT_SESSION_RUNS_RUN_INDEX,
+      },
+    })
+    syncTable(CHAT_SYNCED_MESSAGES_TABLE, CHAT_SYNCED_MESSAGES_SCHEMA, {
+      indexes: {
+        idx_chat_synced_messages_source: CHAT_SYNCED_MESSAGES_SOURCE_INDEX,
+        idx_chat_synced_messages_wui: CHAT_SYNCED_MESSAGES_WUI_INDEX,
+        idx_chat_synced_messages_wui_local: CHAT_SYNCED_MESSAGES_WUI_LOCAL_INDEX,
+      },
+    })
 
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)

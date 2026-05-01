@@ -69,8 +69,8 @@ export async function bootstrap() {
   console.log('[bootstrap] routes registered')
 
   if (authToken) {
-    console.log(`Auth enabled — token: ${authToken}`)
-    logger.info('Auth enabled — token: %s', authToken)
+    console.log('Auth enabled')
+    logger.info('Auth enabled')
   }
 
   // SPA fallback

@@ -592,26 +592,50 @@ export async function getSessionMessagesFromDb(sessionId: string): Promise<{
 } | null> {
   const db = await openSessionDb()
   try {
-    const sessionRow = db.prepare(`
-      SELECT ${SESSION_SELECT}
-      FROM sessions s
-      WHERE s.id = ?
-    `).get(sessionId) as Record<string, unknown> | undefined
+    return getSessionMessagesFromOpenDb(db, sessionId)
+  } finally {
+    db.close()
+  }
+}
 
-    const messageRows = db.prepare(`
-      SELECT
-        id, session_id, role, content, tool_call_id, tool_calls, tool_name,
-        timestamp, token_count, finish_reason, reasoning, reasoning_details,
-        codex_reasoning_items, reasoning_content
-      FROM messages
-      WHERE session_id = ?
-      ORDER BY timestamp, id
-    `).all(sessionId) as Record<string, unknown>[]
+function getSessionMessagesFromOpenDb(
+  db: { prepare: (sql: string) => { get: (...params: any[]) => Record<string, unknown> | undefined; all: (...params: any[]) => Record<string, unknown>[] } },
+  sessionId: string,
+): { messages: HermesMessageRow[]; session: HermesSessionRow | null } {
+  const sessionRow = db.prepare(`
+    SELECT ${SESSION_SELECT}
+    FROM sessions s
+    WHERE s.id = ?
+  `).get(sessionId) as Record<string, unknown> | undefined
 
-    return {
-      messages: messageRows.map(mapMessageRow),
-      session: sessionRow ? mapRow(sessionRow) : null,
-    }
+  const messageRows = db.prepare(`
+    SELECT
+      id, session_id, role, content, tool_call_id, tool_calls, tool_name,
+      timestamp, token_count, finish_reason, reasoning, reasoning_details,
+      codex_reasoning_items, reasoning_content
+    FROM messages
+    WHERE session_id = ?
+    ORDER BY timestamp, id
+  `).all(sessionId) as Record<string, unknown>[]
+
+  return {
+    messages: messageRows.map(mapMessageRow),
+    session: sessionRow ? mapRow(sessionRow) : null,
+  }
+}
+
+export async function getSessionMessagesFromDbWithProfile(sessionId: string, profile: string): Promise<{
+  messages: HermesMessageRow[]
+  session: HermesSessionRow | null
+} | null> {
+  if (!SQLITE_AVAILABLE) {
+    throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
+  }
+  const { DatabaseSync } = await import('node:sqlite')
+  const dbPath = `${getProfileDir(profile)}/state.db`
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
+  try {
+    return getSessionMessagesFromOpenDb(db, sessionId)
   } finally {
     db.close()
   }

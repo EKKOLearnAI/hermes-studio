@@ -3,7 +3,7 @@
  * Uses the same ensureTable/getDb pattern as usage-store.ts.
  */
 import { isSqliteAvailable, getDb } from '../index'
-import { SESSIONS_TABLE, MESSAGES_TABLE } from './schemas'
+import { SESSIONS_TABLE, MESSAGES_TABLE, CHAT_SESSION_RUNS_TABLE, CHAT_SYNCED_MESSAGES_TABLE } from './schemas'
 
 // Re-export types for compatibility with sessions-db.ts consumers
 export interface HermesSessionRow {
@@ -126,6 +126,44 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
   }
 }
 
+type NewHermesMessage = {
+  session_id: string
+  role: string
+  content: string
+  tool_call_id?: string | null
+  tool_calls?: any[] | null
+  tool_name?: string | null
+  timestamp?: number
+  token_count?: number | null
+  finish_reason?: string | null
+  reasoning?: string | null
+  reasoning_details?: string | null
+  reasoning_content?: string | null
+  codex_reasoning_items?: string | null
+}
+
+function stringifyToolCalls(value: any[] | null | undefined): string | null {
+  return value ? JSON.stringify(value) : null
+}
+
+function messageKeyValues(msg: NewHermesMessage): any[] {
+  return [
+    msg.session_id,
+    msg.role,
+    msg.content,
+    msg.tool_call_id ?? null,
+    stringifyToolCalls(msg.tool_calls),
+    msg.tool_name ?? null,
+    msg.timestamp ?? Math.floor(Date.now() / 1000),
+    msg.token_count ?? null,
+    msg.finish_reason ?? null,
+    msg.reasoning ?? null,
+    msg.reasoning_details ?? null,
+    msg.reasoning_content ?? null,
+    msg.codex_reasoning_items ?? null,
+  ]
+}
+
 // --- Session CRUD ---
 
 export function createSession(data: {
@@ -197,6 +235,8 @@ export function deleteSession(id: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
   db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+  db.prepare(`DELETE FROM ${CHAT_SESSION_RUNS_TABLE} WHERE wui_session_id = ?`).run(id)
+  db.prepare(`DELETE FROM ${CHAT_SYNCED_MESSAGES_TABLE} WHERE wui_session_id = ?`).run(id)
   const result = db.prepare(`DELETE FROM ${SESSIONS_TABLE} WHERE id = ?`).run(id)
   return result.changes > 0
 }
@@ -330,36 +370,78 @@ export function getSessionDetail(id: string): HermesSessionDetailRow | null {
 
 // --- Message CRUD ---
 
-export function addMessage(msg: {
-  session_id: string
-  role: string
-  content: string
-  tool_call_id?: string | null
-  tool_calls?: any[] | null
-  tool_name?: string | null
-  timestamp?: number
-  token_count?: number | null
-  finish_reason?: string | null
-  reasoning?: string | null
-  reasoning_details?: string | null
-  reasoning_content?: string | null
-  codex_reasoning_items?: string | null
-}): number | undefined {
+export function addMessage(msg: NewHermesMessage): number | undefined {
   if (!isSqliteAvailable()) return undefined
   const db = getDb()!
-  const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
   const result = db.prepare(
     `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content, codex_reasoning_items)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.session_id, msg.role, msg.content,
-    msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
-    msg.timestamp ?? Math.floor(Date.now() / 1000),
-    msg.token_count ?? null, msg.finish_reason ?? null,
-    msg.reasoning ?? null, msg.reasoning_details ?? null,
-    msg.reasoning_content ?? null, msg.codex_reasoning_items ?? null,
-  )
+  ).run(...messageKeyValues(msg))
   return result.lastInsertRowid as number
+}
+
+export function addMessageIfMissing(msg: NewHermesMessage): { inserted: boolean; id?: number | string } {
+  if (!isSqliteAvailable()) return { inserted: false }
+  const existing = findMatchingMessage(msg)
+  if (existing) return { inserted: false, id: existing.id }
+
+  const id = addMessage(msg)
+  return { inserted: true, id }
+}
+
+export function findMatchingMessage(msg: NewHermesMessage): { id: number | string } | null {
+  if (!isSqliteAvailable()) return null
+  const db = getDb()!
+  const values = messageKeyValues(msg)
+  const existing = db.prepare(
+    `SELECT id FROM ${MESSAGES_TABLE}
+     WHERE session_id = ?
+       AND role = ?
+       AND content = ?
+       AND tool_call_id IS ?
+       AND tool_calls IS ?
+       AND tool_name IS ?
+       AND timestamp = ?
+       AND token_count IS ?
+       AND finish_reason IS ?
+       AND reasoning IS ?
+       AND reasoning_details IS ?
+       AND reasoning_content IS ?
+       AND codex_reasoning_items IS ?
+     ORDER BY id
+     LIMIT 1`,
+  ).get(...values) as { id: number | string } | undefined
+  return existing || null
+}
+
+export function findUnmappedMatchingMessage(msg: NewHermesMessage, _hermesSessionId: string): { id: number | string } | null {
+  if (!isSqliteAvailable()) return null
+  const db = getDb()!
+  const values = messageKeyValues(msg)
+  const existing = db.prepare(
+    `SELECT m.id FROM ${MESSAGES_TABLE} m
+     WHERE m.session_id = ?
+       AND m.role = ?
+       AND m.content = ?
+       AND m.tool_call_id IS ?
+       AND m.tool_calls IS ?
+       AND m.tool_name IS ?
+       AND m.timestamp = ?
+       AND m.token_count IS ?
+       AND m.finish_reason IS ?
+       AND m.reasoning IS ?
+       AND m.reasoning_details IS ?
+       AND m.reasoning_content IS ?
+       AND m.codex_reasoning_items IS ?
+       AND NOT EXISTS (
+         SELECT 1 FROM ${CHAT_SYNCED_MESSAGES_TABLE} s
+         WHERE s.wui_session_id = m.session_id
+           AND s.local_message_id = CAST(m.id AS TEXT)
+       )
+     ORDER BY m.id
+     LIMIT 1`,
+  ).get(...values) as { id: number | string } | undefined
+  return existing || null
 }
 
 export function addMessages(msgs: Array<{

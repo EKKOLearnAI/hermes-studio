@@ -13,6 +13,7 @@ import {
 import { deleteUsage, getUsage, getUsageBatch, getLocalUsageStats } from '../../db/hermes/usage-store'
 import type { LocalUsageStats, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
+import { repairUnsyncedChatRuns } from '../../services/hermes/chat-run-sync'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
@@ -208,7 +209,18 @@ export async function search(ctx: any) {
 
 export async function get(ctx: any) {
   if (useLocalSessionStore()) {
-    const session = localGetSessionDetail(ctx.params.id)
+    const sessionId = ctx.params.id
+    try {
+      const repaired = await repairUnsyncedChatRuns(sessionId)
+      const inserted = repaired.reduce((sum, r) => sum + r.inserted, 0)
+      if (inserted > 0) {
+        logger.info('[sessions] repaired %d missing messages before loading local session %s', inserted, sessionId)
+      }
+    } catch (err) {
+      logger.warn(err, '[sessions] failed to repair unsynced runs before loading local session %s', sessionId)
+    }
+
+    const session = localGetSessionDetail(sessionId)
     if (!session) {
       ctx.status = 404
       ctx.body = { error: 'Session not found' }
