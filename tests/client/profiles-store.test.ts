@@ -52,16 +52,16 @@ describe('Profiles Store', () => {
   })
 
   it('createProfile calls API and refreshes list', async () => {
-    mockProfilesApi.createProfile.mockResolvedValue(true)
+    mockProfilesApi.createProfile.mockResolvedValue({ success: true })
     mockProfilesApi.fetchProfiles.mockResolvedValue([
       { name: 'default', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
       { name: 'new-profile', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
     ])
 
     const store = useProfilesStore()
-    const ok = await store.createProfile('new-profile', false)
+    const result = await store.createProfile('new-profile', false)
 
-    expect(ok).toBe(true)
+    expect(result.success).toBe(true)
     expect(mockProfilesApi.createProfile).toHaveBeenCalledWith('new-profile', false)
     expect(store.profiles).toHaveLength(2)
   })

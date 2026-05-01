@@ -8,6 +8,8 @@ const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'sea
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
 const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
@@ -22,6 +24,8 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   get: getMock,
   remove: removeMock,
   rename: renameMock,
+  setWorkspace: setWorkspaceMock,
+  listWorkspaceFolders: listWorkspaceFoldersMock,
   usageBatch: usageBatchMock,
   usageSingle: usageSingleMock,
   usageStats: usageStatsMock,
