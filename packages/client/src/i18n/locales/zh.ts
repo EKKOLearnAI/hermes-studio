@@ -249,7 +249,18 @@ export default {
     attachedFiles: '附件文件',
     loadFailed: '加载技能失败',
     fileLoadFailed: '加载文件失败',
+    modified: '用户已修改',
+    archived: '已归档',
+    pinned: '已置顶',
+    pin: '置顶技能',
+    unpin: '取消置顶',
+    pinFailed: '更改置顶状态失败',
     toggleFailed: '切换技能状态失败',
+    source: {
+      builtin: '内置',
+      hub: 'Hub 安装',
+      local: '本地安装',
+    },
   },
 
   // 记忆

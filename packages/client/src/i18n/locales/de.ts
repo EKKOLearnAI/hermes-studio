@@ -220,7 +220,18 @@ jobTriggered: 'Job ausgelost',
     attachedFiles: 'Angehange Dateien',
     loadFailed: 'Laden der Fahigkeit fehlgeschlagen',
     fileLoadFailed: 'Laden der Datei fehlgeschlagen',
+    modified: 'Benutzerbearbeitet',
+    archived: 'Archiviert',
+    pinned: 'Angeheftet',
+    pin: 'Fahigkeit anheften',
+    unpin: 'Anheften aufheben',
+    pinFailed: 'Anheft-Status konnte nicht geandert werden',
     toggleFailed: 'Aktivieren/Deaktivieren der Fahigkeit fehlgeschlagen',
+    source: {
+      builtin: 'Integriert',
+      hub: 'Hub',
+      local: 'Lokal',
+    },
   },
 
   // Memory

@@ -1,19 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
-import { fetchSkills, type SkillCategory } from '@/api/hermes/skills'
+import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
+
+type SourceFilter = SkillSource | 'modified'
 
 const { t } = useI18n()
 const categories = ref<SkillCategory[]>([])
+const archived = ref<SkillInfo[]>([])
 const loading = ref(false)
 const selectedCategory = ref('')
 const selectedSkill = ref('')
 const searchQuery = ref('')
 const showSidebar = ref(true)
+const sourceFilter = ref<SourceFilter | null>(null)
 let mobileQuery: MediaQueryList | null = null
+
+const selectedSkillData = computed(() => {
+  if (!selectedCategory.value || !selectedSkill.value) return null
+  if (selectedCategory.value === '.archive') {
+    return archived.value.find(s => s.name === selectedSkill.value) ?? null
+  }
+  const cat = categories.value.find(c => c.name === selectedCategory.value)
+  return cat?.skills.find(s => s.name === selectedSkill.value) ?? null
+})
 
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   showSidebar.value = !e.matches
@@ -33,7 +46,9 @@ onUnmounted(() => {
 async function loadSkills() {
   loading.value = true
   try {
-    categories.value = await fetchSkills()
+    const data = await fetchSkills()
+    categories.value = data.categories
+    archived.value = data.archived
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {
@@ -41,11 +56,27 @@ async function loadSkills() {
   }
 }
 
+function toggleFilter(filter: SourceFilter) {
+  sourceFilter.value = sourceFilter.value === filter ? null : filter
+}
+
 function handleSelect(category: string, skill: string) {
   selectedCategory.value = category
   selectedSkill.value = skill
   if (window.innerWidth <= 768) {
     showSidebar.value = false
+  }
+}
+
+function handlePinToggled(name: string, pinned: boolean) {
+  // Update local state so the pin icon updates immediately
+  if (selectedCategory.value === '.archive') {
+    const skill = archived.value.find(s => s.name === name)
+    if (skill) skill.pinned = pinned
+  } else {
+    const cat = categories.value.find(c => c.name === selectedCategory.value)
+    const skill = cat?.skills.find(s => s.name === name)
+    if (skill) skill.pinned = pinned
   }
 }
 </script>
@@ -57,6 +88,20 @@ function handleSelect(category: string, skill: string) {
         <h2 class="header-title">{{ t('skills.title') }}</h2>
         <button v-if="!showSidebar" class="sidebar-toggle" @click="showSidebar = true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="source-legend">
+        <button class="legend-item" :class="{ active: sourceFilter === 'builtin' }" @click="toggleFilter('builtin')">
+          <span class="legend-dot dot-builtin" />{{ t('skills.source.builtin') }}
+        </button>
+        <button class="legend-item" :class="{ active: sourceFilter === 'hub' }" @click="toggleFilter('hub')">
+          <span class="legend-dot dot-hub" />{{ t('skills.source.hub') }}
+        </button>
+        <button class="legend-item" :class="{ active: sourceFilter === 'local' }" @click="toggleFilter('local')">
+          <span class="legend-dot dot-local" />{{ t('skills.source.local') }}
+        </button>
+        <button class="legend-item" :class="{ active: sourceFilter === 'modified' }" @click="toggleFilter('modified')">
+          <span class="modified-icon">✎</span>{{ t('skills.modified') }}
         </button>
       </div>
       <NInput
@@ -75,8 +120,10 @@ function handleSelect(category: string, skill: string) {
           <div v-if="showSidebar" class="skills-sidebar">
             <SkillList
               :categories="categories"
+              :archived="archived"
               :selected-skill="selectedCategory && selectedSkill ? `${selectedCategory}/${selectedSkill}` : null"
               :search-query="searchQuery"
+              :source-filter="sourceFilter"
               @select="handleSelect"
             />
           </div>
@@ -85,6 +132,12 @@ function handleSelect(category: string, skill: string) {
               v-if="selectedCategory && selectedSkill"
               :category="selectedCategory"
               :skill="selectedSkill"
+              :skill-name="selectedSkillData?.name || selectedSkill"
+              :patch-count="selectedSkillData?.patchCount"
+              :use-count="selectedSkillData?.useCount"
+              :view-count="selectedSkillData?.viewCount"
+              :pinned="selectedSkillData?.pinned"
+              @pin-toggled="handlePinToggled"
             />
             <div v-else class="empty-detail">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
@@ -107,6 +160,65 @@ function handleSelect(category: string, skill: string) {
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
+}
+
+.source-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+  margin-left: 16px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: $text-muted;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $text-secondary;
+    background: rgba(var(--accent-primary-rgb), 0.04);
+  }
+
+  &.active {
+    color: $text-primary;
+    border-color: $border-color;
+    background: rgba(var(--accent-primary-rgb), 0.08);
+  }
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-dot.dot-builtin { background: #888; }
+.legend-dot.dot-hub { background: #4a90d9; }
+.legend-dot.dot-local { background: #66bb6a; }
+
+.modified-icon {
+  font-size: 11px;
+  color: $warning;
+  opacity: 0.7;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .source-legend {
+    display: none;
+  }
 }
 
 .search-input {

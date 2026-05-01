@@ -220,7 +220,18 @@ jobTriggered: 'Job acionado',
     attachedFiles: 'Arquivos anexados',
     loadFailed: 'Falha ao carregar a habilidade',
     fileLoadFailed: 'Falha ao carregar o arquivo',
+    modified: 'Modificado pelo usuário',
+    archived: 'Arquivado',
+    pinned: 'Fixado',
+    pin: 'Fixar habilidade',
+    unpin: 'Desfixar habilidade',
+    pinFailed: 'Falha ao alterar estado de fixacao',
     toggleFailed: 'Falha ao ativar/desativar a habilidade',
+    source: {
+      builtin: 'Integrado',
+      hub: 'Hub',
+      local: 'Local',
+    },
   },
 
   // Memory

@@ -220,7 +220,18 @@ export default {
     attachedFiles: '첨부 파일',
     loadFailed: '스킬을 불러오지 못했습니다',
     fileLoadFailed: '파일을 불러오지 못했습니다',
+    modified: '사용자 수정됨',
+    archived: '보관됨',
+    pinned: '고정됨',
+    pin: '스킬 고정',
+    unpin: '고정 해제',
+    pinFailed: '고정 상태 변경 실패',
     toggleFailed: '스킬 상태를 전환하지 못했습니다',
+    source: {
+      builtin: '내장',
+      hub: 'Hub',
+      local: '로컬',
+    },
   },
 
   // 메모리

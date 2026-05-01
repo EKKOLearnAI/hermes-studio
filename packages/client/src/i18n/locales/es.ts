@@ -220,7 +220,18 @@ jobTriggered: 'Job ejecutado',
     attachedFiles: 'Archivos adjuntos',
     loadFailed: 'Error al cargar la habilidad',
     fileLoadFailed: 'Error al cargar el archivo',
+    modified: 'Modificado por el usuario',
+    archived: 'Archivado',
+    pinned: 'Fijado',
+    pin: 'Fijar habilidad',
+    unpin: 'Desfijar habilidad',
+    pinFailed: 'Error al cambiar estado de fijacion',
     toggleFailed: 'Error al activar/desactivar la habilidad',
+    source: {
+      builtin: 'Integrado',
+      hub: 'Hub',
+      local: 'Local',
+    },
   },
 
   // Memory
