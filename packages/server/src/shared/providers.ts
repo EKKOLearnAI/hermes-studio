@@ -206,6 +206,20 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'CLIProxyAPI',
+    value: 'cliproxyapi',
+    builtin: true,
+    base_url: 'http://127.0.0.1:8317/v1',
+    models: [
+      'gpt-5.5',
+      'gpt-5-codex',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5-20250929',
+      'gemini-3.1-pro-preview',
+      'gemini-2.5-pro',
+    ],
+  },
+  {
     label: 'OpenCode Zen',
     value: 'opencode-zen',
     builtin: true,

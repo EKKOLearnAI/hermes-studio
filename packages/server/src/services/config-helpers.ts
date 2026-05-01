@@ -24,6 +24,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   gemini: { api_key_env: 'GEMINI_API_KEY', base_url_env: '' },
   kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: '' },
   'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: '' },
+  cliproxyapi: { api_key_env: '', base_url_env: '' },
   'opencode-zen': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
   'opencode-go': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
