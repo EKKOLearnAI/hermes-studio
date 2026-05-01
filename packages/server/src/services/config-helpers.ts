@@ -209,6 +209,50 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
   }
 }
 
+/** Models returned by Xiaomi's /v1/models that are NOT usable in chat/agent mode. */
+const XIAOMI_NON_CHAT_MODEL_PATTERNS = ['-tts', '-voiceclone', '-voicedesign']
+
+/**
+ * Fetch available models from Xiaomi MiMo's /v1/models endpoint.
+ *
+ * Unlike most OpenAI-compatible providers, Xiaomi uses an `api-key` header
+ * instead of `Authorization: Bearer`.  Non-chat models (TTS, voice clone, etc.)
+ * are filtered out so the picker only shows models usable by the agent.
+ *
+ * Returns an empty array on any failure so the caller can fall back to the
+ * hardcoded catalog.
+ */
+/** CN token-plan endpoint — used automatically when the API key starts with `tp-`. */
+const XIAOMI_TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1'
+
+export async function fetchXiaomiModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  // tp-* keys must hit the CN token-plan endpoint; sk-* keys use the default
+  const effectiveBase = apiKey.startsWith('tp-') ? XIAOMI_TOKEN_PLAN_BASE_URL : baseUrl.replace(/\/+$/, '')
+  const modelsUrl = `${effectiveBase}/models`
+  try {
+    const res = await fetch(modelsUrl, {
+      headers: { 'api-key': apiKey },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) {
+      logger.warn('xiaomi-models %s returned %d', modelsUrl, res.status)
+      return []
+    }
+    const data = await res.json() as { data?: Array<{ id: string }> }
+    if (!Array.isArray(data.data)) {
+      logger.warn('xiaomi-models %s returned unexpected format', modelsUrl)
+      return []
+    }
+    const models = data.data
+      .map(m => m.id)
+      .filter(id => !XIAOMI_NON_CHAT_MODEL_PATTERNS.some(p => id.includes(p)))
+    return models.sort()
+  } catch (err: any) {
+    logger.error(err, 'xiaomi-models %s failed', modelsUrl)
+    return []
+  }
+}
+
 export function buildModelGroups(config: Record<string, any>): { default: string; groups: ModelGroup[] } {
   let defaultModel = ''
   const groups: ModelGroup[] = []

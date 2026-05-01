@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
-import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { readConfigYaml, writeConfigYaml, fetchProviderModels, fetchXiaomiModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig } from '../../services/app-config'
@@ -143,6 +143,17 @@ export async function getAvailable(ctx: any) {
               const fetched = await fetchProviderModels(baseUrl, orKey, true)
               if (fetched.length > 0) modelsList = fetched
             } catch { /* ignore — leave empty, won't show */ }
+          }
+        }
+      } else if (providerKey === 'xiaomi') {
+        // Xiaomi uses api-key header — fetch dynamically, fall back to hardcoded
+        if (envMapping.api_key_env) {
+          const xiaomiKey = envGetValue(envMapping.api_key_env)
+          if (xiaomiKey) {
+            try {
+              const fetched = await fetchXiaomiModels(baseUrl, xiaomiKey)
+              if (fetched.length > 0) modelsList = fetched
+            } catch { /* ignore — leave hardcoded fallback */ }
           }
         }
       }
