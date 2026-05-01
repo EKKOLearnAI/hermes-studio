@@ -421,6 +421,7 @@ export function updateSessionStats(id: string): void {
          last_active = COALESCE((SELECT MAX(timestamp) FROM ${MESSAGES_TABLE} WHERE session_id = ?), started_at)
      WHERE id = ?`,
   ).run(id, id, id)
+  console.log(`Updated session ${id} stats`)
 }
 
 export function getSessionDetailPaginated(

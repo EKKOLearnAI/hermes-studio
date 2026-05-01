@@ -111,7 +111,7 @@ function convertToAnthropicFormat(messages: any[]): any[] {
     // Regular user message
     if (role === 'user') {
       if (typeof content === 'string') {
-        result.push({ role: 'user', content: content || '(empty message)' })
+        result.push({ role: 'user', content: content || '' })
       } else if (Array.isArray(content)) {
         result.push({ role: 'user', content })
       }
@@ -129,6 +129,7 @@ interface SessionMessage {
   session_id: string
   role: string
   content: string
+  hermesSessionId?: string
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
@@ -147,8 +148,6 @@ interface SessionState {
   events: Array<{ event: string; data: any }>
   abortController?: AbortController
   runId?: string
-  /** Ephemeral session ID used for Hermes (one per run) */
-  hermesSessionId?: string
   profile?: string
   inputTokens?: number
   outputTokens?: number
@@ -161,6 +160,7 @@ export class ChatRunSocket {
   private gatewayManager: any
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
+  private hermesSessionIds = new Map<string, any>()
 
   constructor(io: Server, gatewayManager: any) {
     this.nsp = io.of('/chat-run')
@@ -215,279 +215,191 @@ export class ChatRunSocket {
       }
     })
   }
+  private handleMessage(messages: SessionMessage[], sid: string): any[] {
+    let _messages = []
+    try {
+      _messages = messages
+        .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined)
+        .map((m, idx, arr) => {
+          const msg: any = {
+            id: m.id,
+            session_id: sid,
+            role: m.role,
+            content: m.content || '',
+            reasoning: m.reasoning || '',
+            timestamp: m.timestamp,
+          }
+          // Convert Anthropic format content to OpenAI format
+          // Check if content is a stringified array (Hermes Gateway behavior) - only for assistant messages
+          if (m.role === 'assistant' && typeof m.content === 'string') {
+            // Handle double-serialized content: "[{'type': 'text', ...}]" -> "[{'type': 'text', ...}]"
+            let contentToParse = m.content
+            const trimmed = m.content.trim()
+            if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+              contentToParse = trimmed.slice(1, -1)
+              logger.info('[chat-run-socket] resume message %s: double-serialized, removed outer quotes', m.id)
+            }
+
+            if (contentToParse.startsWith('[') && contentToParse.endsWith(']')) {
+              try {
+                // Parse stringified Python-like array to JSON
+                const parsedContent = JSON.parse(
+                  contentToParse
+                    .replace(/'/g, '"')  // Python single quotes to JSON double quotes
+                    .replace(/True/g, 'true')
+                    .replace(/False/g, 'false')
+                    .replace(/None/g, 'null')
+                )
+                if (Array.isArray(parsedContent)) {
+                  const textBlocks: string[] = []
+                  const toolCalls: any[] = []
+                  let reasoningContent: string | null = null
+
+                  for (const block of parsedContent) {
+                    if (block.type === 'thinking') {
+                      reasoningContent = block.thinking
+                    } else if (block.type === 'text') {
+                      textBlocks.push(block.text)
+                    } else if (block.type === 'tool_use') {
+                      toolCalls.push({
+                        id: block.id,
+                        type: 'function',
+                        function: {
+                          name: block.name,
+                          arguments: JSON.stringify(block.input)
+                        }
+                      })
+                    }
+                  }
+
+                  msg.content = textBlocks.join('') || ''
+                  if (toolCalls.length > 0) {
+                    msg.tool_calls = toolCalls
+                  }
+                  if (reasoningContent) {
+                    msg.reasoning = reasoningContent
+                  }
+                }
+              } catch (e) {
+                // Parsing failed, keep original content
+                msg.content = m.content
+              }
+            }
+          } else if (Array.isArray(m.content)) {
+            const textBlocks: string[] = []
+            const toolCalls: any[] = []
+            let reasoningContent: string | null = null
+
+            for (const block of m.content) {
+              if (block.type === 'thinking') {
+                reasoningContent = block.thinking
+              } else if (block.type === 'text') {
+                textBlocks.push(block.text)
+              } else if (block.type === 'tool_use') {
+                toolCalls.push({
+                  id: block.id,
+                  type: 'function',
+                  function: {
+                    name: block.name,
+                    arguments: JSON.stringify(block.input)
+                  }
+                })
+              }
+            }
+
+            msg.content = textBlocks.join('') || ''
+            if (toolCalls.length > 0) {
+              msg.tool_calls = toolCalls
+            }
+            if (reasoningContent) {
+              msg.reasoning = reasoningContent
+            }
+          }
+
+          if (m.tool_calls?.length) {
+            // Filter out tool_calls with empty/invalid id and remove internal fields
+            const cleanedToolCalls = m.tool_calls
+              .filter((tc: any) => tc.id && tc.id.length > 0)
+              .map((tc: any) => ({
+                id: tc.id,
+                type: tc.type,
+                function: tc.function
+              }))
+            if (cleanedToolCalls.length > 0) {
+              msg.tool_calls = cleanedToolCalls
+            }
+          }
+
+          // For tool messages, ensure tool_call_id exists
+          if (m.role === 'tool') {
+            let callId = m.tool_call_id
+            if (!callId || callId.length === 0) {
+              // Try to reconstruct tool_call_id from previous assistant message
+              const prevMsg = arr[idx - 1]
+              if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
+                // Find matching tool_call by tool_name
+                const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
+                if (tc?.id) {
+                  callId = tc.id
+                }
+              }
+            }
+            // Skip tool message if no valid tool_call_id
+            if (!callId || callId.length === 0) {
+              return null
+            }
+            msg.tool_call_id = callId
+          }
+
+          if (m.tool_name) msg.tool_name = m.tool_name
+          if (m.reasoning) msg.reasoning = m.reasoning
+          return msg
+        })
+        .filter(m => m !== null)
+    } catch (error) {
+
+    }
+    return _messages
+  }
   private async resumeSession(socket: Socket, sid: string) {
     let state = this.sessionMap.get(sid)
-
-    try {
-      const detail = useLocalSessionStore()
-        ? getSessionDetailPaginated(sid)
-        : await getSessionDetailFromDb(sid)
-      const messages = detail?.messages?.length
-        ? detail.messages
-          .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined)
-          .map((m, idx, arr) => {
-            const msg: any = {
-              id: m.id,
-              session_id: sid,
-              role: m.role,
-              content: m.content || '',
-              reasoning: m.reasoning || '',
-              timestamp: m.timestamp,
-            }
-            // Convert Anthropic format content to OpenAI format
-            // Check if content is a stringified array (Hermes Gateway behavior) - only for assistant messages
-            if (m.role === 'assistant' && typeof m.content === 'string') {
-              // Handle double-serialized content: "[{'type': 'text', ...}]" -> "[{'type': 'text', ...}]"
-              let contentToParse = m.content
-              const trimmed = m.content.trim()
-              if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-                contentToParse = trimmed.slice(1, -1)
-                logger.info('[chat-run-socket] resume message %s: double-serialized, removed outer quotes', m.id)
-              }
-
-              if (contentToParse.startsWith('[') && contentToParse.endsWith(']')) {
-                try {
-                  // Parse stringified Python-like array to JSON
-                  const parsedContent = JSON.parse(
-                    contentToParse
-                      .replace(/'/g, '"')  // Python single quotes to JSON double quotes
-                      .replace(/True/g, 'true')
-                      .replace(/False/g, 'false')
-                      .replace(/None/g, 'null')
-                  )
-                  if (Array.isArray(parsedContent)) {
-                    const textBlocks: string[] = []
-                    const toolCalls: any[] = []
-                    let reasoningContent: string | null = null
-
-                    for (const block of parsedContent) {
-                      if (block.type === 'thinking') {
-                        reasoningContent = block.thinking
-                      } else if (block.type === 'text') {
-                        textBlocks.push(block.text)
-                      } else if (block.type === 'tool_use') {
-                        toolCalls.push({
-                          id: block.id,
-                          type: 'function',
-                          function: {
-                            name: block.name,
-                            arguments: JSON.stringify(block.input)
-                          }
-                        })
-                      }
-                    }
-
-                    msg.content = textBlocks.join('') || ''
-                    if (toolCalls.length > 0) {
-                      msg.tool_calls = toolCalls
-                    }
-                    if (reasoningContent) {
-                      msg.reasoning = reasoningContent
-                    }
-                  }
-                } catch (e) {
-                  // Parsing failed, keep original content
-                  msg.content = m.content
-                }
-              }
-            } else if (Array.isArray(m.content)) {
-              const textBlocks: string[] = []
-              const toolCalls: any[] = []
-              let reasoningContent: string | null = null
-
-              for (const block of m.content) {
-                if (block.type === 'thinking') {
-                  reasoningContent = block.thinking
-                } else if (block.type === 'text') {
-                  textBlocks.push(block.text)
-                } else if (block.type === 'tool_use') {
-                  toolCalls.push({
-                    id: block.id,
-                    type: 'function',
-                    function: {
-                      name: block.name,
-                      arguments: JSON.stringify(block.input)
-                    }
-                  })
-                }
-              }
-
-              msg.content = textBlocks.join('') || ''
-              if (toolCalls.length > 0) {
-                msg.tool_calls = toolCalls
-              }
-              if (reasoningContent) {
-                msg.reasoning = reasoningContent
-              }
-            }
-
-            if (m.tool_calls?.length) {
-              // Filter out tool_calls with empty/invalid id and remove internal fields
-              const cleanedToolCalls = m.tool_calls
-                .filter((tc: any) => tc.id && tc.id.length > 0)
-                .map((tc: any) => ({
-                  id: tc.id,
-                  type: tc.type,
-                  function: tc.function
-                }))
-              if (cleanedToolCalls.length > 0) {
-                msg.tool_calls = cleanedToolCalls
-              }
-            }
-
-            // For tool messages, ensure tool_call_id exists
-            if (m.role === 'tool') {
-              let callId = m.tool_call_id
-              if (!callId || callId.length === 0) {
-                // Try to reconstruct tool_call_id from previous assistant message
-                const prevMsg = arr[idx - 1]
-                if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
-                  // Find matching tool_call by tool_name
-                  const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
-                  if (tc?.id) {
-                    callId = tc.id
-                  }
-                }
-              }
-              // Skip tool message if no valid tool_call_id
-              if (!callId || callId.length === 0) {
-                return null
-              }
-              msg.tool_call_id = callId
-            }
-
-            if (m.tool_name) msg.tool_name = m.tool_name
-            if (m.reasoning) msg.reasoning = m.reasoning
-            return msg
-          })
-          .filter(m => m !== null)
-        : []
-      // Calculate context tokens — aware of compression snapshot
-      let inputTokens: number
-      const snapshot = getCompressionSnapshot(sid)
-      if (snapshot) {
-        const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
-        inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-          newMessages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      } else {
-        inputTokens = messages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+    if (!state) {
+      try {
+        const detail = useLocalSessionStore()
+          ? getSessionDetailPaginated(sid)
+          : await getSessionDetailFromDb(sid)
+        const messages = detail?.messages ? this.handleMessage(detail.messages, sid) : []
+        // Calculate context tokens — aware of compression snapshot
+        let inputTokens: number
+        const snapshot = getCompressionSnapshot(sid)
+        if (snapshot) {
+          const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
+          inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
+            newMessages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        } else {
+          inputTokens = messages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        }
+        const outputTokens = messages
+          .filter(m => m.role === 'assistant')
+          .reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        state = {
+          messages,
+          isWorking: false,
+          events: [],
+          inputTokens,
+          outputTokens,
+        }
+        this.sessionMap.set(sid, state)
+        logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
+      } catch (err) {
+        logger.warn(err, '[chat-run-socket] failed to load session %s from DB on resume', sid)
+        state = { messages: [], isWorking: false, events: [] }
+        this.sessionMap.set(sid, state)
       }
-      const outputTokens = messages
-        .filter(m => m.role === 'assistant')
-        .reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      state = {
-        messages,
-        isWorking: false,
-        events: [],
-        inputTokens,
-        outputTokens,
-      }
-      this.sessionMap.set(sid, state)
-      logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
-    } catch (err) {
-      logger.warn(err, '[chat-run-socket] failed to load session %s from DB on resume', sid)
-      state = { messages: [], isWorking: false, events: [] }
-      this.sessionMap.set(sid, state)
     }
-
-    // Reply with messages, working status + events (if working)
-    // Convert messages from internal storage format to OpenAI format for client
-    const clientMessages = state.messages.map((m: any) => {
-      const msg: any = { ...m }
-      // Check if content is a stringified array (Hermes Gateway behavior) - only for assistant messages
-      if (m.role === 'assistant' && typeof m.content === 'string') {
-        // Handle double-serialized content: "[{'type': 'text', ...}]"
-        let contentToParse = m.content
-        const trimmed = m.content.trim()
-        if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-          contentToParse = trimmed.slice(1, -1)
-          logger.info('[chat-run-socket] resume message %s: double-serialized, removed outer quotes', m.id)
-        }
-
-        if (contentToParse.trim().startsWith('[') && contentToParse.trim().endsWith(']')) {
-          try {
-            // Parse stringified Python-like array to JSON
-            const parsedContent = JSON.parse(
-              contentToParse
-                .replace(/'/g, '"')
-                .replace(/True/g, 'true')
-                .replace(/False/g, 'false')
-                .replace(/None/g, 'null')
-            )
-            if (Array.isArray(parsedContent)) {
-              const textBlocks: string[] = []
-              const toolCalls: any[] = []
-              let reasoningContent: string | null = null
-
-              for (const block of parsedContent) {
-                if (block.type === 'thinking') {
-                  reasoningContent = block.thinking
-                } else if (block.type === 'text') {
-                  textBlocks.push(block.text)
-                } else if (block.type === 'tool_use') {
-                  toolCalls.push({
-                    id: block.id,
-                    type: 'function',
-                    function: {
-                      name: block.name,
-                      arguments: JSON.stringify(block.input)
-                    }
-                  })
-                }
-              }
-
-              msg.content = textBlocks.join('') || ''
-              if (toolCalls.length > 0) {
-                msg.tool_calls = toolCalls
-              }
-              if (reasoningContent) {
-                msg.reasoning = reasoningContent
-              }
-            }
-          } catch (e) {
-            logger.error('[chat-run-socket] resume message %s: failed to parse content, error=%s, content=%s', m.id, (e as Error).message, contentToParse.substring(0, 200))
-            // Parsing failed, keep original content
-            msg.content = m.content
-          }
-        }
-      } else if (Array.isArray(m.content)) {
-        // If content is an array (Anthropic format), convert to OpenAI format
-        const textBlocks: string[] = []
-        const toolCalls: any[] = []
-        let reasoningContent: string | null = null
-
-        for (const block of m.content) {
-          if (block.type === 'thinking') {
-            reasoningContent = block.thinking
-          } else if (block.type === 'text') {
-            textBlocks.push(block.text)
-          } else if (block.type === 'tool_use') {
-            toolCalls.push({
-              id: block.id,
-              type: 'function',
-              function: {
-                name: block.name,
-                arguments: JSON.stringify(block.input)
-              }
-            })
-          }
-        }
-
-        msg.content = textBlocks.join('') || ''
-        if (toolCalls.length > 0) {
-          msg.tool_calls = toolCalls
-        }
-        if (reasoningContent) {
-          msg.reasoning = reasoningContent
-        }
-      }
-
-      return msg
-    })
-
     socket.emit('resumed', {
       session_id: sid,
-      messages: clientMessages,
+      messages: state.messages,
       isWorking: state.isWorking,
       events: state.isWorking ? state.events : [],
       inputTokens: state.inputTokens,
@@ -518,8 +430,8 @@ export class ChatRunSocket {
     // Mark working immediately on run start, and append user message
     if (session_id) {
       const state = this.getOrCreateSession(session_id)
+      this.hermesSessionIds.set(session_id, hermesSessionId)
       state.isWorking = true
-      state.hermesSessionId = hermesSessionId
       state.profile = profile
       state.messages.push({
         id: state.messages.length + 1,
@@ -599,7 +511,7 @@ export class ChatRunSocket {
               ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
               : validMessages
             ).map((m, idx, arr) => {
-              const msg: any = { role: m.role, content: m.content || 'empty message' }
+              const msg: any = { role: m.role, content: m.content || '' }
               if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
               if (m.tool_calls?.length) {
                 // Filter out tool_calls with empty/invalid id and remove internal fields
@@ -960,6 +872,7 @@ export class ChatRunSocket {
                     msgs.push({
                       id: msgs.length + 1,
                       session_id,
+                      hermesSessionId,
                       role: 'assistant',
                       content: parsed.delta || '',
                       timestamp: Math.floor(Date.now() / 1000),
@@ -978,6 +891,7 @@ export class ChatRunSocket {
                       id: msgs.length + 1,
                       session_id,
                       role: 'assistant',
+                      hermesSessionId,
                       content: '',
                       reasoning: text,
                       timestamp: Math.floor(Date.now() / 1000),
@@ -993,6 +907,7 @@ export class ChatRunSocket {
                     id: msgs.length + 1,
                     session_id,
                     role: 'tool',
+                    hermesSessionId,
                     content: '',
                     tool_call_id: parsed.tool_call_id || null,
                     tool_name: parsed.tool || parsed.name || null,
@@ -1025,6 +940,7 @@ export class ChatRunSocket {
                       msgs.push({
                         id: msgs.length + 1,
                         session_id,
+                        hermesSessionId,
                         role: 'assistant',
                         content: parsed.output,
                         timestamp: Math.floor(Date.now() / 1000),
@@ -1141,12 +1057,11 @@ export class ChatRunSocket {
       state.abortController = undefined
       state.runId = undefined
       state.events = []
-
       // Sync messages from Hermes ephemeral session to local DB
-      if (useLocalSessionStore() && state.hermesSessionId) {
-        const hermesId = state.hermesSessionId
+      if (useLocalSessionStore() && this.hermesSessionIds.get(sessionId)) {
+        const hermesId = this.hermesSessionIds.get(sessionId)
         const prof = state.profile
-        state.hermesSessionId = undefined
+        this.hermesSessionIds.delete(sessionId)
         state.profile = undefined
         this.syncFromHermes(socket, sessionId, hermesId, prof)
       }
@@ -1207,7 +1122,6 @@ export class ChatRunSocket {
           logger.warn('[chat-run-socket] syncFromHermes: no data for Hermes session %s', hermesSessionId)
           return
         }
-
         // Skip user messages — already written to local DB in handleRun
         const toInsert = detail.messages.filter(m => m.role !== 'user')
 
@@ -1301,6 +1215,10 @@ export class ChatRunSocket {
         // Use inputTokens already set by compression path if available
         const state = this.sessionMap.get(localSessionId)
         if (state) {
+          const messages = this.handleMessage(toInsert, localSessionId)
+          if (messages.length > 0) {
+            this.replaceByHermesSessionId(localSessionId, hermesSessionId, messages)
+          }
           const emit = (event: string, payload: any) => {
             socket.emit(event, { ...payload, session_id: localSessionId })
           }
@@ -1314,7 +1232,28 @@ export class ChatRunSocket {
         logger.warn(err, '[chat-run-socket] syncFromHermes failed for session %s (hermesId: %s, profile: %s)', localSessionId, hermesSessionId, profile || 'default')
       })
   }
+  private replaceByHermesSessionId(session_id: string, hermesSessionId: string, newItems: SessionMessage[]) {
+    let start = -1
+    let end = -1
+    const state = this.sessionMap.get(session_id)
+    const msg = state?.messages || []
+    // 找区间
+    for (let i = 0; i < msg.length; i++) {
+      if (msg[i].hermesSessionId === hermesSessionId) {
+        if (start === -1) start = i
+        end = i
+      } else if (start !== -1) {
+        // 已经找到一段，后面断了就可以结束
+        break
+      }
+    }
 
+    // 没找到
+    if (start === -1) return
+    // 替换
+    msg.splice(start, end - start + 1, ...newItems)
+    console.log(msg)
+  }
   /** Enqueue an ephemeral Hermes session for deferred deletion */
   private enqueueEphemeralDelete(hermesSessionId: string, profile?: string) {
     try {

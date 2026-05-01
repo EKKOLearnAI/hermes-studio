@@ -1,4 +1,4 @@
-import { startRunViaSocket, connectChatRun, resumeSession, type RunEvent } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -582,6 +582,8 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     addMessage(sid, userMsg)
+
+
     updateSessionTitle(sid)
 
     try {
@@ -855,6 +857,7 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                 })
               }
+
               cleanup()
               updateSessionTitle(sid)
               // the in-flight marker. If the browser is reloading right now
@@ -962,7 +965,6 @@ export const useChatStore = defineStore('chat', () => {
     // Only set up listeners if there's an actual in-flight run
     if (!readInFlight(sid)) return
 
-    const socket = connectChatRun()
     let closed = false
     let runProducedAssistantText = false
     let runHadToolActivity = false
@@ -970,19 +972,10 @@ export const useChatStore = defineStore('chat', () => {
     const cleanup = () => {
       if (closed) return
       closed = true
-      socket.off('run.started', onRunStarted)
-      socket.off('run.failed', onRunFailed)
-      socket.off('message.delta', onMessageDelta)
-      socket.off('reasoning.delta', onReasoningDelta)
-      socket.off('thinking.delta', onThinkingDelta)
-      socket.off('reasoning.available', onReasoningAvailable)
-      socket.off('tool.started', onToolStarted)
-      socket.off('tool.completed', onToolCompleted)
-      socket.off('run.completed', onRunCompleted)
-      socket.off('compression.started', onCompressionStarted)
-      socket.off('compression.completed', onCompressionCompleted)
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      // Unregister from global session handlers
+      unregisterSessionHandlers(sid)
     }
 
     // Shared event handler — filters by session_id tag
@@ -1172,6 +1165,8 @@ export const useChatStore = defineStore('chat', () => {
               timestamp: Date.now(),
             })
           }
+
+
           cleanup()
           updateSessionTitle(sid)
 
@@ -1218,33 +1213,25 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    function onRunStarted(data: RunEvent) { handleEvent(data) }
-    function onRunFailed(data: RunEvent) { handleEvent(data) }
-    function onMessageDelta(data: RunEvent) { handleEvent(data) }
-    function onReasoningDelta(data: RunEvent) { handleEvent(data) }
-    function onThinkingDelta(data: RunEvent) { handleEvent(data) }
-    function onReasoningAvailable(data: RunEvent) { handleEvent(data) }
-    function onToolStarted(data: RunEvent) { handleEvent(data) }
-    function onToolCompleted(data: RunEvent) { handleEvent(data) }
-    function onRunCompleted(data: RunEvent) { handleEvent(data) }
-    function onCompressionStarted(data: RunEvent) { handleEvent(data) }
-    function onCompressionCompleted(data: RunEvent) { handleEvent(data) }
-
-    socket.on('run.started', onRunStarted)
-    socket.on('run.failed', onRunFailed)
-    socket.on('message.delta', onMessageDelta)
-    socket.on('reasoning.delta', onReasoningDelta)
-    socket.on('thinking.delta', onThinkingDelta)
-    socket.on('reasoning.available', onReasoningAvailable)
-    socket.on('tool.started', onToolStarted)
-    socket.on('tool.completed', onToolCompleted)
-    socket.on('run.completed', onRunCompleted)
-    socket.on('compression.started', onCompressionStarted)
-    socket.on('compression.completed', onCompressionCompleted)
+    // Register handlers in global session map
+    registerSessionHandlers(sid, {
+      onMessageDelta: (evt) => handleEvent(evt),
+      onReasoningDelta: (evt) => handleEvent(evt),
+      onThinkingDelta: (evt) => handleEvent(evt),
+      onReasoningAvailable: (evt) => handleEvent(evt),
+      onToolStarted: (evt) => handleEvent(evt),
+      onToolCompleted: (evt) => handleEvent(evt),
+      onRunStarted: (evt) => handleEvent(evt),
+      onRunCompleted: (evt) => handleEvent(evt),
+      onRunFailed: (evt) => handleEvent(evt),
+      onCompressionStarted: (evt) => handleEvent(evt),
+      onCompressionCompleted: (evt) => handleEvent(evt),
+      onUsageUpdated: (evt) => handleEvent(evt),
+    })
 
     // No need to emit resume here — switchSession already did it.
     // Server already joined room and replayed events.
-    // Just set up listeners for ongoing streaming events.
+    // Just set up handlers for ongoing streaming events.
 
     // Mark as streaming so UI shows the indicator
     streamStates.value.set(sid, { abort: cleanup })
