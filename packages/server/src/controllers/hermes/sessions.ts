@@ -8,6 +8,8 @@ import {
   getSessionDetail as localGetSessionDetail,
   deleteSession as localDeleteSession,
   renameSession as localRenameSession,
+  resolveSessionId as localResolveSessionId,
+  listSessionIdAliases as localListSessionIdAliases,
   useLocalSessionStore,
 } from '../../db/hermes/session-store'
 import { deleteUsage, getUsage, getUsageBatch, getLocalUsageStats } from '../../db/hermes/usage-store'
@@ -85,7 +87,9 @@ export async function getConversationMessages(ctx: any) {
   const humanOnly = (ctx.query.humanOnly as string) !== 'false' && ctx.query.humanOnly !== '0'
 
   if (useLocalSessionStore()) {
-    const detail = localGetSessionDetail(ctx.params.id)
+    const profile = getActiveProfileName()
+    const resolvedId = localResolveSessionId(ctx.params.id, profile)
+    const detail = localGetSessionDetail(resolvedId, profile)
     if (!detail) {
       ctx.status = 404
       ctx.body = { error: 'Conversation not found' }
@@ -105,7 +109,8 @@ export async function getConversationMessages(ctx: any) {
         timestamp: m.timestamp,
       }))
     ctx.body = {
-      session_id: ctx.params.id,
+      session_id: resolvedId,
+      requested_session_id: ctx.params.id,
       messages,
       visible_count: messages.length,
       thread_session_count: 1,
@@ -180,6 +185,15 @@ export async function listHermesSessions(ctx: any) {
   ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
 }
 
+export async function listSessionAliases(ctx: any) {
+  if (!useLocalSessionStore()) {
+    ctx.body = { aliases: {} }
+    return
+  }
+  const profile = getActiveProfileName()
+  ctx.body = { aliases: localListSessionIdAliases(profile) }
+}
+
 export async function search(ctx: any) {
   if (useLocalSessionStore()) {
     const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
@@ -208,13 +222,15 @@ export async function search(ctx: any) {
 
 export async function get(ctx: any) {
   if (useLocalSessionStore()) {
-    const session = localGetSessionDetail(ctx.params.id)
+    const profile = getActiveProfileName()
+    const resolvedId = localResolveSessionId(ctx.params.id, profile)
+    const session = localGetSessionDetail(resolvedId, profile)
     if (!session) {
       ctx.status = 404
       ctx.body = { error: 'Session not found' }
       return
     }
-    ctx.body = { session }
+    ctx.body = { session: { ...session, requested_id: ctx.params.id } }
     return
   }
 
@@ -250,7 +266,8 @@ export async function getHermesSession(ctx: any) {
 
 export async function remove(ctx: any) {
   if (useLocalSessionStore()) {
-    const sessionId = ctx.params.id
+    const profile = getActiveProfileName()
+    const sessionId = localResolveSessionId(ctx.params.id, profile)
     const ok = localDeleteSession(sessionId)
     if (!ok) {
       ctx.status = 500
@@ -284,7 +301,10 @@ export async function usageBatch(ctx: any) {
 }
 
 export async function usageSingle(ctx: any) {
-  const result = getUsage(ctx.params.id)
+  const id = useLocalSessionStore()
+    ? localResolveSessionId(ctx.params.id, getActiveProfileName())
+    : ctx.params.id
+  const result = getUsage(id)
   if (!result) {
     ctx.body = { input_tokens: 0, output_tokens: 0 }
     return
@@ -300,7 +320,8 @@ export async function rename(ctx: any) {
       ctx.body = { error: 'title is required' }
       return
     }
-    const ok = localRenameSession(ctx.params.id, title.trim())
+    const profile = getActiveProfileName()
+    const ok = localRenameSession(localResolveSessionId(ctx.params.id, profile), title.trim())
     if (!ok) {
       ctx.status = 500
       ctx.body = { error: 'Failed to rename session' }
@@ -334,11 +355,11 @@ export async function setWorkspace(ctx: any) {
   }
   if (useLocalSessionStore()) {
     const { updateSession, getSession, createSession } = await import('../../db/hermes/session-store')
-    const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
-    const id = ctx.params.id
+    const profile = getActiveProfileName()
+    const id = localResolveSessionId(ctx.params.id, profile)
     // Create session if it doesn't exist yet (user may set workspace before sending first message)
     if (!getSession(id)) {
-      createSession({ id, profile: getActiveProfileName(), title: '' })
+      createSession({ id, profile, title: '' })
     }
     updateSession(id, { workspace: workspace || null } as any)
     ctx.body = { ok: true }
@@ -487,7 +508,8 @@ export async function getConversationMessagesPaginated(ctx: any) {
 
   if (useLocalSessionStore()) {
     const { getSessionDetailPaginated } = await import('../../db/hermes/session-store')
-    const result = getSessionDetailPaginated(ctx.params.id, offset, limit)
+    const profile = getActiveProfileName()
+    const result = getSessionDetailPaginated(ctx.params.id, offset, limit, profile)
 
     if (!result) {
       ctx.status = 404

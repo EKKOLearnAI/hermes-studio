@@ -1,10 +1,11 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessionAliases, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { useSessionBrowserPrefsStore } from './session-browser-prefs'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 export interface Attachment {
@@ -352,7 +353,8 @@ export const useChatStore = defineStore('chat', () => {
   async function loadSessions() {
     isLoadingSessions.value = true
     try {
-      const list = await fetchSessions()
+      const [list, aliases] = await Promise.all([fetchSessions(), fetchSessionAliases()])
+      useSessionBrowserPrefsStore().migratePinnedAliases(aliases)
       const fresh = list.map(mapHermesSession)
       const freshIds = new Set(fresh.map(s => s.id))
       // Preserve already-loaded messages for sessions that are still present,
@@ -378,8 +380,9 @@ export const useChatStore = defineStore('chat', () => {
 
       // Restore last active session, fallback to most recent
       const savedId = activeSessionId.value
-      const targetId = savedId && sessions.value.some(s => s.id === savedId)
-        ? savedId
+      const resolvedSavedId = savedId ? aliases[savedId] || savedId : null
+      const targetId = resolvedSavedId && sessions.value.some(s => s.id === resolvedSavedId)
+        ? resolvedSavedId
         : sessions.value[0]?.id
       if (targetId) {
         await switchSession(targetId)
@@ -520,6 +523,7 @@ export const useChatStore = defineStore('chat', () => {
   async function deleteSession(sessionId: string) {
     await deleteSessionApi(sessionId)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
+    useSessionBrowserPrefsStore().removePinned(sessionId)
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {
         await switchSession(sessions.value[0].id)

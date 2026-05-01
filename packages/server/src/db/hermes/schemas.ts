@@ -75,6 +75,16 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
 
+export const SESSION_ID_ALIASES_TABLE = 'session_id_aliases'
+
+export const SESSION_ID_ALIASES_SCHEMA: Record<string, string> = {
+  alias_id: 'TEXT NOT NULL',
+  profile: 'TEXT NOT NULL DEFAULT \'default\'',
+  session_id: 'TEXT NOT NULL',
+  reason: 'TEXT NOT NULL DEFAULT \'\'',
+  created_at: 'INTEGER NOT NULL',
+}
+
 // ============================================================================
 // Compression Snapshot (compression-snapshot.ts)
 // ============================================================================
@@ -463,6 +473,12 @@ export function initAllHermesTables(retryCount = 0): void {
     syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
     syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
     db.exec(MESSAGES_INDEX)
+    syncTable(SESSION_ID_ALIASES_TABLE, SESSION_ID_ALIASES_SCHEMA, {
+      primaryKey: 'alias_id, profile',
+      indexes: {
+        idx_session_id_aliases_session_profile: 'CREATE INDEX idx_session_id_aliases_session_profile ON session_id_aliases(session_id, profile)',
+      },
+    })
 
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)

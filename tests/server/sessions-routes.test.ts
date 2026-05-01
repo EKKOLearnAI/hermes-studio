@@ -6,6 +6,7 @@ const getConversationMessagesPaginatedMock = vi.fn(async (ctx: any) => { ctx.bod
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
 const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'hermes-1' }] } })
 const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
+const listSessionAliasesMock = vi.fn(async (ctx: any) => { ctx.body = { aliases: {} } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -24,6 +25,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   list: listMock,
   listHermesSessions: listHermesSessionsMock,
   getHermesSession: getHermesSessionMock,
+  listSessionAliases: listSessionAliasesMock,
   search: searchMock,
   get: getMock,
   remove: removeMock,
@@ -43,6 +45,7 @@ describe('session routes', () => {
     getConversationMessagesMock.mockClear()
     getConversationMessagesPaginatedMock.mockClear()
     listMock.mockClear()
+    listSessionAliasesMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
     removeMock.mockClear()
@@ -58,6 +61,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/conversations/:id/messages',
       '/api/hermes/sessions/conversations/:id/messages/paginated',
       '/api/hermes/sessions',
+      '/api/hermes/sessions/aliases',
       '/api/hermes/search/sessions',
       '/api/hermes/sessions/search',
       '/api/hermes/sessions/usage',

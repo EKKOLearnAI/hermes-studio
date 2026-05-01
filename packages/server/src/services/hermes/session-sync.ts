@@ -1,16 +1,23 @@
 /**
  * Sync Hermes sessions from all profiles on startup.
- * Reads api_server sessions from Hermes state.db and imports into local DB.
- * Only runs when local DB is empty (first startup).
+ * Reads api_server sessions from Hermes state.db and mirrors them into the local DB.
+ * Missing sessions are imported only when the local DB is empty; existing generated-id
+ * imports are repaired on every startup by rekeying them to canonical Hermes ids.
  *
  * Uses sessions-db.ts query logic to properly aggregate session chains.
  */
 import { readdirSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { homedir } from 'os'
-import { randomBytes } from 'crypto'
-import { getProfileDir } from './hermes-profile'
-import { createSession, addMessage, updateSession } from '../../db/hermes/session-store'
+import {
+  addMessages,
+  createSession,
+  findHermesImportedSessionCandidate,
+  getSession,
+  rekeySession,
+  updateSession,
+  updateSessionStats,
+} from '../../db/hermes/session-store'
 import { getDb } from '../../db/index'
 import { logger } from '../logger'
 import { listSessionSummaries as listHermesSessionSummaries } from '../../db/hermes/sessions-db'
@@ -18,20 +25,8 @@ import { listSessionSummaries as listHermesSessionSummaries } from '../../db/her
 const HERMES_BASE = resolve(homedir(), '.hermes')
 const PROFILES_DIR = join(HERMES_BASE, 'profiles')
 
-/**
- * Generate a UUID v4 without external dependencies
- */
-function generateUuid(): string {
-  const bytes = randomBytes(16)
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40 // Version 4
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80 // Variant 10
-  return [
-    bytes.subarray(0, 4).toString('hex'),
-    bytes.subarray(4, 6).toString('hex'),
-    bytes.subarray(6, 8).toString('hex'),
-    bytes.subarray(8, 10).toString('hex'),
-    bytes.subarray(10, 16).toString('hex'),
-  ].join('-')
+interface SyncProfileOptions {
+  importMissing: boolean
 }
 
 /**
@@ -54,7 +49,7 @@ function getAllProfiles(): string[] {
  * Sync api_server sessions from a single profile.
  * Uses sessions-db.ts query logic to properly aggregate session chains.
  */
-async function syncProfileSessions(profile: string): Promise<{
+async function syncProfileSessions(profile: string, options: SyncProfileOptions): Promise<{
   synced: number
   errors: string[]
 }> {
@@ -69,17 +64,6 @@ async function syncProfileSessions(profile: string): Promise<{
 
     for (const hermesSession of summaries) {
       try {
-        // Generate new session ID for local DB
-        const newSessionId = generateUuid()
-
-        // Create session in local DB
-        createSession({
-          id: newSessionId,
-          profile,
-          model: hermesSession.model,
-          title: hermesSession.title || undefined,
-        })
-
         // Get full detail including all messages from the session chain
         const { getSessionDetailFromDbWithProfile } = await import('../../db/hermes/sessions-db')
         const detail = await getSessionDetailFromDbWithProfile(hermesSession.id, profile)
@@ -90,30 +74,12 @@ async function syncProfileSessions(profile: string): Promise<{
           continue
         }
 
-        // Insert all messages from the entire chain
-        for (const msg of detail.messages) {
-          addMessage({
-            session_id: newSessionId,
-            role: msg.role,
-            content: msg.content,
-            tool_call_id: msg.tool_call_id,
-            tool_calls: msg.tool_calls,
-            tool_name: msg.tool_name,
-            timestamp: msg.timestamp,
-            token_count: msg.token_count,
-            finish_reason: msg.finish_reason,
-            reasoning: msg.reasoning,
-            reasoning_details: msg.reasoning_details,
-            reasoning_content: msg.reasoning_content,
-            codex_reasoning_items: msg.codex_reasoning_items,
-          })
-        }
-
-        // Update session with aggregated stats from Hermes
-        updateSession(newSessionId, {
+        const canonicalSessionId = hermesSession.id
+        const sessionStats = {
           started_at: hermesSession.started_at,
           ended_at: hermesSession.ended_at,
           end_reason: hermesSession.end_reason,
+          message_count: detail.messages.length,
           input_tokens: hermesSession.input_tokens,
           output_tokens: hermesSession.output_tokens,
           cache_read_tokens: hermesSession.cache_read_tokens,
@@ -122,10 +88,64 @@ async function syncProfileSessions(profile: string): Promise<{
           estimated_cost_usd: hermesSession.estimated_cost_usd,
           last_active: hermesSession.last_active,
           preview: hermesSession.preview,
+        }
+
+        const existing = getSession(canonicalSessionId, profile)
+        if (existing) {
+          updateSession(canonicalSessionId, sessionStats)
+          updateSessionStats(canonicalSessionId)
+          result.synced++
+          logger.info(`[session-sync] refreshed existing Hermes session ${canonicalSessionId}`)
+          continue
+        }
+
+        const candidate = findHermesImportedSessionCandidate(profile, hermesSession, detail.messages.length, detail.messages)
+        if (candidate) {
+          rekeySession(candidate.id, canonicalSessionId, profile, 'hermes-import-rekey')
+          updateSession(canonicalSessionId, sessionStats)
+          updateSessionStats(canonicalSessionId)
+          result.synced++
+          logger.info(`[session-sync] rekeyed imported Hermes session ${candidate.id} -> ${canonicalSessionId}`)
+          continue
+        }
+
+        if (!options.importMissing) {
+          logger.info(`[session-sync] skipping missing Hermes session ${canonicalSessionId}; local DB is not empty`)
+          continue
+        }
+
+        // Preserve the canonical Hermes session id in the local DB. Browser pins,
+        // CLI links, and API detail routes all use this id as the stable identity.
+        createSession({
+          id: canonicalSessionId,
+          profile,
+          model: hermesSession.model,
+          title: hermesSession.title || undefined,
         })
 
+        // Insert all messages from the entire chain
+        addMessages(detail.messages.map((msg: any) => ({
+          session_id: canonicalSessionId,
+          role: msg.role,
+          content: msg.content,
+          tool_call_id: msg.tool_call_id,
+          tool_calls: msg.tool_calls,
+          tool_name: msg.tool_name,
+          timestamp: msg.timestamp,
+          token_count: msg.token_count,
+          finish_reason: msg.finish_reason,
+          reasoning: msg.reasoning,
+          reasoning_details: msg.reasoning_details,
+          reasoning_content: msg.reasoning_content,
+          codex_reasoning_items: msg.codex_reasoning_items,
+        })))
+
+        // Update session with aggregated stats from Hermes
+        updateSession(canonicalSessionId, sessionStats)
+        updateSessionStats(canonicalSessionId)
+
         result.synced++
-        logger.info(`[session-sync] synced Hermes session ${hermesSession.id} -> ${newSessionId} (${detail.messages.length} messages, thread_session_count=${detail.thread_session_count})`)
+        logger.info(`[session-sync] synced Hermes session ${canonicalSessionId} (${detail.messages.length} messages, thread_session_count=${detail.thread_session_count})`)
       } catch (err: any) {
         result.errors.push(`session ${hermesSession.id}: ${err.message}`)
         logger.warn(err, `[session-sync] failed to sync session ${hermesSession.id}`)
@@ -142,11 +162,13 @@ async function syncProfileSessions(profile: string): Promise<{
 }
 
 /**
- * Main entry point: sync all profiles on startup
- * Only runs if local DB is empty (first startup or after DB reset)
+ * Main entry point: sync all profiles on startup.
+ * Imports missing sessions only when the local DB is empty, but always checks
+ * existing imported Hermes sessions for generated-id repairs.
  */
 export async function syncAllHermesSessionsOnStartup(): Promise<void> {
-  // Check if local DB has any sessions - only sync if completely empty
+  // Import brand-new missing sessions only on an empty local DB. Generated-id
+  // repairs still run below when existing sessions are present.
   const db = getDb()
   if (!db) {
     logger.info('[session-sync] SQLite not available, skipping Hermes sync')
@@ -157,11 +179,10 @@ export async function syncAllHermesSessionsOnStartup(): Promise<void> {
   const hasExistingSessions = countResult && countResult.count > 0
 
   if (hasExistingSessions) {
-    logger.info('[session-sync] local DB has %d sessions, skipping Hermes sync', countResult!.count)
-    return
+    logger.info('[session-sync] local DB has %d sessions; checking for Hermes id repairs without importing new missing sessions', countResult!.count)
+  } else {
+    logger.info('[session-sync] local DB is empty, starting Hermes session sync...')
   }
-
-  logger.info('[session-sync] local DB is empty, starting Hermes session sync...')
 
   const profiles = getAllProfiles()
   logger.info(`[session-sync] found ${profiles.length} profiles: ${profiles.join(', ')}`)
@@ -170,7 +191,7 @@ export async function syncAllHermesSessionsOnStartup(): Promise<void> {
   let totalErrors = 0
 
   for (const profile of profiles) {
-    const result = await syncProfileSessions(profile)
+    const result = await syncProfileSessions(profile, { importMissing: !hasExistingSessions })
     totalSynced += result.synced
     totalErrors += result.errors.length
 

@@ -11,7 +11,7 @@ describe('session browser prefs store', () => {
     window.localStorage.clear()
   })
 
-  it('persists pins per profile and prunes missing sessions', () => {
+  it('persists pins per profile and only prunes after confirmed deletion', () => {
     const profilesStore = useProfilesStore()
     profilesStore.activeProfileName = 'default'
 
@@ -23,7 +23,10 @@ describe('session browser prefs store', () => {
     expect(store.pinnedIds).toEqual(['session-1', 'session-2'])
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1', 'session-2'])
 
-    expect(store.pruneMissingSessions(['session-2'])).toBe(true)
+    expect(store.pruneMissingSessions(['session-2'])).toBe(false)
+    expect(store.pinnedIds).toEqual(['session-1', 'session-2'])
+
+    expect(store.pruneMissingSessions(['session-2'], { confirmedDelete: true })).toBe(true)
     expect(store.pinnedIds).toEqual(['session-2'])
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-2'])
   })
@@ -37,6 +40,24 @@ describe('session browser prefs store', () => {
     expect(store.pruneMissingSessions([])).toBe(false)
     expect(store.pinnedIds).toEqual(['session-1'])
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1'])
+  })
+
+  it('migrates pinned alias ids to canonical session ids without duplicates', () => {
+    const profilesStore = useProfilesStore()
+    profilesStore.activeProfileName = 'default'
+    const store = useSessionBrowserPrefsStore()
+
+    store.togglePinned('legacy-session-id')
+    store.togglePinned('canonical-session-id')
+    store.togglePinned('unrelated-session-id')
+
+    expect(store.migratePinnedAliases({ 'legacy-session-id': 'canonical-session-id' })).toBe(true)
+    expect(store.pinnedIds).toEqual(['canonical-session-id', 'unrelated-session-id'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['canonical-session-id', 'unrelated-session-id'])
+
+    setActivePinia(createPinia())
+    const reloadedStore = useSessionBrowserPrefsStore()
+    expect(reloadedStore.pinnedIds).toEqual(['canonical-session-id', 'unrelated-session-id'])
   })
 
   it('reloads pin and human-only preferences automatically when the active profile changes', async () => {

@@ -87,10 +87,26 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     persistHumanOnly()
   }
 
-  function pruneMissingSessions(existingIds: string[]): boolean {
+  function pruneMissingSessions(existingIds: string[], options?: { confirmedDelete?: boolean }): boolean {
+    if (!options?.confirmedDelete) return false
     if (existingIds.length === 0) return false
     const existing = new Set(existingIds)
     const nextPinnedIds = pinnedIds.value.filter(id => existing.has(id))
+    if (sameIds(nextPinnedIds, pinnedIds.value)) return false
+    pinnedIds.value = nextPinnedIds
+    persistPins()
+    return true
+  }
+
+  function migratePinnedAliases(aliases: Record<string, string>): boolean {
+    const nextPinnedIds: string[] = []
+    const seen = new Set<string>()
+    for (const id of pinnedIds.value) {
+      const resolved = aliases[id] || id
+      if (seen.has(resolved)) continue
+      seen.add(resolved)
+      nextPinnedIds.push(resolved)
+    }
     if (sameIds(nextPinnedIds, pinnedIds.value)) return false
     pinnedIds.value = nextPinnedIds
     persistPins()
@@ -112,5 +128,6 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     removePinned,
     setHumanOnly,
     pruneMissingSessions,
+    migratePinnedAliases,
   }
 })

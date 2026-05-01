@@ -20,6 +20,7 @@ import {
   addMessage,
   updateSessionStats,
   useLocalSessionStore,
+  resolveSessionId,
 } from '../../db/hermes/session-store'
 import { getDb } from '../../db/index'
 import { getSessionDetailFromDb } from '../../db/hermes/sessions-db'
@@ -203,15 +204,17 @@ export class ChatRunSocket {
 
     socket.on('resume', async (data: { session_id?: string }) => {
       if (!data.session_id) return
-      const sid = data.session_id
-      const room = `session:${sid}`
-      socket.join(room)
-      this.resumeSession(socket, sid)
+      const requestedSid = data.session_id
+      const sid = useLocalSessionStore() ? resolveSessionId(requestedSid, profile) : requestedSid
+      socket.join(`session:${requestedSid}`)
+      if (sid !== requestedSid) socket.join(`session:${sid}`)
+      this.resumeSession(socket, sid, profile)
     })
 
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
-        this.handleAbort(socket, data.session_id)
+        const sid = useLocalSessionStore() ? resolveSessionId(data.session_id, profile) : data.session_id
+        this.handleAbort(socket, sid)
       }
     })
   }
@@ -361,17 +364,18 @@ export class ChatRunSocket {
     }
     return _messages
   }
-  private async resumeSession(socket: Socket, sid: string) {
+  private async resumeSession(socket: Socket, sid: string, profile = 'default') {
     let state = this.sessionMap.get(sid)
     if (!state) {
       try {
         const detail = useLocalSessionStore()
-          ? getSessionDetailPaginated(sid)
+          ? getSessionDetailPaginated(sid, 0, 500, profile)
           : await getSessionDetailFromDb(sid)
-        const messages = detail?.messages ? this.handleMessage(detail.messages, sid) : []
+        const canonicalSid = detail && 'session' in detail ? detail.session.id : detail?.id || sid
+        const messages = detail?.messages ? this.handleMessage(detail.messages, canonicalSid) : []
         // Calculate context tokens — aware of compression snapshot
         let inputTokens: number
-        const snapshot = getCompressionSnapshot(sid)
+        const snapshot = getCompressionSnapshot(canonicalSid)
         if (snapshot) {
           const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
           inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
@@ -388,6 +392,7 @@ export class ChatRunSocket {
           events: [],
           inputTokens,
           outputTokens,
+          profile,
         }
         this.sessionMap.set(sid, state)
         logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
@@ -416,7 +421,10 @@ export class ChatRunSocket {
     data: { input: string; session_id?: string; model?: string; instructions?: string },
     profile: string,
   ) {
-    const { input, session_id, model, instructions } = data
+    const { input, session_id: requestedSessionId, model, instructions } = data
+    const session_id = requestedSessionId && useLocalSessionStore()
+      ? resolveSessionId(requestedSessionId, profile)
+      : requestedSessionId
     const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
     const apiKey = this.gatewayManager.getApiKey(profile) || undefined
 
@@ -442,7 +450,7 @@ export class ChatRunSocket {
       })
 
       // Create session in local DB if it doesn't exist
-      if (!getSession(session_id)) {
+      if (!getSession(session_id, profile)) {
         const preview = input.replace(/[\r\n]/g, ' ').substring(0, 100)
         createSession({ id: session_id, profile, model, title: preview })
       }
@@ -477,7 +485,7 @@ export class ChatRunSocket {
 
       // Inject workspace context if set for this session
       if (session_id) {
-        const sessionRow = getSession(session_id)
+        const sessionRow = getSession(session_id, profile)
         if (sessionRow?.workspace) {
           const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
           body.instructions = body.instructions
@@ -490,7 +498,7 @@ export class ChatRunSocket {
       if (session_id) {
         try {
           const detail = useLocalSessionStore()
-            ? getSessionDetail(session_id)
+            ? getSessionDetail(session_id, profile)
             : await getSessionDetailFromDb(session_id)
           if (detail?.messages?.length) {
             // Filter valid messages
@@ -1077,12 +1085,12 @@ export class ChatRunSocket {
   ): Promise<{ inputTokens: number; outputTokens: number }> {
     try {
       const detail = useLocalSessionStore()
-        ? getSessionDetail(sid)
+        ? getSessionDetail(sid, state.profile || 'default')
         : await getSessionDetailFromDb(sid)
       const msgs = detail?.messages
         ?.filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'tool') || []
 
-      const snapshot = getCompressionSnapshot(sid)
+      const snapshot = getCompressionSnapshot(detail?.id || sid)
       let inputTokens: number
       if (snapshot && msgs.length) {
         const newMessages = msgs.slice(snapshot.lastMessageIndex + 1)

@@ -3,7 +3,15 @@
  * Uses the same ensureTable/getDb pattern as usage-store.ts.
  */
 import { isSqliteAvailable, getDb } from '../index'
-import { SESSIONS_TABLE, MESSAGES_TABLE } from './schemas'
+import {
+  COMPRESSION_SNAPSHOT_TABLE,
+  GC_PENDING_SESSION_DELETES_TABLE,
+  GC_SESSION_PROFILES_TABLE,
+  MESSAGES_TABLE,
+  SESSION_ID_ALIASES_TABLE,
+  SESSIONS_TABLE,
+  USAGE_TABLE,
+} from './schemas'
 
 // Re-export types for compatibility with sessions-db.ts consumers
 export interface HermesSessionRow {
@@ -57,6 +65,14 @@ export interface HermesSessionSearchRow extends HermesSessionRow {
 export interface HermesSessionDetailRow extends HermesSessionRow {
   messages: HermesMessageRow[]
   thread_session_count: number
+}
+
+export interface SessionIdAliasRow {
+  alias_id: string
+  profile: string
+  session_id: string
+  reason: string
+  created_at: number
 }
 
 // Note: Table schemas and initialization are now centralized in schemas.ts
@@ -155,13 +171,179 @@ export function createSession(data: {
   return getSession(data.id)!
 }
 
-export function getSession(id: string): HermesSessionRow | null {
+export function getSession(id: string, profile?: string): HermesSessionRow | null {
   if (!isSqliteAvailable()) return null
   const db = getDb()!
-  const row = db.prepare(
-    `SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`,
-  ).get(id) as Record<string, unknown> | undefined
+  const row = profile
+    ? db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(id, profile) as Record<string, unknown> | undefined
+    : db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
   return row ? mapSessionRow(row) : null
+}
+
+export function resolveSessionId(id: string, profile?: string): string {
+  if (!isSqliteAvailable()) return id
+  const db = getDb()!
+  const alias = profile
+    ? db.prepare(
+      `SELECT a.session_id
+       FROM ${SESSION_ID_ALIASES_TABLE} a
+       INNER JOIN ${SESSIONS_TABLE} s ON s.id = a.session_id AND s.profile = a.profile
+       WHERE a.alias_id = ? AND a.profile = ?`,
+    ).get(id, profile) as { session_id: string } | undefined
+    : db.prepare(
+      `SELECT a.session_id
+       FROM ${SESSION_ID_ALIASES_TABLE} a
+       INNER JOIN ${SESSIONS_TABLE} s ON s.id = a.session_id AND s.profile = a.profile
+       WHERE a.alias_id = ?
+       ORDER BY a.created_at DESC LIMIT 1`,
+    ).get(id) as { session_id: string } | undefined
+  if (alias?.session_id) return alias.session_id
+
+  const session = profile
+    ? db.prepare(`SELECT id FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(id, profile) as { id: string } | undefined
+    : db.prepare(`SELECT id FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as { id: string } | undefined
+  return session?.id || id
+}
+
+function upsertSessionAlias(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  aliasId: string,
+  sessionId: string,
+  profile: string,
+  reason: string,
+): boolean {
+  if (!aliasId || !sessionId || aliasId === sessionId) return false
+  db.prepare(
+    `INSERT INTO ${SESSION_ID_ALIASES_TABLE} (alias_id, profile, session_id, reason, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(alias_id, profile) DO UPDATE SET
+       session_id = excluded.session_id,
+       reason = excluded.reason,
+       created_at = excluded.created_at`,
+  ).run(aliasId, profile, sessionId, reason, Math.floor(Date.now() / 1000))
+  return true
+}
+
+export function createSessionAlias(aliasId: string, sessionId: string, profile = 'default', reason = ''): boolean {
+  if (!isSqliteAvailable()) return false
+  return upsertSessionAlias(getDb()!, aliasId, sessionId, profile, reason)
+}
+
+export function listSessionIdAliases(profile: string): Record<string, string> {
+  if (!isSqliteAvailable()) return {}
+  const db = getDb()!
+  const rows = db.prepare(
+    `SELECT a.alias_id, a.session_id
+     FROM ${SESSION_ID_ALIASES_TABLE} a
+     INNER JOIN ${SESSIONS_TABLE} s ON s.id = a.session_id AND s.profile = a.profile
+     WHERE a.profile = ?`,
+  ).all(profile) as Array<{ alias_id: string; session_id: string }>
+  const aliases: Record<string, string> = {}
+  for (const row of rows) {
+    if (row.alias_id && row.session_id && row.alias_id !== row.session_id) {
+      aliases[row.alias_id] = row.session_id
+    }
+  }
+  return aliases
+}
+
+type MessageFingerprintInput = Array<{ role?: string | null; content?: string | null; timestamp?: number | null }>
+
+function normalizeMessageForFingerprint(message?: { role?: string | null; content?: string | null; timestamp?: number | null }): string {
+  if (!message) return ''
+  return JSON.stringify({
+    role: message.role || '',
+    content: message.content || '',
+    timestamp: Number(message.timestamp || 0),
+  })
+}
+
+function localMessageFingerprint(db: NonNullable<ReturnType<typeof getDb>>, sessionId: string): string {
+  const first = db.prepare(
+    `SELECT role, content, timestamp FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp ASC, id ASC LIMIT 1`,
+  ).get(sessionId) as { role: string | null; content: string | null; timestamp: number | null } | undefined
+  const last = db.prepare(
+    `SELECT role, content, timestamp FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT 1`,
+  ).get(sessionId) as { role: string | null; content: string | null; timestamp: number | null } | undefined
+  return `${normalizeMessageForFingerprint(first)}|${normalizeMessageForFingerprint(last)}`
+}
+
+function sourceMessageFingerprint(messages?: MessageFingerprintInput): string | null {
+  if (!messages || messages.length === 0) return null
+  return `${normalizeMessageForFingerprint(messages[0])}|${normalizeMessageForFingerprint(messages[messages.length - 1])}`
+}
+
+export function findHermesImportedSessionCandidate(
+  profile: string,
+  hermesSession: { id: string; source?: string; title?: string | null; started_at?: number | null },
+  messageCount: number,
+  messages?: MessageFingerprintInput,
+): { id: string } | null {
+  if (!isSqliteAvailable()) return null
+  const db = getDb()!
+  const title = hermesSession.title || ''
+  const startedAt = Number(hermesSession.started_at || 0)
+  const rows = db.prepare(
+    `SELECT s.id, COUNT(m.id) AS actual_message_count
+     FROM ${SESSIONS_TABLE} s
+     LEFT JOIN ${MESSAGES_TABLE} m ON m.session_id = s.id
+     WHERE s.profile = ?
+       AND s.source = ?
+       AND s.id <> ?
+       AND COALESCE(s.title, '') = ?
+       AND ABS(s.started_at - ?) <= 1
+     GROUP BY s.id
+     HAVING actual_message_count = ?
+     LIMIT 2`,
+  ).all(profile, hermesSession.source || 'api_server', hermesSession.id, title, startedAt, messageCount) as Array<{ id: string }>
+  if (rows.length !== 1) return null
+
+  const sourceFingerprint = sourceMessageFingerprint(messages)
+  if (sourceFingerprint && localMessageFingerprint(db, rows[0]!.id) !== sourceFingerprint) {
+    return null
+  }
+
+  return { id: rows[0]!.id }
+}
+
+export function rekeySession(oldId: string, newId: string, profile = 'default', reason = 'session-rekey'): boolean {
+  if (!isSqliteAvailable() || oldId === newId) return false
+  const db = getDb()!
+  db.exec('BEGIN')
+  try {
+    const source = db.prepare(`SELECT id FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(oldId, profile) as { id: string } | undefined
+    if (!source) {
+      db.exec('ROLLBACK')
+      return false
+    }
+    const target = db.prepare(`SELECT id FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(newId, profile) as { id: string } | undefined
+    if (target) {
+      upsertSessionAlias(db, oldId, newId, profile, reason)
+      db.exec('COMMIT')
+      return false
+    }
+
+    db.prepare(`UPDATE ${SESSIONS_TABLE} SET id = ? WHERE id = ? AND profile = ?`).run(newId, oldId, profile)
+    db.prepare(`UPDATE ${MESSAGES_TABLE} SET session_id = ? WHERE session_id = ?`).run(newId, oldId)
+    for (const table of [COMPRESSION_SNAPSHOT_TABLE, GC_PENDING_SESSION_DELETES_TABLE, GC_SESSION_PROFILES_TABLE]) {
+      try {
+        db.prepare(`UPDATE ${table} SET session_id = ? WHERE session_id = ?`).run(newId, oldId)
+      } catch {
+        // Optional tables may not exist in older or partially initialized databases.
+      }
+    }
+    try {
+      db.prepare(`UPDATE ${USAGE_TABLE} SET session_id = ? WHERE session_id = ? AND profile = ?`).run(newId, oldId, profile)
+    } catch {
+      // Usage table may not exist in older or partially initialized databases.
+    }
+    upsertSessionAlias(db, oldId, newId, profile, reason)
+    db.exec('COMMIT')
+    return true
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch {}
+    throw err
+  }
 }
 
 export function updateSession(id: string, data: Partial<Omit<HermesSessionRow, 'id' | 'profile'>>): void {
@@ -197,6 +379,7 @@ export function deleteSession(id: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
   db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+  db.prepare(`DELETE FROM ${SESSION_ID_ALIASES_TABLE} WHERE session_id = ? OR alias_id = ?`).run(id, id)
   const result = db.prepare(`DELETE FROM ${SESSIONS_TABLE} WHERE id = ?`).run(id)
   return result.changes > 0
 }
@@ -312,14 +495,17 @@ export interface PaginatedSessionDetailResult {
   hasMore: boolean
 }
 
-export function getSessionDetail(id: string): HermesSessionDetailRow | null {
+export function getSessionDetail(id: string, profile?: string): HermesSessionDetailRow | null {
   if (!isSqliteAvailable()) return null
   const db = getDb()!
-  const sessionRow = db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  const resolvedId = resolveSessionId(id, profile)
+  const sessionRow = profile
+    ? db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(resolvedId, profile) as Record<string, unknown> | undefined
+    : db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(resolvedId) as Record<string, unknown> | undefined
   if (!sessionRow) return null
   const msgRows = db.prepare(
     `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp, id`,
-  ).all(id) as Record<string, unknown>[]
+  ).all(resolvedId) as Record<string, unknown>[]
   const session = mapSessionRow(sessionRow)
   return {
     ...session,
@@ -428,27 +614,31 @@ export function getSessionDetailPaginated(
   id: string,
   offset = 0,
   limit = 500,
+  profile?: string,
 ): PaginatedSessionDetailResult | null {
   if (!isSqliteAvailable()) {
     return null
   }
 
   const db = getDb()!
+  const resolvedId = resolveSessionId(id, profile)
 
   // Get session info
-  const sessionRow = db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  const sessionRow = profile
+    ? db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ? AND profile = ?`).get(resolvedId, profile) as Record<string, unknown> | undefined
+    : db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(resolvedId) as Record<string, unknown> | undefined
   if (!sessionRow) return null
 
   // Get total message count
   const countResult = db.prepare(
     `SELECT COUNT(*) as total FROM ${MESSAGES_TABLE} WHERE session_id = ?`,
-  ).get(id) as { total: number } | undefined
+  ).get(resolvedId) as { total: number } | undefined
   const total = countResult?.total || 0
 
   // Get paginated messages (newest first from DB, then reverse)
   const msgRows = db.prepare(
     `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
-  ).all(id, limit, offset) as Record<string, unknown>[]
+  ).all(resolvedId, limit, offset) as Record<string, unknown>[]
 
   const session = mapSessionRow(sessionRow)
   const messages = msgRows.map(mapMessageRow).reverse()  // Reverse to show oldest first

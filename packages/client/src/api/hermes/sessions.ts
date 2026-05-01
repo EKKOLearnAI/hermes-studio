@@ -56,6 +56,15 @@ export async function fetchSessions(source?: string, limit?: number): Promise<Se
   return res.sessions
 }
 
+export async function fetchSessionAliases(): Promise<Record<string, string>> {
+  try {
+    const res = await request<{ aliases: Record<string, string> }>('/api/hermes/sessions/aliases')
+    return res.aliases || {}
+  } catch {
+    return {}
+  }
+}
+
 /**
  * Fetch Hermes sessions only (exclude api_server source)
  */
