@@ -26,6 +26,7 @@ import { getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import { getModelContextLength } from './model-context'
 import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
+import { parseLLMJSON, parseToolArguments, parseAnthropicContentArray } from '../../lib/llm-json'
 import { logger } from '../logger'
 
 const compressor = new ChatContextCompressor()
@@ -59,18 +60,23 @@ function convertToAnthropicFormat(messages: any[]): any[] {
       if (m.tool_calls && Array.isArray(m.tool_calls)) {
         for (const tc of m.tool_calls) {
           if (tc.id && tc.function) {
-            let args = tc.function.arguments || '{}'
             try {
-              args = typeof args === 'string' ? JSON.parse(args) : args
-            } catch {
-              args = {}
+              const args = parseToolArguments(tc.function.arguments || '{}')
+              blocks.push({
+                type: 'tool_use',
+                id: tc.id,
+                name: tc.function.name,
+                input: args
+              })
+            } catch (e) {
+              logger.warn(e, '[chat-run-socket] failed to parse tool arguments for tool %s', tc.id)
+              blocks.push({
+                type: 'tool_use',
+                id: tc.id,
+                name: tc.function.name,
+                input: {}
+              })
             }
-            blocks.push({
-              type: 'tool_use',
-              id: tc.id,
-              name: tc.function.name,
-              input: args
-            })
           }
         }
       }
@@ -86,11 +92,34 @@ function convertToAnthropicFormat(messages: any[]): any[] {
 
     if (role === 'tool') {
       // Convert tool message to tool_result in user message
+      // Follow Hermes official format: content is a string (not array)
       const toolContent = content || '(no output)'
+
+      // Normalize tool_result content to string format
+      // Use robust LLM JSON parser if content looks like JSON
+      let resultContent: string
+      if (typeof toolContent === 'string') {
+        try {
+          // Try to parse as JSON first (handles Python format, single quotes, etc.)
+          const parsed = parseLLMJSON(toolContent, 2)
+          // Re-serialize to ensure clean JSON string
+          resultContent = JSON.stringify(parsed)
+        } catch {
+          // Not valid JSON, use as-is
+          resultContent = toolContent
+        }
+      } else if (typeof toolContent === 'object' && toolContent !== null) {
+        // Object or array, serialize to JSON string
+        resultContent = JSON.stringify(toolContent)
+      } else {
+        // Primitive type (null, undefined, number, boolean)
+        resultContent = String(toolContent !== null && toolContent !== undefined ? toolContent : '(no output)')
+      }
+
       const toolResult = {
         type: 'tool_result',
         tool_use_id: m.tool_call_id || '',
-        content: typeof toolContent === 'string' ? toolContent : JSON.stringify(toolContent)
+        content: resultContent
       }
 
       // Merge with previous user message if it ends with tool_result
@@ -110,15 +139,19 @@ function convertToAnthropicFormat(messages: any[]): any[] {
 
     // Regular user message
     if (role === 'user') {
+      // Format: { role: 'user', content: [{ type: 'text', text: '...' }] }
       if (typeof content === 'string') {
-        result.push({ role: 'user', content: content || '' })
+        result.push({ role: 'user', content: [{ type: 'text', text: content || '' }] })
       } else if (Array.isArray(content)) {
+        // Already in array format, assume it's correct
         result.push({ role: 'user', content })
+      } else if (content) {
+        // Fallback for other types
+        result.push({ role: 'user', content: [{ type: 'text', text: String(content) }] })
       }
       continue
     }
   }
-
   return result
 }
 
@@ -242,45 +275,38 @@ export class ChatRunSocket {
 
             if (contentToParse.startsWith('[') && contentToParse.endsWith(']')) {
               try {
-                // Parse stringified Python-like array to JSON
-                const parsedContent = JSON.parse(
-                  contentToParse
-                    .replace(/'/g, '"')  // Python single quotes to JSON double quotes
-                    .replace(/True/g, 'true')
-                    .replace(/False/g, 'false')
-                    .replace(/None/g, 'null')
-                )
-                if (Array.isArray(parsedContent)) {
-                  const textBlocks: string[] = []
-                  const toolCalls: any[] = []
-                  let reasoningContent: string | null = null
+                // Use robust LLM JSON parser
+                const parsedContent = parseAnthropicContentArray(contentToParse)
+                const textBlocks: string[] = []
+                const toolCalls: any[] = []
+                let reasoningContent: string | null = null
 
-                  for (const block of parsedContent) {
-                    if (block.type === 'thinking') {
-                      reasoningContent = block.thinking
-                    } else if (block.type === 'text') {
-                      textBlocks.push(block.text)
-                    } else if (block.type === 'tool_use') {
-                      toolCalls.push({
-                        id: block.id,
-                        type: 'function',
-                        function: {
-                          name: block.name,
-                          arguments: JSON.stringify(block.input)
-                        }
-                      })
-                    }
-                  }
-
-                  msg.content = textBlocks.join('') || ''
-                  if (toolCalls.length > 0) {
-                    msg.tool_calls = toolCalls
-                  }
-                  if (reasoningContent) {
-                    msg.reasoning = reasoningContent
+                for (const block of parsedContent) {
+                  if (block.type === 'thinking') {
+                    reasoningContent = block.thinking || null
+                  } else if (block.type === 'text') {
+                    textBlocks.push(block.text || '')
+                  } else if (block.type === 'tool_use') {
+                    toolCalls.push({
+                      id: block.id,
+                      type: 'function',
+                      function: {
+                        name: block.name,
+                        arguments: typeof block.input === 'object' ? JSON.stringify(block.input) : (block.input ?? '{}')
+                      }
+                    })
                   }
                 }
+
+                msg.content = textBlocks.join('') || ''
+                if (toolCalls.length > 0) {
+                  msg.tool_calls = toolCalls
+                }
+                if (reasoningContent) {
+                  msg.reasoning = reasoningContent
+                }
               } catch (e) {
+                logger.warn(e, '[chat-run-socket] failed to parse array content for message %s, keeping original', m.id)
                 // Parsing failed, keep original content
                 msg.content = m.content
               }
@@ -301,7 +327,7 @@ export class ChatRunSocket {
                   type: 'function',
                   function: {
                     name: block.name,
-                    arguments: JSON.stringify(block.input)
+                    arguments: JSON.stringify(block.input ?? {})
                   }
                 })
               }
@@ -467,14 +493,12 @@ export class ChatRunSocket {
         socket.emit(event, tagged)
       }
     }
-
     try {
       // Build upstream request body
       const body: Record<string, any> = { input }
       if (hermesSessionId) body.session_id = hermesSessionId
       if (model) body.model = model
       if (instructions) body.instructions = instructions
-
       // Inject workspace context if set for this session
       if (session_id) {
         const sessionRow = getSession(session_id)
@@ -485,7 +509,6 @@ export class ChatRunSocket {
             : workspaceCtx
         }
       }
-
       // Build conversation_history from DB if session_id is provided
       if (session_id) {
         try {
@@ -551,7 +574,6 @@ export class ChatRunSocket {
               return msg
             })
               .filter(m => m !== null)
-
             // Context compression with snapshot awareness
             const contextLength = getModelContextLength(profile)
             const triggerTokens = Math.floor(contextLength / 2)
@@ -795,7 +817,6 @@ export class ChatRunSocket {
         logger.info('[chat-run-socket] converted conversation_history to Anthropic format for session %s: %d messages, content: %s',
           session_id || '(new)', body.conversation_history.length, JSON.stringify(body.conversation_history, null, 2))
       }
-
       const res = await fetch(`${upstream}/v1/runs`, {
         method: 'POST',
         headers,
@@ -866,15 +887,30 @@ export class ChatRunSocket {
 
               switch (parsed.event) {
                 case 'message.delta': {
+                  let deltaText = parsed.delta || ''
+
+                  // Try to extract text from JSON delta (e.g., "[{\"type\":\"text\",\"text\":\"hello\"}]")
+                  if (deltaText.trim().startsWith('[') && deltaText.trim().endsWith(']')) {
+                    try {
+                      const parsedDelta = parseAnthropicContentArray(deltaText)
+                      const textParts = parsedDelta
+                        .filter((b: any) => b.type === 'text')
+                        .map((b: any) => b.text || '')
+                      deltaText = textParts.join('')
+                    } catch {
+                      // If parsing fails, use delta as-is
+                    }
+                  }
+
                   if (last?.role === 'assistant' && last.finish_reason == null) {
-                    last.content += (parsed.delta || '')
+                    last.content += deltaText
                   } else {
                     msgs.push({
                       id: msgs.length + 1,
                       session_id,
                       hermesSessionId,
                       role: 'assistant',
-                      content: parsed.delta || '',
+                      content: deltaText,
                       timestamp: Math.floor(Date.now() / 1000),
                     })
                   }
@@ -934,21 +970,57 @@ export class ChatRunSocket {
                   logger.info('[chat-run-socket] run.completed keys: %s', Object.keys(parsed))
                   // Finalize assistant message — if no content was streamed, use output
                   if (parsed.output && !runProducedAssistantText(msgs)) {
+                    let outputContent = parsed.output
+
+                    // Parse output if it's a stringified array
+                    if (typeof outputContent === 'string' &&
+                      outputContent.trim().startsWith('[') &&
+                      outputContent.trim().endsWith(']')) {
+                      try {
+                        const parsedOutput = parseAnthropicContentArray(outputContent)
+                        const textParts = parsedOutput
+                          .filter((b: any) => b.type === 'text')
+                          .map((b: any) => b.text || '')
+                        outputContent = textParts.join('')
+                      } catch {
+                        // If parsing fails, use output as-is
+                      }
+                    }
+
                     if (last?.role === 'assistant') {
-                      last.content = parsed.output
+                      last.content = outputContent
                     } else {
                       msgs.push({
                         id: msgs.length + 1,
                         session_id,
                         hermesSessionId,
                         role: 'assistant',
-                        content: parsed.output,
+                        content: outputContent,
                         timestamp: Math.floor(Date.now() / 1000),
                       })
                     }
                   }
 
+                  // Always parse output if it's an array format (for parsed_content field)
+                  // Only extract text content (tool_calls and reasoning are already sent via other events)
+                  if (parsed.output && typeof parsed.output === 'string' &&
+                    parsed.output.trim().startsWith('[') && parsed.output.trim().endsWith(']')) {
+                    try {
+                      const parsedOutput = parseAnthropicContentArray(parsed.output)
+                      const textParts = parsedOutput
+                        .filter((b: any) => b.type === 'text')
+                        .map((b: any) => b.text || '')
+
+                      // Set parsed_content for frontend (only text content)
+                      parsed.parsed_content = textParts.join('') || ''
+                      logger.info('[chat-run-socket] parsed output from run.completed event')
+                    } catch (e) {
+                      logger.error(e, '[chat-run-socket] failed to parse output from run.completed')
+                    }
+                  }
+
                   // Parse stringified array content for all assistant messages
+                  // Only extract text content (tool_calls and reasoning are already in message fields)
                   let parsedCount = 0
                   for (const msg of msgs) {
                     if (msg.role === 'assistant' && typeof msg.content === 'string' &&
@@ -956,44 +1028,13 @@ export class ChatRunSocket {
                       try {
                         logger.info('[chat-run-socket] parsing array content for message %s, content preview: %s',
                           msg.id, msg.content.slice(0, 100))
-                        const parsedContent = JSON.parse(
-                          msg.content
-                            .replace(/'/g, '"')
-                            .replace(/True/g, 'true')
-                            .replace(/False/g, 'false')
-                            .replace(/None/g, 'null')
-                        )
-                        if (Array.isArray(parsedContent)) {
-                          const textBlocks: string[] = []
-                          const toolCalls: any[] = []
-                          let reasoningContent: string | null = null
+                        const parsedContent = parseAnthropicContentArray(msg.content)
+                        const textBlocks = parsedContent
+                          .filter((b: any) => b.type === 'text')
+                          .map((b: any) => b.text || '')
 
-                          for (const block of parsedContent) {
-                            if (block.type === 'thinking') {
-                              reasoningContent = block.thinking
-                            } else if (block.type === 'text') {
-                              textBlocks.push(block.text)
-                            } else if (block.type === 'tool_use') {
-                              toolCalls.push({
-                                id: block.id,
-                                type: 'function',
-                                function: {
-                                  name: block.name,
-                                  arguments: JSON.stringify(block.input)
-                                }
-                              })
-                            }
-                          }
-
-                          msg.content = textBlocks.join('') || ''
-                          if (toolCalls.length > 0) {
-                            msg.tool_calls = toolCalls
-                          }
-                          if (reasoningContent) {
-                            msg.reasoning = reasoningContent
-                          }
-                          parsedCount++
-                        }
+                        msg.content = textBlocks.join('') || ''
+                        parsedCount++
                       } catch (e) {
                         logger.error(e, '[chat-run-socket] failed to parse array content for message %s', msg.id)
                       }
@@ -1252,7 +1293,6 @@ export class ChatRunSocket {
     if (start === -1) return
     // 替换
     msg.splice(start, end - start + 1, ...newItems)
-    console.log(msg)
   }
   /** Enqueue an ephemeral Hermes session for deferred deletion */
   private enqueueEphemeralDelete(hermesSessionId: string, profile?: string) {

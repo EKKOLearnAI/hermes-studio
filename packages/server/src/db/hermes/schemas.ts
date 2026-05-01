@@ -119,6 +119,7 @@ export const GC_MESSAGES_SCHEMA: Record<string, string> = {
 export const GC_ROOM_AGENTS_TABLE = 'gc_room_agents'
 
 export const GC_ROOM_AGENTS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
   roomId: 'TEXT NOT NULL',
   agentId: 'TEXT NOT NULL',
   profile: 'TEXT NOT NULL',
@@ -140,6 +141,7 @@ export const GC_CONTEXT_SNAPSHOTS_SCHEMA: Record<string, string> = {
 export const GC_ROOM_MEMBERS_TABLE = 'gc_room_members'
 
 export const GC_ROOM_MEMBERS_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
   roomId: 'TEXT NOT NULL',
   userId: 'TEXT NOT NULL',
   userName: 'TEXT NOT NULL',
@@ -474,16 +476,14 @@ export function initAllHermesTables(retryCount = 0): void {
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
     syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
 
-    // Group chat - composite primary key tables
+    // Group chat - single-column primary key tables (PRIMARY KEY in column definition)
     syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
-      primaryKey: 'roomId, agentId',
       indexes: {
         idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
       }
     })
 
     syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
-      primaryKey: 'roomId, userId',
       indexes: {
         idx_gc_room_members_user: 'CREATE INDEX idx_gc_room_members_user ON gc_room_members(userId)',
       }

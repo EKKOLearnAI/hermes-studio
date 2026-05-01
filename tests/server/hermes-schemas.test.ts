@@ -65,31 +65,32 @@ describe('Hermes schema initialization', () => {
     expect(cols.some(c => c.name === 'output_tokens')).toBe(true)
   })
 
-  it('handles composite primary key tables correctly', async () => {
+  it('handles single-column primary key tables correctly', async () => {
     const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
 
-    // Verify composite primary key
+    // Verify table has primary key and required columns
     const tableInfo = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`).get(GC_ROOM_AGENTS_TABLE) as { sql: string }
     expect(tableInfo.sql).toContain('PRIMARY KEY')
+    expect(tableInfo.sql).toContain('id')
     expect(tableInfo.sql).toContain('roomId')
     expect(tableInfo.sql).toContain('agentId')
 
-    // Verify we can insert with same roomId but different agentId
-    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('room-1', 'agent-1', 'default', 'Agent 1', '', 0)
-    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('room-1', 'agent-2', 'default', 'Agent 2', '', 0)
+    // Verify we can insert multiple entries with unique id
+    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('agent-1', 'room-1', 'agent-1', 'default', 'Agent 1', '', 0)
+    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('agent-2', 'room-1', 'agent-2', 'default', 'Agent 2', '', 0)
 
     const count = db.prepare(`SELECT COUNT(*) as count FROM "${GC_ROOM_AGENTS_TABLE}"`).get() as { count: number }
     expect(count.count).toBe(2)
 
     // Verify duplicate primary key is rejected
     expect(() => {
-      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run('room-1', 'agent-1', 'default', 'Agent 1 Duplicate', '', 0)
+      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run('agent-1', 'room-1', 'agent-1', 'default', 'Agent 1 Duplicate', '', 0)
     }).toThrow()
   })
 })

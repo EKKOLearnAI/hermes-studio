@@ -53,8 +53,20 @@ function getTablePrimaryKey(db: DatabaseSync, tableName: string): string | null 
   ).get(tableName) as { sql: string } | undefined
 
   const sql = tableInfo?.sql || ''
+
+  // First, check for composite primary key: PRIMARY KEY (col1, col2)
   const pkMatch = sql.match(/PRIMARY KEY\s*\(([^)]+)\)/i)
-  return pkMatch ? pkMatch[1].replace(/\s+/g, '') : null
+  if (pkMatch) {
+    return pkMatch[1].replace(/\s+/g, '')
+  }
+
+  // Then, check for inline primary key: col TEXT PRIMARY KEY
+  const inlinePkMatch = sql.match(/"(\w+)"\s+\w+\s+PRIMARY KEY/i)
+  if (inlinePkMatch) {
+    return inlinePkMatch[1]
+  }
+
+  return null
 }
 
 describe('Database Schema Synchronization', () => {
@@ -152,13 +164,13 @@ describe('Database Schema Synchronization', () => {
     })
   })
 
-  describe('Schema sync with composite primary keys', () => {
-    it('creates table with composite primary key', async () => {
+  describe('Schema sync with single-column primary keys', () => {
+    it('creates table with single-column primary key', async () => {
       const { syncTable, GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA } =
         await import('../../packages/server/src/db/hermes/schemas')
 
       syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
-        primaryKey: 'roomId, agentId',
+        primaryKey: 'id',
       })
 
       const db = getTestDb()
@@ -166,23 +178,24 @@ describe('Database Schema Synchronization', () => {
       // Verify table exists
       expect(tableExists(db, GC_ROOM_AGENTS_TABLE)).toBe(true)
 
-      // Verify composite primary key
+      // Verify single-column primary key
       const pk = getTablePrimaryKey(db, GC_ROOM_AGENTS_TABLE)
-      expect(pk).toBe('roomId,agentId')
+      expect(pk).toBe('id')
 
       // Verify all columns exist
       const cols = getTableColumns(db, GC_ROOM_AGENTS_TABLE)
+      expect(cols.has('id')).toBe(true)
       expect(cols.has('roomId')).toBe(true)
       expect(cols.has('agentId')).toBe(true)
       expect(cols.has('profile')).toBe(true)
       expect(cols.has('name')).toBe(true)
 
-      // Verify primary key constraint works (should allow same roomId with different agentId)
-      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run('room-1', 'agent-1', 'default', 'Agent 1', '', 0)
+      // Verify primary key constraint works (unique id required)
+      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run('agent-1', 'room-1', 'agent-1', 'default', 'Agent 1', '', 0)
 
-      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run('room-1', 'agent-2', 'default', 'Agent 2', '', 0)
+      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run('agent-2', 'room-1', 'agent-2', 'default', 'Agent 2', '', 0)
 
       // Verify both rows exist
       const rows = db.prepare(`SELECT COUNT(*) as count FROM "${GC_ROOM_AGENTS_TABLE}"`).get() as { count: number }
@@ -190,34 +203,34 @@ describe('Database Schema Synchronization', () => {
 
       // Verify duplicate primary key is rejected
       expect(() => {
-        db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-          .run('room-1', 'agent-1', 'default', 'Agent 1 Duplicate', '', 0)
+        db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run('agent-1', 'room-1', 'agent-1', 'default', 'Agent 1 Duplicate', '', 0)
       }).toThrow()
     })
   })
 
   describe('Primary key changes trigger table rebuild', () => {
-    it('rebuilds table when primary key changes from single to composite', async () => {
+    it('rebuilds table when primary key changes from single column to id column', async () => {
       const { syncTable, GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA } =
         await import('../../packages/server/src/db/hermes/schemas')
 
       const db = getTestDb()
 
-      // Create table with single-column primary key and all necessary columns
+      // Create table with roomId as primary key and all necessary columns
       db.exec(`CREATE TABLE "${GC_ROOM_MEMBERS_TABLE}" (roomId TEXT PRIMARY KEY, userId TEXT, userName TEXT, description TEXT DEFAULT '', joinedAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)`)
 
       // Insert test data
       db.prepare(`INSERT INTO "${GC_ROOM_MEMBERS_TABLE}" (roomId, userId, userName, description, joinedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`)
         .run('room-1', 'user-1', 'User 1', '', Date.now(), Date.now())
 
-      // Sync with composite primary key schema
+      // Sync with id-based primary key schema
       syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
-        primaryKey: 'roomId, userId',
+        primaryKey: 'id',
       })
 
-      // Verify composite primary key
+      // Verify id-based primary key
       const pk = getTablePrimaryKey(db, GC_ROOM_MEMBERS_TABLE)
-      expect(pk).toBe('roomId,userId')
+      expect(pk).toBe('id')
 
       // Verify data was preserved
       const row = db.prepare(`SELECT * FROM "${GC_ROOM_MEMBERS_TABLE}" WHERE roomId = ? AND userId = ?`).get('room-1', 'user-1')
@@ -329,22 +342,23 @@ describe('Database Schema Synchronization', () => {
 
       const db = getTestDb()
 
-      // Create table without composite primary key but with all columns
-      db.exec(`CREATE TABLE "${GC_ROOM_AGENTS_TABLE}" (roomId TEXT NOT NULL, agentId TEXT NOT NULL, profile TEXT NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '', invited INTEGER DEFAULT 0)`)
+      // Create table without id primary key but with all columns
+      db.exec(`CREATE TABLE "${GC_ROOM_AGENTS_TABLE}" (id TEXT NOT NULL, roomId TEXT NOT NULL, agentId TEXT NOT NULL, profile TEXT NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT '', invited INTEGER DEFAULT 0)`)
 
       // Insert test data (only columns that exist)
-      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run('room-1', 'agent-1', 'default', 'Test Agent', '', 0)
+      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run('agent-1', 'room-1', 'agent-1', 'default', 'Test Agent', '', 0)
 
-      // Sync with composite primary key (triggers rebuild)
+      // Sync with id primary key (triggers rebuild)
       syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
-        primaryKey: 'roomId, agentId',
+        primaryKey: 'id',
       })
 
       // Verify data was preserved
-      const row = db.prepare(`SELECT * FROM "${GC_ROOM_AGENTS_TABLE}" WHERE roomId = ? AND agentId = ?`)
-        .get('room-1', 'agent-1')
+      const row = db.prepare(`SELECT * FROM "${GC_ROOM_AGENTS_TABLE}" WHERE id = ?`)
+        .get('agent-1')
       expect(row).toBeTruthy()
+      expect(row.id).toBe('agent-1')
       expect(row.roomId).toBe('room-1')
       expect(row.agentId).toBe('agent-1')
       expect(row.name).toBe('Test Agent')
