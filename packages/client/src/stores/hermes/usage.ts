@@ -4,9 +4,12 @@ import { computed, ref } from 'vue'
 
 interface DailyUsage {
   date: string
-  tokens: number
-  cache: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
   sessions: number
+  errors: number
   cost: number
 }
 

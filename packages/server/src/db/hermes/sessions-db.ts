@@ -783,8 +783,10 @@ export async function getUsageStatsFromDb(
     const byDay = db.prepare(`
       SELECT
         date(started_at, 'unixepoch') AS date,
-        COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) AS tokens,
-        COALESCE(SUM(cache_read_tokens), 0) AS cache,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
         COUNT(*) AS sessions,
         COALESCE(SUM(COALESCE(actual_cost_usd, estimated_cost_usd, 0)), 0) AS cost
       FROM sessions
@@ -793,9 +795,12 @@ export async function getUsageStatsFromDb(
       ORDER BY date ASC
     `).all(since).map(row => ({
       date: String(row.date || ''),
-      tokens: normalizeNumber(row.tokens),
-      cache: normalizeNumber(row.cache),
+      input_tokens: normalizeNumber(row.input_tokens),
+      output_tokens: normalizeNumber(row.output_tokens),
+      cache_read_tokens: normalizeNumber(row.cache_read_tokens),
+      cache_write_tokens: normalizeNumber(row.cache_write_tokens),
       sessions: normalizeNumber(row.sessions),
+      errors: 0,
       cost: normalizeNumber(row.cost),
     }))
 
