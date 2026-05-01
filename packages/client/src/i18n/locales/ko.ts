@@ -558,6 +558,8 @@ export default {
     date: '날짜',
     tokens: '토큰',
     cache: '캐시',
+    cacheRead: '캐시 읽기',
+    cacheWrite: '캐시 쓰기',
     sessions: '세션',
     cost: '비용',
     noData: '사용량 데이터 없음',

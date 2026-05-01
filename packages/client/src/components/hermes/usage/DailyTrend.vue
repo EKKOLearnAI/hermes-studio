@@ -52,7 +52,8 @@ const maxTokens = computed(() =>
           <div class="tooltip-date">{{ d.date }}</div>
           <div class="tooltip-row">{{ t('usage.inputTokens') }}: {{ formatTokens(d.input_tokens) }}</div>
           <div class="tooltip-row">{{ t('usage.outputTokens') }}: {{ formatTokens(d.output_tokens) }}</div>
-          <div class="tooltip-row">{{ t('usage.cache') }}: {{ formatTokens(d.cache_read_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cacheRead') }}: {{ formatTokens(d.cache_read_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cacheWrite') }}: {{ formatTokens(d.cache_write_tokens) }}</div>
           <div class="tooltip-row">{{ t('usage.cacheHitRate') }}: {{ cacheHitRate(d) }}</div>
           <div class="tooltip-row">{{ t('usage.sessions') }}: {{ d.sessions }}</div>
           <div class="tooltip-row">{{ t('usage.cost') }}: {{ formatCost(d.cost) }}</div>
@@ -71,7 +72,8 @@ const maxTokens = computed(() =>
             <th>{{ t('usage.date') }}</th>
             <th>{{ t('usage.inputTokens') }}</th>
             <th>{{ t('usage.outputTokens') }}</th>
-            <th>{{ t('usage.cache') }}</th>
+            <th>{{ t('usage.cacheRead') }}</th>
+            <th>{{ t('usage.cacheWrite') }}</th>
             <th>{{ t('usage.cacheHitRate') }}</th>
             <th>{{ t('usage.sessions') }}</th>
             <th>{{ t('usage.cost') }}</th>
@@ -83,6 +85,7 @@ const maxTokens = computed(() =>
             <td>{{ formatTokens(d.input_tokens) }}</td>
             <td>{{ formatTokens(d.output_tokens) }}</td>
             <td>{{ formatTokens(d.cache_read_tokens) }}</td>
+            <td>{{ formatTokens(d.cache_write_tokens) }}</td>
             <td>{{ cacheHitRate(d) }}</td>
             <td>{{ d.sessions }}</td>
             <td>{{ formatCost(d.cost) }}</td>

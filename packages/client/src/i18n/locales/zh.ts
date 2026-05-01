@@ -668,6 +668,8 @@ export default {
     date: '日期',
     tokens: 'Token',
     cache: '缓存',
+    cacheRead: '缓存读取',
+    cacheWrite: '缓存写入',
     sessions: '会话',
     cost: '费用',
     noData: '暂无用量数据',

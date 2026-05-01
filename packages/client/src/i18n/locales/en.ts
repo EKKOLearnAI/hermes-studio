@@ -666,6 +666,8 @@ export default {
     date: 'Date',
     tokens: 'Tokens',
     cache: 'Cache',
+    cacheRead: 'Cache Read',
+    cacheWrite: 'Cache Write',
     sessions: 'Sessions',
     cost: 'Cost',
     noData: 'No usage data',

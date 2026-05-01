@@ -558,6 +558,8 @@ export default {
     date: '日付',
     tokens: 'トークン',
     cache: 'キャッシュ',
+    cacheRead: 'キャッシュ読み取り',
+    cacheWrite: 'キャッシュ書き込み',
     sessions: 'セッション',
     cost: 'コスト',
     noData: '使用データがありません',
