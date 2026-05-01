@@ -80,6 +80,13 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.chat") }}</span>
           </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.history' }" @click="handleNav('hermes.history')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            <span>{{ t("sidebar.history") }}</span>
+          </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.groupChat' }" @click="handleNav('hermes.groupChat')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />

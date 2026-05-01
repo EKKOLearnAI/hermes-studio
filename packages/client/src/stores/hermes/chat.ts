@@ -215,14 +215,13 @@ function isQuotaExceededError(error: unknown): boolean {
 
 function recoverStorageQuota() {
   try {
+    // 清理所有会话相关的旧缓存（已完全废弃）
     const prefixes = [
-      `hermes_session_msgs_v1_${getProfileName()}_`,
-      `hermes_in_flight_v1_${getProfileName()}_`,
+      'hermes_sessions_cache_v1_',
+      'hermes_session_msgs_v1_',
+      'hermes_session_pins_v1_',
+      'hermes_human_only_v1_',
     ]
-    if (getProfileName() === 'default') {
-      prefixes.push('hermes_session_msgs_v1_')
-      prefixes.push('hermes_in_flight_v1_')
-    }
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
@@ -233,6 +232,9 @@ function recoverStorageQuota() {
       }
     }
     keysToRemove.forEach(key => removeItem(key))
+    if (keysToRemove.length > 0) {
+      console.log(`Recovered storage: cleared ${keysToRemove.length} old session cache entries`)
+    }
   } catch {
     // ignore
   }
@@ -536,6 +538,17 @@ export const useChatStore = defineStore('chat', () => {
   function addMessage(sessionId: string, msg: Message) {
     const s = sessions.value.find(s => s.id === sessionId)
     if (s) s.messages.push(msg)
+  }
+
+  function addOrUpdateSession(session: Session) {
+    const existingIndex = sessions.value.findIndex(s => s.id === session.id)
+    if (existingIndex !== -1) {
+      // Update existing session
+      sessions.value[existingIndex] = session
+    } else {
+      // Add new session
+      sessions.value.push(session)
+    }
   }
 
   function updateMessage(sessionId: string, id: string, update: Partial<Message>) {
@@ -1346,6 +1359,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     switchSession,
     switchSessionModel,
+    addOrUpdateSession,
     clearProviderFromSessions,
     deleteSession,
     sendMessage,

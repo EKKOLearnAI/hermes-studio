@@ -56,6 +56,18 @@ export async function fetchSessions(source?: string, limit?: number): Promise<Se
   return res.sessions
 }
 
+/**
+ * Fetch Hermes sessions only (exclude api_server source)
+ */
+export async function fetchHermesSessions(source?: string, limit?: number): Promise<SessionSummary[]> {
+  const params = new URLSearchParams()
+  if (source) params.set('source', source)
+  if (limit) params.set('limit', String(limit))
+  const query = params.toString()
+  const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions/hermes${query ? `?${query}` : ''}`)
+  return res.sessions
+}
+
 export async function searchSessions(q: string, source?: string, limit?: number): Promise<SessionSearchResult[]> {
   const params = new URLSearchParams()
   params.set('q', q)
@@ -69,6 +81,18 @@ export async function searchSessions(q: string, source?: string, limit?: number)
 export async function fetchSession(id: string): Promise<SessionDetail | null> {
   try {
     const res = await request<{ session: SessionDetail }>(`/api/hermes/sessions/${id}`)
+    return res.session
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch Hermes session detail only (exclude api_server source)
+ */
+export async function fetchHermesSession(id: string): Promise<SessionDetail | null> {
+  try {
+    const res = await request<{ session: SessionDetail }>(`/api/hermes/sessions/hermes/${id}`)
     return res.session
   } catch {
     return null

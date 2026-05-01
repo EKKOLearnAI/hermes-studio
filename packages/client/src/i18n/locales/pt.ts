@@ -67,6 +67,8 @@ export default {
   // Sidebar
   sidebar: {
     chat: 'Chat',
+    search: 'Pesquisar',
+    history: 'Historico',
     jobs: 'Tarefas agendadas',
     models: 'Modelos',
     profiles: 'Perfis',
@@ -563,7 +565,15 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   changelog: {
-    new_0_5_4_1: 'Happy Labor Day! No work this Labor Day, please bear with us if there are any issues 🎉',
+
+    new_0_5_5_1: '🎉 Feliz Dia do Trabalhador! Hoje não se trabalha, obrigado pela compreensão',
+    new_0_5_5_2: 'Adicionada página de histórico para sessões Hermes',
+    new_0_5_5_3: 'Página de histórico gerencia sessões de forma independente',
+    new_0_5_5_4: 'Carregamento automático da primeira sessão CLI',
+    new_0_5_5_5: 'Componente HistoryMessageList com injeção de props',
+    new_0_5_5_6: 'Filtragem de mensagens vazias e tools sem toolName',
+    new_0_5_5_7: 'Removido cache de sessões localStorage, dados do backend',
+    new_0_5_5_8: 'Otimizada troca de perfil',
     new_0_5_4_2: 'Fix concurrent chat sessions event cross-talk with WebSocket event routing refactoring',
     new_0_5_4_3: 'Fix cron job edit payloads with partial PATCH to support long prompt name-only edits',
     new_0_5_4_4: 'Fix web terminal Hermes CLI availability after Docker deployment',

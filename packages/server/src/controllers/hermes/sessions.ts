@@ -160,6 +160,26 @@ export async function list(ctx: any) {
   ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
 }
 
+/**
+ * List Hermes sessions only (exclude api_server source)
+ * GET /api/hermes/sessions/hermes?source=&limit=
+ */
+export async function listHermesSessions(ctx: any) {
+  const source = (ctx.query.source as string) || undefined
+  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
+
+  try {
+    const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cron')) }
+    return
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
+  }
+
+  const sessions = await hermesCli.listSessions(source, limit)
+  ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
+}
+
 export async function search(ctx: any) {
   if (useLocalSessionStore()) {
     const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
@@ -200,6 +220,27 @@ export async function get(ctx: any) {
 
   const session = await hermesCli.getSession(ctx.params.id)
   if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  ctx.body = { session }
+}
+
+/**
+ * Get Hermes session detail only (exclude api_server source)
+ * GET /api/hermes/sessions/hermes/:id
+ */
+export async function getHermesSession(ctx: any) {
+
+  const session = await hermesCli.getSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  // Filter out api_server sessions
+  if (session.source === 'api_server') {
     ctx.status = 404
     ctx.body = { error: 'Session not found' }
     return
