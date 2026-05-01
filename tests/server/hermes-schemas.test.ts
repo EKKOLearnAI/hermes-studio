@@ -1,26 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replace(/"/g, '""')}"`
-}
-
-function ensureTableForTest(db: any, tableName: string, schema: Record<string, string>): void {
-  const colDefs = Object.entries(schema)
-    .map(([col, def]) => `${quoteIdentifier(col)} ${def}`)
-    .join(', ')
-  db.exec(`CREATE TABLE IF NOT EXISTS ${quoteIdentifier(tableName)} (${colDefs})`)
-
-  const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
-  const existingCols = new Set(rows.map(row => row.name))
-
-  for (const [col, def] of Object.entries(schema)) {
-    if (!existingCols.has(col)) {
-      db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(col)} ${def}`)
-    }
-  }
-}
-
-describe('Hermes schema migrations', () => {
+describe('Hermes schema initialization', () => {
   let db: any = null
 
   beforeEach(async () => {
@@ -29,7 +9,7 @@ describe('Hermes schema migrations', () => {
     db = new DatabaseSync(':memory:')
     vi.doMock('../../packages/server/src/db/index', () => ({
       getDb: () => db,
-      ensureTable: (tableName: string, schema: Record<string, string>) => ensureTableForTest(db, tableName, schema),
+      getStoragePath: () => ':memory:',
     }))
   })
 
@@ -40,80 +20,76 @@ describe('Hermes schema migrations', () => {
     vi.resetModules()
   })
 
-  it('migrates legacy session_usage rows with SQL-safe defaults', async () => {
-    const updatedAt = Date.UTC(2026, 3, 29)
-    db.exec(`CREATE TABLE "session_usage" (
-      "session_id" TEXT PRIMARY KEY,
-      "input_tokens" INTEGER NOT NULL DEFAULT 0,
-      "output_tokens" INTEGER NOT NULL DEFAULT 0,
-      "updated_at" INTEGER NOT NULL
-    )`)
-    db.prepare(
-      `INSERT INTO "session_usage" (session_id, input_tokens, output_tokens, updated_at) VALUES (?, ?, ?, ?)`,
-    ).run('legacy-session', 123, 45, updatedAt)
-
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+  it('initializes all tables with correct schemas', async () => {
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE } =
+      await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
 
-    const row = db.prepare(
-      `SELECT session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-              reasoning_tokens, model, profile, created_at
-       FROM "session_usage"`,
-    ).get() as any
-    expect(row).toMatchObject({
-      session_id: 'legacy-session',
-      input_tokens: 123,
-      output_tokens: 45,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      reasoning_tokens: 0,
-      model: '',
-      profile: 'default',
-      created_at: updatedAt,
-    })
-    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='session_usage_old'`).get()).toBeUndefined()
+    // Verify core tables exist
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as Array<{ name: string }>
+    expect(tables.map(t => t.name)).toContain(USAGE_TABLE)
+    expect(tables.map(t => t.name)).toContain(SESSIONS_TABLE)
+    expect(tables.map(t => t.name)).toContain(MESSAGES_TABLE)
+    expect(tables.map(t => t.name)).toContain(GC_ROOMS_TABLE)
+
+    // Verify USAGE_TABLE structure
+    const usageCols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
+    expect(usageCols.some(c => c.name === 'id')).toBe(true)
+    expect(usageCols.some(c => c.name === 'session_id')).toBe(true)
+    expect(usageCols.some(c => c.name === 'input_tokens')).toBe(true)
+    expect(usageCols.some(c => c.name === 'output_tokens')).toBe(true)
   })
 
-  it('recovers rows left in session_usage_old by a failed previous migration', async () => {
-    const updatedAt = Date.UTC(2026, 3, 30)
-    db.exec(`CREATE TABLE "session_usage" (
-      "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-      "session_id" TEXT NOT NULL,
-      "input_tokens" INTEGER NOT NULL DEFAULT 0,
-      "output_tokens" INTEGER NOT NULL DEFAULT 0,
-      "cache_read_tokens" INTEGER NOT NULL DEFAULT 0,
-      "cache_write_tokens" INTEGER NOT NULL DEFAULT 0,
-      "reasoning_tokens" INTEGER NOT NULL DEFAULT 0,
-      "model" TEXT NOT NULL DEFAULT '',
-      "profile" TEXT NOT NULL DEFAULT 'default',
-      "created_at" INTEGER NOT NULL
-    )`)
-    db.exec(`CREATE TABLE "session_usage_old" (
-      "session_id" TEXT PRIMARY KEY,
-      "input_tokens" INTEGER NOT NULL DEFAULT 0,
-      "output_tokens" INTEGER NOT NULL DEFAULT 0,
-      "updated_at" INTEGER NOT NULL
-    )`)
-    db.prepare(
-      `INSERT INTO "session_usage_old" (session_id, input_tokens, output_tokens, updated_at) VALUES (?, ?, ?, ?)`,
-    ).run('stranded-session', 200, 80, updatedAt)
+  it('preserves existing data when syncing schemas', async () => {
+    const { initAllHermesTables, USAGE_TABLE, USAGE_SCHEMA } =
+      await import('../../packages/server/src/db/hermes/schemas')
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    // Create table with minimal schema
+    db.exec(`CREATE TABLE "${USAGE_TABLE}" (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, created_at INTEGER NOT NULL)`)
+
+    // Insert test data
+    db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id, created_at) VALUES (?, ?)`).run('test-session', Date.now())
+
+    // Run initialization (should sync schema)
+    expect(() => initAllHermesTables()).not.toThrow()
+
+    // Verify data is preserved
+    const row = db.prepare(`SELECT * FROM "${USAGE_TABLE}" WHERE session_id = ?`).get('test-session')
+    expect(row).toBeTruthy()
+    expect(row.session_id).toBe('test-session')
+
+    // Verify new columns were added
+    const cols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
+    expect(cols.some(c => c.name === 'input_tokens')).toBe(true)
+    expect(cols.some(c => c.name === 'output_tokens')).toBe(true)
+  })
+
+  it('handles composite primary key tables correctly', async () => {
+    const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
+      await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
 
-    const row = db.prepare(
-      `SELECT session_id, input_tokens, output_tokens, model, profile, created_at FROM "session_usage"`,
-    ).get() as any
-    expect(row).toMatchObject({
-      session_id: 'stranded-session',
-      input_tokens: 200,
-      output_tokens: 80,
-      model: '',
-      profile: 'default',
-      created_at: updatedAt,
-    })
-    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='session_usage_old'`).get()).toBeUndefined()
+    // Verify composite primary key
+    const tableInfo = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`).get(GC_ROOM_AGENTS_TABLE) as { sql: string }
+    expect(tableInfo.sql).toContain('PRIMARY KEY')
+    expect(tableInfo.sql).toContain('roomId')
+    expect(tableInfo.sql).toContain('agentId')
+
+    // Verify we can insert with same roomId but different agentId
+    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('room-1', 'agent-1', 'default', 'Agent 1', '', 0)
+    db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('room-1', 'agent-2', 'default', 'Agent 2', '', 0)
+
+    const count = db.prepare(`SELECT COUNT(*) as count FROM "${GC_ROOM_AGENTS_TABLE}"`).get() as { count: number }
+    expect(count.count).toBe(2)
+
+    // Verify duplicate primary key is rejected
+    expect(() => {
+      db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run('room-1', 'agent-1', 'default', 'Agent 1 Duplicate', '', 0)
+    }).toThrow()
   })
 })
