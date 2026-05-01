@@ -283,3 +283,34 @@ The BFF layer handles API proxy (with path rewriting), SSE streaming, file uploa
 ## License
 
 [MIT](./LICENSE)
+
+## Configuration
+
+### API Server Key for Jobs API
+
+Web UI requires `API_SERVER_KEY` to authenticate with Hermes Gateway's Jobs API. 
+
+**For default profile**, create `~/.hermes/.env`:
+```bash
+API_SERVER_KEY="your-api-server-key"
+```
+
+**For other profiles**, create `~/.hermes/profiles/<profile-name>/.env`:
+```bash
+API_SERVER_KEY="your-api-server-key"
+```
+
+The API key is configured in `~/.hermes/config.yaml`:
+```yaml
+platforms:
+  api_server:
+    enabled: true
+    key: "your-api-server-key"  # Copy this value to .env
+    extra:
+      host: 127.0.0.1
+      port: 8642
+```
+
+### Why is this needed?
+
+Web UI's `gateway-manager.ts` reads `API_SERVER_KEY` from `.env` file to authenticate proxy requests to Hermes Gateway's `/api/jobs` endpoint. Without this configuration, the Jobs page will return `Invalid API key` error.
