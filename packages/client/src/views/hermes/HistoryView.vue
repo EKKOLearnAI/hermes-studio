@@ -361,12 +361,15 @@ async function handleWorkspaceConfirm() {
     <div class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
     <aside class="session-list" :class="{ collapsed: !showSessions }">
       <div class="session-list-header">
-        <span v-if="showSessions" class="session-list-title">{{ t('chat.sessions') }}</span>
+        <span v-if="showSessions" class="session-list-title">{{ t('chat.hermesHistory') }}</span>
         <div class="session-list-actions">
           <button class="session-close-btn" @click="showSessions = false">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+      </div>
+      <div v-if="showSessions" class="session-scope-note">
+        {{ t('chat.historyScopeHint') }}
       </div>
       <div v-if="showSessions" class="session-items">
         <div v-if="hermesSessionsLoading && hermesSessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
@@ -580,6 +583,17 @@ async function handleWorkspaceConfirm() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.session-scope-note {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba($accent-primary, 0.16);
+  border-radius: $radius-sm;
+  background: rgba($accent-primary, 0.06);
+  color: $text-secondary;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .session-group-header {
