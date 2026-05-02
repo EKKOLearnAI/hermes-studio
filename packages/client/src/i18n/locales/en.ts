@@ -759,6 +759,14 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_5_6_1: 'Add voice playback feature with Web Speech API: manual button, auto-play toggle, rainbow border animation, and mobile optimization',
+    new_0_5_6_2: 'Add robust LLM JSON parser with tolerance for Python format and extract text from streaming events',
+    new_0_5_6_3: 'Add Skills enhancements: usage stats, source filtering, archived skills, provenance, and pin toggle',
+    new_0_5_6_4: 'Expand daily usage stats with detailed token breakdown including cache read/write separation',
+    new_0_5_6_5: 'Clarify session history scope with improved descriptions in chat and history views',
+    new_0_5_6_6: 'Redesigned attachment handling using Anthropic-style ContentBlock array format with type discriminated unions (text, image, file)',
+    new_0_5_6_7: 'Added frontend file download functionality supporting both ContentBlock and Markdown formats with authentication',
+    new_0_5_6_8: 'Fixed multi-process conflict causing SQLite database resets by eliminating redundant nodemon instances',
     new_0_5_5_1: '🎉 Happy Labor Day! No work this Labor Day, please bear with us if there are any issues',
     new_0_5_5_2: 'Add History page for browsing Hermes session history',
     new_0_5_5_3: 'History page manages session state independently without interfering with active chat',

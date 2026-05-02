@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { Message } from "@/stores/hermes/chat";
+import type { Message, ContentBlock } from "@/stores/hermes/chat";
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { downloadFile } from "@/api/hermes/download";
+	import { getApiKey } from "@/api/client";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
@@ -23,6 +24,55 @@ const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+
+// Parse ContentBlock[] from JSON string
+const contentBlocks = computed(() => {
+  const content = props.message.content || '';
+  if (!content.trim()) return null;
+
+  try {
+    // Try to parse as ContentBlock[] array
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
+      return parsed as ContentBlock[];
+    }
+  } catch {
+    // Not valid JSON, treat as plain text
+  }
+
+  return null;
+});
+
+// Check if content is in ContentBlock[] format
+const isContentBlockArray = computed(() => contentBlocks.value !== null);
+
+// Extract text content from ContentBlock[] for display
+const displayText = computed(() => {
+  if (!isContentBlockArray.value) {
+    return props.message.content || '';
+  }
+
+  // Extract text from blocks
+  return contentBlocks.value!
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n');
+});
+
+// Extract files from ContentBlock[]
+const contentFiles = computed(() => {
+  if (!isContentBlockArray.value) return null;
+
+  return contentBlocks.value!.filter(block => block.type === 'image' || block.type === 'file');
+});
+
+// Generate download URL with auth token
+function getDownloadUrl(path: string, name: string): string {
+	const token = getApiKey();
+	const base = `/api/hermes/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
+	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+}
+
 const toolExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
@@ -156,11 +206,29 @@ function formatSize(bytes: number): string {
  */
 function getFilePathFromContent(attName: string): string | null {
   const content = props.message.content || "";
+
+  // Try ContentBlock[] format first
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
+      const fileBlock = parsed.find((block: any) =>
+        block.type === 'file' && block.name === attName
+      );
+      if (fileBlock && (fileBlock as any).path) {
+        return (fileBlock as any).path;
+      }
+    }
+  } catch {
+    // Not valid JSON, continue to regex matching
+  }
+
+  // Fallback to markdown format: [File: name](path)
   const regex = /\[File:\s*([^\]]+)\]\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
     if (match[1].trim() === attName.trim()) return match[2];
   }
+
   return null;
 }
 
@@ -517,8 +585,55 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <MarkdownRenderer
-              v-if="parsedThinking.body"
+              v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
+            />
+
+            <!-- Render user message content -->
+            <template v-if="message.role === 'user'">
+              <!-- ContentBlock[] format -->
+              <template v-if="isContentBlockArray">
+                <div v-if="contentFiles && contentFiles.length > 0" class="msg-attachments">
+                  <div
+                    v-for="(file, idx) in contentFiles"
+                    :key="idx"
+                    class="msg-attachment"
+                    :class="{ image: file.type === 'image' }"
+                  >
+                    <template v-if="file.type === 'image'">
+                      <img
+                        :src="getDownloadUrl(file.path, file.name)"
+                        :alt="file.name"
+                        class="msg-attachment-thumb"
+                        @click="previewUrl = getDownloadUrl(file.path, file.name)"
+                      />
+                    </template>
+                    <template v-else>
+                      <div
+                        class="msg-attachment-file"
+                        @click="downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
+                        style="cursor: pointer;"
+                        :title="t('download.downloadFile')"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        <span class="att-name">{{ file.name }}</span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <MarkdownRenderer v-if="displayText" :content="displayText" />
+              </template>
+              <!-- Plain text format -->
+              <MarkdownRenderer v-else-if="message.content" :content="message.content" />
+            </template>
+
+            <!-- Render assistant message content -->
+            <MarkdownRenderer
+              v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
+              :content="message.content"
             />
 
             <span v-if="message.isStreaming && !message.content" class="streaming-dots">

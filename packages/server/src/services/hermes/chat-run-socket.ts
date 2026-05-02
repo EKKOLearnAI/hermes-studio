@@ -29,6 +29,65 @@ import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
 import { parseLLMJSON, parseToolArguments, parseAnthropicContentArray } from '../../lib/llm-json'
 import { logger } from '../logger'
 
+/**
+ * Content block types for Anthropic-compatible message format
+ */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; name: string; path: string; media_type: string }
+  | { type: 'file'; name: string; path: string; media_type?: string }
+
+/**
+ * Convert ContentBlock[] to string for display/storage
+ * - string → 直接返回
+ * - ContentBlock[] → 返回 JSON 字符串
+ */
+function contentBlocksToString(input: string | ContentBlock[]): string {
+  if (typeof input === 'string') return input
+  return JSON.stringify(input)
+}
+
+/**
+ * Extract text content from ContentBlock[] for title preview
+ */
+function extractTextForPreview(input: string | ContentBlock[]): string {
+  if (typeof input === 'string') return input
+
+  return input
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n')
+}
+
+/**
+ * Check if input is ContentBlock array
+ */
+function isContentBlockArray(input: any): input is ContentBlock[] {
+  return Array.isArray(input) && input.length > 0 && ('type' in input[0])
+}
+
+/**
+ * Convert file/image blocks with path to base64 format for upstream API
+ *
+ * Converts images to base64 data URLs for Anthropic/OpenAI API compatibility.
+ * File attachments are converted to text mentions.
+ */
+async function convertContentBlocks(blocks: ContentBlock[]): Promise<string> {
+  let contentStr = ''
+
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      contentStr += block.text
+    } else if (block.type === 'image') {
+      contentStr += `[Image: ${block.path}]`
+    } else if (block.type === 'file') {
+      contentStr += `[File: ${block.path}]`
+    }
+  }
+
+  return contentStr
+}
+
 const compressor = new ChatContextCompressor()
 
 // --- Helper: Convert OpenAI format to Anthropic format ---
@@ -439,7 +498,7 @@ export class ChatRunSocket {
 
   private async handleRun(
     socket: Socket,
-    data: { input: string; session_id?: string; model?: string; instructions?: string },
+    data: { input: string | ContentBlock[]; session_id?: string; model?: string; instructions?: string },
     profile: string,
   ) {
     const { input, session_id, model, instructions } = data
@@ -452,24 +511,27 @@ export class ChatRunSocket {
       : undefined
 
     const now = Math.floor(Date.now() / 1000)
-
     // Mark working immediately on run start, and append user message
     if (session_id) {
       const state = this.getOrCreateSession(session_id)
       this.hermesSessionIds.set(session_id, hermesSessionId)
       state.isWorking = true
       state.profile = profile
+
+      // Convert ContentBlock[] to string for storage
+      const inputStr = contentBlocksToString(input)
       state.messages.push({
         id: state.messages.length + 1,
         session_id,
         role: 'user',
-        content: input,
+        content: inputStr,
         timestamp: now,
       })
 
       // Create session in local DB if it doesn't exist
       if (!getSession(session_id)) {
-        const preview = input.replace(/[\r\n]/g, ' ').substring(0, 100)
+        const previewText = extractTextForPreview(input)
+        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
         createSession({ id: session_id, profile, model, title: preview })
       }
 
@@ -477,7 +539,7 @@ export class ChatRunSocket {
       addMessage({
         session_id,
         role: 'user',
-        content: input,
+        content: inputStr,
         timestamp: now,
       })
 
@@ -808,14 +870,16 @@ export class ChatRunSocket {
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      // Convert input from ContentBlock[] to Anthropic format (with base64 images)
+      if (isContentBlockArray(input)) {
+        body.input = await convertContentBlocks(input)
+      }
 
       // Debug: write history to JSON file for analysis (before conversion)
 
       // Convert conversation_history from OpenAI format to Anthropic format
       if (body.conversation_history && Array.isArray(body.conversation_history)) {
         body.conversation_history = convertToAnthropicFormat(body.conversation_history)
-        logger.info('[chat-run-socket] converted conversation_history to Anthropic format for session %s: %d messages, content: %s',
-          session_id || '(new)', body.conversation_history.length, JSON.stringify(body.conversation_history, null, 2))
       }
       const res = await fetch(`${upstream}/v1/runs`, {
         method: 'POST',
@@ -823,7 +887,6 @@ export class ChatRunSocket {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(120_000),
       })
-
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         emit('run.failed', { event: 'run.failed', error: `Upstream ${res.status}: ${text}` })

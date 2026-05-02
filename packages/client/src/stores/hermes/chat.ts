@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -6,6 +6,9 @@ import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+
+// Re-export ContentBlock for convenience
+export type ContentBlock = ContentBlockImport
 
 export interface Attachment {
   id: string
@@ -72,6 +75,47 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
   return data.files
+}
+
+async function buildContentBlocks(
+  content: string,
+  attachments?: Attachment[],
+  uploadedFiles?: { name: string; path: string }[]
+): Promise<ContentBlock[]> {
+  const blocks: ContentBlock[] = []
+
+  // Add text block if content is not empty
+  if (content.trim()) {
+    blocks.push({ type: 'text', text: content.trim() })
+  }
+
+  // Add attachment blocks using uploaded file paths
+  if (attachments && attachments.length > 0 && uploadedFiles) {
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const uploaded = uploadedFiles[i]
+      const attachment = attachments[i]
+
+      // Check if it's an image
+      if (attachment?.type.startsWith('image/')) {
+        blocks.push({
+          type: 'image',
+          name: uploaded.name,
+          path: uploaded.path,
+          media_type: attachment.type,
+        })
+      } else {
+        // Other files
+        blocks.push({
+          type: 'file',
+          name: uploaded.name,
+          path: uploaded.path,
+          media_type: attachment?.type,
+        })
+      }
+    }
+  }
+
+  return blocks
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
@@ -608,11 +652,13 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
 
-      // Upload attachments and build input with file paths
-      let inputText = content.trim()
+      // Build input in Anthropic format
+      let input: string | ContentBlock[]
       if (attachments && attachments.length > 0) {
+        // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
-        // Replace blob URLs with persistent download URLs on the user message
+
+        // Update attachment URLs on the user message for display
         const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
           const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
@@ -626,14 +672,18 @@ export const useChatStore = defineStore('chat', () => {
             return dl ? { ...a, url: dl } : a
           })
         }
-        const pathParts = uploaded.map(f => `[File: ${f.name}](${urlMap.get(f.name)})`)
-        inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
+
+        // Build content blocks with uploaded file paths
+        input = await buildContentBlocks(content, attachments, uploaded)
+      } else {
+        // No attachments: use plain text format
+        input = content.trim()
       }
 
       const appStore = useAppStore()
       const sessionModel = activeSession.value?.model || appStore.selectedModel
       const runPayload = {
-        input: inputText,
+        input,
         session_id: sid,
         model: sessionModel || undefined,
       }

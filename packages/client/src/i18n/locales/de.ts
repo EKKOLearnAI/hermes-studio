@@ -589,6 +589,14 @@ jobTriggered: 'Job ausgelost',
   // Anderungsprotokoll
   changelog: {
 
+    new_0_5_6_1: 'Sprachwiedergabe mit Web Speech API: manuelle Taste, Auto-Play-Schalter, Regenbogen-Randanimation und Mobile-Optimierung',
+    new_0_5_6_2: 'Robuster LLM-JSON-Parser mit Toleranz für Python-Format und Textextraktion aus Streaming-Events',
+    new_0_5_6_3: 'Skills-Verbesserungen: Nutzungsstatistiken, Quellfilterung, archivierte Skills, Herkunft und Pin-Toggle',
+    new_0_5_6_4: 'Erweiterte tägliche Nutzungsstatistiken mit detaillierter Token-Aufschlüsselung inkl. Cache-Lese-/Schreibtrennung',
+    new_0_5_6_5: 'Sitzungshistorium-Umfang geklärt mit verbesserten Beschreibungen in Chat- und Historienansichten',
+    new_0_5_6_6: 'Attachment-Verarbeitung neu gestaltet mit Anthropic-Stil ContentBlock-Array-Format (Text, Bild, Datei)',
+    new_0_5_6_7: 'Frontend-Dateidownload-Funktion für ContentBlock- und Markdown-Formate mit Authentifizierung hinzugefügt',
+    new_0_5_6_8: 'Multi-Prozess-Konflikt behoben, der SQLite-Database-Resets verursacht hat, durch Entfernen redundanter nodemon-Instanzen',
     new_0_5_5_1: '🎉 Tag der Arbeit! Heute wird nicht gearbeitet, bitte habt Verständnis',
     new_0_5_5_2: 'Verlaufsseite für Hermes-Sitzungshistorie hinzugefügt',
     new_0_5_5_3: 'Verlaufsseite verwaltet Sitzungen unabhängig ohne Störung des aktiven Chats',

@@ -589,6 +589,14 @@ jobTriggered: 'Job acionado',
   // Registro de alteracoes
   changelog: {
 
+    new_0_5_6_1: 'Reprodução de voz: Web Speech API, botão manual, interruptor auto-play, animação de borda arco-íris e otimização móvel',
+    new_0_5_6_2: 'Parser JSON LLM robusto com tolerância ao formato Python e extração de texto de eventos streaming',
+    new_0_5_6_3: 'Melhorias de Skills: estatísticas de uso, filtragem de fonte, skills arquivados, procedência e toggle de fixação',
+    new_0_5_6_4: 'Estatísticas diárias de uso expandidas com breakdown detalhado de tokens incluindo separação de leitura/escrita de cache',
+    new_0_5_6_5: 'Escopo do histórico de sessões clarificado com descrições melhoradas nas visualizações de chat e histórico',
+    new_0_5_6_6: 'Processamento de anexos reprojetado usando formato de matriz ContentBlock estilo Anthropic (texto, imagem, arquivo)',
+    new_0_5_6_7: 'Adicionada funcionalidade de download de arquivos frontend suportando formatos ContentBlock e Markdown com autenticação',
+    new_0_5_6_8: 'Corrigido conflito de múltiplos processos que causava redefinições do banco de dados SQLite eliminando instâncias nodemon redundantes',
     new_0_5_5_1: '🎉 Feliz Dia do Trabalhador! Hoje não se trabalha, obrigado pela compreensão',
     new_0_5_5_2: 'Adicionada página de histórico para sessões Hermes',
     new_0_5_5_3: 'Página de histórico gerencia sessões de forma independente',
