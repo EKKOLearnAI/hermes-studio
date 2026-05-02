@@ -18,6 +18,7 @@ import {
   getSessionDetailPaginated,
   createSession,
   addMessage,
+  addMessages,
   updateSessionStats,
   useLocalSessionStore,
 } from '../../db/hermes/session-store'
@@ -91,108 +92,20 @@ async function convertContentBlocks(blocks: ContentBlock[]): Promise<string> {
 const compressor = new ChatContextCompressor()
 
 // --- Helper: Convert OpenAI format to Anthropic format ---
-function convertToAnthropicFormat(messages: any[]): any[] {
+function convertHistoryFormat(messages: any[]): any[] {
   const result: any[] = []
 
   for (const m of messages) {
     const role = m.role
     const content = m.content || ''
-
-    if (role === 'assistant') {
-      const blocks: any[] = []
-
-      // Add thinking block if reasoning_content exists
-      if (m.reasoning) {
-        blocks.push({ type: 'thinking', thinking: m.reasoning })
-      }
-
-      // Add text content
-      if (content) {
-        if (typeof content === 'string') {
-          blocks.push({ type: 'text', text: content })
-        } else if (Array.isArray(content)) {
-          blocks.push(...content)
-        }
-      }
-
-      // Add tool_use blocks
-      if (m.tool_calls && Array.isArray(m.tool_calls)) {
-        for (const tc of m.tool_calls) {
-          if (tc.id && tc.function) {
-            try {
-              const args = parseToolArguments(tc.function.arguments || '{}')
-              blocks.push({
-                type: 'tool_use',
-                id: tc.id,
-                name: tc.function.name,
-                input: args
-              })
-            } catch (e) {
-              logger.warn(e, '[chat-run-socket] failed to parse tool arguments for tool %s', tc.id)
-              blocks.push({
-                type: 'tool_use',
-                id: tc.id,
-                name: tc.function.name,
-                input: {}
-              })
-            }
-          }
-        }
-      }
-
-      // Handle empty content
-      if (blocks.length === 0) {
-        blocks.push({ type: 'text', text: '' })
-      }
-
-      result.push({ role: 'assistant', content: blocks })
-      continue
-    }
-
+    delete m.reasoning_content
     if (role === 'tool') {
       // Convert tool message to tool_result in user message
       // Follow Hermes official format: content is a string (not array)
-      const toolContent = content || '(no output)'
-
-      // Normalize tool_result content to string format
-      // Use robust LLM JSON parser if content looks like JSON
-      let resultContent: string
-      if (typeof toolContent === 'string') {
-        try {
-          // Try to parse as JSON first (handles Python format, single quotes, etc.)
-          const parsed = parseLLMJSON(toolContent, 2)
-          // Re-serialize to ensure clean JSON string
-          resultContent = JSON.stringify(parsed)
-        } catch {
-          // Not valid JSON, use as-is
-          resultContent = toolContent
-        }
-      } else if (typeof toolContent === 'object' && toolContent !== null) {
-        // Object or array, serialize to JSON string
-        resultContent = JSON.stringify(toolContent)
-      } else {
-        // Primitive type (null, undefined, number, boolean)
-        resultContent = String(toolContent !== null && toolContent !== undefined ? toolContent : '(no output)')
-      }
-
-      const toolResult = {
-        type: 'tool_result',
-        tool_use_id: m.tool_call_id || '',
-        content: resultContent
-      }
-
-      // Merge with previous user message if it ends with tool_result
-      if (
-        result.length > 0 &&
-        result[result.length - 1].role === 'user' &&
-        Array.isArray(result[result.length - 1].content) &&
-        result[result.length - 1].content.length > 0 &&
-        result[result.length - 1].content[result[result.length - 1].content.length - 1].type === 'tool_result'
-      ) {
-        result[result.length - 1].content.push(toolResult)
-      } else {
-        result.push({ role: 'user', content: [toolResult] })
-      }
+      let pushItem = { ...m }
+      pushItem.role = 'user'
+      pushItem.content = `[Tool result: ${content}]`
+      result.push(pushItem)
       continue
     }
 
@@ -200,14 +113,15 @@ function convertToAnthropicFormat(messages: any[]): any[] {
     if (role === 'user') {
       // Format: { role: 'user', content: [{ type: 'text', text: '...' }] }
       if (typeof content === 'string') {
-        result.push({ role: 'user', content: [{ type: 'text', text: content || '' }] })
+        result.push({ role: 'user', content: content })
       } else if (Array.isArray(content)) {
         // Already in array format, assume it's correct
-        result.push({ role: 'user', content })
-      } else if (content) {
-        // Fallback for other types
-        result.push({ role: 'user', content: [{ type: 'text', text: String(content) }] })
+        result.push({ role: 'user', content: convertContentBlocks(content) })
       }
+      continue
+    }
+    if (role === 'assistant') {
+      result.push({ ...m })
       continue
     }
   }
@@ -455,18 +369,23 @@ export class ChatRunSocket {
           : await getSessionDetailFromDb(sid)
         const messages = detail?.messages ? this.handleMessage(detail.messages, sid) : []
         // Calculate context tokens — aware of compression snapshot
+
         let inputTokens: number
+        let outputTokens: number
         const snapshot = getCompressionSnapshot(sid)
         if (snapshot) {
           const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
           inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-            newMessages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+            newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+          outputTokens = newMessages
+            .filter(m => m.role === 'assistant' || m.role === 'tool')
+            .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
         } else {
-          inputTokens = messages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+          inputTokens = messages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+          outputTokens = messages
+            .filter(m => m.role === 'assistant' || m.role === 'tool')
+            .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
         }
-        const outputTokens = messages
-          .filter(m => m.role === 'assistant')
-          .reduce((sum, m) => sum + countTokens(m.content || ''), 0)
         state = {
           messages,
           isWorking: false,
@@ -650,6 +569,7 @@ export class ChatRunSocket {
               const newMessages = history.slice(snapshot.lastMessageIndex + 1)
               logger.info('[context-compress] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
                 session_id, snapshot.lastMessageIndex, newMessages.length, totalTokens, triggerTokens)
+              // triggerTokens
               if (totalTokens <= triggerTokens) {
                 // Under threshold — use assembled context directly, no LLM call needed
                 history = [
@@ -879,7 +799,7 @@ export class ChatRunSocket {
 
       // Convert conversation_history from OpenAI format to Anthropic format
       if (body.conversation_history && Array.isArray(body.conversation_history)) {
-        body.conversation_history = convertToAnthropicFormat(body.conversation_history)
+        body.conversation_history = convertHistoryFormat(body.conversation_history)
       }
       const res = await fetch(`${upstream}/v1/runs`, {
         method: 'POST',
@@ -1188,17 +1108,20 @@ export class ChatRunSocket {
 
       const snapshot = getCompressionSnapshot(sid)
       let inputTokens: number
+      let outputTokens: number
       if (snapshot && msgs.length) {
         const newMessages = msgs.slice(snapshot.lastMessageIndex + 1)
         inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-          newMessages.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+          newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        outputTokens = newMessages
+          .filter(m => m.role === 'assistant' || m.role === 'tool')
+          .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
       } else {
-        inputTokens = msgs.reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        inputTokens = msgs.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        outputTokens = msgs
+          .filter(m => m.role === 'assistant' || m.role === 'tool')
+          .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
       }
-
-      const outputTokens = msgs
-        .filter(m => m.role === 'assistant')
-        .reduce((sum, m) => sum + countTokens(m.content || ''), 0)
       state.inputTokens = inputTokens
       state.outputTokens = outputTokens
       emit('usage.updated', {
@@ -1277,13 +1200,14 @@ export class ChatRunSocket {
             logger.info('[chat-run-socket] syncFromHermes: merged reasoning for %d messages', mergedCount)
           }
 
-          for (const msg of toInsert) {
+          // Batch insert with transaction for atomicity
+          addMessages(toInsert.map(msg => {
             // Resolve tool_name from assistant's tool_calls if missing
             let toolName = msg.tool_name || null
             if (!toolName && msg.tool_call_id) {
               toolName = toolNameMap.get(msg.tool_call_id) || null
             }
-            addMessage({
+            return {
               session_id: localSessionId,
               role: msg.role,
               content: msg.content || '',
@@ -1293,12 +1217,13 @@ export class ChatRunSocket {
               timestamp: msg.timestamp || Math.floor(Date.now() / 1000),
               token_count: msg.token_count || null,
               finish_reason: msg.finish_reason || null,
-              reasoning: msg.reasoning || null,  // Now includes merged reasoning
+              reasoning: msg.reasoning || null,
               reasoning_details: msg.reasoning_details || null,
               reasoning_content: msg.reasoning_content || null,
               codex_reasoning_items: msg.codex_reasoning_items || null,
-            })
-          }
+            }
+          }))
+
           logger.info('[chat-run-socket] syncFromHermes: synced %d messages to local session %s', toInsert.length, localSessionId)
         }
 
@@ -1324,7 +1249,12 @@ export class ChatRunSocket {
             this.replaceByHermesSessionId(localSessionId, hermesSessionId, messages)
           }
           const emit = (event: string, payload: any) => {
-            socket.emit(event, { ...payload, session_id: localSessionId })
+            const tagged = localSessionId ? { ...payload, localSessionId } : payload
+            if (localSessionId) {
+              this.nsp.to(`session:${localSessionId}`).emit(event, tagged)
+            } else if (socket.connected) {
+              socket.emit(event, tagged)
+            }
           }
           this.calcAndUpdateUsage(localSessionId, state, emit)
         }
