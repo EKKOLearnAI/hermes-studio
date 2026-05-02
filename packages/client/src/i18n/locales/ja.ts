@@ -147,6 +147,11 @@ export default {
     copyBubble: 'メッセージをコピー',
     copiedBubble: 'コピーしました',
     copyFailed: 'コピーに失敗しました',
+    playSpeech: '音声を読み上げ',
+    pauseSpeech: '一時停止',
+    resumeSpeech: '再開',
+    stopSpeech: '停止',
+    speechNotSupported: 'このブラウザは音声読み上げをサポートしていません',
   },
 
   // スケジュールジョブ

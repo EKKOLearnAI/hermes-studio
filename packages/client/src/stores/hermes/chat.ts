@@ -300,6 +300,13 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+
+  // 自动播放语音开关
+  const autoPlaySpeechEnabled = ref(false)
+
+  function setAutoPlaySpeech(enabled: boolean) {
+    autoPlaySpeechEnabled.value = enabled
+  }
   const isStreaming = computed(() => {
     const sid = activeSessionId.value
     if (sid == null) return false
@@ -871,6 +878,19 @@ export const useChatStore = defineStore('chat', () => {
                 })
               }
 
+              // 自动播放语音
+              console.log('[run.completed] autoPlaySpeechEnabled:', autoPlaySpeechEnabled.value)
+              if (autoPlaySpeechEnabled.value) {
+                const msgs = getSessionMsgs(sid)
+                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+                if (lastAssistant?.content) {
+                  // 延迟一小会儿再播放，确保 UI 更新完成
+                  setTimeout(() => {
+                    playMessageSpeech(lastAssistant.id, lastAssistant.content)
+                  }, 300)
+                }
+              }
+
               cleanup()
               updateSessionTitle(sid)
               // the in-flight marker. If the browser is reloading right now
@@ -1342,6 +1362,15 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.clear()
   }
 
+  // 播放消息语音
+  function playMessageSpeech(messageId: string, content: string) {
+    // 触发自定义事件，让 MessageItem 组件处理播放
+    const event = new CustomEvent('auto-play-speech', {
+      detail: { messageId, content }
+    })
+    window.dispatchEvent(event)
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -1371,5 +1400,7 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
+    setAutoPlaySpeech,
+    playMessageSpeech,
   }
 })

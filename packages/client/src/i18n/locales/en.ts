@@ -111,6 +111,7 @@ export default {
     emptyState: 'Start a conversation with Hermes Agent',
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     attachFiles: 'Attach files',
+    autoPlaySpeech: 'Auto-play voice',
     stop: 'Stop',
     start: 'Start',
     stopGateway: 'Stop Gateway',
@@ -176,6 +177,11 @@ export default {
     copyBubble: 'Copy message',
     copiedBubble: 'Message copied',
     copyFailed: 'Copy failed',
+    playSpeech: 'Play voice',
+    pauseSpeech: 'Pause',
+    resumeSpeech: 'Resume',
+    stopSpeech: 'Stop',
+    speechNotSupported: 'Voice playback not supported in this browser',
   },
 
   // Jobs

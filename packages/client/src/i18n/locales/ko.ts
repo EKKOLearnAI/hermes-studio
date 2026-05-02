@@ -147,6 +147,11 @@ export default {
     copyBubble: '메시지 복사',
     copiedBubble: '복사됨',
     copyFailed: '복사 실패',
+    playSpeech: '음성 재생',
+    pauseSpeech: '일시정지',
+    resumeSpeech: '재개',
+    stopSpeech: '중지',
+    speechNotSupported: '이 브라우저는 음성 재생을 지원하지 않습니다',
   },
 
   // 예약 작업

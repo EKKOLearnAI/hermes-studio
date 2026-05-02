@@ -111,6 +111,7 @@ export default {
     emptyState: '开始与 Hermes Agent 对话',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     attachFiles: '添加附件',
+    autoPlaySpeech: '自动播放语音',
     stop: '停止',
     start: '启动',
     stopGateway: '停止网关',
@@ -176,6 +177,11 @@ export default {
     copyBubble: '复制消息',
     copiedBubble: '已复制',
     copyFailed: '复制失败',
+    playSpeech: '播放语音',
+    pauseSpeech: '暂停',
+    resumeSpeech: '继续',
+    stopSpeech: '停止',
+    speechNotSupported: '此浏览器不支持语音播放',
   },
 
   // 定时任务

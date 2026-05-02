@@ -147,6 +147,11 @@ export default {
     copyBubble: 'Copier le message',
     copiedBubble: 'Message copié',
     copyFailed: 'Échec de la copie',
+    playSpeech: 'Lire à voix haute',
+    pauseSpeech: 'Pause',
+    resumeSpeech: 'Reprendre',
+    stopSpeech: 'Arrêter',
+    speechNotSupported: 'Reproduction vocale non prise en charge dans ce navigateur',
   },
 
   // Jobs
