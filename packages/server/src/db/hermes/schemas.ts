@@ -543,8 +543,8 @@ export function initAllHermesTables(retryCount = 0): void {
       }
 
       // 3. 删除 WAL 和 SHM 文件
-      try { unlinkSync(dbPath + '-wal') } catch {}
-      try { unlinkSync(dbPath + '-shm') } catch {}
+      try { unlinkSync(dbPath + '-wal') } catch { }
+      try { unlinkSync(dbPath + '-shm') } catch { }
 
       // 4. 重新初始化（增加重试计数）
       console.log('[Schema] Reinitializing database...')
