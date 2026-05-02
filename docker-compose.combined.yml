@@ -1,0 +1,27 @@
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.combined
+      args:
+        BASE_IMAGE: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
+    image: ${COMBINED_IMAGE:-hermes-combined:latest}
+    container_name: ${CONTAINER_NAME:-hermes}
+    user: root
+    volumes:
+      - ${HERMES_DATA_DIR:-./hermes_data}:/opt/data/.hermes:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/opt/data/.hermes-web-ui:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/opt/data/workspace:z
+    environment:
+      - PORT=${PORT:-6060}
+      - UPSTREAM=http://127.0.0.1:8642
+      - HERMES_HOME=/opt/data/.hermes
+      - HERMES_BIN=/opt/hermes/.venv/bin/hermes
+      - AUTH_DISABLED=${AUTH_DISABLED:-false}
+      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    ports:
+      - "${PORT:-6060}:${PORT:-6060}"
+      - "8642-8670:8642-8670"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
