@@ -130,6 +130,7 @@ export default {
     renamed: '이름이 변경되었습니다',
     renameFailed: '이름 변경 실패',
     renameSession: '세션 이름 변경',
+    sessionNotFound: '세션을 찾을 수 없습니다',
     enterNewTitle: '새 제목을 입력하세요',
     other: '기타',
     runFailed: '실행 실패',

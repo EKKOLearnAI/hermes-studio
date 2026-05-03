@@ -1,7 +1,7 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listConversationSummariesFromDb, getConversationDetailFromDb } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -232,7 +232,18 @@ export async function get(ctx: any) {
  * GET /api/hermes/sessions/hermes/:id
  */
 export async function getHermesSession(ctx: any) {
+  // Try database first (consistent with listHermesSessions)
+  try {
+    const session = await getSessionDetailFromDb(ctx.params.id)
+    if (session && session.source !== 'api_server' && session.source !== 'cron') {
+      ctx.body = { session }
+      return
+    }
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
+  }
 
+  // Fallback to CLI
   const session = await hermesCli.getSession(ctx.params.id)
   if (!session) {
     ctx.status = 404

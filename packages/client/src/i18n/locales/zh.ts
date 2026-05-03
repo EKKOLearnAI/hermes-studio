@@ -153,6 +153,7 @@ export default {
     renamed: '已重命名',
     renameFailed: '重命名失败',
     renameSession: '重命名会话',
+    sessionNotFound: '会话未找到',
     enterNewTitle: '输入新标题',
     workspace: '工作区',
     setWorkspace: '设置工作区',

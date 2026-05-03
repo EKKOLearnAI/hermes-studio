@@ -130,6 +130,7 @@ export default {
     renamed: 'Renombrada',
     renameFailed: 'Error al renombrar',
     renameSession: 'Renombrar sesion',
+    sessionNotFound: 'Sesion no encontrada',
     enterNewTitle: 'Introduce un nuevo titulo',
     other: 'Otro',
     runFailed: 'Error en la ejecucion',

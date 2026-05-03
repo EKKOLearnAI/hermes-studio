@@ -130,6 +130,7 @@ export default {
     renamed: 'Umbenannt',
     renameFailed: 'Umbenennung fehlgeschlagen',
     renameSession: 'Sitzung umbenennen',
+    sessionNotFound: 'Sitzung nicht gefunden',
     enterNewTitle: 'Neuen Titel eingeben',
     other: 'Sonstige',
     runFailed: 'Ausfuhrung fehlgeschlagen',
