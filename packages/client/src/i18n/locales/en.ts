@@ -105,6 +105,12 @@ export default {
     noChangelog: 'No changelog available',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Workspace',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'remaining',
@@ -622,6 +628,10 @@ export default {
     closeSession: 'Close this session?',
     sessionExited: 'Exited',
     processExited: 'Process exited with code {code}',
+    noSessions: 'No terminal sessions',
+    connectionFailed: 'Terminal service connection failed',
+    connectionClosed: 'Terminal connection closed',
+    connectionError: 'Terminal connection error',
   },
 
   // Group Chat
@@ -698,6 +708,7 @@ export default {
   // Files
   files: {
     title: 'Files',
+    fileTree: 'File Tree',
     tree: 'Directory Tree',
     list: 'File List',
     breadcrumbRoot: 'Home',

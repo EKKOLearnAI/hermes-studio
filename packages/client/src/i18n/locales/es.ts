@@ -95,6 +95,12 @@ export default {
     noChangelog: 'No hay registro de cambios',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Espacio de trabajo',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'restante',

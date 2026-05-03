@@ -105,6 +105,12 @@ export default {
     noChangelog: '暂无更新日志',
   },
 
+  // 抽屉
+  drawer: {
+    terminal: '终端',
+    files: '工作区',
+  },
+
   // 对话
   chat: {
     contextRemaining: '剩余',
@@ -624,6 +630,10 @@ export default {
     closeSession: '关闭此会话？',
     sessionExited: '已退出',
     processExited: '进程已退出，代码 {code}',
+    noSessions: '暂无终端会话',
+    connectionFailed: '终端服务连接失败',
+    connectionClosed: '终端连接已关闭',
+    connectionError: '终端连接错误',
   },
 
   // 群聊
@@ -700,6 +710,7 @@ export default {
   // 文件管理
   files: {
     title: '文件',
+    fileTree: '文件树',
     tree: '目录树',
     list: '文件列表',
     breadcrumbRoot: '根目录',

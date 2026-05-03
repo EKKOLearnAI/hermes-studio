@@ -95,6 +95,12 @@ export default {
     noChangelog: '更新履歴はありません',
   },
 
+  // ドロワー
+  drawer: {
+    terminal: 'ターミナル',
+    files: 'ワークスペース',
+  },
+
   // チャット
   chat: {
     contextRemaining: '残り',

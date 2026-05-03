@@ -95,6 +95,12 @@ export default {
     noChangelog: 'Aucun journal disponible',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Espace de travail',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'restant',

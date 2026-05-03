@@ -95,6 +95,12 @@ export default {
     noChangelog: '변경 이력이 없습니다',
   },
 
+  // 서랍
+  drawer: {
+    terminal: '터미널',
+    files: '작업 공간',
+  },
+
   // 채팅
   chat: {
     contextRemaining: '남음',

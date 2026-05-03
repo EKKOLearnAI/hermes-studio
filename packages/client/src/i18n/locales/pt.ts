@@ -95,6 +95,12 @@ export default {
     noChangelog: 'Nenhum registro disponivel',
   },
 
+  // Gaveta
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Espaço de trabalho',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'restante',

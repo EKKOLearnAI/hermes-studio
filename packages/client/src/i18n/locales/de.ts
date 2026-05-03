@@ -95,6 +95,12 @@ export default {
     noChangelog: 'Kein Anderungsprotokoll verfugbar',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Arbeitsbereich',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'übrig',
@@ -562,6 +568,10 @@ jobTriggered: 'Job ausgelost',
     closeSession: 'Diese Sitzung schliessen?',
     sessionExited: 'Beendet',
     processExited: 'Prozess beendet mit Code {code}',
+    noSessions: 'Keine Terminal-Sitzungen',
+    connectionFailed: 'Terminaldienstverbindung fehlgeschlagen',
+    connectionClosed: 'Terminalverbindung geschlossen',
+    connectionError: 'Terminalverbindungsfehler',
   },
 
   // Usage
