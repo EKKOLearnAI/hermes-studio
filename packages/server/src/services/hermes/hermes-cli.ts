@@ -394,7 +394,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
     for (const line of lines) {
       if (line.startsWith(' Profile') || line.match(/^ ─/)) continue
 
-      const match = line.match(/^\s+(◆)?(\S+)\s{2,}(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
+      const match = line.match(/^\s+(◆)?(.+?)\s+(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
       if (match) {
         profiles.push({
           name: match[2],
