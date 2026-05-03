@@ -1012,7 +1012,7 @@ async function handleWorkspaceConfirm() {
   box-shadow:
     0 0 10px rgba(255, 107, 107, 0.4),
     0 0 20px rgba(255, 107, 107, 0.2);
-  animation: rainbow-glow 4s linear infinite;
+  animation: rainbow-glow 8s linear infinite;
   transition: all $transition-fast;
 
   &:hover {
