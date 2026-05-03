@@ -39,4 +39,4 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:v0.5.5
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:v0.5.7
