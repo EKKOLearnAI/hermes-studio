@@ -475,7 +475,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     padding: 4px 10px;
     font-size: 12px;
     color: $text-secondary;
-    background-color: $bg-card-hover;
+    background: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.06);
     border-radius: $radius-sm;
 
     .dark & {
@@ -856,7 +856,9 @@ export default defineComponent({ components: { CreateRoomForm } })
 }
 
 .modal {
-    background: $bg-card;
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.45);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border-radius: $radius-lg;
     padding: 24px;
     width: 400px;

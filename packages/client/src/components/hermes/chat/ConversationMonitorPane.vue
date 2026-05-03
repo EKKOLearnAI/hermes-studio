@@ -284,7 +284,9 @@ onUnmounted(() => {
 .conversation-monitor__message {
   padding: 12px 14px;
   border-radius: 10px;
-  background: rgba($bg-secondary, 0.8);
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 
   &.role-user {
     border: 1px solid rgba($accent-primary, 0.18);

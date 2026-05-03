@@ -117,14 +117,22 @@ async function handleDelete() {
 @use '@/styles/variables' as *;
 
 .provider-card {
-  background-color: $bg-card;
-  border: 1px solid $border-color;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
   border-radius: $radius-md;
   padding: 16px;
-  transition: border-color $transition-fast;
+  transition: all 0.25s ease;
 
   &:hover {
     border-color: rgba(var(--accent-primary-rgb), 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  .dark & {
+    background: rgba(var(--bg-card-rgb, 51, 51, 51), 0.4);
   }
 }
 

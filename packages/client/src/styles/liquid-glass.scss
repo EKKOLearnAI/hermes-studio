@@ -1,0 +1,627 @@
+// ─── Liquid Glass Design System ─────────────────────────────
+// Frosted glass, ambient blobs, shimmer borders, glass buttons
+// Works in both light and dark themes via CSS custom properties
+
+// ── Ambient Background Blobs ────────────────────────────────
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.3;
+  animation: lg-float 20s ease-in-out infinite;
+}
+
+.blob-1 {
+  width: 300px;
+  height: 300px;
+  background: var(--accent-info, #6ba3d6);
+  top: -80px;
+  right: -60px;
+}
+
+.blob-2 {
+  width: 250px;
+  height: 250px;
+  background: var(--success, #66bb6a);
+  bottom: -40px;
+  left: -60px;
+  animation-delay: -7s;
+}
+
+.blob-3 {
+  width: 200px;
+  height: 200px;
+  background: var(--accent-primary, #e0e0e0);
+  top: 50%;
+  left: 60%;
+  animation-delay: -14s;
+}
+
+@keyframes lg-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(40px, -30px) scale(1.08); }
+  50% { transform: translate(-15px, 20px) scale(0.95); }
+  75% { transform: translate(25px, 10px) scale(1.03); }
+}
+
+// ── Caustic Light Overlay ──────────────────────────────────
+
+.ambient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 600px 400px at 20% 30%, rgba(var(--accent-info-rgb, 74, 144, 217), 0.04), transparent),
+    radial-gradient(ellipse 500px 350px at 80% 70%, rgba(var(--success-rgb, 46, 125, 50), 0.03), transparent),
+    radial-gradient(ellipse 400px 300px at 50% 20%, rgba(var(--accent-primary-rgb, 51, 51, 51), 0.02), transparent);
+  pointer-events: none;
+  animation: lg-caustic 15s ease-in-out infinite alternate;
+}
+
+@keyframes lg-caustic {
+  0% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0.7; transform: scale(0.98); }
+}
+
+// ── Page Layout Helpers ─────────────────────────────────────
+
+.lg-page {
+  position: relative;
+  z-index: 1;
+  height: calc(100 * var(--vh));
+  display: flex;
+  flex-direction: column;
+}
+
+.lg-header {
+  padding: 24px 28px 0;
+  flex-shrink: 0;
+
+  .lg-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+  }
+
+  .lg-subtitle {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+}
+
+.lg-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.lg-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px 32px;
+}
+
+// ── Glass Card ──────────────────────────────────────────────
+
+.lg-card {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.lg-card-shimmer {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.25),
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.15)
+  );
+  background-size: 300% 300%;
+  animation: lg-shimmer 8s ease-in-out infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes lg-shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.lg-card-inner {
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.45);
+  backdrop-filter: blur(24px) saturate(1.5) brightness(1.05);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5) brightness(1.05);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.dark .lg-card-inner {
+  background: rgba(var(--bg-card-rgb, 51, 51, 51), 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+// Compact card variant
+.lg-card-inner.lg-compact {
+  padding: 16px;
+}
+
+// ── Glass Card Header ───────────────────────────────────────
+
+.lg-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.lg-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.08);
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.lg-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.lg-card-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+// ── Status Badge ────────────────────────────────────────────
+
+.lg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(var(--text-muted-rgb, 153, 153, 153), 0.1);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: all 0.4s ease;
+}
+
+.lg-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.lg-badge.active {
+  background: rgba(var(--success-rgb, 46, 125, 50), 0.12);
+  color: var(--success);
+
+  .lg-badge-dot {
+    box-shadow: 0 0 6px rgba(var(--success-rgb, 46, 125, 50), 0.6);
+    animation: lg-pulse-dot 2s ease-in-out infinite;
+  }
+}
+
+@keyframes lg-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+// ── Glass Tip / Info Box ────────────────────────────────────
+
+.lg-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--accent-info);
+  background: rgba(var(--accent-info-rgb, 74, 144, 217), 0.07);
+  margin-bottom: 20px;
+  line-height: 1.5;
+
+  svg { flex-shrink: 0; opacity: 0.7; }
+}
+
+// ── Glass Error Box ─────────────────────────────────────────
+
+.lg-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--error);
+  background: rgba(var(--error-rgb, 198, 40, 40), 0.06);
+  border: 1px solid rgba(var(--error-rgb, 198, 40, 40), 0.1);
+  margin-bottom: 16px;
+  line-height: 1.5;
+
+  svg { flex-shrink: 0; margin-top: 1px; }
+}
+
+// ── Glass Input ─────────────────────────────────────────────
+
+.lg-input-wrap {
+  border-radius: 10px;
+  background: rgba(var(--bg-input-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.3);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  overflow: hidden;
+
+  &:focus-within {
+    border-color: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.3);
+    box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb, 51, 51, 51), 0.06);
+  }
+
+  .n-input {
+    --n-color: transparent !important;
+    --n-color-disabled: transparent !important;
+    --n-border: none !important;
+    --n-border-hover: none !important;
+    --n-border-focus: none !important;
+    --n-box-shadow-focus: none !important;
+    --n-caret-color: var(--accent-primary) !important;
+    --n-text-color: var(--text-primary) !important;
+    --n-text-color-disabled: var(--text-muted) !important;
+    --n-placeholder-color: var(--text-muted) !important;
+    --n-font-size: 13px !important;
+    background: transparent !important;
+  }
+}
+
+// ── Glass Buttons ───────────────────────────────────────────
+
+.lg-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.25s ease;
+  border: none;
+  outline: none;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.lg-btn-shine {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+  transition: left 0.5s ease;
+  pointer-events: none;
+}
+
+.lg-btn:hover:not(:disabled) .lg-btn-shine {
+  left: 100%;
+}
+
+.lg-btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: lg-spin 0.6s linear infinite;
+}
+
+.lg-btn.ghost .lg-btn-spinner {
+  border-color: rgba(var(--text-muted-rgb, 153, 153, 153), 0.3);
+  border-top-color: currentColor;
+}
+
+@keyframes lg-spin {
+  to { transform: rotate(360deg); }
+}
+
+// Primary button
+.lg-btn.primary {
+  background: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.85);
+  color: var(--text-on-accent);
+  backdrop-filter: blur(8px);
+
+  &:hover:not(:disabled) {
+    background: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.95);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(var(--accent-primary-rgb, 51, 51, 51), 0.25);
+  }
+}
+
+// Danger button
+.lg-btn.danger {
+  background: rgba(var(--error-rgb, 198, 40, 40), 0.85);
+  color: #fff;
+  backdrop-filter: blur(8px);
+
+  &:hover:not(:disabled) {
+    background: rgba(var(--error-rgb, 198, 40, 40), 0.95);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(var(--error-rgb, 198, 40, 40), 0.25);
+  }
+}
+
+// Ghost / outline button
+.lg-btn.ghost {
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.4);
+  color: var(--text-secondary);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.3);
+  backdrop-filter: blur(8px);
+
+  &:hover:not(:disabled) {
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.6);
+    color: var(--text-primary);
+    border-color: rgba(var(--border-color-rgb, 224, 224, 224), 0.5);
+    transform: translateY(-1px);
+  }
+}
+
+// Success button
+.lg-btn.success {
+  background: rgba(var(--success-rgb, 46, 125, 50), 0.85);
+  color: #fff;
+  backdrop-filter: blur(8px);
+
+  &:hover:not(:disabled) {
+    background: rgba(var(--success-rgb, 46, 125, 50), 0.95);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(var(--success-rgb, 46, 125, 50), 0.25);
+  }
+}
+
+// ── Glass Tag ───────────────────────────────────────────────
+
+.lg-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(var(--accent-primary-rgb, 51, 51, 51), 0.08);
+  color: var(--text-secondary);
+}
+
+.lg-tag.success {
+  background: rgba(var(--success-rgb, 46, 125, 50), 0.1);
+  color: var(--success);
+}
+
+.lg-tag.warning {
+  background: rgba(var(--warning-rgb, 245, 127, 23), 0.1);
+  color: var(--warning);
+}
+
+.lg-tag.error {
+  background: rgba(var(--error-rgb, 198, 40, 40), 0.1);
+  color: var(--error);
+}
+
+.lg-tag.info {
+  background: rgba(var(--accent-info-rgb, 74, 144, 217), 0.1);
+  color: var(--accent-info);
+}
+
+// ── Wave Loader ─────────────────────────────────────────────
+
+.lg-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+
+  span {
+    width: 3px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--accent-info);
+    animation: lg-wave 1.2s ease-in-out infinite;
+
+    &:nth-child(1) { animation-delay: 0s; }
+    &:nth-child(2) { animation-delay: 0.1s; }
+    &:nth-child(3) { animation-delay: 0.2s; }
+    &:nth-child(4) { animation-delay: 0.3s; }
+    &:nth-child(5) { animation-delay: 0.4s; }
+  }
+}
+
+@keyframes lg-wave {
+  0%, 60%, 100% { height: 6px; opacity: 0.4; }
+  30% { height: 16px; opacity: 1; }
+}
+
+// ── Glass Divider ───────────────────────────────────────────
+
+.lg-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--border-color-rgb, 224, 224, 224), 0.3),
+    transparent
+  );
+  margin: 16px 0;
+}
+
+// ── Empty State ─────────────────────────────────────────────
+
+.lg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+
+  svg { opacity: 0.4; }
+}
+
+// ── Glass Grid ──────────────────────────────────────────────
+
+.lg-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.lg-grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.lg-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+// ── Field Group ─────────────────────────────────────────────
+
+.lg-field {
+  margin-bottom: 18px;
+}
+
+.lg-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+// ── URL Display ─────────────────────────────────────────────
+
+.lg-url-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(var(--success-rgb, 46, 125, 50), 0.06);
+  border: 1px solid rgba(var(--success-rgb, 46, 125, 50), 0.12);
+
+  a {
+    font-size: 13px;
+    font-family: var(--font-code, monospace);
+    color: var(--accent-info);
+    word-break: break-all;
+    text-decoration: none;
+    transition: color 0.2s;
+
+    &:hover {
+      color: var(--accent-primary);
+      text-decoration: underline;
+    }
+  }
+}
+
+.lg-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.3);
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+
+  &:hover {
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.8);
+    color: var(--text-primary);
+    border-color: rgba(var(--border-color-rgb, 224, 224, 224), 0.5);
+  }
+}
+
+// ── Generating Animation ────────────────────────────────────
+
+.lg-generating {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(var(--accent-info-rgb, 74, 144, 217), 0.05);
+  border: 1px solid rgba(var(--accent-info-rgb, 74, 144, 217), 0.1);
+  font-size: 13px;
+  color: var(--accent-info);
+}
+
+// ── Stats Card ──────────────────────────────────────────────
+
+.lg-stat {
+  text-align: center;
+  padding: 16px;
+
+  .lg-stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+  }
+
+  .lg-stat-label {
+    margin-top: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+}

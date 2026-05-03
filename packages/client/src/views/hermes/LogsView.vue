@@ -85,9 +85,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="logs-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('logs.title') }}</h2>
+  <div class="logs-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('logs.title') }}</h2>
       <div class="header-actions">
         <NSelect
           v-model:value="selectedLog"
@@ -128,7 +128,7 @@ onMounted(async () => {
           <div
             v-for="(entry, idx) in filteredEntries"
             :key="idx"
-            class="log-entry"
+class="logs-content lg-body"
             :class="levelClass(entry.level)"
           >
             <span class="log-time">{{ formatTime(entry.timestamp) }}</span>
@@ -174,7 +174,9 @@ onMounted(async () => {
   padding: 4px 10px;
   border: 1px solid $border-color;
   border-radius: $radius-sm;
-  background: $bg-input;
+  background: rgba(var(--bg-input-rgb, 255, 255, 255), 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: $text-primary;
   font-size: 13px;
   outline: none;
@@ -185,10 +187,9 @@ onMounted(async () => {
   &::placeholder { color: $text-muted; }
 }
 
-.logs-body {
+.logs-content {
   flex: 1;
   overflow-y: auto;
-  min-height: 0;
 }
 
 .logs-empty {

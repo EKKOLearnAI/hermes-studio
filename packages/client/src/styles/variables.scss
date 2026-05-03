@@ -54,6 +54,10 @@
   --error-rgb: 198, 40, 40;
   --warning-rgb: 245, 127, 23;
   --accent-info-rgb: 74, 144, 217;
+
+  --bg-card-rgb: 255, 255, 255;
+  --bg-input-rgb: 255, 255, 255;
+  --border-color-rgb: 224, 224, 224;
 }
 
 .dark {
@@ -106,6 +110,10 @@
   --error-rgb: 239, 83, 80;
   --warning-rgb: 255, 183, 77;
   --accent-info-rgb: 107, 163, 214;
+
+  --bg-card-rgb: 60, 60, 60;
+  --bg-input-rgb: 42, 42, 42;
+  --border-color-rgb: 58, 58, 58;
 }
 
 // ─── SCSS Variables (delegate to CSS custom properties) ────────

@@ -80,6 +80,7 @@ export async function bootstrap() {
   app.use(serve(distDir))
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
+      !ctx.path.startsWith('/socket.io/') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
       ctx.path !== '/webhook') {

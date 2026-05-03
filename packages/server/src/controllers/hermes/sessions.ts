@@ -17,6 +17,77 @@ import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
+import type { HermesSessionRow, HermesSessionSearchRow, HermesSessionDetailRow } from '../../db/hermes/sessions-db'
+
+function sortByLastActiveDesc<T extends { last_active?: number; started_at?: number }>(items: T[]): T[] {
+  return items.sort((a, b) => Number(b.last_active || b.started_at || 0) - Number(a.last_active || a.started_at || 0))
+}
+
+function mergeByIdPreferFirst<T extends { id: string }>(...groups: T[][]): T[] {
+  const merged = new Map<string, T>()
+  for (const group of groups) {
+    for (const item of group) {
+      if (!merged.has(item.id)) merged.set(item.id, item)
+    }
+  }
+  return [...merged.values()]
+}
+
+async function listMergedSessions(source?: string, limit = 2000): Promise<HermesSessionRow[]> {
+  const local = useLocalSessionStore()
+    ? localListSessions(getActiveProfileName(), source, Math.max(limit, 2000)) as unknown as HermesSessionRow[]
+    : []
+
+  let hermes: HermesSessionRow[] = []
+  try {
+    hermes = await listSessionSummaries(source, Math.max(limit, 2000))
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: summary query failed while merging sessions')
+    if (!useLocalSessionStore()) {
+      hermes = await hermesCli.listSessions(source, limit) as unknown as HermesSessionRow[]
+    }
+  }
+
+  return sortByLastActiveDesc(mergeByIdPreferFirst(local, hermes)).slice(0, limit)
+}
+
+async function searchMergedSessions(q: string, source?: string, limit = 20): Promise<HermesSessionSearchRow[]> {
+  const local = useLocalSessionStore()
+    ? localSearchSessions(getActiveProfileName(), q, Math.max(limit, 20)) as unknown as HermesSessionSearchRow[]
+    : []
+
+  let hermes: HermesSessionSearchRow[] = []
+  try {
+    hermes = await searchSessionSummaries(q, source, Math.max(limit, 20))
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: search query failed while merging sessions')
+  }
+
+  return sortByLastActiveDesc(mergeByIdPreferFirst(local, hermes)).slice(0, limit)
+}
+
+async function getMergedSessionDetail(sessionId: string): Promise<HermesSessionDetailRow | null> {
+  if (useLocalSessionStore()) {
+    const local = localGetSessionDetail(sessionId) as unknown as HermesSessionDetailRow | null
+    if (local) return local
+  }
+
+  try {
+    const fromSessionDb = await getSessionDetailFromDb(sessionId) as unknown as HermesSessionDetailRow | null
+    if (fromSessionDb) return fromSessionDb
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: detail query failed while loading merged session')
+  }
+
+  try {
+    const fromCli = await hermesCli.getSession(sessionId) as unknown as HermesSessionDetailRow | null
+    if (fromCli) return fromCli
+  } catch (err) {
+    logger.warn(err, 'Hermes CLI detail query failed while loading merged session')
+  }
+
+  return null
+}
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -139,8 +210,7 @@ export async function list(ctx: any) {
   if (useLocalSessionStore()) {
     const source = (ctx.query.source as string) || undefined
     const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-    const profile = getActiveProfileName()
-    const sessions = localListSessions(profile, source, limit && limit > 0 ? limit : 2000)
+    const sessions = await listMergedSessions(source, limit && limit > 0 ? limit : 2000)
     ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
     return
   }
@@ -183,9 +253,11 @@ export async function listHermesSessions(ctx: any) {
 export async function search(ctx: any) {
   if (useLocalSessionStore()) {
     const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
+    const source = typeof ctx.query.source === 'string' && ctx.query.source.trim()
+      ? ctx.query.source.trim()
+      : undefined
     const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-    const profile = getActiveProfileName()
-    const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
+    const results = await searchMergedSessions(q, source, limit && limit > 0 ? limit : 20)
     ctx.body = { results: filterPendingDeletedSessions(results) }
     return
   }
@@ -208,7 +280,7 @@ export async function search(ctx: any) {
 
 export async function get(ctx: any) {
   if (useLocalSessionStore()) {
-    const session = localGetSessionDetail(ctx.params.id)
+    const session = await getMergedSessionDetail(ctx.params.id)
     if (!session) {
       ctx.status = 404
       ctx.body = { error: 'Session not found' }

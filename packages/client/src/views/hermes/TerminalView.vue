@@ -723,7 +723,9 @@ onUnmounted(() => {
     top: 0;
     height: 100%;
     z-index: 10;
-    background: $bg-card;
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.45);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     width: 280px;
 

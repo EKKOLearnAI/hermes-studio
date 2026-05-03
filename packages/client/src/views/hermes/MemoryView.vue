@@ -73,9 +73,9 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
 </script>
 
 <template>
-  <div class="memory-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('memory.title') }}</h2>
+  <div class="memory-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('memory.title') }}</h2>
       <NButton size="small" quaternary @click="loadMemory">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -87,7 +87,7 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
       </NButton>
     </header>
 
-    <div class="memory-content">
+    <div class="memory-content lg-body">
       <div v-if="loading && !data" class="memory-loading">{{ t('common.loading') }}</div>
       <div v-else class="memory-sections">
           <!-- My Notes -->
@@ -244,8 +244,7 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
 
 .memory-content {
   flex: 1;
-  overflow: hidden;
-  padding: 20px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -285,7 +284,7 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: $bg-secondary;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.3);
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
 }
@@ -301,10 +300,11 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
   display: flex;
 }
 
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
+.lg-title {
+  font-size: 22px;
+  font-weight: 700;
   color: $text-primary;
+  letter-spacing: -0.3px;
 }
 
 .section-mtime {
@@ -340,7 +340,9 @@ const displaySoul = computed(() => (data.value?.soul || '').replace(/§/g, '\n\n
   padding: 12px;
   border: 1px solid $border-color;
   border-radius: $radius-sm;
-  background: $bg-input;
+  background: rgba(var(--bg-input-rgb, 255, 255, 255), 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: $text-primary;
   font-family: $font-code;
   font-size: 13px;

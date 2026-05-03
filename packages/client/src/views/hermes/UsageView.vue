@@ -16,15 +16,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="usage-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('usage.title') }}</h2>
+  <div class="usage-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('usage.title') }}</h2>
       <NButton size="small" quaternary :loading="usageStore.isLoading" @click="usageStore.loadSessions()">
         {{ t('usage.refresh') }}
       </NButton>
     </header>
 
-    <div class="usage-content">
+    <div class="usage-content lg-body">
       <div v-if="usageStore.isLoading && !usageStore.hasData" class="usage-loading">
         {{ t('common.loading') }}
       </div>
@@ -54,7 +54,6 @@ onMounted(() => {
 .usage-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
   max-width: 960px;
   margin: 0 auto;
   width: 100%;

@@ -25,7 +25,7 @@ defineProps<{
   align-items: center;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid $border-light;
+  border-bottom: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.15);
 
   &:last-child {
     border-bottom: none;

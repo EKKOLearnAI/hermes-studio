@@ -494,7 +494,7 @@ export class ChatRunSocket {
       if (session_id) {
         try {
           const detail = useLocalSessionStore()
-            ? getSessionDetail(session_id)
+            ? (getSessionDetail(session_id) || await getSessionDetailFromDb(session_id))
             : await getSessionDetailFromDb(session_id)
           if (detail?.messages?.length) {
             // Filter valid messages

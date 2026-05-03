@@ -14,12 +14,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="channels-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('sidebar.channels') }}</h2>
+  <div class="channels-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('sidebar.channels') }}</h2>
     </header>
 
-    <div class="channels-content">
+    <div class="channels-content lg-body">
       <NSpin :show="settingsStore.loading || settingsStore.saving" size="large" :description="t('common.loading')">
         <PlatformSettings v-if="!settingsStore.loading" />
       </NSpin>
@@ -39,7 +39,6 @@ onMounted(() => {
 .channels-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
   position: relative;
 }
 </style>

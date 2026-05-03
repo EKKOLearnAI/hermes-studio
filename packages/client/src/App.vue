@@ -67,6 +67,11 @@ useKeyboard()
             <div v-if="!isLoginPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
             <AppSidebar v-if="!isLoginPage" />
             <main class="app-main">
+              <div class="ambient">
+                <div class="blob blob-1"></div>
+                <div class="blob blob-2"></div>
+                <div class="blob blob-3"></div>
+              </div>
               <router-view />
             </main>
           </div>
@@ -94,7 +99,8 @@ useKeyboard()
 .app-main {
   flex: 1;
   overflow-y: auto;
-  background-color: $bg-primary;
+  background: transparent;
+  position: relative;
 
   .no-sidebar & {
     height: calc(100 * var(--vh));

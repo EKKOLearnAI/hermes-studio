@@ -37,9 +37,9 @@ async function handleSaved() {
 </script>
 
 <template>
-  <div class="models-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('models.title') }}</h2>
+  <div class="models-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('models.title') }}</h2>
       <NButton type="primary" size="small" @click="openCreateModal">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -48,7 +48,7 @@ async function handleSaved() {
       </NButton>
     </header>
 
-    <div class="models-content">
+    <div class="models-content lg-body">
       <NSpin :show="modelsStore.loading && modelsStore.providers.length === 0">
         <CodexAccountsPanel @refreshed="handleSaved" />
         <ProvidersPanel />
@@ -75,6 +75,5 @@ async function handleSaved() {
 .models-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
 }
 </style>

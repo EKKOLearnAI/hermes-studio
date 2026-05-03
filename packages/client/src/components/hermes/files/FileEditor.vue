@@ -117,7 +117,9 @@ function handleClose() {
   justify-content: space-between;
   padding: 8px 16px;
   border-bottom: 1px solid $border-color;
-  background-color: $bg-card;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .editor-filename {

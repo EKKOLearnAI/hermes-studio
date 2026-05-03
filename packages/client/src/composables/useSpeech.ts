@@ -19,7 +19,7 @@ export interface SpeechState {
  * Web Speech API 语音播放 Composable
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
@@ -33,11 +33,16 @@ export function useSpeech() {
 
   // 加载可用语音列表
   function loadVoices() {
-    availableVoices.value = synth.getVoices()
+    availableVoices.value = synth && typeof synth.getVoices === 'function' ? synth.getVoices() : []
   }
 
-  // 浏览器会在语音列表变化时触发 voiceschanged 事件
-  synth.addEventListener('voiceschanged', loadVoices)
+  // 浏览器会在语音列表变化时触发 voiceschanged 事件；jsdom/mock 可能没有 EventTarget 方法
+  const supportsVoiceEvents = !!synth && typeof (synth as any).addEventListener === 'function'
+  if (supportsVoiceEvents) {
+    ;(synth as any).addEventListener('voiceschanged', loadVoices)
+  } else if (synth) {
+    ;(synth as any).onvoiceschanged = loadVoices
+  }
   loadVoices() // 初始加载
 
   /**
@@ -74,7 +79,7 @@ export function useSpeech() {
    * 检查浏览器是否支持 Web Speech API
    */
   const isSupported = computed(() => {
-    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
+    return typeof window !== 'undefined' && !!synth && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
   })
 
   /**
@@ -107,7 +112,7 @@ export function useSpeech() {
    * 停止当前播放
    */
   function stop() {
-    if (synth.speaking) {
+    if (synth?.speaking) {
       synth.cancel()
     }
     if (utterance) {
@@ -126,7 +131,7 @@ export function useSpeech() {
    * 播放文本
    */
   function play(messageId: string, content: string, options: SpeechOptions = {}) {
-    if (!isSupported.value) {
+    if (!synth || !isSupported.value) {
       console.warn('[useSpeech] Speech synthesis not supported')
       return
     }
@@ -217,7 +222,7 @@ export function useSpeech() {
    * 暂停播放
    */
   function pause() {
-    if (synth.speaking && !state.value.isPaused) {
+    if (synth?.speaking && !state.value.isPaused) {
       synth.pause()
       state.value.isPaused = true
     }
@@ -228,7 +233,7 @@ export function useSpeech() {
    */
   function resume() {
     if (state.value.isPaused) {
-      synth.resume()
+      synth?.resume()
       state.value.isPaused = false
     }
   }
@@ -251,7 +256,11 @@ export function useSpeech() {
   // 清理
   onUnmounted(() => {
     stop()
-    synth.removeEventListener('voiceschanged', loadVoices)
+    if (supportsVoiceEvents) {
+      ;(synth as any).removeEventListener?.('voiceschanged', loadVoices)
+    } else if (synth && (synth as any).onvoiceschanged === loadVoices) {
+      ;(synth as any).onvoiceschanged = null
+    }
   })
 
   return {

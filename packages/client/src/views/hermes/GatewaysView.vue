@@ -28,12 +28,12 @@ async function handleToggle(name: string, running: boolean) {
 </script>
 
 <template>
-  <div class="gateways-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('gateways.title') }}</h2>
+  <div class="gateways-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t('gateways.title') }}</h2>
     </header>
 
-    <div class="gateways-content">
+    <div class="gateways-content lg-body">
       <NSpin :show="gatewayStore.loading" size="large">
         <div v-if="gatewayStore.gateways.length === 0" class="empty-state">
           {{ t('common.noData') }}
@@ -80,7 +80,6 @@ async function handleToggle(name: string, running: boolean) {
 .gateways-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
 }
 
 .empty-state {
@@ -95,26 +94,34 @@ async function handleToggle(name: string, running: boolean) {
   gap: 12px;
 }
 
+.lg-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: $text-primary;
+  letter-spacing: -0.3px;
+}
+
 .gateway-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  background-color: $bg-card;
-  border: 1px solid $border-color;
+  padding: 14px 16px;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
   border-radius: $radius-md;
-  transition: border-color $transition-fast;
+  transition: all 0.25s ease;
 
   &:hover {
-    border-color: $text-muted;
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
   }
-}
 
-.gateway-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: $text-primary;
-  margin-bottom: 4px;
+  .dark & {
+    background: rgba(var(--bg-card-rgb, 51, 51, 51), 0.4);
+  }
 }
 
 .gateway-meta {

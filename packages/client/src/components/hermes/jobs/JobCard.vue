@@ -157,15 +157,23 @@ function handleCardClick(e: MouseEvent) {
 @use '@/styles/variables' as *;
 
 .job-card {
-  background-color: $bg-card;
-  border: 1px solid $border-color;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
   border-radius: $radius-md;
   padding: 16px;
-  transition: border-color $transition-fast;
+  transition: all 0.25s ease;
   cursor: pointer;
 
   &:hover {
     border-color: rgba(var(--accent-primary-rgb), 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  .dark & {
+    background: rgba(var(--bg-card-rgb, 51, 51, 51), 0.4);
   }
 
   &.selected {
@@ -258,7 +266,7 @@ function handleCardClick(e: MouseEvent) {
 .card-actions {
   display: flex;
   gap: 4px;
-  border-top: 1px solid $border-light;
+  border-top: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.15);
   padding-top: 10px;
 }
 </style>

@@ -60,7 +60,9 @@ defineExpose({ scrollToBottom })
     display: flex;
     flex-direction: column;
     gap: 12px;
-    background-color: $bg-card;
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 .empty-state {

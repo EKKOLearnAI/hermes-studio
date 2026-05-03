@@ -32,15 +32,17 @@ export function getDb(): DatabaseSync | null {
   if (!_db) {
     mkdirSync(DB_DIR, { recursive: true })
     _db = new DatabaseSync(DB_PATH)
-    // Use WAL mode for better concurrency and WSL compatibility
-    if (isDev) {
-      _db.exec('PRAGMA journal_mode=DELETE')
-    } else {
+    // Set timeout before changing journal mode so tests/dev tools do not fail on transient locks.
+    _db.exec('PRAGMA busy_timeout=5000')
+    // Use WAL mode for better concurrency and WSL compatibility. In dev/test, tolerate
+    // an already-open database that cannot switch journal mode immediately.
+    try {
       _db.exec('PRAGMA journal_mode=WAL')
       _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
+    } catch (err) {
+      if (!isDev) throw err
     }
+    _db.exec('PRAGMA foreign_keys=ON')
   }
   return _db
 }

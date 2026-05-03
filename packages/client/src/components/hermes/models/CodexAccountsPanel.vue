@@ -237,7 +237,9 @@ onBeforeUnmount(() => {
   padding: 14px;
   border: 1px solid $border-color;
   border-radius: $radius-md;
-  background: $bg-card;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .codex-header {

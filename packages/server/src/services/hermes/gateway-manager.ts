@@ -128,16 +128,43 @@ export class GatewayManager {
 
   /** 从 profile 的 gateway.pid 文件读取 PID（JSON 格式 { "pid": 12345 }） */
   private readPidFile(name: string): number | null {
+    // Try gateway.pid first
     const pidPath = join(this.profileDir(name), 'gateway.pid')
-    if (!existsSync(pidPath)) return null
-
-    try {
-      const content = readFileSync(pidPath, 'utf-8').trim()
-      const data = JSON.parse(content)
-      return typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
-    } catch {
-      return null
+    if (existsSync(pidPath)) {
+      try {
+        const content = readFileSync(pidPath, 'utf-8').trim()
+        const data = JSON.parse(content)
+        return typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
+      } catch { }
     }
+
+    // Fallback: check gateway_state.json (written by `hermes gateway run`)
+    const statePath = join(this.profileDir(name), 'gateway_state.json')
+    if (existsSync(statePath)) {
+      try {
+        const content = readFileSync(statePath, 'utf-8').trim()
+        const data = JSON.parse(content)
+        if (data.pid) {
+          const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10)
+          if (pid && this.isProcessAlive(pid)) return pid
+        }
+      } catch { }
+    }
+
+    // Final fallback: scan for running hermes gateway process
+    try {
+      const { execSync } = require('child_process')
+      const output = execSync('ps -eo pid,cmd | grep "hermes.*gateway run" | grep -v grep', { encoding: 'utf-8', timeout: 3000 })
+      for (const line of output.trim().split('\n')) {
+        const match = line.trim().match(/^(\d+)/)
+        if (match) {
+          const pid = parseInt(match[1], 10)
+          if (pid && this.isProcessAlive(pid)) return pid
+        }
+      }
+    } catch { }
+
+    return null
   }
 
   // ============================
@@ -287,6 +314,17 @@ export class GatewayManager {
       // 检查系统级端口占用（外部进程）
       const available = await this.checkPortAvailable(port, host)
       if (!available) {
+        // 端口被占用 — 检查是否是已运行的 gateway 进程
+        const existingPid = this.readPidFile(name)
+        if (existingPid && this.isProcessAlive(existingPid)) {
+          const healthUrl = `http://${host}:${port}`
+          if (await this.checkHealth(healthUrl)) {
+            logger.info('Port %d is already used by running gateway (PID %d) for profile "%s"', port, existingPid, name)
+            this.gateways.set(name, { pid: existingPid, port, host, url: healthUrl })
+            this.allocatedPorts.add(port)
+            return { port, host }
+          }
+        }
         const newPort = await this.findFreePort(port, host)
         logger.info('Port %d is occupied by another process for profile "%s", reassigning to %d', port, name, newPort)
         this.writeProfilePort(name, newPort, host)
@@ -571,9 +609,18 @@ export class GatewayManager {
         continue
       }
 
-      // 有 PID 文件但进程未在正确端口运行 → 旧进程，先停掉
+      // 有 PID 文件但进程未在正确端口运行 → 检查是否真的需要停掉
       const pid = this.readPidFile(name)
       if (pid && this.isProcessAlive(pid)) {
+        // 检查该进程是否在正确的端口上运行且健康
+        const { port, host } = this.readProfilePort(name)
+        const healthUrl = `http://${host}:${port}`
+        if (await this.checkHealth(healthUrl)) {
+          logger.info('%s: gateway already running (PID: %d, port: %d)', name, pid, port)
+          this.gateways.set(name, { pid, port, host, url: healthUrl })
+          this.allocatedPorts.add(port)
+          continue
+        }
         logger.info('%s: stale process (PID: %d), stopping', name, pid)
         try { await this.stop(name) } catch { }
       }

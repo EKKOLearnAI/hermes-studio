@@ -24,12 +24,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="settings-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t("settings.title") }}</h2>
+  <div class="settings-view lg-page">
+    <header class="lg-header lg-header-row">
+      <h2 class="lg-title">{{ t("settings.title") }}</h2>
     </header>
 
-    <div class="settings-content">
+    <div class="settings-content lg-body">
       <NSpin
         :show="settingsStore.loading || settingsStore.saving"
         size="large"
@@ -75,6 +75,5 @@ onMounted(() => {
 .settings-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
 }
 </style>

@@ -148,7 +148,7 @@ describe('session conversations controller', () => {
         { model: 'local-model', input_tokens: 10, output_tokens: 5, cache_read_tokens: 2, cache_write_tokens: 1, reasoning_tokens: 3, sessions: 1 },
       ],
       by_day: [
-        { date: today, tokens: 15, cache: 2, sessions: 1, cost: 0 },
+        { date: today, input_tokens: 10, output_tokens: 5, cache_read_tokens: 2, cache_write_tokens: 1, sessions: 1, errors: 0, cost: 0 },
       ],
     })
     getUsageStatsFromDbMock.mockResolvedValue({
@@ -164,7 +164,7 @@ describe('session conversations controller', () => {
         { model: 'hermes-model', input_tokens: 20, output_tokens: 10, cache_read_tokens: 4, cache_write_tokens: 2, reasoning_tokens: 6, sessions: 2 },
       ],
       by_day: [
-        { date: today, tokens: 30, cache: 4, sessions: 2, cost: 0.02 },
+        { date: today, input_tokens: 20, output_tokens: 10, cache_read_tokens: 4, cache_write_tokens: 2, sessions: 2, errors: 0, cost: 0.02 },
       ],
     })
 
@@ -189,6 +189,6 @@ describe('session conversations controller', () => {
       { model: 'hermes-model', input_tokens: 20, output_tokens: 10, cache_read_tokens: 4, cache_write_tokens: 2, reasoning_tokens: 6, sessions: 2 },
       { model: 'local-model', input_tokens: 10, output_tokens: 5, cache_read_tokens: 2, cache_write_tokens: 1, reasoning_tokens: 3, sessions: 1 },
     ])
-    expect(ctx.body.daily_usage.find((row: any) => row.date === today)).toMatchObject({ tokens: 45, cache: 6, sessions: 3, cost: 0.02 })
+    expect(ctx.body.daily_usage.find((row: any) => row.date === today)).toMatchObject({ input_tokens: 30, output_tokens: 15, cache_read_tokens: 6, cache_write_tokens: 3, sessions: 3, cost: 0.02 })
   })
 })

@@ -54,11 +54,14 @@ const configured = computed(() => {
 @use '@/styles/variables' as *;
 
 .platform-card {
-  background-color: $bg-card;
-  border: 1px solid $border-color;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
   border-radius: $radius-md;
   margin-bottom: 12px;
   overflow: hidden;
+  transition: all 0.25s ease;
 
   &.configured {
     border-color: rgba(var(--success-rgb), 0.2);

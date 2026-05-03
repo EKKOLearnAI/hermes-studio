@@ -342,7 +342,10 @@ function isImage(type: string): boolean {
 
 .chat-input-area {
   padding: 12px 20px 16px;
-  border-top: 1px solid $border-color;
+  border-top: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   flex-shrink: 0;
 }
 
@@ -416,7 +419,9 @@ function isImage(type: string): boolean {
   position: relative;
   border-radius: $radius-sm;
   overflow: hidden;
-  background-color: $bg-secondary;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
   border: 1px solid $border-color;
 
   &.image {
@@ -486,7 +491,9 @@ function isImage(type: string): boolean {
   display: flex;
   align-items: center;
   gap: 10px;
-  background-color: $bg-input;
+  background: rgba(var(--bg-input-rgb, 255, 255, 255), 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid $border-color;
   border-radius: $radius-md;
   padding: 10px 12px;

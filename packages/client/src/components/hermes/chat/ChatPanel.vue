@@ -625,7 +625,10 @@ async function handleWorkspaceConfirm() {
 
 .session-list {
   width: 220px;
-  border-right: 1px solid $border-color;
+  border-right: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.5);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -647,8 +650,10 @@ async function handleWorkspaceConfirm() {
     top: 0;
     height: 100%;
     z-index: 10;
-    background: $bg-card;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.7);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
     width: 280px;
 
     &.collapsed {

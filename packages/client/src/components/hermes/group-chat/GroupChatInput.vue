@@ -272,7 +272,9 @@ function handleCompositionEnd() {
     display: flex;
     align-items: center;
     gap: 10px;
-    background-color: $bg-input;
+    background: rgba(var(--bg-input-rgb, 255, 255, 255), 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid $border-color;
     border-radius: $radius-md;
     padding: 10px 12px;

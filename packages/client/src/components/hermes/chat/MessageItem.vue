@@ -702,7 +702,10 @@ onBeforeUnmount(() => {
     }
 
     .message-bubble {
-      background-color: $msg-user-bg;
+      background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.6);
+      backdrop-filter: blur(12px) saturate(1.2);
+      -webkit-backdrop-filter: blur(12px) saturate(1.2);
+      border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
       border-radius: 10px;
     }
   }
@@ -726,7 +729,10 @@ onBeforeUnmount(() => {
     }
 
     .message-bubble {
-      background-color: $msg-assistant-bg;
+      background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.55);
+      backdrop-filter: blur(12px) saturate(1.2);
+      -webkit-backdrop-filter: blur(12px) saturate(1.2);
+      border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.18);
       border-radius: 10px;
     }
   }
