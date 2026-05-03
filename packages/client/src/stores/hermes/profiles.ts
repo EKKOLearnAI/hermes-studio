@@ -106,6 +106,7 @@ export const useProfilesStore = defineStore('profiles', () => {
             } else {
               localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
             }
+            // 返回 false 以触发 UI 错误提示
             return false
           }
         } catch (err) {
