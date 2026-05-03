@@ -95,13 +95,6 @@ export default {
     noChangelog: '변경 이력이 없습니다',
   },
 
-  // Changelog
-  changelog: {
-    new_0_5_7_1: '컨텍스트 압축 및 세션 동기화 최적화',
-    new_0_5_7_2: '데이터베이스 경합 조건 방지를 위한 시작 지연 추가',
-  },
-  },
-
   // 서랍
   drawer: {
     terminal: '터미널',

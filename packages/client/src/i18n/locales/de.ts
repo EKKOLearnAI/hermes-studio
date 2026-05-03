@@ -95,12 +95,6 @@ export default {
     noChangelog: 'Kein Anderungsprotokoll verfugbar',
   },
 
-  // Changelog
-  changelog: {
-    new_0_5_7_1: 'Kontextkomprimierung und Sitzungssynchronisierung optimiert',
-    new_0_5_7_2: 'Startverzögerungen hinzugefügt, um Datenbank-Raceconditions zu verhindern',
-  },
-
   // Drawer
   drawer: {
     terminal: 'Terminal',

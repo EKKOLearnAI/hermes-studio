@@ -95,13 +95,6 @@ export default {
     noChangelog: 'Aucun journal disponible',
   },
 
-  // Changelog
-  changelog: {
-    new_0_5_7_1: 'Optimiser la compression du contexte et la synchronisation de session',
-    new_0_5_7_2: 'Ajouter des délais de démarrage pour éviter les conditions de course dans la base de données',
-  },
-  },
-
   // Drawer
   drawer: {
     terminal: 'Terminal',
