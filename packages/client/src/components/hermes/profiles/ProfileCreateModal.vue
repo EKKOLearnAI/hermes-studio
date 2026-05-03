@@ -70,7 +70,6 @@ function handleClose() {
           :value="name"
           :placeholder="t('profiles.namePlaceholder')"
           @input="name = $event.toLowerCase().replace(/[^a-z0-9_-]/g, '')"
-          @keyup.enter="handleSave"
         />
       </NFormItem>
 
