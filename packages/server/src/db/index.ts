@@ -33,47 +33,16 @@ export function getDb(): DatabaseSync | null {
     mkdirSync(DB_DIR, { recursive: true })
     _db = new DatabaseSync(DB_PATH)
     // Use WAL mode for better concurrency and WSL compatibility
-    _db.exec('PRAGMA journal_mode=WAL')
-    _db.exec('PRAGMA synchronous=NORMAL')
-    _db.exec('PRAGMA busy_timeout=5000')
-    _db.exec('PRAGMA foreign_keys=ON')
+    if (isDev) {
+      _db.exec('PRAGMA journal_mode=DELETE')
+    } else {
+      _db.exec('PRAGMA journal_mode=WAL')
+      _db.exec('PRAGMA synchronous=NORMAL')
+      _db.exec('PRAGMA busy_timeout=5000')
+      _db.exec('PRAGMA foreign_keys=ON')
+    }
   }
   return _db
-}
-
-/**
- * Ensure a table's schema matches the expected definition.
- * - Creates the table if it does not exist
- * - Adds missing columns (ALTER TABLE ADD COLUMN)
- * - Drops extra columns (ALTER TABLE DROP COLUMN, SQLite 3.35+)
- *
- * No-op when SQLite is not available.
- */
-export function ensureTable(tableName: string, schema: Record<string, string>): void {
-  const db = getDb()
-  if (!db) return
-
-  const colDefs = Object.entries(schema)
-    .map(([col, def]) => `"${col}" ${def}`)
-    .join(', ')
-
-  db.exec(`CREATE TABLE IF NOT EXISTS "${tableName}" (${colDefs})`)
-
-  const rows = db.prepare(`PRAGMA table_info("${tableName}")`).all() as Array<{ name: string }>
-  const existingCols = new Set(rows.map(r => r.name))
-  const expectedCols = new Set(Object.keys(schema))
-
-  for (const col of expectedCols) {
-    if (!existingCols.has(col)) {
-      db.exec(`ALTER TABLE "${tableName}" ADD COLUMN "${col}" ${schema[col]}`)
-    }
-  }
-
-  for (const col of existingCols) {
-    if (!expectedCols.has(col)) {
-      db.exec(`ALTER TABLE "${tableName}" DROP COLUMN "${col}"`)
-    }
-  }
 }
 
 // --- JSON fallback backend ---

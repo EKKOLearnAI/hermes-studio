@@ -20,6 +20,7 @@ export interface SessionSummary {
   estimated_cost_usd: number
   actual_cost_usd: number | null
   cost_status: string
+  workspace?: string | null
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -55,6 +56,18 @@ export async function fetchSessions(source?: string, limit?: number): Promise<Se
   return res.sessions
 }
 
+/**
+ * Fetch Hermes sessions only (exclude api_server source)
+ */
+export async function fetchHermesSessions(source?: string, limit?: number): Promise<SessionSummary[]> {
+  const params = new URLSearchParams()
+  if (source) params.set('source', source)
+  if (limit) params.set('limit', String(limit))
+  const query = params.toString()
+  const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions/hermes${query ? `?${query}` : ''}`)
+  return res.sessions
+}
+
 export async function searchSessions(q: string, source?: string, limit?: number): Promise<SessionSearchResult[]> {
   const params = new URLSearchParams()
   params.set('q', q)
@@ -68,6 +81,18 @@ export async function searchSessions(q: string, source?: string, limit?: number)
 export async function fetchSession(id: string): Promise<SessionDetail | null> {
   try {
     const res = await request<{ session: SessionDetail }>(`/api/hermes/sessions/${id}`)
+    return res.session
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch Hermes session detail only (exclude api_server source)
+ */
+export async function fetchHermesSession(id: string): Promise<SessionDetail | null> {
+  try {
+    const res = await request<{ session: SessionDetail }>(`/api/hermes/sessions/hermes/${id}`)
     return res.session
   } catch {
     return null
@@ -95,6 +120,18 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/workspace`, {
+      method: 'POST',
+      body: JSON.stringify({ workspace: workspace || '' }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export interface UsageStatsResponse {
   total_input_tokens: number
   total_output_tokens: number
@@ -103,6 +140,8 @@ export interface UsageStatsResponse {
   total_reasoning_tokens: number
   total_sessions: number
   total_cost: number
+  total_api_calls?: number
+  period_days?: number
   model_usage: Array<{
     model: string
     input_tokens: number
@@ -114,15 +153,21 @@ export interface UsageStatsResponse {
   }>
   daily_usage: Array<{
     date: string
-    tokens: number
-    cache: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
     sessions: number
+    errors: number
     cost: number
   }>
 }
 
-export async function fetchUsageStats(): Promise<UsageStatsResponse> {
-  return request<UsageStatsResponse>('/api/hermes/usage/stats')
+export async function fetchUsageStats(days = 30): Promise<UsageStatsResponse> {
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 30
+  const params = new URLSearchParams()
+  params.set('days', String(safeDays))
+  return request<UsageStatsResponse>(`/api/hermes/usage/stats?${params}`)
 }
 
 export async function fetchSessionUsage(ids: string[]): Promise<Record<string, { input_tokens: number; output_tokens: number }>> {

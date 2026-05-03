@@ -126,6 +126,12 @@ function handleClose() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 300px;
+
+  @media (max-width: $breakpoint-mobile) {
+    max-width: 120px;
+    font-size: 12px;
+  }
 }
 
 .editor-container {

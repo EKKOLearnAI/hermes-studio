@@ -333,9 +333,21 @@ class AgentClient {
 
             // Stream events from Hermes
             const eventsUrl = new URL(`${upstream}/v1/runs/${run_id}/events`)
-            if (apiKey) eventsUrl.searchParams.set('token', apiKey)
             logger.debug(`[AgentClients] ${this.name}: streaming events from ${eventsUrl}`)
-            const source = new EventSource(eventsUrl.toString())
+
+            // Use Authorization header instead of query parameter for better compatibility
+            const eventSourceInit: any = apiKey ? {
+                fetch: (url: string, init: any = {}) => fetch(url, {
+                  ...init,
+                  headers: {
+                    ...(init.headers || {}),
+                    Authorization: `Bearer ${apiKey}`,
+                  },
+                }),
+              } : {}
+
+            // @ts-ignore - eventsource library types are too strict
+            const source = new EventSource(eventsUrl.toString(), eventSourceInit)
 
             let fullContent = ''
 

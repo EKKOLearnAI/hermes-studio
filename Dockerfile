@@ -22,6 +22,8 @@ RUN ARCH=$(dpkg --print-architecture) \
 WORKDIR /app
 
 COPY package*.json ./
+# Increase Node.js memory limit to prevent OOM during build
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm install --ignore-scripts && npm rebuild node-pty
 
 COPY . .

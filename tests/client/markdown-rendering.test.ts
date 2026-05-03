@@ -50,6 +50,10 @@ describe('MarkdownRenderer', () => {
       svg: `<svg id="${id}" data-testid="mermaid-svg"><text>${source}</text></svg>`,
     }))
 
+    Object.defineProperty(window, 'isSecureContext', {
+      configurable: true,
+      value: true,
+    })
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -465,5 +469,31 @@ describe('MarkdownRenderer', () => {
     await wrapper.find('[data-copy-code="true"]').trigger('click')
 
     expect(writeText).toHaveBeenCalledWith(expected)
+  })
+
+  it('falls back to legacy clipboard copy when the Clipboard API is unavailable', async () => {
+    Object.defineProperty(window, 'isSecureContext', {
+      configurable: true,
+      value: false,
+    })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    })
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand,
+    })
+
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '```ts\nconst answer = 42\n```',
+      },
+    })
+
+    await wrapper.find('[data-copy-code="true"]').trigger('click')
+
+    expect(execCommand).toHaveBeenCalledWith('copy')
   })
 })

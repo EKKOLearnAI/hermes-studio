@@ -4,9 +4,12 @@ import { computed, ref } from 'vue'
 
 interface DailyUsage {
   date: string
-  tokens: number
-  cache: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
   sessions: number
+  errors: number
   cost: number
 }
 
@@ -23,10 +26,10 @@ export const useUsageStore = defineStore('usage', () => {
   const stats = ref<UsageStatsResponse | null>(null)
   const isLoading = ref(false)
 
-  async function loadSessions() {
+  async function loadSessions(days = 30) {
     isLoading.value = true
     try {
-      stats.value = await fetchUsageStats()
+      stats.value = await fetchUsageStats(days)
     } catch (err) {
       console.error('Failed to load usage stats:', err)
     } finally {
@@ -54,7 +57,7 @@ export const useUsageStore = defineStore('usage', () => {
   const modelUsage = computed<ModelUsage[]>(() => {
     if (!stats.value) return []
     return stats.value.model_usage.map(m => ({
-      model: m.model,
+      model: m.model || 'unknown',
       inputTokens: m.input_tokens,
       outputTokens: m.output_tokens,
       cacheTokens: m.cache_read_tokens,

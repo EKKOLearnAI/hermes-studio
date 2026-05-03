@@ -24,17 +24,17 @@ async function handleRefresh() {
 
 <template>
   <div class="file-toolbar">
-    <NSpace>
-      <NButton size="small" @click="emit('showNewFile')">
+    <NSpace :size="8" :wrap="true" class="toolbar-space">
+      <NButton size="small" @click="emit('showNewFile')" class="toolbar-btn">
         {{ t('files.newFile') }}
       </NButton>
-      <NButton size="small" @click="emit('showNewFolder')">
+      <NButton size="small" @click="emit('showNewFolder')" class="toolbar-btn">
         {{ t('files.newFolder') }}
       </NButton>
-      <NButton size="small" @click="emit('showUpload')">
+      <NButton size="small" @click="emit('showUpload')" class="toolbar-btn">
         {{ t('files.upload') }}
       </NButton>
-      <NButton size="small" @click="handleRefresh">
+      <NButton size="small" @click="handleRefresh" class="toolbar-btn">
         {{ t('files.refresh') }}
       </NButton>
     </NSpace>
@@ -42,8 +42,31 @@ async function handleRefresh() {
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/variables' as *;
+
 .file-toolbar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 8px 4px;
+  }
+}
+
+.toolbar-space {
+  @media (max-width: $breakpoint-mobile) {
+    :deep(.n-space) {
+      gap: 4px !important;
+    }
+  }
+}
+
+.toolbar-btn {
+  @media (max-width: $breakpoint-mobile) {
+    font-size: 12px;
+    padding: 0 8px;
+    height: 32px;
+    white-space: nowrap;
+  }
 }
 </style>

@@ -29,6 +29,7 @@ export interface HermesSessionRow {
   cost_status: string
   preview: string
   last_active: number
+  workspace: string | null
 }
 
 export interface HermesMessageRow {
@@ -102,6 +103,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     cost_status: String(row.cost_status || ''),
     preview: String(row.preview || ''),
     last_active: Number(row.last_active || 0),
+    workspace: row.workspace != null ? String(row.workspace) : null,
   }
 }
 
@@ -131,6 +133,7 @@ export function createSession(data: {
   profile?: string
   model?: string
   title?: string
+  workspace?: string
 }): HermesSessionRow {
   const now = Math.floor(Date.now() / 1000)
   if (!isSqliteAvailable()) {
@@ -141,14 +144,14 @@ export function createSession(data: {
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
       billing_provider: null, estimated_cost_usd: 0, actual_cost_usd: null,
-      cost_status: '', preview: '', last_active: now,
+      cost_status: '', preview: '', last_active: now, workspace: data.workspace || null,
     }
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, title, started_at, last_active)
-     VALUES (?, ?, 'api_server', ?, ?, ?, ?)`,
-  ).run(data.id, data.profile || 'default', data.model || '', data.title || null, now, now)
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, title, started_at, last_active, workspace)
+     VALUES (?, ?, 'api_server', ?, ?, ?, ?, ?)`,
+  ).run(data.id, data.profile || 'default', data.model || '', data.title || null, now, now, data.workspace || null)
   return getSession(data.id)!
 }
 
@@ -300,6 +303,15 @@ export function searchSessions(profile: string, query: string, limit = 20): Herm
   })
 }
 
+export interface PaginatedSessionDetailResult {
+  session: HermesSessionRow
+  messages: HermesMessageRow[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+
 export function getSessionDetail(id: string): HermesSessionDetailRow | null {
   if (!isSqliteAvailable()) return null
   const db = getDb()!
@@ -409,6 +421,46 @@ export function updateSessionStats(id: string): void {
          last_active = COALESCE((SELECT MAX(timestamp) FROM ${MESSAGES_TABLE} WHERE session_id = ?), started_at)
      WHERE id = ?`,
   ).run(id, id, id)
+  console.log(`Updated session ${id} stats`)
+}
+
+export function getSessionDetailPaginated(
+  id: string,
+  offset = 0,
+  limit = 500,
+): PaginatedSessionDetailResult | null {
+  if (!isSqliteAvailable()) {
+    return null
+  }
+
+  const db = getDb()!
+
+  // Get session info
+  const sessionRow = db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  if (!sessionRow) return null
+
+  // Get total message count
+  const countResult = db.prepare(
+    `SELECT COUNT(*) as total FROM ${MESSAGES_TABLE} WHERE session_id = ?`,
+  ).get(id) as { total: number } | undefined
+  const total = countResult?.total || 0
+
+  // Get paginated messages (newest first from DB, then reverse)
+  const msgRows = db.prepare(
+    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+  ).all(id, limit, offset) as Record<string, unknown>[]
+
+  const session = mapSessionRow(sessionRow)
+  const messages = msgRows.map(mapMessageRow).reverse()  // Reverse to show oldest first
+
+  return {
+    session,
+    messages,
+    total,
+    offset,
+    limit,
+    hasMore: offset + messages.length < total,
+  }
 }
 
 // --- Session store mode ---

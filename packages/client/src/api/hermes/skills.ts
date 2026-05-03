@@ -1,9 +1,17 @@
 import { request } from '../client'
 
+export type SkillSource = 'builtin' | 'hub' | 'local'
+
 export interface SkillInfo {
   name: string
   description: string
   enabled?: boolean
+  source?: SkillSource
+  modified?: boolean
+  patchCount?: number
+  useCount?: number
+  viewCount?: number
+  pinned?: boolean
 }
 
 export interface SkillCategory {
@@ -14,6 +22,7 @@ export interface SkillCategory {
 
 export interface SkillListResponse {
   categories: SkillCategory[]
+  archived: SkillInfo[]
 }
 
 export interface SkillFileEntry {
@@ -31,9 +40,14 @@ export interface MemoryData {
   soul_mtime: number | null
 }
 
-export async function fetchSkills(): Promise<SkillCategory[]> {
+export interface SkillsData {
+  categories: SkillCategory[]
+  archived: SkillInfo[]
+}
+
+export async function fetchSkills(): Promise<SkillsData> {
   const res = await request<SkillListResponse>('/api/hermes/skills')
-  return res.categories
+  return { categories: res.categories, archived: res.archived ?? [] }
 }
 
 export async function fetchSkillContent(skillPath: string): Promise<string> {
@@ -61,5 +75,12 @@ export async function toggleSkill(name: string, enabled: boolean): Promise<void>
   await request('/api/hermes/skills/toggle', {
     method: 'PUT',
     body: JSON.stringify({ name, enabled }),
+  })
+}
+
+export async function pinSkillApi(name: string, pinned: boolean): Promise<void> {
+  await request('/api/hermes/skills/pin', {
+    method: 'PUT',
+    body: JSON.stringify({ name, pinned }),
   })
 }

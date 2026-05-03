@@ -4,7 +4,7 @@ import { useChatStore } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
-import { NButton, NTooltip } from 'naive-ui'
+import { NButton, NTooltip, NSwitch } from 'naive-ui'
 import { computed, ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -17,6 +17,26 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+
+// 自动播放语音开关
+const autoPlaySpeech = ref(false)
+
+// 从 localStorage 读取设置
+onMounted(() => {
+  const saved = localStorage.getItem('autoPlaySpeech')
+  if (saved !== null) {
+    autoPlaySpeech.value = saved === 'true'
+    // 同步到 chat store
+    chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
+  }
+})
+
+// 监听变化并保存
+watch(autoPlaySpeech, (value) => {
+  localStorage.setItem('autoPlaySpeech', String(value))
+  // 通知 chat store
+  chatStore.setAutoPlaySpeech(value)
+})
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
 
@@ -195,7 +215,7 @@ function isImage(type: string): boolean {
 
 <template>
   <div class="chat-input-area">
-    <!-- Top bar: attach + context info -->
+    <!-- Top bar: attach + auto play speech + context info -->
     <div class="input-top-bar">
       <NTooltip trigger="hover">
         <template #trigger>
@@ -207,6 +227,25 @@ function isImage(type: string): boolean {
         </template>
         {{ t('chat.attachFiles') }}
       </NTooltip>
+
+      <div class="auto-play-speech-switch">
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <div class="switch-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+            </div>
+          </template>
+          {{ t('chat.autoPlaySpeech') }}
+        </NTooltip>
+        <NSwitch
+          size="small"
+          v-model:value="autoPlaySpeech"
+          :round="false"
+        />
+      </div>
+
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} / {{ formatTokens(contextLength) }} · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
       </span>
@@ -312,6 +351,26 @@ function isImage(type: string): boolean {
   align-items: center;
   gap: 8px;
   padding: 0 0 6px;
+}
+
+.auto-play-speech-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-left: 1px solid $border-light;
+  margin-left: 4px;
+
+  .switch-label {
+    display: flex;
+    align-items: center;
+    color: $text-muted;
+    font-size: 12px;
+
+    svg {
+      opacity: 0.7;
+    }
+  }
 }
 
 .context-info {

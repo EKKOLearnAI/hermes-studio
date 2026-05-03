@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/EKKOLearnAI/hermes-web-ui#readme
+    about: Please check the documentation first
+  - name: GitHub Discussions
+    url: https://github.com/EKKOLearnAI/hermes-web-ui/discussions
+    about: Use GitHub Discussions for questions that don't fit as issues

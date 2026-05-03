@@ -25,12 +25,20 @@ import { getDb } from '../../db/index'
 
 // ─── Types ───────────────────────────────────────────────
 
+export interface ContentBlock {
+  type: 'text' | 'image' | 'file'
+  text?: string
+  path?: string
+  source?: { type: string; media_type?: string; data?: string }
+}
+
 export interface ChatMessage {
   role: string
-  content: string
+  content: string | ContentBlock[]
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
   tool_call_id?: string
   name?: string
+  reasoning_content?: string | null
 }
 
 export interface CompressionConfig {
@@ -92,10 +100,6 @@ export function countTokensForModel(text: string, model: string): number {
   } catch {
     return countTokens(text)
   }
-}
-
-function estimateMessagesTokens(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => sum + countTokens(m.content), 0)
 }
 
 // ─── Prompts ────────────────────────────────────────────
@@ -227,9 +231,23 @@ Write only the summary body. Do not include any preamble or prefix.`
 
 function serializeForSummary(messages: ChatMessage[]): string {
   const parts: string[] = []
+
+  function contentToString(content: string | ContentBlock[]): string {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content.map(block => {
+        if (block.type === 'text') return block.text || ''
+        if (block.type === 'image') return `[Image: ${block.path || ''}]`
+        if (block.type === 'file') return `[File: ${block.path || ''}]`
+        return ''
+      }).join('')
+    }
+    return ''
+  }
+
   for (const msg of messages) {
     const role = msg.role === 'tool' ? `[tool:${msg.name || 'unknown'}]` : msg.role
-    let content = msg.content || ''
+    let content = contentToString(msg.content || '')
 
     if (msg.role === 'tool' && content.length > 5500) {
       content = content.slice(0, 4000) + '\n... [truncated]\n...' + content.slice(-1500)
@@ -250,6 +268,76 @@ function serializeForSummary(messages: ChatMessage[]): string {
   return parts.join('\n\n')
 }
 
+/**
+ * Convert messages to conversation history format for LLM API.
+ * Tool calls are converted to text format within assistant messages.
+ */
+function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string; content: string }> {
+  const result: Array<{ role: string; content: string }> = []
+
+  for (const msg of messages) {
+    if (msg.role === 'tool') {
+      // Convert tool result to text and append to previous assistant message
+      const toolText = `[Tool result: ${msg.name || 'unknown'}]\n${(msg.content || '').slice(0, 500)}${msg.content && msg.content.length > 500 ? '...' : ''}`
+      // Find the last assistant message and append to it
+      const lastAssistant = result.findLast(m => m.role === 'assistant')
+      if (lastAssistant) {
+        lastAssistant.content += `\n\n${toolText}`
+      } else {
+        // Fallback: create an assistant message
+        result.push({ role: 'assistant', content: toolText })
+      }
+    } else if (msg.role === 'assistant' && msg.tool_calls?.length) {
+      // Include tool calls in assistant message
+      const toolsInfo = msg.tool_calls.map(tc => {
+        let args = tc.function.arguments
+        if (args.length > 1000) args = args.slice(0, 1000) + '...'
+        return `[Calling tool: ${tc.function.name} with arguments: ${args}]`
+      }).join('\n')
+      const content = msg.content ? `${msg.content}\n\n${toolsInfo}` : toolsInfo
+      result.push({ role: msg.role, content })
+    } else if (msg.role === 'user') {
+      // Handle ContentBlock[] format: { type: 'text', text: '...' } or { type: 'image', path: '...' }
+      let contentStr = ''
+      const content = msg.content || ''
+      if (typeof content === 'string') {
+        contentStr = content
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text') {
+            contentStr += block.text || ''
+          } else if (block.type === 'image') {
+            contentStr += `[Image: ${block.path || ''}]`
+          } else if (block.type === 'file') {
+            contentStr += `[File: ${block.path || ''}]`
+          }
+        }
+      }
+      result.push({ role: 'user', content: contentStr })
+    } else if (msg.role === 'assistant' || msg.role === 'system') {
+      let contentStr = ''
+      const content = msg.content
+      if (typeof content === 'string') {
+        contentStr = content
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text') {
+            contentStr += block.text || ''
+          } else if (block.type === 'image') {
+            contentStr += `[Image: ${block.path || ''}]`
+          } else if (block.type === 'file') {
+            contentStr += `[File: ${block.path || ''}]`
+          }
+        }
+      }
+      result.push({ role: msg.role, content: contentStr })
+    }
+    // Skip other roles
+  }
+
+  return result
+}
+
 function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): ChatMessage[] {
   if (messages.length <= keepRecentCount) return messages
 
@@ -258,7 +346,15 @@ function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): 
 
   const pruned = head.map(msg => {
     if (msg.role !== 'tool') return msg
-    const content = msg.content || ''
+    let content = ''
+    if (typeof msg.content === 'string') {
+      content = msg.content
+    } else if (Array.isArray(msg.content)) {
+      content = msg.content.map(block => {
+        if (block.type === 'text') return block.text || ''
+        return `[${block.type}]`
+      }).join('')
+    }
     const preview = content.slice(0, 100).replace(/\n/g, ' ')
     const truncated = content.length > 100 ? '...' : ''
     return { ...msg, content: `[${msg.name || 'tool'}] ${preview}${truncated}` }
@@ -316,9 +412,20 @@ async function callSummarizer(
     }, timeoutMs)
 
     const eventsUrl = new URL(`${upstream}/v1/runs/${run_id}/events`)
-    if (apiKey) eventsUrl.searchParams.set('token', apiKey)
 
-    const source = new EventSource(eventsUrl.toString())
+    // Use Authorization header instead of query parameter for better compatibility
+    const eventSourceInit: any = apiKey ? {
+      fetch: (url: string, init: any = {}) => fetch(url, {
+        ...init,
+        headers: {
+          ...(init.headers || {}),
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }),
+    } : {}
+
+    // @ts-ignore - eventsource library types are too strict
+    const source = new EventSource(eventsUrl.toString(), eventSourceInit)
 
     source.onmessage = (event: MessageEvent) => {
       try {
@@ -326,7 +433,7 @@ async function callSummarizer(
         if (parsed.event === 'run.completed') {
           clearTimeout(timer)
           source.close()
-          deleteCompressSession(sessionId, profile).catch(() => {})
+          deleteCompressSession(sessionId, profile).catch(() => { })
           const output = parsed.output
           if (!output || typeof output !== 'string' || output.trim() === '') {
             reject(new Error('Empty summarization response'))
@@ -336,7 +443,7 @@ async function callSummarizer(
         } else if (parsed.event === 'run.failed') {
           clearTimeout(timer)
           source.close()
-          deleteCompressSession(sessionId, profile).catch(() => {})
+          deleteCompressSession(sessionId, profile).catch(() => { })
           reject(new Error(parsed.error || 'Summarization run failed'))
         }
       } catch { /* ignore parse errors */ }
@@ -345,7 +452,7 @@ async function callSummarizer(
     source.onerror = () => {
       clearTimeout(timer)
       source.close()
-      deleteCompressSession(sessionId, profile).catch(() => {})
+      deleteCompressSession(sessionId, profile).catch(() => { })
       reject(new Error('Summarization SSE connection error'))
     }
   })
@@ -391,11 +498,8 @@ export class ChatContextCompressor {
     upstream: string,
     apiKey: string | undefined,
     sessionId?: string,
-    contextLength?: number,
     profile?: string,
   ): Promise<CompressedResult> {
-    const cl = contextLength || 200_000
-    const triggerTokens = Math.floor(cl / 2)
     const total = messages.length
 
     const makeMeta = (opts: Partial<CompressedResult['meta']> = {}): CompressedResult['meta'] => ({
@@ -408,59 +512,26 @@ export class ChatContextCompressor {
       ...opts,
     })
 
-    // ── Step 1: Check snapshot first ─────────────────────
+    // Check if we have a previous compression snapshot
     const snapshot = sessionId ? getCompressionSnapshot(sessionId) : null
 
     if (snapshot) {
-      const { summary: previousSummary, lastMessageIndex } = snapshot
-      const newMessages = messages.slice(lastMessageIndex + 1)
-      const summaryTokens = countTokens(SUMMARY_PREFIX + previousSummary)
-      const newTokens = estimateMessagesTokens(newMessages)
-      const assembledTokens = summaryTokens + newTokens
-
+      // Has snapshot → incremental compress (merge old summary with new messages)
       logger.info(
-        '[context-compressor] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
-        sessionId, lastMessageIndex, newMessages.length, assembledTokens, triggerTokens,
+        '[context-compressor] session=%s: incremental compress with snapshot at index %d',
+        sessionId, snapshot.lastMessageIndex,
       )
-
-      // Under threshold → return summary + new messages, no LLM call
-      if (assembledTokens <= triggerTokens) {
-        const result: ChatMessage[] = [
-          { role: 'system', content: SUMMARY_PREFIX + '\n\n' + previousSummary },
-          ...newMessages,
-        ]
-        return {
-          messages: result,
-          meta: makeMeta({
-            compressed: true,
-            llmCompressed: false,
-            summaryTokenEstimate: summaryTokens,
-            verbatimCount: newMessages.length,
-            compressedStartIndex: lastMessageIndex,
-          }),
-        }
-      }
-
-      // Over threshold → incremental LLM compress
       return this.incrementalCompress(
         messages, snapshot, upstream, apiKey, sessionId!, makeMeta(), profile,
       )
+    } else {
+      // No snapshot → full compress (compress all messages)
+      logger.info(
+        '[context-compressor] session=%s: full compress %d messages',
+        sessionId, total,
+      )
+      return this.fullCompress(messages, upstream, apiKey, sessionId!, makeMeta(), profile)
     }
-
-    // ── Step 2: No snapshot — check all messages ──────────
-    const totalTokens = estimateMessagesTokens(messages)
-
-    logger.info(
-      '[context-compressor] session=%s: no snapshot, %d messages, ~%d tokens (threshold %d)',
-      sessionId, total, totalTokens, triggerTokens,
-    )
-
-    if (totalTokens <= triggerTokens) {
-      return { messages, meta: makeMeta() }
-    }
-
-    // Over threshold → full LLM compress
-    return this.fullCompress(messages, upstream, apiKey, sessionId!, makeMeta(), profile)
   }
 
   private async incrementalCompress(
@@ -492,9 +563,7 @@ export class ChatContextCompressor {
     try {
       const contentToSummarize = serializeForSummary(toCompress)
       const prompt = buildIncrementalPrompt(previousSummary, contentToSummarize, this.config.summaryBudget)
-      const history = toCompress
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => ({ role: m.role, content: m.content }))
+      const history = buildConversationHistory(toCompress)
 
       const t0 = Date.now()
       summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, profile)
@@ -505,7 +574,7 @@ export class ChatContextCompressor {
     }
 
     const result: ChatMessage[] = [
-      { role: 'system', content: SUMMARY_PREFIX + '\n\n' + summary },
+      { role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary },
       ...tail,
     ]
 
@@ -554,9 +623,7 @@ export class ChatContextCompressor {
 
     const contentToSummarize = serializeForSummary(toCompress)
     const prompt = buildFullPrompt(contentToSummarize, this.config.summaryBudget)
-    const history = toCompress
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({ role: m.role, content: m.content }))
+    const history = buildConversationHistory(toCompress)
 
     let summary: string | null = null
     try {
@@ -570,7 +637,7 @@ export class ChatContextCompressor {
     const result: ChatMessage[] = []
 
     if (summary) {
-      result.push({ role: 'system', content: SUMMARY_PREFIX + '\n\n' + summary })
+      result.push({ role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary })
       if (sessionId) {
         saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
       }

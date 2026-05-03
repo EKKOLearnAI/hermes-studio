@@ -21,9 +21,11 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   anthropic: { api_key_env: 'ANTHROPIC_API_KEY', base_url_env: '' },
   xai: { api_key_env: 'XAI_API_KEY', base_url_env: '' },
   xiaomi: { api_key_env: 'XIAOMI_API_KEY', base_url_env: '' },
+  'xiaomi-token-plan': { api_key_env: '', base_url_env: '' },
   gemini: { api_key_env: 'GEMINI_API_KEY', base_url_env: '' },
   kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: '' },
   'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: '' },
+  cliproxyapi: { api_key_env: '', base_url_env: '' },
   'opencode-zen': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
   'opencode-go': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
@@ -37,10 +39,13 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
 
 // --- Types ---
 
+export type SkillSource = 'builtin' | 'hub' | 'local'
+
 export interface SkillInfo {
   name: string
   description: string
   enabled: boolean
+  source?: SkillSource
 }
 
 export interface SkillCategory {

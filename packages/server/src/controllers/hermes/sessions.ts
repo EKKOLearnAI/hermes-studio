@@ -1,7 +1,7 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listConversationSummariesFromDb, getConversationDetailFromDb } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -60,6 +60,7 @@ export async function listConversations(ctx: any) {
       actual_cost_usd: s.actual_cost_usd,
       cost_status: s.cost_status,
       preview: s.preview,
+      workspace: s.workspace || null,
       is_active: s.ended_at == null && (Date.now() / 1000 - s.last_active) <= 300,
       thread_session_count: 1,
     }))
@@ -159,6 +160,26 @@ export async function list(ctx: any) {
   ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
 }
 
+/**
+ * List Hermes sessions only (exclude api_server source)
+ * GET /api/hermes/sessions/hermes?source=&limit=
+ */
+export async function listHermesSessions(ctx: any) {
+  const source = (ctx.query.source as string) || undefined
+  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
+
+  try {
+    const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cron')) }
+    return
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
+  }
+
+  const sessions = await hermesCli.listSessions(source, limit)
+  ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
+}
+
 export async function search(ctx: any) {
   if (useLocalSessionStore()) {
     const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
@@ -199,6 +220,38 @@ export async function get(ctx: any) {
 
   const session = await hermesCli.getSession(ctx.params.id)
   if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  ctx.body = { session }
+}
+
+/**
+ * Get Hermes session detail only (exclude api_server source)
+ * GET /api/hermes/sessions/hermes/:id
+ */
+export async function getHermesSession(ctx: any) {
+  // Try database first (consistent with listHermesSessions)
+  try {
+    const session = await getSessionDetailFromDb(ctx.params.id)
+    if (session && session.source !== 'api_server' && session.source !== 'cron') {
+      ctx.body = { session }
+      return
+    }
+  } catch (err) {
+    logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
+  }
+
+  // Fallback to CLI
+  const session = await hermesCli.getSession(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  // Filter out api_server sessions
+  if (session.source === 'api_server') {
     ctx.status = 404
     ctx.body = { error: 'Session not found' }
     return
@@ -283,110 +336,98 @@ export async function rename(ctx: any) {
   ctx.body = { ok: true }
 }
 
+export async function setWorkspace(ctx: any) {
+  const { workspace } = ctx.request.body as { workspace?: string }
+  if (workspace !== undefined && workspace !== null && typeof workspace !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'workspace must be a string or null' }
+    return
+  }
+  if (useLocalSessionStore()) {
+    const { updateSession, getSession, createSession } = await import('../../db/hermes/session-store')
+    const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
+    const id = ctx.params.id
+    // Create session if it doesn't exist yet (user may set workspace before sending first message)
+    if (!getSession(id)) {
+      createSession({ id, profile: getActiveProfileName(), title: '' })
+    }
+    updateSession(id, { workspace: workspace || null } as any)
+    ctx.body = { ok: true }
+    return
+  }
+  ctx.status = 501
+  ctx.body = { error: 'Workspace setting only supported in local session store mode' }
+}
+
 export async function contextLength(ctx: any) {
   const profile = (ctx.query.profile as string) || undefined
   ctx.body = { context_length: getModelContextLength(profile) }
 }
 
 export async function usageStats(ctx: any) {
-  // Get current active profile
+  const rawDays = parseInt(String(ctx.query?.days ?? '30'), 10)
+  const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30
+
+  // Local Web UI chat usage is kept in the dashboard DB and must be merged
+  // with Hermes' native state.db analytics for the same period.
   const currentProfile = getActiveProfileName()
+  const local = getLocalUsageStats(currentProfile, days)
 
-  // 1. Local session_usage (web UI chat runs) - filtered by current profile
-  const local = getLocalUsageStats(currentProfile)
-
-  // 2. Hermes state.db sessions (exclude api_server source)
-  let hermesSessions: Array<{
-    model: string
-    input_tokens: number
-    output_tokens: number
-    cache_read_tokens: number
-    cache_write_tokens: number
-    reasoning_tokens: number
-    started_at: number
-    estimated_cost_usd: number
-    actual_cost_usd: number | null
-  }> = []
+  let hermes = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    sessions: 0,
+    by_model: [] as UsageStatsModelRow[],
+    by_day: [] as UsageStatsDailyRow[],
+    cost: 0,
+    total_api_calls: 0,
+  }
 
   try {
-    const allSessions = await listSessionSummaries(undefined, 100000)
-    // Only include sessions from current profile
-    // Note: Hermes sessions don't have profile field, so we include all
-    // This could be improved in the future by filtering by some criteria
-    hermesSessions = allSessions.filter(s => s.source !== 'api_server')
+    hermes = await getUsageStatsFromDb(days)
   } catch (err) {
-    logger.warn(err, 'usageStats: failed to load Hermes sessions')
+    logger.warn(err, 'usageStats: failed to load Hermes usage analytics from state.db')
   }
 
-  // Aggregate Hermes sessions
-  const hModelMap = new Map<string, UsageStatsModelRow>()
-  const hDayMap = new Map<string, UsageStatsDailyRow>()
-  let hInput = 0, hOutput = 0, hCacheRead = 0, hCacheWrite = 0, hReasoning = 0, hSessions = 0, hCost = 0
+  const totalInput = local.input_tokens + hermes.input_tokens
+  const totalOutput = local.output_tokens + hermes.output_tokens
+  const totalCacheRead = local.cache_read_tokens + hermes.cache_read_tokens
+  const totalCacheWrite = local.cache_write_tokens + hermes.cache_write_tokens
+  const totalReasoning = local.reasoning_tokens + hermes.reasoning_tokens
+  const totalSessions = local.sessions + hermes.sessions
 
-  for (const s of hermesSessions) {
-    const iTokens = s.input_tokens || 0
-    const oTokens = s.output_tokens || 0
-    const crTokens = s.cache_read_tokens || 0
-    const cwTokens = s.cache_write_tokens || 0
-    const rTokens = s.reasoning_tokens || 0
-    const cost = s.actual_cost_usd ?? s.estimated_cost_usd ?? 0
-    const model = s.model || ''
-
-    hInput += iTokens; hOutput += oTokens; hCacheRead += crTokens
-    hCacheWrite += cwTokens; hReasoning += rTokens; hCost += cost
-    hSessions++
-
-    // By model
-    const me = hModelMap.get(model) || { model, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 0 }
-    me.input_tokens += iTokens; me.output_tokens += oTokens; me.cache_read_tokens += crTokens
-    me.cache_write_tokens += cwTokens; me.reasoning_tokens += rTokens; me.sessions++
-    hModelMap.set(model, me)
-
-    // By day (last 30 days)
-    const d = new Date(s.started_at * 1000)
-    const key = d.toISOString().slice(0, 10)
-    if (d.getTime() > Date.now() - 30 * 24 * 60 * 60 * 1000) {
-      const de = hDayMap.get(key) || { date: key, tokens: 0, cache: 0, sessions: 0, cost: 0 }
-      de.tokens += iTokens + oTokens; de.cache += crTokens; de.sessions++; de.cost += cost
-      hDayMap.set(key, de)
-    }
-  }
-
-  // Merge local + Hermes
-  const totalInput = local.input_tokens + hInput
-  const totalOutput = local.output_tokens + hOutput
-  const totalCacheRead = local.cache_read_tokens + hCacheRead
-  const totalCacheWrite = local.cache_write_tokens + hCacheWrite
-  const totalReasoning = local.reasoning_tokens + hReasoning
-  const totalSessions = local.sessions + hSessions
-  const totalCost = hCost // local has no cost data
-
-  // Merge by_model
   const modelMap = new Map<string, UsageStatsModelRow>()
-  for (const m of [...local.by_model, ...hModelMap.values()].filter(m => m.model)) {
+  for (const m of [...local.by_model, ...hermes.by_model].filter(m => m.model)) {
     const existing = modelMap.get(m.model)
     if (existing) {
-      existing.input_tokens += m.input_tokens; existing.output_tokens += m.output_tokens
-      existing.cache_read_tokens += m.cache_read_tokens; existing.cache_write_tokens += m.cache_write_tokens
-      existing.reasoning_tokens += m.reasoning_tokens; existing.sessions += m.sessions
+      existing.input_tokens += m.input_tokens
+      existing.output_tokens += m.output_tokens
+      existing.cache_read_tokens += m.cache_read_tokens
+      existing.cache_write_tokens += m.cache_write_tokens
+      existing.reasoning_tokens += m.reasoning_tokens
+      existing.sessions += m.sessions
     } else {
       modelMap.set(m.model, { ...m })
     }
   }
 
-  // Merge by_day
   const dayMap = new Map<string, UsageStatsDailyRow>()
-  // Initialize last 30 days
   const now = new Date()
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now); d.setDate(d.getDate() - i)
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
     const key = d.toISOString().slice(0, 10)
-    dayMap.set(key, { date: key, tokens: 0, cache: 0, sessions: 0, cost: 0 })
+    dayMap.set(key, { date: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, sessions: 0, errors: 0, cost: 0 })
   }
-  for (const d of [...local.by_day, ...hDayMap.values()]) {
+  for (const d of [...local.by_day, ...hermes.by_day]) {
     const existing = dayMap.get(d.date)
     if (existing) {
-      existing.tokens += d.tokens; existing.cache += d.cache; existing.sessions += d.sessions; existing.cost += d.cost
+      existing.input_tokens += d.input_tokens; existing.output_tokens += d.output_tokens
+      existing.cache_read_tokens += d.cache_read_tokens; existing.cache_write_tokens += d.cache_write_tokens
+      existing.sessions += d.sessions; existing.errors += d.errors; existing.cost += d.cost
     }
   }
 
@@ -397,8 +438,95 @@ export async function usageStats(ctx: any) {
     total_cache_write_tokens: totalCacheWrite,
     total_reasoning_tokens: totalReasoning,
     total_sessions: totalSessions,
-    total_cost: totalCost,
+    total_cost: hermes.cost,
+    total_api_calls: hermes.total_api_calls,
+    period_days: days,
     model_usage: [...modelMap.values()].sort((a, b) => (b.input_tokens + b.output_tokens) - (a.input_tokens + a.output_tokens)),
     daily_usage: [...dayMap.values()],
   }
+}
+
+/**
+ * List folders under workspace base path for folder picker.
+ * GET /api/hermes/workspace/folders?path=<relative_path>
+ * Base: /opt/data/workspace (overridable via WORKSPACE_BASE env)
+ */
+export async function listWorkspaceFolders(ctx: any) {
+  const { resolve, join } = await import('path')
+  const { readdir } = await import('fs/promises')
+  const { existsSync } = await import('fs')
+
+  const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/opt/data/workspace'
+  const subPath = (ctx.query.path as string) || ''
+
+  // Security: prevent path traversal
+  const fullPath = resolve(join(WORKSPACE_BASE, subPath))
+  if (!fullPath.startsWith(resolve(WORKSPACE_BASE))) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
+
+  if (!existsSync(fullPath)) {
+    ctx.status = 404
+    ctx.body = { error: 'Path not found', folders: [] }
+    return
+  }
+
+  try {
+    const entries = await readdir(fullPath, { withFileTypes: true })
+    const folders = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .map(e => ({
+        name: e.name,
+        path: subPath ? `${subPath}/${e.name}` : e.name,
+        fullPath: join(fullPath, e.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    ctx.body = { base: WORKSPACE_BASE, current: subPath, folders }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function getConversationMessagesPaginated(ctx: any) {
+  const offset = ctx.query.offset ? parseInt(ctx.query.offset as string, 10) : 0
+  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 50
+
+  if (useLocalSessionStore()) {
+    const { getSessionDetailPaginated } = await import('../../db/hermes/session-store')
+    const result = getSessionDetailPaginated(ctx.params.id, offset, limit)
+
+    if (!result) {
+      ctx.status = 404
+      ctx.body = { error: 'Conversation not found' }
+      return
+    }
+
+    ctx.body = {
+      session: {
+        id: result.session.id,
+        source: result.session.source,
+        model: result.session.model,
+        title: result.session.title,
+        started_at: result.session.started_at,
+        ended_at: result.session.ended_at,
+        last_active: result.session.last_active,
+        message_count: result.session.message_count,
+        input_tokens: result.session.input_tokens,
+        output_tokens: result.session.output_tokens,
+      },
+      messages: result.messages,
+      total: result.total,
+      offset: result.offset,
+      limit: result.limit,
+      hasMore: result.hasMore,
+    }
+    return
+  }
+
+  ctx.status = 404
+  ctx.body = { error: 'Conversation not found' }
 }

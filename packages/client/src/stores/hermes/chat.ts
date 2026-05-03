@@ -1,4 +1,4 @@
-import { startRunViaSocket, connectChatRun, resumeSession, type RunEvent } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -6,6 +6,9 @@ import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+
+// Re-export ContentBlock for convenience
+export type ContentBlock = ContentBlockImport
 
 export interface Attachment {
   id: string
@@ -26,6 +29,7 @@ export interface Message {
   toolArgs?: string
   toolResult?: string
   toolStatus?: 'running' | 'done' | 'error'
+  toolDuration?: number  // 工具执行时长（秒）
   isStreaming?: boolean
   attachments?: Attachment[]
   // 思考/推理文本。两条来源：
@@ -49,6 +53,7 @@ export interface Session {
   outputTokens?: number
   endedAt?: number | null
   lastActiveAt?: number
+  workspace?: string | null
 }
 
 function uid(): string {
@@ -70,6 +75,47 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
   return data.files
+}
+
+async function buildContentBlocks(
+  content: string,
+  attachments?: Attachment[],
+  uploadedFiles?: { name: string; path: string }[]
+): Promise<ContentBlock[]> {
+  const blocks: ContentBlock[] = []
+
+  // Add text block if content is not empty
+  if (content.trim()) {
+    blocks.push({ type: 'text', text: content.trim() })
+  }
+
+  // Add attachment blocks using uploaded file paths
+  if (attachments && attachments.length > 0 && uploadedFiles) {
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const uploaded = uploadedFiles[i]
+      const attachment = attachments[i]
+
+      // Check if it's an image
+      if (attachment?.type.startsWith('image/')) {
+        blocks.push({
+          type: 'image',
+          name: uploaded.name,
+          path: uploaded.path,
+          media_type: attachment.type,
+        })
+      } else {
+        // Other files
+        blocks.push({
+          type: 'file',
+          name: uploaded.name,
+          path: uploaded.path,
+          media_type: attachment?.type,
+        })
+      }
+    }
+  }
+
+  return blocks
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
@@ -167,6 +213,7 @@ function mapHermesSession(s: SessionSummary): Session {
     messageCount: s.message_count,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
+    workspace: s.workspace || null,
   }
 }
 
@@ -212,14 +259,13 @@ function isQuotaExceededError(error: unknown): boolean {
 
 function recoverStorageQuota() {
   try {
+    // 清理所有会话相关的旧缓存（已完全废弃）
     const prefixes = [
-      `hermes_session_msgs_v1_${getProfileName()}_`,
-      `hermes_in_flight_v1_${getProfileName()}_`,
+      'hermes_sessions_cache_v1_',
+      'hermes_session_msgs_v1_',
+      'hermes_session_pins_v1_',
+      'hermes_human_only_v1_',
     ]
-    if (getProfileName() === 'default') {
-      prefixes.push('hermes_session_msgs_v1_')
-      prefixes.push('hermes_in_flight_v1_')
-    }
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
@@ -230,6 +276,9 @@ function recoverStorageQuota() {
       }
     }
     keysToRemove.forEach(key => removeItem(key))
+    if (keysToRemove.length > 0) {
+      console.log(`Recovered storage: cleared ${keysToRemove.length} old session cache entries`)
+    }
   } catch {
     // ignore
   }
@@ -295,6 +344,13 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+
+  // 自动播放语音开关
+  const autoPlaySpeechEnabled = ref(false)
+
+  function setAutoPlaySpeech(enabled: boolean) {
+    autoPlaySpeechEnabled.value = enabled
+  }
   const isStreaming = computed(() => {
     const sid = activeSessionId.value
     if (sid == null) return false
@@ -535,6 +591,17 @@ export const useChatStore = defineStore('chat', () => {
     if (s) s.messages.push(msg)
   }
 
+  function addOrUpdateSession(session: Session) {
+    const existingIndex = sessions.value.findIndex(s => s.id === session.id)
+    if (existingIndex !== -1) {
+      // Update existing session
+      sessions.value[existingIndex] = session
+    } else {
+      // Add new session
+      sessions.value.push(session)
+    }
+  }
+
   function updateMessage(sessionId: string, id: string, update: Partial<Message>) {
     const s = sessions.value.find(s => s.id === sessionId)
     if (!s) return
@@ -579,15 +646,19 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     addMessage(sid, userMsg)
+
+
     updateSessionTitle(sid)
 
     try {
 
-      // Upload attachments and build input with file paths
-      let inputText = content.trim()
+      // Build input in Anthropic format
+      let input: string | ContentBlock[]
       if (attachments && attachments.length > 0) {
+        // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
-        // Replace blob URLs with persistent download URLs on the user message
+
+        // Update attachment URLs on the user message for display
         const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
           const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
@@ -601,22 +672,28 @@ export const useChatStore = defineStore('chat', () => {
             return dl ? { ...a, url: dl } : a
           })
         }
-        const pathParts = uploaded.map(f => `[File: ${f.name}](${urlMap.get(f.name)})`)
-        inputText = inputText ? inputText + '\n\n' + pathParts.join('\n') : pathParts.join('\n')
+
+        // Build content blocks with uploaded file paths
+        input = await buildContentBlocks(content, attachments, uploaded)
+      } else {
+        // No attachments: use plain text format
+        input = content.trim()
       }
 
       const appStore = useAppStore()
       const sessionModel = activeSession.value?.model || appStore.selectedModel
       const runPayload = {
-        input: inputText,
+        input,
         session_id: sid,
         model: sessionModel || undefined,
       }
 
       // Helper to clean up this session's stream state
       const cleanup = () => {
+        console.log('[sendMessage] cleanup called, deleting stream state for sid:', sid)
         streamStates.value.delete(sid)
         serverWorking.value.delete(sid)
+        console.log('[sendMessage] cleanup done, isStreaming now:', isStreaming.value)
       }
 
       // Per-run flags used to detect silently-swallowed errors at run.completed.
@@ -765,7 +842,13 @@ export const useChatStore = defineStore('chat', () => {
               )
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
-                updateMessage(sid, last.id, { toolStatus: 'done' })
+                // Check if tool errored
+                const hasError = (evt as any).error === true
+                const duration = (evt as any).duration
+                updateMessage(sid, last.id, {
+                  toolStatus: hasError ? 'error' : 'done',
+                  toolDuration: duration,
+                })
               }
 
               break
@@ -790,17 +873,38 @@ export const useChatStore = defineStore('chat', () => {
               // stream). If we never produced assistant text but the gateway
               // reports a non-empty output, fall back to rendering it as a
               // single assistant message so the user actually sees the reply.
-              const finalOutput =
-                typeof evt.output === 'string' ? evt.output : ''
-              const finalOutputTrimmed = finalOutput.trim()
-              if (!runProducedAssistantText && finalOutputTrimmed !== '') {
-                addMessage(sid, {
-                  id: uid(),
-                  role: 'assistant',
-                  content: finalOutput,
-                  timestamp: Date.now(),
-                })
-                runProducedAssistantText = true
+
+              // Check if backend provided parsed content (from stringified array format)
+              let finalOutputTrimmed = ''
+              if ((evt as any).parsed_content !== undefined) {
+                // Backend has parsed stringified array format, update last assistant message
+                const msgs = getSessionMsgs(sid)
+                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+                if (lastAssistant) {
+                  updateMessage(sid, lastAssistant.id, {
+                    content: (evt as any).parsed_content || '',
+                  })
+                  if ((evt as any).parsed_reasoning) {
+                    updateMessage(sid, lastAssistant.id, {
+                      reasoning: (evt as any).parsed_reasoning,
+                    })
+                  }
+                  finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
+                }
+              } else {
+                // Fallback to output field (legacy behavior)
+                const finalOutput =
+                  typeof evt.output === 'string' ? evt.output : ''
+                finalOutputTrimmed = finalOutput.trim()
+                if (!runProducedAssistantText && finalOutputTrimmed !== '') {
+                  addMessage(sid, {
+                    id: uid(),
+                    role: 'assistant',
+                    content: finalOutput,
+                    timestamp: Date.now(),
+                  })
+                  runProducedAssistantText = true
+                }
               }
               // Workaround for upstream hermes-agent bug: when the agent
               // layer silently swallows an error (e.g. invalid API key,
@@ -823,6 +927,20 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                 })
               }
+
+              // 自动播放语音
+              console.log('[run.completed] autoPlaySpeechEnabled:', autoPlaySpeechEnabled.value)
+              if (autoPlaySpeechEnabled.value) {
+                const msgs = getSessionMsgs(sid)
+                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+                if (lastAssistant?.content) {
+                  // 延迟一小会儿再播放，确保 UI 更新完成
+                  setTimeout(() => {
+                    playMessageSpeech(lastAssistant.id, lastAssistant.content)
+                  }, 300)
+                }
+              }
+
               cleanup()
               updateSessionTitle(sid)
               // the in-flight marker. If the browser is reloading right now
@@ -875,6 +993,7 @@ export const useChatStore = defineStore('chat', () => {
         },
         // onDone
         () => {
+          console.log('[sendMessage] onDone callback called, cleaning up stream state')
           const msgs = getSessionMsgs(sid)
           const last = msgs[msgs.length - 1]
           if (last?.isStreaming) {
@@ -929,7 +1048,6 @@ export const useChatStore = defineStore('chat', () => {
     // Only set up listeners if there's an actual in-flight run
     if (!readInFlight(sid)) return
 
-    const socket = connectChatRun()
     let closed = false
     let runProducedAssistantText = false
     let runHadToolActivity = false
@@ -937,19 +1055,10 @@ export const useChatStore = defineStore('chat', () => {
     const cleanup = () => {
       if (closed) return
       closed = true
-      socket.off('run.started', onRunStarted)
-      socket.off('run.failed', onRunFailed)
-      socket.off('message.delta', onMessageDelta)
-      socket.off('reasoning.delta', onReasoningDelta)
-      socket.off('thinking.delta', onThinkingDelta)
-      socket.off('reasoning.available', onReasoningAvailable)
-      socket.off('tool.started', onToolStarted)
-      socket.off('tool.completed', onToolCompleted)
-      socket.off('run.completed', onRunCompleted)
-      socket.off('compression.started', onCompressionStarted)
-      socket.off('compression.completed', onCompressionCompleted)
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      // Unregister from global session handlers
+      unregisterSessionHandlers(sid)
     }
 
     // Shared event handler — filters by session_id tag
@@ -1076,7 +1185,11 @@ export const useChatStore = defineStore('chat', () => {
           const msgs = getSessionMsgs(sid)
           const toolMsgs = msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
           if (toolMsgs.length > 0) {
-            updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, { toolStatus: 'done' })
+            const hasError = (evt as any).error === true
+            updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
+              toolStatus: hasError ? 'error' : 'done',
+              toolDuration: (evt as any).duration,
+            })
           }
 
           break
@@ -1096,15 +1209,35 @@ export const useChatStore = defineStore('chat', () => {
               target.outputTokens = (evt as any).outputTokens
             }
           }
-          const finalOutput = typeof evt.output === 'string' ? evt.output : ''
-          const finalOutputTrimmed = finalOutput.trim()
-          if (!runProducedAssistantText && finalOutputTrimmed !== '') {
-            addMessage(sid, {
-              id: uid(),
-              role: 'assistant',
-              content: finalOutput,
-              timestamp: Date.now(),
-            })
+          // Check if backend provided parsed content (from stringified array format)
+          let finalOutputTrimmed = ''
+          if ((evt as any).parsed_content !== undefined) {
+            // Backend has parsed stringified array format, update last assistant message
+            const msgs = getSessionMsgs(sid)
+            const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
+            if (lastAssistant) {
+              updateMessage(sid, lastAssistant.id, {
+                content: (evt as any).parsed_content || '',
+              })
+              if ((evt as any).parsed_reasoning) {
+                updateMessage(sid, lastAssistant.id, {
+                  reasoning: (evt as any).parsed_reasoning,
+                })
+              }
+              finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
+            }
+          } else {
+            // Fallback to output field (legacy behavior)
+            const finalOutput = typeof evt.output === 'string' ? evt.output : ''
+            finalOutputTrimmed = finalOutput.trim()
+            if (!runProducedAssistantText && finalOutputTrimmed !== '') {
+              addMessage(sid, {
+                id: uid(),
+                role: 'assistant',
+                content: finalOutput,
+                timestamp: Date.now(),
+              })
+            }
           }
           const swallowedError = !runProducedAssistantText && !runHadToolActivity && finalOutputTrimmed === ''
           if (swallowedError) {
@@ -1115,6 +1248,8 @@ export const useChatStore = defineStore('chat', () => {
               timestamp: Date.now(),
             })
           }
+
+
           cleanup()
           updateSessionTitle(sid)
 
@@ -1161,33 +1296,25 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    function onRunStarted(data: RunEvent) { handleEvent(data) }
-    function onRunFailed(data: RunEvent) { handleEvent(data) }
-    function onMessageDelta(data: RunEvent) { handleEvent(data) }
-    function onReasoningDelta(data: RunEvent) { handleEvent(data) }
-    function onThinkingDelta(data: RunEvent) { handleEvent(data) }
-    function onReasoningAvailable(data: RunEvent) { handleEvent(data) }
-    function onToolStarted(data: RunEvent) { handleEvent(data) }
-    function onToolCompleted(data: RunEvent) { handleEvent(data) }
-    function onRunCompleted(data: RunEvent) { handleEvent(data) }
-    function onCompressionStarted(data: RunEvent) { handleEvent(data) }
-    function onCompressionCompleted(data: RunEvent) { handleEvent(data) }
-
-    socket.on('run.started', onRunStarted)
-    socket.on('run.failed', onRunFailed)
-    socket.on('message.delta', onMessageDelta)
-    socket.on('reasoning.delta', onReasoningDelta)
-    socket.on('thinking.delta', onThinkingDelta)
-    socket.on('reasoning.available', onReasoningAvailable)
-    socket.on('tool.started', onToolStarted)
-    socket.on('tool.completed', onToolCompleted)
-    socket.on('run.completed', onRunCompleted)
-    socket.on('compression.started', onCompressionStarted)
-    socket.on('compression.completed', onCompressionCompleted)
+    // Register handlers in global session map
+    registerSessionHandlers(sid, {
+      onMessageDelta: (evt) => handleEvent(evt),
+      onReasoningDelta: (evt) => handleEvent(evt),
+      onThinkingDelta: (evt) => handleEvent(evt),
+      onReasoningAvailable: (evt) => handleEvent(evt),
+      onToolStarted: (evt) => handleEvent(evt),
+      onToolCompleted: (evt) => handleEvent(evt),
+      onRunStarted: (evt) => handleEvent(evt),
+      onRunCompleted: (evt) => handleEvent(evt),
+      onRunFailed: (evt) => handleEvent(evt),
+      onCompressionStarted: (evt) => handleEvent(evt),
+      onCompressionCompleted: (evt) => handleEvent(evt),
+      onUsageUpdated: (evt) => handleEvent(evt),
+    })
 
     // No need to emit resume here — switchSession already did it.
     // Server already joined room and replayed events.
-    // Just set up listeners for ongoing streaming events.
+    // Just set up handlers for ongoing streaming events.
 
     // Mark as streaming so UI shows the indicator
     streamStates.value.set(sid, { abort: cleanup })
@@ -1285,6 +1412,15 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.clear()
   }
 
+  // 播放消息语音
+  function playMessageSpeech(messageId: string, content: string) {
+    // 触发自定义事件，让 MessageItem 组件处理播放
+    const event = new CustomEvent('auto-play-speech', {
+      detail: { messageId, content }
+    })
+    window.dispatchEvent(event)
+  }
+
   return {
     sessions,
     activeSessionId,
@@ -1302,6 +1438,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     switchSession,
     switchSessionModel,
+    addOrUpdateSession,
     clearProviderFromSessions,
     deleteSession,
     sendMessage,
@@ -1313,5 +1450,7 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
+    setAutoPlaySpeech,
+    playMessageSpeech,
   }
 })

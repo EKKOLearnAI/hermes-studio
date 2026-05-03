@@ -42,6 +42,7 @@ const modelOptions = ref<Array<{ label: string; value: string }>>([])
 const CODEX_KEY = 'openai-codex'
 const NOUS_KEY = 'nous'
 const COPILOT_KEY = 'copilot'
+const CLIPROXYAPI_KEY = 'cliproxyapi'
 const ALIBABA_CODING_KEY = 'alibaba-coding-plan'
 const ALIBABA_CODING_REGIONS = {
   intl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
@@ -51,6 +52,7 @@ const ALIBABA_CODING_REGIONS = {
 const isCodex = computed(() => selectedPreset.value === CODEX_KEY)
 const isNous = computed(() => selectedPreset.value === NOUS_KEY)
 const isCopilot = computed(() => selectedPreset.value === COPILOT_KEY)
+const isCliproxyApi = computed(() => selectedPreset.value === CLIPROXYAPI_KEY)
 const isAlibabaCoding = computed(() => selectedPreset.value === ALIBABA_CODING_KEY)
 const alibabaCodingRegion = ref<'intl' | 'cn'>('intl')
 
@@ -171,7 +173,7 @@ async function handleSave() {
     message.warning(t('models.baseUrlRequired'))
     return
   }
-  if (!formData.value.api_key.trim()) {
+  if (!formData.value.api_key.trim() && !isCliproxyApi.value) {
     message.warning(t('models.apiKeyRequired'))
     return
   }
@@ -344,7 +346,7 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem v-if="!isCodex && !isNous" :label="t('models.apiKey')" required>
+      <NFormItem v-if="!isCodex && !isNous" :label="t('models.apiKey')" :required="!isCliproxyApi">
         <NInput
           v-model:value="formData.api_key"
           type="password"

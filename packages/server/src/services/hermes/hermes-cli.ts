@@ -394,7 +394,7 @@ export async function listProfiles(): Promise<HermesProfile[]> {
     for (const line of lines) {
       if (line.startsWith(' Profile') || line.match(/^ ─/)) continue
 
-      const match = line.match(/^\s+(◆)?(\S+)\s{2,}(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
+      const match = line.match(/^\s+(◆)?(.+?)\s+(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
       if (match) {
         profiles.push({
           name: match[2],
@@ -572,5 +572,22 @@ export async function importProfile(archivePath: string, name?: string): Promise
   } catch (err: any) {
     logger.error(err, 'Hermes CLI: profile import failed')
     throw new Error(`Failed to import profile: ${err.message}`)
+  }
+}
+
+/**
+ * Pin or unpin a skill via hermes curator
+ */
+export async function pinSkill(name: string, pinned: boolean): Promise<string> {
+  const subcmd = pinned ? 'pin' : 'unpin'
+  try {
+    const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['curator', subcmd, name], {
+      timeout: 15000,
+      ...execOpts,
+    })
+    return stdout || stderr
+  } catch (err: any) {
+    logger.error(err, `Hermes CLI: curator ${subcmd} failed`)
+    throw new Error(`Failed to ${subcmd} skill: ${err.message}`)
   }
 }

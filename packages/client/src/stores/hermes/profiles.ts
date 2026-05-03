@@ -24,6 +24,8 @@ export const useProfilesStore = defineStore('profiles', () => {
         activeProfileName.value = activeProfile.value.name
         localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeProfile.value.name)
       }
+      // 清理所有会话缓存（不再使用 localStorage 缓存）
+      clearAllSessionCaches()
     } catch (err) {
       console.error('Failed to fetch profiles:', err)
     } finally {
@@ -52,31 +54,15 @@ export const useProfilesStore = defineStore('profiles', () => {
     const ok = await profilesApi.deleteProfile(name)
     if (ok) {
       delete detailMap.value[name]
-      // 清理该 profile 的 localStorage 缓存
-      clearProfileCache(name)
       await fetchProfiles()
     }
     return ok
   }
 
-  // 清理指定 profile 的所有 localStorage 缓存（精确匹配缓存 key 前缀）
-  function clearProfileCache(profileName: string) {
-    const prefixes = [
-      `hermes_sessions_cache_v1_${profileName}`,
-      `hermes_session_msgs_v1_${profileName}_`,
-      `hermes_in_flight_v1_${profileName}_`,
-      `hermes_active_session_${profileName}`,
-      `hermes_session_pins_v1_${profileName}`,
-      `hermes_human_only_v1_${profileName}`,
-    ]
-    const keysToRemove: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key && prefixes.some(p => key.startsWith(p))) {
-        keysToRemove.push(key)
-      }
-    }
-    keysToRemove.forEach(key => localStorage.removeItem(key))
+  // 清理所有 profile 的会话缓存
+  function clearAllSessionCaches() {
+    // 注意：不再清理任何缓存，因为已经不再使用 localStorage 缓存会话数据
+    // 所有会话数据都从服务器实时获取
   }
 
   async function renameProfile(name: string, newName: string) {
@@ -92,7 +78,43 @@ export const useProfilesStore = defineStore('profiles', () => {
     switching.value = true
     try {
       const ok = await profilesApi.switchProfile(name)
-      if (ok) await fetchProfiles()
+      if (ok) {
+        // 保存旧值，用于可能的回滚
+        const oldName = activeProfileName.value
+
+        // 立即更新 activeProfileName，确保前端显示正确
+        // 不要完全依赖 fetchProfiles 的返回值，以防后端数据同步延迟
+        activeProfileName.value = name
+        localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
+
+        // 尝试刷新 profiles 列表并验证
+        try {
+          await fetchProfiles()
+
+          // 验证：检查后端返回的 active profile 是否与我们期望的一致
+          // 如果不一致，说明后端实际上没有切换成功，需要回滚
+          const actualActive = profiles.value.find(p => p.active)
+          if (actualActive && actualActive.name !== name) {
+            console.warn(
+              `[switchProfile] Backend verification failed: expected active profile "${name}", ` +
+              `but backend reports "${actualActive.name}". Rolling back frontend state.`
+            )
+            // 回滚到旧值
+            activeProfileName.value = oldName
+            if (oldName) {
+              localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, oldName)
+            } else {
+              localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
+            }
+            // 返回 false 以触发 UI 错误提示
+            return false
+          }
+        } catch (err) {
+          // fetchProfiles 失败，无法验证
+          // 假设切换成功（API 返回了 200），保持已设置的状态
+          console.warn('Failed to refresh profiles list after switch, assuming switch succeeded:', err)
+        }
+      }
       return ok
     } finally {
       switching.value = false
@@ -124,5 +146,6 @@ export const useProfilesStore = defineStore('profiles', () => {
     switchProfile,
     exportProfile,
     importProfile,
+    clearAllSessionCaches,
   }
 })

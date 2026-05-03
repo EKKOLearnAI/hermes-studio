@@ -20,7 +20,6 @@ vi.mock('../../packages/server/src/db/index', () => ({
 }))
 
 import {
-  initUsageStore,
   updateUsage,
   getUsage,
   getUsageBatch,
@@ -30,12 +29,6 @@ import {
 describe('Usage Store (JSON fallback)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-  })
-
-  it('initUsageStore calls ensureTable when SQLite is available', () => {
-    // In our mock, isSqliteAvailable returns false, so ensureTable should NOT be called
-    initUsageStore()
-    expect(mockEnsureTable).not.toHaveBeenCalled()
   })
 
   it('updateUsage writes via jsonSet', () => {
