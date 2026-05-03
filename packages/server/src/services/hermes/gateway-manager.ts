@@ -346,7 +346,7 @@ export class GatewayManager {
       const profiles: string[] = []
       for (const line of stdout.trim().split('\n')) {
         if (line.startsWith(' Profile') || line.match(/^ ─/)) continue
-        const match = line.match(/^\s+(?:◆)?(\S+)\s+/)
+        const match = line.match(/^\s+(?:◆)?(\S+)\s{2,}/)
         if (match) profiles.push(match[1])
       }
       return profiles
