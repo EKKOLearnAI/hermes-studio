@@ -17,10 +17,27 @@ const showModal = ref(true)
 const loading = ref(false)
 const name = ref('')
 const clone = ref(false)
+const nameValidationMessage = ref('')
+
+function handleNameInput(value: string) {
+  // 过滤掉不符合规则的字符，只保留小写字母、数字、下划线和连字符
+  const filtered = value.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  if (filtered !== value) {
+    nameValidationMessage.value = t('profiles.nameValidation')
+  } else {
+    nameValidationMessage.value = ''
+  }
+  name.value = filtered
+}
 
 async function handleSave() {
-  if (!name.value.trim()) {
+  if (!name.value) {
     message.warning(t('profiles.namePlaceholder'))
+    return
+  }
+
+  if (!/^[a-z0-9_-]+$/.test(name.value)) {
+    message.error(t('profiles.nameValidation'))
     return
   }
 
@@ -70,8 +87,12 @@ function handleClose() {
         <NInput
           v-model:value="name"
           :placeholder="t('profiles.namePlaceholder')"
+          @input="handleNameInput"
         />
       </NFormItem>
+      <NText v-if="nameValidationMessage" depth="3" type="warning" style="font-size: 12px;">
+        {{ nameValidationMessage }}
+      </NText>
 
       <NFormItem :label="t('profiles.cloneFromCurrent')">
         <NSwitch v-model:value="clone" />

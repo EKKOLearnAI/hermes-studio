@@ -370,6 +370,7 @@ export default {
     importInvalidFile: '有効なアーカイブファイルを選択してください (.tar.gz, .tgz, .gz, .zip)',
     name: 'プロファイル名',
     namePlaceholder: '英数字、ハイフンのみ',
+    nameValidation: 'プロファイル名には小文字、数字、アンダースコア、ハイフンのみ使用できます',
     newName: '新しい名前',
     newNamePlaceholder: '新しい名前を入力',
     cloneFromCurrent: '現在のプロファイルから複製',

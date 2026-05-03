@@ -370,6 +370,7 @@ export default {
     importInvalidFile: '유효한 아카이브 파일을 선택해 주세요 (.tar.gz, .tgz, .gz, .zip)',
     name: '프로필 이름',
     namePlaceholder: '영문, 숫자, 하이픈만 사용 가능',
+    nameValidation: '프로필 이름에는 소문자, 숫자, 밑줄, 하이픈만 사용할 수 있습니다',
     newName: '새 이름',
     newNamePlaceholder: '새 이름을 입력하세요',
     cloneFromCurrent: '현재 프로필에서 복제',

@@ -412,6 +412,7 @@ export default {
     importInvalidFile: 'Please select a valid archive (.tar.gz, .tgz, .gz, .zip)',
     name: 'Profile Name',
     namePlaceholder: 'Lowercase letters, numbers, hyphens only',
+    nameValidation: 'Profile name can only contain lowercase letters, numbers, underscores, and hyphens',
     newName: 'New Name',
     newNamePlaceholder: 'Lowercase letters, numbers, hyphens',
     cloneFromCurrent: 'Clone from current profile',

@@ -404,6 +404,7 @@ export default {
     importInvalidFile: '请选择有效的归档文件 (.tar.gz, .tgz, .gz, .zip)',
     name: '配置名称',
     namePlaceholder: '仅限小写字母、数字、连字符',
+    nameValidation: '配置名称只能包含小写字母、数字、下划线和连字符',
     newName: '新名称',
     newNamePlaceholder: '小写字母、数字、连字符',
     cloneFromCurrent: '从当前配置克隆',
