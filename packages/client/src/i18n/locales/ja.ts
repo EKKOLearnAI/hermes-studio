@@ -105,6 +105,11 @@ export default {
     send: '送信',
     contextUsed: 'コンテキスト使用量:',
     sessions: 'セッション',
+    webUiSessions: 'Web UI/API Server セッション',
+    sessionScopeHint: 'チャットには Web UI/API Server セッションのみ表示されます。CLI、Telegram、Discord、Cron などのチャンネルセッションは履歴で読み取り専用として表示されます。',
+    openHistory: '履歴を開く',
+    hermesHistory: 'Hermes 履歴',
+    historyScopeHint: 'ソース別にグループ化された Hermes 履歴セッションを読み取り専用で表示します。',
     noSessions: 'セッションがありません',
     newChat: '新しいチャット',
     deleteSession: 'このセッションを削除しますか？',
@@ -142,6 +147,11 @@ export default {
     copyBubble: 'メッセージをコピー',
     copiedBubble: 'コピーしました',
     copyFailed: 'コピーに失敗しました',
+    playSpeech: '音声を読み上げ',
+    pauseSpeech: '一時停止',
+    resumeSpeech: '再開',
+    stopSpeech: '停止',
+    speechNotSupported: 'このブラウザは音声読み上げをサポートしていません',
   },
 
   // スケジュールジョブ
@@ -220,7 +230,18 @@ export default {
     attachedFiles: '添付ファイル',
     loadFailed: 'スキルの読み込みに失敗しました',
     fileLoadFailed: 'ファイルの読み込みに失敗しました',
+    modified: 'ユーザー変更あり',
+    archived: 'アーカイブ済み',
+    pinned: 'ピン留め',
+    pin: 'スキルをピン留め',
+    unpin: 'ピン留めを解除',
+    pinFailed: 'ピン留め状態の変更に失敗しました',
     toggleFailed: 'スキルの切り替えに失敗しました',
+    source: {
+      builtin: '組み込み',
+      hub: 'Hub',
+      local: 'ローカル',
+    },
   },
 
   // メモリ
@@ -558,6 +579,8 @@ export default {
     date: '日付',
     tokens: 'トークン',
     cache: 'キャッシュ',
+    cacheRead: 'キャッシュ読み取り',
+    cacheWrite: 'キャッシュ書き込み',
     sessions: 'セッション',
     cost: 'コスト',
     noData: '使用データがありません',
@@ -566,6 +589,14 @@ export default {
   // 更新履歴
   changelog: {
 
+    new_0_5_6_1: '音声再生機能：Web Speech API使用、手動再生ボタン、自動再生スイッチ、虹色ボーダーアニメーション、モバイル最適化',
+    new_0_5_6_2: '堅牢なLLM JSONパーサー：Python形式対応、ストリーミングイベントからのテキスト抽出',
+    new_0_5_6_3: 'Skills機能強化：使用統計、ソースフィルター、アーカイブ済みスキル、来歴、ピン留め切替',
+    new_0_5_6_4: '日次使用統計の拡張：キャッシュ読み取り/書き込み分離を含む詳細なトークン内訳',
+    new_0_5_6_5: 'セッション履歴範囲の明確化：チャットと履歴ビューの説明を改善',
+    new_0_5_6_6: 'AnthropicスタイルのContentBlock配列形式（テキスト、画像、ファイル）を使用して添付ファイル処理を再設計',
+    new_0_5_6_7: 'ContentBlockおよびMarkdown形式をサポートし、認証付きのフロントエンドファイルダウンロード機能を追加',
+    new_0_5_6_8: '重複するnodemonインスタンスを削除し、SQLiteデータベースのリセットを引き起こすマルチプロセス競合を修正',
     new_0_5_5_1: '🎉 労働者の日！今日はお休みです、何卒ご理解ください',
     new_0_5_5_2: 'Hermesセッション履歴ページを追加',
     new_0_5_5_3: '履歴ページはアクティブチャットに干渉せずにセッション管理',

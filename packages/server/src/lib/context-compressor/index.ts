@@ -25,9 +25,16 @@ import { getDb } from '../../db/index'
 
 // ─── Types ───────────────────────────────────────────────
 
+export interface ContentBlock {
+  type: 'text' | 'image' | 'file'
+  text?: string
+  path?: string
+  source?: { type: string; media_type?: string; data?: string }
+}
+
 export interface ChatMessage {
   role: string
-  content: string
+  content: string | ContentBlock[]
   tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>
   tool_call_id?: string
   name?: string
@@ -224,9 +231,23 @@ Write only the summary body. Do not include any preamble or prefix.`
 
 function serializeForSummary(messages: ChatMessage[]): string {
   const parts: string[] = []
+
+  function contentToString(content: string | ContentBlock[]): string {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content.map(block => {
+        if (block.type === 'text') return block.text || ''
+        if (block.type === 'image') return `[Image: ${block.path || ''}]`
+        if (block.type === 'file') return `[File: ${block.path || ''}]`
+        return ''
+      }).join('')
+    }
+    return ''
+  }
+
   for (const msg of messages) {
     const role = msg.role === 'tool' ? `[tool:${msg.name || 'unknown'}]` : msg.role
-    let content = msg.content || ''
+    let content = contentToString(msg.content || '')
 
     if (msg.role === 'tool' && content.length > 5500) {
       content = content.slice(0, 4000) + '\n... [truncated]\n...' + content.slice(-1500)
@@ -275,8 +296,41 @@ function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string
       }).join('\n')
       const content = msg.content ? `${msg.content}\n\n${toolsInfo}` : toolsInfo
       result.push({ role: msg.role, content })
-    } else if (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'system') {
-      result.push({ role: msg.role, content: msg.content || '' })
+    } else if (msg.role === 'user') {
+      // Handle ContentBlock[] format: { type: 'text', text: '...' } or { type: 'image', path: '...' }
+      let contentStr = ''
+      const content = msg.content || ''
+      if (typeof content === 'string') {
+        contentStr = content
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text') {
+            contentStr += block.text || ''
+          } else if (block.type === 'image') {
+            contentStr += `[Image: ${block.path || ''}]`
+          } else if (block.type === 'file') {
+            contentStr += `[File: ${block.path || ''}]`
+          }
+        }
+      }
+      result.push({ role: 'user', content: contentStr })
+    } else if (msg.role === 'assistant' || msg.role === 'system') {
+      let contentStr = ''
+      const content = msg.content
+      if (typeof content === 'string') {
+        contentStr = content
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text') {
+            contentStr += block.text || ''
+          } else if (block.type === 'image') {
+            contentStr += `[Image: ${block.path || ''}]`
+          } else if (block.type === 'file') {
+            contentStr += `[File: ${block.path || ''}]`
+          }
+        }
+      }
+      result.push({ role: msg.role, content: contentStr })
     }
     // Skip other roles
   }
@@ -292,7 +346,15 @@ function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): 
 
   const pruned = head.map(msg => {
     if (msg.role !== 'tool') return msg
-    const content = msg.content || ''
+    let content = ''
+    if (typeof msg.content === 'string') {
+      content = msg.content
+    } else if (Array.isArray(msg.content)) {
+      content = msg.content.map(block => {
+        if (block.type === 'text') return block.text || ''
+        return `[${block.type}]`
+      }).join('')
+    }
     const preview = content.slice(0, 100).replace(/\n/g, ' ')
     const truncated = content.length > 100 ? '...' : ''
     return { ...msg, content: `[${msg.name || 'tool'}] ${preview}${truncated}` }
@@ -512,7 +574,7 @@ export class ChatContextCompressor {
     }
 
     const result: ChatMessage[] = [
-      { role: 'system', content: SUMMARY_PREFIX + '\n\n' + summary },
+      { role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary },
       ...tail,
     ]
 
@@ -575,7 +637,7 @@ export class ChatContextCompressor {
     const result: ChatMessage[] = []
 
     if (summary) {
-      result.push({ role: 'system', content: SUMMARY_PREFIX + '\n\n' + summary })
+      result.push({ role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary })
       if (sessionId) {
         saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
       }

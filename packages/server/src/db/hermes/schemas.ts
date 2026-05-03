@@ -174,182 +174,389 @@ export const GC_SESSION_PROFILES_SCHEMA: Record<string, string> = {
 }
 
 // ============================================================================
-// Unified Initializer
+// Schema Sync Utilities
 // ============================================================================
 
-import { ensureTable, getDb } from '../index'
+import { getDb, getStoragePath } from '../index'
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`
 }
 
-function sqlLiteral(value: string | number): string {
-  if (typeof value === 'number') return String(value)
-  return `'${value.replace(/'/g, "''")}'`
+/**
+ * 检查表是否存在
+ */
+function tableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): boolean {
+  const result = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+  ).get(tableName)
+  return !!result
 }
 
-function usageSchemaDefinitionSql(): string {
-  return Object.entries(USAGE_SCHEMA)
-    .map(([col, def]) => `${quoteIdentifier(col)} ${def}`)
-    .join(', ')
-}
+/**
+ * 获取表的实际结构（包括主键）
+ */
+function getTableStructure(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): {
+  columns: Map<string, string>
+  primaryKey: string | null
+} {
+  // 获取列信息
+  const columns = db.prepare(`PRAGMA table_info("${tableName}")`).all() as Array<{ name: string; type: string; pk: number }>
+  const columnMap = new Map<string, string>()
 
-function sqliteTableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): boolean {
-  return Boolean(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(tableName))
-}
-
-function sqliteTableColumns(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): Set<string> {
-  const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
-  return new Set(rows.map(row => row.name))
-}
-
-function legacyUsageValueSql(
-  sourceAlias: string,
-  oldCols: Set<string>,
-  col: string,
-  defaults: Record<string, string | number>,
-): string {
-  const sourceColumn = (sourceCol: string) => `${quoteIdentifier(sourceAlias)}.${quoteIdentifier(sourceCol)}`
-
-  if (col === 'created_at' && oldCols.has('updated_at')) {
-    return `COALESCE(${sourceColumn('updated_at')}, ${sqlLiteral(defaults.created_at)})`
+  for (const col of columns) {
+    columnMap.set(col.name, col.type)
   }
 
-  if (oldCols.has(col)) {
-    return `COALESCE(${sourceColumn(col)}, ${sqlLiteral(defaults[col] ?? 0)})`
-  }
+  // 获取主键信息
+  const tableInfo = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`
+  ).get(tableName) as { sql: string } | undefined
 
-  return sqlLiteral(defaults[col] ?? 0)
+  // 从 CREATE TABLE 语句中提取主键定义
+  const sql = tableInfo?.sql || ''
+  const pkMatch = sql.match(/PRIMARY KEY\s*\(([^)]+)\)/i)
+  const primaryKey = pkMatch ? pkMatch[1].replace(/\s+/g, '') : null
+
+  return { columns: columnMap, primaryKey }
 }
 
-function insertUsageRowsFromLegacyTable(
+/**
+ * 提取列类型（从 schema 定义中）
+ */
+function extractType(schemaDef: string): string {
+  const types = ['TEXT', 'INTEGER', 'REAL', 'BLOB', 'NUMERIC']
+  for (const type of types) {
+    if (schemaDef.toUpperCase().includes(type)) {
+      return type
+    }
+  }
+  return 'TEXT'
+}
+
+/**
+ * 检查表结构是否完全匹配 schema（包括主键和列类型）
+ */
+function structureMatches(
+  actual: { columns: Map<string, string>; primaryKey: string | null },
+  schema: Record<string, string>,
+  expectedPrimaryKey?: string
+): boolean {
+  // 1. 检查主键
+  if (expectedPrimaryKey) {
+    const expectedPKClean = expectedPrimaryKey.replace(/\s+/g, '')
+    if (actual.primaryKey !== expectedPKClean) {
+      return false  // 主键不匹配
+    }
+  } else {
+    if (actual.primaryKey) {
+      return false  // 期望没有主键，但实际有
+    }
+  }
+
+  // 2. 检查列数量
+  const columnMap = actual.columns as Map<string, string>
+  if (columnMap.size !== Object.keys(schema).length) {
+    return false
+  }
+
+  // 3. 检查列名和类型
+  for (const [colName, colDef] of Object.entries(schema)) {
+    if (!columnMap.has(colName)) {
+      return false  // 列不存在
+    }
+
+    const actualType = columnMap.get(colName)!
+    const expectedType = extractType(colDef)
+
+    if (actualType !== expectedType) {
+      return false  // 类型不匹配
+    }
+  }
+
+  return true
+}
+
+/**
+ * 创建表（带完整 schema）
+ */
+function createTable(
   db: NonNullable<ReturnType<typeof getDb>>,
-  oldTableName: string,
-  oldCols: Set<string>,
-  skipExistingSessionIds = false,
+  tableName: string,
+  schema: Record<string, string>,
+  primaryKey?: string
 ): void {
-  const defaults: Record<string, string | number> = {
-    session_id: '',
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_read_tokens: 0,
-    cache_write_tokens: 0,
-    reasoning_tokens: 0,
-    created_at: Date.now(),
-    model: '',
-    profile: 'default',
-  }
-  const sourceAlias = 'old_usage'
-  const sourceColumn = (col: string) => `${quoteIdentifier(sourceAlias)}.${quoteIdentifier(col)}`
-  const insertValues: string[] = []
-  const selectValues: string[] = []
+  const colDefs = Object.entries(schema).map(([col, def]) => `${quoteIdentifier(col)} ${def}`)
 
-  for (const col of Object.keys(USAGE_SCHEMA)) {
-    if (col === 'id') continue
-
-    insertValues.push(quoteIdentifier(col))
-    selectValues.push(legacyUsageValueSql(sourceAlias, oldCols, col, defaults))
-  }
-
-  const skipExistingWhere = skipExistingSessionIds && oldCols.has('session_id')
-    ? ` WHERE NOT EXISTS (SELECT 1 FROM ${quoteIdentifier(USAGE_TABLE)} WHERE ${quoteIdentifier(USAGE_TABLE)}.${quoteIdentifier('session_id')} = ${sourceColumn('session_id')})`
-    : ''
-
-  db.exec(
-    `INSERT INTO ${quoteIdentifier(USAGE_TABLE)} (${insertValues.join(', ')}) ` +
-    `SELECT ${selectValues.join(', ')} FROM ${quoteIdentifier(oldTableName)} AS ${quoteIdentifier(sourceAlias)}` +
-    skipExistingWhere,
+  // 只在 schema 中没有主键时才添加复合主键
+  const hasPrimaryKeyInSchema = Object.values(schema).some((def) =>
+    def.toUpperCase().includes("PRIMARY KEY")
   )
+
+  if (primaryKey && !hasPrimaryKeyInSchema) {
+    colDefs.push(`PRIMARY KEY (${primaryKey})`)
+  }
+
+  db.exec(`CREATE TABLE ${quoteIdentifier(tableName)} (${colDefs.join(', ')})`)
 }
 
-function recoverInterruptedUsageMigration(db: NonNullable<ReturnType<typeof getDb>>): void {
-  const oldUsageTable = `${USAGE_TABLE}_old`
-  if (!sqliteTableExists(db, oldUsageTable)) return
+/**
+ * 重建表（保留数据）
+ */
+function rebuildTable(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+  schema: Record<string, string>,
+  primaryKey?: string
+): void {
+  const tempTable = `${tableName}_rebuild_${Date.now()}`
 
-  const oldCols = sqliteTableColumns(db, oldUsageTable)
-  db.exec('BEGIN')
-  try {
-    insertUsageRowsFromLegacyTable(db, oldUsageTable, oldCols, true)
-    db.exec(`DROP TABLE ${quoteIdentifier(oldUsageTable)}`)
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
+  // 1. 创建新表
+  createTable(db, tempTable, schema, primaryKey)
+
+  // 2. 找出两表共有的列（只复制这些列）
+  const actual = getTableStructure(db, tableName)
+  const commonCols = Array.from(actual.columns.keys()).filter((col) => schema[col])
+
+  // 3. 复制数据
+  if (commonCols.length > 0) {
+    const colList = commonCols.map(c => quoteIdentifier(c)).join(', ')
+    db.exec(`
+      INSERT INTO ${quoteIdentifier(tempTable)} (${colList})
+      SELECT ${colList} FROM ${quoteIdentifier(tableName)}
+    `)
+  }
+
+  // 4. 删除旧表
+  db.exec(`DROP TABLE ${quoteIdentifier(tableName)}`)
+
+  // 5. 重命名新表
+  db.exec(`ALTER TABLE ${quoteIdentifier(tempTable)} RENAME TO ${quoteIdentifier(tableName)}`)
+}
+
+/**
+ * 同步表的列（不重建表）
+ */
+function syncColumns(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+  schema: Record<string, string>
+): void {
+  const actual = getTableStructure(db, tableName)
+  const expectedCols = new Set(Object.keys(schema))
+
+  // 添加缺失的列
+  for (const colName of expectedCols) {
+    if (!actual.columns.has(colName)) {
+      db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(colName)} ${schema[colName]}`)
+    }
+  }
+
+  // 删除多余的列
+  for (const colName of actual.columns.keys()) {
+    if (!expectedCols.has(colName)) {
+      db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} DROP COLUMN ${quoteIdentifier(colName)}`)
+    }
   }
 }
 
 /**
- * Initialize all Hermes SQLite tables with proper schemas.
- * This function creates tables and adds missing columns if schemas change.
- * Call this once at application bootstrap.
+ * 同步索引
  */
-export function initAllHermesTables(): void {
+function syncIndexes(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+  indexes: Record<string, string>
+): void {
+  const existingIndexes = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?`
+  ).all(tableName) as Array<{ name: string }>
+
+  const existingNames = new Set(existingIndexes.map(i => i.name))
+  const expectedNames = new Set(Object.keys(indexes))
+
+  // 删除多余索引
+  for (const name of existingNames) {
+    if (expectedNames.has(name)) {
+      try { db.exec(`DROP INDEX ${quoteIdentifier(name)}`) } catch { }
+    }
+  }
+
+  // 创建新索引
+  for (const [name, sql] of Object.entries(indexes)) {
+    if (!existingNames.has(name)) {
+      try { db.exec(sql) } catch { }
+    }
+  }
+}
+
+/**
+ * 主同步函数
+ * - 表不存在：创建
+ * - 表存在但结构不匹配（主键/类型）：重建
+ * - 表存在且结构匹配：同步列（增删）
+ * - 同步索引
+ */
+export function syncTable(
+  tableName: string,
+  schema: Record<string, string>,
+  options?: {
+    primaryKey?: string  // 主键定义，如 "roomId, agentId" 或 "id"
+    indexes?: Record<string, string>  // 索引定义
+  }
+): void {
   const db = getDb()
   if (!db) return
 
-  // Usage store - with special migration logic
-  const tableExists = sqliteTableExists(db, USAGE_TABLE)
-  const cols = tableExists
-    ? db.prepare(`PRAGMA table_info(${quoteIdentifier(USAGE_TABLE)})`).all() as Array<{ name: string; pk: number }>
-    : []
-  const hasId = cols.some(c => c.name === 'id')
-  if (!hasId && tableExists) {
-    // Migration: if session_id is still PRIMARY KEY (no separate id column), recreate table
-    const oldCols = new Set(cols.map(c => c.name))
-    const oldUsageTable = `${USAGE_TABLE}_old`
+  // 1. 表不存在 → 直接创建
+  if (!tableExists(db, tableName)) {
+    createTable(db, tableName, schema, options?.primaryKey)
 
-    db.exec('BEGIN')
-    try {
-      db.exec(`ALTER TABLE ${quoteIdentifier(USAGE_TABLE)} RENAME TO ${quoteIdentifier(oldUsageTable)}`)
-      db.exec(`CREATE TABLE ${quoteIdentifier(USAGE_TABLE)} (${usageSchemaDefinitionSql()})`)
-      insertUsageRowsFromLegacyTable(db, oldUsageTable, oldCols)
-      db.exec(`DROP TABLE ${quoteIdentifier(oldUsageTable)}`)
-      db.exec('COMMIT')
-    } catch (error) {
-      db.exec('ROLLBACK')
-      throw error
+    // 创建索引
+    if (options?.indexes) {
+      for (const indexSQL of Object.values(options.indexes)) {
+        db.exec(indexSQL)
+      }
     }
-  } else if (hasId) {
-    recoverInterruptedUsageMigration(db)
-  }
-  ensureTable(USAGE_TABLE, USAGE_SCHEMA)
-
-  // Session store
-  ensureTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
-  ensureTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
-  db.exec(MESSAGES_INDEX)
-
-  // Compression snapshot
-  ensureTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
-
-  // Group chat - basic tables
-  ensureTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
-  ensureTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
-  ensureTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
-  ensureTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
-  ensureTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
-
-  // Group chat - composite primary key tables
-  // Create without PK first, then add PK constraint
-  ensureTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA)
-  ensureTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA)
-
-  // Add composite primary keys (SQLite doesn't support ADD PK, so we recreate if needed)
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS ${GC_ROOM_AGENTS_TABLE}_new (${Object.entries(GC_ROOM_AGENTS_SCHEMA).map(([k, v]) => `"${k}" ${v}`).join(', ')}, PRIMARY KEY (room_id, agent_id))`)
-    db.exec(`INSERT OR IGNORE INTO ${GC_ROOM_AGENTS_TABLE}_new SELECT * FROM ${GC_ROOM_AGENTS_TABLE}`)
-    db.exec(`DROP TABLE IF EXISTS ${GC_ROOM_AGENTS_TABLE}`)
-    db.exec(`ALTER TABLE ${GC_ROOM_AGENTS_TABLE}_new RENAME TO ${GC_ROOM_AGENTS_TABLE}`)
-  } catch {
-    // Table already has correct schema or migration failed
+    return
   }
 
+  // 2. 表存在 → 检查结构
+  const actual = getTableStructure(db, tableName)
+  const matches = structureMatches(actual, schema, options?.primaryKey)
+
+  if (matches) {
+    // 结构完全匹配 → 同步列（理论上不会做任何事，但确保一致性）
+    syncColumns(db, tableName, schema)
+  } else {
+    // 结构不匹配 → 重建表
+    rebuildTable(db, tableName, schema, options?.primaryKey)
+  }
+
+  // 3. 同步索引（不管是否重建）
+  if (options?.indexes) {
+    syncIndexes(db, tableName, options.indexes)
+  }
+}
+
+// ============================================================================
+// Unified Initializer
+// ============================================================================
+
+/**
+ * Initialize all Hermes SQLite tables with proper schemas.
+ * This function automatically syncs all tables to match their schema definitions.
+ * Call this once at application bootstrap.
+ */
+export function initAllHermesTables(retryCount = 0): void {
+  // 防止无限重试（最多重试 1 次）
+  if (retryCount > 1) {
+    throw new Error('[Schema] ❌ Database initialization failed after multiple retry attempts. Please delete the database file manually and restart.')
+  }
+
+  const db = getDb()
+  if (!db) return
+
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS ${GC_ROOM_MEMBERS_TABLE}_new (${Object.entries(GC_ROOM_MEMBERS_SCHEMA).map(([k, v]) => `"${k}" ${v}`).join(', ')}, PRIMARY KEY (room_id, user_id))`)
-    db.exec(`INSERT OR IGNORE INTO ${GC_ROOM_MEMBERS_TABLE}_new SELECT * FROM ${GC_ROOM_MEMBERS_TABLE}`)
-    db.exec(`DROP TABLE IF EXISTS ${GC_ROOM_MEMBERS_TABLE}`)
-    db.exec(`ALTER TABLE ${GC_ROOM_MEMBERS_TABLE}_new RENAME TO ${GC_ROOM_MEMBERS_TABLE}`)
-  } catch {
-    // Table already has correct schema or migration failed
+    // Usage store
+    syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
+
+    // Session store
+    syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA)
+    syncTable(MESSAGES_TABLE, MESSAGES_SCHEMA)
+    db.exec(MESSAGES_INDEX)
+
+    // Compression snapshot
+    syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
+
+    // Group chat - basic tables
+    syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)
+    syncTable(GC_MESSAGES_TABLE, GC_MESSAGES_SCHEMA)
+    syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
+    syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
+    syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
+
+    // Group chat - single-column primary key tables (PRIMARY KEY in column definition)
+    syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
+      indexes: {
+        idx_gc_room_agents_profile: 'CREATE INDEX idx_gc_room_agents_profile ON gc_room_agents(profile)',
+      }
+    })
+
+    syncTable(GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA, {
+      indexes: {
+        idx_gc_room_members_user: 'CREATE INDEX idx_gc_room_members_user ON gc_room_members(userId)',
+      }
+    })
+  } catch (e) {
+    console.error('Error initializing Hermes SQLite tables:', e)
+
+    // 自动恢复：备份数据库 → 删除损坏的数据库 → 重新初始化
+    console.warn('[Schema] Database initialization failed. Attempting automatic recovery...')
+
+    try {
+      const dbPath = getStoragePath()
+      const { unlinkSync, copyFileSync, existsSync } = require('fs')
+
+      if (!existsSync(dbPath)) {
+        console.log('[Schema] Database file does not exist. Creating new database...')
+        initAllHermesTables()
+        console.log('[Schema] Database created successfully!')
+        return
+      }
+
+      // 检查是否已经存在备份（避免重复失败时创建多个备份）
+      const existingBackup = dbPath + '.corrupted.last'
+      let finalBackupPath: string | undefined
+
+      if (existsSync(existingBackup)) {
+        console.log(`[Schema] Backup already exists: ${existingBackup}`)
+        console.log('[Schema] Deleting corrupted database without re-backup...')
+        try {
+          unlinkSync(dbPath)
+        } catch (deleteError) {
+          console.warn('[Schema] Failed to delete corrupted database:', deleteError)
+        }
+      } else {
+        // 没有备份，创建新备份
+        const timestamp = Date.now()
+        const backupPath = dbPath + '.corrupted.' + timestamp
+        let backupSuccess = false
+
+        try {
+          copyFileSync(dbPath, backupPath)
+          backupSuccess = true
+          finalBackupPath = backupPath
+          console.log(`[Schema] Backed up corrupted database to: ${backupPath}`)
+        } catch (backupError) {
+          console.warn('[Schema] Failed to backup database:', backupError)
+        }
+
+        // 只有备份成功后才删除原文件
+        if (backupSuccess) {
+          try {
+            unlinkSync(dbPath)
+          } catch (deleteError) {
+            console.warn('[Schema] Failed to delete corrupted database:', deleteError)
+          }
+        }
+      }
+
+      // 3. 删除 WAL 和 SHM 文件
+      try { unlinkSync(dbPath + '-wal') } catch { }
+      try { unlinkSync(dbPath + '-shm') } catch { }
+
+      // 4. 重新初始化（增加重试计数）
+      console.log('[Schema] Reinitializing database...')
+      initAllHermesTables(retryCount + 1)
+      console.log('[Schema] Database recovered successfully! System is ready to use.')
+      const backupLocation = finalBackupPath || existingBackup
+      if (backupLocation) {
+        console.log(`[Schema] If you need to recover old data, restore from: ${backupLocation}`)
+      }
+    } catch (recoveryError) {
+      console.error('[Schema] Failed to recover database:', recoveryError)
+      throw recoveryError
+    }
   }
 }

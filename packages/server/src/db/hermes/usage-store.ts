@@ -137,9 +137,12 @@ export interface UsageStatsModelRow {
 
 export interface UsageStatsDailyRow {
   date: string
-  tokens: number
-  cache: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
   sessions: number
+  errors: number
   cost: number
 }
 
@@ -200,14 +203,16 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
 
   const byDay = db.prepare(`
     SELECT DATE(created_at / 1000, 'unixepoch') as date,
-      COALESCE(SUM(input_tokens + output_tokens),0) as tokens,
-      COALESCE(SUM(cache_read_tokens),0) as cache,
+      COALESCE(SUM(input_tokens),0) as input_tokens,
+      COALESCE(SUM(output_tokens),0) as output_tokens,
+      COALESCE(SUM(cache_read_tokens),0) as cache_read_tokens,
+      COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens,
       COUNT(DISTINCT session_id) as sessions
     FROM ${TABLE}
     ${whereClause}
     GROUP BY date
     ORDER BY date
-  `).all(...params) as Array<{ date: string; tokens: number; cache: number; sessions: number }>
+  `).all(...params) as Array<{ date: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; sessions: number }>
 
   return {
     input_tokens: totals.input_tokens,
@@ -217,6 +222,6 @@ export function getLocalUsageStats(profile?: string, days = 30): LocalUsageStats
     reasoning_tokens: totals.reasoning_tokens,
     sessions: totals.sessions,
     by_model: byModel,
-    by_day: byDay.map(d => ({ ...d, cost: 0 })),
+    by_day: byDay.map(d => ({ ...d, errors: 0, cost: 0 })),
   }
 }

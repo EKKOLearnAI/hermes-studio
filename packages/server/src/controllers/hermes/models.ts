@@ -134,13 +134,13 @@ export async function getAvailable(ctx: any) {
           }
           if (Object.keys(modelMeta).length === 0) modelMeta = undefined
         }
-      } else if (providerKey === 'openrouter') {
-        // OpenRouter has 200+ models — fetch dynamically like Copilot
+      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi') {
+        // OpenRouter and local CLIProxyAPI expose dynamic OpenAI-compatible /models catalogs.
         if (envMapping.api_key_env) {
-          const orKey = envGetValue(envMapping.api_key_env)
-          if (orKey) {
+          const apiKey = envGetValue(envMapping.api_key_env)
+          if (apiKey) {
             try {
-              const fetched = await fetchProviderModels(baseUrl, orKey, true)
+              const fetched = await fetchProviderModels(baseUrl, apiKey, providerKey === 'openrouter')
               if (fetched.length > 0) modelsList = fetched
             } catch { /* ignore — leave empty, won't show */ }
           }

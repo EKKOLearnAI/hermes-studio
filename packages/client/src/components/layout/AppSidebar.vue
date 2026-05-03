@@ -57,12 +57,19 @@ function openChangelog() {
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ open: appStore.sidebarOpen }">
+  <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
       <img :src="logoPath" alt="Hermes" class="logo-img" />
       <span class="logo-text">Hermes</span>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
+
+    <button class="collapse-btn" @click="appStore.toggleSidebarCollapsed()" :title="appStore.sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline v-if="appStore.sidebarCollapsed" points="9 18 15 12 9 6" />
+        <polyline v-else points="15 18 9 12 15 6" />
+      </svg>
+    </button>
 
     <nav class="sidebar-nav">
       <!-- Conversation -->
@@ -316,6 +323,7 @@ function openChangelog() {
 @use "@/styles/variables" as *;
 
 .sidebar {
+  position: relative;
   width: $sidebar-width;
   height: calc(100 * var(--vh));
   background-color: $bg-sidebar;
@@ -600,6 +608,112 @@ function openChangelog() {
       background: $text-muted;
     }
   }
+}
+
+// ─── Collapsed sidebar (icon-rail mode) ─────────────────────────
+
+.sidebar.collapsed {
+  width: $sidebar-collapsed-width;
+  padding: 0 8px 12px;
+  overflow: hidden;
+
+  .sidebar-logo {
+    padding: 12px 4px 8px;
+    margin: 0 -8px;
+    justify-content: center;
+    gap: 0;
+
+    .logo-text {
+      display: none;
+    }
+  }
+
+  .collapse-btn {
+    display: flex;
+    margin: 0 auto 8px;
+  }
+
+  .nav-group-label {
+    display: none;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 10px 4px;
+    gap: 0;
+
+    span {
+      display: none;
+    }
+
+    svg {
+      flex-shrink: 0;
+    }
+  }
+
+  // Keep group children visible — user can still see icons
+  .nav-group > div {
+    display: flex !important;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  // Hide selectors and footer text, keep theme switch
+  :deep(.profile-selector),
+  :deep(.model-selector) {
+    display: none;
+  }
+
+  .sidebar-footer {
+    .logout-item span {
+      display: none;
+    }
+
+    .status-text {
+      display: none;
+    }
+
+    .version-text,
+    .github-link {
+      display: none;
+    }
+
+    .status-row {
+      justify-content: center;
+    }
+  }
+}
+
+// ─── Collapse button ────────────────────────────────────────────
+
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: $text-muted;
+  border-radius: $radius-sm;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-right: 0;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $text-primary;
+    background-color: rgba(var(--accent-primary-rgb), 0.08);
+  }
+}
+
+// In expanded mode, overlap the top-right of the logo area
+.sidebar:not(.collapsed) .collapse-btn {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+  z-index: 5;
 }
 
 @media (max-width: $breakpoint-mobile) {

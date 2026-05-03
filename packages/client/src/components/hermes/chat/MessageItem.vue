@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { Message } from "@/stores/hermes/chat";
-import { computed, onBeforeUnmount, ref, watchEffect } from "vue";
+import type { Message, ContentBlock } from "@/stores/hermes/chat";
+import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { downloadFile } from "@/api/hermes/download";
+	import { getApiKey } from "@/api/client";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
@@ -14,6 +15,7 @@ import {
   handleCodeBlockCopyClick,
   renderHighlightedCodeBlock,
 } from "./highlight";
+import { useGlobalSpeech } from "@/composables/useSpeech";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
@@ -22,11 +24,61 @@ const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+
+// Parse ContentBlock[] from JSON string
+const contentBlocks = computed(() => {
+  const content = props.message.content || '';
+  if (!content.trim()) return null;
+
+  try {
+    // Try to parse as ContentBlock[] array
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
+      return parsed as ContentBlock[];
+    }
+  } catch {
+    // Not valid JSON, treat as plain text
+  }
+
+  return null;
+});
+
+// Check if content is in ContentBlock[] format
+const isContentBlockArray = computed(() => contentBlocks.value !== null);
+
+// Extract text content from ContentBlock[] for display
+const displayText = computed(() => {
+  if (!isContentBlockArray.value) {
+    return props.message.content || '';
+  }
+
+  // Extract text from blocks
+  return contentBlocks.value!
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n');
+});
+
+// Extract files from ContentBlock[]
+const contentFiles = computed(() => {
+  if (!isContentBlockArray.value) return null;
+
+  return contentBlocks.value!.filter(block => block.type === 'image' || block.type === 'file');
+});
+
+// Generate download URL with auth token
+function getDownloadUrl(path: string, name: string): string {
+	const token = getApiKey();
+	const base = `/api/hermes/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
+	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+}
+
 const toolExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
 const chatStore = useChatStore();
 const settingsStore = useSettingsStore();
+const speech = useGlobalSpeech();
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -154,11 +206,29 @@ function formatSize(bytes: number): string {
  */
 function getFilePathFromContent(attName: string): string | null {
   const content = props.message.content || "";
+
+  // Try ContentBlock[] format first
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
+      const fileBlock = parsed.find((block: any) =>
+        block.type === 'file' && block.name === attName
+      );
+      if (fileBlock && (fileBlock as any).path) {
+        return (fileBlock as any).path;
+      }
+    }
+  } catch {
+    // Not valid JSON, continue to regex matching
+  }
+
+  // Fallback to markdown format: [File: name](path)
   const regex = /\[File:\s*([^\]]+)\]\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
     if (match[1].trim() === attName.trim()) return match[2];
   }
+
   return null;
 }
 
@@ -278,6 +348,88 @@ const renderedToolResult = computed(() => {
     toolResultPayload.value.language,
   );
 });
+
+// 语音播放相关
+const canPlaySpeech = computed(() => {
+  // 只有 assistant 消息可以播放，且浏览器支持 Web Speech API
+  return props.message.role === 'assistant' &&
+         speech.isSupported &&
+         copyableContent.value;
+});
+
+const isPlayingThisMessage = computed(() => {
+  return speech.currentMessageId.value === props.message.id && speech.isPlaying.value;
+});
+
+const isPausedThisMessage = computed(() => {
+  return speech.currentMessageId.value === props.message.id && speech.isPaused.value;
+});
+
+function handleSpeechToggle() {
+  if (!canPlaySpeech.value) {
+    console.log('Speech not supported or no content')
+    return
+  }
+  const content = props.message.content || ''
+  console.log('Toggling speech for message:', props.message.id)
+  console.log('Current playing:', speech.currentMessageId.value, speech.isPlaying.value)
+  console.log('Call stack:', new Error().stack)
+
+  // 尝试获取男声语音包
+  const allVoices = speech.getAllVoices()
+  let maleVoice = null
+
+  // 查找可能的男声语音包
+  for (const voice of allVoices) {
+    const name = voice.name.toLowerCase()
+    // 常见男声关键词
+    if (name.includes('male') || name.includes('david') || name.includes('daniel') ||
+        name.includes('mark') || name.includes('yaoyao') || name.includes('google')) {
+      // 优先选择中文男声
+      if (voice.lang.startsWith('zh')) {
+        maleVoice = voice
+        break
+      }
+      // 如果没有找到中文男声，记住第一个男声
+      if (!maleVoice) {
+        maleVoice = voice
+      }
+    }
+  }
+
+  console.log('Selected male voice:', maleVoice?.name, maleVoice?.lang)
+
+  // 快速男声：语速快、音调低
+  speech.toggle(props.message.id, content, {
+    pitch: 0.5,   // 低沉
+    rate: 1.2,    // 快速
+    voice: maleVoice || undefined, // 使用男声，如果没有就用默认
+  })
+}
+
+// 监听自动播放事件
+let autoPlayHandler: ((e: Event) => void) | null = null
+
+onMounted(() => {
+  autoPlayHandler = (e: Event) => {
+    const customEvent = e as CustomEvent<{ messageId: string; content: string }>
+    if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
+      console.log('Auto-play triggered for message:', props.message.id)
+      handleSpeechToggle()
+    }
+  }
+  window.addEventListener('auto-play-speech', autoPlayHandler)
+})
+
+// 组件卸载时停止播放并清理事件监听
+onBeforeUnmount(() => {
+  if (autoPlayHandler) {
+    window.removeEventListener('auto-play-speech', autoPlayHandler)
+  }
+  if (speech.currentMessageId.value === props.message.id) {
+    speech.stop();
+  }
+});
 </script>
 
 <template>
@@ -353,7 +505,7 @@ const renderedToolResult = computed(() => {
           class="msg-avatar"
         />
         <div class="msg-content" :class="message.role">
-          <div class="message-bubble" :class="{ system: isSystem }">
+          <div class="message-bubble" :class="{ system: isSystem, 'speech-playing': isPlayingThisMessage && !isPausedThisMessage }">
             <div v-if="hasAttachments" class="msg-attachments">
               <div
                 v-for="att in message.attachments"
@@ -433,8 +585,55 @@ const renderedToolResult = computed(() => {
               </div>
             </div>
             <MarkdownRenderer
-              v-if="parsedThinking.body"
+              v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
+            />
+
+            <!-- Render user message content -->
+            <template v-if="message.role === 'user'">
+              <!-- ContentBlock[] format -->
+              <template v-if="isContentBlockArray">
+                <div v-if="contentFiles && contentFiles.length > 0" class="msg-attachments">
+                  <div
+                    v-for="(file, idx) in contentFiles"
+                    :key="idx"
+                    class="msg-attachment"
+                    :class="{ image: file.type === 'image' }"
+                  >
+                    <template v-if="file.type === 'image'">
+                      <img
+                        :src="getDownloadUrl(file.path, file.name)"
+                        :alt="file.name"
+                        class="msg-attachment-thumb"
+                        @click="previewUrl = getDownloadUrl(file.path, file.name)"
+                      />
+                    </template>
+                    <template v-else>
+                      <div
+                        class="msg-attachment-file"
+                        @click="downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
+                        style="cursor: pointer;"
+                        :title="t('download.downloadFile')"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        <span class="att-name">{{ file.name }}</span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <MarkdownRenderer v-if="displayText" :content="displayText" />
+              </template>
+              <!-- Plain text format -->
+              <MarkdownRenderer v-else-if="message.content" :content="message.content" />
+            </template>
+
+            <!-- Render assistant message content -->
+            <MarkdownRenderer
+              v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
+              :content="message.content"
             />
 
             <span v-if="message.isStreaming && !message.content" class="streaming-dots">
@@ -442,6 +641,21 @@ const renderedToolResult = computed(() => {
             </span>
           </div>
           <div class="message-meta">
+            <button
+              v-if="canPlaySpeech"
+              class="speech-bubble-btn"
+              :class="{ playing: isPlayingThisMessage, paused: isPausedThisMessage }"
+              @click="handleSpeechToggle"
+              :title="isPlayingThisMessage ? (isPausedThisMessage ? t('chat.resumeSpeech') : t('chat.pauseSpeech')) : t('chat.playSpeech')"
+            >
+              <svg v-if="!isPlayingThisMessage || isPausedThisMessage" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="4" width="4" height="16"/>
+                <rect x="14" y="4" width="4" height="16"/>
+              </svg>
+            </button>
             <button
               v-if="copyableContent"
               class="copy-bubble-btn"
@@ -472,12 +686,15 @@ const renderedToolResult = computed(() => {
 .message {
   display: flex;
   flex-direction: column;
+  position: relative;
 
   &.user {
     align-items: flex-end;
 
     .msg-body {
       max-width: 75%;
+      position: relative;
+      z-index: 1;
     }
 
     .msg-content.user {
@@ -497,6 +714,8 @@ const renderedToolResult = computed(() => {
 
     .msg-body {
       max-width: 80%;
+      position: relative;
+      z-index: 1;
     }
 
     .msg-avatar {
@@ -518,19 +737,24 @@ const renderedToolResult = computed(() => {
 
   &.system {
     align-items: flex-start;
-
-    .message-bubble.system {
-      border-left: 3px solid $warning;
-      border-radius: $radius-sm;
-      max-width: 80%;
-      background-color: rgba(var(--warning-rgb), 0.06);
-    }
   }
 
   &.highlight {
     .message-bubble {
       box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.45);
     }
+  }
+}
+
+@keyframes gradient-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
   }
 }
 
@@ -554,6 +778,68 @@ const renderedToolResult = computed(() => {
   word-break: break-word;
   border-radius: 10px;
   max-width: 100%;
+  position: relative;
+  box-sizing: border-box;
+
+  &.system {
+    border-left: 3px solid $warning;
+    border-radius: $radius-sm;
+    max-width: 80%;
+    background-color: rgba(var(--warning-rgb), 0.06);
+  }
+
+  &.speech-playing {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+    animation: rainbow-glow 4s linear infinite;
+  }
+}
+
+@keyframes rainbow-glow {
+  0% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
+  16.66% {
+    box-shadow:
+      0 0 0 2px #feca57,
+      0 0 10px rgba(254, 202, 87, 0.4),
+      0 0 20px rgba(254, 202, 87, 0.2);
+  }
+  33.33% {
+    box-shadow:
+      0 0 0 2px #48dbfb,
+      0 0 10px rgba(72, 219, 251, 0.4),
+      0 0 20px rgba(72, 219, 251, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px #ff9ff3,
+      0 0 10px rgba(255, 159, 243, 0.4),
+      0 0 20px rgba(255, 159, 243, 0.2);
+  }
+  66.66% {
+    box-shadow:
+      0 0 0 2px #54a0ff,
+      0 0 10px rgba(84, 160, 255, 0.4),
+      0 0 20px rgba(84, 160, 255, 0.2);
+  }
+  83.33% {
+    box-shadow:
+      0 0 0 2px #5f27cd,
+      0 0 10px rgba(95, 39, 205, 0.4),
+      0 0 20px rgba(95, 39, 205, 0.2);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
 }
 
 .msg-attachments {
@@ -673,9 +959,15 @@ const renderedToolResult = computed(() => {
   .message:hover & {
     opacity: 1;
   }
+
+  // 移动端一直显示按钮
+  @media (max-width: 768px) {
+    opacity: 1;
+  }
 }
 
-.copy-bubble-btn {
+.copy-bubble-btn,
+.speech-bubble-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -699,8 +991,29 @@ const renderedToolResult = computed(() => {
 
     &:hover {
       color: #cccccc;
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.1);
     }
+  }
+}
+
+.speech-bubble-btn {
+  &.playing {
+    color: var(--accent-primary);
+    animation: pulse 1.5s ease-in-out infinite;
+
+    &.paused {
+      animation: none;
+      opacity: 0.6;
+    }
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 

@@ -105,6 +105,11 @@ export default {
     send: '전송',
     contextUsed: '사용된 컨텍스트:',
     sessions: '세션',
+    webUiSessions: 'Web UI/API Server 세션',
+    sessionScopeHint: '채팅에는 Web UI/API Server 세션만 표시됩니다. CLI, Telegram, Discord, Cron 등 채널 세션은 기록에서 읽기 전용으로 볼 수 있습니다.',
+    openHistory: '기록 열기',
+    hermesHistory: 'Hermes 기록',
+    historyScopeHint: '소스별로 그룹화된 Hermes 기록 세션을 읽기 전용으로 봅니다.',
     noSessions: '세션 없음',
     newChat: '새 채팅',
     deleteSession: '이 세션을 삭제하시겠습니까?',
@@ -142,6 +147,11 @@ export default {
     copyBubble: '메시지 복사',
     copiedBubble: '복사됨',
     copyFailed: '복사 실패',
+    playSpeech: '음성 재생',
+    pauseSpeech: '일시정지',
+    resumeSpeech: '재개',
+    stopSpeech: '중지',
+    speechNotSupported: '이 브라우저는 음성 재생을 지원하지 않습니다',
   },
 
   // 예약 작업
@@ -220,7 +230,18 @@ export default {
     attachedFiles: '첨부 파일',
     loadFailed: '스킬을 불러오지 못했습니다',
     fileLoadFailed: '파일을 불러오지 못했습니다',
+    modified: '사용자 수정됨',
+    archived: '보관됨',
+    pinned: '고정됨',
+    pin: '스킬 고정',
+    unpin: '고정 해제',
+    pinFailed: '고정 상태 변경 실패',
     toggleFailed: '스킬 상태를 전환하지 못했습니다',
+    source: {
+      builtin: '내장',
+      hub: 'Hub',
+      local: '로컬',
+    },
   },
 
   // 메모리
@@ -558,6 +579,8 @@ export default {
     date: '날짜',
     tokens: '토큰',
     cache: '캐시',
+    cacheRead: '캐시 읽기',
+    cacheWrite: '캐시 쓰기',
     sessions: '세션',
     cost: '비용',
     noData: '사용량 데이터 없음',
@@ -566,6 +589,14 @@ export default {
   // 변경 이력
   changelog: {
 
+    new_0_5_6_1: '음성 재생 기능: Web Speech API, 수동 재생 버튼, 자동 재생 스위치, 무지개 테두리 애니메이션, 모바일 최적화',
+    new_0_5_6_2: '강력한 LLM JSON 파서: Python 형식 허용, 스트리밍 이벤트에서 텍스트 추출',
+    new_0_5_6_3: 'Skils 기능 향상: 사용 통계, 소스 필터링, 보관된 스킬, 출처, 고정 토글',
+    new_0_5_6_4: '확장된 일일 사용 통계: 캐시 읽기/쓰기 분리를 포함한 상세한 토큰 분석',
+    new_0_5_6_5: '세션 기록 범위 명확화: 채팅 및 기록 보기의 설명 개선',
+    new_0_5_6_6: 'Anthropic 스타일의 ContentBlock 배열 형식(텍스트, 이미지, 파일)을 사용하여 첨부파일 처리를 재설계',
+    new_0_5_6_7: '인증이 포함된 ContentBlock 및 Markdown 형식을 지원하는 프론트엔드 파일 다운로드 기능 추가',
+    new_0_5_6_8: '중복된 nodemon 인스턴스를 제거하여 SQLite 데이터베이스 재설정을 일으키는 다중 프로세스 충돌 수정',
     new_0_5_5_1: '🎉 노동절 감사합니다! 오늘은 쉬니까 양해 부탁드립니다',
     new_0_5_5_2: 'Hermes 세션 기록 페이지 추가',
     new_0_5_5_3: '기록 페이지는 독립적으로 세션 관리',

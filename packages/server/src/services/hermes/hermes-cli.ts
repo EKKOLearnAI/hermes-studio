@@ -574,3 +574,20 @@ export async function importProfile(archivePath: string, name?: string): Promise
     throw new Error(`Failed to import profile: ${err.message}`)
   }
 }
+
+/**
+ * Pin or unpin a skill via hermes curator
+ */
+export async function pinSkill(name: string, pinned: boolean): Promise<string> {
+  const subcmd = pinned ? 'pin' : 'unpin'
+  try {
+    const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['curator', subcmd, name], {
+      timeout: 15000,
+      ...execOpts,
+    })
+    return stdout || stderr
+  } catch (err: any) {
+    logger.error(err, `Hermes CLI: curator ${subcmd} failed`)
+    throw new Error(`Failed to ${subcmd} skill: ${err.message}`)
+  }
+}

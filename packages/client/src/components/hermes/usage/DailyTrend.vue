@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUsageStore } from '@/stores/hermes/usage'
 
@@ -17,13 +18,15 @@ function formatCost(n: number): string {
   return '$' + n.toFixed(2)
 }
 
-const maxTokens = computed(() =>
-  Math.max(...usageStore.dailyUsage.map(d => d.tokens), 1),
-)
-</script>
+function cacheHitRate(d: { input_tokens: number; cache_read_tokens: number }): string {
+  const total = d.input_tokens + d.cache_read_tokens
+  if (total === 0) return '--'
+  return ((d.cache_read_tokens / total) * 100).toFixed(1) + '%'
+}
 
-<script lang="ts">
-import { computed } from 'vue'
+const maxTokens = computed(() =>
+  Math.max(...usageStore.dailyUsage.map(d => d.input_tokens + d.output_tokens), 1),
+)
 </script>
 
 <template>
@@ -39,13 +42,19 @@ import { computed } from 'vue'
         <div class="bar-track">
           <div
             class="bar-fill"
-            :style="{ height: (d.tokens / maxTokens * 100) + '%' }"
+            :style="{
+              height: ((d.input_tokens + d.output_tokens) / maxTokens * 100) + '%',
+              '--output-pct': (d.output_tokens / Math.max(d.input_tokens + d.output_tokens, 1) * 100) + '%',
+            }"
           />
         </div>
         <div class="bar-tooltip">
           <div class="tooltip-date">{{ d.date }}</div>
-          <div class="tooltip-row">{{ t('usage.tokens') }}: {{ formatTokens(d.tokens) }}</div>
-          <div class="tooltip-row">{{ t('usage.cache') }}: {{ formatTokens(d.cache) }}</div>
+          <div class="tooltip-row">{{ t('usage.inputTokens') }}: {{ formatTokens(d.input_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.outputTokens') }}: {{ formatTokens(d.output_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cacheRead') }}: {{ formatTokens(d.cache_read_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cacheWrite') }}: {{ formatTokens(d.cache_write_tokens) }}</div>
+          <div class="tooltip-row">{{ t('usage.cacheHitRate') }}: {{ cacheHitRate(d) }}</div>
           <div class="tooltip-row">{{ t('usage.sessions') }}: {{ d.sessions }}</div>
           <div class="tooltip-row">{{ t('usage.cost') }}: {{ formatCost(d.cost) }}</div>
         </div>
@@ -61,8 +70,11 @@ import { computed } from 'vue'
         <thead>
           <tr>
             <th>{{ t('usage.date') }}</th>
-            <th>{{ t('usage.tokens') }}</th>
-            <th>{{ t('usage.cache') }}</th>
+            <th>{{ t('usage.inputTokens') }}</th>
+            <th>{{ t('usage.outputTokens') }}</th>
+            <th>{{ t('usage.cacheRead') }}</th>
+            <th>{{ t('usage.cacheWrite') }}</th>
+            <th>{{ t('usage.cacheHitRate') }}</th>
             <th>{{ t('usage.sessions') }}</th>
             <th>{{ t('usage.cost') }}</th>
           </tr>
@@ -70,8 +82,11 @@ import { computed } from 'vue'
         <tbody>
           <tr v-for="d in [...usageStore.dailyUsage].reverse().slice(0, 30)" :key="d.date">
             <td>{{ d.date }}</td>
-            <td>{{ formatTokens(d.tokens) }}</td>
-            <td>{{ formatTokens(d.cache) }}</td>
+            <td>{{ formatTokens(d.input_tokens) }}</td>
+            <td>{{ formatTokens(d.output_tokens) }}</td>
+            <td>{{ formatTokens(d.cache_read_tokens) }}</td>
+            <td>{{ formatTokens(d.cache_write_tokens) }}</td>
+            <td>{{ cacheHitRate(d) }}</td>
             <td>{{ d.sessions }}</td>
             <td>{{ formatCost(d.cost) }}</td>
           </tr>
@@ -110,6 +125,7 @@ import { computed } from 'vue'
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
 }
 
 .bar-track {
@@ -123,18 +139,17 @@ import { computed } from 'vue'
 
 .bar-fill {
   width: 100%;
-  background: $text-primary;
   border-radius: 2px 2px 0 0;
   min-height: 0;
   transition: height 0.3s ease;
-
-  .dark & {
-    background: #66bb6a;
-  }
-}
-
-.bar-col {
-  position: relative;
+  /* Bottom = output (teal), top = input (blue) */
+  background: linear-gradient(
+    to top,
+    #26a69a 0%,
+    #26a69a var(--output-pct, 50%),
+    #5c6bc0 var(--output-pct, 50%),
+    #5c6bc0 100%
+  );
 }
 
 .bar-tooltip {
@@ -176,10 +191,6 @@ import { computed } from 'vue'
   font-size: 10px;
   opacity: 0.85;
   line-height: 1.5;
-}
-
-.bar-label {
-  display: none;
 }
 
 .bar-dates {
