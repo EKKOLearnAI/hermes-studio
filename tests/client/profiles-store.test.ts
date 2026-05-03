@@ -103,4 +103,20 @@ describe('Profiles Store', () => {
     await switchPromise
     expect(store.switching).toBe(false)
   })
+
+  it('switchProfile updates activeProfileName immediately', async () => {
+    mockProfilesApi.switchProfile.mockResolvedValue(true)
+    mockProfilesApi.fetchProfiles.mockResolvedValue([
+      { name: 'default', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
+      { name: 'dev', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
+    ])
+
+    const store = useProfilesStore()
+    await store.switchProfile('dev')
+
+    // activeProfileName should be updated immediately
+    expect(store.activeProfileName).toBe('dev')
+    // localStorage should also be updated
+    expect(localStorage.getItem('hermes_active_profile_name')).toBe('dev')
+  })
 })

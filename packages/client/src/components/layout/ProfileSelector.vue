@@ -15,7 +15,7 @@ const options = computed(() =>
   })),
 )
 
-const activeName = computed(() => profilesStore.activeProfile?.name ?? '')
+const activeName = computed(() => profilesStore.activeProfileName ?? '')
 
 function handleChange(value: string | number | Array<string | number>) {
   if (typeof value === 'string' && value !== activeName.value) {

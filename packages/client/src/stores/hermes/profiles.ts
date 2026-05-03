@@ -78,7 +78,13 @@ export const useProfilesStore = defineStore('profiles', () => {
     switching.value = true
     try {
       const ok = await profilesApi.switchProfile(name)
-      if (ok) await fetchProfiles()
+      if (ok) {
+        // 立即更新 activeProfileName，确保前端显示正确
+        // 不要完全依赖 fetchProfiles 的返回值，以防后端数据同步延迟
+        activeProfileName.value = name
+        localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
+        await fetchProfiles()
+      }
       return ok
     } finally {
       switching.value = false
