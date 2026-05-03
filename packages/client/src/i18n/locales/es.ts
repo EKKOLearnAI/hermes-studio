@@ -95,6 +95,13 @@ export default {
     noChangelog: 'No hay registro de cambios',
   },
 
+  // Changelog
+  changelog: {
+    new_0_5_7_1: 'Optimizar compresión de contexto y sincronización de sesión',
+    new_0_5_7_2: 'Agregar retrasos de inicio para evitar condiciones de carrera en la base de datos',
+  },
+  },
+
   // Drawer
   drawer: {
     terminal: 'Terminal',

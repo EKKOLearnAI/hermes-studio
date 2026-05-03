@@ -105,6 +105,12 @@ export default {
     noChangelog: '暂无更新日志',
   },
 
+  // 更新日志
+  changelog: {
+    new_0_5_7_1: '优化上下文压缩和会话同步',
+    new_0_5_7_2: '添加启动延迟以防止数据库资源竞争',
+  },
+
   // 抽屉
   drawer: {
     terminal: '终端',

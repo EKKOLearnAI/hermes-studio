@@ -95,6 +95,13 @@ export default {
     noChangelog: '更新履歴はありません',
   },
 
+  // Changelog
+  changelog: {
+    new_0_5_7_1: 'コンテキスト圧縮とセッション同期を最適化',
+    new_0_5_7_2: 'データベースの競合状態を防ぐために起動遅延を追加',
+  },
+  },
+
   // ドロワー
   drawer: {
     terminal: 'ターミナル',

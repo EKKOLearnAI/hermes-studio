@@ -95,6 +95,13 @@ export default {
     noChangelog: 'Nenhum registro disponivel',
   },
 
+  // Changelog
+  changelog: {
+    new_0_5_7_1: 'Otimizar compressão de contexto e sincronização de sessão',
+    new_0_5_7_2: 'Adicionar atrasos de inicialização para evitar condições de corrida no banco de dados',
+  },
+  },
+
   // Gaveta
   drawer: {
     terminal: 'Terminal',

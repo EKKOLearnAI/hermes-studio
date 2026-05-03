@@ -105,6 +105,12 @@ export default {
     noChangelog: 'No changelog available',
   },
 
+  // Changelog
+  changelog: {
+    new_0_5_7_1: 'Optimize context compression and session sync',
+    new_0_5_7_2: 'Add startup delays to prevent database race conditions',
+  },
+
   // Drawer
   drawer: {
     terminal: 'Terminal',
