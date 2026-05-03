@@ -42,7 +42,8 @@ async function handleSave() {
       }
       emit('saved')
     } else {
-      message.error(t('profiles.createFailed'))
+      const errorMsg = res.error || t('profiles.createFailed')
+      message.error(errorMsg)
     }
   } finally {
     loading.value = false
