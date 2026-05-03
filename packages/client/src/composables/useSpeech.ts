@@ -59,6 +59,11 @@ export function useSpeech() {
     // 移除 HTML 标签
     text = text.replace(/<[^>]+>/g, '')
 
+    // 只保留：字母、数字、空格、常用标点、中文
+    // 保留的标点：。!?;,，。！？；：、""''（）【】《》
+    // 移除：*# 等特殊符号、表情符号、emoji 等
+    text = text.replace(/[^\p{L}\p{N}\s。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
+
     // 移除多余的空白
     text = text.replace(/\s+/g, ' ').trim()
 
