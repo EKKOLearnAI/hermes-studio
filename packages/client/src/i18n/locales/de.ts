@@ -606,6 +606,9 @@ jobTriggered: 'Job ausgelost',
   // Anderungsprotokoll
   changelog: {
 
+    new_0_5_7_1: 'Kontextkomprimierung für rich content (Bilder, Dateien) optimiert, verbesserte Verarbeitung von Tool-Nachrichten',
+    new_0_5_7_2: 'Synchronisation von Sitzungen verbessert mit Batch-Inserts und Transaktionsschutz für Datenkonsistenz',
+    new_0_5_7_3: 'Empfang von usage.updated-Ereignissen behoben, um genaues Token-Tracking über Läufe hinweg zu gewährleisten',
     new_0_5_6_1: 'Sprachwiedergabe mit Web Speech API: manuelle Taste, Auto-Play-Schalter, Regenbogen-Randanimation und Mobile-Optimierung',
     new_0_5_6_2: 'Robuster LLM-JSON-Parser mit Toleranz für Python-Format und Textextraktion aus Streaming-Events',
     new_0_5_6_3: 'Skills-Verbesserungen: Nutzungsstatistiken, Quellfilterung, archivierte Skills, Herkunft und Pin-Toggle',
