@@ -83,7 +83,13 @@ export const useProfilesStore = defineStore('profiles', () => {
         // 不要完全依赖 fetchProfiles 的返回值，以防后端数据同步延迟
         activeProfileName.value = name
         localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
-        await fetchProfiles()
+        // 尝试刷新 profiles 列表，但不让它影响切换结果
+        try {
+          await fetchProfiles()
+        } catch (err) {
+          // fetchProfiles 失败不影响切换结果，activeProfileName 已经正确设置
+          console.warn('Failed to refresh profiles list after switch, but profile was switched successfully:', err)
+        }
       }
       return ok
     } finally {

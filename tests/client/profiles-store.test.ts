@@ -119,4 +119,41 @@ describe('Profiles Store', () => {
     // localStorage should also be updated
     expect(localStorage.getItem('hermes_active_profile_name')).toBe('dev')
   })
+
+  it('switchProfile does not update state when API fails', async () => {
+    const initialName = 'default'
+    localStorage.setItem('hermes_active_profile_name', initialName)
+
+    mockProfilesApi.switchProfile.mockResolvedValue(false)  // API failed
+
+    const store = useProfilesStore()
+    store.activeProfileName = initialName
+    const result = await store.switchProfile('dev')
+
+    // Should return false
+    expect(result).toBe(false)
+    // activeProfileName should NOT change
+    expect(store.activeProfileName).toBe(initialName)
+    // localStorage should NOT change
+    expect(localStorage.getItem('hermes_active_profile_name')).toBe(initialName)
+  })
+
+  it('switchProfile keeps activeProfileName even if fetchProfiles fails', async () => {
+    const initialName = 'default'
+    localStorage.setItem('hermes_active_profile_name', initialName)
+
+    mockProfilesApi.switchProfile.mockResolvedValue(true)
+    mockProfilesApi.fetchProfiles.mockRejectedValue(new Error('Network error'))
+
+    const store = useProfilesStore()
+    store.activeProfileName = initialName
+    const result = await store.switchProfile('dev')
+
+    // Should return true (API succeeded)
+    expect(result).toBe(true)
+    // activeProfileName should be updated even though fetchProfiles failed
+    expect(store.activeProfileName).toBe('dev')
+    // localStorage should be updated
+    expect(localStorage.getItem('hermes_active_profile_name')).toBe('dev')
+  })
 })
