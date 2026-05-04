@@ -11,6 +11,15 @@ import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
 export async function list(ctx: any) {
   try {
     const profiles = await hermesCli.listProfiles()
+    const mgr = getGatewayManagerInstance()
+    const activeProfile = mgr?.getActiveProfile?.() || null
+
+    if (activeProfile) {
+      for (const profile of profiles) {
+        profile.active = profile.name === activeProfile
+      }
+    }
+
     ctx.body = { profiles }
   } catch (err: any) {
     ctx.status = 500
