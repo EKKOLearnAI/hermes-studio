@@ -78,7 +78,43 @@ export const useProfilesStore = defineStore('profiles', () => {
     switching.value = true
     try {
       const ok = await profilesApi.switchProfile(name)
-      if (ok) await fetchProfiles()
+      if (ok) {
+        // 保存旧值，用于可能的回滚
+        const oldName = activeProfileName.value
+
+        // 立即更新 activeProfileName，确保前端显示正确
+        // 不要完全依赖 fetchProfiles 的返回值，以防后端数据同步延迟
+        activeProfileName.value = name
+        localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
+
+        // 尝试刷新 profiles 列表并验证
+        try {
+          await fetchProfiles()
+
+          // 验证：检查后端返回的 active profile 是否与我们期望的一致
+          // 如果不一致，说明后端实际上没有切换成功，需要回滚
+          const actualActive = profiles.value.find(p => p.active)
+          if (actualActive && actualActive.name !== name) {
+            console.warn(
+              `[switchProfile] Backend verification failed: expected active profile "${name}", ` +
+              `but backend reports "${actualActive.name}". Rolling back frontend state.`
+            )
+            // 回滚到旧值
+            activeProfileName.value = oldName
+            if (oldName) {
+              localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, oldName)
+            } else {
+              localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
+            }
+            // 返回 false 以触发 UI 错误提示
+            return false
+          }
+        } catch (err) {
+          // fetchProfiles 失败，无法验证
+          // 假设切换成功（API 返回了 200），保持已设置的状态
+          console.warn('Failed to refresh profiles list after switch, assuming switch succeeded:', err)
+        }
+      }
       return ok
     } finally {
       switching.value = false

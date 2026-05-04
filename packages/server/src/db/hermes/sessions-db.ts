@@ -573,7 +573,6 @@ async function openSessionDb() {
   }
   const { DatabaseSync } = await import('node:sqlite')
   const dbPath = sessionDbPath()
-  console.log(`[sessions-db] Opening session db: ${dbPath}`)
   try {
     return new DatabaseSync(dbPath, { open: true, readOnly: true })
   } catch (err: any) {

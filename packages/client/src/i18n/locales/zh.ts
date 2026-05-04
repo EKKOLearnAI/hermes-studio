@@ -105,6 +105,12 @@ export default {
     noChangelog: '暂无更新日志',
   },
 
+  // 抽屉
+  drawer: {
+    terminal: '终端',
+    files: '工作区',
+  },
+
   // 对话
   chat: {
     contextRemaining: '剩余',
@@ -153,6 +159,7 @@ export default {
     renamed: '已重命名',
     renameFailed: '重命名失败',
     renameSession: '重命名会话',
+    sessionNotFound: '会话未找到',
     enterNewTitle: '输入新标题',
     workspace: '工作区',
     setWorkspace: '设置工作区',
@@ -397,6 +404,7 @@ export default {
     importInvalidFile: '请选择有效的归档文件 (.tar.gz, .tgz, .gz, .zip)',
     name: '配置名称',
     namePlaceholder: '仅限小写字母、数字、连字符',
+    nameValidation: '配置名称只能包含小写字母、数字、下划线和连字符',
     newName: '新名称',
     newNamePlaceholder: '小写字母、数字、连字符',
     cloneFromCurrent: '从当前配置克隆',
@@ -623,6 +631,10 @@ export default {
     closeSession: '关闭此会话？',
     sessionExited: '已退出',
     processExited: '进程已退出，代码 {code}',
+    noSessions: '暂无终端会话',
+    connectionFailed: '终端服务连接失败',
+    connectionClosed: '终端连接已关闭',
+    connectionError: '终端连接错误',
   },
 
   // 群聊
@@ -699,6 +711,7 @@ export default {
   // 文件管理
   files: {
     title: '文件',
+    fileTree: '文件树',
     tree: '目录树',
     list: '文件列表',
     breadcrumbRoot: '根目录',
@@ -769,6 +782,14 @@ export default {
     new_0_5_6_6: '重新设计附件处理，采用 Anthropic 风格的 ContentBlock 数组格式，支持类型区分（文本、图片、文件）',
     new_0_5_6_7: '新增前端文件下载功能，支持 ContentBlock 和 Markdown 两种格式，带身份验证',
     new_0_5_6_8: '修复多进程冲突导致的 SQLite 数据库重置问题，清理冗余 nodemon 进程',
+    new_0_5_8_1: '新增抽屉面板支持移动端侧边栏，可自定义彩虹边框按钮',
+    new_0_5_8_2: '修复 profile 切换状态同步问题，立即更新 UI 并验证后端状态',
+    new_0_5_8_3: '过滤语音播放中的特殊字符和表情符号，改善语音合成效果',
+    new_0_5_8_4: '添加缺失的 i18n 键并统一会话数据源，优先使用数据库',
+    new_0_5_8_5: '优化 Vite 构建配置加快 Docker 构建，使用 esbuild 和代码分割',
+    new_0_5_7_1: '优化上下文压缩以支持富内容（图片、文件），改进工具消息处理',
+    new_0_5_7_2: '改进会话同步，使用批量插入和事务保护确保数据一致性',
+    new_0_5_7_3: '修复 usage.updated 事件接收，确保跨运行准确追踪 token',
     new_0_5_5_1: '🎉 五一劳动节快乐！这个劳动节就不劳动啦，如果有问题大家忍忍',
     new_0_5_5_2: '新增历史页面，用于浏览 Hermes 会话历史记录',
     new_0_5_5_3: '历史页面独立管理会话状态，不影响当前聊天页面的活动会话',

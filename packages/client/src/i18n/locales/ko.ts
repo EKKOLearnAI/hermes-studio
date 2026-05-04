@@ -95,6 +95,12 @@ export default {
     noChangelog: '변경 이력이 없습니다',
   },
 
+  // 서랍
+  drawer: {
+    terminal: '터미널',
+    files: '작업 공간',
+  },
+
   // 채팅
   chat: {
     contextRemaining: '남음',
@@ -130,6 +136,7 @@ export default {
     renamed: '이름이 변경되었습니다',
     renameFailed: '이름 변경 실패',
     renameSession: '세션 이름 변경',
+    sessionNotFound: '세션을 찾을 수 없습니다',
     enterNewTitle: '새 제목을 입력하세요',
     other: '기타',
     runFailed: '실행 실패',
@@ -363,6 +370,7 @@ export default {
     importInvalidFile: '유효한 아카이브 파일을 선택해 주세요 (.tar.gz, .tgz, .gz, .zip)',
     name: '프로필 이름',
     namePlaceholder: '영문, 숫자, 하이픈만 사용 가능',
+    nameValidation: '프로필 이름에는 소문자, 숫자, 밑줄, 하이픈만 사용할 수 있습니다',
     newName: '새 이름',
     newNamePlaceholder: '새 이름을 입력하세요',
     cloneFromCurrent: '현재 프로필에서 복제',
@@ -597,6 +605,14 @@ export default {
     new_0_5_6_6: 'Anthropic 스타일의 ContentBlock 배열 형식(텍스트, 이미지, 파일)을 사용하여 첨부파일 처리를 재설계',
     new_0_5_6_7: '인증이 포함된 ContentBlock 및 Markdown 형식을 지원하는 프론트엔드 파일 다운로드 기능 추가',
     new_0_5_6_8: '중복된 nodemon 인스턴스를 제거하여 SQLite 데이터베이스 재설정을 일으키는 다중 프로세스 충돌 수정',
+    new_0_5_8_1: '모바일 사이드바 지원 및 사용자 정의 가능한 무지개 버튼이 포함된 서랍 패널 추가',
+    new_0_5_8_2: '프로필 전환 상태 동기화 문제를 수정하고 즉시 UI 업데이트 및 백엔드 검증',
+    new_0_5_8_3: '음성 합성 개선을 위해 음성 재생의 특수 문자 및 이모지 필터링',
+    new_0_5_8_4: '누락된 i18n 키를 추가하고 데이터베이스 우선 순위를 위해 세션 데이터 소스 통합',
+    new_0_5_8_5: 'esbuild 및 청크 분할을 사용하여 Docker 빌드 속도를 높이기 위해 Vite 빌드 구성 최적화',
+    new_0_5_7_1: '도구 메시지 처리를 개선하여 리치 콘텐츠(이미지, 파일)를 지원하는 컨텍스트 압축 최적화',
+    new_0_5_7_2: '일괄 삽입 및 트랜잭션 보호로 데이터 일관성을 보장하는 세션 동기화 개선',
+    new_0_5_7_3: '실행 간 정확한 토큰 추적을 보장하기 위한 usage.updated 이벤트 수신 수정',
     new_0_5_5_1: '🎉 노동절 감사합니다! 오늘은 쉬니까 양해 부탁드립니다',
     new_0_5_5_2: 'Hermes 세션 기록 페이지 추가',
     new_0_5_5_3: '기록 페이지는 독립적으로 세션 관리',

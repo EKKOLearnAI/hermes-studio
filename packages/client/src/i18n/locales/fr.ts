@@ -95,6 +95,12 @@ export default {
     noChangelog: 'Aucun journal disponible',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Espace de travail',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'restant',
@@ -130,6 +136,7 @@ export default {
     renamed: 'Renomme',
     renameFailed: 'Echec du renommage',
     renameSession: 'Renommer la session',
+    sessionNotFound: 'Session non trouvee',
     enterNewTitle: 'Entrez un nouveau titre',
     other: 'Autre',
     runFailed: 'Echec de l\'execution',
@@ -363,6 +370,7 @@ jobTriggered: 'Job declenche',
     importInvalidFile: 'Veuillez selectionner une archive valide (.tar.gz, .tgz, .gz, .zip)',
     name: 'Nom du profil',
     namePlaceholder: 'Lettres, chiffres et tirets uniquement',
+    nameValidation: 'Le nom du profil ne peut contenir que des lettres minuscules, des chiffres, des tirets bas et des tirets',
     newName: 'Nouveau nom',
     newNamePlaceholder: 'Entrez un nouveau nom',
     cloneFromCurrent: 'Cloner depuis le profil actuel',
@@ -597,6 +605,14 @@ jobTriggered: 'Job declenche',
     new_0_5_6_6: 'Repensé la gestion des pièces jointes en utilisant le format de tableau ContentBlock style Anthropic (texte, image, fichier)',
     new_0_5_6_7: 'Ajouté la fonctionnalité de téléchargement de fichiers frontend supportant les formats ContentBlock et Markdown avec authentification',
     new_0_5_6_8: 'Corrigé le conflit multi-processus causant des réinitialisations de base de données SQLite en éliminant les instances nodemon redondantes',
+    new_0_5_8_1: 'Ajouter le panneau de tiroir avec support de barre latérale mobile et bouton arc-en-ciel personnalisable',
+    new_0_5_8_2: 'Corriger le problème de synchronisation d\'état de changement de profil avec mise à jour immédiate de l\'UI et vérification du backend',
+    new_0_5_8_3: 'Filtrer les caractères spéciaux et emoji dans la lecture vocale pour une meilleure synthèse vocale',
+    new_0_5_8_4: 'Ajouter la clé i18n manquante et unifier la source de données de session pour prioriser la base de données',
+    new_0_5_8_5: 'Optimiser la configuration de build Vite pour des builds Docker plus rapides avec esbuild et la division de chunks',
+    new_0_5_7_1: 'Optimiser la compression du contexte pour supporter le contenu riche (images, fichiers) avec amélioration du traitement des messages d\'outils',
+    new_0_5_7_2: 'Améliorer la synchronisation des sessions avec des insertions par lot et la protection des transactions pour la cohérence des données',
+    new_0_5_7_3: 'Corriger la réception des événements usage.updated pour assurer un suivi précis des tokens entre les exécutions',
     new_0_5_5_1: '🎉 Joyeuse Fête du Travail! Pas de travail aujourd\'hui, merci de votre compréhension',
     new_0_5_5_2: 'Ajout d\'une page d\'historique pour les sessions Hermes',
     new_0_5_5_3: 'La page d\'historique gère les sessions de manière indépendante',

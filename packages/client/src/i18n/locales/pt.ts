@@ -95,6 +95,12 @@ export default {
     noChangelog: 'Nenhum registro disponivel',
   },
 
+  // Gaveta
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Espaço de trabalho',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'restante',
@@ -130,6 +136,7 @@ export default {
     renamed: 'Renomeado',
     renameFailed: 'Falha ao renomear',
     renameSession: 'Renomear sessao',
+    sessionNotFound: 'Sessao nao encontrada',
     enterNewTitle: 'Digite um novo titulo',
     other: 'Outro',
     runFailed: 'Falha na execucao',
@@ -363,6 +370,7 @@ jobTriggered: 'Job acionado',
     importInvalidFile: 'Por favor, selecione um arquivo valido (.tar.gz, .tgz, .gz, .zip)',
     name: 'Nome do perfil',
     namePlaceholder: 'Apenas letras, numeros e hifens',
+    nameValidation: 'O nome do perfil só pode conter letras minúsculas, números, sublinhados e hifens',
     newName: 'Novo nome',
     newNamePlaceholder: 'Digite um novo nome',
     cloneFromCurrent: 'Clonar do perfil atual',
@@ -597,6 +605,14 @@ jobTriggered: 'Job acionado',
     new_0_5_6_6: 'Processamento de anexos reprojetado usando formato de matriz ContentBlock estilo Anthropic (texto, imagem, arquivo)',
     new_0_5_6_7: 'Adicionada funcionalidade de download de arquivos frontend suportando formatos ContentBlock e Markdown com autenticação',
     new_0_5_6_8: 'Corrigido conflito de múltiplos processos que causava redefinições do banco de dados SQLite eliminando instâncias nodemon redundantes',
+    new_0_5_8_1: 'Adicionar painel de gaveta com suporte de barra lateral móvel e botão arco-íris personalizável',
+    new_0_5_8_2: 'Corrigir problema de sincronização de estado de troca de perfil com atualização imediata de IU e verificação de backend',
+    new_0_5_8_3: 'Filtrar caracteres especiais e emoji na reprodução de voz para melhor síntese de voz',
+    new_0_5_8_4: 'Adicionar chave i18n ausente e unificar fonte de dados de sessão para priorizar banco de dados',
+    new_0_5_8_5: 'Otimizar configuração de build Vite para builds Docker mais rápidos com esbuild e divisão de chunks',
+    new_0_5_7_1: 'Otimizar compressão de contexto para suportar conteúdo rico (imagens, arquivos) com melhoria no manuseio de mensagens de ferramentas',
+    new_0_5_7_2: 'Melhorar sincronização de sessões com inserções em lote e proteção de transações para consistência de dados',
+    new_0_5_7_3: 'Corrigir recepção de eventos usage.updated para garantir rastreamento preciso de tokens entre execuções',
     new_0_5_5_1: '🎉 Feliz Dia do Trabalhador! Hoje não se trabalha, obrigado pela compreensão',
     new_0_5_5_2: 'Adicionada página de histórico para sessões Hermes',
     new_0_5_5_3: 'Página de histórico gerencia sessões de forma independente',

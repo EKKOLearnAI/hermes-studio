@@ -105,6 +105,12 @@ export default {
     noChangelog: 'No changelog available',
   },
 
+  // Drawer
+  drawer: {
+    terminal: 'Terminal',
+    files: 'Workspace',
+  },
+
   // Chat
   chat: {
     contextRemaining: 'remaining',
@@ -153,6 +159,7 @@ export default {
     renamed: 'Renamed',
     renameFailed: 'Rename failed',
     renameSession: 'Rename Session',
+    sessionNotFound: 'Session not found',
     enterNewTitle: 'Enter new title',
     workspace: 'Workspace',
     setWorkspace: 'Set Workspace',
@@ -405,6 +412,7 @@ export default {
     importInvalidFile: 'Please select a valid archive (.tar.gz, .tgz, .gz, .zip)',
     name: 'Profile Name',
     namePlaceholder: 'Lowercase letters, numbers, hyphens only',
+    nameValidation: 'Profile name can only contain lowercase letters, numbers, underscores, and hyphens',
     newName: 'New Name',
     newNamePlaceholder: 'Lowercase letters, numbers, hyphens',
     cloneFromCurrent: 'Clone from current profile',
@@ -621,6 +629,10 @@ export default {
     closeSession: 'Close this session?',
     sessionExited: 'Exited',
     processExited: 'Process exited with code {code}',
+    noSessions: 'No terminal sessions',
+    connectionFailed: 'Terminal service connection failed',
+    connectionClosed: 'Terminal connection closed',
+    connectionError: 'Terminal connection error',
   },
 
   // Group Chat
@@ -697,6 +709,7 @@ export default {
   // Files
   files: {
     title: 'Files',
+    fileTree: 'File Tree',
     tree: 'Directory Tree',
     list: 'File List',
     breadcrumbRoot: 'Home',
@@ -767,6 +780,11 @@ export default {
     new_0_5_6_6: 'Redesigned attachment handling using Anthropic-style ContentBlock array format with type discriminated unions (text, image, file)',
     new_0_5_6_7: 'Added frontend file download functionality supporting both ContentBlock and Markdown formats with authentication',
     new_0_5_6_8: 'Fixed multi-process conflict causing SQLite database resets by eliminating redundant nodemon instances',
+    new_0_5_8_1: 'Add drawer panel with mobile sidebar support and customizable rainbow button',
+    new_0_5_8_2: 'Fix profile switching state sync issue with immediate UI update and backend verification',
+    new_0_5_8_3: 'Filter special characters and emoji in speech playback for better text-to-speech',
+    new_0_5_8_4: 'Add missing i18n key and unify session data source to prioritize database',
+    new_0_5_8_5: 'Optimize Vite build configuration for faster Docker builds with esbuild and chunk splitting',
     new_0_5_7_1: 'Optimize context compression to support rich content (images, files) with improved tool message handling',
     new_0_5_7_2: 'Improve session sync with batch inserts and transaction protection for data consistency',
     new_0_5_7_3: 'Fix usage.updated event reception to ensure accurate token tracking across runs',

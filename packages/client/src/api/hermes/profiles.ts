@@ -39,13 +39,14 @@ export interface CreateProfileResult {
   strippedConfigCredentials?: string[]
 }
 
-export async function createProfile(name: string, clone?: boolean): Promise<CreateProfileResult> {
+export async function createProfile(name: string, clone?: boolean): Promise<CreateProfileResult & { error?: string }> {
   try {
     const res = await request<{
       success: boolean
       strippedCredentials?: string[]
       disabledPlatforms?: string[]
       strippedConfigCredentials?: string[]
+      error?: string
     }>('/api/hermes/profiles', {
       method: 'POST',
       body: JSON.stringify({ name, clone }),
@@ -55,9 +56,10 @@ export async function createProfile(name: string, clone?: boolean): Promise<Crea
       strippedCredentials: res.strippedCredentials,
       disabledPlatforms: res.disabledPlatforms,
       strippedConfigCredentials: res.strippedConfigCredentials,
+      error: res.error,
     }
-  } catch {
-    return { success: false }
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Unknown error' }
   }
 }
 
