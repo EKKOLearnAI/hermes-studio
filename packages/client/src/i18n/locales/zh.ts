@@ -782,6 +782,8 @@ export default {
     new_0_5_6_6: '重新设计附件处理，采用 Anthropic 风格的 ContentBlock 数组格式，支持类型区分（文本、图片、文件）',
     new_0_5_6_7: '新增前端文件下载功能，支持 ContentBlock 和 Markdown 两种格式，带身份验证',
     new_0_5_6_8: '修复多进程冲突导致的 SQLite 数据库重置问题，清理冗余 nodemon 进程',
+    new_0_5_9_1: '统一应用程序中的 profile 管理，提供一致的 API 和状态管理',
+    new_0_5_9_2: '添加 GitHub issue 和 pull request 模板以改进贡献工作流程',
     new_0_5_8_1: '新增抽屉面板支持移动端侧边栏，可自定义彩虹边框按钮',
     new_0_5_8_2: '修复 profile 切换状态同步问题，立即更新 UI 并验证后端状态',
     new_0_5_8_3: '过滤语音播放中的特殊字符和表情符号，改善语音合成效果',

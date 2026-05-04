@@ -780,6 +780,8 @@ export default {
     new_0_5_6_6: 'Redesigned attachment handling using Anthropic-style ContentBlock array format with type discriminated unions (text, image, file)',
     new_0_5_6_7: 'Added frontend file download functionality supporting both ContentBlock and Markdown formats with authentication',
     new_0_5_6_8: 'Fixed multi-process conflict causing SQLite database resets by eliminating redundant nodemon instances',
+    new_0_5_9_1: 'Unify profile management across the application with consistent API and state management',
+    new_0_5_9_2: 'Add GitHub issue and pull request templates for better contribution workflow',
     new_0_5_8_1: 'Add drawer panel with mobile sidebar support and customizable rainbow button',
     new_0_5_8_2: 'Fix profile switching state sync issue with immediate UI update and backend verification',
     new_0_5_8_3: 'Filter special characters and emoji in speech playback for better text-to-speech',
