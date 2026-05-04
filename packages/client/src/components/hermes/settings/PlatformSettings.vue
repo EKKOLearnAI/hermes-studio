@@ -3,7 +3,7 @@ import { ref, reactive, onUnmounted } from 'vue'
 import { NSwitch, NInput, NButton, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
-import { saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials } from '@/api/hermes/config'
+import { saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials, fetchQqQrCode, pollQrStatus, saveQqCredentials } from '@/api/hermes/config'
 import PlatformCard from './PlatformCard.vue'
 import SettingRow from './SettingRow.vue'
 
@@ -57,6 +57,12 @@ const wxQrUrl = ref('')
 const wxQrId = ref('')
 const wxQrStatus = ref<'idle' | 'loading' | 'waiting' | 'scaned' | 'confirmed' | 'error' | 'expired'>('idle')
 let wxPollTimer: ReturnType<typeof setTimeout> | null = null
+
+// QQ Bot QR code login state
+const qqQrUrl = ref('')
+const qqQrId = ref('')
+const qqQrStatus = ref<'idle' | 'loading' | 'waiting' | 'scaned' | 'confirmed' | 'error' | 'expired'>('idle')
+let qqPollTimer: ReturnType<typeof setTimeout> | null = null
 
 async function startWeixinQrLogin() {
   wxQrStatus.value = 'loading'
@@ -112,8 +118,62 @@ function stopWeixinPoll() {
   }
 }
 
+async function startQqQrLogin() {
+  qqQrStatus.value = 'loading'
+  qqQrUrl.value = ''
+  qqQrId.value = ''
+  stopQqPoll()
+
+  try {
+    const data = await fetchQqQrCode()
+    qqQrId.value = data.qrcode
+    qqQrUrl.value = data.qrcode_url
+    window.open(data.qrcode_url, '_blank')
+    qqQrStatus.value = 'waiting'
+    pollQqStatus()
+  } catch (err: any) {
+    qqQrStatus.value = 'error'
+    message.error(err.message || '获取QQ二维码失败')
+  }
+}
+
+function pollQqStatus() {
+  if (!qqQrId.value) return
+  qqPollTimer = setTimeout(async () => {
+    try {
+      const data = await pollQrStatus(qqQrId.value)
+      if (data.status === 'wait') {
+        pollQqStatus()
+      } else if (data.status === 'scaned') {
+        qqQrStatus.value = 'scaned'
+        pollQqStatus()
+      } else if (data.status === 'expired') {
+        qqQrStatus.value = 'expired'
+      } else if (data.status === 'confirmed') {
+        qqQrStatus.value = 'confirmed'
+        await saveQqCredentials({
+          app_id: data.app_id!,
+          client_secret: data.client_secret!,
+        })
+        await settingsStore.fetchSettings()
+        message.success(t('settings.saved'))
+      }
+    } catch {
+      pollQqStatus()
+    }
+  }, 3000)
+}
+
+function stopQqPoll() {
+  if (qqPollTimer) {
+    clearTimeout(qqPollTimer)
+    qqPollTimer = null
+  }
+}
+
 onUnmounted(() => {
   stopWeixinPoll()
+  stopQqPoll()
 })
 
 const platforms = [
@@ -157,6 +217,12 @@ const platforms = [
     name: 'Weixin',
     exclusive: true,
     icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.68 4.025c-3.694 0-6.69 2.462-6.69 5.496 0 3.034 2.996 5.496 6.69 5.496.753 0 1.477-.1 2.158-.28a.66.66 0 01.548.074l1.46.854a.25.25 0 00.127.041.224.224 0 00.221-.225c0-.055-.022-.109-.037-.162l-.298-1.131a.453.453 0 01.163-.509C21.81 18.613 22.77 16.973 22.77 15.512c0-3.034-2.996-5.496-6.69-5.496h.198zm-2.454 3.347c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902zm4.912 0c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902z"/></svg>',
+  },
+  {
+    key: 'qq',
+    name: 'QQ Bot',
+    exclusive: true,
+    icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>',
   },
   {
     key: 'wecom',
@@ -334,6 +400,33 @@ const platforms = [
         </SettingRow>
         <SettingRow :label="t('platform.accountId')" :hint="t('platform.accountIdHint')">
           <NInput :default-value="getCreds('weixin').extra?.account_id || ''" :loading="isSaving('weixin', 'account_id')" clearable size="small" class="input-lg" placeholder="Account ID" @change="v => saveCredentials('weixin', 'account_id', { extra: { ...getCreds('weixin').extra, account_id: v } })" />
+        </SettingRow>
+      </template>
+
+      <!-- QQ Bot -->
+      <template v-if="p.key === 'qq'">
+        <div class="weixin-qr-section">
+          <NButton
+            v-if="qqQrStatus === 'idle' || qqQrStatus === 'error' || qqQrStatus === 'expired' || qqQrStatus === 'confirmed'"
+            type="primary"
+            size="small"
+            @click="startQqQrLogin"
+          >
+            {{ qqQrStatus === 'confirmed' ? t('platform.qrRelogin') : 'QQ Bot 扫码接入' }}
+          </NButton>
+          <div v-if="qqQrStatus === 'loading'" class="weixin-qr-loading">
+            <NSpin size="small" />
+            <span>{{ t('platform.qrFetching') }}</span>
+          </div>
+          <div v-if="qqQrStatus === 'waiting' || qqQrStatus === 'scaned'" class="weixin-qr-hint">
+            {{ qqQrStatus === 'scaned' ? t('platform.qrScanedHint') : '请使用手机QQ扫描二维码' }}
+          </div>
+        </div>
+        <SettingRow :label="t('platform.appId')" :hint="'QQ 机器人 App ID'">
+          <NInput :default-value="getCreds('qq').extra?.app_id || ''" :loading="isSaving('qq', 'app_id')" clearable size="small" class="input-lg" placeholder="App ID" @change="v => saveCredentials('qq', 'app_id', { extra: { ...getCreds('qq').extra, app_id: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.appSecret')" :hint="'QQ 机器人 App Secret'">
+          <NInput :default-value="getCreds('qq').extra?.client_secret || ''" :loading="isSaving('qq', 'client_secret')" clearable size="small" class="input-lg" placeholder="App Secret" @change="v => saveCredentials('qq', 'client_secret', { extra: { ...getCreds('qq').extra, client_secret: v } })" />
         </SettingRow>
       </template>
 

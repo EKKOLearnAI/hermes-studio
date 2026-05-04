@@ -6,7 +6,7 @@ import { saveEnvValue } from '../../services/config-helpers'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
-  'weixin', 'wecom', 'feishu', 'dingtalk',
+  'weixin', 'wecom', 'feishu', 'dingtalk', 'qq',
 ])
 
 const configPath = () => getActiveConfigPath()
@@ -29,6 +29,8 @@ const envPlatformMap: Record<string, [string, string]> = {
   WEIXIN_ACCOUNT_ID: ['weixin', 'extra.account_id'],
   WEIXIN_BASE_URL: ['weixin', 'extra.base_url'],
   WHATSAPP_ENABLED: ['whatsapp', 'enabled'],
+  QQ_APP_ID: ['qq', 'extra.app_id'],
+  QQ_CLIENT_SECRET: ['qq', 'extra.client_secret'],
 }
 
 const platformEnvMap: Record<string, Record<string, string>> = {}
@@ -180,6 +182,18 @@ export async function updateCredentials(ctx: any) {
         }
       } else {
         await saveEnvValue(envVar, String(val))
+        // Also write to config.yaml platforms.<platform> so gateway can read it
+        if (!config.platforms) config.platforms = {}
+        if (!config.platforms[platform]) config.platforms[platform] = {}
+        if (!config.platforms[platform].enabled) config.platforms[platform].enabled = true
+        const parts = cfgPath.split('.')
+        let cur: any = config.platforms[platform]
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {}
+          cur = cur[parts[i]]
+        }
+        cur[parts[parts.length - 1]] = val
+        configChanged = true
       }
     }
     if (configChanged) { await writeConfig(config) }
