@@ -289,7 +289,6 @@ class AgentClient {
 
             // Strip @mention from input — agent already knows it was mentioned
             const input = msg.content.replace(new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi'), '').trim() || msg.content
-
             // Start a run on Hermes gateway
             const runRes = await fetch(`${upstream}/v1/runs`, {
                 method: 'POST',
@@ -338,13 +337,13 @@ class AgentClient {
             // Use Authorization header instead of query parameter for better compatibility
             const eventSourceInit: any = apiKey ? {
                 fetch: (url: string, init: any = {}) => fetch(url, {
-                  ...init,
-                  headers: {
-                    ...(init.headers || {}),
-                    Authorization: `Bearer ${apiKey}`,
-                  },
+                    ...init,
+                    headers: {
+                        ...(init.headers || {}),
+                        Authorization: `Bearer ${apiKey}`,
+                    },
                 }),
-              } : {}
+            } : {}
 
             // @ts-ignore - eventsource library types are too strict
             const source = new EventSource(eventsUrl.toString(), eventSourceInit)

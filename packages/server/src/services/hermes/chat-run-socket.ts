@@ -12,6 +12,7 @@ import type { Server, Socket } from 'socket.io'
 import { EventSource } from 'eventsource'
 import { setRunSession } from '../../routes/hermes/proxy-handler'
 import { updateUsage } from '../../db/hermes/usage-store'
+import { getSystemPrompt } from '../../lib/llm-prompt'
 import {
   getSession,
   getSessionDetail,
@@ -479,15 +480,19 @@ export class ChatRunSocket {
       const body: Record<string, any> = { input }
       if (hermesSessionId) body.session_id = hermesSessionId
       if (model) body.model = model
-      if (instructions) body.instructions = instructions
+      if (instructions) {
+        body.instructions = `${getSystemPrompt()}\n${instructions}`
+      } else {
+        body.instructions = getSystemPrompt()
+      }
       // Inject workspace context if set for this session
       if (session_id) {
         const sessionRow = getSession(session_id)
         if (sessionRow?.workspace) {
           const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
           body.instructions = body.instructions
-            ? `${workspaceCtx}\n${body.instructions}`
-            : workspaceCtx
+            ? `\n${workspaceCtx}\n${body.instructions}`
+            : `\n${workspaceCtx}`
         }
       }
       // Build conversation_history from DB if session_id is provided

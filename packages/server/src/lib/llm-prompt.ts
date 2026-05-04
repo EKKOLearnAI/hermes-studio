@@ -25,7 +25,7 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 \`\`\`
 
 ## 视频格式
-使用 Markdown 链接语法，路径必须是本地绝对路径（以 / 开头），支持的格式：mp4, webm
+使用 Markdown 链接语法引用视频文件，路径必须是本地绝对路径（以 / 开头），支持的格式：mp4, webm
 \`\`\`
 [视频名称](/tmp/recording.mp4)
 \`\`\`
@@ -34,6 +34,7 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 [屏幕录制](/tmp/screen-recording.mp4)
 [操作演示](/tmp/demo.webm)
 \`\`\`
+视频会显示为可播放的视频播放器（最大 640x480），支持原生播放控件。
 
 ## 文件链接格式
 使用 Markdown 链接语法，路径必须是本地绝对路径（以 / 开头）：
@@ -46,13 +47,15 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 \`\`\`
 
 ## 注意事项
-1. 图片和文件路径必须以 / 开头的绝对路径
-2. 图片会自动显示在对话中，缩略图尺寸 200x160px
-3. 视频和文件链接点击后会自动下载
-4. 视频文件大小建议不超过 200MB
-5. 不要使用相对路径（如 ./file.png）
-6. 不要使用 http:// 或 https:// 开头的远程链接表示本地文件
-7. 视频支持格式：.mp4, .webm
+1. 图片、视频、文件路径必须使用本地绝对路径（以 / 开头）
+2. 确保文件确实存在且路径正确
+3. 视频支持格式：.mp4, .webm
+
+## 发送文件给用户
+当用户要求"发给我"、"发送给我"、"传给我"等请求文件时，使用上述格式返回文件路径：
+- 图片：\`![描述](/path/to/image.png)\`
+- 视频：\`[视频名](/path/to/video.mp4)\`
+- 文件：\`[文件名](/path/to/file.pdf)\`
 `;
 
 /**
