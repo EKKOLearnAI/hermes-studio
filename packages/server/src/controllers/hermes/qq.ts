@@ -10,13 +10,12 @@
 import axios from 'axios'
 import { readFile, writeFile, chmod } from 'fs/promises'
 import crypto from 'crypto'
+import YAML from 'js-yaml'
 import { restartGateway } from '../../services/hermes/hermes-cli'
-import { join } from 'path'
-import { homedir } from 'os'
+import { getActiveConfigPath, getActiveEnvPath } from '../../services/hermes/hermes-profile'
 
-const HERMES_BASE = join(homedir(), '.hermes')
-
-const envPath = () => join(process.env.HERMES_HOME || HERMES_BASE, '.env')
+const envPath = () => getActiveEnvPath()
+const configYamlPath = () => getActiveConfigPath()
 
 // ---------------------------------------------------------------------------
 // In-memory task store (single-user web UI)
@@ -178,6 +177,7 @@ export async function save(ctx: any) {
   }
 
   try {
+    // 1. Write .env
     let raw: string
     try {
       raw = await readFile(envPath(), 'utf-8')
@@ -226,6 +226,24 @@ export async function save(ctx: any) {
     } catch {
       /* ignore */
     }
+
+    // 2. Write config.yaml platforms.qq
+    try {
+      const cfgRaw = await readFile(configYamlPath(), 'utf-8')
+      const cfg = (YAML.load(cfgRaw) as Record<string, any>) || {}
+      if (!cfg.platforms) cfg.platforms = {}
+      if (!cfg.platforms.qq) cfg.platforms.qq = {}
+      if (!cfg.platforms.qq.extra) cfg.platforms.qq.extra = {}
+      cfg.platforms.qq.enabled = true
+      cfg.platforms.qq.extra.app_id = app_id
+      cfg.platforms.qq.extra.client_secret = client_secret
+      const yamlStr = YAML.dump(cfg, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false })
+      await writeFile(configYamlPath(), yamlStr, 'utf-8')
+    } catch (yamlErr: any) {
+      // .env already written; log but don't fail the request
+      console.error('[qq.save] config.yaml write failed:', yamlErr.message)
+    }
+
     await restartGateway()
     ctx.body = { success: true }
   } catch (err: any) {
