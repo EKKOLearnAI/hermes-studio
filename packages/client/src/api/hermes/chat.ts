@@ -291,7 +291,17 @@ export function connectChatRun(): Socket {
 
   const baseUrl = getBaseUrlValue()
   const token = getApiKey()
-  const profile = localStorage.getItem('hermes_active_profile_name') || 'default'
+
+  // Get active profile from store (authoritative source)
+  let profile = 'default'
+  try {
+    const { useProfilesStore } = require('@/stores/hermes/profiles')
+    const profilesStore = useProfilesStore()
+    profile = profilesStore.activeProfileName || 'default'
+  } catch {
+    // Fallback to localStorage during early initialization
+    profile = localStorage.getItem('hermes_active_profile_name') || 'default'
+  }
 
   chatRunSocket = io(`${baseUrl}/chat-run`, {
     auth: { token },

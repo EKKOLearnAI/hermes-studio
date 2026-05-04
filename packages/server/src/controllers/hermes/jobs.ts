@@ -13,7 +13,20 @@ function getApiKey(profile: string): string | null {
 }
 
 function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  // Use header/query from request first, then fall back to authoritative source
+  const requestedProfile = ctx.get('x-hermes-profile') || (ctx.query.profile as string)
+
+  if (requestedProfile) {
+    return requestedProfile
+  }
+
+  // Fallback: read from authoritative source (active_profile file)
+  try {
+    const { getActiveProfileName } = require('../../services/hermes/hermes-profile')
+    return getActiveProfileName()
+  } catch {
+    return 'default'
+  }
 }
 
 function buildHeaders(profile: string): Record<string, string> {
