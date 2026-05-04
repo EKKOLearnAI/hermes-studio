@@ -61,13 +61,13 @@ const renderedHtml = computed(() => {
 
   // Replace image src paths with download URLs
   // Replace both src="/path" and src='/path' formats
-  html = html.replace(/src="\/([^"]+)"/g, (match, path) => {
+  html = html.replace(/src="\/([^"]+)"/g, (_match, path) => {
     const originalPath = '/' + path
     const downloadUrl = getDownloadUrl(originalPath)
     return `src="${downloadUrl}"`
   })
 
-  html = html.replace(/src='\/([^']+)'/g, (match, path) => {
+  html = html.replace(/src='\/([^']+)'/g, (_match, path) => {
     const originalPath = '/' + path
     const downloadUrl = getDownloadUrl(originalPath)
     return `src='${downloadUrl}'`
