@@ -9,8 +9,8 @@ import { getActiveProfileDir, getActiveEnvPath } from './hermes-profile'
 
 const execFileAsync = promisify(execFile)
 
-// Max download file size (default 100MB)
-const MAX_DOWNLOAD_SIZE = parseInt(process.env.MAX_DOWNLOAD_SIZE || '', 10) || 100 * 1024 * 1024
+// Max download file size (default 200MB)
+const MAX_DOWNLOAD_SIZE = parseInt(process.env.MAX_DOWNLOAD_SIZE || '', 10) || 200 * 1024 * 1024
 // Backend command timeout (default 30s)
 const BACKEND_TIMEOUT = 30_000
 
