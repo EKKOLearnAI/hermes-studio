@@ -3,9 +3,15 @@ import { readdir, stat, readFile } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import { existsSync } from 'fs'
+import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
 
 const HERMES_BASE = join(homedir(), '.hermes')
-const CRON_OUTPUT = join(HERMES_BASE, 'cron', 'output')
+
+function getCronOutputDir(): string {
+  // Use the active profile's directory, so cron history follows profile switches
+  const profileDir = getActiveProfileDir()
+  return join(profileDir, 'cron', 'output')
+}
 
 export interface RunEntry {
   jobId: string
@@ -24,20 +30,21 @@ export interface RunDetail {
 /** List all run output files, optionally filtered by job ID */
 export async function listRuns(ctx: Context) {
   const jobId = ctx.query.jobId as string | undefined
+  const cronOutput = getCronOutputDir()
 
-  if (!existsSync(CRON_OUTPUT)) {
+  if (!existsSync(cronOutput)) {
     ctx.body = { runs: [] }
     return
   }
 
   try {
-    const dirs = await readdir(CRON_OUTPUT)
+    const dirs = await readdir(cronOutput)
     const runs: RunEntry[] = []
 
     const targetDirs = jobId ? dirs.filter(d => d === jobId) : dirs
 
     for (const dir of targetDirs) {
-      const dirPath = join(CRON_OUTPUT, dir)
+      const dirPath = join(cronOutput, dir)
       try {
         const dirStat = await stat(dirPath)
         if (!dirStat.isDirectory()) continue
@@ -93,7 +100,8 @@ export async function readRun(ctx: Context) {
     return
   }
 
-  const filePath = join(CRON_OUTPUT, jobId, fileName)
+  const cronOutput = getCronOutputDir()
+  const filePath = join(cronOutput, jobId, fileName)
 
   if (!existsSync(filePath)) {
     ctx.status = 404

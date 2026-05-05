@@ -49,7 +49,20 @@ async function waitForGatewayReady(upstream: string, timeoutMs: number = 5000): 
 
 /** Resolve profile name from request */
 function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  // Use header/query from request, but fall back to authoritative source if not provided
+  const requestedProfile = ctx.get('x-hermes-profile') || (ctx.query.profile as string)
+
+  if (requestedProfile) {
+    return requestedProfile
+  }
+
+  // Fallback: read from authoritative source (active_profile file)
+  try {
+    const { getActiveProfileName } = require('../../services/hermes/hermes-profile')
+    return getActiveProfileName()
+  } catch {
+    return 'default'
+  }
 }
 
 /** Resolve upstream URL for a request based on profile header/query */

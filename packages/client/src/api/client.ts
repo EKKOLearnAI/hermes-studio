@@ -26,6 +26,23 @@ export function hasApiKey(): boolean {
   return !!getApiKey()
 }
 
+/**
+ * Get current active profile name.
+ * Reads from store first (authoritative source), falls back to localStorage.
+ */
+function getActiveProfileName(): string | null {
+  try {
+    // Dynamic import to avoid circular dependency
+    const { useProfilesStore } = require('@/stores/hermes/profiles')
+    const store = useProfilesStore()
+    // Store is the source of truth - it's updated from /api/hermes/profiles
+    return store.activeProfileName
+  } catch {
+    // Fallback to localStorage if store is not available (e.g., during initialization)
+    return localStorage.getItem('hermes_active_profile_name')
+  }
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const base = getBaseUrl()
   const url = `${base}${path}`
@@ -40,7 +57,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   }
 
   // Inject active profile header for proxied gateway requests
-  const profileName = localStorage.getItem('hermes_active_profile_name')
+  const profileName = getActiveProfileName()
   if (profileName && profileName !== 'default') {
     headers['X-Hermes-Profile'] = profileName
   }

@@ -1,6 +1,7 @@
 // ─── Agent Identity Instructions ────────────────────────────
 
 import type { MemberInfo } from './types'
+import { getSystemPrompt } from '../../../lib/llm-prompt'
 
 interface AgentInstructionsParams {
     agentName: string
@@ -11,20 +12,41 @@ interface AgentInstructionsParams {
 }
 
 export function buildAgentInstructions(params: AgentInstructionsParams): string {
+    // Deduplicate members by name (primary key) to avoid duplicate roles
+    // If multiple entries have the same name, prefer the one with description
+    const uniqueMembersMap = new Map<string, MemberInfo>()
+
+    for (const m of params.members) {
+        const existing = uniqueMembersMap.get(m.name)
+        // Prefer entries with description
+        if (!existing || (m.description && !existing.description)) {
+            uniqueMembersMap.set(m.name, m)
+        }
+    }
+
+    const uniqueMembers = Array.from(uniqueMembersMap.values())
+
     let memberSection: string
-    if (params.members.length > 0) {
-        memberSection = params.members
+    if (uniqueMembers.length > 0) {
+        memberSection = uniqueMembers
             .map(m => m.description ? `- ${m.name}: ${m.description}` : `- ${m.name}`)
             .join('\n')
     } else if (params.memberNames.length > 0) {
-        memberSection = params.memberNames.map(n => `- ${n}`).join('\n')
+        // Deduplicate member names as well
+        const uniqueNames = Array.from(new Set(params.memberNames))
+        memberSection = uniqueNames.map(n => `- ${n}`).join('\n')
     } else {
         memberSection = '- 未知'
     }
 
-    return `你是"${params.agentName}"，群聊房间"${params.roomName}"中的 AI 助手。
+    // Handle empty agent description
+    const roleDescription = params.agentDescription?.trim()
+        ? params.agentDescription
+        : '专业的 AI 助手，随时准备协助解决问题。'
 
-你的角色：${params.agentDescription}
+    const basePrompt = `你是"${params.agentName}"，群聊房间"${params.roomName}"中的 AI 助手。
+
+你的角色：${roleDescription}
 
 当前房间成员：
 ${memberSection}
@@ -38,6 +60,8 @@ ${memberSection}
 - 回复最新一条提及你的消息。
 - 如果需要其他 agent 协作或明确回复某个人，使用 @名字 来提及对方。
 - 自行判断对话是否已经结束——如果问题已解决、达成共识、或对方只是陈述不需要回复，则不要再 @任何人，直接结束回复，避免产生无意义的循环对话。`
+
+    return getSystemPrompt(basePrompt)
 }
 
 // ─── Summarization Prompts ─────────────────────────────────

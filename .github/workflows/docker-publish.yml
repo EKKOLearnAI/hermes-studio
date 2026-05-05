@@ -1,7 +1,9 @@
 name: Build and Push Docker Image to Docker Hub
 
 on:
-  workflow_dispatch:    # 仅手动触发
+  workflow_dispatch:    # 手动触发
+  release:
+    types: [published]  # 发布 release 时自动触发
 
 jobs:
   build-and-push:
@@ -38,3 +40,4 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.ref_name || github.event.release.tag_name }}

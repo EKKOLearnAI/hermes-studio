@@ -14,7 +14,7 @@ import {
   isMermaidFence,
   renderMermaidPlaceholder,
 } from './mermaidRenderer'
-import { downloadFile } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl } from '@/api/hermes/download'
 
 const props = withDefaults(defineProps<{
     content: string
@@ -52,11 +52,65 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 
 const markdownBody = ref<HTMLElement | null>(null)
 const componentId = `hermes-mermaid-${Math.random().toString(36).slice(2)}`
+const previewUrl = ref<string | null>(null)
 let renderGeneration = 0
 let unmounted = false
 
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
+
+  // Replace image src paths with download URLs
+  // Replace both src="/path" and src='/path' formats
+  html = html.replace(/src="\/([^"]+)"/g, (_match, path) => {
+    const originalPath = '/' + path
+    const downloadUrl = getDownloadUrl(originalPath)
+    return `src="${downloadUrl}"`
+  })
+
+  html = html.replace(/src='\/([^']+)'/g, (_match, path) => {
+    const originalPath = '/' + path
+    const downloadUrl = getDownloadUrl(originalPath)
+    return `src='${downloadUrl}'`
+  })
+
+  // Replace local file links with file card UI or video player
+  // Match <a href="/tmp/file.pdf">filename</a> or <a href="/tmp/video.mp4">filename</a>
+  html = html.replace(/<a href="(\/[^"]+)">([^<]+)<\/a>/g, (match, path, filename) => {
+    // Only replace local file paths (starting with /)
+    if (!path.startsWith('/')) return match
+
+    const fileName = filename.trim()
+    const ext = path.split('.').pop()?.toLowerCase()
+
+    // Video files: render as video player
+    if (ext === 'mp4' || ext === 'webm') {
+      const downloadUrl = getDownloadUrl(path)
+      return `<div class="markdown-video-container">
+        <video class="markdown-video" controls preload="metadata" src="${downloadUrl}"></video>
+        <div class="markdown-video-footer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span class="att-name">${fileName}</span>
+        </div>
+      </div>`
+    }
+
+    // Other files: render as file card
+    return `<div class="markdown-file-card" data-path="${path}" data-filename="${fileName}" title="${t('download.downloadFile')}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+      </svg>
+      <span class="att-name">${fileName}</span>
+      <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+    </div>`
+  })
+
   if (props.mentionNames && props.mentionNames.length > 0) {
     const escaped = props.mentionNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     const re = new RegExp(`(?<=[\\s>]|^)@(${escaped.join('|')})(?=\\s|$)`, 'gi')
@@ -210,8 +264,33 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  // Handle file path link clicks for download
   const target = event.target as HTMLElement
+
+  // Handle image clicks for preview
+  const img = target.closest('img') as HTMLImageElement | null
+  if (img) {
+    event.preventDefault()
+    previewUrl.value = img.src
+    return
+  }
+
+  // Handle file card clicks for download
+  const fileCard = target.closest('.markdown-file-card') as HTMLElement | null
+  if (fileCard) {
+    event.preventDefault()
+    event.stopPropagation()
+    const path = fileCard.getAttribute('data-path')
+    const fileName = fileCard.getAttribute('data-filename')
+    if (path) {
+      message.info(t('download.downloading'))
+      downloadFile(path, fileName || undefined).catch((err: Error) => {
+        message.error(err.message || t('download.downloadFailed'))
+      })
+    }
+    return
+  }
+
+  // Handle file path link clicks for download
   const link = target.closest('a') as HTMLAnchorElement | null
   if (!link) return
 
@@ -242,6 +321,11 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 
 <template>
   <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
+  <Teleport to="body">
+    <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
+      <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
+    </div>
+  </Teleport>
 </template>
 
 <style lang="scss">
@@ -288,6 +372,86 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 
     &:hover {
       color: $accent-hover;
+    }
+  }
+
+  img {
+    display: block;
+    max-width: 200px;
+    max-height: 160px;
+    object-fit: contain;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 8px 0;
+  }
+
+  .markdown-video-container {
+    margin: 12px 0;
+    border-radius: $radius-sm;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid $border-color;
+  }
+
+  .markdown-video {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    max-height: 480px;
+    object-fit: contain;
+  }
+
+  .markdown-video-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    font-size: 12px;
+
+    .att-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .markdown-file-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: $text-secondary;
+    background-color: rgba(0, 0, 0, 0.04);
+    border: 1px solid $border-light;
+    border-radius: $radius-sm;
+    margin: 8px 0;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.08);
+      border-color: $border-color;
+    }
+
+    .att-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 160px;
+    }
+
+    .att-download-icon {
+      flex-shrink: 0;
+      opacity: 0.6;
+      transition: opacity 0.15s ease;
+    }
+
+    &:hover .att-download-icon {
+      opacity: 1;
     }
   }
 
@@ -363,5 +527,24 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     align-items: center;
     justify-content: center;
   }
+}
+
+.image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.image-preview-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 4px;
+  cursor: pointer;
 }
 </style>

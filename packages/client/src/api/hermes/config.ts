@@ -38,12 +38,18 @@ export interface PrivacyConfig {
   redact_pii?: boolean
 }
 
+export interface ApprovalConfig {
+  mode?: 'off' | 'manual'
+  timeout?: number
+}
+
 export interface AppConfig {
   display?: DisplayConfig
   agent?: AgentConfig
   memory?: MemoryConfig
   session_reset?: SessionResetConfig
   privacy?: PrivacyConfig
+  approvals?: ApprovalConfig
   telegram?: Record<string, any>
   discord?: Record<string, any>
   slack?: Record<string, any>

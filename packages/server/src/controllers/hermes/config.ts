@@ -7,6 +7,7 @@ import { saveEnvValue } from '../../services/config-helpers'
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
   'weixin', 'wecom', 'feishu', 'dingtalk',
+  'approvals',
 ])
 
 const configPath = () => getActiveConfigPath()
@@ -95,7 +96,12 @@ async function readConfig(): Promise<Record<string, any>> {
 async function writeConfig(data: Record<string, any>): Promise<void> {
   const cp = configPath()
   await copyFile(cp, cp + '.bak')
-  const yamlStr = YAML.dump(data, { lineWidth: -1, noRefs: true, quotingType: '"', forceQuotes: false })
+  const yamlStr = YAML.dump(data, {
+    lineWidth: -1,
+    noRefs: true,
+    quotingType: '"',
+    forceQuotes: true, // Force quotes on all string values
+  })
   await writeFile(cp, yamlStr, 'utf-8')
 }
 
