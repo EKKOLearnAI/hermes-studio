@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
+import type { ApprovalChoice } from '../../utils/approval-commands'
 import { request, getBaseUrlValue, getApiKey } from '../client'
 
 export type ContentBlock =
@@ -38,6 +39,14 @@ export interface RunEvent {
   /** Final response text on `run.completed`. May be empty/null if the agent
    * silently swallowed an upstream error — see chat store for fallback. */
   output?: string | null
+  command?: string
+  description?: string
+  pattern_key?: string
+  pattern_keys?: string[]
+  choices?: ApprovalChoice[]
+  resolved?: number
+  choice?: ApprovalChoice
+  all?: boolean
   usage?: {
     input_tokens: number
     output_tokens: number
@@ -72,6 +81,8 @@ const sessionEventHandlers = new Map<string, {
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
+  onApprovalRequest: (event: RunEvent) => void
+  onApprovalResponded: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
 }>()
 
@@ -254,6 +265,32 @@ function globalAbortCompletedHandler(event: RunEvent): void {
 }
 
 /**
+ * Global approval.request event handler
+ */
+function globalApprovalRequestHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onApprovalRequest) {
+    handlers.onApprovalRequest(event)
+  }
+}
+
+/**
+ * Global approval.responded event handler
+ */
+function globalApprovalRespondedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onApprovalResponded) {
+    handlers.onApprovalResponded(event)
+  }
+}
+
+/**
  * Global usage.updated event handler
  */
 function globalUsageUpdatedHandler(event: RunEvent): void {
@@ -288,6 +325,8 @@ export function registerSessionHandlers(
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
+    onApprovalRequest: (event: RunEvent) => void
+    onApprovalResponded: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
   }
 ): () => void {
@@ -367,6 +406,11 @@ export function connectChatRun(): Socket {
     chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
     chatRunSocket.on('abort.started', globalAbortStartedHandler)
     chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
+
+    // Approval events
+    chatRunSocket.on('approval.requested', globalApprovalRequestHandler)
+    chatRunSocket.on('approval.request', globalApprovalRequestHandler)
+    chatRunSocket.on('approval.responded', globalApprovalRespondedHandler)
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
@@ -480,6 +524,14 @@ export function startRunViaSocket(
       closed = true
       onDone()
     },
+    onApprovalRequest: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onApprovalResponded: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
     onUsageUpdated: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
@@ -500,6 +552,16 @@ export function startRunViaSocket(
       }
     },
   }
+}
+
+export function submitApprovalViaSocket(
+  sessionId: string,
+  choice: ApprovalChoice,
+  all = false,
+): Socket {
+  const socket = connectChatRun()
+  socket.emit('approval.respond', { session_id: sessionId, choice, all })
+  return socket
 }
 
 export async function fetchModels(): Promise<{ data: Array<{ id: string }> }> {

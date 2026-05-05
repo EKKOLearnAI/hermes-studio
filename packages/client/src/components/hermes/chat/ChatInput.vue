@@ -7,6 +7,7 @@ import { fetchContextLength } from '@/api/hermes/sessions'
 import { NButton, NTooltip, NSwitch } from 'naive-ui'
 import { computed, ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { isApprovalCommand } from '@/utils/approval-commands'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
@@ -39,6 +40,10 @@ watch(autoPlaySpeech, (value) => {
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const canSubmit = computed(() => Boolean(
+  canSend.value &&
+  (!chatStore.isStreaming || (attachments.value.length === 0 && isApprovalCommand(inputText.value))),
+))
 
 // --- Context info ---
 
@@ -155,7 +160,7 @@ function handleDrop(e: DragEvent) {
 
 function handleSend() {
   const text = inputText.value.trim()
-  if (!text && attachments.value.length === 0) return
+  if (!canSubmit.value) return
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
@@ -325,7 +330,7 @@ function isImage(type: string): boolean {
         <NButton
           size="small"
           type="primary"
-          :disabled="!canSend || chatStore.isStreaming"
+          :disabled="!canSubmit"
           @click="handleSend"
         >
           <template #icon>

@@ -149,6 +149,8 @@ interface SessionMessage {
   codex_reasoning_items?: string | null
 }
 
+type ApprovalChoice = 'once' | 'session' | 'always' | 'deny'
+
 interface SessionState {
   messages: SessionMessage[]
   isWorking: boolean
@@ -221,6 +223,13 @@ export class ChatRunSocket {
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
         void this.handleAbort(socket, data.session_id)
+      }
+    })
+
+    socket.on('approval.respond', (data: { session_id?: string; choice?: ApprovalChoice; all?: boolean }) => {
+      const choice = data.choice
+      if (data.session_id && (choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')) {
+        void this.handleApprovalRespond(socket, data.session_id, choice, data.all === true)
       }
     })
   }
@@ -798,6 +807,7 @@ export class ChatRunSocket {
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      if (session_id) headers['X-Hermes-Session-Key'] = this.getGatewaySessionKey(session_id)
       // Convert input from ContentBlock[] to Anthropic format (with base64 images)
       if (isContentBlockArray(input)) {
         body.input = await convertContentBlocks(input)
@@ -848,12 +858,13 @@ export class ChatRunSocket {
       const eventsUrl = new URL(`${upstream}/v1/runs/${runId}/events`)
 
       // Use Authorization header instead of query parameter for better compatibility
-      const eventSourceInit: any = apiKey ? {
+      const eventSourceInit: any = (apiKey || session_id) ? {
         fetch: (url: string, init: any = {}) => fetch(url, {
           ...init,
           headers: {
             ...(init.headers || {}),
-            Authorization: `Bearer ${apiKey}`,
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            ...(session_id ? { 'X-Hermes-Session-Key': this.getGatewaySessionKey(session_id) } : {}),
           },
         }),
       } : {}
@@ -873,6 +884,19 @@ export class ChatRunSocket {
             logger.info('[chat-run-socket] upstream event: %s, data: %j', parsed.event, parsed)
           } else {
             logger.info('[chat-run-socket] upstream event: %s', parsed.event)
+          }
+
+          // Surface structured approval protocol events immediately instead of
+          // letting the client sit in a silent working state.  New API-server
+          // builds emit approval.request; older payloads with approval_required
+          // are normalized only for compatibility while the upstream rolls out.
+          const approvalPayload = this.normalizeApprovalRequest(parsed, runId)
+          if (approvalPayload) {
+            if (session_id) this.replaceState(session_id, 'approval.request', approvalPayload)
+            emit('approval.request', approvalPayload)
+            if (parsed.event === 'approval_required' || parsed.event === 'approval.requested' || parsed.event === 'approval.request') {
+              return
+            }
           }
 
           // Track messages into sessionMap
@@ -1118,8 +1142,13 @@ export class ChatRunSocket {
     const apiKey = this.gatewayManager.getApiKey(profile) || undefined
 
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Hermes-Session-Key': this.getGatewaySessionKey(sessionId),
+      }
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`
+      }
 
       logger.info({ sessionId, runId, upstream }, '[chat-run-socket][abort] calling upstream stop')
       await fetch(`${upstream}/v1/runs/${runId}/stop`, {
@@ -1147,6 +1176,77 @@ export class ChatRunSocket {
     }
 
     await this.markAbortCompleted(socket, sessionId, runId)
+  }
+
+  private async handleApprovalRespond(socket: Socket, sessionId: string, choice: ApprovalChoice, all: boolean) {
+    const state = this.sessionMap.get(sessionId)
+    const runId = state?.runId
+    if (!state?.isWorking || !runId) {
+      this.emitToSession(socket, sessionId, 'approval.responded', {
+        event: 'approval.responded',
+        choice,
+        all,
+        resolved: 0,
+        error: 'No active run for this session',
+      })
+      return
+    }
+
+    const profile = state.profile || 'default'
+    const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
+    const apiKey = this.gatewayManager.getApiKey(profile) || undefined
+    const sessionKey = this.getGatewaySessionKey(sessionId)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Hermes-Session-Key': sessionKey,
+    }
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+
+    const unsupported = await this.getApprovalCapabilityError(upstream, headers)
+    if (unsupported) {
+      const event = {
+        event: 'approval.responded',
+        run_id: runId,
+        choice,
+        all,
+        resolved: 0,
+        error: unsupported,
+      }
+      this.replaceState(sessionId, 'approval.responded', event)
+      this.emitToSession(socket, sessionId, 'approval.responded', event)
+      return
+    }
+
+    let resolved = 0
+    let error = ''
+    try {
+      const res = await fetch(`${upstream}/v1/runs/${runId}/approval`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ choice, all }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        error = `Upstream ${res.status}: ${text}`
+      } else {
+        const json = await res.json().catch(() => ({})) as any
+        resolved = Number(json.resolved ?? 0) || 0
+      }
+    } catch (err: any) {
+      error = err?.message || 'Approval resolve failed'
+    }
+
+    const event = {
+      event: 'approval.responded',
+      run_id: runId,
+      choice,
+      all,
+      resolved,
+      ...(error ? { error } : {}),
+    }
+    this.replaceState(sessionId, 'approval.responded', event)
+    this.emitToSession(socket, sessionId, 'approval.responded', event)
   }
 
   /** Mark a session run as completed/failed so reconnecting clients get notified */
@@ -1442,7 +1542,58 @@ export class ChatRunSocket {
       logger.info('[chat-run-socket] enqueued ephemeral session %s for deletion', hermesSessionId)
     } catch { /* best-effort */ }
   }
+  private async getApprovalCapabilityError(upstream: string, headers: Record<string, string>): Promise<string | null> {
+    try {
+      const res = await fetch(`${upstream}/v1/capabilities`, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) {
+        return `Hermes Agent API does not advertise approval support; upgrade to a build containing NousResearch/hermes-agent#20311. (/v1/capabilities returned ${res.status})`
+      }
+      const caps = await res.json().catch(() => ({})) as any
+      const features = caps?.features || {}
+      const endpoints = caps?.endpoints || {}
+      if (features.approval_events === true && features.run_approval_response === true && endpoints.run_approval?.path) {
+        return null
+      }
+      return 'Hermes Agent API does not support run approval control plane; upgrade to a build containing NousResearch/hermes-agent#20311.'
+    } catch (err: any) {
+      return `Unable to verify Hermes Agent approval capabilities: ${err?.message || 'capability request failed'}`
+    }
+  }
 
+
+  /** Get stable gateway approval/memory key for a Web UI chat session. */
+  private getGatewaySessionKey(sessionId: string): string {
+    return `webui:${sessionId}`.replace(/[\r\n\x00]/g, '_')
+  }
+
+  private normalizeApprovalRequest(parsed: any, runId?: string): any | null {
+    const eventName = parsed?.event
+    const status = parsed?.status || parsed?.data?.status || parsed?.output?.status
+    const isApprovalEvent = eventName === 'approval_required' || eventName === 'approval.requested' || eventName === 'approval.request'
+    if (!isApprovalEvent && status !== 'approval_required') return null
+
+    const source = parsed?.data && typeof parsed.data === 'object'
+      ? parsed.data
+      : parsed?.output && typeof parsed.output === 'object'
+        ? parsed.output
+        : parsed
+
+    return {
+      event: 'approval.request',
+      run_id: parsed?.run_id || runId,
+      timestamp: parsed?.timestamp || Date.now() / 1000,
+      command: source?.command,
+      description: source?.description,
+      pattern_key: source?.pattern_key,
+      pattern_keys: source?.pattern_keys,
+      choices: Array.isArray(source?.choices) ? source.choices : ['once', 'session', 'always', 'deny'],
+      message: source?.message,
+    }
+  }
 
   /** Get or create session state in sessionMap */
   private getOrCreateSession(sessionId: string): SessionState {
