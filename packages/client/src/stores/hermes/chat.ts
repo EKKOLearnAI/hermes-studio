@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -219,7 +219,6 @@ function mapHermesSession(s: SessionSummary): Session {
 
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
-const IN_FLIGHT_TTL_MS = 15 * 60 * 1000 // Give up after 15 minutes
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -234,22 +233,6 @@ function getProfileName(): string {
 
 function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
-function inFlightKey(sid: string): string { return `hermes_in_flight_v1_${getProfileName()}_${sid}` }
-function legacyInFlightKey(sid: string): string | null { return getProfileName() === 'default' ? `hermes_in_flight_v1_${sid}` : null }
-
-interface InFlightRun {
-  runId: string
-  startedAt: number
-}
-
-function loadJson<T>(key: string): T | null {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : null
-  } catch {
-    return null
-  }
-}
 
 function isQuotaExceededError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
@@ -301,37 +284,12 @@ function setItemBestEffort(key: string, value: string) {
   }
 }
 
-function saveJson(key: string, value: unknown) {
-  try {
-    setItemBestEffort(key, JSON.stringify(value))
-  } catch {
-    // quota exceeded or private mode — ignore, cache is best-effort
-  }
-}
-
 function removeItem(key: string) {
   try {
     localStorage.removeItem(key)
   } catch {
     // ignore
   }
-}
-
-function loadJsonWithFallback<T>(key: string, legacyKey?: string | null): T | null {
-  const value = loadJson<T>(key)
-  if (value != null) return value
-  if (!legacyKey) return null
-  return loadJson<T>(legacyKey)
-}
-
-function saveJsonWithLegacy(key: string, value: unknown, legacyKey?: string | null) {
-  saveJson(key, value)
-  if (legacyKey) removeItem(legacyKey)
-}
-
-function removeItemWithLegacy(key: string, legacyKey?: string | null) {
-  removeItem(key)
-  if (legacyKey) removeItem(legacyKey)
 }
 
 // Strip the circular `file: File` reference from attachments before caching —
@@ -375,6 +333,17 @@ export const useChatStore = defineStore('chat', () => {
     compressionState.value = state
   }
 
+  const abortState = ref<{
+    aborting: boolean
+    synced: boolean | null
+    error?: string
+  } | null>(null)
+  const isAborting = computed(() => abortState.value?.aborting === true)
+
+  function setAbortState(state: typeof abortState.value) {
+    abortState.value = state
+  }
+
   const activeSession = ref<Session | null>(null)
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
@@ -382,30 +351,11 @@ export const useChatStore = defineStore('chat', () => {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
 
-  function markInFlight(sid: string, runId: string) {
-    saveJsonWithLegacy(inFlightKey(sid), { runId, startedAt: Date.now() } as InFlightRun, legacyInFlightKey(sid))
-  }
-
-  function clearInFlight(sid: string) {
-    removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
-  }
-
-  function readInFlight(sid: string): InFlightRun | null {
-    const rec = loadJsonWithFallback<InFlightRun>(inFlightKey(sid), legacyInFlightKey(sid))
-    if (!rec) return null
-    if (Date.now() - rec.startedAt > IN_FLIGHT_TTL_MS) {
-      removeItemWithLegacy(inFlightKey(sid), legacyInFlightKey(sid))
-      return null
-    }
-    return rec
-  }
-
   async function loadSessions() {
     isLoadingSessions.value = true
     try {
       const list = await fetchSessions()
       const fresh = list.map(mapHermesSession)
-      const freshIds = new Set(fresh.map(s => s.id))
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
       const msgsByIdBefore = new Map(sessions.value.map(s => [s.id, s.messages]))
@@ -413,19 +363,7 @@ export const useChatStore = defineStore('chat', () => {
         const prev = msgsByIdBefore.get(s.id)
         if (prev && prev.length) s.messages = prev
       }
-      // Preserve local-only sessions the server hasn't seen yet — e.g. a chat
-      // that was just created and whose first run is still in-flight. Without
-      // this, refreshing mid-run would wipe the session and fall back to
-      // sessions[0], which is exactly what the user reported.
-      // Sessions without an active in-flight run are considered deleted and
-      // cleaned up along with their cached messages.
-      const localOnly = sessions.value.filter(s => {
-        if (freshIds.has(s.id)) return false
-        if (readInFlight(s.id)) return true
-        removeItemWithLegacy(inFlightKey(s.id), legacyInFlightKey(s.id))
-        return false
-      })
-      sessions.value = [...localOnly, ...fresh]
+      sessions.value = fresh
 
       // Restore last active session, fallback to most recent
       const savedId = activeSessionId.value
@@ -500,6 +438,11 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             serverWorking.value.delete(sessionId)
           }
+          if ((data as any).isAborting) {
+            setAbortState({ aborting: true, synced: null })
+          } else if (!data.isWorking) {
+            setAbortState(null)
+          }
           if (data.inputTokens != null) activeSession.value!.inputTokens = data.inputTokens
           if (data.outputTokens != null) activeSession.value!.outputTokens = data.outputTokens
           if (data.messages?.length) {
@@ -533,6 +476,10 @@ export const useChatStore = defineStore('chat', () => {
                   compressed: e.compressed ?? false,
                   error: e.error,
                 })
+              } else if (e.event === 'abort.started') {
+                setAbortState({ aborting: true, synced: null })
+              } else if (e.event === 'abort.completed') {
+                setAbortState({ aborting: false, synced: e.synced ?? false })
               }
             }
           }
@@ -546,7 +493,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // Resume in-flight run event listeners if needed
-    resumeInFlightRun(sessionId)
+    resumeServerWorkingRun(sessionId)
   }
 
   function newChat() {
@@ -690,10 +637,8 @@ export const useChatStore = defineStore('chat', () => {
 
       // Helper to clean up this session's stream state
       const cleanup = () => {
-        console.log('[sendMessage] cleanup called, deleting stream state for sid:', sid)
         streamStates.value.delete(sid)
         serverWorking.value.delete(sid)
-        console.log('[sendMessage] cleanup done, isStreaming now:', isStreaming.value)
       }
 
       // Per-run flags used to detect silently-swallowed errors at run.completed.
@@ -741,6 +686,31 @@ export const useChatStore = defineStore('chat', () => {
                   setCompressionState(null)
                 }
               }, 5000)
+              break
+            }
+
+            case 'abort.started': {
+              setAbortState({ aborting: true, synced: null })
+              break
+            }
+
+            case 'abort.completed': {
+              setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+              const msgs = getSessionMsgs(sid)
+              const lastMsg = msgs[msgs.length - 1]
+              if (lastMsg?.isStreaming) {
+                updateMessage(sid, lastMsg.id, { isStreaming: false })
+              }
+              msgs.forEach((m, i) => {
+                if (m.role === 'tool' && m.toolStatus === 'running') {
+                  msgs[i] = { ...m, toolStatus: 'done' }
+                }
+              })
+              cleanup()
+              if (sid === activeSessionId.value) {
+                void refreshActiveSession()
+              }
+              setAbortState(null)
               break
             }
 
@@ -929,7 +899,6 @@ export const useChatStore = defineStore('chat', () => {
               }
 
               // 自动播放语音
-              console.log('[run.completed] autoPlaySpeechEnabled:', autoPlaySpeechEnabled.value)
               if (autoPlaySpeechEnabled.value) {
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
@@ -943,13 +912,6 @@ export const useChatStore = defineStore('chat', () => {
 
               cleanup()
               updateSessionTitle(sid)
-              // the in-flight marker. If the browser is reloading right now
-              // and kills us between the two localStorage writes, we want
-              // the next page load to still see in-flight === true (so
-              // polling kicks in and recovers) rather than the other way
-              // around (cleared in-flight + stale streaming cache = UI stuck).
-
-              clearInFlight(sid)
               break
             }
 
@@ -976,8 +938,6 @@ export const useChatStore = defineStore('chat', () => {
                 }
               })
               cleanup()
-
-              clearInFlight(sid)
               break
             }
 
@@ -993,7 +953,6 @@ export const useChatStore = defineStore('chat', () => {
         },
         // onDone
         () => {
-          console.log('[sendMessage] onDone callback called, cleaning up stream state')
           const msgs = getSessionMsgs(sid)
           const last = msgs[msgs.length - 1]
           if (last?.isStreaming) {
@@ -1020,10 +979,7 @@ export const useChatStore = defineStore('chat', () => {
             void refreshActiveSession()
           }
         },
-        // onStarted — called when server acks with run_id
-        (runId: string) => {
-          markInFlight(sid, runId)
-        },
+        undefined,
       )
 
       streamStates.value.set(sid, ctrl)
@@ -1042,11 +998,11 @@ export const useChatStore = defineStore('chat', () => {
    * Emits 'resume' to join the session room on the server,
    * then sets up event listeners to receive ongoing events.
    */
-  function resumeInFlightRun(sid: string) {
+  function resumeServerWorkingRun(sid: string) {
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
-    // Only set up listeners if there's an actual in-flight run
-    if (!readInFlight(sid)) return
+    // Only set up listeners if the server reported an active run during resume.
+    if (!serverWorking.value.has(sid)) return
 
     let closed = false
     let runProducedAssistantText = false
@@ -1095,6 +1051,31 @@ export const useChatStore = defineStore('chat', () => {
               setCompressionState(null)
             }
           }, 5000)
+          break
+        }
+
+        case 'abort.started': {
+          setAbortState({ aborting: true, synced: null })
+          break
+        }
+
+        case 'abort.completed': {
+          setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+          const msgs = getSessionMsgs(sid)
+          const lastMsg = msgs[msgs.length - 1]
+          if (lastMsg?.isStreaming) {
+            updateMessage(sid, lastMsg.id, { isStreaming: false })
+          }
+          msgs.forEach((m, i) => {
+            if (m.role === 'tool' && m.toolStatus === 'running') {
+              msgs[i] = { ...m, toolStatus: 'done' }
+            }
+          })
+          cleanup()
+          if (sid === activeSessionId.value) {
+            void refreshActiveSession()
+          }
+          setAbortState(null)
           break
         }
 
@@ -1252,8 +1233,6 @@ export const useChatStore = defineStore('chat', () => {
 
           cleanup()
           updateSessionTitle(sid)
-
-          clearInFlight(sid)
           break
         }
 
@@ -1280,8 +1259,6 @@ export const useChatStore = defineStore('chat', () => {
             }
           })
           cleanup()
-
-          clearInFlight(sid)
           break
         }
 
@@ -1309,6 +1286,8 @@ export const useChatStore = defineStore('chat', () => {
       onRunFailed: (evt) => handleEvent(evt),
       onCompressionStarted: (evt) => handleEvent(evt),
       onCompressionCompleted: (evt) => handleEvent(evt),
+      onAbortStarted: (evt) => handleEvent(evt),
+      onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
     })
 
@@ -1316,25 +1295,28 @@ export const useChatStore = defineStore('chat', () => {
     // Server already joined room and replayed events.
     // Just set up handlers for ongoing streaming events.
 
-    // Mark as streaming so UI shows the indicator
-    streamStates.value.set(sid, { abort: cleanup })
+    // Mark as streaming so UI shows the indicator and can still abort after refresh.
+    streamStates.value.set(sid, {
+      abort: () => {
+        getChatRunSocket()?.emit('abort', { session_id: sid })
+      },
+    })
   }
 
   function stopStreaming() {
     const sid = activeSessionId.value
     if (!sid) return
+    if (isAborting.value) return
     const ctrl = streamStates.value.get(sid)
     if (ctrl) {
+      setAbortState({ aborting: true, synced: null })
       ctrl.abort()
       const msgs = getSessionMsgs(sid)
       const lastMsg = msgs[msgs.length - 1]
       if (lastMsg?.isStreaming) {
         updateMessage(sid, lastMsg.id, { isStreaming: false })
       }
-      streamStates.value.delete(sid)
-      serverWorking.value.delete(sid)
     }
-    clearInFlight(sid)
   }
 
   // Tab visibility: re-sync when returning to foreground
@@ -1345,11 +1327,21 @@ export const useChatStore = defineStore('chat', () => {
         if (sid && !streamStates.value.has(sid)) {
           // Re-load messages via resume (server loads from DB)
           resumeSession(sid, (data) => {
+            if (data.isWorking) {
+              serverWorking.value.add(sid)
+            } else {
+              serverWorking.value.delete(sid)
+            }
+            if (data.isAborting) {
+              setAbortState({ aborting: true, synced: null })
+            } else if (!data.isWorking) {
+              setAbortState(null)
+            }
             if (data.messages?.length && activeSession.value) {
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
             }
+            resumeServerWorkingRun(sid)
           })
-          resumeInFlightRun(sid)
         }
       }
     })
@@ -1431,6 +1423,8 @@ export const useChatStore = defineStore('chat', () => {
     isRunActive,
     isSessionLive,
     compressionState,
+    abortState,
+    isAborting,
     isLoadingSessions,
     sessionsLoaded,
     isLoadingMessages,

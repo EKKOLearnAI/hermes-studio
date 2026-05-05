@@ -133,7 +133,7 @@ watch(currentToolCalls, () => {
       :highlight="chatStore.focusMessageId === msg.id"
     />
     <Transition name="fade">
-      <div v-if="chatStore.isRunActive" class="streaming-indicator">
+      <div v-if="chatStore.isRunActive || chatStore.abortState" class="streaming-indicator">
         <video
           :src="isDark ? thinkingVideoDark : thinkingVideoLight"
           autoplay
@@ -142,7 +142,47 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState" class="tool-calls-panel">
+        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
+          <!-- Abort indicator -->
+          <div v-if="chatStore.abortState" class="tool-call-item compression-item">
+            <svg
+              v-if="chatStore.abortState.aborting"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M10 9v6m4-6v6M5 5h14v14H5z" />
+            </svg>
+            <svg
+              v-else
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="tool-call-icon"
+            >
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+            <span class="tool-call-name">
+              {{
+                chatStore.abortState.aborting
+                  ? 'Pausing... waiting for the run to stop and sync'
+                  : chatStore.abortState.synced
+                    ? 'Paused and synced'
+                    : 'Paused'
+              }}
+            </span>
+            <span
+              v-if="chatStore.abortState.aborting"
+              class="tool-call-spinner"
+            ></span>
+          </div>
           <!-- Compression indicator -->
           <div v-if="chatStore.compressionState" class="tool-call-item compression-item">
             <svg

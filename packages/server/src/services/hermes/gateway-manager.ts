@@ -49,10 +49,49 @@ const execFileAsync = promisify(execFile)
 const HERMES_BASE = resolve(homedir(), '.hermes')
 const HERMES_BIN = process.env.HERMES_BIN?.trim() || 'hermes'
 
-// WSL / Docker 没有 systemd 或 launchd，需要用 "gateway run" 代替 "gateway start"
-const isWsl = existsSync('/proc/version') && readFileSync('/proc/version', 'utf-8').toLowerCase().includes('microsoft')
-const isDocker = existsSync('/.dockerenv')
-const needsRunMode = isWsl || isDocker
+/**
+ * 检测系统的 init 系统（服务管理器）
+ * - macOS → launchd
+ * - Windows → windows-service
+ * - Linux → systemd / sysvinit / other
+ *
+ * 没有 systemd/launchd/windows-service 的环境需要用 "gateway run" 代替 "gateway start"
+ * （适用于 WSL/Docker/Termux/proot 等无服务管理器的环境）
+ */
+function detectInitSystem(): string {
+  const platform = process.platform
+
+  // macOS → launchd
+  if (platform === 'darwin') {
+    return 'launchd'
+  }
+
+  // Windows → Service Manager
+  if (platform === 'win32') {
+    return 'windows-service'
+  }
+
+  // Linux 才检查 /proc
+  if (platform === 'linux') {
+    try {
+      const comm = readFileSync('/proc/1/comm', 'utf-8').trim()
+
+      if (comm === 'systemd') return 'systemd'
+      if (comm === 'init') return 'sysvinit'
+
+      return 'other'
+    } catch {
+      return 'unknown'
+    }
+  }
+
+  return 'unknown'
+}
+
+const initSystem = detectInitSystem()
+const needsRunMode = !['systemd', 'launchd', 'windows-service'].includes(initSystem)
+// 启动时输出 init 系统检测结果（方便调试）
+logger.debug('Detected init system: %s (needsRunMode: %s)', initSystem, needsRunMode)
 
 // ============================
 // 类型定义

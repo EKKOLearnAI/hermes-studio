@@ -367,13 +367,9 @@ const isPausedThisMessage = computed(() => {
 
 function handleSpeechToggle() {
   if (!canPlaySpeech.value) {
-    console.log('Speech not supported or no content')
     return
   }
   const content = props.message.content || ''
-  console.log('Toggling speech for message:', props.message.id)
-  console.log('Current playing:', speech.currentMessageId.value, speech.isPlaying.value)
-  console.log('Call stack:', new Error().stack)
 
   // 尝试获取男声语音包
   const allVoices = speech.getAllVoices()
@@ -397,8 +393,6 @@ function handleSpeechToggle() {
     }
   }
 
-  console.log('Selected male voice:', maleVoice?.name, maleVoice?.lang)
-
   // 快速男声：语速快、音调低
   speech.toggle(props.message.id, content, {
     pitch: 0.5,   // 低沉
@@ -414,7 +408,6 @@ onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
     if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
-      console.log('Auto-play triggered for message:', props.message.id)
       handleSpeechToggle()
     }
   }

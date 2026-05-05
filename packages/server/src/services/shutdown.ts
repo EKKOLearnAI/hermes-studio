@@ -1,6 +1,6 @@
 import { logger } from './logger'
 
-export function bindShutdown(server: any, groupChatServer?: any): void {
+export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any): void {
   let isShuttingDown = false
 
   const shutdown = async (signal: string) => {
@@ -10,6 +10,12 @@ export function bindShutdown(server: any, groupChatServer?: any): void {
     logger.info('Shutting down (%s)...', signal)
 
     try {
+      // Close ChatRunSocket first to abort all active runs and close EventSource connections
+      if (chatRunServer) {
+        chatRunServer.close()
+        logger.info('ChatRunSocket closed')
+      }
+
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {
         groupChatServer.agentClients.disconnectAll()
