@@ -102,8 +102,10 @@ export async function bootstrap() {
   console.log('[bootstrap] SPA fallback registered')
 
   // Start server
-  console.log(`[bootstrap] listening on port ${config.port}`)
-  server = app.listen(config.port, '0.0.0.0')
+  console.log(`[bootstrap] listening on ${config.host || 'default host'}:${config.port}`)
+  server = config.host
+    ? app.listen(config.port, config.host)
+    : app.listen(config.port)
   console.log('[bootstrap] app.listen called')
 
   setupTerminalWebSocket(server)
