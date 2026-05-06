@@ -114,6 +114,16 @@ export default {
   // 对话
   chat: {
     contextRemaining: '剩余',
+    contextClickToEdit: '点击编辑上下文长度',
+    contextEditTitle: '编辑上下文长度',
+    contextEditDesc: '设置当前模型的上下文长度限制（token 数量）',
+    contextEditPlaceholder: '请输入上下文长度',
+    contextEditHint: '常见值：200k (Claude), 128k (GPT-4), 32k (GPT-3.5)',
+    contextEditSave: '保存',
+    contextEditCancel: '取消',
+    contextEditInvalid: '请输入有效的上下文长度',
+    contextEditSuccess: '上下文长度已更新',
+    contextEditFailed: '更新失败',
     emptyState: '开始与 Hermes Agent 对话',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     attachFiles: '添加附件',

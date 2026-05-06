@@ -104,6 +104,16 @@ export default {
   // チャット
   chat: {
     contextRemaining: '残り',
+    contextClickToEdit: 'クリックしてコンテキスト長を編集',
+    contextEditTitle: 'コンテキスト長を編集',
+    contextEditDesc: '現在のモデルのコンテキスト長制限を設定（トークン数）',
+    contextEditPlaceholder: 'コンテキスト長を入力',
+    contextEditHint: '一般的な値：200k (Claude), 128k (GPT-4), 32k (GPT-3.5)',
+    contextEditSave: '保存',
+    contextEditCancel: 'キャンセル',
+    contextEditInvalid: '有効なコンテキスト長を入力してください',
+    contextEditSuccess: 'コンテキスト長を更新しました',
+    contextEditFailed: '更新に失敗しました',
     emptyState: 'Hermes Agent と会話を開始しましょう',
     inputPlaceholder: 'メッセージを入力... (Enter で送信、Shift+Enter で改行)',
     attachFiles: 'ファイルを添付',

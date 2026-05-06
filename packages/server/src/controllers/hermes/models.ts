@@ -5,6 +5,8 @@ import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups,
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig } from '../../services/app-config'
+import { getDb } from '../../db'
+import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
@@ -231,6 +233,129 @@ export async function setConfigModel(ctx: any) {
     if (reqProvider) { config.model.provider = reqProvider }
     await writeConfigYaml(config)
     ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/**
+ * 设置模型上下文配置（UPSERT：存在则更新，不存在则插入）
+ * 支持路径参数和查询参数两种方式
+ */
+export async function updateModelContext(ctx: any) {
+  // 支持两种方式：
+  // 1. 路径参数: /api/hermes/model-context/:provider/:model
+  // 2. 查询参数: /api/hermes/model-context?provider=xxx&model=xxx
+  let provider: string | undefined
+  let model: string | undefined
+
+  // 优先从路径参数获取
+  if (ctx.params.provider && ctx.params.model) {
+    provider = ctx.params.provider
+    model = ctx.params.model
+  } else {
+    // 从查询参数获取
+    const query = ctx.query as { provider?: string; model?: string }
+    provider = query.provider
+    model = query.model
+  }
+
+  // 如果没有参数，从请求体获取
+  if (!provider || !model) {
+    const body = ctx.request.body as { provider?: string; model?: string; context_limit?: number }
+    provider = body.provider
+    model = body.model
+  }
+
+  const { context_limit } = ctx.request.body as { context_limit: number }
+
+  if (!provider || !model || !context_limit) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing required fields: provider, model, context_limit' }
+    return
+  }
+
+  if (typeof context_limit !== 'number' || context_limit <= 0) {
+    ctx.status = 400
+    ctx.body = { error: 'Context limit must be a positive number' }
+    return
+  }
+
+  try {
+    const db = getDb()
+    if (!db) {
+      ctx.status = 500
+      ctx.body = { error: 'Database not available' }
+      return
+    }
+
+    // 使用 REPLACE 实现 UPSERT：存在则替换，不存在则插入
+    db.prepare(
+      `REPLACE INTO ${MODEL_CONTEXT_TABLE} (provider, model, context_limit) VALUES (?, ?, ?)`
+    ).run(provider, model, context_limit)
+
+    // 查询并返回更新后的数据
+    const row = db.prepare(
+      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
+    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number }
+
+    ctx.body = {
+      success: true,
+      data: row
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/**
+ * 查询模型上下文配置
+ */
+export async function getModelContext(ctx: any) {
+  // 支持两种方式：
+  // 1. 路径参数: /api/hermes/model-context/:provider/:model
+  // 2. 查询参数: /api/hermes/model-context?provider=xxx&model=xxx
+  let provider: string | undefined
+  let model: string | undefined
+
+  // 优先从路径参数获取
+  if (ctx.params.provider && ctx.params.model) {
+    provider = ctx.params.provider
+    model = ctx.params.model
+  } else {
+    // 从查询参数获取
+    const query = ctx.query as { provider?: string; model?: string }
+    provider = query.provider
+    model = query.model
+  }
+
+  if (!provider || !model) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing provider or model parameter' }
+    return
+  }
+
+  try {
+    const db = getDb()
+    if (!db) {
+      ctx.status = 500
+      ctx.body = { error: 'Database not available' }
+      return
+    }
+
+    const row = db.prepare(
+      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
+    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number } | undefined
+
+    if (!row) {
+      ctx.status = 404
+      ctx.body = { error: 'Model context not found' }
+      return
+    }
+
+    ctx.body = { data: { ...row, limit: row.context_limit } }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

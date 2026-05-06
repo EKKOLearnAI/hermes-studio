@@ -5,6 +5,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
+import { useSettingsStore } from './settings'
+import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 // Re-export ContentBlock for convenience
@@ -119,10 +121,18 @@ async function buildContentBlocks(
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
+  // Filter out assistant messages with empty content
+  const filteredMsgs = msgs.filter(m => {
+    if (m.role === 'assistant') {
+      return m.content && m.content.trim() !== ''
+    }
+    return true
+  })
+
   // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
   const toolArgsMap = new Map<string, string>()
-  for (const msg of msgs) {
+  for (const msg of filteredMsgs) {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (tc.id) {
@@ -134,7 +144,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   }
 
   const result: Message[] = []
-  for (const msg of msgs) {
+  for (const msg of filteredMsgs) {
     // Skip assistant messages that only contain tool_calls (no meaningful content)
     if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
       // Emit a tool.started message for each tool call
@@ -573,8 +583,22 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  function primeCompletionBellIfEnabled() {
+    if (useSettingsStore().display.bell_on_complete) {
+      primeCompletionSound()
+    }
+  }
+
+  function playCompletionBellIfEnabled() {
+    if (useSettingsStore().display.bell_on_complete) {
+      void playCompletionSound()
+    }
+  }
+
   async function sendMessage(content: string, attachments?: Attachment[]) {
     if ((!content.trim() && !(attachments && attachments.length > 0)) || isStreaming.value) return
+
+    primeCompletionBellIfEnabled()
 
     if (!activeSession.value) {
       const session = createSession()
@@ -896,6 +920,8 @@ export const useChatStore = defineStore('chat', () => {
                   content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
                   timestamp: Date.now(),
                 })
+              } else {
+                playCompletionBellIfEnabled()
               }
 
               // 自动播放语音
@@ -1228,8 +1254,9 @@ export const useChatStore = defineStore('chat', () => {
               content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
               timestamp: Date.now(),
             })
+          } else {
+            playCompletionBellIfEnabled()
           }
-
 
           cleanup()
           updateSessionTitle(sid)

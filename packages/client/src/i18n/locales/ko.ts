@@ -104,6 +104,16 @@ export default {
   // 채팅
   chat: {
     contextRemaining: '남음',
+    contextClickToEdit: '클릭하여 컨텍스트 길이 편집',
+    contextEditTitle: '컨텍스트 길이 편집',
+    contextEditDesc: '현재 모델의 컨텍스트 길이 제한 설정 (토큰 수)',
+    contextEditPlaceholder: '컨텍스트 길이 입력',
+    contextEditHint: '일반적인 값: 200k (Claude), 128k (GPT-4), 32k (GPT-3.5)',
+    contextEditSave: '저장',
+    contextEditCancel: '취소',
+    contextEditInvalid: '유효한 컨텍스트 길이를 입력하세요',
+    contextEditSuccess: '컨텍스트 길이가 업데이트되었습니다',
+    contextEditFailed: '업데이트 실패',
     emptyState: 'Hermes Agent와 대화를 시작하세요',
     inputPlaceholder: '메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)',
     attachFiles: '파일 첨부',

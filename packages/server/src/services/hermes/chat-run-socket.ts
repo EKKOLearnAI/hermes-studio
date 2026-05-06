@@ -578,7 +578,7 @@ export class ChatRunSocket {
               logger.info('[context-compress] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
                 session_id, snapshot.lastMessageIndex, newMessages.length, totalTokens, triggerTokens)
               // triggerTokens
-              if (totalTokens <= triggerTokens) {
+              if (totalTokens <= triggerTokens && newMessages.length <= 200) {
                 // Under threshold — use assembled context directly, no LLM call needed
                 history = [
                   { role: 'user', content: SUMMARY_PREFIX + '\n\n' + snapshot.summary },
@@ -684,7 +684,7 @@ export class ChatRunSocket {
             } else if (history.length > 4) {
               // No snapshot — check if raw history exceeds threshold
 
-              if (totalTokens <= triggerTokens) {
+              if (totalTokens <= triggerTokens && history.length <= 200) {
                 // Under threshold — use raw history as-is
                 logger.info('[context-compress] session=%s: %d messages, ~%d tokens — under threshold, skip', session_id, history.length, totalTokens)
               } else {

@@ -3,6 +3,8 @@ import { homedir } from 'os'
 import { readFileSync, existsSync, statSync } from 'fs'
 import yaml from 'js-yaml'
 import { PROVIDER_PRESETS } from '../../shared/providers'
+import { getDb } from '../../db'
+import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 
 const HERMES_BASE = resolve(homedir(), '.hermes')
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
@@ -329,6 +331,25 @@ function lookupContextFromCache(config: any, modelName: string, provider: string
  *   3. models_dev_cache.json, scoped to model.provider when configured
  *   4. DEFAULT_CONTEXT_LENGTH (200K hardcoded fallback)
  */
+/**
+ * 从数据库 model_context 表查找上下文长度（最高优先级）
+ */
+function lookupContextFromDatabase(modelName: string, provider: string | null): number | null {
+  const db = getDb()
+  if (!db) return null
+
+  try {
+    // 尝试精确匹配 provider 和 model
+    const row = db
+      .prepare(`SELECT context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`)
+      .get(provider || 'default', modelName) as { context_limit: number } | undefined
+
+    return row?.context_limit || null
+  } catch {
+    return null
+  }
+}
+
 export function getModelContextLength(profile?: string): number {
   const profileDir = getProfileDir(profile)
   const config = loadConfig(profileDir)
@@ -337,12 +358,17 @@ export function getModelContextLength(profile?: string): number {
   const model = getDefaultModel(config)
   if (!model) return DEFAULT_CONTEXT_LENGTH
 
+  const provider = getDefaultProvider(config)
+
+  // 0. Database model_context table (highest priority)
+  const dbCtx = lookupContextFromDatabase(model, provider)
+  if (dbCtx && dbCtx > 0) return dbCtx
+
   // 1. Global context_length override in config.yaml
   const configCtx = getConfigContextLength(config)
   if (configCtx && configCtx > 0) return configCtx
 
   // 2. Custom provider context_length
-  const provider = getDefaultProvider(config)
   const customCtx = lookupCustomProviderContextLength(config, model, provider)
   if (customCtx && customCtx > 0) return customCtx
 

@@ -104,6 +104,16 @@ export default {
   // Chat
   chat: {
     contextRemaining: 'restante',
+    contextClickToEdit: 'Clique para editar o tamanho do contexto',
+    contextEditTitle: 'Editar tamanho do contexto',
+    contextEditDesc: 'Definir o limite de tamanho do contexto para o modelo atual (em tokens)',
+    contextEditPlaceholder: 'Digite o tamanho do contexto',
+    contextEditHint: 'Valores comuns: 200k (Claude), 128k (GPT-4), 32k (GPT-3.5)',
+    contextEditSave: 'Salvar',
+    contextEditCancel: 'Cancelar',
+    contextEditInvalid: 'Por favor, insira um tamanho de contexto válido',
+    contextEditSuccess: 'Tamanho do contexto atualizado',
+    contextEditFailed: 'Falha na atualização',
     emptyState: 'Inicie uma conversa com o Hermes Agent',
     inputPlaceholder: 'Digite uma mensagem... (Enter para enviar, Shift+Enter para nova linha)',
     attachFiles: 'Anexar arquivos',

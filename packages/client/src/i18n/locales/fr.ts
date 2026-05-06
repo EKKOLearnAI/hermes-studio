@@ -104,6 +104,16 @@ export default {
   // Chat
   chat: {
     contextRemaining: 'restant',
+    contextClickToEdit: 'Cliquez pour modifier la longueur du contexte',
+    contextEditTitle: 'Modifier la longueur du contexte',
+    contextEditDesc: 'Définir la limite de longueur du contexte pour le modèle actuel (en tokens)',
+    contextEditPlaceholder: 'Entrez la longueur du contexte',
+    contextEditHint: 'Valeurs courantes : 200k (Claude), 128k (GPT-4), 32k (GPT-3.5)',
+    contextEditSave: 'Enregistrer',
+    contextEditCancel: 'Annuler',
+    contextEditInvalid: 'Veuillez entrer une longueur de contexte valide',
+    contextEditSuccess: 'Longueur du contexte mise à jour',
+    contextEditFailed: 'Échec de la mise à jour',
     emptyState: 'Demarrer une conversation avec Hermes Agent',
     inputPlaceholder: 'Tapez un message... (Entree pour envoyer, Shift+Entree pour un saut de ligne)',
     attachFiles: 'Joindre des fichiers',
