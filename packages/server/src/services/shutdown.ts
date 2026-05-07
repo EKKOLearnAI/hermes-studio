@@ -1,4 +1,5 @@
 import { logger } from './logger'
+import { closeDb } from '../db'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any): void {
   let isShuttingDown = false
@@ -35,6 +36,7 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
       logger.error(err, 'Shutdown error')
     }
 
+    closeDb()
     process.exit(0)
   }
 
