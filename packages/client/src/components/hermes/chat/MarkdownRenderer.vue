@@ -305,6 +305,22 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     return
   }
 
+  // Full download URL: open directly (already has /api/hermes/download?path=...)
+  if (href.startsWith('/api/hermes/download?')) {
+    event.preventDefault()
+    event.stopPropagation()
+    const linkText = link.textContent || ''
+    const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+    message.info(t('download.downloading'))
+    // Parse the real file path from the existing query param
+    const url = new URL(href, window.location.origin)
+    const realPath = url.searchParams.get('path') || href
+    downloadFile(realPath, fileName || undefined).catch((err: Error) => {
+      message.error(err.message || t('download.downloadFailed'))
+    })
+    return
+  }
+
   // File path links: intercept and download
   if (href.startsWith('/')) {
     event.preventDefault()
