@@ -164,6 +164,45 @@ export async function bootstrap() {
     logger.info('Auth enabled — token: %s', authToken)
   }
 
+  // Cache policy + legacy service worker cleanup
+  const legacyServiceWorkerPaths = new Set([
+    '/service-worker.js',
+    '/sw.js',
+    '/ngsw-worker.js',
+    '/workbox-sw.js',
+  ])
+
+  app.use(async (ctx, next) => {
+    if (legacyServiceWorkerPaths.has(ctx.path)) {
+      ctx.status = 200
+      ctx.type = 'application/javascript; charset=utf-8'
+      ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+      ctx.set('Pragma', 'no-cache')
+      ctx.set('Expires', '0')
+      ctx.body = `self.addEventListener('install',event=>{self.skipWaiting();});
+self.addEventListener('activate',event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.map(key=>caches.delete(key)));await self.registration.unregister();const clientsList=await self.clients.matchAll({type:'window',includeUncontrolled:true});for(const client of clientsList)client.navigate(client.url);})());});
+`
+      return
+    }
+
+    await next()
+
+    if (ctx.path === '/' ||
+      ctx.path === '/index.html' ||
+      (!ctx.path.startsWith('/api') &&
+        !ctx.path.startsWith('/assets/') &&
+        !ctx.path.startsWith('/upload') &&
+        !ctx.path.startsWith('/socket.io') &&
+        !ctx.path.includes('.'))) {
+      ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+      ctx.set('Pragma', 'no-cache')
+      ctx.set('Expires', '0')
+    } else if (ctx.path.startsWith('/assets/')) {
+      ctx.set('Cache-Control', 'public, max-age=31536000, immutable')
+    }
+  })
+  console.log('[bootstrap] cache-control middleware registered')
+
   // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')
   app.use(serve(distDir))
@@ -171,7 +210,8 @@ export async function bootstrap() {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/webhook' &&
+      !legacyServiceWorkerPaths.has(ctx.path)) {
       await send(ctx, 'index.html', { root: distDir })
     }
   })
