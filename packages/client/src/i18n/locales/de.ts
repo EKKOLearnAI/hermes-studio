@@ -117,6 +117,8 @@ export default {
     emptyState: 'Starten Sie eine Konversation mit Hermes Agent',
     inputPlaceholder: 'Nachricht eingeben... (Enter zum Senden, Shift+Enter fur neue Zeile)',
     attachFiles: 'Dateien anhangen',
+    messageQueue: 'Nachrichtenwarteschlange',
+    removeQueuedMessage: 'Nachricht aus Warteschlange entfernen',
     stop: 'Stopp',
     send: 'Senden',
     contextUsed: 'Kontext verwendet:',

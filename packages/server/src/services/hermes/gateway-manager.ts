@@ -74,9 +74,15 @@ function detectInitSystem(): string {
   // Linux 才检查 /proc
   if (platform === 'linux') {
     try {
+      if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) {
+        return 'container'
+      }
+
       const comm = readFileSync('/proc/1/comm', 'utf-8').trim()
 
-      if (comm === 'systemd') return 'systemd'
+      if (comm === 'systemd') {
+        return existsSync('/run/systemd/system') ? 'systemd' : 'other'
+      }
       if (comm === 'init') return 'sysvinit'
 
       return 'other'
@@ -223,11 +229,15 @@ export class GatewayManager {
   }
 
   /** 从 base 端口开始递增查找空闲端口（上限 65535） */
-  private findFreePort(base: number, host = '127.0.0.1'): Promise<number> {
+  private findFreePort(base: number, host = '127.0.0.1', reservedPorts = new Set<number>()): Promise<number> {
     return new Promise((resolve, reject) => {
       const tryPort = (port: number) => {
         if (port > 65535) {
           reject(new Error(`No free port found in range ${base}-65535`))
+          return
+        }
+        if (reservedPorts.has(port)) {
+          tryPort(port + 1)
           return
         }
         const server = createServer()
@@ -318,7 +328,7 @@ export class GatewayManager {
 
     if (usedPorts.has(port)) {
       // 已管理端口冲突 → 找空闲端口
-      const newPort = await this.findFreePort(port, host)
+      const newPort = await this.findFreePort(port, host, usedPorts)
       logger.info('Port %d is in use for profile "%s", reassigning to %d', port, name, newPort)
       this.writeProfilePort(name, newPort, host)
       port = newPort
@@ -326,7 +336,7 @@ export class GatewayManager {
       // 检查系统级端口占用（外部进程）
       const available = await this.checkPortAvailable(port, host)
       if (!available) {
-        const newPort = await this.findFreePort(port, host)
+        const newPort = await this.findFreePort(port, host, usedPorts)
         logger.info('Port %d is occupied by another process for profile "%s", reassigning to %d', port, name, newPort)
         this.writeProfilePort(name, newPort, host)
         port = newPort

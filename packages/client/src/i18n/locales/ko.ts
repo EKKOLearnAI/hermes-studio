@@ -117,6 +117,8 @@ export default {
     emptyState: 'Hermes Agent와 대화를 시작하세요',
     inputPlaceholder: '메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)',
     attachFiles: '파일 첨부',
+    messageQueue: '메시지 대기열',
+    removeQueuedMessage: '대기열 메시지 제거',
     stop: '중지',
     send: '전송',
     contextUsed: '사용된 컨텍스트:',

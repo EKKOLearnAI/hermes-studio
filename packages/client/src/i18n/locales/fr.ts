@@ -117,6 +117,8 @@ export default {
     emptyState: 'Demarrer une conversation avec Hermes Agent',
     inputPlaceholder: 'Tapez un message... (Entree pour envoyer, Shift+Entree pour un saut de ligne)',
     attachFiles: 'Joindre des fichiers',
+    messageQueue: 'File de messages',
+    removeQueuedMessage: 'Retirer le message de la file',
     stop: 'Arreter',
     send: 'Envoyer',
     contextUsed: 'Contexte utilise :',

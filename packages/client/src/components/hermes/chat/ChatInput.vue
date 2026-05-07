@@ -374,7 +374,7 @@ function isImage(type: string): boolean {
         <NButton
           size="small"
           type="primary"
-          :disabled="!canSend || chatStore.isStreaming"
+          :disabled="!canSend"
           @click="handleSend"
         >
           <template #icon>

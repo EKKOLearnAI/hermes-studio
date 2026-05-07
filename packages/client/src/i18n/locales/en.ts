@@ -128,6 +128,8 @@ export default {
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     attachFiles: 'Attach files',
     autoPlaySpeech: 'Auto-play voice',
+    messageQueue: 'Message queue',
+    removeQueuedMessage: 'Remove queued message',
     stop: 'Stop',
     start: 'Start',
     stopGateway: 'Stop Gateway',

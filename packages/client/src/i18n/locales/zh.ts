@@ -128,6 +128,8 @@ export default {
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     attachFiles: '添加附件',
     autoPlaySpeech: '自动播放语音',
+    messageQueue: '消息队列',
+    removeQueuedMessage: '移除队列消息',
     stop: '停止',
     start: '启动',
     stopGateway: '停止网关',
