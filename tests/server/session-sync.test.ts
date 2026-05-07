@@ -1,73 +1,194 @@
 /**
  * Tests for session-sync service
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getDb, ensureTable } from '../../packages/server/src/db/index'
-import { syncAllHermesSessionsOnStartup } from '../../packages/server/src/services/hermes/session-sync'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const {
+  mockGetDb,
+  mockGetSession,
+  mockCreateSession,
+  mockAddMessage,
+  mockUpdateSession,
+  mockListHermesSessionSummaries,
+  mockGetSessionDetailFromDbWithProfile,
+  mockLogger,
+} = vi.hoisted(() => ({
+  mockGetDb: vi.fn(),
+  mockGetSession: vi.fn(),
+  mockCreateSession: vi.fn(),
+  mockAddMessage: vi.fn(),
+  mockUpdateSession: vi.fn(),
+  mockListHermesSessionSummaries: vi.fn(),
+  mockGetSessionDetailFromDbWithProfile: vi.fn(),
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: mockGetDb,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+  getSession: mockGetSession,
+  createSession: mockCreateSession,
+  addMessage: mockAddMessage,
+  updateSession: mockUpdateSession,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+  listSessionSummaries: mockListHermesSessionSummaries,
+  getSessionDetailFromDbWithProfile: mockGetSessionDetailFromDbWithProfile,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+  getProfileDir: (profile: string) => profile === 'default' ? '/fake/home/.hermes' : `/fake/home/.hermes/profiles/${profile}`,
+}))
+
+vi.mock('../../packages/server/src/services/logger', () => ({
+  logger: mockLogger,
+}))
+
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os')
+  return { ...actual, homedir: () => '/fake/home' }
+})
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs')
+  return { ...actual, existsSync: () => false, readdirSync: () => [] }
+})
+
+const webuiSummary = {
+  id: 'webui-session-1',
+  source: 'webui',
+  user_id: null,
+  model: 'gpt-5.5',
+  title: 'Work laptop chat',
+  started_at: 100,
+  ended_at: null,
+  end_reason: null,
+  message_count: 2,
+  tool_call_count: 0,
+  input_tokens: 10,
+  output_tokens: 20,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
+  reasoning_tokens: 0,
+  billing_provider: null,
+  estimated_cost_usd: 0,
+  actual_cost_usd: null,
+  cost_status: '',
+  preview: 'hello from work laptop',
+  last_active: 110,
+}
+
+const webuiDetail = {
+  ...webuiSummary,
+  thread_session_count: 1,
+  messages: [
+    {
+      id: 1,
+      session_id: 'webui-session-1',
+      role: 'user',
+      content: 'hello from work laptop',
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      timestamp: 100,
+      token_count: null,
+      finish_reason: null,
+      reasoning: null,
+    },
+    {
+      id: 2,
+      session_id: 'webui-session-1',
+      role: 'assistant',
+      content: 'hello from hermes',
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      timestamp: 110,
+      token_count: null,
+      finish_reason: 'stop',
+      reasoning: null,
+    },
+  ],
+}
+
+function makeDb(existingSessionCount: number, legacyMatch = false) {
+  return {
+    prepare: vi.fn((sql: string) => ({
+      get: vi.fn(() => {
+        if (sql.includes('COUNT(*)')) return { count: existingSessionCount }
+        if (sql.includes('SELECT id FROM sessions')) return legacyMatch ? { id: 'legacy-random-id' } : undefined
+        return undefined
+      }),
+    })),
+  }
+}
 
 describe('session-sync', () => {
   beforeEach(() => {
-    // Reset database before each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+    vi.clearAllMocks()
+    mockGetDb.mockReturnValue(makeDb(1))
+    mockGetSession.mockReturnValue(null)
+    mockCreateSession.mockImplementation((data: any) => ({
+      id: data.id,
+      profile: data.profile || 'default',
+      source: 'api_server',
+      model: data.model || '',
+      title: data.title || null,
+    }))
+    mockListHermesSessionSummaries.mockImplementation(async (source?: string) => {
+      if (source === 'webui') return [webuiSummary]
+      return []
+    })
+    mockGetSessionDetailFromDbWithProfile.mockResolvedValue(webuiDetail)
   })
 
-  afterEach(() => {
-    // Cleanup after each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+  it('imports missing webui sessions even when the local DB already has sessions', async () => {
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+
+    await syncAllHermesSessionsOnStartup()
+
+    expect(mockListHermesSessionSummaries).toHaveBeenCalledWith('webui', 10000, 'default')
+    expect(mockCreateSession).toHaveBeenCalledWith({
+      id: 'webui-session-1',
+      profile: 'default',
+      model: 'gpt-5.5',
+      title: 'Work laptop chat',
+    })
+    expect(mockUpdateSession).toHaveBeenCalledWith('webui-session-1', expect.objectContaining({
+      source: 'webui',
+      started_at: 100,
+      last_active: 110,
+    }))
+    expect(mockAddMessage).toHaveBeenCalledTimes(2)
   })
 
-  it('should skip sync when local DB is not empty', () => {
-    const db = getDb()
-    expect(db).not.toBeNull()
+  it('skips a Hermes session that has already been imported by id', async () => {
+    mockGetSession.mockReturnValue({ id: 'webui-session-1' })
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
 
-    // Insert a test session
-    db!.prepare(`
-      INSERT INTO sessions (id, profile, source, model, title, started_at, last_active)
-      VALUES ('test-session-1', 'default', 'api_server', 'gpt-4', 'Test Session', ${Date.now()}, ${Date.now()})
-    `).run()
+    await syncAllHermesSessionsOnStartup()
 
-    // Check that session exists
-    const countResult = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countResult.count).toBe(1)
-
-    // Run sync - should skip because DB is not empty
-    syncAllHermesSessionsOnStartup()
-
-    // Verify session still exists (no changes)
-    const countAfter = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countAfter.count).toBe(1)
+    expect(mockCreateSession).not.toHaveBeenCalled()
+    expect(mockAddMessage).not.toHaveBeenCalled()
   })
 
-  it('should attempt sync when local DB is empty', () => {
-    const db = getDb()
-    expect(db).not.toBeNull()
+  it('skips a Hermes session that matches an older random-id import', async () => {
+    mockGetDb.mockReturnValue(makeDb(1, true))
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
 
-    // Verify DB is empty
-    const countBefore = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countBefore.count).toBe(0)
+    await syncAllHermesSessionsOnStartup()
 
-    // Run sync - should attempt to sync from Hermes
-    syncAllHermesSessionsOnStartup()
-
-    // Note: Whether sessions are actually imported depends on whether
-    // Hermes state.db exists and has api_server sessions
-    // This test mainly verifies the function doesn't crash when DB is empty
-    expect(true).toBe(true)
+    expect(mockCreateSession).not.toHaveBeenCalled()
+    expect(mockAddMessage).not.toHaveBeenCalled()
   })
 
-  it('should handle case when SQLite is not available', () => {
-    // This test verifies the function handles the case when getDb() returns null
-    // Since we can't easily mock getDb(), we just verify it doesn't crash
-    expect(() => {
-      syncAllHermesSessionsOnStartup()
-    }).not.toThrow()
+  it('does not throw when SQLite is unavailable', async () => {
+    mockGetDb.mockReturnValue(null)
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+
+    await expect(syncAllHermesSessionsOnStartup()).resolves.toBeUndefined()
   })
 })
