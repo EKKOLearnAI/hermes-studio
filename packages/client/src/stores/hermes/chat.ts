@@ -686,14 +686,18 @@ export const useChatStore = defineStore('chat', () => {
     })()
     const resolved = typeof evt.resolved === 'number' ? evt.resolved : 0
     const error = (evt as any).error
+    const content = error
+      ? `Approval response failed: ${error}`
+      : resolved > 0
+        ? `Approval ${choiceLabel}. Resolved ${resolved} pending request${resolved === 1 ? '' : 's'}.`
+        : `No pending approval request was found to ${evt.choice || 'resolve'}.`
+    const msgs = getSessionMsgs(sessionId)
+    const alreadyShown = msgs.some(m => m.role === 'system' && m.content === content)
+    if (alreadyShown) return
     addMessage(sessionId, {
       id: uid(),
       role: 'system',
-      content: error
-        ? `Approval response failed: ${error}`
-        : resolved > 0
-          ? `Approval ${choiceLabel}. Resolved ${resolved} pending request${resolved === 1 ? '' : 's'}.`
-          : `No pending approval request was found to ${evt.choice || 'resolve'}.`,
+      content,
       timestamp: Date.now(),
     })
   }

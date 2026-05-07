@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const chatApiMocks = vi.hoisted(() => ({
-  startRunViaSocket: vi.fn(() => ({ abort: vi.fn() })),
+  lastRunEventHandler: null as null | ((evt: any) => void),
+  startRunViaSocket: vi.fn((_payload: any, onEvent: (evt: any) => void) => {
+    chatApiMocks.lastRunEventHandler = onEvent
+    return { abort: vi.fn() }
+  }),
   resumeSession: vi.fn((sessionId: string, onResumed: (data: any) => void) => {
     onResumed({ session_id: sessionId, messages: [], isWorking: false, events: [] })
     return {} as any
@@ -68,5 +72,34 @@ describe('chat store approval commands', () => {
     expect(chatApiMocks.startRunViaSocket.mock.calls[1][0].queue_id).toEqual(expect.any(String))
     expect(chatApiMocks.submitApprovalViaSocket).not.toHaveBeenCalled()
     expect(store.messages.map(m => m.content)).not.toContain('this should queue behind the active run')
+  })
+
+  it('deduplicates the optimistic and upstream approval response for the same run', async () => {
+    const store = useChatStore()
+
+    store.newChat()
+    await store.sendMessage('start risky work')
+    const onEvent = chatApiMocks.lastRunEventHandler
+    expect(onEvent).toEqual(expect.any(Function))
+
+    onEvent?.({
+      event: 'approval.responded',
+      run_id: 'run-approval-1',
+      choice: 'once',
+      all: false,
+      resolved: 1,
+    })
+    onEvent?.({
+      event: 'approval.responded',
+      run_id: 'run-approval-1',
+      timestamp: Date.now() / 1000,
+      choice: 'once',
+      resolved: 1,
+    })
+
+    const approvalResponses = store.messages.filter(m =>
+      m.role === 'system' && m.content.includes('Approval approved once. Resolved 1 pending request.'),
+    )
+    expect(approvalResponses).toHaveLength(1)
   })
 })

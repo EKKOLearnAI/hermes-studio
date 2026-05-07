@@ -48,6 +48,23 @@ describe('MessageItem tool details', () => {
     })
   })
 
+  it('renders system approval prompt content in the chat bubble', () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'approval-request',
+          role: 'system',
+          content: 'Approval required\n\nCommand:\n```\nbash -lc \'printf ok\'\n```\n\nReply with /approve to approve once.',
+          timestamp: Date.now(),
+        } satisfies Message,
+      },
+    })
+
+    expect(wrapper.text()).toContain('Approval required')
+    expect(wrapper.text()).toContain('Reply with /approve')
+    expect(wrapper.find('.message-bubble.system').exists()).toBe(true)
+  })
+
   it('renders highlighted code blocks for tool arguments and tool results', async () => {
     const wrapper = mount(MessageItem, {
       props: {
