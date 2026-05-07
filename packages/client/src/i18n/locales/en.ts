@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: 'Password',
     credentialsRequired: 'Please enter username and password',
     invalidCredentials: 'Invalid username or password',
+    tooManyAttempts: 'Too many failed attempts, please try again later',
     passwordMismatch: 'Passwords do not match',
     passwordTooShort: 'Password must be at least 6 characters',
     setupSuccess: 'Password login configured successfully',

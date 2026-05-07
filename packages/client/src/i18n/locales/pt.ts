@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: 'Senha',
     credentialsRequired: 'Por favor, insira nome de usuario e senha',
     invalidCredentials: 'Nome de usuario ou senha incorretos',
+    tooManyAttempts: 'Muitas tentativas falhadas, por favor tente novamente mais tarde',
     passwordMismatch: 'As senhas nao conferem',
     passwordTooShort: 'A senha deve ter pelo menos 6 caracteres',
     setupSuccess: 'Login por senha configurado com sucesso',

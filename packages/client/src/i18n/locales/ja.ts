@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: 'パスワード',
     credentialsRequired: 'ユーザー名とパスワードを入力してください',
     invalidCredentials: 'ユーザー名またはパスワードが正しくありません',
+    tooManyAttempts: 'ログイン試行回数が多すぎます。しばらくしてからお試しください',
     passwordMismatch: 'パスワードが一致しません',
     passwordTooShort: 'パスワードは6文字以上必要です',
     setupSuccess: 'パスワードログインが設定されました',

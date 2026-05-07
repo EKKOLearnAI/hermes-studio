@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: 'Mot de passe',
     credentialsRequired: 'Veuillez entrer le nom d\'utilisateur et le mot de passe',
     invalidCredentials: 'Nom d\'utilisateur ou mot de passe incorrect',
+    tooManyAttempts: 'Trop de tentatives echouees, veuillez reessayer plus tard',
     passwordMismatch: 'Les mots de passe ne correspondent pas',
     passwordTooShort: 'Le mot de passe doit contenir au moins 6 caracteres',
     setupSuccess: 'Login par mot de passe configure avec succes',

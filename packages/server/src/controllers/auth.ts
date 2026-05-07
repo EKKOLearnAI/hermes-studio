@@ -1,6 +1,7 @@
 import type { Context } from 'koa'
 import { getCredentials, setCredentials, verifyCredentials, deleteCredentials } from '../services/credentials'
 import { getToken } from '../services/auth'
+import { checkPassword, recordPasswordFailure, recordPasswordSuccess, extractIp } from '../services/login-limiter'
 
 /**
  * GET /api/auth/status
@@ -27,8 +28,17 @@ export async function login(ctx: Context) {
     return
   }
 
+  const ip = extractIp(ctx)
+  const result = checkPassword(ip)
+  if (!result.allowed) {
+    ctx.status = result.status
+    ctx.body = { error: 'Too many login attempts, please try again later' }
+    return
+  }
+
   const valid = await verifyCredentials(username, password)
   if (!valid) {
+    recordPasswordFailure(ip)
     ctx.status = 401
     ctx.body = { error: 'Invalid username or password' }
     return
@@ -41,6 +51,7 @@ export async function login(ctx: Context) {
     return
   }
 
+  recordPasswordSuccess(ip)
   ctx.body = { token }
 }
 

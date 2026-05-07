@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: '密码',
     credentialsRequired: '请输入用户名和密码',
     invalidCredentials: '用户名或密码错误',
+    tooManyAttempts: '登录失败次数过多，请稍后重试',
     passwordMismatch: '两次密码不一致',
     passwordTooShort: '密码长度至少 6 个字符',
     setupSuccess: '密码登录配置成功',

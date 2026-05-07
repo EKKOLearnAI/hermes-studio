@@ -19,7 +19,9 @@ export async function loginWithPassword(username: string, password: string): Pro
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.error || 'Login failed')
+    const err: any = new Error(data.error || 'Login failed')
+    err.status = res.status
+    throw err
   }
   const data = await res.json()
   return data.token

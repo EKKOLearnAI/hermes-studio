@@ -14,6 +14,7 @@ export default {
     passwordPlaceholder: 'Contrasena',
     credentialsRequired: 'Por favor, introduzca nombre de usuario y contrasena',
     invalidCredentials: 'Nombre de usuario o contrasena incorrectos',
+    tooManyAttempts: 'Demasiados intentos fallidos, por favor intente mas tarde',
     passwordMismatch: 'Las contrasenas no coinciden',
     passwordTooShort: 'La contrasena debe tener al menos 6 caracteres',
     setupSuccess: 'Login con contrasena configurado correctamente',

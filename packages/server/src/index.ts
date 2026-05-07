@@ -9,6 +9,7 @@ import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
 import { getToken, requireAuth } from './services/auth'
+import { initLoginLimiter } from './services/login-limiter'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -133,6 +134,7 @@ export async function bootstrap() {
   await mkdir(config.dataDir, { recursive: true })
 
   const authToken = await getToken()
+  await initLoginLimiter()
   const app = new Koa()
 
   await initGatewayManager()
