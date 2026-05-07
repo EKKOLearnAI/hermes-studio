@@ -4,13 +4,14 @@ import { useChatStore } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
-import { NButton, NTooltip, NSwitch } from 'naive-ui'
+import { setModelContext } from '@/api/hermes/model-context'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
 import { computed, ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { isApprovalCommand } from '@/utils/approval-commands'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
+const message = useMessage()
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const fileInputRef = ref<HTMLInputElement>()
@@ -40,15 +41,49 @@ watch(autoPlaySpeech, (value) => {
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
-const canSubmit = computed(() => Boolean(
-  canSend.value &&
-  (!chatStore.isStreaming || (attachments.value.length === 0 && isApprovalCommand(inputText.value))),
-))
 
 // --- Context info ---
 
 const contextLength = ref(200000)
 const FALLBACK_CONTEXT = 200000
+
+// Context length editing
+const showContextEditModal = ref(false)
+const editingContextLimit = ref(200000)
+const isSavingContextLimit = ref(false)
+
+async function handleEditContextLimit() {
+  editingContextLimit.value = contextLength.value
+  showContextEditModal.value = true
+}
+
+async function saveContextLimit() {
+  if (!editingContextLimit.value || editingContextLimit.value <= 0) {
+    message.error(t('chat.contextEditInvalid'))
+    return
+  }
+
+  isSavingContextLimit.value = true
+  try {
+    const appStore = useAppStore()
+    const provider = appStore.selectedProvider || ''
+    const model = appStore.selectedModel || ''
+
+    if (!provider || !model) {
+      message.error(t('chat.contextEditFailed'))
+      return
+    }
+
+    await setModelContext(provider, model, editingContextLimit.value)
+    contextLength.value = editingContextLimit.value
+    showContextEditModal.value = false
+    message.success(t('chat.contextEditSuccess'))
+  } catch (err: any) {
+    message.error(`${t('chat.contextEditFailed')}: ${err.message || ''}`)
+  } finally {
+    isSavingContextLimit.value = false
+  }
+}
 
 async function loadContextLength() {
   try {
@@ -160,7 +195,7 @@ function handleDrop(e: DragEvent) {
 
 function handleSend() {
   const text = inputText.value.trim()
-  if (!canSubmit.value) return
+  if (!canSend.value) return
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
@@ -252,7 +287,16 @@ function isImage(type: string): boolean {
       </div>
 
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
-        {{ formatTokens(totalTokens) }} / {{ formatTokens(contextLength) }} · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+        {{ formatTokens(totalTokens) }} /
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <span class="context-limit-editable" @click="handleEditContextLimit">
+              {{ formatTokens(contextLength) }}
+            </span>
+          </template>
+          <span>{{ t('chat.contextClickToEdit') }}</span>
+        </NTooltip>
+        · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
       </span>
       <div v-if="totalTokens > 0" class="context-bar">
         <div
@@ -330,7 +374,7 @@ function isImage(type: string): boolean {
         <NButton
           size="small"
           type="primary"
-          :disabled="!canSubmit"
+          :disabled="!canSend"
           @click="handleSend"
         >
           <template #icon>
@@ -340,6 +384,47 @@ function isImage(type: string): boolean {
         </NButton>
       </div>
     </div>
+
+    <!-- Context Length Edit Modal -->
+    <NModal
+      v-model:show="showContextEditModal"
+      :title="t('chat.contextEditTitle')"
+      :mask-closable="true"
+      preset="card"
+      style="width: 400px"
+    >
+      <div class="context-edit-content">
+        <p style="margin-bottom: 16px; color: #666;">
+          {{ t('chat.contextEditDesc') }}
+        </p>
+        <NInputNumber
+          v-model:value="editingContextLimit"
+          :min="1000"
+          :max="10000000"
+          :step="1000"
+          :show-button="false"
+          :placeholder="t('chat.contextEditPlaceholder')"
+          style="width: 100%"
+        >
+          <template #suffix>
+            <span style="color: #999;">tokens</span>
+          </template>
+        </NInputNumber>
+        <div style="margin-top: 12px; font-size: 12px; color: #999;">
+          {{ t('chat.contextEditHint') }}
+        </div>
+      </div>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <NButton @click="showContextEditModal = false" :disabled="isSavingContextLimit">
+            {{ t('chat.contextEditCancel') }}
+          </NButton>
+          <NButton type="primary" @click="saveContextLimit" :loading="isSavingContextLimit">
+            {{ t('chat.contextEditSave') }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -385,6 +470,19 @@ function isImage(type: string): boolean {
 
   &.context-warning {
     color: #e8a735;
+  }
+}
+
+.context-limit-editable {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: all 0.2s ease;
+  padding: 0 2px;
+
+  &:hover {
+    border-bottom-color: $text-muted;
+    background: rgba(128, 128, 128, 0.1);
+    border-radius: 2px;
   }
 }
 

@@ -17,6 +17,7 @@ export interface StartRunRequest {
   instructions?: string
   session_id?: string
   model?: string
+  queue_id?: string
 }
 
 export interface StartRunResponse {
@@ -54,6 +55,8 @@ export interface RunEvent {
   }
   /** session_id tag added by server for client-side filtering */
   session_id?: string
+  /** Queue length from run.queued event */
+  queue_length?: number
 }
 
 // ============================
@@ -84,6 +87,7 @@ const sessionEventHandlers = new Map<string, {
   onApprovalRequest: (event: RunEvent) => void
   onApprovalResponded: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
+  onRunQueued?: (event: RunEvent) => void
 }>()
 
 /**
@@ -190,7 +194,8 @@ function globalRunCompletedHandler(event: RunEvent): void {
     handlers.onRunCompleted(event)
   }
 
-  // Auto-cleanup session handlers on completion
+  // Auto-cleanup session handlers on completion (skip if more runs queued)
+  if ((event as any).queue_remaining > 0) return
   sessionEventHandlers.delete(sid)
 }
 
@@ -206,8 +211,22 @@ function globalRunFailedHandler(event: RunEvent): void {
     handlers.onRunFailed(event)
   }
 
-  // Auto-cleanup session handlers on failure
+  // Auto-cleanup session handlers on failure (skip if more runs queued)
+  if ((event as any).queue_remaining > 0) return
   sessionEventHandlers.delete(sid)
+}
+
+/**
+ * Global run.queued event handler
+ */
+function globalRunQueuedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onRunQueued) {
+    handlers.onRunQueued(event)
+  }
 }
 
 /**
@@ -261,6 +280,9 @@ function globalAbortCompletedHandler(event: RunEvent): void {
     handlers.onAbortCompleted(event)
   }
 
+  // If abort completion is followed by queued runs, keep the handler alive so
+  // the next run.started/message.delta/run.completed events are still received.
+  if ((event as any).queue_length > 0) return
   sessionEventHandlers.delete(sid)
 }
 
@@ -328,6 +350,7 @@ export function registerSessionHandlers(
     onApprovalRequest: (event: RunEvent) => void
     onApprovalResponded: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
+    onRunQueued?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -400,6 +423,7 @@ export function connectChatRun(): Socket {
     chatRunSocket.on('run.started', globalRunStartedHandler)
     chatRunSocket.on('run.failed', globalRunFailedHandler)
     chatRunSocket.on('run.completed', globalRunCompletedHandler)
+    chatRunSocket.on('run.queued', globalRunQueuedHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
@@ -439,7 +463,7 @@ export function disconnectChatRun(): void {
  */
 export function resumeSession(
   sessionId: string,
-  onResumed: (data: { session_id: string; messages: any[]; isWorking: boolean; isAborting?: boolean; events: any[]; inputTokens?: number; outputTokens?: number }) => void,
+  onResumed: (data: { session_id: string; messages: any[]; isWorking: boolean; isAborting?: boolean; events: any[]; inputTokens?: number; outputTokens?: number; queueLength?: number }) => void,
 ): Socket {
   const socket = connectChatRun()
 
@@ -462,6 +486,18 @@ export function startRunViaSocket(
   }
 
   let closed = false
+  const socket = connectChatRun()
+
+  if (sessionEventHandlers.has(sid)) {
+    socket.emit('run', body)
+    return {
+      abort: () => {
+        if (!closed) {
+          socket.emit('abort', { session_id: sid })
+        }
+      },
+    }
+  }
 
   // Define event handlers for this session
   const handlers = {
@@ -497,12 +533,14 @@ export function startRunViaSocket(
     onRunCompleted: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
+      if ((evt as any).queue_remaining > 0) return
       closed = true
       onDone()
     },
     onRunFailed: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
+      if ((evt as any).queue_remaining > 0) return
       closed = true
       onError(new Error(evt.error || 'Run failed'))
     },
@@ -521,6 +559,7 @@ export function startRunViaSocket(
     onAbortCompleted: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
+      if ((evt as any).queue_length > 0) return
       closed = true
       onDone()
     },
@@ -536,13 +575,16 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
     },
+    onRunQueued: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
   }
 
   // Register handlers in the global session map
   sessionEventHandlers.set(sid, handlers)
 
   // Emit run request
-  const socket = connectChatRun()
   socket.emit('run', body)
 
   return {

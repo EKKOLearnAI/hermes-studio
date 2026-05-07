@@ -370,10 +370,13 @@ function handleSpeechToggle() {
     return
   }
   const content = props.message.content || ''
+  speech.toggle(props.message.id, content, getSpeechOptions())
+}
 
+function getSpeechOptions() {
   // 尝试获取男声语音包
   const allVoices = speech.getAllVoices()
-  let maleVoice = null
+  let maleVoice: SpeechSynthesisVoice | null = null
 
   // 查找可能的男声语音包
   for (const voice of allVoices) {
@@ -394,11 +397,11 @@ function handleSpeechToggle() {
   }
 
   // 快速男声：语速快、音调低
-  speech.toggle(props.message.id, content, {
+  return {
     pitch: 0.5,   // 低沉
     rate: 1.2,    // 快速
     voice: maleVoice || undefined, // 使用男声，如果没有就用默认
-  })
+  }
 }
 
 // 监听自动播放事件
@@ -408,7 +411,7 @@ onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
     if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
-      handleSpeechToggle()
+      speech.enqueue(props.message.id, customEvent.detail.content || props.message.content || '', getSpeechOptions())
     }
   }
   window.addEventListener('auto-play-speech', autoPlayHandler)

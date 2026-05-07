@@ -3,6 +3,7 @@ import { writeFile } from 'fs/promises'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { readConfigYaml, writeConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi'])
@@ -39,18 +40,22 @@ export async function create(ctx: any) {
         existing.base_url = base_url
         existing.api_key = api_key
         existing.model = model
+        const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
+        if (preset?.api_mode) existing.api_mode = preset.api_mode
         if (context_length && context_length > 0) {
           if (!existing.models) existing.models = {}
           existing.models[model] = existing.models[model] || {}
           existing.models[model].context_length = context_length
         }
       } else {
-        config.custom_providers.push(buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length))
+        const entry = buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length)
+        const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
+        if (preset?.api_mode) entry.api_mode = preset.api_mode
+        config.custom_providers.push(entry)
       }
       config.model.default = model
       config.model.provider = poolKey
     } else {
-      console.log(PROVIDER_ENV_MAP[poolKey])
       if (PROVIDER_ENV_MAP[poolKey].api_key_env) {
         await saveEnvValue(PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
         if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValue(PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
@@ -65,13 +70,18 @@ export async function create(ctx: any) {
           existing.base_url = base_url
           existing.api_key = api_key
           existing.model = model
+          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+          if (preset?.api_mode) existing.api_mode = preset.api_mode
           if (context_length && context_length > 0) {
             if (!existing.models) existing.models = {}
             existing.models[model] = existing.models[model] || {}
             existing.models[model].context_length = context_length
           }
         } else {
-          config.custom_providers.push(buildProviderEntry(poolKey, base_url, api_key, model, context_length))
+          const entry = buildProviderEntry(poolKey, base_url, api_key, model, context_length)
+          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+          if (preset?.api_mode) entry.api_mode = preset.api_mode
+          config.custom_providers.push(entry)
         }
         config.model.default = model
         config.model.provider = `custom:${poolKey}`

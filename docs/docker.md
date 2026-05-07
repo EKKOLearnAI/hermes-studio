@@ -34,6 +34,7 @@ All key runtime settings are configured from compose variables.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `6060` | Web UI listen port |
+| `BIND_HOST` | Node default | Optional Web UI bind host. Leave unset for IPv6 dual-stack when available, or set `0.0.0.0` / `::` explicitly. |
 | `UPSTREAM` | `http://hermes-agent:8642` | Hermes gateway URL (container internal) |
 | `HERMES_BIN` | `/opt/hermes/.venv/bin/hermes` | Path to Hermes CLI binary |
 | `HERMES_AGENT_IMAGE` | `nousresearch/hermes-agent:latest` | Hermes Agent base image |

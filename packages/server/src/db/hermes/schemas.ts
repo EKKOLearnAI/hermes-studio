@@ -90,6 +90,21 @@ export const COMPRESSION_SNAPSHOT_SCHEMA: Record<string, string> = {
 }
 
 // ============================================================================
+// Model Context (model-context.ts)
+// ============================================================================
+
+export const MODEL_CONTEXT_TABLE = 'model_context'
+
+export const MODEL_CONTEXT_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  provider: 'TEXT NOT NULL',
+  model: 'TEXT NOT NULL',
+  context_limit: 'INTEGER NOT NULL',
+}
+
+export const MODEL_CONTEXT_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_model_context_provider_model ON model_context(provider, model)'
+
+// ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
 // ============================================================================
 
@@ -468,6 +483,13 @@ export function initAllHermesTables(retryCount = 0): void {
 
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
+
+    // Model context
+    syncTable(MODEL_CONTEXT_TABLE, MODEL_CONTEXT_SCHEMA, {
+      indexes: {
+        idx_model_context_provider_model: MODEL_CONTEXT_INDEX,
+      }
+    })
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)

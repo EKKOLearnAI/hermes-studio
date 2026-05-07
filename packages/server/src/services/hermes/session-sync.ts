@@ -68,6 +68,8 @@ async function syncProfileSessions(profile: string): Promise<{
     logger.info(`[session-sync] profile '${profile}': found ${summaries.length} aggregated session chains`)
 
     for (const hermesSession of summaries) {
+      // Skip ephemeral sessions (created internally by chat-run-socket)
+      if (hermesSession.id.startsWith('eph_')) continue
       try {
         // Generate new session ID for local DB
         const newSessionId = generateUuid()

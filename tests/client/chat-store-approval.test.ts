@@ -51,17 +51,22 @@ describe('chat store approval commands', () => {
     expect(store.messages.at(-1)?.content).toBe('/approve session')
   })
 
-  it('keeps ordinary chat text blocked while a run is streaming', async () => {
+  it('queues ordinary chat text while a run is streaming', async () => {
     const store = useChatStore()
 
     store.newChat()
     await store.sendMessage('start risky work')
     expect(store.isStreaming).toBe(true)
 
-    await store.sendMessage('this should not start another run')
+    await store.sendMessage('this should queue behind the active run')
 
-    expect(chatApiMocks.startRunViaSocket).toHaveBeenCalledTimes(1)
+    expect(chatApiMocks.startRunViaSocket).toHaveBeenCalledTimes(2)
+    expect(chatApiMocks.startRunViaSocket.mock.calls[1][0]).toMatchObject({
+      input: 'this should queue behind the active run',
+      session_id: store.activeSessionId,
+    })
+    expect(chatApiMocks.startRunViaSocket.mock.calls[1][0].queue_id).toEqual(expect.any(String))
     expect(chatApiMocks.submitApprovalViaSocket).not.toHaveBeenCalled()
-    expect(store.messages.map(m => m.content)).not.toContain('this should not start another run')
+    expect(store.messages.map(m => m.content)).not.toContain('this should queue behind the active run')
   })
 })

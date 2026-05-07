@@ -15,6 +15,12 @@ export interface SpeechState {
   progress: number  // 当前进度（字符数）
 }
 
+interface SpeechQueueItem {
+  messageId: string
+  content: string
+  options: SpeechOptions
+}
+
 /**
  * Web Speech API 语音播放 Composable
  */
@@ -29,7 +35,8 @@ export function useSpeech() {
   })
 
   let utterance: SpeechSynthesisUtterance | null = null
-  let currentText = ''
+  let playbackToken = 0
+  const speechQueue: SpeechQueueItem[] = []
 
   // 加载可用语音列表
   function loadVoices() {
@@ -106,8 +113,12 @@ export function useSpeech() {
   /**
    * 停止当前播放
    */
-  function stop() {
-    if (synth.speaking) {
+  function stop(clearQueue = true) {
+    playbackToken += 1
+    if (clearQueue) {
+      speechQueue.length = 0
+    }
+    if (synth.speaking || synth.pending || synth.paused) {
       synth.cancel()
     }
     if (utterance) {
@@ -119,7 +130,89 @@ export function useSpeech() {
       currentMessageId: null,
       progress: 0,
     }
-    currentText = ''
+  }
+
+  function speak(messageId: string, text: string, options: SpeechOptions = {}) {
+    const token = ++playbackToken
+
+    utterance = new SpeechSynthesisUtterance(text)
+    const activeUtterance = utterance
+    const activeText = text
+
+    // 设置语音参数
+    utterance.rate = options.rate ?? 1
+    utterance.pitch = options.pitch ?? 1
+    utterance.volume = options.volume ?? 1
+    utterance.voice = options.voice ?? getDefaultVoice()
+
+    console.log('[useSpeech] Selected voice:', utterance.voice?.name, utterance.voice?.lang)
+
+    if (options.lang) {
+      utterance.lang = options.lang
+    } else if (utterance.voice) {
+      utterance.lang = utterance.voice.lang
+    }
+
+    // 事件监听
+    utterance.onstart = () => {
+      if (token !== playbackToken || utterance !== activeUtterance) return
+      console.log('[useSpeech] onstart fired')
+      state.value.isPlaying = true
+      state.value.isPaused = false
+      state.value.currentMessageId = messageId
+      state.value.progress = 0
+    }
+
+    utterance.onboundary = (event) => {
+      if (token !== playbackToken || utterance !== activeUtterance) return
+      if (event.name === 'word') {
+        state.value.progress = event.charIndex
+      }
+    }
+
+    utterance.onend = () => {
+      if (token !== playbackToken || utterance !== activeUtterance) return
+      console.log('[useSpeech] onend fired')
+      state.value.isPlaying = false
+      state.value.isPaused = false
+      state.value.currentMessageId = null
+      state.value.progress = activeText.length
+      utterance = null
+      if (speechQueue.length > 0) {
+        window.setTimeout(playNextQueuedSpeech, 0)
+      }
+    }
+
+    utterance.onerror = (event) => {
+      if (token !== playbackToken || utterance !== activeUtterance) return
+      console.error('[useSpeech] Speech synthesis error:', event.error)
+      state.value.isPlaying = false
+      state.value.isPaused = false
+      state.value.currentMessageId = null
+      utterance = null
+      if (speechQueue.length > 0) {
+        window.setTimeout(playNextQueuedSpeech, 0)
+      }
+    }
+
+    // 开始播放
+    console.log('[useSpeech] Calling synth.speak()')
+    synth.speak(utterance)
+  }
+
+  function playNextQueuedSpeech() {
+    if (state.value.isPlaying || state.value.isPaused || synth.speaking || synth.pending) return
+    const next = speechQueue.shift()
+    if (!next) return
+
+    const text = extractReadableText(next.content)
+    if (!text) {
+      window.setTimeout(playNextQueuedSpeech, 0)
+      return
+    }
+
+    console.log('[useSpeech] Playing queued text:', text.substring(0, 50) + '...')
+    speak(next.messageId, text, next.options)
   }
 
   /**
@@ -159,58 +252,23 @@ export function useSpeech() {
 
     // 停止当前播放
     stop()
+    speak(messageId, text, options)
+  }
 
-    // 创建新的 utterance
-    utterance = new SpeechSynthesisUtterance(text)
-    currentText = text
-
-    // 设置语音参数
-    utterance.rate = options.rate ?? 1
-    utterance.pitch = options.pitch ?? 1
-    utterance.volume = options.volume ?? 1
-    utterance.voice = options.voice ?? getDefaultVoice()
-
-    console.log('[useSpeech] Selected voice:', utterance.voice?.name, utterance.voice?.lang)
-
-    if (options.lang) {
-      utterance.lang = options.lang
-    } else if (utterance.voice) {
-      utterance.lang = utterance.voice.lang
+  /**
+   * 自动播放入队：不打断当前语音，按完成顺序依次播放。
+   */
+  function enqueue(messageId: string, content: string, options: SpeechOptions = {}) {
+    if (!isSupported.value) {
+      console.warn('[useSpeech] Speech synthesis not supported')
+      return
     }
-
-    // 事件监听
-    utterance.onstart = () => {
-      console.log('[useSpeech] onstart fired')
-      state.value.isPlaying = true
-      state.value.isPaused = false
-      state.value.currentMessageId = messageId
-      state.value.progress = 0
+    if (!extractReadableText(content)) {
+      console.warn('[useSpeech] No readable text found')
+      return
     }
-
-    utterance.onboundary = (event) => {
-      if (event.name === 'word') {
-        state.value.progress = event.charIndex
-      }
-    }
-
-    utterance.onend = () => {
-      console.log('[useSpeech] onend fired')
-      state.value.isPlaying = false
-      state.value.isPaused = false
-      state.value.currentMessageId = null
-      state.value.progress = currentText.length
-    }
-
-    utterance.onerror = (event) => {
-      console.error('[useSpeech] Speech synthesis error:', event.error)
-      state.value.isPlaying = false
-      state.value.isPaused = false
-      state.value.currentMessageId = null
-    }
-
-    // 开始播放
-    console.log('[useSpeech] Calling synth.speak()')
-    synth.speak(utterance)
+    speechQueue.push({ messageId, content, options })
+    playNextQueuedSpeech()
   }
 
   /**
@@ -269,6 +327,7 @@ export function useSpeech() {
     resume,
     stop,
     toggle,
+    enqueue,
     getDefaultVoice,
     getAllVoices,
     extractReadableText,

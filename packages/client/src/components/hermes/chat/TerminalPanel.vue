@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onUnmounted, computed, watch } from "vue";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,6 +11,8 @@ import type { ITheme } from "@xterm/xterm";
 
 const { t } = useI18n();
 const message = useMessage();
+
+const props = defineProps<{ visible?: boolean }>();
 
 // ─── Terminal themes ────────────────────────────────────────────
 
@@ -121,6 +123,13 @@ const terminalBg = computed(
 
 // ─── WebSocket ──────────────────────────────────────────────────
 
+function formatHostForPort(hostname: string, port: number): string {
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return `${hostname}:${port}`;
+  }
+  return hostname.includes(":") ? `[${hostname}]:${port}` : `${hostname}:${port}`;
+}
+
 function buildWsUrl(): string {
   const token = getApiKey();
   const base = getBaseUrlValue();
@@ -137,7 +146,7 @@ function buildWsUrl(): string {
   }
 
   const host = import.meta.env.DEV
-    ? `${location.hostname}:8648`
+    ? formatHostForPort(location.hostname, 8648)
     : location.host;
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }
@@ -157,10 +166,8 @@ function connect() {
   ws = new WebSocket(url);
 
   ws.onopen = () => {
-    reconnectAttempts = 0;
     isConnecting.value = false;
     connectionError.value = null;
-    // Server auto-creates the first session
   };
 
   ws.onmessage = (event) => {
@@ -203,6 +210,7 @@ function send(data: object | string) {
 function handleControl(msg: any) {
   switch (msg.type) {
     case "created":
+      reconnectAttempts = 0;
       sessions.value.push({
         id: msg.id,
         shell: msg.shell,
@@ -369,9 +377,14 @@ function formatTime(ts: number) {
 
 // ─── Lifecycle ──────────────────────────────────────────────────
 
-onMounted(() => {
-  connect();
-});
+let hasConnected = false;
+
+watch(() => props.visible, (visible) => {
+  if (visible && !hasConnected && !ws) {
+    hasConnected = true;
+    connect();
+  }
+}, { immediate: true });
 
 onUnmounted(() => {
   unmountActiveTerminal();

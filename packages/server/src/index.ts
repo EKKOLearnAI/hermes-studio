@@ -37,7 +37,83 @@ process.on('unhandledRejection', (reason) => {
 })
 
 let server: any = null
+let servers: any[] = []
 let chatRunServer: any = null
+
+interface ListenResult {
+  primary: any
+  servers: any[]
+}
+
+function listen(app: Koa, port: number, host: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const s = app.listen(port, host)
+    s.once('listening', () => resolve(s))
+    s.once('error', reject)
+  })
+}
+
+function probeIPv4(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const req = require('http').get(`http://127.0.0.1:${port}/health`, (res: any) => {
+      res.resume()
+      resolve(true)
+    })
+    req.once('error', () => resolve(false))
+    req.setTimeout(1000, () => {
+      req.destroy()
+      resolve(false)
+    })
+  })
+}
+
+/**
+ * Try listening on IPv6 dual-stack (::) first. If IPv4 is not reachable through
+ * that socket, keep IPv6 and add a separate IPv4 listener. Fall back to IPv4
+ * only when IPv6 is unavailable. Skips fallback when BIND_HOST is explicitly set.
+ *
+ * On some systems (e.g. WSL2), binding to :: succeeds but the dual-stack
+ * doesn't actually accept IPv4 connections. We detect this by probing
+ * 127.0.0.1 after binding.
+ */
+async function listenWithFallback(app: Koa, port: number, host?: string): Promise<ListenResult> {
+  // Explicit host: use it directly.
+  if (host) {
+    console.log(`[bootstrap] listening on ${host}:${port}`)
+    const explicit = await listen(app, port, host)
+    return { primary: explicit, servers: [explicit] }
+  }
+
+  console.log(`[bootstrap] trying IPv6 dual-stack on ::${port}`)
+  try {
+    const s6 = await listen(app, port, '::')
+    if (await probeIPv4(port)) {
+      console.log(`[bootstrap] IPv6 dual-stack verified (IPv4 probe ok) on ::${port}`)
+      return { primary: s6, servers: [s6] }
+    }
+
+    console.log('[bootstrap] IPv6 listener is IPv6-only, adding IPv4 listener on 0.0.0.0')
+    try {
+      const s4 = await listen(app, port, '0.0.0.0')
+      console.log(`[bootstrap] listening on ::${port} and 0.0.0.0:${port}`)
+      return { primary: s6, servers: [s6, s4] }
+    } catch (err) {
+      console.log('[bootstrap] IPv4 listener failed; keeping IPv6 listener')
+      logger.warn({ err }, 'Could not add IPv4 listener after IPv6-only bind')
+      return { primary: s6, servers: [s6] }
+    }
+  } catch (err: any) {
+    if (err.code !== 'EADDRNOTAVAIL' && err.code !== 'EAFNOSUPPORT' && err.code !== 'EPROTONOSUPPORT') {
+      throw err
+    }
+
+    console.log(`[bootstrap] IPv6 not available (${err.code}), falling back to 0.0.0.0`)
+    const s4 = await listen(app, port, '0.0.0.0')
+    console.log(`[bootstrap] listening on 0.0.0.0:${port}`)
+    return { primary: s4, servers: [s4] }
+  }
+}
 
 /**
  * 安全获取网络接口信息（兼容 Termux/proot 环境）
@@ -101,16 +177,17 @@ export async function bootstrap() {
   })
   console.log('[bootstrap] SPA fallback registered')
 
-  // Start server
-  console.log(`[bootstrap] listening on port ${config.port}`)
-  server = app.listen(config.port, '0.0.0.0')
+  // Start server — try IPv6 dual-stack first, fall back to IPv4
+  const listenResult = await listenWithFallback(app, config.port, config.host)
+  server = listenResult.primary
+  servers = listenResult.servers
   console.log('[bootstrap] app.listen called')
 
-  setupTerminalWebSocket(server)
+  setupTerminalWebSocket(servers)
   console.log('[bootstrap] terminal websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
-  const groupChatServer = new GroupChatServer(server)
+  const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
   groupChatServer.setGatewayManager(getGatewayManagerInstance())
 
@@ -127,32 +204,34 @@ export async function bootstrap() {
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
 
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
-  server.on('upgrade', (req: any, socket: any) => {
-    const url = new URL(req.url || '', `http://${req.headers.host}`)
-    if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
-      socket.destroy()
-    }
+  servers.forEach((httpServer) => {
+    httpServer.on('upgrade', (req: any, socket: any) => {
+      const url = new URL(req.url || '', `http://${req.headers.host}`)
+      if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
+        socket.destroy()
+      }
+    })
   })
 
-  server.on('listening', () => {
-    const interfaces = safeNetworkInterfaces()
-    const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
-    console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
-    console.log(`Upstream: ${config.upstream}`)
-    console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
-    logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
-    logger.info('Upstream: %s', config.upstream)
+  const interfaces = safeNetworkInterfaces()
+  const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
+  console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
+  console.log(`Upstream: ${config.upstream}`)
+  console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
+  logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+  logger.info('Upstream: %s', config.upstream)
 
-    // Restore group chat agents after server is ready
-    groupChatServer.restoreWhenReady()
+  // Restore group chat agents after server is ready.
+  groupChatServer.restoreWhenReady()
+
+  servers.forEach((httpServer) => {
+    httpServer.on('error', (err: any) => {
+      console.error('[bootstrap] server error:', err.code || err.message)
+      logger.error({ err }, 'Server error')
+    })
   })
 
-  server.on('error', (err: any) => {
-    console.error('[bootstrap] server error:', err.code || err.message)
-    logger.error({ err }, 'Server error')
-  })
-
-  bindShutdown(server, groupChatServer, chatRunServer)
+  bindShutdown(servers, groupChatServer, chatRunServer)
   startVersionCheck()
 }
 

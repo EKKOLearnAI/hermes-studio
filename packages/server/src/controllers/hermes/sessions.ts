@@ -10,6 +10,8 @@ import {
   renameSession as localRenameSession,
   useLocalSessionStore,
 } from '../../db/hermes/session-store'
+import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
+import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { deleteUsage, getUsage, getUsageBatch, getLocalUsageStats } from '../../db/hermes/usage-store'
 import type { LocalUsageStats, UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
@@ -284,6 +286,54 @@ export async function remove(ctx: any) {
   ctx.body = { ok: true }
 }
 
+export async function batchRemove(ctx: any) {
+  const { ids } = ctx.request.body as { ids?: string[] }
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    ctx.status = 400
+    ctx.body = { error: 'ids is required and must be a non-empty array' }
+    return
+  }
+
+  const validIds = ids.filter(id => typeof id === 'string' && id.trim() !== '')
+  if (validIds.length === 0) {
+    ctx.status = 400
+    ctx.body = { error: 'No valid session ids provided' }
+    return
+  }
+
+  const results = {
+    deleted: 0,
+    failed: 0,
+    errors: [] as Array<{ id: string; error: string }>
+  }
+
+  if (useLocalSessionStore()) {
+    for (const id of validIds) {
+      const ok = localDeleteSession(id)
+      if (ok) {
+        deleteUsage(id)
+        results.deleted++
+      } else {
+        results.failed++
+        results.errors.push({ id, error: 'Failed to delete session' })
+      }
+    }
+  } else {
+    for (const id of validIds) {
+      const ok = await hermesCli.deleteSession(id)
+      if (ok) {
+        deleteUsage(id)
+        results.deleted++
+      } else {
+        results.failed++
+        results.errors.push({ id, error: 'Failed to delete session' })
+      }
+    }
+  }
+
+  ctx.body = { ...results, ok: true }
+}
+
 export async function usageBatch(ctx: any) {
   const ids = (ctx.query.ids as string)
   if (!ids) {
@@ -489,6 +539,90 @@ export async function listWorkspaceFolders(ctx: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
   }
+}
+
+const exportCompressor = new ExportCompressor()
+
+export async function exportSession(ctx: any) {
+  let session: any = null
+
+  if (useLocalSessionStore()) {
+    session = localGetSessionDetail(ctx.params.id)
+  } else {
+    try {
+      session = await getSessionDetailFromDb(ctx.params.id)
+    } catch (err) {
+      logger.warn(err, 'Hermes Session DB: export detail query failed, falling back to CLI')
+    }
+    if (!session) {
+      session = await hermesCli.getSession(ctx.params.id)
+    }
+  }
+
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+
+  const mode = (ctx.query.mode as string) || 'full'
+  const ext = (ctx.query.ext as string) || (mode === 'compressed' ? 'txt' : 'json')
+  const title = session.title || 'session'
+  const safeName = title.replace(/[^a-zA-Z0-9一-鿿_-]/g, '_').slice(0, 50)
+  const filename = `${safeName}_${ctx.params.id.slice(0, 8)}.${ext}`
+
+  if (mode === 'compressed') {
+    const result = await compressSession(session)
+    if (ext === 'json') {
+      ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
+      ctx.set('Content-Type', 'application/json')
+      ctx.body = JSON.stringify({ id: session.id, title: session.title, ...result.meta, messages: result.messages }, null, 2)
+    } else {
+      ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
+      ctx.set('Content-Type', 'text/plain; charset=utf-8')
+      ctx.body = serializeAsText(session.title, result.messages)
+    }
+  } else {
+    if (ext === 'txt') {
+      ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
+      ctx.set('Content-Type', 'text/plain; charset=utf-8')
+      ctx.body = serializeAsText(session.title, session.messages || [])
+    } else {
+      ctx.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
+      ctx.set('Content-Type', 'application/json')
+      ctx.body = JSON.stringify(session, null, 2)
+    }
+  }
+}
+
+async function compressSession(session: any) {
+  const mgr = getGatewayManagerInstance()
+  const profile = getActiveProfileName()
+  const upstream = mgr ? mgr.getUpstream(profile).replace(/\/$/, '') : ''
+  const apiKey = mgr ? mgr.getApiKey(profile) || undefined : undefined
+  const messages = (session.messages || []).map((m: any) => ({
+    role: m.role,
+    content: m.content || '',
+    tool_calls: m.tool_calls,
+    tool_call_id: m.tool_call_id,
+    name: m.tool_name,
+    reasoning_content: m.reasoning,
+  }))
+
+  return exportCompressor.compress(messages, upstream, apiKey, session.id, profile)
+}
+
+function serializeAsText(title: string | null, messages: any[]): string {
+  const lines: string[] = [`# ${title || 'Untitled'}`, '']
+  for (const msg of messages) {
+    const role = msg.role || 'unknown'
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+    const ts = msg.timestamp ? new Date(msg.timestamp * 1000).toISOString() : ''
+    lines.push(`[${role}]${ts ? ' ' + ts : ''}`)
+    lines.push(content || '')
+    lines.push('')
+  }
+  return lines.join('\n')
 }
 
 export async function getConversationMessagesPaginated(ctx: any) {

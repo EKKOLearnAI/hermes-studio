@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { renameSession, setSessionWorkspace } from "@/api/hermes/sessions";
+import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
 import {
@@ -8,6 +8,7 @@ import {
   NInput,
   NModal,
   NTooltip,
+  NPopconfirm,
   useMessage,
 } from "naive-ui";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
@@ -30,6 +31,10 @@ const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
 
 const currentMode = ref<"chat" | "live">("chat");
+
+// Batch selection mode
+const isBatchMode = ref(false);
+const selectedSessionIds = ref<Set<string>>(new Set());
 
 // Initialize synchronously from the media query so first paint is correct.
 // On narrow viewports the session list is an absolute-positioned overlay
@@ -218,6 +223,72 @@ function handleDeleteSession(id: string) {
   message.success(t("chat.sessionDeleted"));
 }
 
+function toggleBatchMode() {
+  isBatchMode.value = !isBatchMode.value;
+  if (!isBatchMode.value) {
+    selectedSessionIds.value.clear();
+  }
+}
+
+function toggleSessionSelection(id: string) {
+  if (selectedSessionIds.value.has(id)) {
+    selectedSessionIds.value.delete(id);
+  } else {
+    selectedSessionIds.value.add(id);
+  }
+  selectedSessionIds.value = new Set(selectedSessionIds.value);
+}
+
+function isSessionSelected(id: string): boolean {
+  return selectedSessionIds.value.has(id);
+}
+
+async function handleBatchDelete() {
+  if (selectedSessionIds.value.size === 0) return;
+
+  const ids = Array.from(selectedSessionIds.value);
+  try {
+    const result = await batchDeleteSessions(ids);
+    if (result.deleted > 0) {
+      // Remove from pinned sessions
+      for (const id of ids) {
+        sessionBrowserPrefsStore.removePinned(id);
+      }
+
+      // Remove deleted sessions from local store (without calling API again)
+      // Use loadSessions to refresh from server instead of manual filtering
+      await chatStore.loadSessions();
+
+      message.success(t("chat.batchDeleteSuccess", { count: result.deleted }));
+      if (result.failed > 0) {
+        message.warning(t("chat.batchDeletePartial", { failed: result.failed }));
+      }
+    } else {
+      message.error(t("chat.batchDeleteFailed"));
+    }
+  } catch (err: any) {
+    message.error(t("chat.batchDeleteFailed"));
+  } finally {
+    isBatchMode.value = false;
+    selectedSessionIds.value.clear();
+  }
+}
+
+function selectAllSessions() {
+  selectedSessionIds.value.clear();
+  for (const session of chatStore.sessions) {
+    if (session.id !== chatStore.activeSessionId) {
+      selectedSessionIds.value.add(session.id);
+    }
+  }
+  selectedSessionIds.value = new Set(selectedSessionIds.value);
+}
+
+const selectedCount = computed(() => selectedSessionIds.value.size);
+const canSelectAll = computed(() => {
+  return chatStore.sessions.some(s => s.id !== chatStore.activeSessionId);
+});
+
 const contextSessionId = ref<string | null>(null);
 const contextSessionPinned = computed(() =>
   contextSessionId.value
@@ -232,6 +303,28 @@ const contextMenuOptions = computed(() => [
   },
   { label: t("chat.rename"), key: "rename" },
   { label: t("chat.setWorkspace"), key: "workspace" },
+  {
+    label: t("chat.export"),
+    key: "export",
+    children: [
+      {
+        label: t("chat.exportFull"),
+        key: "export-full",
+        children: [
+          { label: "JSON", key: "export-full-json" },
+          { label: "TXT", key: "export-full-txt" },
+        ],
+      },
+      {
+        label: t("chat.exportCompressed"),
+        key: "export-compressed",
+        children: [
+          { label: "JSON", key: "export-compressed-json" },
+          { label: "TXT", key: "export-compressed-txt" },
+        ],
+      },
+    ],
+  },
   { label: t("chat.copySessionId"), key: "copy-id" },
 ]);
 
@@ -247,7 +340,15 @@ const showContextMenu = ref(false);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
 
-function handleContextMenuSelect(key: string) {
+function parseExportKey(key: string): { mode: 'full' | 'compressed'; ext: 'json' | 'txt' } | null {
+  if (key === 'export-full-json') return { mode: 'full', ext: 'json' }
+  if (key === 'export-full-txt') return { mode: 'full', ext: 'txt' }
+  if (key === 'export-compressed-json') return { mode: 'compressed', ext: 'json' }
+  if (key === 'export-compressed-txt') return { mode: 'compressed', ext: 'txt' }
+  return null
+}
+
+async function handleContextMenuSelect(key: string) {
   showContextMenu.value = false;
   if (!contextSessionId.value) return;
   if (key === "pin") {
@@ -256,6 +357,17 @@ function handleContextMenuSelect(key: string) {
   }
   if (key === "copy-id") {
     copySessionId(contextSessionId.value);
+  } else if (parseExportKey(key)) {
+    const { mode, ext } = parseExportKey(key)!;
+    const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
+    try {
+      await exportSession(contextSessionId.value, mode, ext);
+      loadingMsg?.destroy();
+      message.success(t("chat.exportSuccess"));
+    } catch {
+      loadingMsg?.destroy();
+      message.error(t("chat.exportFailed"));
+    }
   } else if (key === "workspace") {
     const session = chatStore.sessions.find(
       (s) => s.id === contextSessionId.value,
@@ -358,6 +470,92 @@ async function handleWorkspaceConfirm() {
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
+          <NButton
+            v-if="!isBatchMode"
+            quaternary
+            size="tiny"
+            @click="toggleBatchMode"
+            :title="t('chat.toggleBatchMode')"
+          >
+            <template #icon>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            @click="selectAllSessions"
+            :disabled="!canSelectAll"
+            :title="t('chat.selectAll')"
+          >
+            <template #icon>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NPopconfirm
+            v-if="isBatchMode && selectedCount > 0"
+            @positive-click="handleBatchDelete"
+          >
+            <template #trigger>
+              <NButton quaternary size="tiny" type="error">
+                <template #icon>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.confirmBatchDelete', { count: selectedCount }) }}
+          </NPopconfirm>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            @click="toggleBatchMode"
+          >
+            <template #icon>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </template>
+          </NButton>
           <NButton quaternary size="tiny" @click="handleNewChat" circle>
             <template #icon>
               <svg
@@ -408,9 +606,12 @@ async function handleWorkspaceConfirm() {
               chatStore.sessions.length > 1
             "
             :streaming="chatStore.isSessionLive(s.id)"
+            :selectable="isBatchMode"
+            :selected="isSessionSelected(s.id)"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
+            @toggle-select="toggleSessionSelection(s.id)"
           />
         </template>
 
@@ -443,9 +644,12 @@ async function handleWorkspaceConfirm() {
                 chatStore.sessions.length > 1
               "
               :streaming="chatStore.isSessionLive(s.id)"
+              :selectable="isBatchMode"
+              :selected="isSessionSelected(s.id)"
               @select="handleSessionClick(s.id)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id)"
+              @toggle-select="toggleSessionSelection(s.id)"
             />
           </template>
         </template>
@@ -685,12 +889,22 @@ async function handleWorkspaceConfirm() {
   justify-content: space-between;
   padding: 12px;
   flex-shrink: 0;
+  min-height: 0;
 }
 
 .session-list-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  height: 22px;
+
+  .n-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    min-height: 22px;
+  }
 }
 
 .session-close-btn {
@@ -701,6 +915,10 @@ async function handleWorkspaceConfirm() {
   color: $text-secondary;
   padding: 4px;
   border-radius: $radius-sm;
+  height: 22px;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
 
   &:hover {
     background: rgba($accent-primary, 0.06);
@@ -713,6 +931,7 @@ async function handleWorkspaceConfirm() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  line-height: 22px;
 }
 
 .session-scope-note {

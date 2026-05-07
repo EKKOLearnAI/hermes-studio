@@ -8,6 +8,8 @@ import { logger } from './logger'
 
 // --- Provider env var mapping (from hermes providers.py HERMES_OVERLAYS + config.py) ---
 export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_env: string }> = {
+  'fun-codex': { api_key_env: '', base_url_env: '' },
+  'fun-claude': { api_key_env: '', base_url_env: '' },
   openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: '' },
   'glm-coding-plan': { api_key_env: '', base_url_env: '' },
   zai: { api_key_env: 'GLM_API_KEY', base_url_env: '' },

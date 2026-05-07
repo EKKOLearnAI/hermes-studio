@@ -31,6 +31,17 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
+vi.mock('naive-ui', async (importActual) => {
+  const actual = await importActual<typeof import('naive-ui')>()
+  return {
+    ...actual,
+    useMessage: () => ({
+      error: vi.fn(),
+      success: vi.fn(),
+    }),
+  }
+})
+
 import ChatInput from '../../packages/client/src/components/hermes/chat/ChatInput.vue'
 
 function mountInput() {
@@ -76,18 +87,18 @@ describe('ChatInput approval commands while streaming', () => {
     expect((textarea.element as HTMLTextAreaElement).value).toBe('')
   })
 
-  it('keeps ordinary messages blocked while streaming and preserves draft text', async () => {
+  it('allows ordinary messages while streaming so the run queue can handle them', async () => {
     const wrapper = mountInput()
     const textarea = wrapper.find('textarea')
     await textarea.setValue('hello while busy')
 
     const buttons = wrapper.findAll('button')
     const sendButton = buttons[buttons.length - 1]
-    expect(sendButton.attributes('disabled')).toBeDefined()
+    expect(sendButton.attributes('disabled')).toBeUndefined()
 
     await textarea.trigger('keydown', { key: 'Enter' })
-    expect(mockChatStore.sendMessage).not.toHaveBeenCalled()
-    expect((textarea.element as HTMLTextAreaElement).value).toBe('hello while busy')
+    expect(mockChatStore.sendMessage).toHaveBeenCalledWith('hello while busy', undefined)
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('')
   })
 
   it('allows session/always/all approval commands while streaming', async () => {
