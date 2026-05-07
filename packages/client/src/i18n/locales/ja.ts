@@ -176,6 +176,7 @@ export default {
     thinkingDuration: '観測 {duration}',
     thinkingChars: '{count} 文字',
     copyBubble: 'メッセージをコピー',
+    editBubble: 'メッセージを編集',
     copiedBubble: 'コピーしました',
     copyFailed: 'コピーに失敗しました',
     playSpeech: '音声を読み上げ',

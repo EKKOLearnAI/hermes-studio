@@ -102,6 +102,7 @@ watch(
       :key="msg.id"
       :message="msg"
       :highlight="chatStore.focusMessageId === msg.id"
+      :readonly="true"
     />
   </div>
 </template>

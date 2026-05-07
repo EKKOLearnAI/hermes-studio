@@ -206,6 +206,7 @@ export default {
     thinkingDuration: '已观察 {duration}',
     thinkingChars: '{count} 字',
     copyBubble: '复制消息',
+    editBubble: '编辑消息',
     copiedBubble: '已复制',
     copyFailed: '复制失败',
     playSpeech: '播放语音',

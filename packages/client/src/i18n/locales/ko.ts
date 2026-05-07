@@ -176,6 +176,7 @@ export default {
     thinkingDuration: '관측 {duration}',
     thinkingChars: '{count}자',
     copyBubble: '메시지 복사',
+    editBubble: '메시지 편집',
     copiedBubble: '복사됨',
     copyFailed: '복사 실패',
     playSpeech: '음성 재생',

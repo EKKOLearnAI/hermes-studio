@@ -332,6 +332,7 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingSessions = ref(false)
   const sessionsLoaded = ref(false)
   const isLoadingMessages = ref(false)
+  const pendingEditContent = ref<string | null>(null)
   const isRunActive = computed(() => isStreaming.value)
 
   // Compression state
@@ -1678,5 +1679,7 @@ export const useChatStore = defineStore('chat', () => {
     clearThinkingObservationFor,
     setAutoPlaySpeech,
     playMessageSpeech,
+
+    pendingEditContent,
   }
 })

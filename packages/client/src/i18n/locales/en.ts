@@ -206,6 +206,7 @@ export default {
     thinkingDuration: 'Observed {duration}',
     thinkingChars: '{count} chars',
     copyBubble: 'Copy message',
+    editBubble: 'Edit message',
     copiedBubble: 'Message copied',
     copyFailed: 'Copy failed',
     playSpeech: 'Play voice',

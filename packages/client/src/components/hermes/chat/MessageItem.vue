@@ -19,7 +19,7 @@ import { useGlobalSpeech } from "@/composables/useSpeech";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
-const props = defineProps<{ message: Message; highlight?: boolean }>();
+const props = defineProps<{ message: Message; highlight?: boolean; readonly?: boolean }>();
 const { t } = useI18n();
 const toast = useMessage();
 
@@ -97,6 +97,12 @@ async function copyBubbleContent() {
     return
   }
   toast.error(t('chat.copyFailed'))
+}
+
+function editBubbleContent() {
+  const text = displayText.value || props.message.content || ''
+  if (!text.trim()) return
+  chatStore.pendingEditContent = text
 }
 
 const parsedThinking = computed(() =>
@@ -663,6 +669,17 @@ onBeforeUnmount(() => {
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
             </button>
+            <button
+              v-if="message.role === 'user' && !readonly"
+              class="edit-bubble-btn"
+              @click="editBubbleContent"
+              :title="t('chat.editBubble')"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
             <span class="message-time">{{ timeStr }}</span>
           </div>
         </div>
@@ -963,7 +980,8 @@ onBeforeUnmount(() => {
 }
 
 .copy-bubble-btn,
-.speech-bubble-btn {
+.speech-bubble-btn,
+.edit-bubble-btn {
   display: flex;
   align-items: center;
   justify-content: center;

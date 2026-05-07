@@ -6,7 +6,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
 import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const chatStore = useChatStore()
@@ -38,6 +38,16 @@ watch(autoPlaySpeech, (value) => {
   localStorage.setItem('autoPlaySpeech', String(value))
   // 通知 chat store
   chatStore.setAutoPlaySpeech(value)
+})
+
+// 监听编辑请求 — 点击消息编辑按钮时填充输入框
+watch(() => chatStore.pendingEditContent, (content) => {
+  if (content == null) return
+  inputText.value = content
+  chatStore.pendingEditContent = null
+  nextTick(() => {
+    textareaRef.value?.focus()
+  })
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
