@@ -228,9 +228,19 @@ export async function setConfigModel(ctx: any) {
   }
   try {
     const config = await readConfigYaml()
+    const prevContextLength = config.model?.context_length
     config.model = {}
     config.model.default = defaultModel
-    if (reqProvider) { config.model.provider = reqProvider }
+    if (reqProvider) {
+      const bareName = reqProvider.startsWith('custom:') ? reqProvider.slice(7) : reqProvider
+      const matchedKey = Object.keys(config.providers || {}).find(
+        k => k.toLowerCase() === bareName.toLowerCase()
+      )
+      config.model.provider = matchedKey || reqProvider
+    }
+    if (prevContextLength !== undefined) {
+      config.model.context_length = prevContextLength
+    }
     await writeConfigYaml(config)
     ctx.body = { success: true }
   } catch (err: any) {
