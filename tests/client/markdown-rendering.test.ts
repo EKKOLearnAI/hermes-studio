@@ -36,6 +36,11 @@ vi.mock('naive-ui', () => ({
   }),
 }))
 
+vi.mock('@/api/hermes/download', () => ({
+  downloadFile: vi.fn(),
+  getDownloadUrl: (path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`,
+}))
+
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 
 describe('MarkdownRenderer', () => {
@@ -216,6 +221,21 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.findAll('.hljs-code-block')).toHaveLength(1)
     expect(wrapper.find('code.hljs').text()).toContain('```\nplain nested block\n```')
     expect(wrapper.find('.markdown-body').text()).toContain('Done outside.')
+  })
+
+  it('renders local mov links as inline video players', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[录屏2026-05-08 15.19.46.mov](/Users/ekko/Desktop/录屏2026-05-08%2015.19.46.mov)',
+      },
+    })
+
+    const video = wrapper.find('video.markdown-video')
+    expect(video.exists()).toBe(true)
+    expect(video.attributes('src')).toContain('/api/hermes/download?path=')
+    const src = new URL(video.attributes('src'))
+    expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/Users/ekko/Desktop/录屏2026-05-08 15.19.46.mov')
+    expect(wrapper.find('.markdown-video-footer .att-name').text()).toBe('录屏2026-05-08 15.19.46.mov')
   })
 
   it('keeps tilde-fenced markdown examples with nested tilde fences intact', () => {

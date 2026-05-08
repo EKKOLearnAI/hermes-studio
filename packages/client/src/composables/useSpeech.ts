@@ -1,10 +1,7 @@
 import { ref, computed, onUnmounted } from 'vue'
+import { generateSpeech, playAudioBlob } from '@/api/hermes/tts'
 
 export interface SpeechOptions {
-  rate?: number      // 语速 0.1-10，默认 1
-  pitch?: number     // 音调 0-2，默认 1
-  volume?: number    // 音量 0-1，默认 1
-  voice?: SpeechSynthesisVoice | null
   lang?: string      // 语言 'zh-CN', 'en-US' 等
 }
 
@@ -13,6 +10,7 @@ export interface SpeechState {
   isPaused: boolean
   currentMessageId: string | null
   progress: number  // 当前进度（字符数）
+  engine: 'none' | 'tts' | 'browser'  // 当前使用的引擎
 }
 
 interface SpeechQueueItem {
@@ -22,7 +20,8 @@ interface SpeechQueueItem {
 }
 
 /**
- * Web Speech API 语音播放 Composable
+ * 语音播放 Composable
+ * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
  */
 export function useSpeech() {
   const synth = window.speechSynthesis
@@ -32,9 +31,11 @@ export function useSpeech() {
     isPaused: false,
     currentMessageId: null,
     progress: 0,
+    engine: 'none',
   })
 
   let utterance: SpeechSynthesisUtterance | null = null
+  let currentAudio: HTMLAudioElement | null = null
   let playbackToken = 0
   const speechQueue: SpeechQueueItem[] = []
 
@@ -43,9 +44,8 @@ export function useSpeech() {
     availableVoices.value = synth.getVoices()
   }
 
-  // 浏览器会在语音列表变化时触发 voiceschanged 事件
   synth.addEventListener('voiceschanged', loadVoices)
-  loadVoices() // 初始加载
+  loadVoices()
 
   /**
    * 从文本中提取纯文本内容，过滤代码块、thinking 标签等
@@ -66,86 +66,110 @@ export function useSpeech() {
     // 移除 HTML 标签
     text = text.replace(/<[^>]+>/g, '')
 
-    // 只保留：字母、数字、空格、常用标点、中文
-    // 保留的标点：。!?;,，。！？；：、""''（）【】《》
-    // 移除：*# 等特殊符号、表情符号、emoji 等
     text = text.replace(/[^\p{L}\p{N}\s。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
 
-    // 移除多余的空白
     text = text.replace(/\s+/g, ' ').trim()
 
     return text
   }
 
-  /**
-   * 检查浏览器是否支持 Web Speech API
-   */
   const isSupported = computed(() => {
     return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
   })
 
-  /**
-   * 获取默认语音（优先选择中文）
-   */
   function getDefaultVoice(): SpeechSynthesisVoice | null {
     const voices = availableVoices.value
     if (voices.length === 0) return null
 
-    // 优先选择中文语音
     const zhVoice = voices.find(v => v.lang.startsWith('zh'))
     if (zhVoice) return zhVoice
 
-    // 其次选择英文语音
     const enVoice = voices.find(v => v.lang.startsWith('en'))
     if (enVoice) return enVoice
 
-    // 默认第一个
     return voices[0]
   }
 
-  /**
-   * 获取所有可用语音（用于调试）
-   */
-  function getAllVoices(): SpeechSynthesisVoice[] {
-    return availableVoices.value
-  }
-
-  /**
-   * 停止当前播放
-   */
   function stop(clearQueue = true) {
     playbackToken += 1
     if (clearQueue) {
       speechQueue.length = 0
     }
+    // Stop TTS audio
+    if (currentAudio) {
+      currentAudio.pause()
+      currentAudio.src = ''
+      currentAudio = null
+    }
+    // Stop browser speech
     if (synth.speaking || synth.pending || synth.paused) {
       synth.cancel()
     }
-    if (utterance) {
-      utterance = null
-    }
+    utterance = null
     state.value = {
       isPlaying: false,
       isPaused: false,
       currentMessageId: null,
       progress: 0,
+      engine: 'none',
     }
   }
 
-  function speak(messageId: string, text: string, options: SpeechOptions = {}) {
-    const token = ++playbackToken
+  // ─── TTS Engine (server-side) ───────────────────────────────
 
+  async function speakViaTts(messageId: string, text: string, options: SpeechOptions, token: number) {
+    // Set playing state immediately so UI shows breathing animation right away
+    state.value.isPlaying = true
+    state.value.isPaused = false
+    state.value.currentMessageId = messageId
+    state.value.progress = 0
+    state.value.engine = 'tts'
+
+    try {
+      const lang = options.lang || 'zh-CN'
+
+      const { audio } = await generateSpeech({ text, lang })
+
+      if (token !== playbackToken) return
+
+      currentAudio = playAudioBlob(audio)
+
+      currentAudio.onended = () => {
+        if (token !== playbackToken) return
+        state.value.isPlaying = false
+        state.value.isPaused = false
+        state.value.currentMessageId = null
+        state.value.progress = text.length
+        state.value.engine = 'none'
+        currentAudio = null
+        if (speechQueue.length > 0) {
+          setTimeout(playNextQueuedSpeech, 0)
+        }
+      }
+
+      currentAudio.onerror = () => {
+        if (token !== playbackToken) return
+        // TTS playback failed, fallback to browser
+        console.warn('[useSpeech] TTS audio playback error, falling back to browser')
+        speakViaBrowser(messageId, text, options, token)
+      }
+    } catch (err) {
+      if (token !== playbackToken) return
+      console.warn('[useSpeech] TTS API failed, falling back to browser:', err)
+      speakViaBrowser(messageId, text, options, token)
+    }
+  }
+
+  // ─── Browser Engine (Web Speech API) ────────────────────────
+
+  function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token: number) {
     utterance = new SpeechSynthesisUtterance(text)
     const activeUtterance = utterance
-    const activeText = text
 
-    // 设置语音参数
-    utterance.rate = options.rate ?? 1
-    utterance.pitch = options.pitch ?? 1
-    utterance.volume = options.volume ?? 1
-    utterance.voice = options.voice ?? getDefaultVoice()
-
-    console.log('[useSpeech] Selected voice:', utterance.voice?.name, utterance.voice?.lang)
+    utterance.rate = 1
+    utterance.pitch = 1
+    utterance.volume = 1
+    utterance.voice = getDefaultVoice()
 
     if (options.lang) {
       utterance.lang = options.lang
@@ -153,15 +177,11 @@ export function useSpeech() {
       utterance.lang = utterance.voice.lang
     }
 
-    // 事件监听
-    utterance.onstart = () => {
-      if (token !== playbackToken || utterance !== activeUtterance) return
-      console.log('[useSpeech] onstart fired')
-      state.value.isPlaying = true
-      state.value.isPaused = false
-      state.value.currentMessageId = messageId
-      state.value.progress = 0
-    }
+    state.value.engine = 'browser'
+    state.value.isPlaying = true
+    state.value.isPaused = false
+    state.value.currentMessageId = messageId
+    state.value.progress = 0
 
     utterance.onboundary = (event) => {
       if (token !== playbackToken || utterance !== activeUtterance) return
@@ -172,66 +192,62 @@ export function useSpeech() {
 
     utterance.onend = () => {
       if (token !== playbackToken || utterance !== activeUtterance) return
-      console.log('[useSpeech] onend fired')
       state.value.isPlaying = false
       state.value.isPaused = false
       state.value.currentMessageId = null
-      state.value.progress = activeText.length
+      state.value.progress = text.length
+      state.value.engine = 'none'
       utterance = null
       if (speechQueue.length > 0) {
-        window.setTimeout(playNextQueuedSpeech, 0)
+        setTimeout(playNextQueuedSpeech, 0)
       }
     }
 
-    utterance.onerror = (event) => {
+    utterance.onerror = () => {
       if (token !== playbackToken || utterance !== activeUtterance) return
-      console.error('[useSpeech] Speech synthesis error:', event.error)
       state.value.isPlaying = false
       state.value.isPaused = false
       state.value.currentMessageId = null
+      state.value.engine = 'none'
       utterance = null
       if (speechQueue.length > 0) {
-        window.setTimeout(playNextQueuedSpeech, 0)
+        setTimeout(playNextQueuedSpeech, 0)
       }
     }
 
-    // 开始播放
-    console.log('[useSpeech] Calling synth.speak()')
     synth.speak(utterance)
   }
 
+  // ─── Unified speak ──────────────────────────────────────────
+
+  function speak(messageId: string, text: string, options: SpeechOptions = {}) {
+    const token = ++playbackToken
+
+    // Try server-side TTS first, fallback to browser
+    speakViaTts(messageId, text, options, token)
+  }
+
   function playNextQueuedSpeech() {
-    if (state.value.isPlaying || state.value.isPaused || synth.speaking || synth.pending) return
+    if (state.value.isPlaying || state.value.isPaused) return
     const next = speechQueue.shift()
     if (!next) return
 
     const text = extractReadableText(next.content)
     if (!text) {
-      window.setTimeout(playNextQueuedSpeech, 0)
+      setTimeout(playNextQueuedSpeech, 0)
       return
     }
 
-    console.log('[useSpeech] Playing queued text:', text.substring(0, 50) + '...')
     speak(next.messageId, text, next.options)
   }
 
-  /**
-   * 播放文本
-   */
   function play(messageId: string, content: string, options: SpeechOptions = {}) {
-    if (!isSupported.value) {
-      console.warn('[useSpeech] Speech synthesis not supported')
-      return
-    }
-
-    console.log('[useSpeech] play called:', messageId)
-
-    // 如果正在播放其他消息，先停止
+    // If playing other message, stop first
     if (state.value.currentMessageId && state.value.currentMessageId !== messageId) {
       stop()
     }
 
-    // 如果已经在播放这条消息，暂停/恢复
+    // Toggle play/pause for same message
     if (state.value.currentMessageId === messageId) {
       if (state.value.isPaused) {
         resume()
@@ -241,59 +257,40 @@ export function useSpeech() {
       return
     }
 
-    // 提取可读文本
     const text = extractReadableText(content)
-    if (!text) {
-      console.warn('[useSpeech] No readable text found')
-      return
-    }
+    if (!text) return
 
-    console.log('[useSpeech] Playing text:', text.substring(0, 50) + '...')
-
-    // 停止当前播放
     stop()
     speak(messageId, text, options)
   }
 
-  /**
-   * 自动播放入队：不打断当前语音，按完成顺序依次播放。
-   */
   function enqueue(messageId: string, content: string, options: SpeechOptions = {}) {
-    if (!isSupported.value) {
-      console.warn('[useSpeech] Speech synthesis not supported')
-      return
-    }
-    if (!extractReadableText(content)) {
-      console.warn('[useSpeech] No readable text found')
-      return
-    }
+    if (!extractReadableText(content)) return
     speechQueue.push({ messageId, content, options })
     playNextQueuedSpeech()
   }
 
-  /**
-   * 暂停播放
-   */
   function pause() {
-    if (synth.speaking && !state.value.isPaused) {
+    if (state.value.engine === 'tts' && currentAudio) {
+      currentAudio.pause()
+      state.value.isPaused = true
+    } else if (synth.speaking && !state.value.isPaused) {
       synth.pause()
       state.value.isPaused = true
     }
   }
 
-  /**
-   * 恢复播放
-   */
   function resume() {
     if (state.value.isPaused) {
-      synth.resume()
+      if (state.value.engine === 'tts' && currentAudio) {
+        currentAudio.play()
+      } else {
+        synth.resume()
+      }
       state.value.isPaused = false
     }
   }
 
-  /**
-   * 切换播放/暂停
-   */
   function toggle(messageId: string, content: string, options: SpeechOptions = {}) {
     if (state.value.currentMessageId === messageId && state.value.isPlaying) {
       if (state.value.isPaused) {
@@ -306,22 +303,20 @@ export function useSpeech() {
     }
   }
 
-  // 清理
   onUnmounted(() => {
     stop()
     synth.removeEventListener('voiceschanged', loadVoices)
   })
 
   return {
-    // 状态
     isSupported,
     availableVoices,
     isPlaying: computed(() => state.value.isPlaying),
     isPaused: computed(() => state.value.isPaused),
     currentMessageId: computed(() => state.value.currentMessageId),
     progress: computed(() => state.value.progress),
+    engine: computed(() => state.value.engine),
 
-    // 方法
     play,
     pause,
     resume,
@@ -329,12 +324,10 @@ export function useSpeech() {
     toggle,
     enqueue,
     getDefaultVoice,
-    getAllVoices,
     extractReadableText,
   }
 }
 
-// 单例模式，全局共享一个语音实例
 let globalSpeech: ReturnType<typeof useSpeech> | null = null
 
 export function useGlobalSpeech() {

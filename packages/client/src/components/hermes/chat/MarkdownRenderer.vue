@@ -83,7 +83,7 @@ const renderedHtml = computed(() => {
     const ext = path.split('.').pop()?.toLowerCase()
 
     // Video files: render as video player
-    if (ext === 'mp4' || ext === 'webm') {
+    if (ext === 'mp4' || ext === 'webm' || ext === 'mov') {
       const downloadUrl = getDownloadUrl(path)
       return `<div class="markdown-video-container">
         <video class="markdown-video" controls preload="metadata" src="${downloadUrl}"></video>
@@ -302,6 +302,22 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   if (href.startsWith('http://') || href.startsWith('https://')) {
     event.preventDefault()
     window.open(href, '_blank', 'noopener,noreferrer')
+    return
+  }
+
+  // Full download URL: open directly (already has /api/hermes/download?path=...)
+  if (href.startsWith('/api/hermes/download?')) {
+    event.preventDefault()
+    event.stopPropagation()
+    const linkText = link.textContent || ''
+    const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+    message.info(t('download.downloading'))
+    // Parse the real file path from the existing query param
+    const url = new URL(href, window.location.origin)
+    const realPath = url.searchParams.get('path') || href
+    downloadFile(realPath, fileName || undefined).catch((err: Error) => {
+      message.error(err.message || t('download.downloadFailed'))
+    })
     return
   }
 

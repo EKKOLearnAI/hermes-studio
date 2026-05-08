@@ -9,6 +9,7 @@ import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
 import { getToken, requireAuth } from './services/auth'
+import { initLoginLimiter } from './services/login-limiter'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -53,66 +54,11 @@ function listen(app: Koa, port: number, host: string): Promise<any> {
   })
 }
 
-function probeIPv4(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const req = require('http').get(`http://127.0.0.1:${port}/health`, (res: any) => {
-      res.resume()
-      resolve(true)
-    })
-    req.once('error', () => resolve(false))
-    req.setTimeout(1000, () => {
-      req.destroy()
-      resolve(false)
-    })
-  })
-}
-
-/**
- * Try listening on IPv6 dual-stack (::) first. If IPv4 is not reachable through
- * that socket, keep IPv6 and add a separate IPv4 listener. Fall back to IPv4
- * only when IPv6 is unavailable. Skips fallback when BIND_HOST is explicitly set.
- *
- * On some systems (e.g. WSL2), binding to :: succeeds but the dual-stack
- * doesn't actually accept IPv4 connections. We detect this by probing
- * 127.0.0.1 after binding.
- */
 async function listenWithFallback(app: Koa, port: number, host?: string): Promise<ListenResult> {
-  // Explicit host: use it directly.
-  if (host) {
-    console.log(`[bootstrap] listening on ${host}:${port}`)
-    const explicit = await listen(app, port, host)
-    return { primary: explicit, servers: [explicit] }
-  }
-
-  console.log(`[bootstrap] trying IPv6 dual-stack on ::${port}`)
-  try {
-    const s6 = await listen(app, port, '::')
-    if (await probeIPv4(port)) {
-      console.log(`[bootstrap] IPv6 dual-stack verified (IPv4 probe ok) on ::${port}`)
-      return { primary: s6, servers: [s6] }
-    }
-
-    console.log('[bootstrap] IPv6 listener is IPv6-only, adding IPv4 listener on 0.0.0.0')
-    try {
-      const s4 = await listen(app, port, '0.0.0.0')
-      console.log(`[bootstrap] listening on ::${port} and 0.0.0.0:${port}`)
-      return { primary: s6, servers: [s6, s4] }
-    } catch (err) {
-      console.log('[bootstrap] IPv4 listener failed; keeping IPv6 listener')
-      logger.warn({ err }, 'Could not add IPv4 listener after IPv6-only bind')
-      return { primary: s6, servers: [s6] }
-    }
-  } catch (err: any) {
-    if (err.code !== 'EADDRNOTAVAIL' && err.code !== 'EAFNOSUPPORT' && err.code !== 'EPROTONOSUPPORT') {
-      throw err
-    }
-
-    console.log(`[bootstrap] IPv6 not available (${err.code}), falling back to 0.0.0.0`)
-    const s4 = await listen(app, port, '0.0.0.0')
-    console.log(`[bootstrap] listening on 0.0.0.0:${port}`)
-    return { primary: s4, servers: [s4] }
-  }
+  const bindHost = host || '0.0.0.0'
+  console.log(`[bootstrap] listening on ${bindHost}:${port}`)
+  const primary = await listen(app, port, bindHost)
+  return { primary, servers: [primary] }
 }
 
 /**
@@ -133,6 +79,7 @@ export async function bootstrap() {
   await mkdir(config.dataDir, { recursive: true })
 
   const authToken = await getToken()
+  await initLoginLimiter()
   const app = new Koa()
 
   await initGatewayManager()
@@ -177,7 +124,7 @@ export async function bootstrap() {
   })
   console.log('[bootstrap] SPA fallback registered')
 
-  // Start server — try IPv6 dual-stack first, fall back to IPv4
+  // Start server using the configured bind host. Default is IPv4 for WSL stability.
   const listenResult = await listenWithFallback(app, config.port, config.host)
   server = listenResult.primary
   servers = listenResult.servers
@@ -216,10 +163,8 @@ export async function bootstrap() {
   const interfaces = safeNetworkInterfaces()
   const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
-  console.log(`Upstream: ${config.upstream}`)
   console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
-  logger.info('Upstream: %s', config.upstream)
 
   // Restore group chat agents after server is ready.
   groupChatServer.restoreWhenReady()

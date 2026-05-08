@@ -34,8 +34,7 @@ All key runtime settings are configured from compose variables.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `6060` | Web UI listen port |
-| `BIND_HOST` | Node default | Optional Web UI bind host. Leave unset for IPv6 dual-stack when available, or set `0.0.0.0` / `::` explicitly. |
-| `UPSTREAM` | `http://hermes-agent:8642` | Hermes gateway URL (container internal) |
+| `BIND_HOST` | `0.0.0.0` | Optional Web UI bind host. Defaults to IPv4 for stable WSL/Windows access. Set `::` explicitly if you want IPv6 listening. |
 | `HERMES_BIN` | `/opt/hermes/.venv/bin/hermes` | Path to Hermes CLI binary |
 | `HERMES_AGENT_IMAGE` | `nousresearch/hermes-agent:latest` | Hermes Agent base image |
 | `WEBUI_IMAGE` | `hermes-web-ui-local:latest` | Web UI image (set to `ekkoye8888/hermes-web-ui:latest` to use pre-built) |
@@ -79,10 +78,9 @@ AUTH_DISABLED=false
 
 ## Code Runtime Behavior
 
-- Server upstream comes from `UPSTREAM` env (`packages/server/src/config.ts`).
 - Hermes CLI binary comes from `HERMES_BIN` env (`packages/server/src/services/hermes-cli.ts`).
 - If `HERMES_BIN` is not provided, code falls back to `hermes` in `PATH`.
-- Profile switching dynamically resolves upstream URLs via `GatewayManager` — the `UPSTREAM` env only sets the default profile gateway.
+- Profile switching dynamically resolves upstream URLs via `GatewayManager`.
 
 ## Common Operations
 

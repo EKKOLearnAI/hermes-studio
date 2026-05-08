@@ -1404,7 +1404,10 @@ export class ChatRunSocket {
         const prof = state.profile
         this.hermesSessionIds.delete(sessionId)
         state.profile = undefined
-        await this.syncFromHermes(socket, sessionId, hermesId, prof)
+        await this.syncFromHermes(socket, sessionId, hermesId, prof, {
+          maxAttempts: 4,
+          delayMs: 1000,
+        })
       }
 
     }
@@ -1441,7 +1444,7 @@ export class ChatRunSocket {
       this.hermesSessionIds.delete(sessionId)
       logger.info({ sessionId, hermesId, profile: profile || 'default' }, '[chat-run-socket][abort] syncing stopped run from Hermes')
       synced = await this.syncFromHermes(socket, sessionId, hermesId, profile, {
-        maxAttempts: 10,
+        maxAttempts: 4,
         delayMs: 1000,
       })
     }

@@ -1,10 +1,12 @@
 import type { Context } from 'koa'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
-import { config } from '../../config'
 
 function getUpstream(profile: string): string {
   const mgr = getGatewayManagerInstance()
-  return mgr ? mgr.getUpstream(profile) : config.upstream.replace(/\/$/, '')
+  if (!mgr) {
+    throw new Error('GatewayManager not initialized')
+  }
+  return mgr.getUpstream(profile)
 }
 
 function getApiKey(profile: string): string | null {
@@ -54,7 +56,15 @@ async function readUpstreamError(res: Response): Promise<unknown> {
 
 async function proxyRequest(ctx: Context, upstreamPath: string, method?: string): Promise<void> {
   const profile = resolveProfile(ctx)
-  const upstream = getUpstream(profile)
+  let upstream: string
+  try {
+    upstream = getUpstream(profile)
+  } catch (e: any) {
+    ctx.status = 503
+    ctx.set('Content-Type', 'application/json')
+    ctx.body = { error: { message: e?.message || 'GatewayManager not initialized' } }
+    return
+  }
   const params = new URLSearchParams(ctx.search || '')
   params.delete('token')
   const search = params.toString()
