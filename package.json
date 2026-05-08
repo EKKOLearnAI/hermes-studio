@@ -55,6 +55,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "dev:website": "vite --config vite.config.website.ts",
+    "build:website": "vite build --config vite.config.website.ts",
+    "preview:website": "vite preview --config vite.config.website.ts",
     "openapi:generate": "node scripts/generate-openapi.mjs"
   },
   "files": [
