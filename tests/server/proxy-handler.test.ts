@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// Mock config
-vi.mock('../../packages/server/src/config', () => ({
-  config: { upstream: 'http://127.0.0.1:8642' },
-}))
-
 vi.mock('../../packages/server/src/services/gateway-bootstrap', () => ({
-  getGatewayManagerInstance: () => null,
+  getGatewayManagerInstance: () => ({
+    getUpstream: () => 'http://127.0.0.1:8642',
+    getApiKey: () => null,
+  }),
 }))
 
 // Mock updateUsage so we can assert calls without real DB

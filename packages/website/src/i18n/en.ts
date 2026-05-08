@@ -137,7 +137,6 @@ export default {
           ['AUTH_TOKEN', 'Custom auth token (overrides auto-generated)'],
           ['PORT', 'Server listen port (default: 8648)'],
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],
-          ['UPSTREAM', 'Hermes gateway URL (default: http://127.0.0.1:8642)'],
           ['UPLOAD_DIR', 'Custom upload directory path'],
           ['CORS_ORIGINS', 'CORS origin config (default: *)'],
           ['HERMES_BIN', 'Custom path to hermes CLI binary'],
@@ -145,7 +144,7 @@ export default {
       },
       gateway: {
         title: 'Gateway Management',
-        content: 'The gateway is the Hermes Agent process that handles AI conversations. Hermes Web UI manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles.',
+        content: 'The gateway is the Hermes Agent process that handles AI conversations. Hermes Web UI manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles, and each profile resolves its own gateway host/port from its Hermes config.',
       },
       profiles: {
         title: 'Profiles',

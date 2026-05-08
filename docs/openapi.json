@@ -162,6 +162,53 @@
         }
       }
     },
+    "/api/auth/locked-ips": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get locked-ips",
+        "description": "GET /api/auth/locked-ips",
+        "operationId": "listLockedIps",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Delete locked-ips",
+        "description": "DELETE /api/auth/locked-ips",
+        "operationId": "unlockIpHandler",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/auth/login": {
       "post": {
         "tags": [
