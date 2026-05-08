@@ -12,6 +12,8 @@ const mockGetStats = vi.hoisted(() => vi.fn())
 const mockGetAssignees = vi.hoisted(() => vi.fn())
 const mockSearchSessions = vi.hoisted(() => vi.fn())
 const mockGetSessionDetail = vi.hoisted(() => vi.fn())
+const mockGetExactSessionDetail = vi.hoisted(() => vi.fn())
+const mockFindLatestExactSessionId = vi.hoisted(() => vi.fn())
 
 vi.mock('fs/promises', () => ({
   readFile: mockReadFile,
@@ -36,6 +38,8 @@ vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
 vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   searchSessionSummariesWithProfile: mockSearchSessions,
   getSessionDetailFromDbWithProfile: mockGetSessionDetail,
+  getExactSessionDetailFromDbWithProfile: mockGetExactSessionDetail,
+  findLatestExactSessionIdWithProfile: mockFindLatestExactSessionId,
 }))
 
 import * as ctrl from '../../packages/server/src/controllers/hermes/kanban'
@@ -71,8 +75,8 @@ describe('kanban controller', () => {
       comments: [],
       events: [],
     })
-    mockSearchSessions.mockResolvedValue([{ id: 'session-1' }])
-    mockGetSessionDetail.mockResolvedValue({
+    mockFindLatestExactSessionId.mockResolvedValue('session-1')
+    mockGetExactSessionDetail.mockResolvedValue({
       title: 'Session one',
       source: 'codex',
       model: 'gpt-5.5',
@@ -84,8 +88,8 @@ describe('kanban controller', () => {
     const c = ctx({ params: { id: 'task-1' } })
     await ctrl.get(c)
 
-    expect(mockSearchSessions).toHaveBeenCalledWith('task-1', 'fresh', undefined, 5)
-    expect(mockGetSessionDetail).toHaveBeenCalledWith('session-1', 'fresh')
+    expect(mockFindLatestExactSessionId).toHaveBeenCalledWith('task-1', 'fresh')
+    expect(mockGetExactSessionDetail).toHaveBeenCalledWith('session-1', 'fresh')
     expect(c.body.session).toMatchObject({ id: 'session-1', title: 'Session one' })
   })
 
@@ -113,6 +117,30 @@ describe('kanban controller', () => {
     mockGetStats.mockResolvedValue({ total: 1, by_status: {}, by_assignee: {} })
     mockGetAssignees.mockResolvedValue([{ name: 'alice' }])
     mockSearchSessions.mockResolvedValue([{ id: 'session-2' }])
+    mockFindLatestExactSessionId.mockResolvedValue('session-2')
+    mockGetExactSessionDetail.mockResolvedValue({
+      id: 'session-2',
+      source: 'codex',
+      title: 'Matched session',
+      preview: 'task-id matched',
+      model: 'gpt-5.5',
+      started_at: 100,
+      ended_at: 101,
+      last_active: 101,
+      message_count: 2,
+      tool_call_count: 0,
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: null,
+      estimated_cost_usd: 0,
+      actual_cost_usd: null,
+      cost_status: '',
+      messages: [],
+      thread_session_count: 1,
+    })
 
     const fileCtx = ctx({ query: { path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt' } })
     await ctrl.readArtifact(fileCtx)
@@ -152,5 +180,9 @@ describe('kanban controller', () => {
     const searchCtx = ctx({ query: { task_id: 'task-1', profile: 'alice', q: 'custom' } })
     await ctrl.searchSessions(searchCtx)
     expect(mockSearchSessions).toHaveBeenCalledWith('custom', 'alice', undefined, 10)
+
+    const exactSearchCtx = ctx({ query: { task_id: 'task-1', profile: 'alice' } })
+    await ctrl.searchSessions(exactSearchCtx)
+    expect(exactSearchCtx.body.results[0]).toMatchObject({ id: 'session-2', title: 'Matched session' })
   })
 })

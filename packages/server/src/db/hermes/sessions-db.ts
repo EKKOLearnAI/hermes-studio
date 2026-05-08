@@ -696,6 +696,98 @@ export async function getSessionDetailFromDbWithProfile(sessionId: string, profi
   }
 }
 
+export async function getExactSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dbPath = `${getProfileDir(profile)}/state.db`
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
+  try {
+    const idx = loadAllSessions(db)
+    const requested = idx.byId.get(sessionId) || null
+    if (!requested) return null
+
+    const messageRows = db.prepare(`
+      SELECT
+        id,
+        session_id,
+        role,
+        content,
+        tool_call_id,
+        tool_calls,
+        tool_name,
+        timestamp,
+        token_count,
+        finish_reason,
+        reasoning,
+        reasoning_details,
+        codex_reasoning_items,
+        reasoning_content
+      FROM messages
+      WHERE session_id = ?
+      ORDER BY timestamp, id
+    `).all(sessionId) as Record<string, unknown>[]
+    const messages = messageRows.map(mapMessageRow)
+    return aggregateSessionDetail([requested], messages, sessionId)
+  } finally {
+    db.close()
+  }
+}
+
+export async function findLatestExactSessionIdWithProfile(
+  query: string,
+  profile: string,
+  source?: string,
+): Promise<string | null> {
+  if (!SQLITE_AVAILABLE) {
+    throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
+  }
+
+  const trimmed = query.trim()
+  if (!trimmed) return null
+
+  const { DatabaseSync } = await import('node:sqlite')
+  const dbPath = `${getProfileDir(profile)}/state.db`
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
+  const loweredQuery = trimmed.toLowerCase()
+  const likePattern = buildLikePattern(loweredQuery)
+
+  try {
+    const sourceClause = source ? 'AND s.source = ?' : ''
+    const sourceParams = source ? [source] : []
+    const contentSql = `
+      WITH base AS (
+        SELECT
+          ${SESSION_SELECT},
+          s.parent_session_id AS parent_session_id
+        FROM sessions s
+        WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
+          ${sourceClause}
+      )
+      SELECT base.id
+      FROM base
+      JOIN messages m ON m.session_id = base.id
+      WHERE LOWER(m.content) LIKE ? ESCAPE '\\'
+      ORDER BY base.last_active DESC, m.timestamp DESC
+      LIMIT 1
+    `
+    const contentMatch = db.prepare(contentSql).get(...sourceParams, likePattern) as Record<string, unknown> | undefined
+    if (contentMatch?.id) return String(contentMatch.id)
+
+    const titleSql = `
+      SELECT s.id
+      FROM sessions s
+      WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
+        ${sourceClause}
+        AND LOWER(COALESCE(s.title, '')) LIKE ? ESCAPE '\\'
+      ORDER BY s.started_at DESC
+      LIMIT 1
+    `
+    const titleMatch = db.prepare(titleSql).get(...sourceParams, likePattern) as Record<string, unknown> | undefined
+    return titleMatch?.id ? String(titleMatch.id) : null
+  } finally {
+    db.close()
+  }
+}
+
 export interface HermesUsageStats extends LocalUsageStats {
   cost: number
   total_api_calls: number
