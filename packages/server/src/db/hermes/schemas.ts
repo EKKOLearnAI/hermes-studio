@@ -188,6 +188,18 @@ export const GC_SESSION_PROFILES_SCHEMA: Record<string, string> = {
   created_at: 'INTEGER NOT NULL',
 }
 
+export const CHAT_RUN_EPHEMERAL_RUNS_TABLE = 'chat_run_ephemeral_runs'
+
+export const CHAT_RUN_EPHEMERAL_RUNS_SCHEMA: Record<string, string> = {
+  local_session_id: 'TEXT PRIMARY KEY',
+  hermes_session_id: 'TEXT NOT NULL UNIQUE',
+  profile_name: "TEXT NOT NULL DEFAULT 'default'",
+  status: "TEXT NOT NULL DEFAULT 'running'",
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  last_error: 'TEXT',
+}
+
 // ============================================================================
 // Schema Sync Utilities
 // ============================================================================
@@ -497,6 +509,7 @@ export function initAllHermesTables(retryCount = 0): void {
     syncTable(GC_CONTEXT_SNAPSHOTS_TABLE, GC_CONTEXT_SNAPSHOTS_SCHEMA)
     syncTable(GC_PENDING_SESSION_DELETES_TABLE, GC_PENDING_SESSION_DELETES_SCHEMA)
     syncTable(GC_SESSION_PROFILES_TABLE, GC_SESSION_PROFILES_SCHEMA)
+    syncTable(CHAT_RUN_EPHEMERAL_RUNS_TABLE, CHAT_RUN_EPHEMERAL_RUNS_SCHEMA)
 
     // Group chat - single-column primary key tables (PRIMARY KEY in column definition)
     syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
