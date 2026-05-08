@@ -1745,7 +1745,7 @@ export class ChatRunSocket {
         signal: AbortSignal.timeout(10_000),
       })
       if (!res.ok) {
-        return `Hermes Agent API does not advertise approval support; upgrade to a build containing NousResearch/hermes-agent#20311. (/v1/capabilities returned ${res.status})`
+        return `Hermes Agent API does not advertise approval support; upgrade to Hermes Agent main or a build containing NousResearch/hermes-agent#21899. (/v1/capabilities returned ${res.status})`
       }
       const caps = await res.json().catch(() => ({})) as any
       const features = caps?.features || {}
@@ -1753,7 +1753,7 @@ export class ChatRunSocket {
       if (features.approval_events === true && features.run_approval_response === true && endpoints.run_approval?.path) {
         return null
       }
-      return 'Hermes Agent API does not support run approval control plane; upgrade to a build containing NousResearch/hermes-agent#20311.'
+      return 'Hermes Agent API does not support run approval control plane; upgrade to Hermes Agent main or a build containing NousResearch/hermes-agent#21899.'
     } catch (err: any) {
       return `Unable to verify Hermes Agent approval capabilities: ${err?.message || 'capability request failed'}`
     }
