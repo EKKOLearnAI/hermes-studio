@@ -642,10 +642,10 @@ export const useChatStore = defineStore('chat', () => {
 
     const command = (evt.command || '').trim()
     const description = (evt.description || '').trim()
-    const patterns = [
+    const patterns = Array.from(new Set([
       ...((evt as any).pattern_keys || []),
       evt.pattern_key,
-    ].filter(Boolean) as string[]
+    ].filter(Boolean))) as string[]
     const patternText = patterns.join(', ')
     const choices = Array.isArray(evt.choices) && evt.choices.length > 0
       ? evt.choices

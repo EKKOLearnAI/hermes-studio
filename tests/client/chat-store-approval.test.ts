@@ -74,6 +74,31 @@ describe('chat store approval commands', () => {
     expect(store.messages.map(m => m.content)).not.toContain('this should queue behind the active run')
   })
 
+  it('deduplicates repeated approval request pattern labels', async () => {
+    const store = useChatStore()
+
+    store.newChat()
+    await store.sendMessage('start risky work')
+    const onEvent = chatApiMocks.lastRunEventHandler
+    expect(onEvent).toEqual(expect.any(Function))
+
+    onEvent?.({
+      event: 'approval.request',
+      run_id: 'run-approval-1',
+      command: "bash -lc 'printf ok'",
+      description: 'shell command via -c/-lc flag',
+      pattern_key: 'shell command via -c/-lc flag',
+      pattern_keys: ['shell command via -c/-lc flag'],
+      choices: ['once', 'session', 'always', 'deny'],
+    })
+
+    const approvalPrompt = store.messages.find(m =>
+      m.role === 'system' && m.content.includes('Approval required'),
+    )
+    expect(approvalPrompt?.content).toContain('Patterns: shell command via -c/-lc flag')
+    expect(approvalPrompt?.content).not.toContain('shell command via -c/-lc flag, shell command via -c/-lc flag')
+  })
+
   it('deduplicates the optimistic and upstream approval response for the same run', async () => {
     const store = useChatStore()
 
