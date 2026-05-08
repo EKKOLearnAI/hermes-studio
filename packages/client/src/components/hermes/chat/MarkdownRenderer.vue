@@ -83,7 +83,7 @@ const renderedHtml = computed(() => {
     const ext = path.split('.').pop()?.toLowerCase()
 
     // Video files: render as video player
-    if (ext === 'mp4' || ext === 'webm') {
+    if (ext === 'mp4' || ext === 'webm' || ext === 'mov') {
       const downloadUrl = getDownloadUrl(path)
       return `<div class="markdown-video-container">
         <video class="markdown-video" controls preload="metadata" src="${downloadUrl}"></video>
