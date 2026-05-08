@@ -1,12 +1,12 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.11",
+  "version": "0.5.14",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-web-ui.git"
   },
-  "homepage": "https://github.com/EKKOLearnAI/hermes-web-ui",
+  "homepage": "https://ekkolearnai.com",
   "license": "MIT",
   "engines": {
     "node": ">=23.0.0"
@@ -55,6 +55,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "dev:website": "vite --config vite.config.website.ts",
+    "build:website": "vite build --config vite.config.website.ts",
+    "preview:website": "vite preview --config vite.config.website.ts",
     "openapi:generate": "node scripts/generate-openapi.mjs"
   },
   "files": [
@@ -64,6 +67,7 @@
   "dependencies": {
     "eventsource": "^4.1.0",
     "js-tiktoken": "^1.0.21",
+    "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"

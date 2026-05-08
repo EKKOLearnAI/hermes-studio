@@ -172,7 +172,7 @@ Be specific with file paths, commands, line numbers, and results.]
 ## Critical Context
 [Any specific values, error messages, configuration details, or data that would be lost without explicit preservation]`
 
-function buildFullPrompt(contentToSummarize: string, summaryBudget: number): string {
+export function buildFullPrompt(contentToSummarize: string, summaryBudget: number): string {
   return `You are a summarization agent creating a context checkpoint.
 Your output will be injected as reference material for a DIFFERENT
 assistant that continues the conversation.
@@ -194,7 +194,7 @@ Target ~${summaryBudget} tokens. Be CONCRETE — include file paths, command out
 Write only the summary body. Do not include any preamble or prefix.`
 }
 
-function buildIncrementalPrompt(previousSummary: string, contentToSummarize: string, summaryBudget: number): string {
+export function buildIncrementalPrompt(previousSummary: string, contentToSummarize: string, summaryBudget: number): string {
   return `You are a summarization agent creating a context checkpoint.
 Your output will be injected as reference material for a DIFFERENT
 assistant that continues the conversation.
@@ -229,7 +229,7 @@ Write only the summary body. Do not include any preamble or prefix.`
 
 // ─── Pre-cleaning ───────────────────────────────────────
 
-function serializeForSummary(messages: ChatMessage[]): string {
+export function serializeForSummary(messages: ChatMessage[]): string {
   const parts: string[] = []
 
   function contentToString(content: string | ContentBlock[]): string {
@@ -272,13 +272,13 @@ function serializeForSummary(messages: ChatMessage[]): string {
  * Convert messages to conversation history format for LLM API.
  * Tool calls are converted to text format within assistant messages.
  */
-function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string; content: string }> {
+export function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string; content: string }> {
   const result: Array<{ role: string; content: string }> = []
 
   for (const msg of messages) {
     if (msg.role === 'tool') {
       // Convert tool result to text and append to previous assistant message
-      const toolText = `[Tool result: ${msg.name || 'unknown'}]\n${(msg.content || '').slice(0, 500)}${msg.content && msg.content.length > 500 ? '...' : ''}`
+      const toolText = `[Tool result: ${msg.name || 'unknown'}]\n${(msg.content || '').slice(0, 4000)}${msg.content && msg.content.length > 4000 ? '...' : ''}`
       // Find the last assistant message and append to it
       const lastAssistant = result.findLast(m => m.role === 'assistant')
       if (lastAssistant) {
@@ -291,7 +291,7 @@ function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string
       // Include tool calls in assistant message
       const toolsInfo = msg.tool_calls.map(tc => {
         let args = tc.function.arguments
-        if (args.length > 1000) args = args.slice(0, 1000) + '...'
+        if (args.length > 4000) args = args.slice(0, 4000) + '...'
         return `[Calling tool: ${tc.function.name} with arguments: ${args}]`
       }).join('\n')
       const content = msg.content ? `${msg.content}\n\n${toolsInfo}` : toolsInfo
@@ -313,6 +313,7 @@ function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string
           }
         }
       }
+      if (contentStr.length > 4000) contentStr = contentStr.slice(0, 4000) + '...'
       result.push({ role: 'user', content: contentStr })
     } else if (msg.role === 'assistant' || msg.role === 'system') {
       let contentStr = ''
@@ -330,6 +331,7 @@ function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string
           }
         }
       }
+      if (contentStr.length > 4000) contentStr = contentStr.slice(0, 4000) + '...'
       result.push({ role: msg.role, content: contentStr })
     }
     // Skip other roles
@@ -338,7 +340,7 @@ function buildConversationHistory(messages: ChatMessage[]): Array<{ role: string
   return result
 }
 
-function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): ChatMessage[] {
+export function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): ChatMessage[] {
   if (messages.length <= keepRecentCount) return messages
 
   const tail = messages.slice(-keepRecentCount)
@@ -365,7 +367,7 @@ function pruneOldToolResults(messages: ChatMessage[], keepRecentCount: number): 
 
 // ─── LLM Summarization ──────────────────────────────────
 
-async function callSummarizer(
+export async function callSummarizer(
   upstream: string,
   apiKey: string | undefined,
   prompt: string,

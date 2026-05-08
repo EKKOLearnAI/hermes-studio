@@ -2,7 +2,8 @@
 import { ref, onMounted } from "vue";
 import { NButton, NInput, NModal, NForm, NFormItem, NPopconfirm, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { fetchAuthStatus, setupPassword, changePassword, changeUsername, removePassword } from "@/api/auth";
+import { fetchAuthStatus, setupPassword, changePassword, changeUsername, removePassword, fetchLockedIps, unlockSpecificIp, unlockAllIps } from "@/api/auth";
+import type { LockedIp } from "@/api/auth";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -139,6 +140,47 @@ function openChangeUsernameModal() {
   newUsernameVal.value = "";
   showChangeUsernameModal.value = true;
 }
+
+// Locked IPs management
+const lockedIps = ref<LockedIp[]>([]);
+const loadingLocks = ref(false);
+
+async function loadLockedIps() {
+  loadingLocks.value = true;
+  try {
+    lockedIps.value = await fetchLockedIps();
+  } catch { /* ignore */ }
+  finally {
+    loadingLocks.value = false;
+  }
+}
+
+async function handleUnlockIp(ip: string) {
+  try {
+    await unlockSpecificIp(ip);
+    message.success(t("settings.lockedIps.unlocked"));
+    await loadLockedIps();
+  } catch (err: any) {
+    message.error(err.message || t("common.saveFailed"));
+  }
+}
+
+async function handleUnlockAll() {
+  try {
+    const count = await unlockAllIps();
+    message.success(t("settings.lockedIps.allUnlocked", { count }));
+    await loadLockedIps();
+  } catch (err: any) {
+    message.error(err.message || t("common.saveFailed"));
+  }
+}
+
+function formatTime(ts: number): string {
+  const remaining = Math.max(0, Math.round((ts - Date.now()) / 60000));
+  return remaining > 0 ? `${remaining} min` : t("common.expired");
+}
+
+onMounted(() => { loadLockedIps(); });
 </script>
 
 <template>
@@ -166,6 +208,34 @@ function openChangeUsernameModal() {
           </NPopconfirm>
         </div>
       </div>
+    </div>
+
+    <!-- Locked IPs management -->
+    <div class="locked-ips-section">
+      <h3 class="section-title">{{ t("settings.lockedIps.title") }}</h3>
+      <div class="action-row" style="margin-bottom: 12px;">
+        <span class="action-label">{{ t("settings.lockedIps.count", { count: lockedIps.length }) }}</span>
+        <div class="action-buttons">
+          <NButton size="small" :loading="loadingLocks" @click="loadLockedIps">{{ t("common.retry") }}</NButton>
+          <NPopconfirm v-if="lockedIps.length > 0" @positive-click="handleUnlockAll">
+            <template #trigger>
+              <NButton size="small" type="warning">{{ t("settings.lockedIps.unlockAll") }}</NButton>
+            </template>
+            {{ t("settings.lockedIps.unlockAllConfirm") }}
+          </NPopconfirm>
+        </div>
+      </div>
+      <div v-if="lockedIps.length > 0" class="locked-list">
+        <div v-for="lock in lockedIps" :key="lock.ip + lock.type" class="locked-item">
+          <div class="locked-info">
+            <span class="locked-ip">{{ lock.ip }}</span>
+            <span class="locked-badge">{{ lock.type }}</span>
+            <span class="locked-ttl">{{ formatTime(lock.lockedUntil) }}</span>
+          </div>
+          <NButton size="tiny" type="error" ghost @click="handleUnlockIp(lock.ip)">{{ t("settings.lockedIps.unlock") }}</NButton>
+        </div>
+      </div>
+      <p v-else class="empty-hint">{{ t("settings.lockedIps.empty") }}</p>
     </div>
 
     <!-- Setup modal -->
@@ -254,5 +324,65 @@ function openChangeUsernameModal() {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.locked-ips-section {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid $border-color;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: $text-primary;
+  margin: 0 0 16px;
+}
+
+.locked-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.locked-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-input;
+}
+
+.locked-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.locked-ip {
+  font-family: $font-code;
+  font-size: 13px;
+  color: $text-primary;
+}
+
+.locked-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba($error, 0.1);
+  color: $error;
+}
+
+.locked-ttl {
+  font-size: 12px;
+  color: $text-muted;
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: $text-muted;
+  margin: 0;
 }
 </style>

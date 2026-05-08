@@ -17,7 +17,7 @@ const chatStore = useChatStore()
 const message = useMessage()
 const dialog = useDialog()
 
-const isCustom = computed(() => props.provider.provider.startsWith('custom:'))
+const isCustom = computed(() => !props.provider.builtin && props.provider.provider.startsWith('custom:'))
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)

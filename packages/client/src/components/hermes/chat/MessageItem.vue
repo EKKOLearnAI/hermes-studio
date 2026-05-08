@@ -370,35 +370,7 @@ function handleSpeechToggle() {
     return
   }
   const content = props.message.content || ''
-
-  // 尝试获取男声语音包
-  const allVoices = speech.getAllVoices()
-  let maleVoice = null
-
-  // 查找可能的男声语音包
-  for (const voice of allVoices) {
-    const name = voice.name.toLowerCase()
-    // 常见男声关键词
-    if (name.includes('male') || name.includes('david') || name.includes('daniel') ||
-        name.includes('mark') || name.includes('yaoyao') || name.includes('google')) {
-      // 优先选择中文男声
-      if (voice.lang.startsWith('zh')) {
-        maleVoice = voice
-        break
-      }
-      // 如果没有找到中文男声，记住第一个男声
-      if (!maleVoice) {
-        maleVoice = voice
-      }
-    }
-  }
-
-  // 快速男声：语速快、音调低
-  speech.toggle(props.message.id, content, {
-    pitch: 0.5,   // 低沉
-    rate: 1.2,    // 快速
-    voice: maleVoice || undefined, // 使用男声，如果没有就用默认
-  })
+  speech.toggle(props.message.id, content)
 }
 
 // 监听自动播放事件
@@ -408,7 +380,7 @@ onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
     if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
-      handleSpeechToggle()
+      speech.enqueue(props.message.id, customEvent.detail.content || props.message.content || '')
     }
   }
   window.addEventListener('auto-play-speech', autoPlayHandler)

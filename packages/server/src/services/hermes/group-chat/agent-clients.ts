@@ -91,10 +91,11 @@ class AgentClient {
         this.storage = storage
     }
 
-    async connect(port = 8648): Promise<void> {
+    async connect(port?: number): Promise<void> {
+        const actualPort = port ?? parseInt(process.env.PORT || '8648', 10)
         const token = await getToken()
 
-        this.socket = io(`http://127.0.0.1:${port}/group-chat`, {
+        this.socket = io(`http://127.0.0.1:${actualPort}/group-chat`, {
             auth: {
                 token: token || undefined,
                 name: this.name,

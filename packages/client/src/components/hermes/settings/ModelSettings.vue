@@ -18,7 +18,10 @@ onMounted(() => {
   }
 })
 
-const isCustom = (provider: string) => provider.startsWith('custom:')
+const isCustom = (provider: string) => {
+  const g = modelsStore.providers.find(p => p.provider === provider)
+  return !g?.builtin && provider.startsWith('custom:')
+}
 
 function getEditKey(provider: string): string {
   if (!(provider in editKeys.value)) {

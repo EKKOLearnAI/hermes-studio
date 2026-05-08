@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { NPopconfirm } from 'naive-ui'
+import { ref, onUnmounted } from 'vue'
+import { NPopconfirm, NCheckbox } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { Session } from '@/stores/hermes/chat'
 import { formatTimestampMs } from '@/shared/session-display'
@@ -10,25 +11,77 @@ const props = defineProps<{
   pinned: boolean
   canDelete: boolean
   streaming?: boolean
+  selectable?: boolean
+  selected?: boolean
 }>()
 
 const emit = defineEmits<{
   select: []
   contextmenu: [event: MouseEvent]
   delete: []
+  'toggle-select': []
 }>()
 
 const { t } = useI18n()
+
+let longPressTimer: ReturnType<typeof setTimeout> | null = null
+const longPressTriggered = ref(false)
+
+function onTouchStart(e: TouchEvent) {
+  longPressTriggered.value = false
+  longPressTimer = setTimeout(() => {
+    longPressTriggered.value = true
+    const touch = e.touches[0]
+    const syntheticEvent = new MouseEvent('contextmenu', {
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      bubbles: true,
+    })
+    emit('contextmenu', syntheticEvent)
+  }, 500)
+}
+
+function onTouchEnd() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+  }
+}
+
+function onTouchMove() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+  }
+}
+
+function onClick() {
+  if (longPressTriggered.value) {
+    longPressTriggered.value = false
+    return
+  }
+  emit('select')
+}
+
+onUnmounted(() => {
+  if (longPressTimer) clearTimeout(longPressTimer)
+})
 </script>
 
 <template>
   <button
     class="session-item"
-    :class="{ active }"
+    :class="{ active, 'batch-mode': selectable }"
     :aria-current="active ? 'page' : undefined"
-    @click="emit('select')"
+    @click="onClick"
     @contextmenu="emit('contextmenu', $event)"
+    @touchstart="onTouchStart"
+    @touchend="onTouchEnd"
+    @touchmove="onTouchMove"
   >
+    <div v-if="selectable" class="session-item-checkbox">
+      <NCheckbox :checked="selected" @click.stop="emit('toggle-select')" />
+    </div>
     <div class="session-item-content">
       <span class="session-item-title-row">
         <span v-if="pinned" class="session-item-pin" aria-hidden="true">
@@ -48,7 +101,7 @@ const { t } = useI18n()
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
       </span>
     </div>
-    <NPopconfirm v-if="canDelete" @positive-click="emit('delete')">
+    <NPopconfirm v-if="canDelete && !selectable" @positive-click="emit('delete')">
       <template #trigger>
         <button class="session-item-delete" @click.stop>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

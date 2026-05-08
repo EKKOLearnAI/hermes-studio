@@ -111,3 +111,15 @@ export function jsonDelete(table: string, key: string): void {
 export function getStoragePath(): string {
   return SQLITE_AVAILABLE ? DB_PATH : JSON_PATH
 }
+
+/**
+ * Close the SQLite database connection.
+ */
+export function closeDb(): void {
+  if (_db) {
+    try {
+      _db.close()
+    } catch { /* best-effort */ }
+    _db = null
+  }
+}

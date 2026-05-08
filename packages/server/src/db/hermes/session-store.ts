@@ -318,7 +318,7 @@ export function getSessionDetail(id: string): HermesSessionDetailRow | null {
   const sessionRow = db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
   if (!sessionRow) return null
   const msgRows = db.prepare(
-    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp, id`,
+    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY id`,
   ).all(id) as Record<string, unknown>[]
   const session = mapSessionRow(sessionRow)
   return {
@@ -445,9 +445,10 @@ export function getSessionDetailPaginated(
   ).get(id) as { total: number } | undefined
   const total = countResult?.total || 0
 
-  // Get paginated messages (newest first from DB, then reverse)
+  // Get paginated messages (newest first from DB, then reverse).
+  // Timestamp precision is mixed across message sources; id is insertion order.
   const msgRows = db.prepare(
-    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
   ).all(id, limit, offset) as Record<string, unknown>[]
 
   const session = mapSessionRow(sessionRow)

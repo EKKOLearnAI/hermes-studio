@@ -1764,6 +1764,106 @@
         }
       }
     },
+    "/api/hermes/model-context": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get model-context",
+        "description": "GET /api/hermes/model-context",
+        "operationId": "getModelContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Update model-context",
+        "description": "PUT /api/hermes/model-context",
+        "operationId": "updateModelContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/model-context/{provider}/{model}": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get :model",
+        "description": "GET /api/hermes/model-context/:provider/:model",
+        "operationId": "getModelContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Update :model",
+        "description": "PUT /api/hermes/model-context/:provider/:model",
+        "operationId": "updateModelContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/profiles": {
       "get": {
         "tags": [
@@ -2013,6 +2113,32 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/batch-delete": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create batch-delete",
+        "description": "POST /api/hermes/sessions/batch-delete",
+        "operationId": "batchRemove",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -2268,6 +2394,32 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/{id}/export": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get export",
+        "description": "GET /api/hermes/sessions/:id/export",
+        "operationId": "exportSession",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }

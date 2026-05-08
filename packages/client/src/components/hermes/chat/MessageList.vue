@@ -45,6 +45,23 @@ const currentToolCalls = computed(() => {
   return [...tools].reverse();
 });
 
+const queuedMessages = computed(() => {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return [];
+  return chatStore.queuedUserMessages.get(sid) || [];
+});
+
+function removeQueuedMessage(messageId: string) {
+  const sid = chatStore.activeSessionId;
+  if (!sid) return;
+  chatStore.removeQueuedMessage(sid, messageId);
+}
+
+function queuedPreview(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
+}
+
 function isNearBottom(threshold = 200): boolean {
   const el = listRef.value;
   if (!el) return true;
@@ -296,6 +313,38 @@ watch(currentToolCalls, () => {
         </div>
       </div>
     </Transition>
+    <Transition name="queue-float">
+      <div v-if="queuedMessages.length > 0" class="queue-float-panel">
+        <div class="queue-float-header">
+          <span class="queue-orbit" aria-hidden="true">
+            <span></span>
+          </span>
+          <span>{{ t('chat.messageQueue') }}</span>
+          <strong>{{ queuedMessages.length }}</strong>
+        </div>
+        <div class="queue-float-list">
+          <div
+            v-for="(message, index) in queuedMessages"
+            :key="message.id"
+            class="queue-float-item"
+          >
+            <span class="queue-index">{{ index + 1 }}</span>
+            <span class="queue-text">{{ queuedPreview(message.content) }}</span>
+            <button
+              type="button"
+              class="queue-remove"
+              :title="t('chat.removeQueuedMessage')"
+              @click="removeQueuedMessage(message.id)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -310,10 +359,212 @@ watch(currentToolCalls, () => {
   flex-direction: column;
   gap: 16px;
   background-color: $bg-card;
+  position: relative;
 
   .dark & {
     background-color: #333333;
   }
+}
+
+.queue-float-panel {
+  position: sticky;
+  right: 16px;
+  bottom: 16px;
+  z-index: 4;
+  align-self: flex-end;
+  width: min(340px, calc(100% - 16px));
+  margin-top: auto;
+  padding: 10px;
+  border: 1px solid rgba(var(--accent-info-rgb), 0.22);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(14px);
+
+  .dark & {
+    background: #262626;
+  }
+}
+
+.queue-float-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 8px;
+  color: $text-secondary;
+  font-size: 12px;
+  font-weight: 600;
+
+  strong {
+    margin-left: auto;
+    min-width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(var(--accent-info-rgb), 0.16);
+    color: var(--accent-info);
+  }
+}
+
+.queue-orbit {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--accent-info-rgb), 0.28);
+  position: relative;
+  animation: queue-spin 1.6s linear infinite;
+
+  span {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    right: -2px;
+    top: 5px;
+    background: var(--accent-info);
+    box-shadow: 0 0 12px rgba(var(--accent-info-rgb), 0.65);
+  }
+}
+
+.queue-float-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 172px;
+  overflow-y: auto;
+}
+
+.queue-float-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 8px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.68);
+  color: $text-primary;
+
+  .dark & {
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.queue-index {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--accent-info);
+  background: rgba(var(--accent-info-rgb), 0.12);
+}
+
+.queue-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.queue-remove {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-muted;
+  background: transparent;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $error;
+    background: rgba($error, 0.1);
+  }
+}
+
+@media (max-width: 640px) {
+  .queue-float-panel {
+    right: 8px;
+    bottom: 8px;
+    width: min(260px, calc(100% - 8px));
+    padding: 7px;
+    border-radius: 14px;
+  }
+
+  .queue-float-header {
+    padding: 0 2px;
+    font-size: 11px;
+
+    span:nth-child(2) {
+      display: none;
+    }
+  }
+
+  .queue-orbit {
+    width: 16px;
+    height: 16px;
+
+    span {
+      width: 5px;
+      height: 5px;
+      top: 5px;
+    }
+  }
+
+  .queue-float-list {
+    margin-top: 6px;
+    max-height: min(220px, 34dvh);
+    overflow-y: auto;
+  }
+
+  .queue-float-item {
+    min-height: 30px;
+    padding: 5px 6px;
+  }
+
+  .queue-index {
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    font-size: 10px;
+  }
+
+  .queue-text {
+    font-size: 11px;
+  }
+
+  .queue-remove {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@keyframes queue-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.queue-float-enter-active,
+.queue-float-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.queue-float-enter-from,
+.queue-float-leave-to {
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
 }
 
 .empty-state {

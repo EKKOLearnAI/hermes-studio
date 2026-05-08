@@ -11,7 +11,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
-import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
+import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, exportSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -281,6 +281,28 @@ const contextMenuOptions = computed(() => [
   { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
   { label: t('chat.rename'), key: 'rename' },
   { label: t('chat.setWorkspace'), key: 'workspace' },
+  {
+    label: t('chat.export'),
+    key: 'export',
+    children: [
+      {
+        label: t('chat.exportFull'),
+        key: 'export-full',
+        children: [
+          { label: 'JSON', key: 'export-full-json' },
+          { label: 'TXT', key: 'export-full-txt' },
+        ],
+      },
+      {
+        label: t('chat.exportCompressed'),
+        key: 'export-compressed',
+        children: [
+          { label: 'JSON', key: 'export-compressed-json' },
+          { label: 'TXT', key: 'export-compressed-txt' },
+        ],
+      },
+    ],
+  },
   { label: t('chat.copySessionId'), key: 'copy-id' },
 ])
 
@@ -296,7 +318,15 @@ const showContextMenu = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 
-function handleContextMenuSelect(key: string) {
+function parseExportKey(key: string): { mode: 'full' | 'compressed'; ext: 'json' | 'txt' } | null {
+  if (key === 'export-full-json') return { mode: 'full', ext: 'json' }
+  if (key === 'export-full-txt') return { mode: 'full', ext: 'txt' }
+  if (key === 'export-compressed-json') return { mode: 'compressed', ext: 'json' }
+  if (key === 'export-compressed-txt') return { mode: 'compressed', ext: 'txt' }
+  return null
+}
+
+async function handleContextMenuSelect(key: string) {
   showContextMenu.value = false
   if (!contextSessionId.value) return
   if (key === 'pin') {
@@ -305,6 +335,17 @@ function handleContextMenuSelect(key: string) {
   }
   if (key === 'copy-id') {
     copySessionId(contextSessionId.value)
+  } else if (parseExportKey(key)) {
+    const { mode, ext } = parseExportKey(key)!
+    const loadingMsg = mode === 'compressed' ? message.loading(t('chat.exportCompressing'), { duration: 0 }) : null
+    try {
+      await exportSession(contextSessionId.value, mode, ext)
+      loadingMsg?.destroy()
+      message.success(t('chat.exportSuccess'))
+    } catch {
+      loadingMsg?.destroy()
+      message.error(t('chat.exportFailed'))
+    }
   } else if (key === 'workspace') {
     const session = historySessions.value.find(s => s.id === contextSessionId.value)
     workspaceSessionId.value = contextSessionId.value

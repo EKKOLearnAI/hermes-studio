@@ -47,20 +47,19 @@ describe('update controller', () => {
     }
   })
 
-  it('updates using npm from the active node prefix and restarts via the same cli path', async () => {
+  it('updates using npm from PATH and restarts via global prefix', async () => {
     process.env.PORT = '9129'
     const { handleUpdate, mocks } = await loadUpdateController()
     const ctx = createMockCtx()
-    const nodeBinDir = dirname(process.execPath)
 
     await handleUpdate(ctx)
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
-      join(nodeBinDir, process.platform === 'win32' ? 'npm.cmd' : 'npm'),
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
       ['install', '-g', 'hermes-web-ui@latest'],
       {
         encoding: 'utf-8',
-        timeout: 120000,
+        timeout: 10 * 60 * 1000,
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     )
@@ -68,8 +67,9 @@ describe('update controller', () => {
 
     vi.runAllTimers()
 
+    // Note: spawn is called with getGlobalCliBin() result
     expect(mocks.spawn).toHaveBeenCalledWith(
-      join(nodeBinDir, process.platform === 'win32' ? 'hermes-web-ui.cmd' : 'hermes-web-ui'),
+      expect.any(String), // Dynamic path based on npm prefix -g
       ['restart', '--port', '9129'],
       {
         detached: true,

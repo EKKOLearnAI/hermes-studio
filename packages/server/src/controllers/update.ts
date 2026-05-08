@@ -1,53 +1,39 @@
 import { execFileSync, spawn } from 'child_process'
-import { dirname, join } from 'path'
-
-function getNodeBinDir() {
-  return dirname(process.execPath)
-}
+import { join } from 'path'
 
 function getNpmBin() {
-  return join(getNodeBinDir(), process.platform === 'win32' ? 'npm.cmd' : 'npm')
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
-function getCliBin() {
-  return join(getNodeBinDir(), process.platform === 'win32' ? 'hermes-web-ui.cmd' : 'hermes-web-ui')
+function getGlobalPrefix() {
+  return execFileSync(getNpmBin(), ['prefix', '-g'], {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim()
 }
 
-function getWindowsShell() {
-  return process.env.ComSpec || 'cmd.exe'
-}
+function getGlobalCliBin() {
+  const prefix = getGlobalPrefix()
 
-function quoteForWindowsCommand(value: string) {
-  return `"${value.replace(/"/g, '""')}"`
+  if (process.platform === 'win32') {
+    return join(prefix, 'hermes-web-ui.cmd')
+  }
+
+  return join(prefix, 'bin', 'hermes-web-ui')
 }
 
 function runUpdateInstall() {
-  if (process.platform === 'win32') {
-    return execFileSync(getWindowsShell(), ['/d', '/s', '/c', `${quoteForWindowsCommand(getNpmBin())} install -g hermes-web-ui@latest`], {
-      encoding: 'utf-8',
-      timeout: 120000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-  }
-
   return execFileSync(getNpmBin(), ['install', '-g', 'hermes-web-ui@latest'], {
     encoding: 'utf-8',
-    timeout: 120000,
+    timeout: 10 * 60 * 1000,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 }
 
 function spawnRestart(port: string) {
-  if (process.platform === 'win32') {
-    return spawn(getWindowsShell(), ['/d', '/s', '/c', `${quoteForWindowsCommand(getCliBin())} restart --port ${port}`], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-  }
+  const cli = getGlobalCliBin()
 
-  return spawn(getCliBin(), ['restart', '--port', port], {
+  return spawn(cli, ['restart', '--port', port], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -57,13 +43,24 @@ function spawnRestart(port: string) {
 export async function handleUpdate(ctx: any) {
   try {
     const output = runUpdateInstall()
-    ctx.body = { success: true, message: output.trim() }
+
+    ctx.body = {
+      success: true,
+      message: output.trim() || 'hermes-web-ui updated successfully',
+    }
+
     setTimeout(() => {
-      spawnRestart(process.env.PORT || '8648').unref()
-      process.exit(0)
-    }, 2000)
+      try {
+        spawnRestart(process.env.PORT || '8648').unref()
+      } finally {
+        process.exit(0)
+      }
+    }, 3000)
   } catch (err: any) {
     ctx.status = 500
-    ctx.body = { success: false, message: err.stderr || err.message }
+    ctx.body = {
+      success: false,
+      message: err.stderr?.toString() || err.message || String(err),
+    }
   }
 }

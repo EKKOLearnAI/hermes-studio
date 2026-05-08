@@ -74,9 +74,15 @@ function detectInitSystem(): string {
   // Linux 才检查 /proc
   if (platform === 'linux') {
     try {
+      if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) {
+        return 'container'
+      }
+
       const comm = readFileSync('/proc/1/comm', 'utf-8').trim()
 
-      if (comm === 'systemd') return 'systemd'
+      if (comm === 'systemd') {
+        return existsSync('/run/systemd/system') ? 'systemd' : 'other'
+      }
       if (comm === 'init') return 'sysvinit'
 
       return 'other'
@@ -112,6 +118,15 @@ interface ManagedGateway {
   host: string
   url: string
   process?: ChildProcess
+}
+
+function formatHostForUrl(host: string): string {
+  if (host.startsWith('[') && host.endsWith(']')) return host
+  return host.includes(':') ? `[${host}]` : host
+}
+
+function buildHttpUrl(host: string, port: number): string {
+  return `http://${formatHostForUrl(host)}:${port}`
 }
 
 // ============================
@@ -223,11 +238,15 @@ export class GatewayManager {
   }
 
   /** 从 base 端口开始递增查找空闲端口（上限 65535） */
-  private findFreePort(base: number, host = '127.0.0.1'): Promise<number> {
+  private findFreePort(base: number, host = '127.0.0.1', reservedPorts = new Set<number>()): Promise<number> {
     return new Promise((resolve, reject) => {
       const tryPort = (port: number) => {
         if (port > 65535) {
           reject(new Error(`No free port found in range ${base}-65535`))
+          return
+        }
+        if (reservedPorts.has(port)) {
+          tryPort(port + 1)
           return
         }
         const server = createServer()
@@ -318,7 +337,7 @@ export class GatewayManager {
 
     if (usedPorts.has(port)) {
       // 已管理端口冲突 → 找空闲端口
-      const newPort = await this.findFreePort(port, host)
+      const newPort = await this.findFreePort(port, host, usedPorts)
       logger.info('Port %d is in use for profile "%s", reassigning to %d', port, name, newPort)
       this.writeProfilePort(name, newPort, host)
       port = newPort
@@ -326,7 +345,7 @@ export class GatewayManager {
       // 检查系统级端口占用（外部进程）
       const available = await this.checkPortAvailable(port, host)
       if (!available) {
-        const newPort = await this.findFreePort(port, host)
+        const newPort = await this.findFreePort(port, host, usedPorts)
         logger.info('Port %d is occupied by another process for profile "%s", reassigning to %d', port, name, newPort)
         this.writeProfilePort(name, newPort, host)
         port = newPort
@@ -350,7 +369,7 @@ export class GatewayManager {
     const gw = this.gateways.get(name)
     if (gw?.url) return gw.url
     const { port, host } = this.readProfilePort(name)
-    return `http://${host}:${port}`
+    return buildHttpUrl(host, port)
   }
 
   /** 读取 profile 的 API_SERVER_KEY（从 .env 文件） */
@@ -416,7 +435,7 @@ export class GatewayManager {
   async detectStatus(name: string): Promise<GatewayStatus> {
     const pid = this.readPidFile(name)
     const { port, host } = this.readProfilePort(name)
-    const url = `http://${host}:${port}`
+    const url = buildHttpUrl(host, port)
 
     if (pid && this.isProcessAlive(pid) && await this.checkHealth(url)) {
       this.gateways.set(name, { pid, port, host, url })
@@ -446,7 +465,7 @@ export class GatewayManager {
   async start(name: string): Promise<GatewayStatus> {
     const { port, host } = await this.resolvePort(name)
     const hermesHome = this.profileDir(name)
-    const url = `http://${host}:${port}`
+    const url = buildHttpUrl(host, port)
 
     if (needsRunMode) {
       // WSL / Docker：无 systemd/launchd，用 "gateway run" 作为 detached 子进程
@@ -524,7 +543,7 @@ export class GatewayManager {
     const gw = this.gateways.get(name)
     const url = gw?.url || (() => {
       const { port, host } = this.readProfilePort(name)
-      return `http://${host}:${port}`
+      return buildHttpUrl(host, port)
     })()
 
     if (!needsRunMode) {
