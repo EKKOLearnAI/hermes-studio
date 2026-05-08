@@ -1,24 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dirname, join } from 'path'
+import { delimiter, dirname, join } from 'path'
 
-type ChildProcessMocks = {
+type UpdateControllerMocks = {
   execFileSync: ReturnType<typeof vi.fn>
   spawn: ReturnType<typeof vi.fn>
   unref: ReturnType<typeof vi.fn>
+  existsSync: ReturnType<typeof vi.fn>
 }
 
-async function loadUpdateController(overrides: Partial<ChildProcessMocks> = {}) {
+async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = {}) {
   const execFileSync = overrides.execFileSync ?? vi.fn().mockReturnValue('updated')
   const unref = overrides.unref ?? vi.fn()
   const spawn = overrides.spawn ?? vi.fn(() => ({ unref }))
+  const existsSync = overrides.existsSync ?? vi.fn(() => true)
 
   vi.resetModules()
   vi.doMock('child_process', () => ({ execFileSync, spawn }))
+  vi.doMock('fs', () => ({ existsSync }))
 
   const mod = await import('../../packages/server/src/controllers/update')
   return {
     ...mod,
-    mocks: { execFileSync, spawn, unref },
+    mocks: { execFileSync, spawn, unref, existsSync },
   }
 }
 
@@ -27,6 +30,27 @@ function createMockCtx() {
     status: 200,
     body: null as unknown,
   }
+}
+
+function getNodeBinDir() {
+  return dirname(process.execPath)
+}
+
+function getNodePrefix() {
+  return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
+}
+
+function getNpmCliPath() {
+  const prefix = getNodePrefix()
+  return process.platform === 'win32'
+    ? join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    : join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+}
+
+function getGlobalCliScript(prefix: string) {
+  return process.platform === 'win32'
+    ? join(prefix, 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+    : join(prefix, 'lib', 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
 }
 
 describe('update controller', () => {
@@ -40,6 +64,8 @@ describe('update controller', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.doUnmock('child_process')
+    vi.doUnmock('fs')
     if (originalPort === undefined) {
       delete process.env.PORT
     } else {
@@ -47,35 +73,56 @@ describe('update controller', () => {
     }
   })
 
-  it('updates using npm from PATH and restarts via global prefix', async () => {
+  it('updates and restarts through the running Node executable, not PATH shims', async () => {
     process.env.PORT = '9129'
-    const { handleUpdate, mocks } = await loadUpdateController()
+    const nodeBinDir = getNodeBinDir()
+    const npmCli = getNpmCliPath()
+    const globalPrefix = getNodePrefix()
+    const cliScript = getGlobalCliScript(globalPrefix)
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
+      if (args[1] === 'prefix') return globalPrefix
+      return 'updated'
+    })
+    const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
     const ctx = createMockCtx()
 
     await handleUpdate(ctx)
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
-      process.platform === 'win32' ? 'npm.cmd' : 'npm',
-      ['install', '-g', 'hermes-web-ui@latest'],
-      {
+      process.execPath,
+      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
+      expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
         stdio: ['pipe', 'pipe', 'pipe'],
-      },
+        env: expect.objectContaining({
+          npm_node_execpath: process.execPath,
+          PATH: expect.stringContaining(`${nodeBinDir}${delimiter}`),
+        }),
+      }),
     )
     expect(ctx.body).toEqual({ success: true, message: 'updated' })
 
     vi.runAllTimers()
 
-    // Note: spawn is called with getGlobalCliBin() result
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
+      process.execPath,
+      [npmCli, 'prefix', '-g'],
+      expect.objectContaining({
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: expect.objectContaining({ npm_node_execpath: process.execPath }),
+      }),
+    )
     expect(mocks.spawn).toHaveBeenCalledWith(
-      expect.any(String), // Dynamic path based on npm prefix -g
-      ['restart', '--port', '9129'],
-      {
+      process.execPath,
+      [cliScript, 'restart', '--port', '9129'],
+      expect.objectContaining({
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-      },
+        env: expect.objectContaining({ npm_node_execpath: process.execPath }),
+      }),
     )
     expect(mocks.unref).toHaveBeenCalledOnce()
     expect(exitSpy).toHaveBeenCalledWith(0)
@@ -90,8 +137,8 @@ describe('update controller', () => {
     vi.runAllTimers()
 
     expect(mocks.spawn).toHaveBeenCalledWith(
-      expect.any(String),
-      ['restart', '--port', '8648'],
+      process.execPath,
+      [expect.any(String), 'restart', '--port', '8648'],
       expect.objectContaining({ detached: true, stdio: 'ignore', windowsHide: true }),
     )
   })
@@ -109,6 +156,22 @@ describe('update controller', () => {
 
     expect(ctx.status).toBe(500)
     expect(ctx.body).toEqual({ success: false, message: 'engine mismatch' })
+    expect(mocks.spawn).not.toHaveBeenCalled()
+    expect(exitSpy).not.toHaveBeenCalled()
+  })
+
+  it('fails closed instead of falling back to PATH npm when the current Node install has no npm CLI', async () => {
+    const { handleUpdate, mocks } = await loadUpdateController({ existsSync: vi.fn(() => false) })
+    const ctx = createMockCtx()
+
+    await handleUpdate(ctx)
+
+    expect(ctx.status).toBe(500)
+    expect(ctx.body).toEqual({
+      success: false,
+      message: expect.stringContaining(`Unable to locate npm CLI for ${process.execPath}`),
+    })
+    expect(mocks.execFileSync).not.toHaveBeenCalled()
     expect(mocks.spawn).not.toHaveBeenCalled()
     expect(exitSpy).not.toHaveBeenCalled()
   })
