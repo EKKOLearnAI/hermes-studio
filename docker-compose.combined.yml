@@ -18,6 +18,7 @@ services:
       - HERMES_HOME=/opt/data/.hermes
       - HERMES_BIN=/opt/hermes/.venv/bin/hermes
       - AUTH_DISABLED=${AUTH_DISABLED:-false}
+      - HERMES_ALLOW_ROOT_GATEWAY=1
       - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     ports:
       - "${PORT:-6060}:${PORT:-6060}"
