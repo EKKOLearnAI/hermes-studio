@@ -6,7 +6,7 @@
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-web-ui.git"
   },
-  "homepage": "https://github.com/EKKOLearnAI/hermes-web-ui",
+  "homepage": "https://ekkolearnai.com",
   "license": "MIT",
   "engines": {
     "node": ">=23.0.0"
