@@ -12,8 +12,8 @@ export const useKanbanStore = defineStore('kanban', () => {
   const filterStatus = ref<string | null>(null)
   const filterAssignee = ref<string | null>(null)
 
-  async function fetchTasks() {
-    loading.value = true
+  async function fetchTasks(silent = false) {
+    if (!silent) loading.value = true
     try {
       tasks.value = await kanbanApi.listTasks({
         status: filterStatus.value || undefined,
@@ -22,7 +22,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     } catch (err) {
       console.error('Failed to fetch kanban tasks:', err)
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 

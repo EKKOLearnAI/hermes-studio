@@ -14,7 +14,7 @@ const message = useMessage()
 const store = useGroupChatStore()
 const profilesStore = useProfilesStore()
 
-const showSidebar = ref(true)
+const showSidebar = ref(window.innerWidth > 768)
 const showCreateModal = ref(false)
 const showAddAgentModal = ref(false)
 const showCompressionModal = ref(false)
@@ -915,11 +915,12 @@ export default defineComponent({ components: { CreateRoomForm } })
         top: 0;
         bottom: 0;
         z-index: 100;
+        background-color: $bg-card;
         box-shadow: 4px 0 16px rgba(0, 0, 0, 0.1);
     }
 
     .chat-header {
-        padding-left: 56px;
+        padding: 16px 12px 16px 52px;
     }
 }
 </style>

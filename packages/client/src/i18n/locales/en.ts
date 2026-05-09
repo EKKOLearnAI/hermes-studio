@@ -911,6 +911,7 @@ export default {
     new_0_5_15_8: 'Fix double-wrapping of download URLs in MarkdownRenderer',
     new_0_5_15_9: 'Fix Hermes markdown media rendering and sync retry',
     new_0_5_15_10: 'Refactor to remove upstream env dependency',
+    new_0_5_15_11: 'If the Kanban feature is not available, please upgrade hermes-agent',
     new_0_5_13_1: 'Add message queue for sequential run processing to prevent concurrent request conflicts',
     new_0_5_13_2: 'Support two-level skills directory structure with misc category for flat skills',
     new_0_5_13_3: 'Filter out ephemeral sessions during startup sync to avoid importing internal sessions',

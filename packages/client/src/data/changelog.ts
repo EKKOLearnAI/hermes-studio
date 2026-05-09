@@ -19,6 +19,7 @@ export const changelog: ChangelogEntry[] = [
       'changelog.new_0_5_15_8',
       'changelog.new_0_5_15_9',
       'changelog.new_0_5_15_10',
+      'changelog.new_0_5_15_11',
     ],
   },
   {

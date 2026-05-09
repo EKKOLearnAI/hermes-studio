@@ -54,7 +54,7 @@ onMounted(async () => {
   await kanbanStore.refreshAll()
   refreshTimer.value = setInterval(() => {
     if (document.visibilityState === 'visible') {
-      void Promise.all([kanbanStore.fetchTasks(), kanbanStore.fetchStats()])
+      void Promise.all([kanbanStore.fetchTasks(true), kanbanStore.fetchStats()])
     }
   }, 15000)
 })
@@ -248,6 +248,7 @@ async function handleTaskCreated() {
 
 @media (max-width: $breakpoint-mobile) {
   .page-header {
+    padding: 16px 12px 16px 52px;
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
