@@ -598,11 +598,7 @@ export async function getSessionMessagesFromDb(sessionId: string): Promise<{
     `).get(sessionId) as Record<string, unknown> | undefined
 
     const messageRows = db.prepare(`
-      SELECT
-        id, session_id, role, content, tool_call_id, tool_calls, tool_name,
-        timestamp, token_count, finish_reason, reasoning, reasoning_details,
-        codex_reasoning_items, reasoning_content
-      FROM messages
+      SELECT * FROM messages
       WHERE session_id = ?
       ORDER BY timestamp, id
     `).all(sessionId) as Record<string, unknown>[]
@@ -629,22 +625,7 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
     const ids = chain.map(session => session.id)
     const placeholders = ids.map(() => '?').join(', ')
     const messageRows = db.prepare(`
-      SELECT
-        id,
-        session_id,
-        role,
-        content,
-        tool_call_id,
-        tool_calls,
-        tool_name,
-        timestamp,
-        token_count,
-        finish_reason,
-        reasoning,
-        reasoning_details,
-        codex_reasoning_items,
-        reasoning_content
-      FROM messages
+      SELECT * FROM messages
       WHERE session_id IN (${placeholders})
       ORDER BY timestamp, id
     `).all(...ids) as Record<string, unknown>[]
@@ -670,22 +651,7 @@ export async function getSessionDetailFromDbWithProfile(sessionId: string, profi
     const ids = chain.map(session => session.id)
     const placeholders = ids.map(() => '?').join(', ')
     const messageRows = db.prepare(`
-      SELECT
-        id,
-        session_id,
-        role,
-        content,
-        tool_call_id,
-        tool_calls,
-        tool_name,
-        timestamp,
-        token_count,
-        finish_reason,
-        reasoning,
-        reasoning_details,
-        codex_reasoning_items,
-        reasoning_content
-      FROM messages
+      SELECT * FROM messages
       WHERE session_id IN (${placeholders})
       ORDER BY timestamp, id
     `).all(...ids) as Record<string, unknown>[]
@@ -706,22 +672,7 @@ export async function getExactSessionDetailFromDbWithProfile(sessionId: string, 
     if (!requested) return null
 
     const messageRows = db.prepare(`
-      SELECT
-        id,
-        session_id,
-        role,
-        content,
-        tool_call_id,
-        tool_calls,
-        tool_name,
-        timestamp,
-        token_count,
-        finish_reason,
-        reasoning,
-        reasoning_details,
-        codex_reasoning_items,
-        reasoning_content
-      FROM messages
+      SELECT * FROM messages
       WHERE session_id = ?
       ORDER BY timestamp, id
     `).all(sessionId) as Record<string, unknown>[]

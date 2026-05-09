@@ -163,7 +163,9 @@ export class GatewayManager {
    */
   private readProfilePort(name: string): { port: number; host: string } {
     const configPath = join(this.profileDir(name), 'config.yaml')
-    if (!existsSync(configPath)) return { port: 8642, host: '127.0.0.1' }
+    const defaultHost = initSystem === 'container' ? 'hermes-agent' : '127.0.0.1'
+
+    if (!existsSync(configPath)) return { port: 8642, host: defaultHost }
 
     try {
       const content = readFileSync(configPath, 'utf-8')
@@ -172,11 +174,11 @@ export class GatewayManager {
       const extra = cfg?.platforms?.api_server?.extra
       const rawPort = extra?.port || 8642
       const port = typeof rawPort === 'number' ? rawPort : parseInt(rawPort, 10) || 8642
-      const host = extra?.host || '127.0.0.1'
+      const host = extra?.host || defaultHost
       // 端口超出合法范围时回退到默认值
       return { port: port > 0 && port <= 65535 ? port : 8642, host }
     } catch {
-      return { port: 8642, host: '127.0.0.1' }
+      return { port: 8642, host: defaultHost }
     }
   }
 
