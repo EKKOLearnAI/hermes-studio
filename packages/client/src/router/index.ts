@@ -56,6 +56,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/SkillsView.vue'),
     },
     {
+      path: '/hermes/plugins',
+      name: 'hermes.plugins',
+      component: () => import('@/views/hermes/PluginsView.vue'),
+    },
+    {
       path: '/hermes/memory',
       name: 'hermes.memory',
       component: () => import('@/views/hermes/MemoryView.vue'),

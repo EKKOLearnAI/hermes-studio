@@ -157,6 +157,13 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.skills") }}</span>
           </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.plugins' }" @click="handleNav('hermes.plugins')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l2.1-2.1a4 4 0 0 1-5.3 5.3l-7.8 7.8a2.1 2.1 0 0 1-3-3l7.8-7.8a4 4 0 0 1 5.3-5.3l-2.1 2.1z" />
+              <path d="M5 19l1-1" />
+            </svg>
+            <span>{{ t("sidebar.plugins") }}</span>
+          </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.memory' }" @click="handleNav('hermes.memory')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 18h6" />

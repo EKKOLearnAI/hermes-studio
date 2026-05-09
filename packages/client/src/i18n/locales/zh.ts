@@ -78,6 +78,7 @@ export default {
     kanban: '看板',
     models: '模型',
     profiles: '用户',
+    plugins: '插件',
     skills: '技能',
     memory: '记忆',
     logs: '日志',

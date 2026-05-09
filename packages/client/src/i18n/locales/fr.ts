@@ -74,6 +74,7 @@ export default {
     jobs: 'Taches planifiees',
     models: 'Modeles',
     profiles: 'Profils',
+    plugins: 'Plugins',
     skills: 'Competences',
     memory: 'Memoire',
     logs: 'Journaux',

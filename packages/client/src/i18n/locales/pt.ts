@@ -74,6 +74,7 @@ export default {
     jobs: 'Tarefas agendadas',
     models: 'Modelos',
     profiles: 'Perfis',
+    plugins: 'Plugins',
     skills: 'Habilidades',
     memory: 'Memoria',
     logs: 'Logs',

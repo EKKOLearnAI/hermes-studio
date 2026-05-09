@@ -74,6 +74,7 @@ export default {
     jobs: '예약 작업',
     models: '모델',
     profiles: '프로필',
+    plugins: '플러그인',
     skills: '스킬',
     memory: '메모리',
     logs: '로그',

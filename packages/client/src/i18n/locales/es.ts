@@ -74,6 +74,7 @@ export default {
     jobs: 'Tareas programadas',
     models: 'Modelos',
     profiles: 'Perfiles',
+    plugins: 'Plugins',
     skills: 'Habilidades',
     memory: 'Memoria',
     logs: 'Registros',

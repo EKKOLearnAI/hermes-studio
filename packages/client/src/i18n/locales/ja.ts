@@ -74,6 +74,7 @@ export default {
     jobs: 'ジョブ',
     models: 'モデル',
     profiles: 'プロファイル',
+    plugins: 'プラグイン',
     skills: 'スキル',
     memory: 'メモリ',
     logs: 'ログ',
