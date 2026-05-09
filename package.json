@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
   "repository": {
     "type": "git",
@@ -58,7 +58,8 @@
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
-    "openapi:generate": "node scripts/generate-openapi.mjs"
+    "openapi:generate": "node scripts/generate-openapi.mjs",
+    "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
     "bin/",
