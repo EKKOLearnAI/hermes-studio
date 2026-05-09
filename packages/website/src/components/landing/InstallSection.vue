@@ -62,6 +62,10 @@ function copyText(text: string) {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: $radius-lg;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 24px 16px;
+  }
 }
 
 .panel-title {
@@ -118,6 +122,8 @@ function copyText(text: string) {
   margin-bottom: 8px;
   cursor: pointer;
   transition: border-color $transition-fast;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 
   &:hover {
     border-color: var(--text-muted);
@@ -127,6 +133,7 @@ function copyText(text: string) {
     font-size: 14px;
     background: transparent;
     padding: 0;
+    white-space: nowrap;
   }
 }
 
