@@ -1,6 +1,6 @@
 /**
  * Sync Hermes sessions from all profiles on startup.
- * Reads api_server sessions from Hermes state.db and imports into local DB.
+ * Reads Hermes sessions from state.db and imports into local DB.
  * Only runs when local DB is empty (first startup).
  *
  * Uses sessions-db.ts query logic to properly aggregate session chains.
@@ -51,7 +51,7 @@ function getAllProfiles(): string[] {
 }
 
 /**
- * Sync api_server sessions from a single profile.
+ * Sync sessions from a single profile.
  * Uses sessions-db.ts query logic to properly aggregate session chains.
  */
 async function syncProfileSessions(profile: string): Promise<{
@@ -63,7 +63,7 @@ async function syncProfileSessions(profile: string): Promise<{
   try {
     // Use listSessionSummaries to get aggregated session chains
     // This returns only root sessions with aggregated stats from the entire chain
-    const summaries = await listHermesSessionSummaries('api_server', 10000, profile)
+    const summaries = await listHermesSessionSummaries(undefined, 10000, profile)
 
     logger.info(`[session-sync] profile '${profile}': found ${summaries.length} aggregated session chains`)
 
@@ -116,6 +116,10 @@ async function syncProfileSessions(profile: string): Promise<{
           started_at: hermesSession.started_at,
           ended_at: hermesSession.ended_at,
           end_reason: hermesSession.end_reason,
+          source: hermesSession.source,
+          user_id: hermesSession.user_id,
+          message_count: hermesSession.message_count,
+          tool_call_count: hermesSession.tool_call_count,
           input_tokens: hermesSession.input_tokens,
           output_tokens: hermesSession.output_tokens,
           cache_read_tokens: hermesSession.cache_read_tokens,

@@ -1,73 +1,128 @@
-/**
- * Tests for session-sync service
- */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getDb, ensureTable } from '../../packages/server/src/db/index'
-import { syncAllHermesSessionsOnStartup } from '../../packages/server/src/services/hermes/session-sync'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mockGetDb = vi.hoisted(() => vi.fn())
+const mockCreateSession = vi.hoisted(() => vi.fn())
+const mockAddMessage = vi.hoisted(() => vi.fn())
+const mockUpdateSession = vi.hoisted(() => vi.fn())
+const mockListSessionSummaries = vi.hoisted(() => vi.fn())
+const mockGetSessionDetailFromDbWithProfile = vi.hoisted(() => vi.fn())
+
+vi.mock('../../packages/server/src/db/index', () => ({
+  getDb: mockGetDb,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+  createSession: mockCreateSession,
+  addMessage: mockAddMessage,
+  updateSession: mockUpdateSession,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+  listSessionSummaries: mockListSessionSummaries,
+  getSessionDetailFromDbWithProfile: mockGetSessionDetailFromDbWithProfile,
+}))
+
+function mockEmptyLocalDb() {
+  mockGetDb.mockReturnValue({
+    prepare: vi.fn(() => ({
+      get: vi.fn(() => ({ count: 0 })),
+    })),
+  })
+}
 
 describe('session-sync', () => {
   beforeEach(() => {
-    // Reset database before each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+    vi.clearAllMocks()
+    mockEmptyLocalDb()
+    mockCreateSession.mockImplementation((data) => ({
+      id: data.id,
+      profile: data.profile || 'default',
+      source: 'api_server',
+      model: data.model || '',
+      title: data.title || null,
+    }))
+    mockGetSessionDetailFromDbWithProfile.mockResolvedValue({
+      messages: [
+        { role: 'user', content: 'hello', timestamp: 1 },
+        { role: 'assistant', content: 'hi', timestamp: 2 },
+      ],
+      thread_session_count: 1,
+    })
   })
 
-  afterEach(() => {
-    // Cleanup after each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+  it('skips sync when local DB is not empty', async () => {
+    mockGetDb.mockReturnValue({
+      prepare: vi.fn(() => ({
+        get: vi.fn(() => ({ count: 1 })),
+      })),
+    })
+
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+    await syncAllHermesSessionsOnStartup()
+
+    expect(mockListSessionSummaries).not.toHaveBeenCalled()
   })
 
-  it('should skip sync when local DB is not empty', () => {
-    const db = getDb()
-    expect(db).not.toBeNull()
+  it('syncs all Hermes session sources into the local Web UI index', async () => {
+    mockListSessionSummaries.mockResolvedValue([
+      {
+        id: 'cli-session',
+        source: 'cli',
+        user_id: null,
+        model: 'GLM-5',
+        title: 'CLI session',
+        started_at: 10,
+        ended_at: null,
+        end_reason: null,
+        message_count: 2,
+        tool_call_count: 1,
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        estimated_cost_usd: 0,
+        last_active: 20,
+        preview: 'from cli',
+      },
+      {
+        id: 'telegram-session',
+        source: 'telegram',
+        user_id: '8300764555',
+        model: 'GLM-5',
+        title: 'Telegram session',
+        started_at: 30,
+        ended_at: null,
+        end_reason: null,
+        message_count: 3,
+        tool_call_count: 0,
+        input_tokens: 200,
+        output_tokens: 30,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        estimated_cost_usd: 0,
+        last_active: 40,
+        preview: 'from telegram',
+      },
+    ])
 
-    // Insert a test session
-    db!.prepare(`
-      INSERT INTO sessions (id, profile, source, model, title, started_at, last_active)
-      VALUES ('test-session-1', 'default', 'api_server', 'gpt-4', 'Test Session', ${Date.now()}, ${Date.now()})
-    `).run()
+    const { syncAllHermesSessionsOnStartup } = await import('../../packages/server/src/services/hermes/session-sync')
+    await syncAllHermesSessionsOnStartup()
 
-    // Check that session exists
-    const countResult = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countResult.count).toBe(1)
-
-    // Run sync - should skip because DB is not empty
-    syncAllHermesSessionsOnStartup()
-
-    // Verify session still exists (no changes)
-    const countAfter = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countAfter.count).toBe(1)
-  })
-
-  it('should attempt sync when local DB is empty', () => {
-    const db = getDb()
-    expect(db).not.toBeNull()
-
-    // Verify DB is empty
-    const countBefore = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
-    expect(countBefore.count).toBe(0)
-
-    // Run sync - should attempt to sync from Hermes
-    syncAllHermesSessionsOnStartup()
-
-    // Note: Whether sessions are actually imported depends on whether
-    // Hermes state.db exists and has api_server sessions
-    // This test mainly verifies the function doesn't crash when DB is empty
-    expect(true).toBe(true)
-  })
-
-  it('should handle case when SQLite is not available', () => {
-    // This test verifies the function handles the case when getDb() returns null
-    // Since we can't easily mock getDb(), we just verify it doesn't crash
-    expect(() => {
-      syncAllHermesSessionsOnStartup()
-    }).not.toThrow()
+    expect(mockListSessionSummaries).toHaveBeenCalledWith(undefined, 10000, 'default')
+    expect(mockCreateSession).toHaveBeenCalledTimes(2)
+    expect(mockUpdateSession).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      source: 'cli',
+      user_id: null,
+      message_count: 2,
+      tool_call_count: 1,
+    }))
+    expect(mockUpdateSession).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      source: 'telegram',
+      user_id: '8300764555',
+      message_count: 3,
+      tool_call_count: 0,
+    }))
   })
 })
