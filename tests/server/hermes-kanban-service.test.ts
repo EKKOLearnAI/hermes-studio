@@ -45,10 +45,12 @@ describe('hermes kanban service', () => {
   it('exposes capability metadata for WUI/canonical parity gaps', async () => {
     await expect(service.getCapabilities()).resolves.toMatchObject({
       source: 'hermes-cli',
-      supports: { boardsList: true, boardCreate: true, commentsWrite: true, dispatch: true },
-      missing: expect.arrayContaining(['cliCurrentSwitch', 'links', 'bulk', 'homeSubscriptions']),
+      supports: { boardsList: true, boardCreate: true, commentsWrite: true, dispatch: true, links: true },
+      missing: expect.arrayContaining(['cliCurrentSwitch', 'bulk', 'homeSubscriptions']),
       capabilities: expect.arrayContaining([
         expect.objectContaining({ key: 'commentsWrite', status: 'supported', canonicalCommand: 'comment', requiresBoard: true }),
+        expect.objectContaining({ key: 'links', status: 'supported', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true }),
+        expect.objectContaining({ key: 'bulk', status: 'partial', canonicalRoute: '/tasks/bulk', requiresBoard: true }),
         expect.objectContaining({ key: 'events', status: 'partial', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true }),
       ]),
     })
@@ -57,6 +59,37 @@ describe('hermes kanban service', () => {
   it('builds board-scoped watch args for the kanban event bridge', () => {
     expect(service.buildWatchArgs({ board: 'Project_A', interval: 0.25 })).toEqual(['kanban', '--board', 'project_a', 'watch', '--interval', '0.25'])
     expect(service.buildWatchArgs()).toEqual(['kanban', '--board', 'default', 'watch', '--interval', '0.5'])
+  })
+
+  it('builds link/unlink and bulk-equivalent task commands with explicit board', async () => {
+    mockExecFileAsync
+      .mockResolvedValueOnce({ stdout: 'linked\n' })
+      .mockResolvedValueOnce({ stdout: 'unlinked\n' })
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockRejectedValueOnce(new Error('cannot complete task-2'))
+
+    await expect(service.linkTasks('task-1', 'task-2', { board: 'project-a' })).resolves.toEqual({ ok: true, output: 'linked\n' })
+    await expect(service.unlinkTasks('task-1', 'task-2', { board: 'project-a' })).resolves.toEqual({ ok: true, output: 'unlinked\n' })
+    await expect(service.bulkUpdateTasks({ board: 'project-a', ids: ['task-1', 'task-2'], status: 'done', assignee: 'alice', summary: 'closed' })).resolves.toEqual({
+      results: [
+        { id: 'task-1', ok: true },
+        { id: 'task-2', ok: false, error: 'Failed to complete kanban tasks: cannot complete task-2' },
+      ],
+    })
+
+    expect(mockExecFileAsync.mock.calls[0][1]).toEqual(['kanban', '--board', 'project-a', 'link', 'task-1', 'task-2'])
+    expect(mockExecFileAsync.mock.calls[1][1]).toEqual(['kanban', '--board', 'project-a', 'unlink', 'task-1', 'task-2'])
+    expect(mockExecFileAsync.mock.calls[2][1]).toEqual(['kanban', '--board', 'project-a', 'complete', 'task-1', '--summary', 'closed'])
+    expect(mockExecFileAsync.mock.calls[3][1]).toEqual(['kanban', '--board', 'project-a', 'assign', 'task-1', 'alice'])
+    expect(mockExecFileAsync.mock.calls[4][1]).toEqual(['kanban', '--board', 'project-a', 'complete', 'task-2', '--summary', 'closed'])
+  })
+
+  it('returns per-task bulk errors for unsupported direct status patches before shelling out', async () => {
+    await expect(service.bulkUpdateTasks({ board: 'project-a', ids: ['task-1'], status: 'running' })).resolves.toEqual({
+      results: [{ id: 'task-1', ok: false, error: 'Bulk status running is not supported by the CLI bridge' }],
+    })
+    expect(mockExecFileAsync).not.toHaveBeenCalled()
   })
 
   it('builds comment/log/diagnostics commands with explicit board', async () => {

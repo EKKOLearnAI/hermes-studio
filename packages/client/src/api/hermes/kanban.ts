@@ -84,6 +84,8 @@ export interface KanbanTaskDetail {
   comments: KanbanComment[]
   events: KanbanEvent[]
   runs: KanbanRun[]
+  parents?: string[]
+  children?: string[]
 }
 
 export interface KanbanStats {
@@ -196,6 +198,26 @@ export interface KanbanDispatchOptions extends KanbanBoardOptions {
   dryRun?: boolean
   max?: number
   failureLimit?: number
+}
+
+export interface KanbanLinkRequest {
+  parent_id: string
+  child_id: string
+}
+
+export interface KanbanBulkUpdateRequest {
+  ids: string[]
+  status?: KanbanTaskStatus
+  assignee?: string | null
+  archive?: boolean
+  summary?: string
+  reason?: string
+}
+
+export interface KanbanBulkTaskResult {
+  id: string
+  ok: boolean
+  error?: string
 }
 
 function normalizedBoard(board?: string): string {
@@ -325,6 +347,29 @@ export async function assignTask(taskId: string, profile: string, opts?: KanbanB
 
 export async function addComment(taskId: string, data: KanbanCommentCreateRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
   return request<{ ok: boolean; output?: string }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/comments`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function linkTasks(data: KanbanLinkRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
+  return request<{ ok: boolean; output?: string }>(appendQuery('/api/hermes/kanban/links', boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function unlinkTasks(data: KanbanLinkRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
+  const params = boardParams(opts?.board)
+  params.set('parent_id', data.parent_id)
+  params.set('child_id', data.child_id)
+  return request<{ ok: boolean; output?: string }>(appendQuery('/api/hermes/kanban/links', params), {
+    method: 'DELETE',
+  })
+}
+
+export async function bulkUpdateTasks(data: KanbanBulkUpdateRequest, opts?: KanbanBoardOptions): Promise<{ results: KanbanBulkTaskResult[] }> {
+  return request<{ results: KanbanBulkTaskResult[] }>(appendQuery('/api/hermes/kanban/tasks/bulk', boardParams(opts?.board)), {
     method: 'POST',
     body: JSON.stringify(data),
   })

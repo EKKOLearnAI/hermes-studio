@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as kanbanApi from '@/api/hermes/kanban'
-import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions } from '@/api/hermes/kanban'
+import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions, KanbanBulkUpdateRequest } from '@/api/hermes/kanban'
 
 export const KANBAN_SELECTED_BOARD_STORAGE_KEY = 'hermes.kanban.selectedBoard'
 export const DEFAULT_KANBAN_BOARD = 'default'
@@ -88,6 +88,19 @@ export const useKanbanStore = defineStore('kanban', () => {
   function assertCapability(key: string): void {
     if (!isCapabilitySupported(key)) {
       throw new Error(`Kanban capability "${key}" is not supported by the current Hermes backend`)
+    }
+  }
+
+  function hasCapabilityStatus(key: string, statuses: Array<'supported' | 'partial' | 'missing'>): boolean {
+    const detail = capabilities.value?.capabilities?.find(capability => capability.key === key)
+    if (detail) return statuses.includes(detail.status)
+    if (statuses.includes('supported')) return isCapabilitySupported(key)
+    return false
+  }
+
+  function assertCapabilityStatus(key: string, statuses: Array<'supported' | 'partial' | 'missing'>): void {
+    if (!hasCapabilityStatus(key, statuses)) {
+      throw new Error(`Kanban capability "${key}" is not available with the required status`)
     }
   }
 
@@ -373,6 +386,30 @@ export const useKanbanStore = defineStore('kanban', () => {
     return kanbanApi.addComment(taskId, { body, author }, { board: selectedBoard.value })
   }
 
+  async function linkTasks(parentId: string, childId: string) {
+    assertCapability('links')
+    const board = selectedBoard.value
+    const result = await kanbanApi.linkTasks({ parent_id: parentId, child_id: childId }, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards()])
+    return result
+  }
+
+  async function unlinkTasks(parentId: string, childId: string) {
+    assertCapability('links')
+    const board = selectedBoard.value
+    const result = await kanbanApi.unlinkTasks({ parent_id: parentId, child_id: childId }, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards()])
+    return result
+  }
+
+  async function bulkUpdateTasks(data: Omit<KanbanBulkUpdateRequest, 'ids'> & { ids: string[] }) {
+    assertCapabilityStatus('bulk', ['supported', 'partial'])
+    const board = selectedBoard.value
+    const result = await kanbanApi.bulkUpdateTasks(data, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards(), fetchAssignees()])
+    return result
+  }
+
   async function getTaskLog(taskId: string, tail?: number) {
     assertCapability('taskLog')
     return kanbanApi.getTaskLog(taskId, { board: selectedBoard.value, tail })
@@ -455,6 +492,9 @@ export const useKanbanStore = defineStore('kanban', () => {
     unblockTasks,
     assignTask,
     addComment,
+    linkTasks,
+    unlinkTasks,
+    bulkUpdateTasks,
     getTaskLog,
     getDiagnostics,
     reclaimTask,

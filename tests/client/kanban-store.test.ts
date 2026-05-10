@@ -16,6 +16,9 @@ const mockKanbanApi = vi.hoisted(() => ({
   unblockTasks: vi.fn(),
   assignTask: vi.fn(),
   addComment: vi.fn(),
+  linkTasks: vi.fn(),
+  unlinkTasks: vi.fn(),
+  bulkUpdateTasks: vi.fn(),
   getTaskLog: vi.fn(),
   getDiagnostics: vi.fn(),
   reclaimTask: vi.fn(),
@@ -137,6 +140,37 @@ describe('Kanban store', () => {
 
     expect(mockKanbanApi.addComment).toHaveBeenCalledWith('task-1', { body: 'needs review', author: 'han' }, { board: 'project-a' })
     expect(mockKanbanApi.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('passes selected board to link and partial bulk parity actions', async () => {
+    mockKanbanApi.getCapabilities.mockResolvedValue({
+      source: 'hermes-cli',
+      supports: { links: true, bulk: false },
+      missing: ['bulk'],
+      capabilities: [
+        { key: 'links', status: 'supported', requiresBoard: true },
+        { key: 'bulk', status: 'partial', requiresBoard: true },
+      ],
+    })
+    mockKanbanApi.linkTasks.mockResolvedValue({ ok: true })
+    mockKanbanApi.unlinkTasks.mockResolvedValue({ ok: true })
+    mockKanbanApi.bulkUpdateTasks.mockResolvedValue({ results: [{ id: 'task-1', ok: true }] })
+    mockKanbanApi.listTasks.mockResolvedValue([])
+    mockKanbanApi.getStats.mockResolvedValue({ total: 0, by_status: {}, by_assignee: {} })
+    mockKanbanApi.getAssignees.mockResolvedValue([])
+
+    const store = useKanbanStore()
+    store.setSelectedBoard('project-a')
+    await store.fetchCapabilities()
+
+    await store.linkTasks('task-1', 'task-2')
+    await store.unlinkTasks('task-1', 'task-2')
+    await expect(store.bulkUpdateTasks({ ids: ['task-1'], status: 'done', assignee: null, summary: 'closed' })).resolves.toEqual({ results: [{ id: 'task-1', ok: true }] })
+
+    expect(mockKanbanApi.linkTasks).toHaveBeenCalledWith({ parent_id: 'task-1', child_id: 'task-2' }, { board: 'project-a' })
+    expect(mockKanbanApi.unlinkTasks).toHaveBeenCalledWith({ parent_id: 'task-1', child_id: 'task-2' }, { board: 'project-a' })
+    expect(mockKanbanApi.bulkUpdateTasks).toHaveBeenCalledWith({ ids: ['task-1'], status: 'done', assignee: null, summary: 'closed' }, { board: 'project-a' })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
   })
 
   it('opens board-scoped event streams, refreshes on events, and reconnects on board switch', async () => {
