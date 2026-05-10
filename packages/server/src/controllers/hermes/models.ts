@@ -69,12 +69,14 @@ export async function getAvailable(ctx: any) {
         if (!existsSync(authPath)) return false
         const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
         const provider = auth.providers?.[providerKey]
-        if (!provider) return false
-        // Codex: providers.openai-codex.tokens.access_token
-        // Nous:  providers.nous.access_token
+        const pool = auth.credential_pool?.[providerKey]
+        // Legacy OAuth providers are stored under providers.*; newer Hermes
+        // credential pools store Codex-style OAuth entries under
+        // credential_pool.*. Treat either shape as an authorized provider.
         return !!(
-          provider.tokens?.access_token ||
-          provider.access_token
+          provider?.tokens?.access_token ||
+          provider?.access_token ||
+          (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
         )
       } catch { return false }
     }
