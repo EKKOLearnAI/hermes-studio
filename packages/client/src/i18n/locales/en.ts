@@ -571,6 +571,7 @@ export default {
       privacy: 'Privacy',
       apiServer: 'API Server',
       models: 'Models',
+      voice: 'Voice',
     },
     models: {
       apiKey: 'API Key',
@@ -666,6 +667,54 @@ export default {
       unlockAllConfirm: 'Unlock all locked IPs?',
       unlocked: 'IP unlocked',
       allUnlocked: '{count} IPs unlocked',
+    },
+    voice: {
+      ttsProvider: 'TTS Provider',
+      ttsProviderHint: 'Choose the text-to-speech engine for message playback',
+      providerWebSpeech: 'WebSpeech API (Browser)',
+      providerOpenai: 'OpenAI TTS',
+      providerCustom: 'Custom Endpoint (OpenAI-compatible)',
+      providerEdge: 'Edge TTS (Free, no API Key)',
+
+      // WebSpeech
+      webspeechVoice: 'Voice',
+      webspeechVoiceHint: 'Select a voice from your browser or OS',
+      webspeechVoicePlaceholder: 'Auto (default voice)',
+
+      // OpenAI
+      openaiKey: 'API Key',
+      openaiKeyHint: 'Your OpenAI API key with TTS access',
+      openaiUrl: 'API Base URL',
+      openaiUrlHint: 'e.g. https://api.openai.com/v1/audio/speech',
+      openaiModel: 'Model',
+      openaiModelHint: 'tts-1 (faster) / tts-1-hd (higher quality)',
+      openaiVoice: 'Voice',
+      openaiVoiceHint: 'Voice to use for synthesis',
+
+      // Custom endpoint
+      customHint: 'Use any OpenAI-compatible TTS API — works with GPT-SoVITS, CosyVoice, etc.',
+      customUrl: 'API URL',
+      customUrlHint: 'Base URL of your TTS service',
+      customUrlPlaceholder: 'The address configured in the local adapter, e.g. http://127.0.0.1:9880',
+      customApiKey: 'API Key (Optional)',
+      customApiKeyHint: 'Some custom endpoints require authentication',
+      customApiKeyPlaceholder: 'Leave blank if not needed',
+      // Edge TTS
+      edgeHint: 'Powered by Microsoft Edge TTS (node-edge-tts).',
+      edgeUrl: 'Adapter URL',
+      edgeUrlHint: 'Address of your Edge TTS adapter, e.g. http://127.0.0.1:9882',
+      edgeUrlPlaceholder: 'http://127.0.0.1:9882',
+      edgeVoice: 'Voice',
+      edgeVoiceHint: 'Select a voice for speech synthesis',
+
+      // Test
+      testTitle: 'Test Voice',
+      testText: 'Test Text',
+      testTextPlaceholder: 'Enter text to test...',
+      testTextDefault: 'Hello, this is a voice test.',
+      testButton: 'Test',
+      testButtonPlaying: 'Playing...',
+      testFailed: 'Test failed: {error}',
     },
   },
 

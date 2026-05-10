@@ -442,6 +442,8 @@ jobTriggered: 'Job acionado',
       session: 'Sessao',
       privacy: 'Privacidade',
       apiServer: 'Servidor API',
+      models: 'Modelos',
+      voice: 'Voz',
     },
     display: {
       streaming: 'Respostas em streaming',
@@ -519,6 +521,55 @@ jobTriggered: 'Job acionado',
       keyHint: 'Chave de acesso API',
       cors: 'Origens CORS',
       corsHint: 'Fontes cross-origin permitidas',
+    },
+    voice: {
+      ttsProvider: 'Provedor TTS',
+      ttsProviderHint: 'Escolha o mecanismo de texto para fala para reproducao de mensagens',
+      providerWebSpeech: 'WebSpeech API (Navegador)',
+      providerOpenai: 'OpenAI TTS',
+      providerCustom: 'Endpoint personalizado (compativel com OpenAI)',
+      providerEdge: 'Edge TTS (Gratuito, sem chave API)',
+
+      // WebSpeech
+      webspeechVoice: 'Voz',
+      webspeechVoiceHint: 'Selecione uma voz do seu navegador ou SO',
+      webspeechVoicePlaceholder: 'Auto (voz padrao)',
+
+      // OpenAI
+      openaiKey: 'Chave API',
+      openaiKeyHint: 'Sua chave API OpenAI com acesso TTS',
+      openaiUrl: 'URL base da API',
+      openaiUrlHint: 'ex. https://api.openai.com/v1/audio/speech',
+      openaiModel: 'Modelo',
+      openaiModelHint: 'tts-1 (mais rapido) / tts-1-hd (qualidade superior)',
+      openaiVoice: 'Voz',
+      openaiVoiceHint: 'Voz a ser usada para sintese',
+
+      // Custom endpoint
+      customHint: 'Use qualquer API TTS compativel com OpenAI — funciona com GPT-SoVITS, CosyVoice, etc.',
+      customUrl: 'URL da API',
+      customUrlHint: 'URL base do seu servico TTS',
+      customUrlPlaceholder: 'Endereco configurado no adaptador local, ex. http://127.0.0.1:9880',
+      customApiKey: 'Chave API (opcional)',
+      customApiKeyHint: 'Alguns endpoints personalizados exigem autenticacao',
+      customApiKeyPlaceholder: 'Deixe em branco se nao for necessario',
+
+      // Edge TTS
+      edgeHint: 'Desenvolvido por Microsoft Edge TTS (node-edge-tts).',
+      edgeUrl: 'URL do adaptador',
+      edgeUrlHint: 'Endereco do adaptador Edge TTS, ex. http://127.0.0.1:9882',
+      edgeUrlPlaceholder: 'http://127.0.0.1:9882',
+      edgeVoice: 'Voz',
+      edgeVoiceHint: 'Selecione uma voz para sintese de fala',
+
+      // Test
+      testTitle: 'Teste de voz',
+      testText: 'Texto de teste',
+      testTextPlaceholder: 'Insira o texto para testar...',
+      testTextDefault: 'Ola, este e um teste de voz.',
+      testButton: 'Testar',
+      testButtonPlaying: 'Reproduzindo...',
+      testFailed: 'Teste falhou: {error}',
     },
     lockedIps: {
       title: 'IPs bloqueadas',

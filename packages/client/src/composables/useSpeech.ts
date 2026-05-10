@@ -3,6 +3,14 @@ import { generateSpeech, playAudioBlob } from '@/api/hermes/tts'
 
 export interface SpeechOptions {
   lang?: string      // 语言 'zh-CN', 'en-US' 等
+  voiceName?: string // 指定 WebSpeech 音色名称
+}
+
+export interface OpenaiTtsOptions {
+  baseUrl: string
+  apiKey?: string
+  model?: string
+  voice?: string
 }
 
 export interface SpeechState {
@@ -38,6 +46,11 @@ export function useSpeech() {
   let currentAudio: HTMLAudioElement | null = null
   let playbackToken = 0
   const speechQueue: SpeechQueueItem[] = []
+
+  // 自定义 TTS（OpenAI / Custom / Edge）播放状态
+  const isCustomPlaying = ref(false)
+  const isCustomPaused = ref(false)
+  const currentCustomMessageId = ref<string | null>(null)
 
   // 加载可用语音列表
   function loadVoices() {
@@ -162,14 +175,25 @@ export function useSpeech() {
 
   // ─── Browser Engine (Web Speech API) ────────────────────────
 
-  function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token: number) {
+  function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token?: number) {
+    token = token || ++playbackToken
     utterance = new SpeechSynthesisUtterance(text)
     const activeUtterance = utterance
 
     utterance.rate = 1
     utterance.pitch = 1
     utterance.volume = 1
-    utterance.voice = getDefaultVoice()
+
+    // 使用指定的音色（如果有），否则用默认
+    if (options.voiceName) {
+      const voice = availableVoices.value.find(v => v.name === options.voiceName)
+      if (voice) {
+        utterance.voice = voice
+      }
+    }
+    if (!utterance.voice) {
+      utterance.voice = getDefaultVoice()
+    }
 
     if (options.lang) {
       utterance.lang = options.lang
@@ -216,6 +240,115 @@ export function useSpeech() {
     }
 
     synth.speak(utterance)
+  }
+
+  // ─── OpenAI-compatible TTS Engine ────────────────────────────
+
+  let customAudio: HTMLAudioElement | null = null
+
+  async function openaiPlay(
+    messageId: string,
+    content: string,
+    opts: OpenaiTtsOptions,
+  ) {
+    const text = extractReadableText(content)
+    if (!text) return
+
+    const token = ++playbackToken
+
+    isCustomPlaying.value = true
+    isCustomPaused.value = false
+    currentCustomMessageId.value = messageId
+
+    const url = `${opts.baseUrl.replace(/\/+$/, '')}/audio/speech`
+    const body: Record<string, any> = {
+      model: opts.model || 'tts-1',
+      input: text,
+      voice: opts.voice || 'alloy',
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (opts.apiKey) {
+      headers['Authorization'] = `Bearer ${opts.apiKey}`
+    }
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+
+      if (token !== playbackToken) return
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`OpenAI TTS 返回 ${res.status}: ${errText || res.statusText}`)
+      }
+
+      const audioBlob = await res.blob()
+      if (token !== playbackToken) return
+
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      customAudio = audio
+
+      audio.onended = () => {
+        if (token !== playbackToken) return
+        URL.revokeObjectURL(audioUrl)
+        isCustomPlaying.value = false
+        isCustomPaused.value = false
+        currentCustomMessageId.value = null
+        customAudio = null
+      }
+
+      audio.onerror = () => {
+        if (token !== playbackToken) return
+        URL.revokeObjectURL(audioUrl)
+        console.warn('[useSpeech] Custom TTS audio playback error')
+        isCustomPlaying.value = false
+        isCustomPaused.value = false
+        currentCustomMessageId.value = null
+        customAudio = null
+      }
+
+      await audio.play()
+    } catch (err) {
+      if (token !== playbackToken) return
+      console.error('[useSpeech] OpenAI TTS 请求失败:', err)
+      isCustomPlaying.value = false
+      isCustomPaused.value = false
+      currentCustomMessageId.value = null
+      throw err
+    }
+  }
+
+  function openaiToggle(messageId: string, content: string, opts: OpenaiTtsOptions) {
+    if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
+      if (isCustomPaused.value) {
+        // Resume
+        if (customAudio) {
+          customAudio.play()
+        }
+        isCustomPaused.value = false
+      } else {
+        // Pause
+        if (customAudio) {
+          customAudio.pause()
+        }
+        isCustomPaused.value = true
+      }
+    } else {
+      // Stop other speech and start new
+      stop(false)
+      if (customAudio) {
+        customAudio.pause()
+        customAudio = null
+      }
+      openaiPlay(messageId, content, opts)
+    }
   }
 
   // ─── Unified speak ──────────────────────────────────────────
@@ -317,6 +450,11 @@ export function useSpeech() {
     progress: computed(() => state.value.progress),
     engine: computed(() => state.value.engine),
 
+    // Custom TTS state
+    isCustomPlaying,
+    isCustomPaused,
+    currentCustomMessageId,
+
     play,
     pause,
     resume,
@@ -325,6 +463,13 @@ export function useSpeech() {
     enqueue,
     getDefaultVoice,
     extractReadableText,
+
+    // OpenAI-compatible TTS
+    openaiPlay,
+    openaiToggle,
+
+    // Browser WebSpeech (直接调用避免 Rolldown 树摇)
+    speakViaBrowser,
   }
 }
 

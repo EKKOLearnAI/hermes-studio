@@ -442,6 +442,8 @@ export default {
       session: '세션',
       privacy: '개인정보',
       apiServer: 'API 서버',
+      models: '모델',
+      voice: '음성',
     },
     display: {
       streaming: '스트리밍 응답',
@@ -519,6 +521,55 @@ export default {
       keyHint: 'API 접근 키',
       cors: 'CORS 출처',
       corsHint: '허용된 교차 출처',
+    },
+    voice: {
+      ttsProvider: 'TTS 제공자',
+      ttsProviderHint: '메시지 재생에 사용할 텍스트 음성 변환 엔진 선택',
+      providerWebSpeech: 'WebSpeech API (브라우저)',
+      providerOpenai: 'OpenAI TTS',
+      providerCustom: '사용자 정의 엔드포인트 (OpenAI 호환)',
+      providerEdge: 'Edge TTS (무료, API Key 불필요)',
+
+      // WebSpeech
+      webspeechVoice: '음성',
+      webspeechVoiceHint: '브라우저 또는 OS에서 음성 선택',
+      webspeechVoicePlaceholder: '자동 (기본 음성)',
+
+      // OpenAI
+      openaiKey: 'API 키',
+      openaiKeyHint: 'TTS 접근 권한이 있는 OpenAI API 키',
+      openaiUrl: 'API 기본 URL',
+      openaiUrlHint: '예: https://api.openai.com/v1/audio/speech',
+      openaiModel: '모델',
+      openaiModelHint: 'tts-1 (빠름) / tts-1-hd (고음질)',
+      openaiVoice: '음색',
+      openaiVoiceHint: '합성에 사용할 음색',
+
+      // Custom endpoint
+      customHint: '모든 OpenAI 호환 TTS API 사용 가능 — GPT-SoVITS, CosyVoice 등 지원',
+      customUrl: 'API URL',
+      customUrlHint: 'TTS 서비스의 기본 URL',
+      customUrlPlaceholder: '로컬 어댑터에 설정된 주소 (예: http://127.0.0.1:9880)',
+      customApiKey: 'API 키 (선택사항)',
+      customApiKeyHint: '일부 사용자 정의 엔드포인트는 인증 필요',
+      customApiKeyPlaceholder: '필요하지 않으면 비워둠',
+
+      // Edge TTS
+      edgeHint: 'Microsoft Edge TTS 기반 (node-edge-tts).',
+      edgeUrl: '어댑터 URL',
+      edgeUrlHint: 'Edge TTS 어댑터 주소 (예: http://127.0.0.1:9882)',
+      edgeUrlPlaceholder: 'http://127.0.0.1:9882',
+      edgeVoice: '음색',
+      edgeVoiceHint: '음성 합성에 사용할 음색 선택',
+
+      // Test
+      testTitle: '음성 테스트',
+      testText: '테스트 텍스트',
+      testTextPlaceholder: '테스트할 텍스트 입력...',
+      testTextDefault: '안녕하세요, 음성 테스트입니다.',
+      testButton: '테스트',
+      testButtonPlaying: '재생 중...',
+      testFailed: '테스트 실패: {error}',
     },
     lockedIps: {
       title: '잠긴 IP 관리',

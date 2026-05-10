@@ -563,6 +563,7 @@ export default {
       privacy: '隐私',
       apiServer: 'API 服务器',
       models: '模型',
+      voice: '语音',
     },
     models: {
       apiKey: 'API Key',
@@ -658,6 +659,54 @@ export default {
       unlockAllConfirm: '确认解锁所有锁定的 IP？',
       unlocked: 'IP 已解锁',
       allUnlocked: '已解锁 {count} 个 IP',
+    },
+    voice: {
+      ttsProvider: 'TTS 提供者',
+      ttsProviderHint: '选择消息朗读使用的语音引擎',
+      providerWebSpeech: 'WebSpeech API（浏览器内置）',
+      providerOpenai: 'OpenAI TTS',
+      providerCustom: '自定义端点（兼容 OpenAI）',
+      providerEdge: 'Edge TTS（免费，无需 API Key）',
+
+      // WebSpeech
+      webspeechVoice: '音色',
+      webspeechVoiceHint: '从浏览器或系统提供的语音中选择',
+      webspeechVoicePlaceholder: '自动（默认语音）',
+
+      // OpenAI
+      openaiKey: 'API 密钥',
+      openaiKeyHint: '具有 TTS 权限的 OpenAI API Key',
+      openaiUrl: 'API 基础地址',
+      openaiUrlHint: '例如 https://api.openai.com/v1/audio/speech',
+      openaiModel: '模型',
+      openaiModelHint: 'tts-1（快速）/ tts-1-hd（高音质）',
+      openaiVoice: '音色',
+      openaiVoiceHint: '用于语音合成的音色',
+
+      // 自定义端点
+      customHint: '支持任何 OpenAI 兼容的 TTS 服务——可用于 GPT-SoVITS、CosyVoice 等自部署服务。',
+      customUrl: 'API 地址',
+      customUrlHint: 'TTS 服务的完整基础地址',
+      customUrlPlaceholder: '本地适配器中配置的地址 如：http://127.0.0.1:9880',
+      customApiKey: 'API 密钥（可选）',
+      customApiKeyHint: '部分自部署服务需要身份验证',
+      customApiKeyPlaceholder: '不需要则留空',
+      // Edge TTS
+      edgeHint: '由 Microsoft Edge TTS 驱动（node-edge-tts）。',
+      edgeUrl: '适配器地址',
+      edgeUrlHint: 'Edge TTS 适配器地址，例如 http://127.0.0.1:9882',
+      edgeUrlPlaceholder: 'http://127.0.0.1:9882',
+      edgeVoice: '音色',
+      edgeVoiceHint: '选择用于语音合成的音色',
+
+      // 试听
+      testTitle: '试听测试',
+      testText: '测试文本',
+      testTextPlaceholder: '输入测试文本...',
+      testTextDefault: '你好，这是一个语音测试。',
+      testButton: '试听',
+      testButtonPlaying: '播放中...',
+      testFailed: '测试失败：{error}',
     },
   },
 

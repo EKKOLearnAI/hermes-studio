@@ -442,6 +442,8 @@ export default {
       session: 'セッション',
       privacy: 'プライバシー',
       apiServer: 'API サーバー',
+      models: 'モデル',
+      voice: '音声',
     },
     display: {
       streaming: 'ストリームレスポンス',
@@ -519,6 +521,55 @@ export default {
       keyHint: 'API アクセスキー',
       cors: 'CORS 許可元',
       corsHint: '許可するクロスオリジン',
+    },
+    voice: {
+      ttsProvider: 'TTS プロバイダー',
+      ttsProviderHint: 'メッセージ読み上げに使用する音声合成エンジンを選択',
+      providerWebSpeech: 'WebSpeech API（ブラウザ）',
+      providerOpenai: 'OpenAI TTS',
+      providerCustom: 'カスタムエンドポイント（OpenAI 互換）',
+      providerEdge: 'Edge TTS（無料、API Key 不要）',
+
+      // WebSpeech
+      webspeechVoice: '音声',
+      webspeechVoiceHint: 'ブラウザまたは OS から音声を選択',
+      webspeechVoicePlaceholder: '自動（デフォルト音声）',
+
+      // OpenAI
+      openaiKey: 'API キー',
+      openaiKeyHint: 'TTS アクセス権のある OpenAI API キー',
+      openaiUrl: 'API ベース URL',
+      openaiUrlHint: '例: https://api.openai.com/v1/audio/speech',
+      openaiModel: 'モデル',
+      openaiModelHint: 'tts-1（高速）/ tts-1-hd（高音質）',
+      openaiVoice: '音色',
+      openaiVoiceHint: '合成に使用する音色',
+
+      // Custom endpoint
+      customHint: 'OpenAI 互換の TTS API を使用可能 — GPT-SoVITS、CosyVoice などに対応',
+      customUrl: 'API URL',
+      customUrlHint: 'TTS サービスのベース URL',
+      customUrlPlaceholder: 'ローカルアダプターで設定したアドレス（例：http://127.0.0.1:9880）',
+      customApiKey: 'API キー（オプション）',
+      customApiKeyHint: '一部のカスタムエンドポイントは認証が必要',
+      customApiKeyPlaceholder: '不要な場合は空欄',
+
+      // Edge TTS
+      edgeHint: 'Microsoft Edge TTS を搭載（node-edge-tts）。',
+      edgeUrl: 'アダプター URL',
+      edgeUrlHint: 'Edge TTS アダプターのアドレス（例：http://127.0.0.1:9882）',
+      edgeUrlPlaceholder: 'http://127.0.0.1:9882',
+      edgeVoice: '音色',
+      edgeVoiceHint: '音声合成に使用する音色を選択',
+
+      // Test
+      testTitle: '音声テスト',
+      testText: 'テストテキスト',
+      testTextPlaceholder: 'テストするテキストを入力...',
+      testTextDefault: 'こんにちは、これは音声テストです。',
+      testButton: 'テスト',
+      testButtonPlaying: '再生中...',
+      testFailed: 'テスト失敗：{error}',
     },
     lockedIps: {
       title: 'ロック済みIP管理',

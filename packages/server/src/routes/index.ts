@@ -40,6 +40,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
+  app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---
   app.use(requireAuth)
@@ -67,7 +68,6 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(jobRoutes.routes())               // Must be before proxy
   app.use(cronHistoryRoutes.routes())        // Must be before proxy
   app.use(kanbanRoutes.routes())             // Must be before proxy
-  app.use(ttsRoutes.routes())                // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)
