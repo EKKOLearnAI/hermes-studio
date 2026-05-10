@@ -23,7 +23,7 @@ import { getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import { getModelContextLength } from './model-context'
 import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
-import { parseLLMJSON, parseToolArguments, parseAnthropicContentArray } from '../../lib/llm-json'
+import { parseAnthropicContentArray } from '../../lib/llm-json'
 import { updateUsage } from '../../db/hermes/usage-store'
 import { logger } from '../logger'
 
@@ -169,8 +169,6 @@ interface SessionState {
 interface ResponseRunState {
   runMarker?: string
   responseId?: string
-  text: string
-  textInserted: boolean
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
 }
@@ -1047,7 +1045,6 @@ export class ChatRunSocket {
     if (eventType === 'response.output_text.delta') {
       const deltaText = parsed.delta || parsed.text || ''
       if (!deltaText) return null
-      run.text += deltaText
 
       const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
       if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
@@ -1074,8 +1071,12 @@ export class ChatRunSocket {
     }
 
     if (eventType === 'response.output_text.done') {
-      const text = parsed.text || run.text
-      this.insertResponseTextOnce(state, sessionId, runMarker, text)
+      // Just mark the last assistant message as complete.
+      // Content is already accumulated correctly via deltas.
+      const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+      if (last?.role === 'assistant' && last.finish_reason == null) {
+        last.finish_reason = 'stop'
+      }
       return null
     }
 
@@ -1170,7 +1171,6 @@ export class ChatRunSocket {
           this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
         }
       }
-      this.insertResponseTextOnce(state, sessionId, runMarker, extractResponseText(response))
     }
 
     return null
@@ -1180,41 +1180,11 @@ export class ChatRunSocket {
     if (!state.responseRun || state.responseRun.runMarker !== runMarker) {
       state.responseRun = {
         runMarker,
-        text: '',
-        textInserted: false,
         insertedKeys: new Set<string>(),
         toolCalls: new Map<string, any>(),
       }
     }
     return state.responseRun
-  }
-
-  private insertResponseTextOnce(
-    state: SessionState,
-    sessionId: string,
-    runMarker: string | undefined,
-    text: string,
-  ) {
-    const run = this.getResponseRunState(state, runMarker)
-    if (run.textInserted || !text?.trim()) return
-    run.textInserted = true
-
-    const lastIdx = [...state.messages].map((m, i) => ({ m, i }))
-      .reverse().find(({ m }) => m.runMarker === runMarker)
-    if (lastIdx && lastIdx.m.role === 'assistant' && !lastIdx.m.tool_calls?.length) {
-      lastIdx.m.content = text
-      lastIdx.m.finish_reason = 'stop'
-    } else {
-      state.messages.push({
-        id: state.messages.length + 1,
-        session_id: sessionId,
-        runMarker,
-        role: 'assistant',
-        content: text,
-        finish_reason: 'stop',
-        timestamp: Math.floor(Date.now() / 1000),
-      })
-    }
   }
 
   /** Flush all non-user messages for this run to DB in order. */
