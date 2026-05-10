@@ -66,13 +66,22 @@ export const useAppStore = defineStore('app', () => {
       modelAliases.value = res.model_aliases || {}
       selectedModel.value = res.default
       selectedProvider.value = res.default_provider || ''
+
+      const defaultProvider = res.default_provider || ''
+      if (defaultProvider && res.default) {
+        const providerGroup = res.groups.find(g => g.provider === defaultProvider)
+        const isListed = providerGroup?.models.includes(res.default) ?? false
+        customModels.value = isListed ? {} : { [defaultProvider]: [res.default] }
+      } else {
+        customModels.value = {}
+      }
     } catch {
       // ignore
     }
   }
 
   function getModelAlias(modelId: string, provider?: string): string {
-    if (provider && modelAliases.value[provider]?.[modelId]) return modelAliases.value[provider][modelId]
+    if (provider) return modelAliases.value[provider]?.[modelId] || ''
     for (const aliases of Object.values(modelAliases.value)) {
       if (aliases[modelId]) return aliases[modelId]
     }

@@ -74,6 +74,62 @@ describe('App Store', () => {
     expect(store.displayModelName('unknown', 'deepseek')).toBe('unknown')
   })
 
+  it('keeps aliases scoped to their provider when model IDs overlap', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'shared-model',
+      default_provider: 'provider-a',
+      groups: [
+        {
+          provider: 'provider-a',
+          label: 'Provider A',
+          base_url: 'https://a.example/v1',
+          models: ['shared-model'],
+          api_key: '',
+        },
+        {
+          provider: 'provider-b',
+          label: 'Provider B',
+          base_url: 'https://b.example/v1',
+          models: ['shared-model'],
+          api_key: '',
+        },
+      ],
+      allProviders: [],
+      model_aliases: {
+        'provider-a': { 'shared-model': 'A Alias' },
+      },
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.displayModelName('shared-model', 'provider-a')).toBe('A Alias')
+    expect(store.displayModelName('shared-model', 'provider-b')).toBe('shared-model')
+    expect(store.displayModelName('shared-model')).toBe('A Alias')
+  })
+
+  it('rehydrates an active unlisted default model as removable after loading models', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'manually-supported-id',
+      default_provider: 'deepseek',
+      groups: [{
+        provider: 'deepseek',
+        label: 'DeepSeek',
+        base_url: 'https://api.deepseek.com/v1',
+        models: ['deepseek-v4-flash'],
+        api_key: '',
+      }],
+      allProviders: [],
+      model_aliases: {},
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.selectedModel).toBe('manually-supported-id')
+    expect(store.customModels).toEqual({ deepseek: ['manually-supported-id'] })
+  })
+
   it('saves and clears model aliases via the Web UI-only alias API', async () => {
     mockSystemApi.updateModelAlias.mockResolvedValue(undefined)
     const store = useAppStore()
