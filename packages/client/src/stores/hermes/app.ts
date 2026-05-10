@@ -119,6 +119,28 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function removeCustomModel(modelId: string, provider: string) {
+    const providerModels = customModels.value[provider] || []
+    if (!providerModels.includes(modelId)) return
+
+    const nextCustomModels = { ...customModels.value }
+    const remaining = providerModels.filter(m => m !== modelId)
+    if (remaining.length > 0) nextCustomModels[provider] = remaining
+    else delete nextCustomModels[provider]
+    customModels.value = nextCustomModels
+
+    if (selectedModel.value === modelId && selectedProvider.value === provider) {
+      const providerGroup = modelGroups.value.find(g => g.provider === provider && g.models.length > 0)
+      const fallbackGroup = providerGroup || modelGroups.value.find(g => g.models.length > 0)
+      if (fallbackGroup) {
+        await switchModel(fallbackGroup.models[0], fallbackGroup.provider)
+      } else {
+        selectedModel.value = ''
+        selectedProvider.value = ''
+      }
+    }
+  }
+
   function startHealthPolling(interval = 30000) {
     stopHealthPolling()
     checkConnection()
@@ -173,6 +195,7 @@ export const useAppStore = defineStore('app', () => {
     checkConnection,
     loadModels,
     switchModel,
+    removeCustomModel,
     getModelAlias,
     displayModelName,
     setModelAlias,

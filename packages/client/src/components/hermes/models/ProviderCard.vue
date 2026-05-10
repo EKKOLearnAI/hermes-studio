@@ -141,7 +141,6 @@ async function handleDelete() {
         >
           <span class="model-tag-name">{{ modelDisplayName(model) }}</span>
           <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
-          <span class="model-tag-edit">{{ t('models.aliasEdit') }}</span>
         </button>
         <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
           +{{ provider.models.length - 20 }} {{ t('models.more') }}
@@ -342,13 +341,6 @@ async function handleDelete() {
 
 .model-tag-id {
   color: $text-muted;
-  font-size: 9px;
-}
-
-.model-tag-edit {
-  flex-shrink: 0;
-  color: $accent-primary;
-  font-family: $font-ui;
   font-size: 9px;
 }
 

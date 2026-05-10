@@ -90,4 +90,28 @@ describe('App Store', () => {
     await store.setModelAlias('deepseek-v4-flash', 'deepseek', '')
     expect(store.modelAliases).toEqual({})
   })
+
+  it('removes an unlisted custom model and falls back to a listed model when active', async () => {
+    mockSystemApi.updateDefaultModel.mockResolvedValue(undefined)
+    const store = useAppStore()
+    store.modelGroups = [{
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      models: ['deepseek-v4-flash'],
+      api_key: '',
+    }]
+
+    await store.switchModel('test', 'deepseek')
+    expect(store.selectedModel).toBe('test')
+    expect(store.customModels).toEqual({ deepseek: ['test'] })
+
+    await store.removeCustomModel('test', 'deepseek')
+    expect(store.customModels).toEqual({})
+    expect(store.selectedModel).toBe('deepseek-v4-flash')
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenLastCalledWith({
+      default: 'deepseek-v4-flash',
+      provider: 'deepseek',
+    })
+  })
 })

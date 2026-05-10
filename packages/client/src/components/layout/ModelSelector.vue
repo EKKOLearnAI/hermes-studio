@@ -1,22 +1,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NButton, NModal, NInput, NSelect, useMessage } from 'naive-ui'
+import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const message = useMessage()
 
 const showModal = ref(false)
 const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
-const showAliasModal = ref(false)
-const aliasProvider = ref('')
-const aliasModel = ref('')
-const aliasInput = ref('')
 
 const selectedDisplayName = computed(() => appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider))
 
@@ -36,13 +31,13 @@ const modelGroupsWithCustom = computed(() =>
   }))
 )
 
-const customModelSet = computed(() => {
-  const set = new Set<string>()
-  for (const models of Object.values(appStore.customModels)) {
-    models.forEach(m => set.add(m))
-  }
-  return set
-})
+function isCustomModel(model: string, provider: string) {
+  return (appStore.customModels[provider] || []).includes(model)
+}
+
+async function removeCustomModel(model: string, provider: string) {
+  await appStore.removeCustomModel(model, provider)
+}
 
 const filteredGroups = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
@@ -80,29 +75,6 @@ function modelDisplayName(model: string, provider: string) {
 
 function modelAlias(model: string, provider: string) {
   return appStore.getModelAlias(model, provider)
-}
-
-function openAliasEditor(model: string, provider: string) {
-  aliasModel.value = model
-  aliasProvider.value = provider
-  aliasInput.value = appStore.getModelAlias(model, provider)
-  showAliasModal.value = true
-}
-
-async function saveAlias() {
-  if (!aliasModel.value || !aliasProvider.value) return
-  try {
-    await appStore.setModelAlias(aliasModel.value, aliasProvider.value, aliasInput.value)
-    showAliasModal.value = false
-  } catch (err) {
-    console.error('Failed to save model alias:', err)
-    message.error(t('models.aliasSaveFailed'))
-  }
-}
-
-async function clearAlias() {
-  aliasInput.value = ''
-  await saveAlias()
 }
 
 function handleCustomSubmit() {
@@ -183,10 +155,16 @@ function openModal() {
               </span>
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
-              <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
-              <NButton quaternary size="tiny" class="model-alias-button" @click.stop="openAliasEditor(model, group.provider)">
-                {{ t('models.aliasEdit') }}
-              </NButton>
+              <span v-if="isCustomModel(model, group.provider)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
+              <button
+                v-if="isCustomModel(model, group.provider)"
+                class="model-custom-remove"
+                type="button"
+                :title="t('models.removeCustomModel')"
+                @click.stop="removeCustomModel(model, group.provider)"
+              >
+                ×
+              </button>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -219,34 +197,6 @@ function openModal() {
       </div>
     </NModal>
 
-    <NModal
-      v-model:show="showAliasModal"
-      preset="card"
-      :title="aliasModel ? t('models.aliasTitleFor', { model: aliasModel }) : t('models.aliasTitle')"
-      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
-      :mask-closable="true"
-    >
-      <NInput
-        v-model:value="aliasInput"
-        :placeholder="t('models.aliasPlaceholder')"
-        clearable
-        @keydown.enter="saveAlias"
-      />
-      <div v-if="aliasModel" class="model-alias-canonical">
-        {{ t('models.aliasCanonical', { model: aliasModel }) }}
-      </div>
-      <div class="model-alias-hint">{{ t('models.aliasHint') }}</div>
-      <template #footer>
-        <div class="model-alias-actions">
-          <NButton quaternary :disabled="!appStore.getModelAlias(aliasModel, aliasProvider)" @click="clearAlias">
-            {{ t('models.aliasUseOriginal') }}
-          </NButton>
-          <div class="model-alias-spacer" />
-          <NButton @click="showAliasModal = false">{{ t('common.cancel') }}</NButton>
-          <NButton type="primary" @click="saveAlias">{{ t('common.save') }}</NButton>
-        </div>
-      </template>
-    </NModal>
   </div>
 </template>
 
@@ -412,28 +362,6 @@ function openModal() {
   font-weight: 400;
 }
 
-.model-alias-canonical {
-  margin-top: 8px;
-  color: $text-muted;
-  font-family: $font-code;
-  font-size: 11px;
-}
-
-.model-alias-hint {
-  margin-top: 6px;
-  color: $text-muted;
-  font-size: 12px;
-}
-
-.model-alias-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-alias-spacer {
-  flex: 1;
-}
 
 .model-check {
   flex-shrink: 0;
@@ -450,6 +378,25 @@ function openModal() {
   border-radius: 3px;
   margin-right: 4px;
   letter-spacing: 0.03em;
+}
+
+
+.model-custom-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  line-height: 18px;
+  padding: 0;
+
+  &:hover {
+    background: rgba(var(--error-rgb), 0.12);
+    color: $error;
+  }
 }
 
 .model-badge-preview {
