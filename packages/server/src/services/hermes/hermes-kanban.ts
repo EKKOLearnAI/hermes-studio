@@ -112,6 +112,21 @@ export interface KanbanBoard {
   total: number
 }
 
+export interface KanbanBoardCreateOptions {
+  slug: string
+  name?: string
+  description?: string
+  icon?: string
+  color?: string
+  switchCurrent?: boolean
+}
+
+export interface KanbanCapabilities {
+  source: 'hermes-cli'
+  supports: Record<string, boolean>
+  missing: string[]
+}
+
 export interface KanbanBoardOptions {
   board?: string
 }
@@ -133,6 +148,72 @@ export async function listBoards(opts?: { includeArchived?: boolean }): Promise<
     logger.error(err, 'Hermes CLI: kanban boards list failed')
     throw new Error(`Failed to list kanban boards: ${err.message}`)
   }
+}
+
+async function findBoard(slug: string, includeArchived = true): Promise<KanbanBoard | null> {
+  const boards = await listBoards({ includeArchived })
+  return boards.find(board => board.slug === slug) || null
+}
+
+export async function createBoard(opts: KanbanBoardCreateOptions): Promise<KanbanBoard> {
+  const slug = normalizeBoardSlug(opts.slug)
+  const args = ['kanban', 'boards', 'create', slug]
+  if (opts.name?.trim()) args.push('--name', opts.name.trim())
+  if (opts.description?.trim()) args.push('--description', opts.description.trim())
+  if (opts.icon?.trim()) args.push('--icon', opts.icon.trim())
+  if (opts.color?.trim()) args.push('--color', opts.color.trim())
+  if (opts.switchCurrent) args.push('--switch')
+
+  try {
+    await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    const board = await findBoard(slug)
+    if (!board) throw new Error('created board was not returned by boards list')
+    return board
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban boards create failed')
+    throw new Error(`Failed to create kanban board: ${err.message}`)
+  }
+}
+
+export async function archiveBoard(slugInput: string): Promise<void> {
+  const slug = normalizeBoardSlug(slugInput)
+  if (slug === 'default') throw new Error('Cannot archive the default kanban board')
+
+  try {
+    await execFileAsync(HERMES_BIN, ['kanban', 'boards', 'rm', slug], {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban boards archive failed')
+    throw new Error(`Failed to archive kanban board: ${err.message}`)
+  }
+}
+
+export async function getCapabilities(): Promise<KanbanCapabilities> {
+  const supports = {
+    explicitBoard: true,
+    boardsList: true,
+    boardCreate: true,
+    boardArchive: true,
+    cliCurrentSwitch: true,
+    taskCrudLite: true,
+    commentsWrite: false,
+    taskLog: false,
+    dispatch: false,
+    events: false,
+    diagnostics: false,
+    bulk: false,
+  }
+  const missing = Object.entries(supports)
+    .filter(([, supported]) => !supported)
+    .map(([name]) => name)
+  return { source: 'hermes-cli', supports, missing }
 }
 
 export async function listTasks(opts?: {

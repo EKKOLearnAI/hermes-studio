@@ -9,6 +9,9 @@ vi.mock('../../packages/client/src/api/client', () => ({
 
 import {
   listBoards,
+  createBoard,
+  archiveBoard,
+  getCapabilities,
   listTasks,
   getTask,
   createTask,
@@ -77,20 +80,29 @@ describe('Kanban API', () => {
     ])
   })
 
-  it('lists boards and unwraps stats/assignee response envelopes', async () => {
+  it('lists and manages boards through explicit board endpoints', async () => {
     mockRequest
       .mockResolvedValueOnce({ boards: [{ slug: 'default' }] })
+      .mockResolvedValueOnce({ board: { slug: 'project-a' } })
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ capabilities: { source: 'hermes-cli', supports: { boardsList: true }, missing: [] } })
       .mockResolvedValueOnce({ stats: { total: 3, by_status: {}, by_assignee: {} } })
       .mockResolvedValueOnce({ assignees: [{ name: 'alice', on_disk: true, counts: { todo: 1 } }] })
 
     await expect(listBoards({ includeArchived: true })).resolves.toEqual([{ slug: 'default' }])
+    await expect(createBoard({ slug: 'project-a', name: 'Project A' })).resolves.toEqual({ slug: 'project-a' })
+    await expect(archiveBoard('project-a')).resolves.toEqual({ ok: true })
+    await expect(getCapabilities()).resolves.toEqual({ source: 'hermes-cli', supports: { boardsList: true }, missing: [] })
     await expect(getStats({ board: 'project-a' })).resolves.toEqual({ total: 3, by_status: {}, by_assignee: {} })
     await expect(getAssignees({ board: 'project-a' })).resolves.toEqual([{ name: 'alice', on_disk: true, counts: { todo: 1 } }])
 
-    expect(mockRequest.mock.calls.map(call => call[0])).toEqual([
-      '/api/hermes/kanban/boards?includeArchived=true',
-      '/api/hermes/kanban/stats?board=project-a',
-      '/api/hermes/kanban/assignees?board=project-a',
+    expect(mockRequest.mock.calls).toEqual([
+      ['/api/hermes/kanban/boards?includeArchived=true'],
+      ['/api/hermes/kanban/boards', { method: 'POST', body: JSON.stringify({ slug: 'project-a', name: 'Project A' }) }],
+      ['/api/hermes/kanban/boards/project-a', { method: 'DELETE' }],
+      ['/api/hermes/kanban/capabilities'],
+      ['/api/hermes/kanban/stats?board=project-a'],
+      ['/api/hermes/kanban/assignees?board=project-a'],
     ])
   })
 })

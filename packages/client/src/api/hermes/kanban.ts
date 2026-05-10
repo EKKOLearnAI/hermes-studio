@@ -112,6 +112,21 @@ export interface KanbanBoard {
   total: number
 }
 
+export interface KanbanBoardCreateRequest {
+  slug: string
+  name?: string
+  description?: string
+  icon?: string
+  color?: string
+  switchCurrent?: boolean
+}
+
+export interface KanbanCapabilities {
+  source: 'hermes-cli'
+  supports: Record<string, boolean>
+  missing: string[]
+}
+
 export interface KanbanCreateRequest {
   title: string
   body?: string
@@ -153,6 +168,25 @@ export async function listBoards(opts?: { includeArchived?: boolean }): Promise<
   if (opts?.includeArchived) params.set('includeArchived', 'true')
   const res = await request<{ boards: KanbanBoard[] }>(appendQuery('/api/hermes/kanban/boards', params))
   return res.boards
+}
+
+export async function createBoard(data: KanbanBoardCreateRequest): Promise<KanbanBoard> {
+  const res = await request<{ board: KanbanBoard }>('/api/hermes/kanban/boards', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+  return res.board
+}
+
+export async function archiveBoard(slug: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/hermes/kanban/boards/${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getCapabilities(): Promise<KanbanCapabilities> {
+  const res = await request<{ capabilities: KanbanCapabilities }>('/api/hermes/kanban/capabilities')
+  return res.capabilities
 }
 
 export async function listTasks(opts?: KanbanListOptions): Promise<KanbanTask[]> {

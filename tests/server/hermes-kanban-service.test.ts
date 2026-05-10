@@ -28,6 +28,28 @@ describe('hermes kanban service', () => {
     expect(mockExecFileAsync.mock.calls[0][1]).toEqual(['kanban', 'boards', 'list', '--json', '--all'])
   })
 
+  it('creates and archives boards through canonical CLI board commands', async () => {
+    mockExecFileAsync
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([{ slug: 'project-a', name: 'Project A' }]) })
+      .mockResolvedValueOnce({ stdout: '' })
+
+    await expect(service.createBoard({ slug: 'project-a', name: 'Project A', description: 'desc', icon: '📌', color: '#8b5cf6', switchCurrent: true })).resolves.toEqual({ slug: 'project-a', name: 'Project A' })
+    await expect(service.archiveBoard('project-a')).resolves.toBeUndefined()
+
+    expect(mockExecFileAsync.mock.calls[0][1]).toEqual(['kanban', 'boards', 'create', 'project-a', '--name', 'Project A', '--description', 'desc', '--icon', '📌', '--color', '#8b5cf6', '--switch'])
+    expect(mockExecFileAsync.mock.calls[1][1]).toEqual(['kanban', 'boards', 'list', '--json', '--all'])
+    expect(mockExecFileAsync.mock.calls[2][1]).toEqual(['kanban', 'boards', 'rm', 'project-a'])
+  })
+
+  it('exposes capability metadata for WUI/canonical parity gaps', async () => {
+    await expect(service.getCapabilities()).resolves.toMatchObject({
+      source: 'hermes-cli',
+      supports: { boardsList: true, boardCreate: true, commentsWrite: false, dispatch: false },
+      missing: expect.arrayContaining(['commentsWrite', 'dispatch']),
+    })
+  })
+
   it('builds list/create/stats CLI calls with global --board before the action', async () => {
     mockExecFileAsync
       .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'task-1' }]) })

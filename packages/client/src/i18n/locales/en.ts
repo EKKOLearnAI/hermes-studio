@@ -226,6 +226,16 @@ export default {
     noTasks: 'No tasks',
     allStatuses: 'All Statuses',
     allAssignees: 'All Assignees',
+    board: {
+      create: 'New Board',
+      archive: 'Archive Board',
+      slugPlaceholder: 'Board slug, e.g. project-a',
+      namePlaceholder: 'Display name (optional)',
+      slugRequired: 'Board slug is required',
+      created: 'Board created',
+      archived: 'Board archived',
+      archiveConfirm: 'Archive the current board?',
+    },
     columns: {
       triage: 'Triage',
       todo: 'To Do',
@@ -299,6 +309,7 @@ export default {
     },
     stats: {
       total: 'Total',
+      tasks: 'Tasks',
     },
   },
 

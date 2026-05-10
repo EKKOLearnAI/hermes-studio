@@ -39,6 +39,55 @@ export async function listBoards(ctx: Context) {
   }
 }
 
+export async function createBoard(ctx: Context) {
+  const { slug, name, description, icon, color, switchCurrent } = ctx.request.body as {
+    slug?: string
+    name?: string
+    description?: string
+    icon?: string
+    color?: string
+    switchCurrent?: boolean
+  }
+  if (!slug?.trim()) {
+    ctx.status = 400
+    ctx.body = { error: 'slug is required' }
+    return
+  }
+  try {
+    const board = await kanbanCli.createBoard({ slug, name, description, icon, color, switchCurrent })
+    ctx.body = { board }
+  } catch (err: any) {
+    ctx.status = err.message?.includes('Invalid kanban board slug') ? 400 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function archiveBoard(ctx: Context) {
+  const slug = ctx.params.slug
+  if (!slug?.trim()) {
+    ctx.status = 400
+    ctx.body = { error: 'slug is required' }
+    return
+  }
+  try {
+    await kanbanCli.archiveBoard(slug)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err.message?.includes('default') || err.message?.includes('Invalid kanban board slug') ? 400 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function capabilities(ctx: Context) {
+  try {
+    const capabilities = await kanbanCli.getCapabilities()
+    ctx.body = { capabilities }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
 export async function list(ctx: Context) {
   const { status, assignee, tenant } = ctx.query as Record<string, string | undefined>
   const board = requestBoard(ctx)

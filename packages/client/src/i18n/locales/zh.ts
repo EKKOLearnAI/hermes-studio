@@ -226,6 +226,16 @@ export default {
     noTasks: '暂无任务',
     allStatuses: '全部状态',
     allAssignees: '全部负责人',
+    board: {
+      create: '新建看板',
+      archive: '归档看板',
+      slugPlaceholder: '看板标识，例如 project-a',
+      namePlaceholder: '显示名称（可选）',
+      slugRequired: '看板标识不能为空',
+      created: '看板已创建',
+      archived: '看板已归档',
+      archiveConfirm: '确定归档当前看板？',
+    },
     columns: {
       triage: '待分拣',
       todo: '待办',
@@ -299,6 +309,7 @@ export default {
     },
     stats: {
       total: '总计',
+      tasks: '任务数',
     },
   },
 

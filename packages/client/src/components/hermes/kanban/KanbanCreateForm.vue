@@ -28,7 +28,7 @@ const priorityOptions = computed(() => [
 const assigneeOptions = computed(() => {
   return kanbanStore.assignees.map(a => {
     const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
-    return { label: `${a.name} (${total})`, value: a.name }
+    return { label: `${a.name} · ${t('kanban.stats.tasks')}: ${total}`, value: a.name }
   })
 })
 

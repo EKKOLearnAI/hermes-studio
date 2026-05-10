@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as kanbanApi from '@/api/hermes/kanban'
-import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard } from '@/api/hermes/kanban'
+import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities } from '@/api/hermes/kanban'
 
 export const KANBAN_SELECTED_BOARD_STORAGE_KEY = 'hermes.kanban.selectedBoard'
 export const DEFAULT_KANBAN_BOARD = 'default'
@@ -37,6 +37,7 @@ export const useKanbanStore = defineStore('kanban', () => {
   const stats = ref<KanbanStats | null>(null)
   const assignees = ref<KanbanAssignee[]>([])
   const boards = ref<KanbanBoard[]>([])
+  const capabilities = ref<KanbanCapabilities | null>(null)
   const loading = ref(false)
   const boardsLoading = ref(false)
   const boardWarning = ref<string | null>(null)
@@ -47,6 +48,7 @@ export const useKanbanStore = defineStore('kanban', () => {
   const filterAssignee = ref<string | null>(null)
 
   let boardGeneration = 0
+  let boardsRequestSeq = 0
   let tasksRequestSeq = 0
   let statsRequestSeq = 0
   let assigneesRequestSeq = 0
@@ -122,16 +124,44 @@ export const useKanbanStore = defineStore('kanban', () => {
   }
 
   async function fetchBoards(includeArchived = false) {
+    const seq = ++boardsRequestSeq
     boardsLoading.value = true
     try {
-      boards.value = await kanbanApi.listBoards({ includeArchived })
+      const nextBoards = await kanbanApi.listBoards({ includeArchived })
+      if (seq !== boardsRequestSeq) return
+      boards.value = nextBoards
       const resolved = resolveAvailableBoard(selectedBoard.value)
       if (resolved !== selectedBoard.value) recoverSelectedBoard(selectedBoard.value)
     } catch (err) {
-      console.error('Failed to fetch kanban boards:', err)
+      if (seq === boardsRequestSeq) console.error('Failed to fetch kanban boards:', err)
     } finally {
-      boardsLoading.value = false
+      if (seq === boardsRequestSeq) boardsLoading.value = false
     }
+  }
+
+  async function fetchCapabilities() {
+    try {
+      capabilities.value = await kanbanApi.getCapabilities()
+    } catch (err) {
+      console.error('Failed to fetch kanban capabilities:', err)
+    }
+  }
+
+  async function createBoard(data: { slug: string; name?: string; description?: string; icon?: string; color?: string; switchCurrent?: boolean }) {
+    const board = await kanbanApi.createBoard(data)
+    await fetchBoards()
+    setSelectedBoard(board.slug)
+    await refreshAll()
+    return board
+  }
+
+  async function archiveSelectedBoard() {
+    const board = selectedBoard.value
+    if (board === DEFAULT_KANBAN_BOARD) throw new Error('Cannot archive the default kanban board')
+    await kanbanApi.archiveBoard(board)
+    await fetchBoards()
+    setSelectedBoard(DEFAULT_KANBAN_BOARD)
+    await refreshAll()
   }
 
   async function fetchTasks(silent = false) {
@@ -177,7 +207,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     const task = await kanbanApi.createTask(data, { board })
     if (board === selectedBoard.value) {
       tasks.value.unshift(task)
-      await fetchStats()
+      await Promise.all([fetchStats(), fetchBoards()])
     }
     return task
   }
@@ -190,7 +220,7 @@ export const useKanbanStore = defineStore('kanban', () => {
         const task = tasks.value.find(t => t.id === id)
         if (task) task.status = 'done'
       }
-      await fetchStats()
+      await Promise.all([fetchStats(), fetchBoards()])
     }
   }
 
@@ -200,7 +230,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     if (board === selectedBoard.value) {
       const task = tasks.value.find(t => t.id === taskId)
       if (task) task.status = 'blocked'
-      await fetchStats()
+      await Promise.all([fetchStats(), fetchBoards()])
     }
   }
 
@@ -212,7 +242,7 @@ export const useKanbanStore = defineStore('kanban', () => {
         const task = tasks.value.find(t => t.id === id)
         if (task) task.status = 'ready'
       }
-      await fetchStats()
+      await Promise.all([fetchStats(), fetchBoards()])
     }
   }
 
@@ -222,6 +252,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     if (board === selectedBoard.value) {
       const task = tasks.value.find(t => t.id === taskId)
       if (task) task.assignee = profile
+      await Promise.all([fetchStats(), fetchAssignees()])
     }
   }
 
@@ -231,7 +262,7 @@ export const useKanbanStore = defineStore('kanban', () => {
   }
 
   async function refreshAll() {
-    await Promise.all([fetchTasks(), fetchStats(), fetchAssignees()])
+    await Promise.all([fetchBoards(), fetchTasks(), fetchStats(), fetchAssignees()])
   }
 
   return {
@@ -239,6 +270,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     stats,
     assignees,
     boards,
+    capabilities,
     activeBoards,
     loading,
     boardsLoading,
@@ -247,10 +279,13 @@ export const useKanbanStore = defineStore('kanban', () => {
     filterStatus,
     filterAssignee,
     fetchBoards,
+    fetchCapabilities,
     fetchTasks,
     fetchStats,
     fetchAssignees,
     createTask,
+    createBoard,
+    archiveSelectedBoard,
     completeTasks,
     blockTask,
     unblockTasks,

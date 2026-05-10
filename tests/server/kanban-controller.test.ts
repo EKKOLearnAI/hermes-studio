@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
 const mockListBoards = vi.hoisted(() => vi.fn())
+const mockCreateBoard = vi.hoisted(() => vi.fn())
+const mockArchiveBoard = vi.hoisted(() => vi.fn())
+const mockGetCapabilities = vi.hoisted(() => vi.fn())
 const mockListTasks = vi.hoisted(() => vi.fn())
 const mockGetTask = vi.hoisted(() => vi.fn())
 const mockCreateTask = vi.hoisted(() => vi.fn())
@@ -31,6 +34,9 @@ vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
     return value
   },
   listBoards: mockListBoards,
+  createBoard: mockCreateBoard,
+  archiveBoard: mockArchiveBoard,
+  getCapabilities: mockGetCapabilities,
   listTasks: mockListTasks,
   getTask: mockGetTask,
   createTask: mockCreateTask,
@@ -80,6 +86,23 @@ describe('kanban controller', () => {
     await ctrl.list(c)
     expect(mockListTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' })
     expect(c.body).toEqual({ tasks: [{ id: 'task-1' }] })
+
+    mockCreateBoard.mockResolvedValue({ slug: 'project-b' })
+    const createBoardCtx = ctx({ request: { body: { slug: 'project-b', name: 'Project B', switchCurrent: false } } })
+    await ctrl.createBoard(createBoardCtx)
+    expect(mockCreateBoard).toHaveBeenCalledWith({ slug: 'project-b', name: 'Project B', description: undefined, icon: undefined, color: undefined, switchCurrent: false })
+    expect(createBoardCtx.body).toEqual({ board: { slug: 'project-b' } })
+
+    mockArchiveBoard.mockResolvedValue(undefined)
+    const archiveCtx = ctx({ params: { slug: 'project-b' } })
+    await ctrl.archiveBoard(archiveCtx)
+    expect(mockArchiveBoard).toHaveBeenCalledWith('project-b')
+    expect(archiveCtx.body).toEqual({ ok: true })
+
+    mockGetCapabilities.mockResolvedValue({ source: 'hermes-cli', supports: {}, missing: [] })
+    const capabilitiesCtx = ctx()
+    await ctrl.capabilities(capabilitiesCtx)
+    expect(capabilitiesCtx.body).toEqual({ capabilities: { source: 'hermes-cli', supports: {}, missing: [] } })
 
     const defaultCtx = ctx({ query: { status: 'ready' } })
     await ctrl.list(defaultCtx)
