@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { checkHealth, fetchAvailableModels, updateDefaultModel, updateModelVisibility, triggerUpdate, type AvailableModelGroup, type ModelVisibility, type ModelVisibilityRule } from '@/api/hermes/system'
+import { checkHealth, fetchAvailableModels, updateDefaultModel, updateModelVisibility, triggerUpdate, type AvailableModelGroup, type AvailableModelsResponse, type ModelVisibility, type ModelVisibilityRule } from '@/api/hermes/system'
 
 const WEB_UI_VERSION = __APP_VERSION__
 
@@ -59,17 +59,21 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  function applyAvailableModelsResponse(res: AvailableModelsResponse) {
+    modelGroups.value = res.groups
+    modelVisibility.value = res.model_visibility || {}
+    const defaultGroup = res.groups.find(g => g.provider === (res.default_provider || '') && g.models.includes(res.default))
+    const inferredGroup = res.groups.find(g => g.models.includes(res.default))
+    const fallbackGroup = res.groups.find(g => g.models.length > 0)
+    const selectedGroup = defaultGroup || inferredGroup || fallbackGroup
+    selectedModel.value = selectedGroup ? (defaultGroup || inferredGroup ? res.default : selectedGroup.models[0]) : ''
+    selectedProvider.value = selectedGroup?.provider || ''
+  }
+
   async function loadModels() {
     try {
       const res = await fetchAvailableModels()
-      modelGroups.value = res.groups
-      modelVisibility.value = res.model_visibility || {}
-      const defaultGroup = res.groups.find(g => g.provider === (res.default_provider || '') && g.models.includes(res.default))
-      const inferredGroup = res.groups.find(g => g.models.includes(res.default))
-      const fallbackGroup = res.groups.find(g => g.models.length > 0)
-      const selectedGroup = defaultGroup || inferredGroup || fallbackGroup
-      selectedModel.value = selectedGroup ? (defaultGroup || inferredGroup ? res.default : selectedGroup.models[0]) : ''
-      selectedProvider.value = selectedGroup?.provider || ''
+      applyAvailableModelsResponse(res)
     } catch {
       // ignore
     }
@@ -164,6 +168,7 @@ export const useAppStore = defineStore('app', () => {
     maxTokens,
     checkConnection,
     loadModels,
+    applyAvailableModelsResponse,
     switchModel,
     getProviderVisibility,
     isModelVisible,
