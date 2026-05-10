@@ -107,7 +107,6 @@ async function syncProfileSessions(profile: string): Promise<{
             reasoning: msg.reasoning,
             reasoning_details: msg.reasoning_details,
             reasoning_content: msg.reasoning_content,
-            codex_reasoning_items: msg.codex_reasoning_items,
           })
         }
 

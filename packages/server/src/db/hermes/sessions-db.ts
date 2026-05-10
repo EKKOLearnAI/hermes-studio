@@ -53,7 +53,6 @@ export interface HermesMessageRow {
   finish_reason: string | null
   reasoning: string | null
   reasoning_details?: string | null
-  codex_reasoning_items?: string | null
   reasoning_content?: string | null
 }
 
@@ -350,7 +349,6 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     finish_reason: normalizeNullableString(row.finish_reason),
     reasoning,
     reasoning_details: normalizeNullableString(row.reasoning_details),
-    codex_reasoning_items: normalizeNullableString(row.codex_reasoning_items),
     reasoning_content: normalizeNullableString(row.reasoning_content),
   }
 }
