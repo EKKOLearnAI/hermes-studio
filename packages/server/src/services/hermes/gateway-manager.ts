@@ -471,9 +471,9 @@ export class GatewayManager {
     // 统一使用 "gateway run" 作为 detached 子进程，避免 systemd 单例服务限制
     return new Promise((resolve, reject) => {
       const env = { ...process.env, HERMES_HOME: hermesHome }
-      const child = spawn(HERMES_BIN, ['gateway', 'run'], {
+      const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
         detached: true,
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'pipe'],
         windowsHide: true,
         env,
       })
@@ -482,9 +482,32 @@ export class GatewayManager {
       const pid = child.pid ?? 0
       logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
 
+      let settled = false
+      const settleOnce = (fn: () => void) => {
+        if (!settled) { settled = true; fn() }
+      }
+
+      // 捕获 stderr 和 exit 事件以便调试启动失败原因
+      const stderrChunks: Buffer[] = []
+      if (child.stderr) {
+        child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
+        child.stderr.on('end', () => {
+          if (stderrChunks.length > 0) {
+            logger.warn('Gateway stderr for "%s": %s', name, Buffer.concat(stderrChunks).toString().trim())
+          }
+        })
+      }
+      child.on('exit', (code, signal) => {
+        const stderrText = stderrChunks.length > 0
+          ? `\nstderr: ${Buffer.concat(stderrChunks).toString().trim()}`
+          : ''
+        const msg = `Gateway for "${name}" exited (PID: ${pid}, code: ${code ?? 'null'}, signal: ${signal ?? 'null'})${stderrText}`
+        settleOnce(() => reject(new Error(msg)))
+      })
+
       this.waitForReady(name, pid, port, host, url)
-        .then(resolve)
-        .catch(reject)
+        .then(result => settleOnce(() => resolve(result)))
+        .catch(err => settleOnce(() => reject(err)))
     })
   }
 
