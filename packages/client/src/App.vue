@@ -10,14 +10,14 @@ import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 
-const { isDark } = useTheme()
+const { isDark, isComic } = useTheme()
 const { t } = useI18n()
 const appStore = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const ready = ref(false)
 
-const themeOverrides = computed(() => getThemeOverrides(isDark.value))
+const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')

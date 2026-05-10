@@ -1,12 +1,35 @@
 @use 'variables' as *;
 @use 'code-block';
 
+@font-face {
+  font-family: 'Comic Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ComicNeue-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Comic Neue';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ComicNeue-Bold.ttf') format('truetype');
+}
+
 *,
 *::before,
 *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 :root {
@@ -43,6 +66,21 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html.comic body {
+  font-weight: var(--comic-font-weight, 700);
+}
+
+html.comic button,
+html.comic input,
+html.comic select,
+html.comic textarea,
+html.comic a,
+html.comic span,
+html.comic div,
+html.comic label {
+  font-weight: var(--comic-font-weight, 700);
 }
 
 code, pre, .mono {
