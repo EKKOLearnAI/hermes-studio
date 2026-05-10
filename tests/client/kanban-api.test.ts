@@ -2,9 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockRequest = vi.hoisted(() => vi.fn())
+const mockGetApiKey = vi.hoisted(() => vi.fn(() => ''))
+const mockGetBaseUrlValue = vi.hoisted(() => vi.fn(() => ''))
 
 vi.mock('../../packages/client/src/api/client', () => ({
   request: mockRequest,
+  getApiKey: mockGetApiKey,
+  getBaseUrlValue: mockGetBaseUrlValue,
 }))
 
 import {
@@ -28,11 +32,23 @@ import {
   dispatch,
   getStats,
   getAssignees,
+  buildKanbanEventsWebSocketUrl,
 } from '../../packages/client/src/api/hermes/kanban'
 
 describe('Kanban API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
+    mockGetApiKey.mockReturnValue('')
+    mockGetBaseUrlValue.mockReturnValue('')
+  })
+
+  it('builds board-scoped kanban event websocket URLs with auth token', () => {
+    mockGetBaseUrlValue.mockReturnValue('https://wui.example.test')
+    mockGetApiKey.mockReturnValue('token value')
+
+    expect(buildKanbanEventsWebSocketUrl({ board: 'project-a' })).toBe('wss://wui.example.test/api/hermes/kanban/events?board=project-a&token=token+value')
+    expect(buildKanbanEventsWebSocketUrl()).toBe('wss://wui.example.test/api/hermes/kanban/events?board=default&token=token+value')
   })
 
   it('serializes board, list filters, and archived inclusion into query params', async () => {

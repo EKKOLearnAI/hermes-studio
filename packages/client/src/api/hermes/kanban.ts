@@ -1,4 +1,4 @@
-import { request } from '../client'
+import { request, getApiKey, getBaseUrlValue } from '../client'
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -212,6 +212,37 @@ function boardParams(board?: string): URLSearchParams {
   const params = new URLSearchParams()
   params.set('board', normalizedBoard(board))
   return params
+}
+
+function websocketProtocol(base?: string): string {
+  if (base) return base.startsWith('https') ? 'wss:' : 'ws:'
+  return location.protocol === 'https:' ? 'wss:' : 'ws:'
+}
+
+function formatHostForPort(hostname: string, port: number): string {
+  if (hostname.startsWith('[') && hostname.endsWith(']')) return `${hostname}:${port}`
+  return hostname.includes(':') ? `[${hostname}]:${port}` : `${hostname}:${port}`
+}
+
+export function buildKanbanEventsWebSocketUrl(opts?: KanbanBoardOptions): string {
+  const base = getBaseUrlValue()
+  const params = boardParams(opts?.board)
+  const token = getApiKey()
+  if (token) params.set('token', token)
+  const path = `/api/hermes/kanban/events?${params.toString()}`
+
+  if (base) {
+    return `${websocketProtocol(base)}//${new URL(base).host}${path}`
+  }
+
+  const host = import.meta.env.DEV
+    ? formatHostForPort(location.hostname, 8648)
+    : location.host
+  return `${websocketProtocol()}//${host}${path}`
+}
+
+export function openKanbanEventStream(opts?: KanbanBoardOptions): WebSocket {
+  return new WebSocket(buildKanbanEventsWebSocketUrl(opts))
 }
 
 // ─── API functions ───────────────────────────────────────────────

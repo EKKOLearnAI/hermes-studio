@@ -22,6 +22,7 @@ const mockKanbanApi = vi.hoisted(() => ({
   reassignTask: vi.fn(),
   specifyTask: vi.fn(),
   dispatch: vi.fn(),
+  openKanbanEventStream: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/kanban', () => mockKanbanApi)
@@ -49,6 +50,7 @@ describe('Kanban store', () => {
       { slug: 'project-a', name: 'Project A', archived: false, counts: { todo: 1 }, total: 1 },
     ])
     mockKanbanApi.getCapabilities.mockResolvedValue({ source: 'hermes-cli', supports: { boardsList: true }, missing: [] })
+    mockKanbanApi.openKanbanEventStream.mockReturnValue({ close: vi.fn(), onmessage: null, onclose: null, onerror: null })
   })
 
   it('persists selected board, including default, and falls back to default for missing boards', async () => {
@@ -135,6 +137,44 @@ describe('Kanban store', () => {
 
     expect(mockKanbanApi.addComment).toHaveBeenCalledWith('task-1', { body: 'needs review', author: 'han' }, { board: 'project-a' })
     expect(mockKanbanApi.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('opens board-scoped event streams, refreshes on events, and reconnects on board switch', async () => {
+    vi.useFakeTimers()
+    const socketA = { close: vi.fn(), onmessage: null as ((event: { data: string }) => void) | null, onclose: null, onerror: null }
+    const socketB = { close: vi.fn(), onmessage: null as ((event: { data: string }) => void) | null, onclose: null, onerror: null }
+    mockKanbanApi.openKanbanEventStream
+      .mockReturnValueOnce(socketA)
+      .mockReturnValueOnce(socketB)
+    mockKanbanApi.getCapabilities.mockResolvedValue({
+      source: 'hermes-cli',
+      supports: {},
+      missing: [],
+      capabilities: [{ key: 'events', status: 'partial', requiresBoard: true }],
+    })
+    mockKanbanApi.listTasks.mockResolvedValue([])
+    mockKanbanApi.getStats.mockResolvedValue({ total: 0, by_status: {}, by_assignee: {} })
+    mockKanbanApi.getAssignees.mockResolvedValue([])
+
+    const store = useKanbanStore()
+    store.setSelectedBoard('project-a')
+    await store.fetchCapabilities()
+
+    expect(store.startEventStream()).toBe(true)
+    expect(mockKanbanApi.openKanbanEventStream).toHaveBeenCalledWith({ board: 'project-a' })
+
+    socketA.onmessage?.({ data: JSON.stringify({ type: 'event', line: 'changed' }) })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
+    expect(mockKanbanApi.getStats).toHaveBeenCalledWith({ board: 'project-a' })
+    expect(mockKanbanApi.getAssignees).toHaveBeenCalledWith({ board: 'project-a' })
+
+    store.setSelectedBoard('default')
+    expect(socketA.close).toHaveBeenCalled()
+    expect(mockKanbanApi.openKanbanEventStream).toHaveBeenLastCalledWith({ board: 'default' })
+    store.stopEventStream()
+    expect(socketB.close).toHaveBeenCalled()
+    vi.useRealTimers()
   })
 
   it('passes selected board to parity actions and refreshes affected board state', async () => {

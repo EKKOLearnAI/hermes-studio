@@ -46,12 +46,17 @@ describe('hermes kanban service', () => {
     await expect(service.getCapabilities()).resolves.toMatchObject({
       source: 'hermes-cli',
       supports: { boardsList: true, boardCreate: true, commentsWrite: true, dispatch: true },
-      missing: expect.arrayContaining(['cliCurrentSwitch', 'links', 'bulk', 'events', 'homeSubscriptions']),
+      missing: expect.arrayContaining(['cliCurrentSwitch', 'links', 'bulk', 'homeSubscriptions']),
       capabilities: expect.arrayContaining([
         expect.objectContaining({ key: 'commentsWrite', status: 'supported', canonicalCommand: 'comment', requiresBoard: true }),
-        expect.objectContaining({ key: 'events', status: 'missing', canonicalRoute: '/events', requiresBoard: true }),
+        expect.objectContaining({ key: 'events', status: 'partial', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true }),
       ]),
     })
+  })
+
+  it('builds board-scoped watch args for the kanban event bridge', () => {
+    expect(service.buildWatchArgs({ board: 'Project_A', interval: 0.25 })).toEqual(['kanban', '--board', 'project_a', 'watch', '--interval', '0.25'])
+    expect(service.buildWatchArgs()).toEqual(['kanban', '--board', 'default', 'watch', '--interval', '0.5'])
   })
 
   it('builds comment/log/diagnostics commands with explicit board', async () => {

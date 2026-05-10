@@ -1,4 +1,5 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { logger } from '../logger'
 
@@ -155,6 +156,10 @@ export interface KanbanBoardOptions {
   board?: string
 }
 
+export interface KanbanWatchOptions extends KanbanBoardOptions {
+  interval?: number
+}
+
 // ─── CLI wrappers ───────────────────────────────────────────────
 
 export async function listBoards(opts?: { includeArchived?: boolean }): Promise<KanbanBoard[]> {
@@ -237,7 +242,7 @@ export async function getCapabilities(): Promise<KanbanCapabilities> {
     { key: 'dispatch', status: 'supported', canonicalRoute: '/dispatch', canonicalCommand: 'dispatch', requiresBoard: true },
     { key: 'links', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true },
     { key: 'bulk', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/tasks/bulk', canonicalCommand: 'bulk-equivalent', requiresBoard: true },
-    { key: 'events', status: 'missing', reason: 'Streaming strategy not selected for WUI yet', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true },
+    { key: 'events', status: 'partial', reason: 'WUI exposes a board-scoped WebSocket bridge backed by the canonical `kanban watch` stream; payload is currently a refresh invalidation signal, not a typed event model', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true },
     { key: 'homeSubscriptions', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/home-channels and subscription routes', canonicalCommand: 'notify-*', requiresBoard: true },
   ]
   const supports = Object.fromEntries(capabilities.map(capability => [capability.key, capability.status === 'supported'])) as Record<string, boolean>
@@ -264,6 +269,19 @@ function isNoWorkerLogError(err: any): boolean {
 
 function pushOptional(args: string[], flag: string, value?: string | number | null): void {
   if (value !== undefined && value !== null && String(value).trim() !== '') args.push(flag, String(value))
+}
+
+export function buildWatchArgs(opts?: KanbanWatchOptions): string[] {
+  const args = [...boardArgs(opts?.board), 'watch']
+  pushOptional(args, '--interval', opts?.interval ?? 0.5)
+  return args
+}
+
+export function watchEvents(opts?: KanbanWatchOptions): ChildProcess {
+  return spawn(HERMES_BIN, buildWatchArgs(opts), {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...execOpts,
+  })
 }
 
 export async function addComment(taskId: string, body: string, opts?: KanbanBoardOptions & { author?: string }): Promise<{ ok: boolean; output: string }> {
