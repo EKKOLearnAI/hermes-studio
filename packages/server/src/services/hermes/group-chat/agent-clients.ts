@@ -623,11 +623,25 @@ export class AgentClients {
 
         const content = msg.content.toLowerCase()
         const agents = this.getAgents(roomId)
+        if (agents.length === 0) return
 
+        // @all / @所有人 — notify all agents in the room
+        const hasAtAll = content.includes('@all') || content.includes('@所有人')
+        if (hasAtAll) {
+            logger.info(`[AgentClients] @all detected in room ${roomId} by ${msg.senderName}, mentioning all ${agents.length} agents: ${agents.map(a => a.name).join(', ')}`)
+            for (const agent of agents) {
+                this._processAgentMention(roomId, agent, msg).catch((err) => {
+                    logger.error(`[AgentClients] error processing @all mention for ${agent.name}: ${err.message}`)
+                })
+            }
+            return
+        }
+
+        // Specific @mentions — match each agent name in the message content
         const mentioned = agents.filter(a => content.includes(`@${a.name.toLowerCase()}`))
         if (mentioned.length === 0) return
 
-        logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
+        logger.info(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName} in room ${roomId} (${mentioned.length}/${agents.length} agents)`)
 
         for (const agent of mentioned) {
             this._processAgentMention(roomId, agent, msg).catch((err) => {
