@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NButton, useMessage, useDialog } from 'naive-ui'
+import { NButton, NCheckbox, NCheckboxGroup, NModal, useMessage, useDialog } from 'naive-ui'
 import type { AvailableModelGroup } from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
@@ -21,6 +21,45 @@ const isCustom = computed(() => !props.provider.builtin && props.provider.provid
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
+const showVisibilityModal = ref(false)
+const visibilitySaving = ref(false)
+const selectedVisibleModels = ref<string[]>([])
+
+const sourceProvider = computed(() => modelsStore.allProviders.find(g => g.provider === props.provider.provider))
+const allModels = computed(() => props.provider.available_models?.length ? props.provider.available_models : (sourceProvider.value?.models?.length ? sourceProvider.value.models : props.provider.models))
+const visibilityRule = computed(() => appStore.getProviderVisibility(props.provider.provider))
+const isFiltered = computed(() => visibilityRule.value.mode === 'include')
+const visibleCountLabel = computed(() => `${props.provider.models.length}/${allModels.value.length}`)
+
+function openVisibilityModal() {
+  const rule = appStore.getProviderVisibility(props.provider.provider)
+  selectedVisibleModels.value = rule.mode === 'include' ? allModels.value.filter(m => rule.models.includes(m)) : [...allModels.value]
+  showVisibilityModal.value = true
+}
+
+async function handleVisibilitySave() {
+  if (selectedVisibleModels.value.length === 0) {
+    message.error(t('models.visibilitySelectOne'))
+    return
+  }
+  visibilitySaving.value = true
+  try {
+    const selected = selectedVisibleModels.value.filter(m => allModels.value.includes(m))
+    const mode = selected.length === allModels.value.length ? 'all' : 'include'
+    await appStore.setModelVisibility(props.provider.provider, { mode, models: selected })
+    await modelsStore.fetchProviders()
+    showVisibilityModal.value = false
+    message.success(t('models.visibilitySaved'))
+  } catch (e: any) {
+    message.error(e.message || t('models.visibilitySaveFailed'))
+  } finally {
+    visibilitySaving.value = false
+  }
+}
+
+function resetVisibility() {
+  selectedVisibleModels.value = [...allModels.value]
+}
 
 async function handleDelete() {
   let copilotMsg = ''
@@ -93,7 +132,9 @@ async function handleDelete() {
       </div>
       <div class="info-row models-row">
         <span class="info-label">{{ t('models.models') }}</span>
-        <span class="info-value models-count">{{ provider.models.length }} {{ t('models.count') }}</span>
+        <span class="info-value models-count">
+          {{ isFiltered ? visibleCountLabel : provider.models.length }} {{ t('models.count') }}
+        </span>
       </div>
       <div class="models-list">
         <span
@@ -108,8 +149,46 @@ async function handleDelete() {
     </div>
 
     <div class="card-actions">
+      <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ t('common.delete') }}</NButton>
     </div>
+
+    <NModal
+      v-model:show="showVisibilityModal"
+      preset="card"
+      :title="t('models.manageVisibleModelsFor', { name: displayName })"
+      :style="{ width: 'min(560px, calc(100vw - 32px))' }"
+      :mask-closable="!visibilitySaving"
+    >
+      <p class="visibility-hint">{{ t('models.visibilityHint') }}</p>
+      <div class="visibility-count">
+        {{ selectedVisibleModels.length }}/{{ allModels.length }} {{ t('models.count') }}
+      </div>
+      <div class="visibility-list">
+        <NCheckboxGroup v-model:value="selectedVisibleModels">
+          <NCheckbox
+            v-for="model in allModels"
+            :key="model"
+            :value="model"
+            class="visibility-model"
+          >
+            <code>{{ model }}</code>
+          </NCheckbox>
+        </NCheckboxGroup>
+      </div>
+      <div class="visibility-actions">
+        <NButton size="small" quaternary :disabled="visibilitySaving" @click="resetVisibility">
+          {{ t('models.showAllModels') }}
+        </NButton>
+        <div class="visibility-action-spacer" />
+        <NButton size="small" :disabled="visibilitySaving" @click="showVisibilityModal = false">
+          {{ t('common.cancel') }}
+        </NButton>
+        <NButton size="small" type="primary" :loading="visibilitySaving" @click="handleVisibilitySave">
+          {{ t('common.save') }}
+        </NButton>
+      </div>
+    </NModal>
   </div>
 </template>
 
@@ -236,5 +315,49 @@ async function handleDelete() {
   gap: 8px;
   border-top: 1px solid $border-light;
   padding-top: 10px;
+}
+
+.visibility-hint {
+  margin: 0 0 10px;
+  color: $text-secondary;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.visibility-count {
+  color: $text-muted;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.visibility-list {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+  padding: 8px;
+}
+
+.visibility-model {
+  display: flex;
+  width: 100%;
+  padding: 4px 2px;
+
+  code {
+    font-family: $font-code;
+    font-size: 12px;
+    color: $text-secondary;
+  }
+}
+
+.visibility-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.visibility-action-spacer {
+  flex: 1;
 }
 </style>

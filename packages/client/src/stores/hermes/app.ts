@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { checkHealth, fetchAvailableModels, updateDefaultModel, triggerUpdate, type AvailableModelGroup } from '@/api/hermes/system'
+import { checkHealth, fetchAvailableModels, updateDefaultModel, updateModelVisibility, triggerUpdate, type AvailableModelGroup, type ModelVisibility, type ModelVisibilityRule } from '@/api/hermes/system'
 
 const WEB_UI_VERSION = __APP_VERSION__
 
@@ -20,6 +20,7 @@ export const useAppStore = defineStore('app', () => {
   const selectedModel = ref('')
   const selectedProvider = ref('')
   const customModels = ref<Record<string, string[]>>({})
+  const modelVisibility = ref<ModelVisibility>({})
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
 
@@ -62,8 +63,13 @@ export const useAppStore = defineStore('app', () => {
     try {
       const res = await fetchAvailableModels()
       modelGroups.value = res.groups
-      selectedModel.value = res.default
-      selectedProvider.value = res.default_provider || ''
+      modelVisibility.value = res.model_visibility || {}
+      const defaultGroup = res.groups.find(g => g.provider === (res.default_provider || '') && g.models.includes(res.default))
+      const inferredGroup = res.groups.find(g => g.models.includes(res.default))
+      const fallbackGroup = res.groups.find(g => g.models.length > 0)
+      const selectedGroup = defaultGroup || inferredGroup || fallbackGroup
+      selectedModel.value = selectedGroup ? (defaultGroup || inferredGroup ? res.default : selectedGroup.models[0]) : ''
+      selectedProvider.value = selectedGroup?.provider || ''
     } catch {
       // ignore
     }
@@ -87,6 +93,22 @@ export const useAppStore = defineStore('app', () => {
     } catch (err: any) {
       console.error('Failed to switch model:', err)
     }
+  }
+
+
+  function getProviderVisibility(provider: string): ModelVisibilityRule {
+    return modelVisibility.value[provider] || { mode: 'all', models: [] }
+  }
+
+  function isModelVisible(provider: string, model: string): boolean {
+    const rule = getProviderVisibility(provider)
+    return rule.mode !== 'include' || rule.models.includes(model)
+  }
+
+  async function setModelVisibility(provider: string, rule: ModelVisibilityRule) {
+    const res = await updateModelVisibility({ provider, mode: rule.mode, models: rule.models })
+    modelVisibility.value = res.model_visibility || {}
+    await loadModels()
   }
 
   function startHealthPolling(interval = 30000) {
@@ -134,6 +156,7 @@ export const useAppStore = defineStore('app', () => {
     doUpdate,
     modelGroups,
     customModels,
+    modelVisibility,
     selectedModel,
     selectedProvider,
     streamEnabled,
@@ -142,6 +165,9 @@ export const useAppStore = defineStore('app', () => {
     checkConnection,
     loadModels,
     switchModel,
+    getProviderVisibility,
+    isModelVisible,
+    setModelVisibility,
     startHealthPolling,
     stopHealthPolling,
   }

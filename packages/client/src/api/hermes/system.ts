@@ -25,11 +25,20 @@ export interface ConfigModelsResponse {
   groups: ModelGroup[]
 }
 
+export interface ModelVisibilityRule {
+  mode: 'all' | 'include'
+  models: string[]
+}
+
+export type ModelVisibility = Record<string, ModelVisibilityRule>
+
 export interface AvailableModelGroup {
   provider: string   // credential pool key (e.g. "zai", "custom:subrouter.ai")
   label: string      // display name (e.g. "zai", "subrouter.ai")
   base_url: string
   models: string[]
+  /** Full unfiltered model catalog for this provider, used to restore hidden WUI models. */
+  available_models?: string[]
   api_key: string
   builtin?: boolean
   /** 可选：模型 ID -> 元数据（preview/disabled）。目前仅 Copilot 提供。 */
@@ -41,6 +50,7 @@ export interface AvailableModelsResponse {
   default_provider: string
   groups: AvailableModelGroup[]
   allProviders: AvailableModelGroup[]
+  model_visibility?: ModelVisibility
 }
 
 export interface CustomProvider {
@@ -100,6 +110,17 @@ export async function updateProvider(poolKey: string, data: {
   model?: string
 }): Promise<void> {
   await request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateModelVisibility(data: {
+  provider: string
+  mode: 'all' | 'include'
+  models: string[]
+}): Promise<{ success: boolean; model_visibility: ModelVisibility }> {
+  return request<{ success: boolean; model_visibility: ModelVisibility }>('/api/hermes/model-visibility', {
     method: 'PUT',
     body: JSON.stringify(data),
   })
