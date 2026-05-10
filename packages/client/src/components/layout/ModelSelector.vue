@@ -100,6 +100,11 @@ async function saveAlias() {
   }
 }
 
+async function clearAlias() {
+  aliasInput.value = ''
+  await saveAlias()
+}
+
 function handleCustomSubmit() {
   const model = customInput.value.trim()
   if (!model || !customProvider.value) return
@@ -172,7 +177,9 @@ function openModal() {
             >
               <span class="model-item-label">
                 <span class="model-item-name">{{ modelDisplayName(model, group.provider) }}</span>
-                <span v-if="modelAlias(model, group.provider)" class="model-item-id">{{ model }}</span>
+                <span v-if="modelAlias(model, group.provider)" class="model-item-id">
+                  {{ t('models.aliasCanonical', { model }) }}
+                </span>
               </span>
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
@@ -225,9 +232,16 @@ function openModal() {
         clearable
         @keydown.enter="saveAlias"
       />
+      <div v-if="aliasModel" class="model-alias-canonical">
+        {{ t('models.aliasCanonical', { model: aliasModel }) }}
+      </div>
       <div class="model-alias-hint">{{ t('models.aliasHint') }}</div>
       <template #footer>
         <div class="model-alias-actions">
+          <NButton quaternary :disabled="!appStore.getModelAlias(aliasModel, aliasProvider)" @click="clearAlias">
+            {{ t('models.aliasUseOriginal') }}
+          </NButton>
+          <div class="model-alias-spacer" />
           <NButton @click="showAliasModal = false">{{ t('common.cancel') }}</NButton>
           <NButton type="primary" @click="saveAlias">{{ t('common.save') }}</NButton>
         </div>
@@ -372,13 +386,53 @@ function openModal() {
   }
 }
 
-.model-item-name {
+.model-item-label {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-item-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: $font-code;
   font-size: 12px;
+}
+
+.model-item-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.model-alias-canonical {
+  margin-top: 8px;
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 11px;
+}
+
+.model-alias-hint {
+  margin-top: 6px;
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.model-alias-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-alias-spacer {
+  flex: 1;
 }
 
 .model-check {
