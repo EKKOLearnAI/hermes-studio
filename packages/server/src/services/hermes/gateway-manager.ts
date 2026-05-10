@@ -163,7 +163,9 @@ export class GatewayManager {
    */
   private readProfilePort(name: string): { port: number; host: string } {
     const configPath = join(this.profileDir(name), 'config.yaml')
-    const defaultHost = initSystem === 'container' ? 'hermes-agent' : '127.0.0.1'
+    const defaultHost = initSystem === 'container'
+      ? (process.env.GATEWAY_DEFAULT_HOST || 'hermes-agent')
+      : '127.0.0.1'
 
     if (!existsSync(configPath)) return { port: 8642, host: defaultHost }
 
