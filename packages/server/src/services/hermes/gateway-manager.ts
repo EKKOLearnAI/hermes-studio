@@ -26,8 +26,8 @@
  *   ④ 冲突则从 base+1 递增找空闲端口，并写入 config.yaml
  *
  * 启动模式：
- *   - 正常系统（macOS/Linux）：hermes gateway start/stop（系统服务管理）
- *   - WSL / Docker：hermes gateway run（detached 子进程，手动 kill）
+ *   - 统一使用 hermes gateway run（detached 子进程，手动 kill）
+ *   - 每个 Profile 独立进程，支持多 Profile 网关同时运行
  */
 
 import { spawn, type ChildProcess } from 'child_process'
@@ -55,8 +55,8 @@ const HERMES_BIN = process.env.HERMES_BIN?.trim() || 'hermes'
  * - Windows → windows-service
  * - Linux → systemd / sysvinit / other
  *
- * 没有 systemd/launchd/windows-service 的环境需要用 "gateway run" 代替 "gateway start"
- * （适用于 WSL/Docker/Termux/proot 等无服务管理器的环境）
+ * 统一使用 "gateway run"（detached 子进程），避免 systemd 单例服务限制
+ * 支持多 Profile 网关独立并行运行
  */
 function detectInitSystem(): string {
   const platform = process.platform
@@ -94,10 +94,9 @@ function detectInitSystem(): string {
   return 'unknown'
 }
 
+// 保留 init 系统检测结果用于 readProfilePort 中决定默认 host 值
 const initSystem = detectInitSystem()
-const needsRunMode = !['systemd', 'launchd', 'windows-service'].includes(initSystem)
-// 启动时输出 init 系统检测结果（方便调试）
-logger.debug('Detected init system: %s (needsRunMode: %s)', initSystem, needsRunMode)
+logger.debug('Detected init system: %s', initSystem)
 
 // ============================
 // 类型定义
@@ -469,52 +468,24 @@ export class GatewayManager {
     const hermesHome = this.profileDir(name)
     const url = buildHttpUrl(host, port)
 
-    if (needsRunMode) {
-      // WSL / Docker：无 systemd/launchd，用 "gateway run" 作为 detached 子进程
-      return new Promise((resolve, reject) => {
-        const env = { ...process.env, HERMES_HOME: hermesHome }
-        const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-          env,
-        })
-        child.unref()
-
-        const pid = child.pid ?? 0
-        logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
-
-        this.waitForReady(name, pid, port, host, url)
-          .then(resolve)
-          .catch(reject)
-      })
-    }
-
-    // 正常系统：先 start，失败则 restart（处理服务已运行的情况）
-    logger.info('Starting gateway for profile "%s" (start mode, port: %d)', name, port)
-    const env = { ...process.env, HERMES_HOME: hermesHome }
-    try {
-      const { stdout } = await execFileAsync(HERMES_BIN, ['gateway', 'start'], {
-        timeout: 30000,
-        env,
+    // 统一使用 "gateway run" 作为 detached 子进程，避免 systemd 单例服务限制
+    return new Promise((resolve, reject) => {
+      const env = { ...process.env, HERMES_HOME: hermesHome }
+      const child = spawn(HERMES_BIN, ['gateway', 'run'], {
+        detached: true,
+        stdio: 'ignore',
         windowsHide: true,
+        env,
       })
-      logger.debug('gateway start output: %s', stdout?.trim())
-    } catch {
-      // start 失败（可能服务已运行），用 restart
-      try {
-        const { stdout } = await execFileAsync(HERMES_BIN, ['gateway', 'restart'], {
-          timeout: 30000,
-          env,
-          windowsHide: true,
-        })
-        logger.debug('gateway restart output: %s', stdout?.trim())
-      } catch (err: any) {
-        logger.warn(err, 'gateway start/restart (non-fatal)')
-      }
-    }
+      child.unref()
 
-    return this.waitForReady(name, 0, port, host, url)
+      const pid = child.pid ?? 0
+      logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d)', name, pid, port)
+
+      this.waitForReady(name, pid, port, host, url)
+        .then(resolve)
+        .catch(reject)
+    })
   }
 
   /** 等待网关健康检查通过，最多 15 秒 */
@@ -525,7 +496,7 @@ export class GatewayManager {
         throw new Error(`Gateway process exited unexpectedly (PID: ${pid})`)
       }
       if (await this.checkHealth(url, 2000)) {
-        // "gateway start" 自行管理进程，重新从 pid 文件读取实际 PID
+        // 从 pid 文件读取实际 PID（gateway run 也会写 gateway.pid）
         const actualPid = this.readPidFile(name) ?? pid
         this.gateways.set(name, { pid: actualPid, port, host, url })
         return { profile: name, port, host, url, running: true, pid: actualPid || undefined }
@@ -537,7 +508,7 @@ export class GatewayManager {
 
   /**
    * 停止单个 profile 的网关
-   * 正常系统用 "gateway stop"，WSL/Docker 直接 kill 进程组
+   * 直接 kill 进程组（统一使用 gateway run 的子进程管理）
    * 返回前等待 health check 确认网关已真正停止
    */
   async stop(name: string, timeoutMs = 10000): Promise<void> {
@@ -548,27 +519,14 @@ export class GatewayManager {
       return buildHttpUrl(host, port)
     })()
 
-    if (!needsRunMode) {
-      // 正常系统：通过 hermes CLI 停止系统服务
-      try {
-        const hermesHome = this.profileDir(name)
-        const env = { ...process.env, HERMES_HOME: hermesHome }
-        await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
-          timeout: 10000,
-          env,
-          windowsHide: true,
-        })
-      } catch { }
-    } else {
-      // WSL / Docker：直接杀进程组
-      let pid = gw?.pid
-      if (!pid) {
-        pid = this.readPidFile(name) ?? undefined
-      }
-      if (pid) {
-        try { process.kill(-pid, 'SIGTERM') } catch {
-          try { process.kill(pid, 'SIGTERM') } catch { }
-        }
+    // 直接 kill 进程组
+    let pid = gw?.pid
+    if (!pid) {
+      pid = this.readPidFile(name) ?? undefined
+    }
+    if (pid) {
+      try { process.kill(-pid, 'SIGTERM') } catch {
+        try { process.kill(pid, 'SIGTERM') } catch { }
       }
     }
 
