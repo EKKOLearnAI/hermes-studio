@@ -89,11 +89,14 @@ export async function capabilities(ctx: Context) {
 }
 
 export async function list(ctx: Context) {
-  const { status, assignee, tenant } = ctx.query as Record<string, string | undefined>
+  const status = firstQueryValue(ctx.query.status as string | string[] | undefined)
+  const assignee = firstQueryValue(ctx.query.assignee as string | string[] | undefined)
+  const tenant = firstQueryValue(ctx.query.tenant as string | string[] | undefined)
+  const includeArchived = firstQueryValue(ctx.query.includeArchived as string | string[] | undefined) === 'true'
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant })
+    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant, includeArchived })
     ctx.body = { tasks }
   } catch (err: any) {
     ctx.status = 500
