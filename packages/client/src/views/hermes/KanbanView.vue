@@ -1,21 +1,76 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { NButton, NSelect, NSpin, NCollapse, NCollapseItem } from 'naive-ui'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { NButton, NSelect, NSpin, NCollapse, NCollapseItem, NModal, NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
 import KanbanTaskDrawer from '@/components/hermes/kanban/KanbanTaskDrawer.vue'
 import KanbanCreateForm from '@/components/hermes/kanban/KanbanCreateForm.vue'
-import { useKanbanStore } from '@/stores/hermes/kanban'
+import { DEFAULT_KANBAN_BOARD, useKanbanStore } from '@/stores/hermes/kanban'
 import type { KanbanTaskStatus } from '@/api/hermes/kanban'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const message = useMessage()
 const kanbanStore = useKanbanStore()
 
 const showCreateForm = ref(false)
+const showCreateBoardForm = ref(false)
 const selectedTaskId = ref<string | null>(null)
+const newBoardSlug = ref('')
+const newBoardName = ref('')
+const boardActionLoading = ref(false)
 const refreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const routeReady = ref(false)
 
 const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'ready', 'running', 'blocked', 'done', 'archived']
+
+function firstQueryString(value: unknown): string | null {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null
+  return typeof value === 'string' ? value : null
+}
+
+function routeBoard(): string | null {
+  return firstQueryString(route.query.board)
+}
+
+async function replaceRouteBoard(board: string) {
+  if (routeBoard() === board) return
+  await router.replace({ query: { ...route.query, board } })
+}
+
+async function applyBoardSelection(candidate: string | null, notify = true, forceRefresh = false) {
+  const previousBoard = kanbanStore.selectedBoard
+  const { board, recovered } = kanbanStore.recoverSelectedBoard(candidate || kanbanStore.selectedBoard || DEFAULT_KANBAN_BOARD)
+  selectedTaskId.value = null
+  showCreateForm.value = false
+  showCreateBoardForm.value = false
+  if (notify && recovered && kanbanStore.boardWarning) message.warning(kanbanStore.boardWarning)
+  await replaceRouteBoard(board)
+  if (forceRefresh || board !== previousBoard) {
+    await kanbanStore.refreshAll()
+  }
+}
+
+function taskCountLabel(count: number): string {
+  return `${t('kanban.stats.tasks')}: ${count}`
+}
+
+const boardOptions = computed(() => kanbanStore.activeBoards.map(board => {
+  const count = typeof board.total === 'number' ? board.total : 0
+  return {
+    label: `${t('kanban.title')}: ${board.icon ? `${board.icon} ` : ''}${board.name || board.slug} · ${taskCountLabel(count)}`,
+    value: board.slug,
+  }
+}))
+
+const selectedBoardValue = computed({
+  get: () => kanbanStore.selectedBoard,
+  set: (value: string) => {
+    void applyBoardSelection(value || DEFAULT_KANBAN_BOARD)
+  },
+})
 
 const tasksByStatus = computed(() => {
   const grouped: Record<string, typeof kanbanStore.tasks> = {}
@@ -36,7 +91,7 @@ const assigneeFilterOptions = computed(() => [
   { label: t('kanban.allAssignees'), value: '' },
   ...kanbanStore.assignees.map(a => {
     const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
-    return { label: `${a.name} (${total})`, value: a.name }
+    return { label: `${t('kanban.detail.assignee')}: ${a.name} · ${taskCountLabel(total)}`, value: a.name }
   }),
 ])
 
@@ -50,11 +105,18 @@ const filterAssigneeValue = computed({
   set: (v: string) => kanbanStore.setFilter('assignee', v || null),
 })
 
+watch(() => route.query.board, async () => {
+  if (!routeReady.value) return
+  await applyBoardSelection(routeBoard(), false)
+})
+
 onMounted(async () => {
-  await kanbanStore.refreshAll()
+  await Promise.all([kanbanStore.fetchBoards(), kanbanStore.fetchCapabilities()])
+  await applyBoardSelection(routeBoard(), true, true)
+  routeReady.value = true
   refreshTimer.value = setInterval(() => {
     if (document.visibilityState === 'visible') {
-      void Promise.all([kanbanStore.fetchTasks(), kanbanStore.fetchStats()])
+      void Promise.all([kanbanStore.fetchBoards(), kanbanStore.fetchTasks(true), kanbanStore.fetchStats()])
     }
   }, 15000)
 })
@@ -80,7 +142,46 @@ async function handleApplyFilter() {
 }
 
 async function handleTaskCreated() {
-  await Promise.all([kanbanStore.fetchTasks(), kanbanStore.fetchStats()])
+  await Promise.all([kanbanStore.fetchTasks(), kanbanStore.fetchStats(), kanbanStore.fetchBoards()])
+}
+
+async function handleCreateBoard() {
+  const slug = newBoardSlug.value.trim()
+  if (!slug) {
+    message.warning(t('kanban.board.slugRequired'))
+    return
+  }
+  boardActionLoading.value = true
+  try {
+    const board = await kanbanStore.createBoard({
+      slug,
+      name: newBoardName.value.trim() || undefined,
+    })
+    newBoardSlug.value = ''
+    newBoardName.value = ''
+    showCreateBoardForm.value = false
+    await replaceRouteBoard(board.slug)
+    message.success(t('kanban.board.created'))
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    boardActionLoading.value = false
+  }
+}
+
+async function handleArchiveSelectedBoard() {
+  if (kanbanStore.selectedBoard === DEFAULT_KANBAN_BOARD) return
+  if (!window.confirm(t('kanban.board.archiveConfirm'))) return
+  boardActionLoading.value = true
+  try {
+    await kanbanStore.archiveSelectedBoard()
+    await replaceRouteBoard(DEFAULT_KANBAN_BOARD)
+    message.success(t('kanban.board.archived'))
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    boardActionLoading.value = false
+  }
 }
 </script>
 
@@ -89,6 +190,25 @@ async function handleTaskCreated() {
     <header class="page-header">
       <h2 class="header-title">{{ t('kanban.title') }}</h2>
       <div class="header-actions">
+        <NSelect
+          v-model:value="selectedBoardValue"
+          :options="boardOptions"
+          :loading="kanbanStore.boardsLoading"
+          size="small"
+          style="width: 260px;"
+        />
+        <NButton size="small" :loading="boardActionLoading" @click="showCreateBoardForm = true">
+          {{ t('common.add') }}
+        </NButton>
+        <NButton
+          size="small"
+          secondary
+          :disabled="kanbanStore.selectedBoard === DEFAULT_KANBAN_BOARD"
+          :loading="boardActionLoading"
+          @click="handleArchiveSelectedBoard"
+        >
+          {{ t('kanban.board.archive') }}
+        </NButton>
         <NSelect
           v-model:value="filterStatusValue"
           :options="statusFilterOptions"
@@ -156,6 +276,18 @@ async function handleTaskCreated() {
       @close="handleDrawerClose"
       @updated="handleDrawerUpdated"
     />
+
+    <!-- Board management -->
+    <NModal v-model:show="showCreateBoardForm" preset="dialog" :title="t('kanban.board.create')" style="width: 420px;">
+      <div class="board-form">
+        <NInput v-model:value="newBoardSlug" :placeholder="t('kanban.board.slugPlaceholder')" />
+        <NInput v-model:value="newBoardName" :placeholder="t('kanban.board.namePlaceholder')" />
+      </div>
+      <template #action>
+        <NButton @click="showCreateBoardForm = false">{{ t('common.cancel') }}</NButton>
+        <NButton type="primary" :loading="boardActionLoading" @click="handleCreateBoard">{{ t('common.create') }}</NButton>
+      </template>
+    </NModal>
 
     <!-- Create form -->
     <KanbanCreateForm
@@ -246,8 +378,15 @@ async function handleTaskCreated() {
   color: $text-muted;
 }
 
+.board-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 @media (max-width: $breakpoint-mobile) {
   .page-header {
+    padding: 16px 12px 16px 52px;
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
@@ -256,10 +395,6 @@ async function handleTaskCreated() {
   .header-actions {
     flex-wrap: wrap;
     width: 100%;
-  }
-
-  .kanban-board {
-    padding: 0 12px 12px;
   }
 }
 </style>

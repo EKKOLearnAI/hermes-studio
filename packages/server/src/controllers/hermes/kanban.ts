@@ -14,10 +14,86 @@ function getLatestRunProfile(detail: { runs: Array<{ profile: string | null }> }
   return [...detail.runs].reverse().find(run => run.profile)?.profile || null
 }
 
+function firstQueryValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value
+}
+
+function requestBoard(ctx: Context): string | null {
+  try {
+    return kanbanCli.normalizeBoardSlug(firstQueryValue(ctx.query.board as string | string[] | undefined))
+  } catch {
+    ctx.status = 400
+    ctx.body = { error: 'invalid board slug' }
+    return null
+  }
+}
+
+export async function listBoards(ctx: Context) {
+  const includeArchived = firstQueryValue(ctx.query.includeArchived as string | string[] | undefined) === 'true'
+  try {
+    const boards = await kanbanCli.listBoards({ includeArchived })
+    ctx.body = { boards }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function createBoard(ctx: Context) {
+  const { slug, name, description, icon, color, switchCurrent } = ctx.request.body as {
+    slug?: string
+    name?: string
+    description?: string
+    icon?: string
+    color?: string
+    switchCurrent?: boolean
+  }
+  if (!slug?.trim()) {
+    ctx.status = 400
+    ctx.body = { error: 'slug is required' }
+    return
+  }
+  try {
+    const board = await kanbanCli.createBoard({ slug, name, description, icon, color, switchCurrent })
+    ctx.body = { board }
+  } catch (err: any) {
+    ctx.status = err.message?.includes('Invalid kanban board slug') ? 400 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function archiveBoard(ctx: Context) {
+  const slug = ctx.params.slug
+  if (!slug?.trim()) {
+    ctx.status = 400
+    ctx.body = { error: 'slug is required' }
+    return
+  }
+  try {
+    await kanbanCli.archiveBoard(slug)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err.message?.includes('default') || err.message?.includes('Invalid kanban board slug') ? 400 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function capabilities(ctx: Context) {
+  try {
+    const capabilities = await kanbanCli.getCapabilities()
+    ctx.body = { capabilities }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
 export async function list(ctx: Context) {
   const { status, assignee, tenant } = ctx.query as Record<string, string | undefined>
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    const tasks = await kanbanCli.listTasks({ status, assignee, tenant })
+    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant })
     ctx.body = { tasks }
   } catch (err: any) {
     ctx.status = 500
@@ -26,8 +102,10 @@ export async function list(ctx: Context) {
 }
 
 export async function get(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    const detail = await kanbanCli.getTask(ctx.params.id)
+    const detail = await kanbanCli.getTask(ctx.params.id, { board })
     if (!detail) {
       ctx.status = 404
       ctx.body = { error: 'Task not found' }
@@ -97,8 +175,10 @@ export async function create(ctx: Context) {
     ctx.body = { error: 'title is required' }
     return
   }
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    const task = await kanbanCli.createTask(title, { body, assignee, priority, tenant })
+    const task = await kanbanCli.createTask(title, { board, body, assignee, priority, tenant })
     ctx.body = { task }
   } catch (err: any) {
     ctx.status = 500
@@ -116,8 +196,10 @@ export async function complete(ctx: Context) {
     ctx.body = { error: 'task_ids is required' }
     return
   }
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    await kanbanCli.completeTasks(task_ids, summary)
+    await kanbanCli.completeTasks(task_ids, summary, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -132,8 +214,10 @@ export async function block(ctx: Context) {
     ctx.body = { error: 'reason is required' }
     return
   }
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    await kanbanCli.blockTask(ctx.params.id, reason)
+    await kanbanCli.blockTask(ctx.params.id, reason, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -148,8 +232,10 @@ export async function unblock(ctx: Context) {
     ctx.body = { error: 'task_ids is required' }
     return
   }
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    await kanbanCli.unblockTasks(task_ids)
+    await kanbanCli.unblockTasks(task_ids, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -164,8 +250,10 @@ export async function assign(ctx: Context) {
     ctx.body = { error: 'profile is required' }
     return
   }
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    await kanbanCli.assignTask(ctx.params.id, profile)
+    await kanbanCli.assignTask(ctx.params.id, profile, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -174,8 +262,10 @@ export async function assign(ctx: Context) {
 }
 
 export async function stats(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    const stats = await kanbanCli.getStats()
+    const stats = await kanbanCli.getStats({ board })
     ctx.body = { stats }
   } catch (err: any) {
     ctx.status = 500
@@ -184,8 +274,10 @@ export async function stats(ctx: Context) {
 }
 
 export async function assignees(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
   try {
-    const assignees = await kanbanCli.getAssignees()
+    const assignees = await kanbanCli.getAssignees({ board })
     ctx.body = { assignees }
   } catch (err: any) {
     ctx.status = 500

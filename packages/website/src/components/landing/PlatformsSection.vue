@@ -56,6 +56,10 @@ const platforms = [
   flex-wrap: wrap;
   justify-content: center;
   gap: 24px;
+
+  @media (max-width: $breakpoint-mobile) {
+    gap: 16px;
+  }
 }
 
 .platform-item {
@@ -64,6 +68,11 @@ const platforms = [
   align-items: center;
   gap: 10px;
   width: 120px;
+
+  @media (max-width: $breakpoint-mobile) {
+    width: 80px;
+    gap: 6px;
+  }
 }
 
 .platform-icon {
@@ -86,11 +95,25 @@ const platforms = [
     width: 24px;
     height: 24px;
   }
+
+  @media (max-width: $breakpoint-mobile) {
+    width: 44px;
+    height: 44px;
+
+    svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
 }
 
 .platform-name {
   font-size: 13px;
   color: var(--text-secondary);
   text-align: center;
+
+  @media (max-width: $breakpoint-mobile) {
+    font-size: 12px;
+  }
 }
 </style>

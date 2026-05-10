@@ -1,6 +1,6 @@
 // 黑白水墨 — Pure Ink
 // 纯黑白灰，无彩色
-// 支持 light / dark 双主题
+// 支持 light / dark / comic 三主题
 
 // ─── CSS Custom Properties ─────────────────────────────────────
 
@@ -108,6 +108,28 @@
   --accent-info-rgb: 107, 163, 214;
 }
 
+.comic {
+  // Borders — bold comic outlines
+  --border-color: #1a1a1a;
+  --border-light: #555555;
+  --msg-system-border: #1a1a1a;
+
+  // Comic-specific
+  --font-ui: 'Comic Neue', 'Comic Sans MS', cursive, sans-serif;
+  --comic-border-width: 2.5px;
+  --comic-shadow: 3px 3px 0px rgba(0, 0, 0, 0.15);
+  --comic-font-weight: 700;
+}
+
+.dark.comic {
+  // Borders — brighter outlines on dark
+  --border-color: #666666;
+  --border-light: #555555;
+  --msg-system-border: #888888;
+
+  --comic-shadow: 3px 3px 0px rgba(255, 255, 255, 0.08);
+}
+
 // ─── SCSS Variables (delegate to CSS custom properties) ────────
 
 // Backgrounds
@@ -147,7 +169,7 @@ $msg-system-border: var(--msg-system-border);
 $code-bg: var(--code-bg);
 
 // Typography
-$font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+$font-ui: var(--font-ui, 'Inter', system-ui, -apple-system, sans-serif);
 $font-code: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
 // Layout

@@ -32,7 +32,6 @@ services:
       - hermes-agent-src:/opt/hermes
     environment:
       - PORT=${PORT:-6060}
-      - UPSTREAM=${UPSTREAM:-http://hermes-agent:8642}
       - HERMES_HOME=/home/agent/.hermes
       - HERMES_BIN=${HERMES_BIN:-/opt/hermes/.venv/bin/hermes}
       - AUTH_DISABLED=${AUTH_DISABLED:-false}

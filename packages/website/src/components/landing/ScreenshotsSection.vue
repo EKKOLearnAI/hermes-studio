@@ -98,6 +98,12 @@ onUnmounted(() => {
   padding: 0 24px;
   margin-top: 48px;
   margin-bottom: 24px;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 0 12px;
+    margin-top: 32px;
+    margin-bottom: 16px;
+  }
 }
 
 .screenshots-inner {

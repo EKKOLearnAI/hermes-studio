@@ -80,6 +80,10 @@ onMounted(async () => {
   border-radius: $radius-lg;
   display: flex;
   flex-direction: column;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 24px 16px;
+  }
 }
 
 .panel-title {

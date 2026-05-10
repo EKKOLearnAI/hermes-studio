@@ -267,11 +267,24 @@ onMounted(() => {
   border: 1px solid var(--border-color);
   border-radius: $radius-md;
   padding: 12px 20px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 
   code {
     font-size: 14px;
     background: transparent;
     padding: 0;
+    white-space: nowrap;
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 10px 14px;
+    gap: 8px;
+
+    code {
+      font-size: 12px;
+    }
   }
 }
 

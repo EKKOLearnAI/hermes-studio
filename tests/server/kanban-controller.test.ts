@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockReadFile = vi.hoisted(() => vi.fn())
+const mockListBoards = vi.hoisted(() => vi.fn())
+const mockCreateBoard = vi.hoisted(() => vi.fn())
+const mockArchiveBoard = vi.hoisted(() => vi.fn())
+const mockGetCapabilities = vi.hoisted(() => vi.fn())
 const mockListTasks = vi.hoisted(() => vi.fn())
 const mockGetTask = vi.hoisted(() => vi.fn())
 const mockCreateTask = vi.hoisted(() => vi.fn())
@@ -24,6 +28,15 @@ vi.mock('os', () => ({
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
+  normalizeBoardSlug: (board?: string | null) => {
+    const value = board?.trim() || 'default'
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(value)) throw new Error('Invalid kanban board slug')
+    return value
+  },
+  listBoards: mockListBoards,
+  createBoard: mockCreateBoard,
+  archiveBoard: mockArchiveBoard,
+  getCapabilities: mockGetCapabilities,
   listTasks: mockListTasks,
   getTask: mockGetTask,
   createTask: mockCreateTask,
@@ -60,12 +73,40 @@ describe('kanban controller', () => {
     vi.clearAllMocks()
   })
 
-  it('lists tasks with filters', async () => {
+  it('lists boards and tasks with explicit/default board context', async () => {
+    mockListBoards.mockResolvedValue([{ slug: 'default' }])
     mockListTasks.mockResolvedValue([{ id: 'task-1' }])
-    const c = ctx({ query: { status: 'todo', assignee: 'alice', tenant: 'ops' } })
+
+    const boardsCtx = ctx({ query: { includeArchived: 'true' } })
+    await ctrl.listBoards(boardsCtx)
+    expect(mockListBoards).toHaveBeenCalledWith({ includeArchived: true })
+    expect(boardsCtx.body).toEqual({ boards: [{ slug: 'default' }] })
+
+    const c = ctx({ query: { board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' } })
     await ctrl.list(c)
-    expect(mockListTasks).toHaveBeenCalledWith({ status: 'todo', assignee: 'alice', tenant: 'ops' })
+    expect(mockListTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' })
     expect(c.body).toEqual({ tasks: [{ id: 'task-1' }] })
+
+    mockCreateBoard.mockResolvedValue({ slug: 'project-b' })
+    const createBoardCtx = ctx({ request: { body: { slug: 'project-b', name: 'Project B', switchCurrent: false } } })
+    await ctrl.createBoard(createBoardCtx)
+    expect(mockCreateBoard).toHaveBeenCalledWith({ slug: 'project-b', name: 'Project B', description: undefined, icon: undefined, color: undefined, switchCurrent: false })
+    expect(createBoardCtx.body).toEqual({ board: { slug: 'project-b' } })
+
+    mockArchiveBoard.mockResolvedValue(undefined)
+    const archiveCtx = ctx({ params: { slug: 'project-b' } })
+    await ctrl.archiveBoard(archiveCtx)
+    expect(mockArchiveBoard).toHaveBeenCalledWith('project-b')
+    expect(archiveCtx.body).toEqual({ ok: true })
+
+    mockGetCapabilities.mockResolvedValue({ source: 'hermes-cli', supports: {}, missing: [] })
+    const capabilitiesCtx = ctx()
+    await ctrl.capabilities(capabilitiesCtx)
+    expect(capabilitiesCtx.body).toEqual({ capabilities: { source: 'hermes-cli', supports: {}, missing: [] } })
+
+    const defaultCtx = ctx({ query: { status: 'ready' } })
+    await ctrl.list(defaultCtx)
+    expect(mockListTasks).toHaveBeenLastCalledWith({ board: 'default', status: 'ready', assignee: undefined, tenant: undefined })
   })
 
   it('enriches completed task details using the latest run profile', async () => {
@@ -85,7 +126,7 @@ describe('kanban controller', () => {
       messages: [],
     })
 
-    const c = ctx({ params: { id: 'task-1' } })
+    const c = ctx({ params: { id: 'task-1' }, query: { board: 'project-a' } })
     await ctrl.get(c)
 
     expect(mockFindLatestExactSessionId).toHaveBeenCalledWith('task-1', 'fresh')
@@ -110,7 +151,7 @@ describe('kanban controller', () => {
       messages: [{ id: 'm1', role: 'user', content: 'work kanban task t_348bfaaf', timestamp: 1 }],
     })
 
-    const c = ctx({ params: { id: 't_348bfaaf' } })
+    const c = ctx({ params: { id: 't_348bfaaf' }, query: { board: 'project-a' } })
     await ctrl.get(c)
 
     expect(c.body.session).toMatchObject({
@@ -176,32 +217,35 @@ describe('kanban controller', () => {
       path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt',
     })
 
-    const createCtx = ctx({ request: { body: { title: 'Ship', body: 'x' } } })
+    const createCtx = ctx({ query: { board: 'project-a' }, request: { body: { title: 'Ship', body: 'x' } } })
     await ctrl.create(createCtx)
+    expect(mockCreateTask).toHaveBeenCalledWith('Ship', { board: 'project-a', body: 'x', assignee: undefined, priority: undefined, tenant: undefined })
     expect(createCtx.body).toEqual({ task: { id: 'task-2' } })
 
-    const completeCtx = ctx({ request: { body: { task_ids: ['task-1'], summary: 'done' } } })
+    const completeCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'], summary: 'done' } } })
     await ctrl.complete(completeCtx)
-    expect(mockCompleteTasks).toHaveBeenCalledWith(['task-1'], 'done')
+    expect(mockCompleteTasks).toHaveBeenCalledWith(['task-1'], 'done', { board: 'project-a' })
 
-    const blockCtx = ctx({ params: { id: 'task-1' }, request: { body: { reason: 'wait' } } })
+    const blockCtx = ctx({ query: { board: 'project-a' }, params: { id: 'task-1' }, request: { body: { reason: 'wait' } } })
     await ctrl.block(blockCtx)
-    expect(mockBlockTask).toHaveBeenCalledWith('task-1', 'wait')
+    expect(mockBlockTask).toHaveBeenCalledWith('task-1', 'wait', { board: 'project-a' })
 
-    const unblockCtx = ctx({ request: { body: { task_ids: ['task-1'] } } })
+    const unblockCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'] } } })
     await ctrl.unblock(unblockCtx)
-    expect(mockUnblockTasks).toHaveBeenCalledWith(['task-1'])
+    expect(mockUnblockTasks).toHaveBeenCalledWith(['task-1'], { board: 'project-a' })
 
-    const assignCtx = ctx({ params: { id: 'task-1' }, request: { body: { profile: 'alice' } } })
+    const assignCtx = ctx({ query: { board: 'project-a' }, params: { id: 'task-1' }, request: { body: { profile: 'alice' } } })
     await ctrl.assign(assignCtx)
-    expect(mockAssignTask).toHaveBeenCalledWith('task-1', 'alice')
+    expect(mockAssignTask).toHaveBeenCalledWith('task-1', 'alice', { board: 'project-a' })
 
-    const statsCtx = ctx()
+    const statsCtx = ctx({ query: { board: 'project-a' } })
     await ctrl.stats(statsCtx)
+    expect(mockGetStats).toHaveBeenCalledWith({ board: 'project-a' })
     expect(statsCtx.body).toEqual({ stats: { total: 1, by_status: {}, by_assignee: {} } })
 
-    const assigneesCtx = ctx()
+    const assigneesCtx = ctx({ query: { board: 'project-a' } })
     await ctrl.assignees(assigneesCtx)
+    expect(mockGetAssignees).toHaveBeenCalledWith({ board: 'project-a' })
     expect(assigneesCtx.body).toEqual({ assignees: [{ name: 'alice' }] })
 
     const searchCtx = ctx({ query: { task_id: 'task-1', profile: 'alice', q: 'custom' } })

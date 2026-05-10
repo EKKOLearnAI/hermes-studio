@@ -3,6 +3,7 @@ export default {
     home: '首页',
     docs: '文档',
     github: 'GitHub',
+    qqGroup: 'QQ 群',
   },
   hero: {
     title: '自托管 AI 聊天仪表板',

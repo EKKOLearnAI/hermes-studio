@@ -119,6 +119,20 @@ const sections = computed<DocSection[]>(() => {
     color: var(--text-secondary);
     vertical-align: top;
   }
+
+  @media (max-width: $breakpoint-mobile) {
+    display: block;
+
+    tr {
+      display: block;
+      padding: 10px 0;
+    }
+
+    td {
+      display: block;
+      padding: 2px 0;
+    }
+  }
 }
 
 .doc-table-key {
@@ -131,6 +145,12 @@ const sections = computed<DocSection[]>(() => {
     padding: 2px 8px;
     border-radius: 4px;
     font-size: 13px;
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    white-space: normal;
+    width: auto;
+    margin-bottom: 4px;
   }
 }
 </style>

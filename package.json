@@ -1,13 +1,13 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.14",
-  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
+  "version": "0.5.16",
+  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-web-ui.git"
   },
   "homepage": "https://ekkolearnai.com",
-  "license": "MIT",
+  "license": "BSL-1.1",
   "engines": {
     "node": ">=23.0.0"
   },
@@ -20,23 +20,11 @@
     "ai-agent",
     "ai-chat",
     "ai-dashboard",
-    "chatgpt",
-    "claude",
-    "openai",
-    "gemini",
-    "deepseek",
     "llm",
     "multi-model",
     "chat-ui",
     "dashboard",
     "self-hosted",
-    "telegram",
-    "discord",
-    "slack",
-    "whatsapp",
-    "matrix",
-    "feishu",
-    "weixin",
     "multi-platform",
     "vue3",
     "typescript"
@@ -58,7 +46,8 @@
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
-    "openapi:generate": "node scripts/generate-openapi.mjs"
+    "openapi:generate": "node scripts/generate-openapi.mjs",
+    "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
     "bin/",
@@ -122,7 +111,7 @@
     "vue": "^3.5.32",
     "vue-i18n": "^11.3.2",
     "vue-router": "^4.6.4",
-    "vue-tsc": "^3.2.6",
+    "vue-tsc": "^3.2.8",
     "ws": "^8.20.0"
   }
 }

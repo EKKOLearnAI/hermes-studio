@@ -1,12 +1,8 @@
 import { io, Socket } from 'socket.io-client'
-import { EventSource } from 'eventsource'
 import { getToken } from '../../../services/auth'
 import type { GatewayManager } from '../gateway-manager'
-import { deleteSession as hermesDeleteSession } from '../hermes-cli'
-import { getActiveProfileName } from '../hermes-profile'
 import { logger } from '../../../services/logger'
 import { updateUsage } from '../../../db/hermes/usage-store'
-import { getSessionDetailFromDbWithProfile } from '../../../db/hermes/sessions-db'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -186,29 +182,6 @@ class AgentClient {
         }
     }
 
-    private async deleteSession(sessionId: string): Promise<void> {
-        try {
-            const sessionProfile = this.storage?.getSessionProfile?.(sessionId)
-            const currentProfile = getActiveProfileName()
-
-            if (sessionProfile && sessionProfile.profile_name !== currentProfile) {
-                // Cross-profile: enqueue deferred delete, don't switch profile
-                this.storage?.enqueuePendingSessionDelete?.(sessionId, sessionProfile.profile_name)
-                logger.info(`[AgentClients] ${this.name}: cross-profile deferred delete session ${sessionId} (session=${sessionProfile.profile_name}, active=${currentProfile})`)
-                return
-            }
-
-            // Same profile or no mapping: delete directly
-            const ok = await hermesDeleteSession(sessionId)
-            if (ok) {
-                this.storage?.deleteSessionProfile?.(sessionId)
-            }
-            logger.debug(`[AgentClients] ${this.name}: delete session ${sessionId} (profile=${this.profile}) → ${ok ? 'ok' : 'failed'}`)
-        } catch (err: any) {
-            logger.warn(`[AgentClients] ${this.name}: failed to delete session ${sessionId}: ${err.message}`)
-        }
-    }
-
     // ─── Hermes Gateway Integration ────────────────────────────
 
     /**
@@ -234,8 +207,6 @@ class AgentClient {
             logger.error(`[AgentClients] ${this.name}: no gateway upstream for profile "${this.profile}"`)
             return
         }
-
-        const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
         try {
             // Notify room that agent is typing
@@ -290,8 +261,7 @@ class AgentClient {
 
             // Strip @mention from input — agent already knows it was mentioned
             const input = msg.content.replace(new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi'), '').trim() || msg.content
-            // Start a run on Hermes gateway
-            const runRes = await fetch(`${upstream}/v1/runs`, {
+            const responseRes = await fetch(`${upstream.replace(/\/$/, '')}/v1/responses`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -299,126 +269,81 @@ class AgentClient {
                 },
                 body: JSON.stringify({
                     input,
-                    session_id: sessionId,
                     ...(conversationHistory.length > 0 ? { conversation_history: conversationHistory } : {}),
                     ...(instructions ? { instructions } : {}),
+                    stream: true,
+                    store: false,
                 }),
                 signal: AbortSignal.timeout(120000),
             })
 
-            if (!runRes.ok) {
-                const text = await runRes.text().catch(() => '')
-                logger.error(`[AgentClients] ${this.name}: gateway run failed (${runRes.status}): ${text}`)
+            if (!responseRes.ok) {
+                const text = await responseRes.text().catch(() => '')
+                logger.error(`[AgentClients] ${this.name}: gateway response failed (${responseRes.status}): ${text}`)
                 this.stopTyping(roomId)
+                onStatus?.('ready')
                 return
             }
 
-            const runData = await runRes.json() as any
-            const run_id = runData.run_id
-            logger.debug(`[AgentClients] ${this.name}: run started, response=%j`, runData)
-            if (!run_id) {
-                logger.error(`[AgentClients] ${this.name}: no run_id in response`)
+            if (!responseRes.body) {
+                logger.error(`[AgentClients] ${this.name}: gateway response stream missing`)
                 this.stopTyping(roomId)
+                onStatus?.('ready')
                 return
             }
-
-            // Save session-to-profile mapping after gateway confirms the run
-            const actualSessionId = runData.session_id || sessionId
-            if (!this.storage) {
-                logger.warn(`[AgentClients] ${this.name}: storage is null, cannot save session profile for ${actualSessionId}`)
-            } else {
-                this.storage.saveSessionProfile(actualSessionId, roomId, this.agentId, this.profile)
-                logger.debug(`[AgentClients] ${this.name}: saved session profile ${actualSessionId} → profile=${this.profile}`)
-            }
-
-            // Stream events from Hermes
-            const eventsUrl = new URL(`${upstream}/v1/runs/${run_id}/events`)
-            logger.debug(`[AgentClients] ${this.name}: streaming events from ${eventsUrl}`)
-
-            // Use Authorization header instead of query parameter for better compatibility
-            const eventSourceInit: any = apiKey ? {
-                fetch: (url: string, init: any = {}) => fetch(url, {
-                    ...init,
-                    headers: {
-                        ...(init.headers || {}),
-                        Authorization: `Bearer ${apiKey}`,
-                    },
-                }),
-            } : {}
-
-            // @ts-ignore - eventsource library types are too strict
-            const source = new EventSource(eventsUrl.toString(), eventSourceInit)
 
             let fullContent = ''
-
-            source.onmessage = async (e: any) => {
+            for await (const frame of readSseFrames(responseRes.body)) {
+                let parsed: any
                 try {
-                    const parsed = JSON.parse(e.data)
-                    logger.debug(`[AgentClients] ${this.name}: event=${parsed.event}`)
-
-                    if (parsed.event === 'run.completed') {
-                        // Record usage data from Hermes state.db BEFORE closing source
-                        // This ensures we fetch usage before deleteSession can delete it
-                        try {
-                            const detail = await getSessionDetailFromDbWithProfile(actualSessionId, this.profile)
-                            if (detail) {
-                                updateUsage(roomId, {
-                                    inputTokens: detail.input_tokens,
-                                    outputTokens: detail.output_tokens,
-                                    cacheReadTokens: detail.cache_read_tokens,
-                                    cacheWriteTokens: detail.cache_write_tokens,
-                                    reasoningTokens: detail.reasoning_tokens,
-                                    model: detail.model,
-                                    profile: this.profile,
-                                })
-                                logger.debug(`[AgentClients] Recorded usage for room ${roomId} (session ${actualSessionId}, profile=${this.profile}): input=${detail.input_tokens}, output=${detail.output_tokens}`)
-                            } else {
-                                logger.warn(`[AgentClients] Failed to get session detail for ${actualSessionId} (profile=${this.profile})`)
-                            }
-                        } catch (err: any) {
-                            logger.warn(err, '[AgentClients] Failed to record usage from DB')
-                        }
-
-                        source.close()
-                        logger.debug(`[AgentClients] ${this.name}: run completed, content length=${fullContent.length}`)
-                        if (fullContent) {
-                            this.stopTyping(roomId)
-                            this.sendMessage(roomId, fullContent)
-                        }
-                        this.deleteSession(actualSessionId).catch(() => { })
-                        onStatus?.('ready')
-                        return
-                    }
-
-                    if (parsed.event === 'run.failed') {
-                        source.close()
-                        logger.error(`[AgentClients] ${this.name}: run failed`)
-                        this.stopTyping(roomId)
-                        this.deleteSession(actualSessionId).catch(() => { })
-                        onStatus?.('ready')
-                        return
-                    }
-
-                    // Accumulate message deltas
-                    if (parsed.event === 'message.delta' && parsed.delta) {
-                        fullContent += parsed.delta
-                    }
+                    parsed = JSON.parse(frame.data)
                 } catch {
-                    // ignore parse errors
+                    continue
+                }
+                const eventType = parsed.type || frame.event || parsed.event
+                logger.debug(`[AgentClients] ${this.name}: event=${eventType}`)
+
+                if (eventType === 'response.output_text.delta' && parsed.delta) {
+                    fullContent += parsed.delta
+                    continue
+                }
+
+                if (eventType === 'response.completed') {
+                    const response = parsed.response || parsed
+                    const finalText = extractResponseText(response)
+                    if (!fullContent && finalText) fullContent = finalText
+                    const usage = response.usage || {}
+                    updateUsage(roomId, {
+                        inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
+                        outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
+                        cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
+                        cacheWriteTokens: usage.cache_write_tokens ?? usage.cacheWriteTokens ?? 0,
+                        reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
+                        model: response.model || '',
+                        profile: this.profile,
+                    })
+                    logger.debug(`[AgentClients] ${this.name}: response completed, content length=${fullContent.length}`)
+                    if (fullContent) {
+                        this.stopTyping(roomId)
+                        this.sendMessage(roomId, fullContent)
+                    }
+                    onStatus?.('ready')
+                    return
+                }
+
+                if (eventType === 'response.failed') {
+                    logger.error(`[AgentClients] ${this.name}: response failed`)
+                    this.stopTyping(roomId)
+                    onStatus?.('ready')
+                    return
                 }
             }
-
-            source.onerror = (err: any) => {
-                logger.error(err, `[AgentClients] ${this.name}: EventSource error`)
-                source.close()
-                this.stopTyping(roomId)
-                this.deleteSession(actualSessionId).catch(() => { })
-                onStatus?.('ready')
-            }
+            logger.warn(`[AgentClients] ${this.name}: response stream ended without terminal event`)
+            this.stopTyping(roomId)
+            onStatus?.('ready')
         } catch (err: any) {
             logger.error(`[AgentClients] ${this.name}: error handling message: ${err.message}`)
             this.stopTyping(roomId)
-            this.deleteSession(sessionId).catch(() => { })
             onStatus?.('ready')
         }
     }
@@ -458,6 +383,66 @@ class AgentClient {
             this._reconnecting = false
         })
     }
+}
+
+async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: string }> {
+    const decoder = new TextDecoder()
+    const reader = stream.getReader()
+    let buffer = ''
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+
+            let boundary = buffer.indexOf('\n\n')
+            while (boundary >= 0) {
+                const raw = buffer.slice(0, boundary)
+                buffer = buffer.slice(boundary + 2)
+                const frame = parseSseFrame(raw)
+                if (frame?.data) yield frame
+                boundary = buffer.indexOf('\n\n')
+            }
+        }
+
+        buffer += decoder.decode()
+        const frame = parseSseFrame(buffer)
+        if (frame?.data) yield frame
+    } finally {
+        reader.releaseLock()
+    }
+}
+
+function parseSseFrame(raw: string): { event?: string; data: string } | null {
+    let event: string | undefined
+    const data: string[] = []
+    for (const line of raw.split(/\r?\n/)) {
+        if (!line || line.startsWith(':')) continue
+        if (line.startsWith('event:')) {
+            event = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+            data.push(line.slice(5).trimStart())
+        }
+    }
+    if (data.length === 0) return null
+    return { event, data: data.join('\n') }
+}
+
+function extractResponseText(response: any): string {
+    const output = Array.isArray(response?.output) ? response.output : []
+    const parts: string[] = []
+    for (const item of output) {
+        if (item.type !== 'message') continue
+        const content = Array.isArray(item.content) ? item.content : []
+        for (const part of content) {
+            if (part.type === 'output_text' || part.type === 'text') {
+                parts.push(part.text || '')
+            }
+        }
+    }
+    if (parts.length > 0) return parts.join('')
+    return typeof response?.output_text === 'string' ? response.output_text : ''
 }
 
 // ─── AgentClients (roomId -> agents) ──────────────────────────

@@ -61,7 +61,7 @@ async function searchTaskSessions() {
   sessionLoading.value = true
   try {
     const res = await request<{ results: any[] }>(
-      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(detail.value.task.id)}&profile=${encodeURIComponent(profile)}`
+      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(detail.value.task.id)}&profile=${encodeURIComponent(profile)}&board=${encodeURIComponent(kanbanStore.selectedBoard)}`
     )
     sessionResults.value = res.results
   } catch {
@@ -103,22 +103,29 @@ const historySession = computed<Session | null>(() => {
 const assigneeOptions = computed(() => {
   return kanbanStore.assignees.map(a => {
     const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
-    return { label: `${a.name} (${total})`, value: a.name }
+    return { label: `${a.name} · ${t('kanban.stats.tasks')}: ${total}`, value: a.name }
   })
 })
 
-watch(() => props.taskId, async (id) => {
+watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, board]) => {
   if (!id) {
     detail.value = null
     return
   }
   loading.value = true
   try {
-    detail.value = await getTask(id)
+    const nextDetail = await getTask(id, { board })
+    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+      detail.value = nextDetail
+    }
   } catch (err: any) {
-    message.error(t('kanban.message.loadFailed'))
+    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+      message.error(t('kanban.message.loadFailed'))
+    }
   } finally {
-    loading.value = false
+    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+      loading.value = false
+    }
   }
 }, { immediate: true })
 
@@ -178,7 +185,7 @@ async function handleAssign() {
     message.success(t('kanban.message.taskAssigned'))
     assignProfile.value = null
     if (detail.value) {
-      detail.value = await getTask(props.taskId)
+      detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
     }
     emit('updated')
   } catch (err: any) {

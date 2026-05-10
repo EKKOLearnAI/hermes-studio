@@ -37,6 +37,7 @@ vi.mock('@/api/hermes/kanban', () => ({
 
 vi.mock('@/stores/hermes/kanban', () => ({
   useKanbanStore: () => ({
+    selectedBoard: 'project-a',
     assignees: [{ name: 'alice', counts: { todo: 1 } }, { name: 'bob', counts: { ready: 1 } }],
     completeTasks: mockCompleteTasks,
     blockTask: mockBlockTask,
@@ -198,7 +199,7 @@ describe('KanbanTaskDrawer', () => {
     await sessionsTitle?.trigger('click')
     await flushPromises()
 
-    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban/search-sessions?task_id=task-2&profile=fresh')
+    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban/search-sessions?task_id=task-2&profile=fresh&board=project-a')
     await wrapper.find('.session-item').trigger('click')
     expect(mockRouterPush).toHaveBeenCalledWith({ name: 'hermes.chat', query: { session: 'session-2' } })
   })
