@@ -3,19 +3,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 
+const routeState = vi.hoisted(() => ({
+  query: { board: 'project-a' } as Record<string, string>,
+}))
+
+const routerReplace = vi.hoisted(() => vi.fn())
+
 const storeState = vi.hoisted(() => ({
   tasks: [] as Array<{ id: string; title: string; status: string; created_at: number }>,
   stats: { by_status: { todo: 1, done: 0 }, by_assignee: {}, total: 1 } as Record<string, any>,
   assignees: [] as Array<{ name: string; counts: Record<string, number> | null }>,
+  activeBoards: [] as Array<{ slug: string; name: string; icon?: string; total?: number }>,
   loading: false,
+  boardsLoading: false,
+  selectedBoard: 'default',
+  boardWarning: null as string | null,
   filterStatus: null as string | null,
   filterAssignee: null as string | null,
 }))
 
+const mockFetchBoards = vi.hoisted(() => vi.fn())
 const mockRefreshAll = vi.hoisted(() => vi.fn())
 const mockFetchTasks = vi.hoisted(() => vi.fn())
 const mockFetchStats = vi.hoisted(() => vi.fn())
 const mockSetFilter = vi.hoisted(() => vi.fn())
+const mockRecoverSelectedBoard = vi.hoisted(() => vi.fn())
+
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+  useRouter: () => ({ replace: routerReplace }),
+}))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -24,12 +41,15 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('@/stores/hermes/kanban', () => ({
+  DEFAULT_KANBAN_BOARD: 'default',
   useKanbanStore: () => ({
     ...storeState,
+    fetchBoards: mockFetchBoards,
     refreshAll: mockRefreshAll,
     fetchTasks: mockFetchTasks,
     fetchStats: mockFetchStats,
     setFilter: mockSetFilter,
+    recoverSelectedBoard: mockRecoverSelectedBoard,
   }),
 }))
 
@@ -58,6 +78,7 @@ vi.mock('@/components/hermes/kanban/KanbanCreateForm.vue', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
+  useMessage: () => ({ warning: vi.fn(), error: vi.fn(), success: vi.fn() }),
   NButton: defineComponent({
     name: 'NButton',
     emits: ['click'],
@@ -65,9 +86,9 @@ vi.mock('naive-ui', () => ({
   }),
   NSelect: defineComponent({
     name: 'NSelect',
-    props: { value: null, options: { type: Array, default: () => [] } },
+    props: { value: null, options: { type: Array, default: () => [] }, loading: Boolean },
     emits: ['update:value'],
-    template: '<div class="n-select-stub"></div>',
+    template: '<button class="n-select-stub" @click="$emit(\'update:value\', options[1]?.value || value)">{{ value }}</button>',
   }),
   NSpin: defineComponent({
     name: 'NSpin',
@@ -91,6 +112,8 @@ describe('KanbanView', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    routeState.query = { board: 'project-a' }
+    routerReplace.mockResolvedValue(undefined)
     storeState.tasks = [
       { id: 'task-1', title: 'Task one', status: 'todo', created_at: 10 },
       { id: 'task-2', title: 'Task two', status: 'done', created_at: 20 },
@@ -101,12 +124,24 @@ describe('KanbanView', () => {
       total: 2,
     }
     storeState.assignees = []
+    storeState.activeBoards = [
+      { slug: 'default', name: 'Default', total: 0 },
+      { slug: 'project-a', name: 'Project A', total: 2 },
+    ]
     storeState.loading = false
+    storeState.boardsLoading = false
+    storeState.selectedBoard = 'default'
+    storeState.boardWarning = null
     storeState.filterStatus = null
     storeState.filterAssignee = null
+    mockFetchBoards.mockResolvedValue(undefined)
     mockRefreshAll.mockResolvedValue(undefined)
     mockFetchTasks.mockResolvedValue(undefined)
     mockFetchStats.mockResolvedValue(undefined)
+    mockRecoverSelectedBoard.mockImplementation((candidate: string) => {
+      storeState.selectedBoard = candidate || 'default'
+      return { board: storeState.selectedBoard, recovered: false }
+    })
     mockSetFilter.mockImplementation((key: 'status' | 'assignee', value: string | null) => {
       if (key === 'status') storeState.filterStatus = value
       else storeState.filterAssignee = value
@@ -117,11 +152,14 @@ describe('KanbanView', () => {
     })
   })
 
-  it('starts with collapsed panels and refreshes stats alongside tasks', async () => {
+  it('initializes board from route query and refreshes stats alongside tasks', async () => {
     const wrapper = mount(KanbanView)
     await flushPromises()
 
+    expect(mockFetchBoards).toHaveBeenCalledOnce()
+    expect(mockRecoverSelectedBoard).toHaveBeenCalledWith('project-a')
     expect(mockRefreshAll).toHaveBeenCalledOnce()
+    expect(routerReplace).not.toHaveBeenCalled()
     expect(wrapper.find('.n-collapse-stub').attributes('data-default-expanded')).toBe('null')
 
     await wrapper.find('.drawer-updated').trigger('click')
@@ -133,5 +171,19 @@ describe('KanbanView', () => {
 
     expect(mockFetchTasks).toHaveBeenCalledTimes(2)
     expect(mockFetchStats).toHaveBeenCalledTimes(2)
+  })
+
+  it('makes default board explicit when route query is absent', async () => {
+    routeState.query = {}
+    mockRecoverSelectedBoard.mockImplementation(() => {
+      storeState.selectedBoard = 'default'
+      return { board: 'default', recovered: false }
+    })
+
+    mount(KanbanView)
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledWith({ query: { board: 'default' } })
+    expect(mockRefreshAll).toHaveBeenCalledOnce()
   })
 })

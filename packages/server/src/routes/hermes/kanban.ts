@@ -3,6 +3,7 @@ import * as ctrl from '../../controllers/hermes/kanban'
 
 export const kanbanRoutes = new Router()
 
+kanbanRoutes.get('/api/hermes/kanban/boards', ctrl.listBoards)
 kanbanRoutes.get('/api/hermes/kanban/stats', ctrl.stats)
 kanbanRoutes.get('/api/hermes/kanban/assignees', ctrl.assignees)
 kanbanRoutes.get('/api/hermes/kanban/artifact', ctrl.readArtifact)

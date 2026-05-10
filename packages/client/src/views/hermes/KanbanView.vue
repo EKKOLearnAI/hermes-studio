@@ -1,21 +1,67 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { NButton, NSelect, NSpin, NCollapse, NCollapseItem } from 'naive-ui'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { NButton, NSelect, NSpin, NCollapse, NCollapseItem, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
 import KanbanTaskDrawer from '@/components/hermes/kanban/KanbanTaskDrawer.vue'
 import KanbanCreateForm from '@/components/hermes/kanban/KanbanCreateForm.vue'
-import { useKanbanStore } from '@/stores/hermes/kanban'
+import { DEFAULT_KANBAN_BOARD, useKanbanStore } from '@/stores/hermes/kanban'
 import type { KanbanTaskStatus } from '@/api/hermes/kanban'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const message = useMessage()
 const kanbanStore = useKanbanStore()
 
 const showCreateForm = ref(false)
 const selectedTaskId = ref<string | null>(null)
 const refreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const routeReady = ref(false)
 
 const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'ready', 'running', 'blocked', 'done', 'archived']
+
+function firstQueryString(value: unknown): string | null {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null
+  return typeof value === 'string' ? value : null
+}
+
+function routeBoard(): string | null {
+  return firstQueryString(route.query.board)
+}
+
+async function replaceRouteBoard(board: string) {
+  if (routeBoard() === board) return
+  await router.replace({ query: { ...route.query, board } })
+}
+
+async function applyBoardSelection(candidate: string | null, notify = true, forceRefresh = false) {
+  const previousBoard = kanbanStore.selectedBoard
+  const { board, recovered } = kanbanStore.recoverSelectedBoard(candidate || kanbanStore.selectedBoard || DEFAULT_KANBAN_BOARD)
+  selectedTaskId.value = null
+  showCreateForm.value = false
+  if (notify && recovered && kanbanStore.boardWarning) message.warning(kanbanStore.boardWarning)
+  await replaceRouteBoard(board)
+  if (forceRefresh || board !== previousBoard) {
+    await kanbanStore.refreshAll()
+  }
+}
+
+const boardOptions = computed(() => kanbanStore.activeBoards.map(board => {
+  const suffix = typeof board.total === 'number' ? ` (${board.total})` : ''
+  return {
+    label: `${board.icon ? `${board.icon} ` : ''}${board.name || board.slug}${suffix}`,
+    value: board.slug,
+  }
+}))
+
+const selectedBoardValue = computed({
+  get: () => kanbanStore.selectedBoard,
+  set: (value: string) => {
+    void applyBoardSelection(value || DEFAULT_KANBAN_BOARD)
+  },
+})
 
 const tasksByStatus = computed(() => {
   const grouped: Record<string, typeof kanbanStore.tasks> = {}
@@ -50,8 +96,15 @@ const filterAssigneeValue = computed({
   set: (v: string) => kanbanStore.setFilter('assignee', v || null),
 })
 
+watch(() => route.query.board, async () => {
+  if (!routeReady.value) return
+  await applyBoardSelection(routeBoard(), false)
+})
+
 onMounted(async () => {
-  await kanbanStore.refreshAll()
+  await kanbanStore.fetchBoards()
+  await applyBoardSelection(routeBoard(), true, true)
+  routeReady.value = true
   refreshTimer.value = setInterval(() => {
     if (document.visibilityState === 'visible') {
       void Promise.all([kanbanStore.fetchTasks(true), kanbanStore.fetchStats()])
@@ -89,6 +142,13 @@ async function handleTaskCreated() {
     <header class="page-header">
       <h2 class="header-title">{{ t('kanban.title') }}</h2>
       <div class="header-actions">
+        <NSelect
+          v-model:value="selectedBoardValue"
+          :options="boardOptions"
+          :loading="kanbanStore.boardsLoading"
+          size="small"
+          style="width: 220px;"
+        />
         <NSelect
           v-model:value="filterStatusValue"
           :options="statusFilterOptions"
@@ -257,10 +317,6 @@ async function handleTaskCreated() {
   .header-actions {
     flex-wrap: wrap;
     width: 100%;
-  }
-
-  .kanban-board {
-    padding: 0 12px 12px;
   }
 }
 </style>

@@ -5,6 +5,7 @@ import { logger } from '../logger'
 const execFileAsync = promisify(execFile)
 
 const execOpts = { windowsHide: true }
+const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/
 
 function resolveHermesBin(): string {
   const envBin = process.env.HERMES_BIN?.trim()
@@ -13,6 +14,19 @@ function resolveHermesBin(): string {
 }
 
 const HERMES_BIN = resolveHermesBin()
+
+export function normalizeBoardSlug(board?: string | null): string {
+  const trimmed = board?.trim()
+  if (!trimmed) return 'default'
+  if (!BOARD_SLUG_RE.test(trimmed)) {
+    throw new Error('Invalid kanban board slug')
+  }
+  return trimmed
+}
+
+function boardArgs(board?: string | null): string[] {
+  return ['kanban', '--board', normalizeBoardSlug(board)]
+}
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -84,14 +98,50 @@ export interface KanbanAssignee {
   counts: Record<string, number> | null
 }
 
+export interface KanbanBoard {
+  slug: string
+  name: string
+  description: string
+  icon: string
+  color: string
+  created_at: number | null
+  archived: boolean
+  db_path?: string
+  is_current?: boolean
+  counts: Record<string, number>
+  total: number
+}
+
+export interface KanbanBoardOptions {
+  board?: string
+}
+
 // ─── CLI wrappers ───────────────────────────────────────────────
 
+export async function listBoards(opts?: { includeArchived?: boolean }): Promise<KanbanBoard[]> {
+  const args = ['kanban', 'boards', 'list', '--json']
+  if (opts?.includeArchived) args.push('--all')
+
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return JSON.parse(stdout)
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban boards list failed')
+    throw new Error(`Failed to list kanban boards: ${err.message}`)
+  }
+}
+
 export async function listTasks(opts?: {
+  board?: string
   status?: string
   assignee?: string
   tenant?: string
 }): Promise<KanbanTask[]> {
-  const args = ['kanban', 'list', '--json']
+  const args = [...boardArgs(opts?.board), 'list', '--json']
   if (opts?.status) args.push('--status', opts.status)
   if (opts?.assignee) args.push('--assignee', opts.assignee)
   if (opts?.tenant) args.push('--tenant', opts.tenant)
@@ -109,9 +159,9 @@ export async function listTasks(opts?: {
   }
 }
 
-export async function getTask(taskId: string): Promise<KanbanTaskDetail | null> {
+export async function getTask(taskId: string, opts?: KanbanBoardOptions): Promise<KanbanTaskDetail | null> {
   try {
-    const { stdout } = await execFileAsync(HERMES_BIN, ['kanban', 'show', taskId, '--json'], {
+    const { stdout } = await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'show', taskId, '--json'], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -127,13 +177,14 @@ export async function getTask(taskId: string): Promise<KanbanTaskDetail | null> 
 export async function createTask(
   title: string,
   opts?: {
+    board?: string
     body?: string
     assignee?: string
     priority?: number
     tenant?: string
   },
 ): Promise<KanbanTask> {
-  const args = ['kanban', 'create', title, '--json']
+  const args = [...boardArgs(opts?.board), 'create', title, '--json']
   if (opts?.body) args.push('--body', opts.body)
   if (opts?.assignee) args.push('--assignee', opts.assignee)
   if (opts?.priority !== undefined) args.push('--priority', String(opts.priority))
@@ -152,8 +203,8 @@ export async function createTask(
   }
 }
 
-export async function completeTasks(taskIds: string[], summary?: string): Promise<void> {
-  const args = ['kanban', 'complete', ...taskIds]
+export async function completeTasks(taskIds: string[], summary?: string, opts?: KanbanBoardOptions): Promise<void> {
+  const args = [...boardArgs(opts?.board), 'complete', ...taskIds]
   if (summary) args.push('--summary', summary)
 
   try {
@@ -168,9 +219,9 @@ export async function completeTasks(taskIds: string[], summary?: string): Promis
   }
 }
 
-export async function blockTask(taskId: string, reason: string): Promise<void> {
+export async function blockTask(taskId: string, reason: string, opts?: KanbanBoardOptions): Promise<void> {
   try {
-    await execFileAsync(HERMES_BIN, ['kanban', 'block', taskId, reason], {
+    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'block', taskId, reason], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -181,9 +232,9 @@ export async function blockTask(taskId: string, reason: string): Promise<void> {
   }
 }
 
-export async function unblockTasks(taskIds: string[]): Promise<void> {
+export async function unblockTasks(taskIds: string[], opts?: KanbanBoardOptions): Promise<void> {
   try {
-    await execFileAsync(HERMES_BIN, ['kanban', 'unblock', ...taskIds], {
+    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'unblock', ...taskIds], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -194,9 +245,9 @@ export async function unblockTasks(taskIds: string[]): Promise<void> {
   }
 }
 
-export async function assignTask(taskId: string, profile: string): Promise<void> {
+export async function assignTask(taskId: string, profile: string, opts?: KanbanBoardOptions): Promise<void> {
   try {
-    await execFileAsync(HERMES_BIN, ['kanban', 'assign', taskId, profile], {
+    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'assign', taskId, profile], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -207,9 +258,9 @@ export async function assignTask(taskId: string, profile: string): Promise<void>
   }
 }
 
-export async function getStats(): Promise<KanbanStats> {
+export async function getStats(opts?: KanbanBoardOptions): Promise<KanbanStats> {
   try {
-    const { stdout } = await execFileAsync(HERMES_BIN, ['kanban', 'stats', '--json'], {
+    const { stdout } = await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'stats', '--json'], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,
@@ -221,9 +272,9 @@ export async function getStats(): Promise<KanbanStats> {
   }
 }
 
-export async function getAssignees(): Promise<KanbanAssignee[]> {
+export async function getAssignees(opts?: KanbanBoardOptions): Promise<KanbanAssignee[]> {
   try {
-    const { stdout } = await execFileAsync(HERMES_BIN, ['kanban', 'assignees', '--json'], {
+    const { stdout } = await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'assignees', '--json'], {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 30000,
       ...execOpts,

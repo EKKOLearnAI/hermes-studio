@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handlers = {
+  listBoards: vi.fn(async (ctx: any) => { ctx.body = { boards: [] } }),
   stats: vi.fn(async (ctx: any) => { ctx.body = { stats: {} } }),
   assignees: vi.fn(async (ctx: any) => { ctx.body = { assignees: [] } }),
   readArtifact: vi.fn(async (ctx: any) => { ctx.body = { content: 'x' } }),
@@ -27,6 +28,7 @@ describe('kanban routes', () => {
     const paths = kanbanRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
+      '/api/hermes/kanban/boards',
       '/api/hermes/kanban/stats',
       '/api/hermes/kanban/assignees',
       '/api/hermes/kanban/artifact',
