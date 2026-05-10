@@ -10,14 +10,31 @@ function resolveLocale(saved: string | null): SupportedLocale {
   if (saved && (supportedLocales as readonly string[]).includes(saved)) {
     return saved as SupportedLocale
   }
-  const full = navigator.language          // e.g. "zh-TW"
-  const short = full.slice(0, 2)           // e.g. "zh"
-  if ((supportedLocales as readonly string[]).includes(full)) {
-    return full as SupportedLocale
+
+  // Normalize a single BCP-47 tag to a supported locale key.
+  // Covers zh-Hant-TW, zh-TW, zh-HK, zh-MO, zh-Hant → zh-TW
+  //        zh-Hans-*, zh-CN, zh-SG, zh            → zh
+  function normalize(tag: string): SupportedLocale | null {
+    const lower = tag.toLowerCase()
+    if (lower.startsWith('zh')) {
+      const isTraditional =
+        lower.includes('hant') ||
+        lower.includes('-tw') ||
+        lower.includes('-hk') ||
+        lower.includes('-mo')
+      return isTraditional ? 'zh-TW' : 'zh'
+    }
+    const short = tag.slice(0, 2)
+    if ((supportedLocales as readonly string[]).includes(tag)) return tag as SupportedLocale
+    if ((supportedLocales as readonly string[]).includes(short)) return short as SupportedLocale
+    return null
   }
-  if ((supportedLocales as readonly string[]).includes(short)) {
-    return short as SupportedLocale
+
+  for (const lang of navigator.languages) {
+    const resolved = normalize(lang)
+    if (resolved) return resolved
   }
+
   return 'en'
 }
 
