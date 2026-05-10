@@ -6,6 +6,7 @@ const mockSystemApi = vi.hoisted(() => ({
   checkHealth: vi.fn(),
   fetchAvailableModels: vi.fn(),
   updateDefaultModel: vi.fn(),
+  updateModelAlias: vi.fn(),
   triggerUpdate: vi.fn(),
 }))
 
@@ -45,5 +46,48 @@ describe('App Store', () => {
     expect(store.updating).toBe(false)
     expect(consoleError).toHaveBeenCalledWith('Failed to update Hermes Web UI:', expect.any(Error))
     consoleError.mockRestore()
+  })
+
+  it('loads model aliases and resolves display names without changing canonical IDs', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-v4-flash',
+      default_provider: 'deepseek',
+      groups: [{
+        provider: 'deepseek',
+        label: 'DeepSeek',
+        base_url: 'https://api.deepseek.com/v1',
+        models: ['deepseek-v4-flash'],
+        api_key: '',
+      }],
+      allProviders: [],
+      model_aliases: {
+        deepseek: { 'deepseek-v4-flash': 'Flash Alias' },
+      },
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.selectedModel).toBe('deepseek-v4-flash')
+    expect(store.getModelAlias('deepseek-v4-flash', 'deepseek')).toBe('Flash Alias')
+    expect(store.displayModelName('deepseek-v4-flash', 'deepseek')).toBe('Flash Alias')
+    expect(store.displayModelName('unknown', 'deepseek')).toBe('unknown')
+  })
+
+  it('saves and clears model aliases via the Web UI-only alias API', async () => {
+    mockSystemApi.updateModelAlias.mockResolvedValue(undefined)
+    const store = useAppStore()
+
+    await store.setModelAlias('deepseek-v4-flash', 'deepseek', '  Flash Alias  ')
+
+    expect(mockSystemApi.updateModelAlias).toHaveBeenCalledWith({
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      alias: 'Flash Alias',
+    })
+    expect(store.modelAliases).toEqual({ deepseek: { 'deepseek-v4-flash': 'Flash Alias' } })
+
+    await store.setModelAlias('deepseek-v4-flash', 'deepseek', '')
+    expect(store.modelAliases).toEqual({})
   })
 })

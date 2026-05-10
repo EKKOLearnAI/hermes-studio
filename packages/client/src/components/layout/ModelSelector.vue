@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NModal, NInput, NSelect } from 'naive-ui'
+import { NButton, NModal, NInput, NSelect, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const message = useMessage()
 
 const showModal = ref(false)
 const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
+const showAliasModal = ref(false)
+const aliasProvider = ref('')
+const aliasModel = ref('')
+const aliasInput = ref('')
+
+const selectedDisplayName = computed(() => appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider))
 
 const providerOptions = computed(() => {
   const current = appStore.selectedProvider
@@ -43,7 +50,10 @@ const filteredGroups = computed(() => {
   return modelGroupsWithCustom.value
     .map(g => ({
       ...g,
-      models: g.models.filter(m => m.toLowerCase().includes(q)),
+      models: g.models.filter(m => {
+        const displayName = appStore.displayModelName(m, g.provider)
+        return m.toLowerCase().includes(q) || displayName.toLowerCase().includes(q)
+      }),
     }))
     .filter(g => g.models.length > 0 || g.label.toLowerCase().includes(q))
 })
@@ -62,6 +72,32 @@ function handleSelect(model: string, provider: string) {
   appStore.switchModel(model, provider)
   showModal.value = false
   searchQuery.value = ''
+}
+
+function modelDisplayName(model: string, provider: string) {
+  return appStore.displayModelName(model, provider)
+}
+
+function modelAlias(model: string, provider: string) {
+  return appStore.getModelAlias(model, provider)
+}
+
+function openAliasEditor(model: string, provider: string) {
+  aliasModel.value = model
+  aliasProvider.value = provider
+  aliasInput.value = appStore.getModelAlias(model, provider)
+  showAliasModal.value = true
+}
+
+async function saveAlias() {
+  if (!aliasModel.value || !aliasProvider.value) return
+  try {
+    await appStore.setModelAlias(aliasModel.value, aliasProvider.value, aliasInput.value)
+    showAliasModal.value = false
+  } catch (err) {
+    console.error('Failed to save model alias:', err)
+    message.error(t('models.aliasSaveFailed'))
+  }
 }
 
 function handleCustomSubmit() {
@@ -89,7 +125,7 @@ function openModal() {
   <div class="model-selector">
     <div class="model-label">{{ t('models.title') }}</div>
     <button class="model-trigger" @click="openModal">
-      <span class="model-name" :title="appStore.selectedModel">{{ appStore.selectedModel || '—' }}</span>
+      <span class="model-name" :title="appStore.selectedModel">{{ selectedDisplayName || '—' }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
       </svg>
@@ -134,10 +170,16 @@ function openModal() {
               :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
               @click="handleSelect(model, group.provider)"
             >
-              <span class="model-item-name">{{ model }}</span>
+              <span class="model-item-label">
+                <span class="model-item-name">{{ modelDisplayName(model, group.provider) }}</span>
+                <span v-if="modelAlias(model, group.provider)" class="model-item-id">{{ model }}</span>
+              </span>
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
               <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
+              <NButton quaternary size="tiny" class="model-alias-button" @click.stop="openAliasEditor(model, group.provider)">
+                {{ t('models.aliasEdit') }}
+              </NButton>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -168,6 +210,28 @@ function openModal() {
           </div>
         </div>
       </div>
+    </NModal>
+
+    <NModal
+      v-model:show="showAliasModal"
+      preset="card"
+      :title="aliasModel ? t('models.aliasTitleFor', { model: aliasModel }) : t('models.aliasTitle')"
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
+      :mask-closable="true"
+    >
+      <NInput
+        v-model:value="aliasInput"
+        :placeholder="t('models.aliasPlaceholder')"
+        clearable
+        @keydown.enter="saveAlias"
+      />
+      <div class="model-alias-hint">{{ t('models.aliasHint') }}</div>
+      <template #footer>
+        <div class="model-alias-actions">
+          <NButton @click="showAliasModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="saveAlias">{{ t('common.save') }}</NButton>
+        </div>
+      </template>
     </NModal>
   </div>
 </template>

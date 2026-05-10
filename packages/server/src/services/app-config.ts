@@ -12,6 +12,10 @@ export interface AppConfig {
   // via "Add Provider". Mirrors how the user manages Codex/Nous: the web-ui
   // owns the provider list, system credentials are merely a fallback source.
   copilotEnabled?: boolean
+
+  // Web UI-only model display aliases. Keys are provider -> canonical model ID -> display label.
+  // These aliases never replace the canonical model ID sent back to Hermes.
+  modelAliases?: Record<string, Record<string, string>>
 }
 
 let cache: AppConfig | null = null

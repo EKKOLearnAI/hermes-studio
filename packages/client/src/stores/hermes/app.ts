@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { checkHealth, fetchAvailableModels, updateDefaultModel, triggerUpdate, type AvailableModelGroup } from '@/api/hermes/system'
+import { checkHealth, fetchAvailableModels, updateDefaultModel, triggerUpdate, updateModelAlias, type AvailableModelGroup } from '@/api/hermes/system'
 
 const WEB_UI_VERSION = __APP_VERSION__
 
@@ -20,6 +20,7 @@ export const useAppStore = defineStore('app', () => {
   const selectedModel = ref('')
   const selectedProvider = ref('')
   const customModels = ref<Record<string, string[]>>({})
+  const modelAliases = ref<Record<string, Record<string, string>>>({})
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
 
@@ -62,11 +63,40 @@ export const useAppStore = defineStore('app', () => {
     try {
       const res = await fetchAvailableModels()
       modelGroups.value = res.groups
+      modelAliases.value = res.model_aliases || {}
       selectedModel.value = res.default
       selectedProvider.value = res.default_provider || ''
     } catch {
       // ignore
     }
+  }
+
+  function getModelAlias(modelId: string, provider?: string): string {
+    if (provider && modelAliases.value[provider]?.[modelId]) return modelAliases.value[provider][modelId]
+    for (const aliases of Object.values(modelAliases.value)) {
+      if (aliases[modelId]) return aliases[modelId]
+    }
+    return ''
+  }
+
+  function displayModelName(modelId: string, provider?: string): string {
+    return getModelAlias(modelId, provider) || modelId
+  }
+
+  async function setModelAlias(modelId: string, provider: string, alias: string) {
+    const cleanAlias = alias.trim()
+    await updateModelAlias({ provider, model: modelId, alias: cleanAlias })
+    const next = { ...modelAliases.value }
+    const providerAliases = { ...(next[provider] || {}) }
+    if (cleanAlias) {
+      providerAliases[modelId] = cleanAlias
+      next[provider] = providerAliases
+    } else {
+      delete providerAliases[modelId]
+      if (Object.keys(providerAliases).length > 0) next[provider] = providerAliases
+      else delete next[provider]
+    }
+    modelAliases.value = next
   }
 
   async function switchModel(modelId: string, providerOverride?: string) {
@@ -134,6 +164,7 @@ export const useAppStore = defineStore('app', () => {
     doUpdate,
     modelGroups,
     customModels,
+    modelAliases,
     selectedModel,
     selectedProvider,
     streamEnabled,
@@ -142,6 +173,9 @@ export const useAppStore = defineStore('app', () => {
     checkConnection,
     loadModels,
     switchModel,
+    getModelAlias,
+    displayModelName,
+    setModelAlias,
     startHealthPolling,
     stopHealthPolling,
   }

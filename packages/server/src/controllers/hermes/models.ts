@@ -4,11 +4,69 @@ import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/herme
 import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
-import { readAppConfig } from '../../services/app-config'
+import { readAppConfig, writeAppConfig } from '../../services/app-config'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
+
+type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
+type ModelGroup = {
+  provider: string
+  label: string
+  base_url: string
+  models: string[]
+  api_key: string
+  builtin?: boolean
+  model_meta?: Record<string, ModelMeta>
+}
+
+const RESERVED_ALIAS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+function isSafeAliasKey(value: string): boolean {
+  const trimmed = value.trim()
+  return !!trimmed && trimmed.length <= 512 && !RESERVED_ALIAS_KEYS.has(trimmed)
+}
+
+function createAliasMap(): Record<string, string> {
+  return Object.create(null) as Record<string, string>
+}
+
+function createProviderAliasMap(): Record<string, Record<string, string>> {
+  return Object.create(null) as Record<string, Record<string, string>>
+}
+
+function normalizeAliases(value: unknown): Record<string, Record<string, string>> {
+  const normalized = createProviderAliasMap()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized
+  for (const [provider, models] of Object.entries(value as Record<string, unknown>)) {
+    if (!isSafeAliasKey(provider) || !models || typeof models !== 'object' || Array.isArray(models)) continue
+    for (const [model, alias] of Object.entries(models as Record<string, unknown>)) {
+      if (!isSafeAliasKey(model) || typeof alias !== 'string') continue
+      const trimmed = alias.trim()
+      if (!trimmed || trimmed.length > 512) continue
+      if (!Object.hasOwn(normalized, provider)) normalized[provider] = createAliasMap()
+      normalized[provider][model] = trimmed
+    }
+  }
+  return normalized
+}
+
+function applyModelAliases<T extends { provider: string; models: string[]; model_meta?: Record<string, ModelMeta> }>(groups: T[], aliases: Record<string, Record<string, string>>): T[] {
+  return groups.map((group) => {
+    const providerAliases = aliases[group.provider]
+    if (!providerAliases) return group
+    const modelMeta: Record<string, ModelMeta> = { ...(group.model_meta || {}) }
+    let changed = false
+    for (const model of group.models) {
+      const alias = providerAliases[model]
+      if (!alias) continue
+      modelMeta[model] = { ...(modelMeta[model] || {}), alias }
+      changed = true
+    }
+    return changed ? { ...group, model_meta: modelMeta } : group
+  })
+}
 
 // Copilot 授权检测：复用同一套 token 解析逻辑（含 ~/.config/github-copilot/apps.json
 // 与 ghp_ PAT 跳过），与 getCopilotModels 行为一致，避免出现"模型能拉到却被判未授权"。
@@ -41,7 +99,7 @@ export async function getAvailable(ctx: any) {
       currentDefault = modelSection.trim()
     }
 
-    const groups: Array<{ provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, { preview?: boolean; disabled?: boolean }> }> = []
+    const groups: ModelGroup[] = []
     const seenProviders = new Set<string>()
 
     let envContent = ''
@@ -57,7 +115,7 @@ export async function getAvailable(ctx: any) {
       const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
       return match?.[1]?.trim() || ''
     }
-    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, { preview?: boolean; disabled?: boolean }>) => {
+    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
       groups.push({ provider, label, base_url, models: [...models], api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
@@ -93,6 +151,7 @@ export async function getAvailable(ctx: any) {
     // 时也不返回。避免误把 VS Code/gh CLI 用户的全局凭证当作 hermes provider。
     const appConfig = await readAppConfig()
     const copilotEnabled = appConfig.copilotEnabled === true
+    const modelAliases = normalizeAliases(appConfig.modelAliases)
 
     // 兼容老用户：上一版本会"自动 fallback discovery"出 Copilot；升级后这些用户的
     // config.yaml 可能仍把 model.default 指向某个 copilot 模型。若此时 copilot 已不
@@ -120,7 +179,7 @@ export async function getAvailable(ctx: any) {
       }
       const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
       let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
-      let modelMeta: Record<string, { preview?: boolean; disabled?: boolean }> | undefined
+      let modelMeta: Record<string, ModelMeta> | undefined
       if (providerKey === 'copilot') {
         const live = await getCopilotLive()
         if (live.length > 0) {
@@ -196,14 +255,74 @@ export async function getAvailable(ctx: any) {
       base_url: p.base_url,
       models: p.value === 'copilot' && liveCopilotIds.length > 0 ? liveCopilotIds : p.models,
     }))
+    const allProviders = applyModelAliases(allProvidersBase, modelAliases)
 
     if (groups.length === 0) {
       const fallback = buildModelGroups(config)
-      ctx.body = { ...fallback, allProviders: allProvidersBase }
+      ctx.body = {
+        ...fallback,
+        allProviders,
+        model_aliases: modelAliases,
+      }
       return
     }
 
-    ctx.body = { default: currentDefault, default_provider: currentDefaultProvider, groups, allProviders: allProvidersBase }
+    ctx.body = {
+      default: currentDefault,
+      default_provider: currentDefaultProvider,
+      groups: applyModelAliases(groups, modelAliases),
+      allProviders,
+      model_aliases: modelAliases,
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+
+export async function setModelAlias(ctx: any) {
+  const body = ctx.request.body
+  const provider = body && typeof body === 'object' && !Array.isArray(body) ? body.provider : undefined
+  const model = body && typeof body === 'object' && !Array.isArray(body) ? body.model : undefined
+  const alias = body && typeof body === 'object' && !Array.isArray(body) ? body.alias : undefined
+
+  if (typeof provider !== 'string' || typeof model !== 'string' || (alias !== undefined && typeof alias !== 'string')) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider, model, or alias' }
+    return
+  }
+
+  const cleanProvider = provider.trim()
+  const cleanModel = model.trim()
+  const cleanAlias = (alias || '').trim()
+
+  if (!isSafeAliasKey(cleanProvider) || !isSafeAliasKey(cleanModel)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider or model' }
+    return
+  }
+
+  if (cleanAlias.length > 512) {
+    ctx.status = 400
+    ctx.body = { error: 'Alias is too long' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const modelAliases = normalizeAliases(appConfig.modelAliases)
+    if (cleanAlias) {
+      if (!Object.hasOwn(modelAliases, cleanProvider)) modelAliases[cleanProvider] = createAliasMap()
+      modelAliases[cleanProvider][cleanModel] = cleanAlias
+    } else {
+      if (Object.hasOwn(modelAliases, cleanProvider)) delete modelAliases[cleanProvider][cleanModel]
+      if (Object.hasOwn(modelAliases, cleanProvider) && Object.keys(modelAliases[cleanProvider]).length === 0) {
+        delete modelAliases[cleanProvider]
+      }
+    }
+    await writeAppConfig({ modelAliases })
+    ctx.body = { success: true, model_aliases: modelAliases }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

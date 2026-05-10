@@ -32,8 +32,8 @@ export interface AvailableModelGroup {
   models: string[]
   api_key: string
   builtin?: boolean
-  /** 可选：模型 ID -> 元数据（preview/disabled）。目前仅 Copilot 提供。 */
-  model_meta?: Record<string, { preview?: boolean; disabled?: boolean }>
+  /** 可选：模型 ID -> 元数据（preview/disabled/alias）。alias 仅用于 Web UI 展示。 */
+  model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }
 
 export interface AvailableModelsResponse {
@@ -41,6 +41,8 @@ export interface AvailableModelsResponse {
   default_provider: string
   groups: AvailableModelGroup[]
   allProviders: AvailableModelGroup[]
+  /** Web UI-only display aliases keyed by provider -> canonical model ID. */
+  model_aliases?: Record<string, Record<string, string>>
 }
 
 export interface CustomProvider {
@@ -75,6 +77,17 @@ export async function updateDefaultModel(data: {
   api_key?: string
 }): Promise<void> {
   await request('/api/hermes/config/model', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateModelAlias(data: {
+  provider: string
+  model: string
+  alias: string
+}): Promise<void> {
+  await request('/api/hermes/model-alias', {
     method: 'PUT',
     body: JSON.stringify(data),
   })
