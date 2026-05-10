@@ -6,9 +6,11 @@ import { homedir } from 'os'
 const isDev = process.env.NODE_ENV !== 'production'
 
 // In WSL, always use home directory to avoid cross-filesystem issues
-const DB_DIR = isDev
-  ? resolve(process.cwd(), 'packages/server/data')
-  : resolve(homedir(), '.hermes-web-ui')
+const DB_DIR = process.env.DATA_DIR
+  ? resolve(process.env.DATA_DIR)
+  : isDev
+    ? resolve(process.cwd(), 'packages/server/data')
+    : resolve(homedir(), '.hermes-web-ui')
 const DB_PATH = resolve(DB_DIR, 'hermes-web-ui.db')
 const JSON_PATH = resolve(DB_DIR, 'hermes-web-ui.json')
 
@@ -30,16 +32,22 @@ let _db: DatabaseSync | null = null
 export function getDb(): DatabaseSync | null {
   if (!SQLITE_AVAILABLE) return null
   if (!_db) {
-    mkdirSync(DB_DIR, { recursive: true })
-    _db = new DatabaseSync(DB_PATH)
-    // Use WAL mode for better concurrency and WSL compatibility
-    if (isDev) {
-      _db.exec('PRAGMA journal_mode=DELETE')
-    } else {
-      _db.exec('PRAGMA journal_mode=WAL')
-      _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
+    try {
+      mkdirSync(DB_DIR, { recursive: true })
+      _db = new DatabaseSync(DB_PATH)
+      // Use WAL mode for better concurrency and WSL compatibility
+      if (isDev) {
+        _db.exec('PRAGMA journal_mode=DELETE')
+      } else {
+        _db.exec('PRAGMA journal_mode=WAL')
+        _db.exec('PRAGMA synchronous=NORMAL')
+        _db.exec('PRAGMA busy_timeout=5000')
+        _db.exec('PRAGMA foreign_keys=ON')
+      }
+    } catch (err) {
+      console.error('\x1b[31m%s\x1b[0m', `Failed to initialize SQLite database at ${DB_PATH}:`)
+      console.error('\x1b[31m%s\x1b[0m', err instanceof Error ? err.stack : String(err))
+      process.exit(1)
     }
   }
   return _db

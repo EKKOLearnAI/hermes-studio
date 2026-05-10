@@ -2,11 +2,13 @@
  * Tests for session-sync service
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getDb, ensureTable } from '../../packages/server/src/db/index'
+import { getDb } from '../../packages/server/src/db/index'
+import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
 import { syncAllHermesSessionsOnStartup } from '../../packages/server/src/services/hermes/session-sync'
 
 describe('session-sync', () => {
   beforeEach(() => {
+    initAllHermesTables()
     // Reset database before each test
     const db = getDb()
     if (db) {

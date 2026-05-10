@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     make \
     g++ \
+    python3 \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(dpkg --print-architecture) \
@@ -20,6 +22,9 @@ RUN ARCH=$(dpkg --print-architecture) \
     && node --version
 
 WORKDIR /app
+
+ENV DATA_DIR=/app/data
+RUN mkdir -p /app/data && chmod 777 /app/data
 
 COPY package*.json ./
 # Increase Node.js memory limit to prevent OOM during build
