@@ -1,13 +1,13 @@
 {
   "name": "hermes-web-ui",
   "version": "0.5.16",
-  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
+  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-web-ui.git"
   },
   "homepage": "https://ekkolearnai.com",
-  "license": "MIT",
+  "license": "BSL-1.1",
   "engines": {
     "node": ">=23.0.0"
   },
@@ -20,23 +20,11 @@
     "ai-agent",
     "ai-chat",
     "ai-dashboard",
-    "chatgpt",
-    "claude",
-    "openai",
-    "gemini",
-    "deepseek",
     "llm",
     "multi-model",
     "chat-ui",
     "dashboard",
     "self-hosted",
-    "telegram",
-    "discord",
-    "slack",
-    "whatsapp",
-    "matrix",
-    "feishu",
-    "weixin",
     "multi-platform",
     "vue3",
     "typescript"
