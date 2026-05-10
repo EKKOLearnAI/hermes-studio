@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { fetchPlugins, type HermesPluginInfo, type HermesPluginsMetadata } from '@/api/hermes/plugins'
 
+const { t, te } = useI18n()
 const message = useMessage()
 
 const plugins = ref<HermesPluginInfo[]>([])
@@ -16,13 +18,11 @@ const sourceFilter = ref<string | null>(null)
 const kindFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null)
 
-const statusOptions = [
-  { label: 'Enabled', value: 'enabled' },
-  { label: 'Auto-active', value: 'auto-active' },
-  { label: 'Inactive', value: 'inactive' },
-  { label: 'Disabled', value: 'disabled' },
-  { label: 'Provider-managed', value: 'provider-managed' },
-]
+const statusValues = ['enabled', 'auto-active', 'inactive', 'disabled', 'provider-managed'] as const
+const statusOptions = computed(() => statusValues.map(value => ({
+  label: t(`plugins.status.${value}`),
+  value,
+})))
 
 const sourceOptions = computed(() => toOptions(plugins.value.map(p => p.source)))
 const kindOptions = computed(() => toOptions(plugins.value.map(p => p.kind)))
@@ -63,20 +63,20 @@ async function loadPlugins() {
     warnings.value = data.warnings ?? []
     metadata.value = data.metadata ?? null
   } catch (err: any) {
-    error.value = err?.message || 'Failed to load plugins'
+    error.value = err?.message || t('plugins.loadFailed')
   } finally {
     loading.value = false
   }
 }
 
 function statusLabel(plugin: HermesPluginInfo) {
-  switch (plugin.effectiveStatus) {
-    case 'enabled': return 'Enabled by config'
-    case 'auto-active': return 'Auto-active'
-    case 'disabled': return 'Disabled'
-    case 'provider-managed': return 'Provider-managed'
-    default: return 'Inactive'
-  }
+  const key = `plugins.statusLabel.${plugin.effectiveStatus}`
+  return te(key) ? t(key) : plugin.effectiveStatus
+}
+
+function configStatusLabel(plugin: HermesPluginInfo) {
+  const key = `plugins.configStatuses.${plugin.configStatus}`
+  return te(key) ? t(key) : plugin.configStatus
 }
 
 function statusTagType(plugin: HermesPluginInfo): 'success' | 'warning' | 'error' | 'info' | 'default' {
@@ -108,7 +108,7 @@ async function copyCommand(plugin: HermesPluginInfo) {
   const command = pluginCommand(plugin)
   if (!command) return
   await navigator.clipboard.writeText(command)
-  message.success('Command copied')
+  message.success(t('plugins.commandCopied'))
 }
 
 onMounted(loadPlugins)
@@ -117,18 +117,15 @@ onMounted(loadPlugins)
 <template>
   <div class="plugins-view">
     <header class="page-header">
-      <div>
-        <h2 class="header-title">Plugins</h2>
-        <p class="header-subtitle">Read-only inventory of discoverable Hermes plugin manifests.</p>
-      </div>
-      <NButton size="small" :loading="loading" @click="loadPlugins">
-        Refresh
+      <h2 class="header-title">{{ t('plugins.title') }}</h2>
+      <NButton size="small" quaternary :loading="loading" @click="loadPlugins">
+        {{ t('plugins.refresh') }}
       </NButton>
     </header>
 
     <div class="plugins-content">
       <NAlert type="info" :bordered="false" class="plugins-notice">
-        This page uses Hermes Agent discovery metadata without loading plugin code. Management actions stay in CLI for v1; changes take effect in new Hermes sessions.
+        {{ t('plugins.notice') }}
       </NAlert>
 
       <NAlert v-if="error" type="error" class="plugins-notice">
@@ -141,32 +138,32 @@ onMounted(loadPlugins)
 
       <div class="summary-grid">
         <div class="summary-card">
-          <span class="summary-label">Total</span>
+          <span class="summary-label">{{ t('plugins.summary.total') }}</span>
           <strong>{{ summary.total }}</strong>
         </div>
         <div class="summary-card success">
-          <span class="summary-label">Enabled / auto</span>
+          <span class="summary-label">{{ t('plugins.summary.active') }}</span>
           <strong>{{ summary.active }}</strong>
         </div>
         <div class="summary-card warning">
-          <span class="summary-label">Inactive</span>
+          <span class="summary-label">{{ t('plugins.summary.inactive') }}</span>
           <strong>{{ summary.inactive }}</strong>
         </div>
         <div class="summary-card error">
-          <span class="summary-label">Disabled</span>
+          <span class="summary-label">{{ t('plugins.summary.disabled') }}</span>
           <strong>{{ summary.disabled }}</strong>
         </div>
         <div class="summary-card info">
-          <span class="summary-label">Provider-managed</span>
+          <span class="summary-label">{{ t('plugins.summary.providerManaged') }}</span>
           <strong>{{ summary.providerManaged }}</strong>
         </div>
       </div>
 
       <div class="filter-row">
-        <NInput v-model:value="searchQuery" placeholder="Search key, name, description, path..." clearable />
-        <NSelect v-model:value="sourceFilter" :options="sourceOptions" placeholder="Source" clearable />
-        <NSelect v-model:value="kindFilter" :options="kindOptions" placeholder="Kind" clearable />
-        <NSelect v-model:value="statusFilter" :options="statusOptions" placeholder="Status" clearable />
+        <NInput v-model:value="searchQuery" :placeholder="t('plugins.searchPlaceholder')" clearable />
+        <NSelect v-model:value="sourceFilter" :options="sourceOptions" :placeholder="t('plugins.source')" clearable />
+        <NSelect v-model:value="kindFilter" :options="kindOptions" :placeholder="t('plugins.kind')" clearable />
+        <NSelect v-model:value="statusFilter" :options="statusOptions" :placeholder="t('plugins.statusTitle')" clearable />
       </div>
 
       <NSpin :show="loading && plugins.length === 0">
@@ -174,13 +171,13 @@ onMounted(loadPlugins)
           <table class="plugins-table">
             <thead>
               <tr>
-                <th>Plugin</th>
-                <th>Status</th>
-                <th>Source</th>
-                <th>Kind</th>
-                <th>Capabilities</th>
-                <th>Path / entrypoint</th>
-                <th>CLI</th>
+                <th>{{ t('plugins.table.plugin') }}</th>
+                <th>{{ t('plugins.table.status') }}</th>
+                <th>{{ t('plugins.table.source') }}</th>
+                <th>{{ t('plugins.table.kind') }}</th>
+                <th>{{ t('plugins.table.capabilities') }}</th>
+                <th>{{ t('plugins.table.path') }}</th>
+                <th>{{ t('plugins.table.cli') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -198,36 +195,36 @@ onMounted(loadPlugins)
                 </td>
                 <td>
                   <NTag size="small" :type="statusTagType(plugin)">{{ statusLabel(plugin) }}</NTag>
-                  <div class="config-status">config: {{ plugin.configStatus }}</div>
+                  <div class="config-status">{{ t('plugins.configStatus', { status: configStatusLabel(plugin) }) }}</div>
                 </td>
                 <td><NTag size="small" round>{{ plugin.source }}</NTag></td>
                 <td><NTag size="small" round>{{ plugin.kind }}</NTag></td>
                 <td>
                   <div class="capability-list">
-                    <span>{{ plugin.providesTools.length }} tools</span>
-                    <span>{{ plugin.providesHooks.length }} hooks</span>
-                    <span>{{ plugin.requiresEnv.length }} env</span>
+                    <span>{{ t('plugins.capabilities.tools', { count: plugin.providesTools.length }) }}</span>
+                    <span>{{ t('plugins.capabilities.hooks', { count: plugin.providesHooks.length }) }}</span>
+                    <span>{{ t('plugins.capabilities.env', { count: plugin.requiresEnv.length }) }}</span>
                   </div>
                 </td>
-                <td><code class="path-cell">{{ plugin.path || 'n/a' }}</code></td>
+                <td><code class="path-cell">{{ plugin.path || t('plugins.notAvailable') }}</code></td>
                 <td>
                   <NButton v-if="pluginCommand(plugin)" size="tiny" secondary @click="copyCommand(plugin)">
-                    Copy command
+                    {{ t('plugins.copyCommand') }}
                   </NButton>
-                  <span v-else class="muted">managed elsewhere</span>
+                  <span v-else class="muted">{{ t('plugins.managedElsewhere') }}</span>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-        <NEmpty v-else-if="!loading" description="No plugins match the current filters" />
+        <NEmpty v-else-if="!loading" :description="t('plugins.noMatch')" />
       </NSpin>
 
       <div v-if="metadata" class="metadata-panel">
-        <span>Agent root: <code>{{ metadata.hermesAgentRoot }}</code></span>
-        <span>Python: <code>{{ metadata.pythonExecutable }}</code></span>
-        <span>Scan cwd: <code>{{ metadata.cwd }}</code></span>
-        <span>Project plugins: <code>{{ metadata.projectPluginsEnabled ? 'enabled' : 'disabled' }}</code></span>
+        <span>{{ t('plugins.metadata.agentRoot') }}: <code>{{ metadata.hermesAgentRoot }}</code></span>
+        <span>{{ t('plugins.metadata.python') }}: <code>{{ metadata.pythonExecutable }}</code></span>
+        <span>{{ t('plugins.metadata.scanCwd') }}: <code>{{ metadata.cwd }}</code></span>
+        <span>{{ t('plugins.metadata.projectPlugins') }}: <code>{{ metadata.projectPluginsEnabled ? t('plugins.enabled') : t('plugins.disabled') }}</code></span>
       </div>
     </div>
   </div>
@@ -240,12 +237,6 @@ onMounted(loadPlugins)
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
-}
-
-.header-subtitle {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: $text-muted;
 }
 
 .plugins-content {
