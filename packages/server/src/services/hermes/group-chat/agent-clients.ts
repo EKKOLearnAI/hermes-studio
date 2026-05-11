@@ -630,9 +630,11 @@ export class AgentClients {
         if (hasAtAll) {
             logger.info(`[AgentClients] @all detected in room ${roomId} by ${msg.senderName}, mentioning all ${agents.length} agents: ${agents.map(a => a.name).join(', ')}`)
             for (const agent of agents) {
-                this._processAgentMention(roomId, agent, msg).catch((err) => {
+                try {
+                    await this._processAgentMention(roomId, agent, msg)
+                } catch (err: any) {
                     logger.error(`[AgentClients] error processing @all mention for ${agent.name}: ${err.message}`)
-                })
+                }
             }
             return
         }
