@@ -1,10 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { join, resolve } from 'path'
-import { homedir } from 'os'
 import { promisify } from 'util'
 import { logger } from '../logger'
-import { detectHermesHome } from './hermes-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -12,35 +9,11 @@ const execOpts = { windowsHide: true }
 const isDocker = existsSync('/.dockerenv')
 
 /**
- * 智能解析 Hermes CLI 二进制路径
- * Windows 原生安装：在 venv/Scripts/hermes.exe
- * 其他平台：使用 'hermes' 命令（应该在 PATH 中）
+ * 解析 Hermes CLI 二进制路径
+ * 优先使用环境变量 HERMES_BIN，否则使用 PATH 中的 'hermes' 命令
  */
 function resolveHermesBin(): string {
-  // 1. 用户自定义的环境变量（最高优先级）
-  const envBin = process.env.HERMES_BIN?.trim()
-  if (envBin) return envBin
-
-  // 2. Windows 原生安装：检查 venv/Scripts/hermes.exe
-  if (process.platform === 'win32') {
-    const hermesHome = detectHermesHome()
-    // Windows 原生安装：hermes-agent 在 hermesHome 下的 hermes-agent 目录
-    const agentDir = join(hermesHome, 'hermes-agent')
-    const venvExe = join(agentDir, 'venv', 'Scripts', 'hermes.exe')
-    if (existsSync(venvExe)) {
-      logger.debug('Using Windows native hermes: %s', venvExe)
-      return venvExe
-    }
-    // 备选：检查 .venv/Scripts/hermes.exe（某些安装方式）
-    const altVenvExe = join(agentDir, '.venv', 'Scripts', 'hermes.exe')
-    if (existsSync(altVenvExe)) {
-      logger.debug('Using Windows native hermes: %s', altVenvExe)
-      return altVenvExe
-    }
-  }
-
-  // 3. 默认：使用 'hermes' 命令（假设在 PATH 中）
-  return 'hermes'
+  return process.env.HERMES_BIN?.trim() || 'hermes'
 }
 
 const HERMES_BIN = resolveHermesBin()
@@ -302,20 +275,16 @@ export async function startGatewayBackground(): Promise<number | null> {
 }
 
 /**
- * Restart Hermes gateway
+ * Restart Hermes gateway (stop then start)
  */
 export async function restartGateway(): Promise<string> {
-  if (isDocker) {
-    try { await stopGateway() } catch { }
-    const pid = await startGatewayBackground()
-    return pid ? `Gateway restarted (PID: ${pid})` : 'Gateway restart triggered'
+  try {
+    await stopGateway()
+  } catch (err) {
+    // Ignore stop errors, gateway might not be running
   }
-
-  const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'restart'], {
-    timeout: 30000,
-    ...execOpts,
-  })
-  return stdout || stderr
+  const result = await startGateway()
+  return result
 }
 
 /**
@@ -416,7 +385,9 @@ export async function listProfiles(): Promise<HermesProfile[]> {
       ...execOpts,
     })
 
-    const lines = stdout.trim().split('\n').filter(Boolean)
+    // Windows 可能使用 \r\n 换行符，统一处理
+    const normalized = stdout.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const lines = normalized.trim().split('\n').filter(Boolean)
     const profiles: HermesProfile[] = []
 
     // Skip header lines (starts with " Profile" or " ─")

@@ -303,6 +303,7 @@ export class GatewayManager {
       const content = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
       const cfg = (yaml.load(content) as any) || {}
 
+      // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
       if (!cfg.platforms) cfg.platforms = {}
       if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
       if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}

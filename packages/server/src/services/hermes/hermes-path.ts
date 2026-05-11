@@ -9,7 +9,6 @@
 
 import { resolve, join } from 'path'
 import { homedir } from 'os'
-import { existsSync } from 'fs'
 
 /**
  * 智能检测 Hermes 数据目录
@@ -27,19 +26,15 @@ export function detectHermesHome(): string {
     return resolve(process.env.HERMES_HOME)
   }
 
-  // 2. Windows 原生安装：检查 %LOCALAPPDATA%\hermes
+  // 2. Windows：直接使用 %LOCALAPPDATA%\hermes
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA || process.env.APPDATA
     if (localAppData) {
-      const windowsPath = join(localAppData, 'hermes')
-      // 检查是否存在 config.yaml 来验证这是有效的 Hermes 安装
-      if (existsSync(join(windowsPath, 'config.yaml'))) {
-        return windowsPath
-      }
+      return join(localAppData, 'hermes')
     }
   }
 
-  // 3. 默认路径：~/.hermes（Linux/macOS/WSL2）
+  // 3. Linux/macOS：~/.hermes
   return resolve(homedir(), '.hermes')
 }
 
@@ -51,22 +46,5 @@ export function detectHermesHome(): string {
 export function getHermesBin(customBin?: string): string {
   if (customBin?.trim()) return customBin.trim()
   if (process.env.HERMES_BIN?.trim()) return process.env.HERMES_BIN.trim()
-
-  // Windows 原生安装特殊处理：检查 venv/Scripts/hermes.exe
-  if (process.platform === 'win32') {
-    const hermesHome = detectHermesHome()
-    const agentDir = join(hermesHome, 'hermes-agent')
-    const venvExe = join(agentDir, 'venv', 'Scripts', 'hermes.exe')
-    if (existsSync(venvExe)) {
-      return venvExe
-    }
-    // 备选：检查 .venv/Scripts/hermes.exe（某些安装方式）
-    const altVenvExe = join(agentDir, '.venv', 'Scripts', 'hermes.exe')
-    if (existsSync(altVenvExe)) {
-      return altVenvExe
-    }
-  }
-
-  // 默认：使用 'hermes' 命令（假设在 PATH 中）
   return 'hermes'
 }

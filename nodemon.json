@@ -10,5 +10,8 @@
   },
   "exec": "node -r ts-node/register packages/server/src/index.ts",
   "nodeArgs": ["--no-warnings"],
-  "delay": "1000"
+  "delay": "1000",
+  "quiet": true,
+  "legacyWatch": true,
+  "signal": "SIGTERM"
 }
