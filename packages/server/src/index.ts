@@ -29,12 +29,17 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
+  console.error('FATAL: Uncaught exception')
+  console.error(err)
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
 })
 
 process.on('unhandledRejection', (reason) => {
+  console.error('FATAL: Unhandled rejection')
+  console.error(reason)
   logger.error(reason, 'Unhandled rejection')
+  process.exit(1)
 })
 
 let server: any = null
@@ -180,4 +185,9 @@ export async function bootstrap() {
   startVersionCheck()
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('FATAL: Failed to start Hermes Web UI')
+  console.error(error)
+  logger.fatal(error, 'Fatal error during bootstrap')
+  process.exit(1)
+})

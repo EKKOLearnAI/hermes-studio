@@ -19,6 +19,13 @@ import {
   blockTask,
   unblockTasks,
   assignTask,
+  addComment,
+  getTaskLog,
+  getDiagnostics,
+  reclaimTask,
+  reassignTask,
+  specifyTask,
+  dispatch,
   getStats,
   getAssignees,
 } from '../../packages/client/src/api/hermes/kanban'
@@ -28,12 +35,12 @@ describe('Kanban API', () => {
     vi.clearAllMocks()
   })
 
-  it('serializes board and list filters into query params', async () => {
+  it('serializes board, list filters, and archived inclusion into query params', async () => {
     mockRequest.mockResolvedValue({ tasks: [{ id: 'task-1' }] })
 
-    const result = await listTasks({ board: 'default', status: 'blocked', assignee: 'alice', tenant: 'ops' })
+    const result = await listTasks({ board: 'default', status: 'blocked', assignee: 'alice', tenant: 'ops', includeArchived: true })
 
-    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban?board=default&status=blocked&assignee=alice&tenant=ops')
+    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban?board=default&status=blocked&assignee=alice&tenant=ops&includeArchived=true')
     expect(result).toEqual([{ id: 'task-1' }])
   })
 
@@ -103,6 +110,35 @@ describe('Kanban API', () => {
       ['/api/hermes/kanban/capabilities'],
       ['/api/hermes/kanban/stats?board=project-a'],
       ['/api/hermes/kanban/assignees?board=project-a'],
+    ])
+  })
+
+  it('calls parity-gap APIs with explicit board query params', async () => {
+    mockRequest
+      .mockResolvedValueOnce({ ok: true, output: 'commented' })
+      .mockResolvedValueOnce({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
+      .mockResolvedValueOnce({ diagnostics: [{ task_id: 'task-1' }] })
+      .mockResolvedValueOnce({ ok: true, output: 'reclaimed' })
+      .mockResolvedValueOnce({ ok: true, output: 'reassigned' })
+      .mockResolvedValueOnce({ results: [{ task_id: 'task-1' }] })
+      .mockResolvedValueOnce({ result: { spawned: 1 } })
+
+    await addComment('task-1', { body: 'needs review', author: 'han' }, { board: 'default' })
+    await expect(getTaskLog('task-1', { board: 'default', tail: 4000 })).resolves.toEqual({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
+    await expect(getDiagnostics({ board: 'default', task: 'task-1', severity: 'warning' })).resolves.toEqual([{ task_id: 'task-1' }])
+    await reclaimTask('task-1', { board: 'project-a', reason: 'stale' })
+    await reassignTask('task-1', 'bob', { board: 'project-a', reclaim: true, reason: 'handoff' })
+    await expect(specifyTask('task-1', { board: 'default', author: 'han' })).resolves.toEqual([{ task_id: 'task-1' }])
+    await expect(dispatch({ board: 'default', dryRun: true, max: 2, failureLimit: 3 })).resolves.toEqual({ spawned: 1 })
+
+    expect(mockRequest.mock.calls).toEqual([
+      ['/api/hermes/kanban/task-1/comments?board=default', { method: 'POST', body: JSON.stringify({ body: 'needs review', author: 'han' }) }],
+      ['/api/hermes/kanban/task-1/log?board=default&tail=4000'],
+      ['/api/hermes/kanban/diagnostics?board=default&task=task-1&severity=warning'],
+      ['/api/hermes/kanban/task-1/reclaim?board=project-a', { method: 'POST', body: JSON.stringify({ reason: 'stale' }) }],
+      ['/api/hermes/kanban/task-1/reassign?board=project-a', { method: 'POST', body: JSON.stringify({ profile: 'bob', reclaim: true, reason: 'handoff' }) }],
+      ['/api/hermes/kanban/task-1/specify?board=default', { method: 'POST', body: JSON.stringify({ author: 'han' }) }],
+      ['/api/hermes/kanban/dispatch?board=default', { method: 'POST', body: JSON.stringify({ dryRun: true, max: 2, failureLimit: 3 }) }],
     ])
   })
 })

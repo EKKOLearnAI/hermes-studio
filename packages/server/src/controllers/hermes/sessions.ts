@@ -172,7 +172,7 @@ export async function listHermesSessions(ctx: any) {
 
   try {
     const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
-    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cron')) }
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
     return
   } catch (err) {
     logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
@@ -237,7 +237,7 @@ export async function getHermesSession(ctx: any) {
   // Try database first (consistent with listHermesSessions)
   try {
     const session = await getSessionDetailFromDb(ctx.params.id)
-    if (session && session.source !== 'api_server' && session.source !== 'cron') {
+    if (session && session.source !== 'api_server') {
       ctx.body = { session }
       return
     }

@@ -37,6 +37,8 @@ export const useModelsStore = defineStore('models', () => {
       providers.value = res.groups
       allProviders.value = res.allProviders
       defaultModel.value = res.default
+      const appStore = useAppStore()
+      appStore.applyAvailableModelsResponse(res)
     } catch (err) {
       console.error('Failed to fetch providers:', err)
     } finally {

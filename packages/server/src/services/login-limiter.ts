@@ -8,6 +8,7 @@ const LOCK_FILE = join(APP_HOME, '.login-lock.json')
 
 // Per-IP settings
 const IP_MAX_FAILURES = 3
+const IP_FAILURE_WINDOW_MS = 15 * 60_000 // 15 minutes
 const IP_LOCK_DURATION_MS = 60 * 60_000 // 1 hour
 const IP_MAP_MAX_SIZE = 10000
 
@@ -20,6 +21,7 @@ const GLOBAL_LOCK_DURATION_MS = 30 * 60_000 // 30 minutes
 interface IpEntry {
   failures: number
   lockedUntil: number
+  firstFailureAt?: number
 }
 
 interface LimiterState {
@@ -149,6 +151,26 @@ function checkIpLock(ip: string, map: Record<string, IpEntry>): CheckResult | nu
   return null
 }
 
+function recordIpFailure(map: Record<string, IpEntry>, ip: string): IpEntry {
+  const t = now()
+  let entry = map[ip]
+  if (!entry) {
+    entry = { failures: 0, lockedUntil: 0, firstFailureAt: t }
+    map[ip] = entry
+  }
+
+  const firstFailureAt = entry.firstFailureAt || t
+  if (entry.lockedUntil <= 0 && t - firstFailureAt > IP_FAILURE_WINDOW_MS) {
+    entry.failures = 0
+    entry.firstFailureAt = t
+  } else if (!entry.firstFailureAt) {
+    entry.firstFailureAt = firstFailureAt
+  }
+
+  entry.failures++
+  return entry
+}
+
 export function checkPassword(ip: string): CheckResult {
   const global = checkGlobalLimits()
   if (global) return global
@@ -178,11 +200,7 @@ export function checkToken(ip: string): CheckResult {
 }
 
 export function recordPasswordFailure(ip: string): void {
-  if (!state.passwordIpMap[ip]) {
-    state.passwordIpMap[ip] = { failures: 0, lockedUntil: 0 }
-  }
-  const entry = state.passwordIpMap[ip]
-  entry.failures++
+  const entry = recordIpFailure(state.passwordIpMap, ip)
   state.globalTotalFailures++
   dirty = true
 
@@ -201,11 +219,7 @@ export function recordPasswordFailure(ip: string): void {
 }
 
 export function recordTokenFailure(ip: string): void {
-  if (!state.tokenIpMap[ip]) {
-    state.tokenIpMap[ip] = { failures: 0, lockedUntil: 0 }
-  }
-  const entry = state.tokenIpMap[ip]
-  entry.failures++
+  const entry = recordIpFailure(state.tokenIpMap, ip)
   state.globalTotalFailures++
   dirty = true
 

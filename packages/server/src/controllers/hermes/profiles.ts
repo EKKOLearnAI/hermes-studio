@@ -188,9 +188,14 @@ export async function switchProfile(ctx: any) {
     try {
       const detail = await hermesCli.getProfile(name)
       logger.debug('Profile detail.path = %s', detail.path)
-      if (!existsSync(join(detail.path, 'config.yaml'))) {
-        try { await hermesCli.setupReset() } catch { }
+
+      // 确保配置文件存在，但不调用 setupReset()（会重置端口配置）
+      const profileConfig = join(detail.path, 'config.yaml')
+      if (!existsSync(profileConfig)) {
+        writeFileSync(profileConfig, '# Hermes Agent Configuration\n', 'utf-8')
+        logger.info('Created config.yaml for: %s', detail.path)
       }
+
       const profileEnv = join(detail.path, '.env')
       if (!existsSync(profileEnv)) {
         writeFileSync(profileEnv, '# Hermes Agent Environment Configuration\n', 'utf-8')

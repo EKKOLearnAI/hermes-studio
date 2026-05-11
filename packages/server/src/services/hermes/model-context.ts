@@ -5,8 +5,9 @@ import yaml from 'js-yaml'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
+import { detectHermesHome } from './hermes-path'
 
-const HERMES_BASE = resolve(homedir(), '.hermes')
+const HERMES_BASE = detectHermesHome()
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
 const DEFAULT_CONTEXT_LENGTH = 200_000
 
@@ -51,7 +52,7 @@ function loadConfig(profileDir: string): any | null {
   const configPath = join(profileDir, 'config.yaml')
   if (!existsSync(configPath)) return null
   try {
-    return yaml.load(readFileSync(configPath, 'utf-8')) as any
+    return yaml.load(readFileSync(configPath, 'utf-8'), { json: true }) as any
   } catch {
     return null
   }

@@ -19,13 +19,103 @@ function firstQueryValue(value: string | string[] | undefined): string | undefin
 }
 
 function requestBoard(ctx: Context): string | null {
+  const rawBoard = firstQueryValue(ctx.query.board as string | string[] | undefined)
+  if (rawBoard !== undefined && !rawBoard.trim()) {
+    ctx.status = 400
+    ctx.body = { error: 'invalid board slug' }
+    return null
+  }
   try {
-    return kanbanCli.normalizeBoardSlug(firstQueryValue(ctx.query.board as string | string[] | undefined))
+    return kanbanCli.normalizeBoardSlug(rawBoard)
   } catch {
     ctx.status = 400
     ctx.body = { error: 'invalid board slug' }
     return null
   }
+}
+
+function validSeverity(value?: string): value is 'warning' | 'error' | 'critical' {
+  return value === undefined || value === 'warning' || value === 'error' || value === 'critical'
+}
+
+const MAX_LOG_TAIL_BYTES = 1_000_000
+const MAX_DISPATCH_TASKS = 100
+const MAX_DISPATCH_FAILURE_LIMIT = 100
+
+type PositiveIntegerResult = { value?: number; error?: string }
+type StringResult = { value?: string; error?: string }
+type BooleanResult = { value?: boolean; error?: string }
+type BodyResult = { body: Record<string, unknown>; error?: string }
+
+function optionalPositiveInteger(value: unknown, name: string, max: number): PositiveIntegerResult {
+  if (value === undefined || value === null || value === '') return {}
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    return { error: `${name} must be a positive integer` }
+  }
+  if (value > max) {
+    return { error: `${name} must be <= ${max}` }
+  }
+  return { value }
+}
+
+function optionalPositiveIntegerQuery(value: string | undefined, name: string, max: number): PositiveIntegerResult {
+  if (value === undefined || value === '') return {}
+  const numeric = Number(value)
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return { error: `${name} must be a positive integer` }
+  }
+  if (numeric > max) {
+    return { error: `${name} must be <= ${max}` }
+  }
+  return { value: numeric }
+}
+
+function requestBody(ctx: Context): BodyResult {
+  const body = ctx.request.body
+  if (body === undefined || body === null) return { body: {} }
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return { body: {}, error: 'request body must be an object' }
+  }
+  return { body: body as Record<string, unknown> }
+}
+
+function optionalString(value: unknown, name: string): StringResult {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'string') return { error: `${name} must be a string` }
+  return { value }
+}
+
+function requiredNonEmptyString(value: unknown, name: string): StringResult {
+  if (typeof value !== 'string' || !value.trim()) return { error: `${name} is required` }
+  return { value }
+}
+
+function requiredNonEmptyStringArray(value: unknown, name: string): { value?: string[]; error?: string } {
+  if (!Array.isArray(value) || value.length === 0 || value.some(item => typeof item !== 'string' || !item.trim())) {
+    return { error: `${name} is required` }
+  }
+  return { value }
+}
+
+function optionalBoolean(value: unknown, name: string): BooleanResult {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'boolean') return { error: `${name} must be boolean` }
+  return { value }
+}
+
+function optionalInteger(value: unknown, name: string): PositiveIntegerResult {
+  if (value === undefined || value === null || value === '') return {}
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    return { error: `${name} must be an integer` }
+  }
+  return { value }
+}
+
+function rejectBadRequest(ctx: Context, error?: string): boolean {
+  if (!error) return false
+  ctx.status = 400
+  ctx.body = { error }
+  return true
 }
 
 export async function listBoards(ctx: Context) {
@@ -40,21 +130,25 @@ export async function listBoards(ctx: Context) {
 }
 
 export async function createBoard(ctx: Context) {
-  const { slug, name, description, icon, color, switchCurrent } = ctx.request.body as {
-    slug?: string
-    name?: string
-    description?: string
-    icon?: string
-    color?: string
-    switchCurrent?: boolean
-  }
-  if (!slug?.trim()) {
-    ctx.status = 400
-    ctx.body = { error: 'slug is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const body = bodyResult.body
+  const slug = requiredNonEmptyString(body.slug, 'slug')
+  const name = optionalString(body.name, 'name')
+  const description = optionalString(body.description, 'description')
+  const icon = optionalString(body.icon, 'icon')
+  const color = optionalString(body.color, 'color')
+  const switchCurrent = optionalBoolean(body.switchCurrent, 'switchCurrent')
+  if (rejectBadRequest(ctx, slug.error || name.error || description.error || icon.error || color.error || switchCurrent.error)) return
   try {
-    const board = await kanbanCli.createBoard({ slug, name, description, icon, color, switchCurrent })
+    const board = await kanbanCli.createBoard({
+      slug: slug.value!,
+      name: name.value,
+      description: description.value,
+      icon: icon.value,
+      color: color.value,
+      switchCurrent: switchCurrent.value,
+    })
     ctx.body = { board }
   } catch (err: any) {
     ctx.status = err.message?.includes('Invalid kanban board slug') ? 400 : 500
@@ -89,11 +183,14 @@ export async function capabilities(ctx: Context) {
 }
 
 export async function list(ctx: Context) {
-  const { status, assignee, tenant } = ctx.query as Record<string, string | undefined>
+  const status = firstQueryValue(ctx.query.status as string | string[] | undefined)
+  const assignee = firstQueryValue(ctx.query.assignee as string | string[] | undefined)
+  const tenant = firstQueryValue(ctx.query.tenant as string | string[] | undefined)
+  const includeArchived = firstQueryValue(ctx.query.includeArchived as string | string[] | undefined) === 'true'
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant })
+    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant, includeArchived })
     ctx.body = { tasks }
   } catch (err: any) {
     ctx.status = 500
@@ -112,8 +209,9 @@ export async function get(ctx: Context) {
       return
     }
 
-    // For completed tasks, find related session from the worker's profile DB
-    if (detail.task.status === 'done' && detail.runs.length > 0) {
+    // For terminal tasks, find related session from the worker's profile DB.
+    // Archived tasks can still carry the worker result/session users need to inspect.
+    if ((detail.task.status === 'done' || detail.task.status === 'archived') && detail.runs.length > 0) {
       const profile = getLatestRunProfile(detail)
       if (profile) {
         try {
@@ -163,22 +261,19 @@ export async function get(ctx: Context) {
 }
 
 export async function create(ctx: Context) {
-  const { title, body, assignee, priority, tenant } = ctx.request.body as {
-    title?: string
-    body?: string
-    assignee?: string
-    priority?: number
-    tenant?: string
-  }
-  if (!title) {
-    ctx.status = 400
-    ctx.body = { error: 'title is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const payload = bodyResult.body
+  const title = requiredNonEmptyString(payload.title, 'title')
+  const body = optionalString(payload.body, 'body')
+  const assignee = optionalString(payload.assignee, 'assignee')
+  const priority = optionalInteger(payload.priority, 'priority')
+  const tenant = optionalString(payload.tenant, 'tenant')
+  if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const task = await kanbanCli.createTask(title, { board, body, assignee, priority, tenant })
+    const task = await kanbanCli.createTask(title.value!, { board, body: body.value, assignee: assignee.value, priority: priority.value, tenant: tenant.value })
     ctx.body = { task }
   } catch (err: any) {
     ctx.status = 500
@@ -187,19 +282,16 @@ export async function create(ctx: Context) {
 }
 
 export async function complete(ctx: Context) {
-  const { task_ids, summary } = ctx.request.body as {
-    task_ids?: string[]
-    summary?: string
-  }
-  if (!task_ids?.length) {
-    ctx.status = 400
-    ctx.body = { error: 'task_ids is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const payload = bodyResult.body
+  const taskIds = requiredNonEmptyStringArray(payload.task_ids, 'task_ids')
+  const summary = optionalString(payload.summary, 'summary')
+  if (rejectBadRequest(ctx, taskIds.error || summary.error)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    await kanbanCli.completeTasks(task_ids, summary, { board })
+    await kanbanCli.completeTasks(taskIds.value!, summary.value, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -208,16 +300,14 @@ export async function complete(ctx: Context) {
 }
 
 export async function block(ctx: Context) {
-  const { reason } = ctx.request.body as { reason?: string }
-  if (!reason) {
-    ctx.status = 400
-    ctx.body = { error: 'reason is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const reason = requiredNonEmptyString(bodyResult.body.reason, 'reason')
+  if (rejectBadRequest(ctx, reason.error)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    await kanbanCli.blockTask(ctx.params.id, reason, { board })
+    await kanbanCli.blockTask(ctx.params.id, reason.value!, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -226,16 +316,14 @@ export async function block(ctx: Context) {
 }
 
 export async function unblock(ctx: Context) {
-  const { task_ids } = ctx.request.body as { task_ids?: string[] }
-  if (!task_ids?.length) {
-    ctx.status = 400
-    ctx.body = { error: 'task_ids is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const taskIds = requiredNonEmptyStringArray(bodyResult.body.task_ids, 'task_ids')
+  if (rejectBadRequest(ctx, taskIds.error)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    await kanbanCli.unblockTasks(task_ids, { board })
+    await kanbanCli.unblockTasks(taskIds.value!, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
     ctx.status = 500
@@ -244,17 +332,135 @@ export async function unblock(ctx: Context) {
 }
 
 export async function assign(ctx: Context) {
-  const { profile } = ctx.request.body as { profile?: string }
-  if (!profile) {
-    ctx.status = 400
-    ctx.body = { error: 'profile is required' }
-    return
-  }
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const profile = requiredNonEmptyString(bodyResult.body.profile, 'profile')
+  if (rejectBadRequest(ctx, profile.error)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    await kanbanCli.assignTask(ctx.params.id, profile, { board })
+    await kanbanCli.assignTask(ctx.params.id, profile.value!, { board })
     ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function addComment(ctx: Context) {
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const bodyPayload = bodyResult.body
+  const body = requiredNonEmptyString(bodyPayload.body, 'body')
+  const author = optionalString(bodyPayload.author, 'author')
+  if (rejectBadRequest(ctx, body.error || author.error)) return
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    ctx.body = await kanbanCli.addComment(ctx.params.id, body.value!, { board, author: author.value })
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function taskLog(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
+  const tailRaw = firstQueryValue(ctx.query.tail as string | string[] | undefined)
+  const tail = optionalPositiveIntegerQuery(tailRaw, 'tail', MAX_LOG_TAIL_BYTES)
+  if (rejectBadRequest(ctx, tail.error)) return
+  try {
+    ctx.body = await kanbanCli.getTaskLog(ctx.params.id, { board, tail: tail.value })
+  } catch (err: any) {
+    ctx.status = err.message?.includes('not found') ? 404 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function diagnostics(ctx: Context) {
+  const board = requestBoard(ctx)
+  if (!board) return
+  const task = firstQueryValue(ctx.query.task as string | string[] | undefined)
+  const severity = firstQueryValue(ctx.query.severity as string | string[] | undefined)
+  if (!validSeverity(severity)) {
+    ctx.status = 400
+    ctx.body = { error: 'severity must be warning, error, or critical' }
+    return
+  }
+  try {
+    const diagnostics = await kanbanCli.getDiagnostics({ board, task, severity })
+    ctx.body = { diagnostics }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function reclaim(ctx: Context) {
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const body = bodyResult.body
+  const reason = optionalString(body.reason, 'reason')
+  if (rejectBadRequest(ctx, reason.error)) return
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    ctx.body = await kanbanCli.reclaimTask(ctx.params.id, { board, reason: reason.value })
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function reassign(ctx: Context) {
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const body = bodyResult.body
+  const profile = requiredNonEmptyString(body.profile, 'profile')
+  const reclaim = optionalBoolean(body.reclaim, 'reclaim')
+  const reason = optionalString(body.reason, 'reason')
+  if (rejectBadRequest(ctx, profile.error || reclaim.error || reason.error)) return
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    ctx.body = await kanbanCli.reassignTask(ctx.params.id, profile.value!, { board, reclaim: reclaim.value, reason: reason.value })
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function specify(ctx: Context) {
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const body = bodyResult.body
+  const author = optionalString(body.author, 'author')
+  if (rejectBadRequest(ctx, author.error)) return
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    const results = await kanbanCli.specifyTask(ctx.params.id, { board, author: author.value })
+    ctx.body = { results }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function dispatch(ctx: Context) {
+  const bodyResult = requestBody(ctx)
+  if (rejectBadRequest(ctx, bodyResult.error)) return
+  const body = bodyResult.body
+  const dryRun = optionalBoolean(body.dryRun, 'dryRun')
+  const max = optionalPositiveInteger(body.max, 'max', MAX_DISPATCH_TASKS)
+  const failureLimit = optionalPositiveInteger(body.failureLimit, 'failureLimit', MAX_DISPATCH_FAILURE_LIMIT)
+  if (rejectBadRequest(ctx, dryRun.error || max.error || failureLimit.error)) return
+  const board = requestBoard(ctx)
+  if (!board) return
+  try {
+    const result = await kanbanCli.dispatch({ board, dryRun: dryRun.value, max: max.value, failureLimit: failureLimit.value })
+    ctx.body = { result }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

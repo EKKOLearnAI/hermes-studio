@@ -1,5 +1,16 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
+import { getGatewayManagerInstance } from './gateway-bootstrap'
+
+function shouldStopGatewaysOnShutdown(signal: string): boolean {
+  // 总是停止网关，无论是开发环境还是生产环境
+  // 这样可以避免 nodemon 重启时的孤儿进程问题
+  const override = process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN?.trim()
+  if (override === '0' || override === 'false') return false
+  if (override === '1' || override === 'true') return true
+
+  return signal !== 'SIGUSR2'
+}
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any): void {
   let isShuttingDown = false
@@ -14,6 +25,21 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     logger.info('Shutting down (%s)...', signal)
 
     try {
+      if (shouldStopGatewaysOnShutdown(signal)) {
+        // Stop gateway processes owned by this Web UI instance first.
+        try {
+          const gatewayManager = getGatewayManagerInstance()
+          if (gatewayManager) {
+            await gatewayManager.stopAll()
+            logger.info('All gateways stopped')
+          }
+        } catch (err) {
+          logger.warn(err, 'Failed to stop gateways (non-fatal)')
+        }
+      } else {
+        logger.info('Skipping gateway shutdown for %s', signal)
+      }
+
       // Close ChatRunSocket first to abort all active runs and close EventSource connections
       if (chatRunServer) {
         chatRunServer.close()

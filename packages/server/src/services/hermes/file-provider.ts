@@ -714,7 +714,7 @@ export function getTerminalConfig(): TerminalConfig {
     const configPath = `${getActiveProfileDir()}/config.yaml`
     if (!existsSync(configPath)) return { backend: 'local' }
     const raw = readFileSync(configPath, 'utf-8')
-    const doc = YAML.load(raw) as any
+    const doc = YAML.load(raw, { json: true }) as any
     const t = doc?.terminal || {}
     return {
       backend: (t.backend as BackendType) || 'local',

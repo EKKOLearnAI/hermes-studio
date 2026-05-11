@@ -121,10 +121,29 @@ export interface KanbanBoardCreateRequest {
   switchCurrent?: boolean
 }
 
+export interface KanbanCapabilityStatus {
+  key: string
+  status: 'supported' | 'partial' | 'missing'
+  reason?: string
+  canonicalRoute?: string
+  canonicalCommand?: string
+  requiresBoard: boolean
+}
+
 export interface KanbanCapabilities {
   source: 'hermes-cli'
   supports: Record<string, boolean>
   missing: string[]
+  capabilities?: KanbanCapabilityStatus[]
+}
+
+export interface KanbanTaskLog {
+  task_id: string
+  path: string | null
+  exists: boolean
+  size_bytes: number
+  content: string
+  truncated: boolean
 }
 
 export interface KanbanCreateRequest {
@@ -143,6 +162,40 @@ export interface KanbanListOptions extends KanbanBoardOptions {
   status?: string
   assignee?: string
   tenant?: string
+  includeArchived?: boolean
+}
+
+export interface KanbanCommentCreateRequest {
+  body: string
+  author?: string
+}
+
+export interface KanbanTaskLogOptions extends KanbanBoardOptions {
+  tail?: number
+}
+
+export interface KanbanDiagnosticsOptions extends KanbanBoardOptions {
+  task?: string
+  severity?: 'warning' | 'error' | 'critical'
+}
+
+export interface KanbanReclaimOptions extends KanbanBoardOptions {
+  reason?: string
+}
+
+export interface KanbanReassignOptions extends KanbanBoardOptions {
+  reclaim?: boolean
+  reason?: string
+}
+
+export interface KanbanSpecifyOptions extends KanbanBoardOptions {
+  author?: string
+}
+
+export interface KanbanDispatchOptions extends KanbanBoardOptions {
+  dryRun?: boolean
+  max?: number
+  failureLimit?: number
 }
 
 function normalizedBoard(board?: string): string {
@@ -194,6 +247,7 @@ export async function listTasks(opts?: KanbanListOptions): Promise<KanbanTask[]>
   if (opts?.status) params.set('status', opts.status)
   if (opts?.assignee) params.set('assignee', opts.assignee)
   if (opts?.tenant) params.set('tenant', opts.tenant)
+  if (opts?.includeArchived) params.set('includeArchived', 'true')
   const res = await request<{ tasks: KanbanTask[] }>(appendQuery('/api/hermes/kanban', params))
   return res.tasks
 }
@@ -236,6 +290,58 @@ export async function assignTask(taskId: string, profile: string, opts?: KanbanB
     method: 'POST',
     body: JSON.stringify({ profile }),
   })
+}
+
+export async function addComment(taskId: string, data: KanbanCommentCreateRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
+  return request<{ ok: boolean; output?: string }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/comments`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getTaskLog(taskId: string, opts?: KanbanTaskLogOptions): Promise<KanbanTaskLog> {
+  const params = boardParams(opts?.board)
+  if (opts?.tail !== undefined) params.set('tail', String(opts.tail))
+  return request<KanbanTaskLog>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/log`, params))
+}
+
+export async function getDiagnostics(opts?: KanbanDiagnosticsOptions): Promise<unknown[]> {
+  const params = boardParams(opts?.board)
+  if (opts?.task) params.set('task', opts.task)
+  if (opts?.severity) params.set('severity', opts.severity)
+  const res = await request<{ diagnostics: unknown[] }>(appendQuery('/api/hermes/kanban/diagnostics', params))
+  return res.diagnostics
+}
+
+export async function reclaimTask(taskId: string, opts?: KanbanReclaimOptions): Promise<{ ok: boolean; output?: string }> {
+  return request<{ ok: boolean; output?: string }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/reclaim`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify({ reason: opts?.reason }),
+  })
+}
+
+export async function reassignTask(taskId: string, profile: string, opts?: KanbanReassignOptions): Promise<{ ok: boolean; output?: string }> {
+  return request<{ ok: boolean; output?: string }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/reassign`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify({ profile, reclaim: opts?.reclaim, reason: opts?.reason }),
+  })
+}
+
+export async function specifyTask(taskId: string, opts?: KanbanSpecifyOptions): Promise<unknown[]> {
+  const res = await request<{ results: unknown[] }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/specify`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify({ author: opts?.author }),
+  })
+  return res.results
+}
+
+export async function dispatch(opts?: KanbanDispatchOptions): Promise<unknown> {
+  const params = boardParams(opts?.board)
+  const res = await request<{ result: unknown }>(appendQuery('/api/hermes/kanban/dispatch', params), {
+    method: 'POST',
+    body: JSON.stringify({ dryRun: opts?.dryRun, max: opts?.max, failureLimit: opts?.failureLimit }),
+  })
+  return res.result
 }
 
 export async function getStats(opts?: KanbanBoardOptions): Promise<KanbanStats> {

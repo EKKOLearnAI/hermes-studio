@@ -15,13 +15,31 @@ const mockKanbanApi = vi.hoisted(() => ({
   blockTask: vi.fn(),
   unblockTasks: vi.fn(),
   assignTask: vi.fn(),
+  addComment: vi.fn(),
+  getTaskLog: vi.fn(),
+  getDiagnostics: vi.fn(),
+  reclaimTask: vi.fn(),
+  reassignTask: vi.fn(),
+  specifyTask: vi.fn(),
+  dispatch: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/kanban', () => mockKanbanApi)
 
-import { KANBAN_SELECTED_BOARD_STORAGE_KEY, useKanbanStore } from '@/stores/hermes/kanban'
+import { KANBAN_SELECTED_BOARD_STORAGE_KEY, normalizeBoardSlug, useKanbanStore } from '@/stores/hermes/kanban'
 
 describe('Kanban store', () => {
+  it('normalizes board slugs with canonical underscore, uppercase, and length rules', () => {
+    const sixtyFour = 'a'.repeat(64)
+
+    expect(normalizeBoardSlug(' Team_Alpha ')).toBe('team_alpha')
+    expect(normalizeBoardSlug(sixtyFour)).toBe(sixtyFour)
+    expect(normalizeBoardSlug('default')).toBe('default')
+    expect(normalizeBoardSlug('bad/slug')).toBe('default')
+    expect(normalizeBoardSlug('bad.slug')).toBe('default')
+    expect(normalizeBoardSlug('bad slug')).toBe('default')
+  })
+
   beforeEach(() => {
     window.localStorage.clear()
     setActivePinia(createPinia())
@@ -63,7 +81,7 @@ describe('Kanban store', () => {
     expect(store.loading).toBe(true)
     await promise
 
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'blocked', assignee: 'alice' })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'blocked', assignee: 'alice', includeArchived: true })
     expect(store.tasks).toEqual([{ id: 'task-1', status: 'todo' }])
     expect(store.loading).toBe(false)
   })
@@ -98,6 +116,64 @@ describe('Kanban store', () => {
     expect(store.tasks[1]).toMatchObject({ id: 'task-1', status: 'done' })
   })
 
+  it('uses capability metadata before calling parity APIs', async () => {
+    mockKanbanApi.getCapabilities.mockResolvedValue({
+      source: 'hermes-cli',
+      supports: { commentsWrite: true, dispatch: false },
+      missing: ['dispatch'],
+    })
+    mockKanbanApi.addComment.mockResolvedValue({ ok: true })
+
+    const store = useKanbanStore()
+    store.setSelectedBoard('project-a')
+    await store.fetchCapabilities()
+
+    expect(store.isCapabilitySupported('commentsWrite')).toBe(true)
+    expect(store.isCapabilitySupported('dispatch')).toBe(false)
+    await store.addComment('task-1', 'needs review', 'han')
+    await expect(store.dispatch({ dryRun: true })).rejects.toThrow('dispatch')
+
+    expect(mockKanbanApi.addComment).toHaveBeenCalledWith('task-1', { body: 'needs review', author: 'han' }, { board: 'project-a' })
+    expect(mockKanbanApi.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('passes selected board to parity actions and refreshes affected board state', async () => {
+    mockKanbanApi.getCapabilities.mockResolvedValue({
+      source: 'hermes-cli',
+      supports: { taskLog: true, diagnostics: true, reclaim: true, reassign: true, specify: true, dispatch: true },
+      missing: [],
+    })
+    mockKanbanApi.getTaskLog.mockResolvedValue({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
+    mockKanbanApi.getDiagnostics.mockResolvedValue([{ task_id: 'task-1' }])
+    mockKanbanApi.reclaimTask.mockResolvedValue({ ok: true })
+    mockKanbanApi.reassignTask.mockResolvedValue({ ok: true })
+    mockKanbanApi.specifyTask.mockResolvedValue([{ task_id: 'task-1' }])
+    mockKanbanApi.dispatch.mockResolvedValue({ spawned: 1 })
+    mockKanbanApi.getStats.mockResolvedValue({ total: 1, by_status: {}, by_assignee: {} })
+    mockKanbanApi.getAssignees.mockResolvedValue([{ name: 'bob', on_disk: true, counts: {} }])
+    mockKanbanApi.listTasks.mockResolvedValue([{ id: 'task-1', assignee: 'bob' }])
+
+    const store = useKanbanStore()
+    store.setSelectedBoard('project-a')
+    store.tasks = [{ id: 'task-1', status: 'running', assignee: 'alice' }] as any
+    await store.fetchCapabilities()
+
+    await expect(store.getTaskLog('task-1', 4000)).resolves.toEqual({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
+    await expect(store.getDiagnostics({ task: 'task-1', severity: 'warning' })).resolves.toEqual([{ task_id: 'task-1' }])
+    await store.reclaimTask('task-1', 'stale')
+    await store.reassignTask('task-1', 'bob', { reclaim: true, reason: 'handoff' })
+    await expect(store.specifyTask('task-1', 'han')).resolves.toEqual([{ task_id: 'task-1' }])
+    await expect(store.dispatch({ dryRun: true, max: 2, failureLimit: 3 })).resolves.toEqual({ spawned: 1 })
+
+    expect(mockKanbanApi.getTaskLog).toHaveBeenCalledWith('task-1', { board: 'project-a', tail: 4000 })
+    expect(mockKanbanApi.getDiagnostics).toHaveBeenCalledWith({ board: 'project-a', task: 'task-1', severity: 'warning' })
+    expect(mockKanbanApi.reclaimTask).toHaveBeenCalledWith('task-1', { board: 'project-a', reason: 'stale' })
+    expect(mockKanbanApi.reassignTask).toHaveBeenCalledWith('task-1', 'bob', { board: 'project-a', reclaim: true, reason: 'handoff' })
+    expect(mockKanbanApi.specifyTask).toHaveBeenCalledWith('task-1', { board: 'project-a', author: 'han' })
+    expect(mockKanbanApi.dispatch).toHaveBeenCalledWith({ board: 'project-a', dryRun: true, max: 2, failureLimit: 3 })
+    expect(store.tasks[0]).toMatchObject({ id: 'task-1', assignee: 'bob' })
+  })
+
   it('creates and archives boards without relying on CLI current board', async () => {
     mockKanbanApi.listBoards.mockResolvedValue([
       { slug: 'default', name: 'Default', archived: false, counts: {}, total: 0 },
@@ -128,7 +204,7 @@ describe('Kanban store', () => {
     store.setSelectedBoard('project-a')
     await store.refreshAll()
 
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined, includeArchived: true })
     expect(mockKanbanApi.getStats).toHaveBeenCalledWith({ board: 'project-a' })
     expect(mockKanbanApi.getAssignees).toHaveBeenCalledWith({ board: 'project-a' })
     expect(mockKanbanApi.listBoards).toHaveBeenCalledWith({ includeArchived: false })

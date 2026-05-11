@@ -16,6 +16,13 @@ const handlers = {
   unblock: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   block: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   assign: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
+  addComment: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
+  taskLog: vi.fn(async (ctx: any) => { ctx.body = { log: '' } }),
+  diagnostics: vi.fn(async (ctx: any) => { ctx.body = { diagnostics: [] } }),
+  reclaim: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
+  reassign: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
+  specify: vi.fn(async (ctx: any) => { ctx.body = { results: [] } }),
+  dispatch: vi.fn(async (ctx: any) => { ctx.body = { result: {} } }),
 }
 
 vi.mock('../../packages/server/src/controllers/hermes/kanban', () => handlers)
@@ -36,6 +43,8 @@ describe('kanban routes', () => {
       '/api/hermes/kanban/capabilities',
       '/api/hermes/kanban/stats',
       '/api/hermes/kanban/assignees',
+      '/api/hermes/kanban/diagnostics',
+      '/api/hermes/kanban/dispatch',
       '/api/hermes/kanban/artifact',
       '/api/hermes/kanban/search-sessions',
       '/api/hermes/kanban',
@@ -44,6 +53,11 @@ describe('kanban routes', () => {
       '/api/hermes/kanban/unblock',
       '/api/hermes/kanban/:id/block',
       '/api/hermes/kanban/:id/assign',
+      '/api/hermes/kanban/:id/comments',
+      '/api/hermes/kanban/:id/log',
+      '/api/hermes/kanban/:id/reclaim',
+      '/api/hermes/kanban/:id/reassign',
+      '/api/hermes/kanban/:id/specify',
     ]))
   })
 

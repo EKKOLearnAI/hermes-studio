@@ -688,6 +688,19 @@ function openChangelog() {
 
     .status-row {
       justify-content: center;
+
+      :deep(.input-sm) {
+        display: none;
+      }
+    }
+
+    .version-info {
+      justify-content: center;
+      padding: 4px 0;
+
+      :deep(.theme-switch-container) {
+        flex-direction: column;
+      }
     }
   }
 }

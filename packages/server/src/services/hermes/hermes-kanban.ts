@@ -5,7 +5,11 @@ import { logger } from '../logger'
 const execFileAsync = promisify(execFile)
 
 const execOpts = { windowsHide: true }
-const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/
+const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+const NO_WORKER_LOG_PATTERNS = [
+  /^\(no log for [^)]+?\s+—\s+task may not have spawned yet\)$/i,
+  /^no worker log(?: for [^\n]+)?$/i,
+]
 
 function resolveHermesBin(): string {
   const envBin = process.env.HERMES_BIN?.trim()
@@ -16,8 +20,9 @@ function resolveHermesBin(): string {
 const HERMES_BIN = resolveHermesBin()
 
 export function normalizeBoardSlug(board?: string | null): string {
-  const trimmed = board?.trim()
-  if (!trimmed) return 'default'
+  if (board === undefined || board === null) return 'default'
+  const trimmed = board.trim().toLowerCase()
+  if (!trimmed) throw new Error('Invalid kanban board slug')
   if (!BOARD_SLUG_RE.test(trimmed)) {
     throw new Error('Invalid kanban board slug')
   }
@@ -125,6 +130,25 @@ export interface KanbanCapabilities {
   source: 'hermes-cli'
   supports: Record<string, boolean>
   missing: string[]
+  capabilities: KanbanCapabilityStatus[]
+}
+
+export interface KanbanTaskLog {
+  task_id: string
+  path: string | null
+  exists: boolean
+  size_bytes: number
+  content: string
+  truncated: boolean
+}
+
+export interface KanbanCapabilityStatus {
+  key: string
+  status: 'supported' | 'partial' | 'missing'
+  reason?: string
+  canonicalRoute?: string
+  canonicalCommand?: string
+  requiresBoard: boolean
 }
 
 export interface KanbanBoardOptions {
@@ -196,24 +220,186 @@ export async function archiveBoard(slugInput: string): Promise<void> {
 }
 
 export async function getCapabilities(): Promise<KanbanCapabilities> {
-  const supports = {
-    explicitBoard: true,
-    boardsList: true,
-    boardCreate: true,
-    boardArchive: true,
-    cliCurrentSwitch: true,
-    taskCrudLite: true,
-    commentsWrite: false,
-    taskLog: false,
-    dispatch: false,
-    events: false,
-    diagnostics: false,
-    bulk: false,
+  const capabilities: KanbanCapabilityStatus[] = [
+    { key: 'explicitBoard', status: 'supported', canonicalCommand: '--board', requiresBoard: true },
+    { key: 'boardsList', status: 'supported', canonicalRoute: '/boards', canonicalCommand: 'boards list', requiresBoard: false },
+    { key: 'boardCreate', status: 'supported', canonicalRoute: '/boards', canonicalCommand: 'boards create', requiresBoard: false },
+    { key: 'boardArchive', status: 'supported', canonicalRoute: '/boards/{slug}', canonicalCommand: 'boards rm', requiresBoard: false },
+    { key: 'cliCurrentSwitch', status: 'partial', reason: 'Backend keeps explicit board context and does not expose a WUI route for mutating canonical CLI current board', canonicalRoute: '/boards/{slug}/switch', canonicalCommand: 'boards switch', requiresBoard: false },
+    { key: 'taskCrudLite', status: 'supported', canonicalRoute: '/tasks', canonicalCommand: 'list/show/create/complete/block/unblock/assign', requiresBoard: true },
+    { key: 'commentsWrite', status: 'supported', canonicalRoute: '/tasks/{task_id}/comments', canonicalCommand: 'comment', requiresBoard: true },
+    { key: 'commentsRead', status: 'supported', reason: 'Comments are returned on task detail responses', canonicalRoute: '/tasks/{task_id}', canonicalCommand: 'show --json', requiresBoard: true },
+    { key: 'taskLog', status: 'supported', canonicalRoute: '/tasks/{task_id}/log', canonicalCommand: 'log', requiresBoard: true },
+    { key: 'diagnostics', status: 'supported', canonicalRoute: '/diagnostics', canonicalCommand: 'diagnostics', requiresBoard: true },
+    { key: 'reclaim', status: 'supported', canonicalRoute: '/tasks/{task_id}/reclaim', canonicalCommand: 'reclaim', requiresBoard: true },
+    { key: 'reassign', status: 'supported', canonicalRoute: '/tasks/{task_id}/reassign', canonicalCommand: 'reassign', requiresBoard: true },
+    { key: 'specify', status: 'supported', canonicalRoute: '/tasks/{task_id}/specify', canonicalCommand: 'specify', requiresBoard: true },
+    { key: 'dispatch', status: 'supported', canonicalRoute: '/dispatch', canonicalCommand: 'dispatch', requiresBoard: true },
+    { key: 'links', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true },
+    { key: 'bulk', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/tasks/bulk', canonicalCommand: 'bulk-equivalent', requiresBoard: true },
+    { key: 'events', status: 'missing', reason: 'Streaming strategy not selected for WUI yet', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true },
+    { key: 'homeSubscriptions', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/home-channels and subscription routes', canonicalCommand: 'notify-*', requiresBoard: true },
+  ]
+  const supports = Object.fromEntries(capabilities.map(capability => [capability.key, capability.status === 'supported'])) as Record<string, boolean>
+  const missing = capabilities
+    .filter(capability => capability.status !== 'supported')
+    .map(capability => capability.key)
+  return { source: 'hermes-cli', supports, missing, capabilities }
+}
+
+function parseJsonPayload(stdout: string): unknown[] {
+  const trimmed = stdout.trim()
+  if (!trimmed) return []
+  const parsed = JSON.parse(trimmed)
+  if (Array.isArray(parsed)) return parsed
+  return [parsed]
+}
+
+function isNoWorkerLogError(err: any): boolean {
+  const lines = [err?.stderr, err?.stdout, err?.message]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+  return lines.some(line => NO_WORKER_LOG_PATTERNS.some(pattern => pattern.test(line)))
+}
+
+function pushOptional(args: string[], flag: string, value?: string | number | null): void {
+  if (value !== undefined && value !== null && String(value).trim() !== '') args.push(flag, String(value))
+}
+
+export async function addComment(taskId: string, body: string, opts?: KanbanBoardOptions & { author?: string }): Promise<{ ok: boolean; output: string }> {
+  const args = [...boardArgs(opts?.board), 'comment', taskId, body]
+  pushOptional(args, '--author', opts?.author)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return { ok: true, output: stdout }
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban comment failed')
+    throw new Error(`Failed to comment on kanban task: ${err.message}`)
   }
-  const missing = Object.entries(supports)
-    .filter(([, supported]) => !supported)
-    .map(([name]) => name)
-  return { source: 'hermes-cli', supports, missing }
+}
+
+export async function getTaskLog(taskId: string, opts?: KanbanBoardOptions & { tail?: number }): Promise<KanbanTaskLog> {
+  const args = [...boardArgs(opts?.board), 'log', taskId]
+  pushOptional(args, '--tail', opts?.tail)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    const sizeBytes = Buffer.byteLength(stdout, 'utf8')
+    return {
+      task_id: taskId,
+      path: null,
+      exists: true,
+      size_bytes: sizeBytes,
+      content: stdout,
+      truncated: opts?.tail !== undefined && sizeBytes >= opts.tail,
+    }
+  } catch (err: any) {
+    const detail = await getTask(taskId, opts)
+    if (!detail) throw new Error('Kanban task not found')
+    if ((err.code === 1 || err.status === 1) && isNoWorkerLogError(err)) {
+      return {
+        task_id: taskId,
+        path: null,
+        exists: false,
+        size_bytes: 0,
+        content: '',
+        truncated: false,
+      }
+    }
+    logger.error(err, 'Hermes CLI: kanban log failed')
+    throw new Error(`Failed to read kanban task log: ${err.message}`)
+  }
+}
+
+export async function getDiagnostics(opts?: KanbanBoardOptions & { task?: string; severity?: string }): Promise<unknown[]> {
+  const args = [...boardArgs(opts?.board), 'diagnostics', '--json']
+  pushOptional(args, '--task', opts?.task)
+  pushOptional(args, '--severity', opts?.severity)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return JSON.parse(stdout)
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban diagnostics failed')
+    throw new Error(`Failed to get kanban diagnostics: ${err.message}`)
+  }
+}
+
+export async function reclaimTask(taskId: string, opts?: KanbanBoardOptions & { reason?: string }): Promise<{ ok: boolean; output: string }> {
+  const args = [...boardArgs(opts?.board), 'reclaim', taskId]
+  pushOptional(args, '--reason', opts?.reason)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return { ok: true, output: stdout }
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban reclaim failed')
+    throw new Error(`Failed to reclaim kanban task: ${err.message}`)
+  }
+}
+
+export async function reassignTask(taskId: string, profile: string, opts?: KanbanBoardOptions & { reclaim?: boolean; reason?: string }): Promise<{ ok: boolean; output: string }> {
+  const args = [...boardArgs(opts?.board), 'reassign', taskId, profile]
+  if (opts?.reclaim) args.push('--reclaim')
+  pushOptional(args, '--reason', opts?.reason)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return { ok: true, output: stdout }
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban reassign failed')
+    throw new Error(`Failed to reassign kanban task: ${err.message}`)
+  }
+}
+
+export async function specifyTask(taskId: string, opts?: KanbanBoardOptions & { author?: string }): Promise<unknown[]> {
+  const args = [...boardArgs(opts?.board), 'specify', taskId, '--json']
+  pushOptional(args, '--author', opts?.author)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return parseJsonPayload(stdout)
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban specify failed')
+    throw new Error(`Failed to specify kanban task: ${err.message}`)
+  }
+}
+
+export async function dispatch(opts?: KanbanBoardOptions & { dryRun?: boolean; max?: number; failureLimit?: number }): Promise<unknown> {
+  const args = [...boardArgs(opts?.board), 'dispatch', '--json']
+  if (opts?.dryRun) args.push('--dry-run')
+  pushOptional(args, '--max', opts?.max)
+  pushOptional(args, '--failure-limit', opts?.failureLimit)
+  try {
+    const { stdout } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    return JSON.parse(stdout)
+  } catch (err: any) {
+    logger.error(err, 'Hermes CLI: kanban dispatch failed')
+    throw new Error(`Failed to dispatch kanban tasks: ${err.message}`)
+  }
 }
 
 export async function listTasks(opts?: {
@@ -221,8 +407,10 @@ export async function listTasks(opts?: {
   status?: string
   assignee?: string
   tenant?: string
+  includeArchived?: boolean
 }): Promise<KanbanTask[]> {
   const args = [...boardArgs(opts?.board), 'list', '--json']
+  if (opts?.includeArchived) args.push('--archived')
   if (opts?.status) args.push('--status', opts.status)
   if (opts?.assignee) args.push('--assignee', opts.assignee)
   if (opts?.tenant) args.push('--tenant', opts.tenant)
@@ -346,7 +534,13 @@ export async function getStats(opts?: KanbanBoardOptions): Promise<KanbanStats> 
       timeout: 30000,
       ...execOpts,
     })
-    return JSON.parse(stdout)
+    const stats = JSON.parse(stdout) as KanbanStats
+    const archivedTasks = await listTasks({ board: opts?.board, status: 'archived', includeArchived: true })
+    const existingArchived = stats.by_status?.archived || 0
+    const archivedCount = archivedTasks.length
+    stats.by_status = { ...(stats.by_status || {}), archived: archivedCount }
+    stats.total = (stats.total || 0) + Math.max(0, archivedCount - existingArchived)
+    return stats
   } catch (err: any) {
     logger.error(err, 'Hermes CLI: kanban stats failed')
     throw new Error(`Failed to get kanban stats: ${err.message}`)

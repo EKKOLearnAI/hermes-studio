@@ -7,6 +7,7 @@ modelRoutes.get('/api/hermes/available-models', ctrl.getAvailable)
 modelRoutes.get('/api/hermes/config/models', ctrl.getConfigModels)
 modelRoutes.put('/api/hermes/config/model', ctrl.setConfigModel)
 modelRoutes.put('/api/hermes/model-alias', ctrl.setModelAlias)
+modelRoutes.put('/api/hermes/model-visibility', ctrl.setModelVisibility)
 
 // Model context routes
 modelRoutes.get('/api/hermes/model-context', ctrl.getModelContext)

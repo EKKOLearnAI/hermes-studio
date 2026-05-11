@@ -7,6 +7,7 @@ const mockSystemApi = vi.hoisted(() => ({
   fetchAvailableModels: vi.fn(),
   updateDefaultModel: vi.fn(),
   updateModelAlias: vi.fn(),
+  updateModelVisibility: vi.fn(),
   triggerUpdate: vi.fn(),
 }))
 
@@ -33,6 +34,122 @@ describe('App Store', () => {
     store.toggleSidebarCollapsed()
     expect(store.sidebarCollapsed).toBe(false)
     expect(window.localStorage.getItem('hermes_sidebar_collapsed')).toBe('0')
+  })
+
+  it('loads model visibility and falls back when the configured default is hidden', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-chat',
+      default_provider: 'deepseek',
+      groups: [
+        {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          api_key: 'sk-test',
+          models: ['deepseek-reasoner'],
+        },
+      ],
+      allProviders: [],
+      model_visibility: {
+        deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+      },
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.modelVisibility).toEqual({
+      deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+    })
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+    expect(store.selectedProvider).toBe('deepseek')
+    expect(store.customModels).toEqual({})
+    expect(store.isModelVisible('deepseek', 'deepseek-reasoner')).toBe(true)
+    expect(store.isModelVisible('deepseek', 'deepseek-chat')).toBe(false)
+  })
+
+  it('loads aliases while falling back from a hidden default without rehydrating it as custom', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-chat',
+      default_provider: 'deepseek',
+      groups: [
+        {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          api_key: 'sk-test',
+          models: ['deepseek-reasoner'],
+          available_models: ['deepseek-chat', 'deepseek-reasoner'],
+        },
+      ],
+      allProviders: [
+        {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          api_key: 'sk-test',
+          models: ['deepseek-chat', 'deepseek-reasoner'],
+        },
+      ],
+      model_aliases: {
+        deepseek: { 'deepseek-reasoner': 'Reasoner Alias' },
+      },
+      model_visibility: {
+        deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+      },
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.modelAliases).toEqual({
+      deepseek: { 'deepseek-reasoner': 'Reasoner Alias' },
+    })
+    expect(store.modelVisibility).toEqual({
+      deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+    })
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+    expect(store.selectedProvider).toBe('deepseek')
+    expect(store.displayModelName('deepseek-reasoner', 'deepseek')).toBe('Reasoner Alias')
+    expect(store.customModels).toEqual({})
+  })
+
+  it('persists model visibility without changing the canonical selected model id', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-reasoner',
+      default_provider: 'deepseek',
+      groups: [
+        {
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          api_key: 'sk-test',
+          models: ['deepseek-reasoner'],
+        },
+      ],
+      allProviders: [],
+      model_visibility: {
+        deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+      },
+    })
+    mockSystemApi.updateModelVisibility.mockResolvedValue({
+      success: true,
+      model_visibility: {
+        deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+      },
+    })
+    const store = useAppStore()
+
+    await store.setModelVisibility('deepseek', { mode: 'include', models: ['deepseek-reasoner'] })
+
+    expect(mockSystemApi.updateModelVisibility).toHaveBeenCalledWith({
+      provider: 'deepseek',
+      mode: 'include',
+      models: ['deepseek-reasoner'],
+    })
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+    expect(store.selectedProvider).toBe('deepseek')
+    expect(mockSystemApi.updateDefaultModel).not.toHaveBeenCalled()
   })
 
   it('clears the updating state and reports failure when self-update request fails', async () => {
