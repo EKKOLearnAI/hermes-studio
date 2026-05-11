@@ -96,9 +96,9 @@ describe('kanban controller', () => {
     expect(mockListBoards).toHaveBeenCalledWith({ includeArchived: true })
     expect(boardsCtx.body).toEqual({ boards: [{ slug: 'default' }] })
 
-    const c = ctx({ query: { board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' } })
+    const c = ctx({ query: { board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops', includeArchived: 'true' } })
     await ctrl.list(c)
-    expect(mockListTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' })
+    expect(mockListTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops', includeArchived: true })
     expect(c.body).toEqual({ tasks: [{ id: 'task-1' }] })
 
     mockCreateBoard.mockResolvedValue({ slug: 'project-b' })
@@ -120,7 +120,7 @@ describe('kanban controller', () => {
 
     const defaultCtx = ctx({ query: { status: 'ready' } })
     await ctrl.list(defaultCtx)
-    expect(mockListTasks).toHaveBeenLastCalledWith({ board: 'default', status: 'ready', assignee: undefined, tenant: undefined })
+    expect(mockListTasks).toHaveBeenLastCalledWith({ board: 'default', status: 'ready', assignee: undefined, tenant: undefined, includeArchived: false })
   })
 
   it('proxies comment/log/diagnostics with explicit board context', async () => {

@@ -6,6 +6,33 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hermes</title>
+
+  <!-- Prevent FOUC by applying theme classes immediately -->
+  <script>
+    (function() {
+      try {
+        const brightness = localStorage.getItem('hermes_brightness') || 'system';
+        const style = localStorage.getItem('hermes_style') || 'ink';
+
+        // Resolve dark mode
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = brightness === 'dark' || (brightness === 'system' && prefersDark);
+
+        // Resolve comic style
+        const isComic = style === 'comic';
+
+        // Apply classes immediately
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        }
+        if (isComic) {
+          document.documentElement.classList.add('comic');
+        }
+      } catch (e) {
+        console.warn('Failed to apply theme:', e);
+      }
+    })();
+  </script>
 </head>
 
 <body>

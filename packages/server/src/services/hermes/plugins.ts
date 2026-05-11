@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
+import { homedir } from 'os'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
@@ -230,29 +231,68 @@ function maybeRootFromHermesBin(): string[] {
   return candidates.filter((candidate, index) => candidates.indexOf(candidate) === index)
 }
 
+/**
+ * Parse the shebang of the hermes binary to extract the Python interpreter path.
+ * Works with pip-installed launchers, uv tool launchers, and manual venv installs.
+ * e.g. "#!/Users/ekko/.hermes/hermes-agent/venv/bin/python3" -> that path
+ */
+function pythonFromHermesShebang(): string | undefined {
+  const hermesBin = process.env.HERMES_BIN?.trim() || 'hermes'
+  try {
+    const resolved = resolve(hermesBin)
+    if (!existsSync(resolved)) return undefined
+    const head = readFileSync(resolved, 'utf8').slice(0, 256)
+    const match = head.match(/^#!\s*(\/[^\s\n]+)/)
+    return match ? match[1] : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function resolveHermesAgentRoot(): string {
   const candidates = [
     process.env.HERMES_AGENT_ROOT?.trim(),
     ...maybeRootFromHermesBin(),
     '/opt/hermes',
-    join(process.env.HOME || '', '.hermes', 'hermes-agent'),
-  ].filter(Boolean) as string[]
+    join(homedir(), '.hermes', 'hermes-agent'),     // Unix/Linux/macOS
+  ]
+ 
+  // Windows specific path
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    candidates.push(join(process.env.LOCALAPPDATA, 'hermes', 'hermes-agent'))
+  }
 
-  return candidates.find(hasHermesPluginModule) || ''
+  return (candidates.filter(Boolean) as string[]).find(hasHermesPluginModule) || ''
 }
+
 
 function pythonCandidates(agentRoot: string): string[] {
   const hermesBin = process.env.HERMES_BIN?.trim()
-  const hermesBinPython = hermesBin && hermesBin.includes('/bin/') ? join(dirname(hermesBin), 'python') : undefined
-  const rootPythons = agentRoot
-    ? [join(agentRoot, '.venv', 'bin', 'python'), join(agentRoot, 'venv', 'bin', 'python')]
-    : []
+  let hermesBinPython: string | undefined
+  if (hermesBin) {
+    // Windows: hermes -> venv\Scripts\python.exe
+    // Unix: hermes -> venv/bin/python
+    if (hermesBin.includes('\\Scripts\\') || hermesBin.includes('/Scripts/')) {
+      hermesBinPython = join(dirname(hermesBin), 'python.exe')
+    } else if (hermesBin.includes('/bin/') || hermesBin.includes('\\bin\\')) {
+      hermesBinPython = join(dirname(hermesBin), 'python')
+    }
+  }
+
+  const rootPythons = agentRoot ? [
+    join(agentRoot, 'venv', 'bin', 'python'),          // Unix
+    join(agentRoot, 'venv', 'Scripts', 'python.exe'),  // Windows
+    join(agentRoot, '.venv', 'bin', 'python'),         // Unix (alternative)
+    join(agentRoot, '.venv', 'Scripts', 'python.exe'), // Windows (alternative)
+  ] : []
+
   const candidates = [
     process.env.HERMES_PYTHON?.trim(),
     hermesBinPython,
     ...rootPythons,
     'python3',
     'python',
+    pythonFromHermesShebang(),
   ].filter(Boolean) as string[]
 
   return candidates.filter((candidate) => {

@@ -14,8 +14,9 @@ import { createSession, addMessage, updateSession } from '../../db/hermes/sessio
 import { getDb } from '../../db/index'
 import { logger } from '../logger'
 import { listSessionSummaries as listHermesSessionSummaries } from '../../db/hermes/sessions-db'
+import { detectHermesHome } from './hermes-path'
 
-const HERMES_BASE = resolve(homedir(), '.hermes')
+const HERMES_BASE = detectHermesHome()
 const PROFILES_DIR = join(HERMES_BASE, 'profiles')
 
 /**

@@ -35,12 +35,12 @@ describe('Kanban API', () => {
     vi.clearAllMocks()
   })
 
-  it('serializes board and list filters into query params', async () => {
+  it('serializes board, list filters, and archived inclusion into query params', async () => {
     mockRequest.mockResolvedValue({ tasks: [{ id: 'task-1' }] })
 
-    const result = await listTasks({ board: 'default', status: 'blocked', assignee: 'alice', tenant: 'ops' })
+    const result = await listTasks({ board: 'default', status: 'blocked', assignee: 'alice', tenant: 'ops', includeArchived: true })
 
-    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban?board=default&status=blocked&assignee=alice&tenant=ops')
+    expect(mockRequest).toHaveBeenCalledWith('/api/hermes/kanban?board=default&status=blocked&assignee=alice&tenant=ops&includeArchived=true')
     expect(result).toEqual([{ id: 'task-1' }])
   })
 

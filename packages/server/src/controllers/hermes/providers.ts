@@ -90,7 +90,8 @@ export async function create(ctx: any) {
     delete config.model.base_url
     delete config.model.api_key
     await writeConfigYaml(config)
-    try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
+    // TODO: Test if provider works without gateway restart
+    // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
@@ -127,7 +128,8 @@ export async function update(ctx: any) {
       }
       if (api_key !== undefined) { await saveEnvValue(envMapping.api_key_env, api_key) }
     }
-    try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
+    // TODO: Test if provider works without gateway restart
+    // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
@@ -185,7 +187,8 @@ export async function remove(ctx: any) {
         await writeConfigYaml(freshConfig)
       }
     }
-    try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
+    // TODO: Test if provider works without gateway restart
+    // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }

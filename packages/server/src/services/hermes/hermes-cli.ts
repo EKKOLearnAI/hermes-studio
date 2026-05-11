@@ -8,10 +8,12 @@ const execFileAsync = promisify(execFile)
 const execOpts = { windowsHide: true }
 const isDocker = existsSync('/.dockerenv')
 
+/**
+ * 解析 Hermes CLI 二进制路径
+ * 优先使用环境变量 HERMES_BIN，否则使用 PATH 中的 'hermes' 命令
+ */
 function resolveHermesBin(): string {
-  const envBin = process.env.HERMES_BIN?.trim()
-  if (envBin) return envBin
-  return 'hermes'
+  return process.env.HERMES_BIN?.trim() || 'hermes'
 }
 
 const HERMES_BIN = resolveHermesBin()
@@ -273,20 +275,16 @@ export async function startGatewayBackground(): Promise<number | null> {
 }
 
 /**
- * Restart Hermes gateway
+ * Restart Hermes gateway (stop then start)
  */
 export async function restartGateway(): Promise<string> {
-  if (isDocker) {
-    try { await stopGateway() } catch { }
-    const pid = await startGatewayBackground()
-    return pid ? `Gateway restarted (PID: ${pid})` : 'Gateway restart triggered'
+  try {
+    await stopGateway()
+  } catch (err) {
+    // Ignore stop errors, gateway might not be running
   }
-
-  const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'restart'], {
-    timeout: 30000,
-    ...execOpts,
-  })
-  return stdout || stderr
+  const result = await startGateway()
+  return result
 }
 
 /**
@@ -310,13 +308,16 @@ export async function listLogFiles(): Promise<LogFileInfo[]> {
       ...execOpts,
     })
     const files: LogFileInfo[] = []
-    const lines = stdout.trim().split('\n').filter(l => l.includes('.log'))
+    // Windows 可能使用 \r\n 换行符，统一处理
+    const normalized = stdout.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const lines = normalized.trim().split('\n').filter(l => l.includes('.log'))
     for (const line of lines) {
       const match = line.match(/^\s+(\S+)\s+([\d.]+\w+)\s+(.+)$/)
       if (match) {
         const rawName = match[1]
         const name = rawName.replace(/\.log$/, '')
-        if (['agent', 'errors', 'gateway'].includes(name)) {
+        // 支持更多日志类型：agent, errors, gateway, 以及其他可能的日志文件
+        if (['agent', 'errors', 'gateway', 'error'].includes(name)) {
           files.push({ name, size: match[2], modified: match[3].trim() })
         }
       }
@@ -387,7 +388,9 @@ export async function listProfiles(): Promise<HermesProfile[]> {
       ...execOpts,
     })
 
-    const lines = stdout.trim().split('\n').filter(Boolean)
+    // Windows 可能使用 \r\n 换行符，统一处理
+    const normalized = stdout.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const lines = normalized.trim().split('\n').filter(Boolean)
     const profiles: HermesProfile[] = []
 
     // Skip header lines (starts with " Profile" or " ─")

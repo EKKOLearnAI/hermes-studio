@@ -81,7 +81,7 @@ describe('Kanban store', () => {
     expect(store.loading).toBe(true)
     await promise
 
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'blocked', assignee: 'alice' })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'blocked', assignee: 'alice', includeArchived: true })
     expect(store.tasks).toEqual([{ id: 'task-1', status: 'todo' }])
     expect(store.loading).toBe(false)
   })
@@ -204,7 +204,7 @@ describe('Kanban store', () => {
     store.setSelectedBoard('project-a')
     await store.refreshAll()
 
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined, includeArchived: true })
     expect(mockKanbanApi.getStats).toHaveBeenCalledWith({ board: 'project-a' })
     expect(mockKanbanApi.getAssignees).toHaveBeenCalledWith({ board: 'project-a' })
     expect(mockKanbanApi.listBoards).toHaveBeenCalledWith({ includeArchived: false })

@@ -162,6 +162,7 @@ export interface KanbanListOptions extends KanbanBoardOptions {
   status?: string
   assignee?: string
   tenant?: string
+  includeArchived?: boolean
 }
 
 export interface KanbanCommentCreateRequest {
@@ -246,6 +247,7 @@ export async function listTasks(opts?: KanbanListOptions): Promise<KanbanTask[]>
   if (opts?.status) params.set('status', opts.status)
   if (opts?.assignee) params.set('assignee', opts.assignee)
   if (opts?.tenant) params.set('tenant', opts.tenant)
+  if (opts?.includeArchived) params.set('includeArchived', 'true')
   const res = await request<{ tasks: KanbanTask[] }>(appendQuery('/api/hermes/kanban', params))
   return res.tasks
 }

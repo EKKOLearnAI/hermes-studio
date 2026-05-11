@@ -187,6 +187,7 @@ export const useKanbanStore = defineStore('kanban', () => {
         board,
         status: filterStatus.value || undefined,
         assignee: filterAssignee.value || undefined,
+        includeArchived: true,
       })
       if (isCurrentRequest(seq, generation, board, tasksRequestSeq)) tasks.value = nextTasks
     } catch (err) {

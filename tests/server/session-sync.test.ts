@@ -1,30 +1,38 @@
 /**
  * Tests for session-sync service
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getDb, ensureTable } from '../../packages/server/src/db/index'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { getDb } from '../../packages/server/src/db/index'
+import { initAllStores } from '../../packages/server/src/db/hermes/init'
+import { listSessionSummaries } from '../../packages/server/src/db/hermes/sessions-db'
 import { syncAllHermesSessionsOnStartup } from '../../packages/server/src/services/hermes/session-sync'
+
+vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+  listSessionSummaries: vi.fn().mockResolvedValue([]),
+  getSessionDetailFromDbWithProfile: vi.fn(),
+}))
+
+function resetSessionTables(): void {
+  initAllStores()
+
+  const db = getDb()
+  if (db) {
+    db.exec('DELETE FROM messages')
+    db.exec('DELETE FROM sessions')
+  }
+}
 
 describe('session-sync', () => {
   beforeEach(() => {
-    // Reset database before each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+    vi.clearAllMocks()
+    resetSessionTables()
   })
 
   afterEach(() => {
-    // Cleanup after each test
-    const db = getDb()
-    if (db) {
-      db.exec('DELETE FROM sessions')
-      db.exec('DELETE FROM messages')
-    }
+    resetSessionTables()
   })
 
-  it('should skip sync when local DB is not empty', () => {
+  it('should skip sync when local DB is not empty', async () => {
     const db = getDb()
     expect(db).not.toBeNull()
 
@@ -39,14 +47,15 @@ describe('session-sync', () => {
     expect(countResult.count).toBe(1)
 
     // Run sync - should skip because DB is not empty
-    syncAllHermesSessionsOnStartup()
+    await syncAllHermesSessionsOnStartup()
+    expect(vi.mocked(listSessionSummaries)).not.toHaveBeenCalled()
 
     // Verify session still exists (no changes)
     const countAfter = db!.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number }
     expect(countAfter.count).toBe(1)
   })
 
-  it('should attempt sync when local DB is empty', () => {
+  it('should attempt sync when local DB is empty', async () => {
     const db = getDb()
     expect(db).not.toBeNull()
 
@@ -55,19 +64,7 @@ describe('session-sync', () => {
     expect(countBefore.count).toBe(0)
 
     // Run sync - should attempt to sync from Hermes
-    syncAllHermesSessionsOnStartup()
-
-    // Note: Whether sessions are actually imported depends on whether
-    // Hermes state.db exists and has api_server sessions
-    // This test mainly verifies the function doesn't crash when DB is empty
-    expect(true).toBe(true)
-  })
-
-  it('should handle case when SQLite is not available', () => {
-    // This test verifies the function handles the case when getDb() returns null
-    // Since we can't easily mock getDb(), we just verify it doesn't crash
-    expect(() => {
-      syncAllHermesSessionsOnStartup()
-    }).not.toThrow()
+    await expect(syncAllHermesSessionsOnStartup()).resolves.toBeUndefined()
+    expect(vi.mocked(listSessionSummaries)).toHaveBeenCalledWith('api_server', 10000, 'default')
   })
 })
