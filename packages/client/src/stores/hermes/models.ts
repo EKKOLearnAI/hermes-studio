@@ -9,6 +9,8 @@ export const useModelsStore = defineStore('models', () => {
   const allProviders = ref<AvailableModelGroup[]>([])
   const defaultModel = ref('')
   const loading = ref(false)
+  const error = ref<string | null>(null)
+  const isAuthError = ref(false)
 
   const customProviders = computed(() =>
     providers.value.filter(g => g.provider.startsWith('custom:')),
@@ -32,6 +34,15 @@ export const useModelsStore = defineStore('models', () => {
 
   async function fetchProviders() {
     loading.value = true
+    error.value = null
+    
+    // Skip if we already hit an auth error
+    if (isAuthError.value) {
+      console.warn('[fetchProviders] Skipping due to previous auth error')
+      loading.value = false
+      return
+    }
+
     try {
       const res = await systemApi.fetchAvailableModels()
       providers.value = res.groups
@@ -39,8 +50,22 @@ export const useModelsStore = defineStore('models', () => {
       defaultModel.value = res.default
       const appStore = useAppStore()
       appStore.applyAvailableModelsResponse(res)
-    } catch (err) {
-      console.error('Failed to fetch providers:', err)
+      // Clear auth error flag on success
+      isAuthError.value = false
+    } catch (err: any) {
+      const errorMessage = err?.message || String(err)
+      error.value = errorMessage
+
+      // Check if it's an auth error
+      if (errorMessage.includes('Unauthorized') || err?.status === 401) {
+        isAuthError.value = true
+        console.error('[fetchProviders] Auth error, will not retry:', err)
+      } else {
+        console.error('Failed to fetch providers:', err)
+      }
+
+      // Re-throw for upstream handling
+      throw err
     } finally {
       loading.value = false
     }
@@ -72,6 +97,8 @@ export const useModelsStore = defineStore('models', () => {
     allProviders,
     defaultModel,
     loading,
+    error,
+    isAuthError,
     customProviders,
     builtinProviders,
     allModels,

@@ -36,6 +36,12 @@ export const useAppStore = defineStore('app', () => {
   const healthPollTimer = ref<ReturnType<typeof setInterval>>()
   const nodeVersion = ref('')
 
+  // Auth error tracking to prevent infinite retry loops
+  const authErrorCount = ref(0)
+  const maxAuthRetries = 3
+  const lastAuthErrorTime = ref<number | null>(null)
+  const AUTH_ERROR_COOLDOWN = 60000 // 1 minute cooldown after auth errors
+
   // Settings
   const streamEnabled = ref(true)
   const sessionPersistence = ref(true)
@@ -125,11 +131,44 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function loadModels() {
+    // Check if we've hit too many auth errors recently
+    if (authErrorCount.value >= maxAuthRetries) {
+      const now = Date.now()
+      if (lastAuthErrorTime.value && now - lastAuthErrorTime.value < AUTH_ERROR_COOLDOWN) {
+        console.warn('[loadModels] Skipping due to recent auth errors. Please log in.')
+        return
+      }
+      // Reset after cooldown period
+      authErrorCount.value = 0
+      lastAuthErrorTime.value = null
+    }
+
     try {
       const res = await fetchAvailableModels()
       applyAvailableModelsResponse(res)
-    } catch {
-      // ignore
+      // Reset auth error count on success
+      authErrorCount.value = 0
+      lastAuthErrorTime.value = null
+    } catch (err: any) {
+      // Check if it's an auth error
+      const isAuthError = err?.message?.includes('Unauthorized') || err?.status === 401
+
+      if (isAuthError) {
+        authErrorCount.value++
+        lastAuthErrorTime.value = Date.now()
+        console.error(`[loadModels] Auth error (${authErrorCount.value}/${maxAuthRetries}):`, err)
+
+        // On final retry, stop health polling to reduce noise
+        if (authErrorCount.value >= maxAuthRetries) {
+          console.warn('[loadModels] Max auth retries reached. Stopping health polling.')
+          stopHealthPolling()
+        }
+      } else {
+        console.error('[loadModels] Failed to load models:', err)
+      }
+
+      // Re-throw the error so callers can handle it if needed
+      throw err
     }
   }
 
@@ -283,5 +322,8 @@ export const useAppStore = defineStore('app', () => {
     setModelVisibility,
     startHealthPolling,
     stopHealthPolling,
+    // Auth error tracking (exported for debugging/monitoring)
+    authErrorCount,
+    lastAuthErrorTime,
   }
 })

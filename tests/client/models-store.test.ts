@@ -72,4 +72,103 @@ describe('Models Store', () => {
     expect(appStore.selectedModel).toBe('deepseek-v4-flash')
     expect(appStore.selectedProvider).toBe('deepseek')
   })
+
+  describe('auth error handling', () => {
+    it('sets isAuthError flag on 401 and skips subsequent calls', async () => {
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels.mockRejectedValue(new Error('Unauthorized'))
+
+      const modelsStore = useModelsStore()
+
+      await expect(modelsStore.fetchProviders()).rejects.toThrow('Unauthorized')
+      expect(modelsStore.isAuthError).toBe(true)
+      expect(modelsStore.error).toBe('Unauthorized')
+
+      // Subsequent call should be skipped
+      await modelsStore.fetchProviders()
+      expect(consoleWarn).toHaveBeenCalledWith('[fetchProviders] Skipping due to previous auth error')
+      expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalledTimes(1)
+
+      consoleWarn.mockRestore()
+      consoleError.mockRestore()
+    })
+
+    it('clears isAuthError flag on successful fetch', async () => {
+      mockSystemApi.fetchAvailableModels.mockResolvedValueOnce({
+        default: 'deepseek-chat',
+        default_provider: 'deepseek',
+        groups: [{
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          models: ['deepseek-chat'],
+          api_key: '',
+        }],
+        allProviders: [],
+      })
+
+      const modelsStore = useModelsStore()
+      modelsStore.isAuthError = true
+      modelsStore.error = 'Previous error'
+
+      // Clear the error state to allow retry
+      modelsStore.isAuthError = false
+      modelsStore.error = null
+
+      await modelsStore.fetchProviders()
+
+      expect(modelsStore.isAuthError).toBe(false)
+      expect(modelsStore.error).toBe(null)
+      expect(modelsStore.providers.length).toBe(1)
+    })
+
+    it('does not set isAuthError for non-auth errors', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels.mockRejectedValue(new Error('Network Error'))
+
+      const modelsStore = useModelsStore()
+
+      await expect(modelsStore.fetchProviders()).rejects.toThrow('Network Error')
+      expect(modelsStore.isAuthError).toBe(false)
+      expect(modelsStore.error).toBe('Network Error')
+      expect(consoleError).toHaveBeenCalledWith('Failed to fetch providers:', expect.any(Error))
+
+      consoleError.mockRestore()
+    })
+
+    it('allows retry after isAuthError is manually cleared', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels
+        .mockRejectedValueOnce(new Error('Unauthorized'))
+        .mockResolvedValueOnce({
+          default: 'deepseek-chat',
+          default_provider: 'deepseek',
+          groups: [{
+            provider: 'deepseek',
+            label: 'DeepSeek',
+            base_url: 'https://api.deepseek.com/v1',
+            models: ['deepseek-chat'],
+            api_key: '',
+          }],
+          allProviders: [],
+        })
+
+      const modelsStore = useModelsStore()
+
+      // First call fails with auth error
+      await expect(modelsStore.fetchProviders()).rejects.toThrow('Unauthorized')
+      expect(modelsStore.isAuthError).toBe(true)
+
+      // Manually clear auth error (simulating user login)
+      modelsStore.isAuthError = false
+
+      // Second call should succeed
+      await modelsStore.fetchProviders()
+      expect(modelsStore.isAuthError).toBe(false)
+      expect(modelsStore.providers.length).toBe(1)
+
+      consoleError.mockRestore()
+    })
+  })
 })

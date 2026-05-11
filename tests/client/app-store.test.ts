@@ -287,4 +287,93 @@ describe('App Store', () => {
       provider: 'deepseek',
     })
   })
+
+  describe('auth error handling', () => {
+    it('tracks auth errors and stops retrying after max retries', async () => {
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels.mockRejectedValue(new Error('Unauthorized'))
+      const store = useAppStore()
+
+      // First auth error
+      await expect(store.loadModels()).rejects.toThrow('Unauthorized')
+      expect(store.authErrorCount).toBe(1)
+
+      // Second auth error
+      await expect(store.loadModels()).rejects.toThrow('Unauthorized')
+      expect(store.authErrorCount).toBe(2)
+
+      // Third auth error - should stop health polling
+      await expect(store.loadModels()).rejects.toThrow('Unauthorized')
+      expect(store.authErrorCount).toBe(3)
+      expect(consoleWarn).toHaveBeenCalledWith('[loadModels] Max auth retries reached. Stopping health polling.')
+
+      // Fourth call should be skipped due to max retries + cooldown
+      await store.loadModels()
+      expect(consoleWarn).toHaveBeenCalledWith('[loadModels] Skipping due to recent auth errors. Please log in.')
+      expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalledTimes(3)
+
+      consoleWarn.mockRestore()
+      consoleError.mockRestore()
+    })
+
+    it('resets auth error count on successful load', async () => {
+      mockSystemApi.fetchAvailableModels.mockResolvedValueOnce({
+        default: 'deepseek-chat',
+        default_provider: 'deepseek',
+        groups: [{
+          provider: 'deepseek',
+          label: 'DeepSeek',
+          base_url: 'https://api.deepseek.com/v1',
+          models: ['deepseek-chat'],
+          api_key: '',
+        }],
+        allProviders: [],
+      })
+      const store = useAppStore()
+      store.authErrorCount = 2
+
+      await store.loadModels()
+
+      expect(store.authErrorCount).toBe(0)
+      expect(store.selectedModel).toBe('deepseek-chat')
+    })
+
+    it('allows retries after cooldown period expires', async () => {
+      vi.useFakeTimers()
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels.mockRejectedValue(new Error('Unauthorized'))
+      const store = useAppStore()
+
+      // Hit max retries
+      for (let i = 0; i < 3; i++) {
+        await expect(store.loadModels()).rejects.toThrow('Unauthorized')
+      }
+      expect(store.authErrorCount).toBe(3)
+
+      // Advance time past cooldown (1 minute)
+      vi.advanceTimersByTime(61000)
+
+      // Should reset and try again
+      await expect(store.loadModels()).rejects.toThrow('Unauthorized')
+      expect(store.authErrorCount).toBe(1)
+
+      vi.useRealTimers()
+      consoleWarn.mockRestore()
+      consoleError.mockRestore()
+    })
+
+    it('does not count non-auth errors toward auth error limit', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSystemApi.fetchAvailableModels.mockRejectedValue(new Error('Network Error'))
+      const store = useAppStore()
+
+      await expect(store.loadModels()).rejects.toThrow('Network Error')
+      expect(store.authErrorCount).toBe(0)
+      expect(consoleError).toHaveBeenCalledWith('[loadModels] Failed to load models:', expect.any(Error))
+
+      consoleError.mockRestore()
+    })
+  })
 })
