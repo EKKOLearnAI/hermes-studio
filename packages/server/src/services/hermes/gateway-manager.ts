@@ -95,7 +95,7 @@ function detectInitSystem(): string {
 }
 
 const initSystem = detectInitSystem()
-const needsRunMode = !['systemd', 'launchd', 'windows-service'].includes(initSystem)
+const needsRunMode = !['systemd', 'launchd'].includes(initSystem)
 // 启动时输出 init 系统检测结果（方便调试）
 logger.debug('Detected init system: %s (needsRunMode: %s)', initSystem, needsRunMode)
 
