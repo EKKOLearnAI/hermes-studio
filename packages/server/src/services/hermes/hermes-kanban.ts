@@ -290,6 +290,27 @@ function pushOptional(args: string[], flag: string, value?: string | number | nu
   if (value !== undefined && value !== null && String(value).trim() !== '') args.push(flag, String(value))
 }
 
+function textFromExecValue(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString('utf8')
+  return value === undefined || value === null ? '' : String(value)
+}
+
+async function execKanbanMutation(args: string[], logMessage: string, errorPrefix: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    const stderrText = textFromExecValue(stderr).trim()
+    if (stderrText) throw new Error(stderrText)
+    return textFromExecValue(stdout)
+  } catch (err: any) {
+    logger.error(err, logMessage)
+    throw new Error(`${errorPrefix}: ${err.message}`)
+  }
+}
+
 export function buildWatchArgs(opts?: KanbanWatchOptions): string[] {
   const args = [...boardArgs(opts?.board), 'watch']
   pushOptional(args, '--interval', opts?.interval ?? 0.5)
@@ -304,31 +325,21 @@ export function watchEvents(opts?: KanbanWatchOptions): ChildProcess {
 }
 
 export async function linkTasks(parentId: string, childId: string, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output: string }> {
-  try {
-    const { stdout } = await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'link', parentId, childId], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-    return { ok: true, output: stdout }
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban link failed')
-    throw new Error(`Failed to link kanban tasks: ${err.message}`)
-  }
+  const output = await execKanbanMutation(
+    [...boardArgs(opts?.board), 'link', parentId, childId],
+    'Hermes CLI: kanban link failed',
+    'Failed to link kanban tasks',
+  )
+  return { ok: true, output }
 }
 
 export async function unlinkTasks(parentId: string, childId: string, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output: string }> {
-  try {
-    const { stdout } = await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'unlink', parentId, childId], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-    return { ok: true, output: stdout }
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban unlink failed')
-    throw new Error(`Failed to unlink kanban tasks: ${err.message}`)
-  }
+  const output = await execKanbanMutation(
+    [...boardArgs(opts?.board), 'unlink', parentId, childId],
+    'Hermes CLI: kanban unlink failed',
+    'Failed to unlink kanban tasks',
+  )
+  return { ok: true, output }
 }
 
 export async function addComment(taskId: string, body: string, opts?: KanbanBoardOptions & { author?: string }): Promise<{ ok: boolean; output: string }> {
@@ -541,68 +552,39 @@ export async function completeTasks(taskIds: string[], summary?: string, opts?: 
   const args = [...boardArgs(opts?.board), 'complete', ...taskIds]
   if (summary) args.push('--summary', summary)
 
-  try {
-    await execFileAsync(HERMES_BIN, args, {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban complete failed')
-    throw new Error(`Failed to complete kanban tasks: ${err.message}`)
-  }
+  await execKanbanMutation(args, 'Hermes CLI: kanban complete failed', 'Failed to complete kanban tasks')
 }
 
 export async function blockTask(taskId: string, reason: string, opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'block', taskId, reason], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban block failed')
-    throw new Error(`Failed to block kanban task: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'block', taskId, reason],
+    'Hermes CLI: kanban block failed',
+    'Failed to block kanban task',
+  )
 }
 
 export async function unblockTasks(taskIds: string[], opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'unblock', ...taskIds], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban unblock failed')
-    throw new Error(`Failed to unblock kanban tasks: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'unblock', ...taskIds],
+    'Hermes CLI: kanban unblock failed',
+    'Failed to unblock kanban tasks',
+  )
 }
 
 export async function assignTask(taskId: string, profile: string, opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'assign', taskId, profile], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban assign failed')
-    throw new Error(`Failed to assign kanban task: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'assign', taskId, profile],
+    'Hermes CLI: kanban assign failed',
+    'Failed to assign kanban task',
+  )
 }
 
 export async function archiveTasks(taskIds: string[], opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'archive', ...taskIds], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban archive failed')
-    throw new Error(`Failed to archive kanban tasks: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'archive', ...taskIds],
+    'Hermes CLI: kanban archive failed',
+    'Failed to archive kanban tasks',
+  )
 }
 
 async function applyBulkStatus(taskId: string, opts: KanbanBulkTaskUpdateOptions): Promise<void> {

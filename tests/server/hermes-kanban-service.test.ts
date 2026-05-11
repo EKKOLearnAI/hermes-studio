@@ -85,6 +85,23 @@ describe('hermes kanban service', () => {
     expect(mockExecFileAsync.mock.calls[4][1]).toEqual(['kanban', '--board', 'project-a', 'complete', 'task-2', '--summary', 'closed'])
   })
 
+  it('treats zero-exit stderr from mutation CLI calls as failures', async () => {
+    mockExecFileAsync
+      .mockResolvedValueOnce({ stdout: '', stderr: 'kanban: unknown task(s): missing-a, missing-b\n' })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'No such link: missing-a -> missing-b\n' })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'kanban: unknown task(s): task-1\n' })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'kanban: unknown task(s): task-2\n' })
+
+    await expect(service.linkTasks('missing-a', 'missing-b', { board: 'project-a' })).rejects.toThrow('Failed to link kanban tasks: kanban: unknown task(s): missing-a, missing-b')
+    await expect(service.unlinkTasks('missing-a', 'missing-b', { board: 'project-a' })).rejects.toThrow('Failed to unlink kanban tasks: No such link: missing-a -> missing-b')
+    await expect(service.bulkUpdateTasks({ board: 'project-a', ids: ['task-1', 'task-2'], status: 'done' })).resolves.toEqual({
+      results: [
+        { id: 'task-1', ok: false, error: 'Failed to complete kanban tasks: kanban: unknown task(s): task-1' },
+        { id: 'task-2', ok: false, error: 'Failed to complete kanban tasks: kanban: unknown task(s): task-2' },
+      ],
+    })
+  })
+
   it('returns per-task bulk errors for unsupported direct status patches before shelling out', async () => {
     await expect(service.bulkUpdateTasks({ board: 'project-a', ids: ['task-1'], status: 'running' })).resolves.toEqual({
       results: [{ id: 'task-1', ok: false, error: 'Bulk status running is not supported by the CLI bridge' }],
