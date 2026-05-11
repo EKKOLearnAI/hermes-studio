@@ -101,6 +101,7 @@ export default {
     expand: 'Expand menu',
     updateTip: 'Run "hermes-web-ui update" in terminal to update',
     updateVersion: 'Upgrade to v{version}',
+    reloadClientVersion: 'Reload for v{version}',
     updating: 'Updating...',
     updateSuccess: 'Update complete, please restart the server',
     updateFailed: 'Update failed',

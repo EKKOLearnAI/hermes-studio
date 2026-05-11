@@ -89,6 +89,7 @@ export default {
     disconnected: 'Getrennt',
     updateTip: 'Fuhren Sie "hermes-web-ui update" im Terminal aus, um zu aktualisieren',
     updateVersion: 'Aktualisieren auf v{version}',
+    reloadClientVersion: 'Für v{version} neu laden',
     updating: 'Aktualisierung...',
     updateSuccess: 'Aktualisierung abgeschlossen, bitte Server neu starten',
     updateFailed: 'Aktualisierung fehlgeschlagen',

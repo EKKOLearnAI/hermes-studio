@@ -43,6 +43,10 @@ async function handleUpdate() {
   }
 }
 
+function handleReloadClient() {
+  appStore.reloadClient();
+}
+
 function handleLogout() {
   localStorage.clear();
   router.replace({ name: 'login' });
@@ -296,6 +300,9 @@ function openChangelog() {
         <span class="version-text" @click="openChangelog">Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
+      <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
+        {{ t('sidebar.reloadClientVersion', { version: appStore.serverVersion }) }}
+      </NButton>
       <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
         {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
       </NButton>

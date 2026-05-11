@@ -152,6 +152,38 @@ describe('App Store', () => {
     expect(mockSystemApi.updateDefaultModel).not.toHaveBeenCalled()
   })
 
+  it('marks the client stale when the served Web UI version changes', async () => {
+    mockSystemApi.checkHealth.mockResolvedValue({
+      status: 'ok',
+      webui_version: '0.5.17',
+      webui_latest: '0.5.17',
+      webui_update_available: false,
+    })
+    const store = useAppStore()
+
+    await store.checkConnection()
+
+    expect(store.connected).toBe(true)
+    expect(store.serverVersion).toBe('0.5.17')
+    expect(store.clientOutdated).toBe(true)
+    expect(store.updateAvailable).toBe(false)
+  })
+
+  it('does not mark the client stale when the served Web UI version matches this bundle', async () => {
+    mockSystemApi.checkHealth.mockResolvedValue({
+      status: 'ok',
+      webui_version: 'test',
+      webui_latest: 'test',
+      webui_update_available: false,
+    })
+    const store = useAppStore()
+
+    await store.checkConnection()
+
+    expect(store.serverVersion).toBe('test')
+    expect(store.clientOutdated).toBe(false)
+  })
+
   it('clears the updating state and reports failure when self-update request fails', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))

@@ -101,6 +101,7 @@ export default {
     expand: '展开菜单',
     updateTip: '在终端运行 "hermes-web-ui update" 即可更新',
     updateVersion: '升级版本 v{version}',
+    reloadClientVersion: '刷新到 v{version}',
     updating: '正在更新...',
     updateSuccess: '更新完成，请重启服务',
     updateFailed: '更新失败',

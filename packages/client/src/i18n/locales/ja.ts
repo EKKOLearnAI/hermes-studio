@@ -89,6 +89,7 @@ export default {
     disconnected: '未接続',
     updateTip: 'ターミナルで "hermes-web-ui update" を実行して更新してください',
     updateVersion: 'v{version} にアップグレード',
+    reloadClientVersion: 'v{version} に再読み込み',
     updating: '更新中...',
     updateSuccess: '更新が完了しました。サーバーを再起動してください',
     updateFailed: '更新に失敗しました',

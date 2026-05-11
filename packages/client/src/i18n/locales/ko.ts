@@ -89,6 +89,7 @@ export default {
     disconnected: '연결 끊김',
     updateTip: '터미널에서 "hermes-web-ui update"를 실행하여 업데이트하세요',
     updateVersion: 'v{version}(으)로 업그레이드',
+    reloadClientVersion: 'v{version}(으)로 새로고침',
     updating: '업데이트 중...',
     updateSuccess: '업데이트 완료, 서버를 재시작해 주세요',
     updateFailed: '업데이트 실패',

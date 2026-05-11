@@ -89,6 +89,7 @@ export default {
     disconnected: 'Desconectado',
     updateTip: 'Execute "hermes-web-ui update" no terminal para atualizar',
     updateVersion: 'Atualizar para v{version}',
+    reloadClientVersion: 'Recarregar para v{version}',
     updating: 'Atualizando...',
     updateSuccess: 'Atualizacao concluida, por favor reinicie o servidor',
     updateFailed: 'Falha na atualizacao',
