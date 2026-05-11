@@ -7,6 +7,7 @@ const execFileAsync = promisify(execFile)
 
 const execOpts = { windowsHide: true }
 const isDocker = existsSync('/.dockerenv')
+const isWindows = process.platform === 'win32'
 
 function resolveHermesBin(): string {
   const envBin = process.env.HERMES_BIN?.trim()
@@ -244,9 +245,10 @@ export async function getVersion(): Promise<string> {
 
 /**
  * Start Hermes gateway (uses launchd/systemd)
+ * Falls back to background run mode for Docker and Windows
  */
 export async function startGateway(): Promise<string> {
-  if (isDocker) {
+  if (isDocker || isWindows) {
     const pid = await startGatewayBackground()
     return pid ? `Gateway started (PID: ${pid})` : 'Gateway start triggered'
   }
@@ -259,7 +261,7 @@ export async function startGateway(): Promise<string> {
 }
 
 /**
- * Start Hermes gateway in background (for WSL where launchd/systemd is unavailable)
+ * Start Hermes gateway in background (for Docker/Windows where launchd/systemd is unavailable)
  * Uses "hermes gateway run" as a detached background process
  */
 export async function startGatewayBackground(): Promise<number | null> {
@@ -276,7 +278,7 @@ export async function startGatewayBackground(): Promise<number | null> {
  * Restart Hermes gateway
  */
 export async function restartGateway(): Promise<string> {
-  if (isDocker) {
+  if (isDocker || isWindows) {
     try { await stopGateway() } catch { }
     const pid = await startGatewayBackground()
     return pid ? `Gateway restarted (PID: ${pid})` : 'Gateway restart triggered'

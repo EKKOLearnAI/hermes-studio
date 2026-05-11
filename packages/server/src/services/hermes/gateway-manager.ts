@@ -27,10 +27,11 @@
  *
  * 启动模式：
  *   - 正常系统（macOS/Linux）：hermes gateway start/stop（系统服务管理）
- *   - WSL / Docker：hermes gateway run（detached 子进程，手动 kill）
+ *   - Windows / WSL / Docker / container：hermes gateway run（detached 子进程，写 PID 文件）
  */
 
 import { spawn, type ChildProcess } from 'child_process'
+import { execFileSync } from 'child_process'
 import { resolve, join } from 'path'
 import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs'
@@ -55,8 +56,8 @@ const HERMES_BIN = process.env.HERMES_BIN?.trim() || 'hermes'
  * - Windows → windows-service
  * - Linux → systemd / sysvinit / other
  *
- * 没有 systemd/launchd/windows-service 的环境需要用 "gateway run" 代替 "gateway start"
- * （适用于 WSL/Docker/Termux/proot 等无服务管理器的环境）
+ * 没有 systemd/launchd 的环境需要用 "gateway run" 代替 "gateway start"
+ * （Windows 计划任务不管理实时进程生命周期，也用 gateway run）
  */
 function detectInitSystem(): string {
   const platform = process.platform
@@ -95,7 +96,7 @@ function detectInitSystem(): string {
 }
 
 const initSystem = detectInitSystem()
-const needsRunMode = !['systemd', 'launchd', 'windows-service'].includes(initSystem)
+const needsRunMode = !['systemd', 'launchd'].includes(initSystem)
 // 启动时输出 init 系统检测结果（方便调试）
 logger.debug('Detected init system: %s (needsRunMode: %s)', initSystem, needsRunMode)
 
@@ -381,7 +382,7 @@ export class GatewayManager {
       const envPath = join(this.profileDir(name), '.env')
       if (!existsSync(envPath)) return null
       const content = readFileSync(envPath, 'utf-8')
-      const match = content.match(/^API_SERVER_KEY\s*=\s*"?([^"\n]+)"?/m)
+      const match = content.match(/^API_SERVER_KEY\s*=\s*"?([^"\n]+)"/m)
       return match?.[1]?.trim() || null
     } catch {
       return null
@@ -470,7 +471,7 @@ export class GatewayManager {
     const url = buildHttpUrl(host, port)
 
     if (needsRunMode) {
-      // WSL / Docker：无 systemd/launchd，用 "gateway run" 作为 detached 子进程
+      // WSL / Docker / Windows：无 systemd/launchd，用 "gateway run" 作为 detached 子进程
       return new Promise((resolve, reject) => {
         const env = { ...process.env, HERMES_HOME: hermesHome }
         const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
@@ -537,7 +538,7 @@ export class GatewayManager {
 
   /**
    * 停止单个 profile 的网关
-   * 正常系统用 "gateway stop"，WSL/Docker 直接 kill 进程组
+   * 正常系统用 "gateway stop"，run-mode（Windows/WSL/Docker/container）直接 kill 或 taskkill
    * 返回前等待 health check 确认网关已真正停止
    */
   async stop(name: string, timeoutMs = 10000): Promise<void> {
@@ -560,14 +561,22 @@ export class GatewayManager {
         })
       } catch { }
     } else {
-      // WSL / Docker：直接杀进程组
+      // run-mode（Windows/WSL/Docker/container）：直接杀进程
       let pid = gw?.pid
       if (!pid) {
         pid = this.readPidFile(name) ?? undefined
       }
       if (pid) {
-        try { process.kill(-pid, 'SIGTERM') } catch {
-          try { process.kill(pid, 'SIGTERM') } catch { }
+        // Windows: use taskkill to kill process tree (gateway is detached)
+        // POSIX: send SIGTERM to process group, fallback to PID-only
+        if (process.platform === 'win32') {
+          try {
+            execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' })
+          } catch { }
+        } else {
+          try { process.kill(-pid, 'SIGTERM') } catch {
+            try { process.kill(pid, 'SIGTERM') } catch { }
+          }
         }
       }
     }
