@@ -170,7 +170,7 @@ describe('Kanban store', () => {
     expect(mockKanbanApi.linkTasks).toHaveBeenCalledWith({ parent_id: 'task-1', child_id: 'task-2' }, { board: 'project-a' })
     expect(mockKanbanApi.unlinkTasks).toHaveBeenCalledWith({ parent_id: 'task-1', child_id: 'task-2' }, { board: 'project-a' })
     expect(mockKanbanApi.bulkUpdateTasks).toHaveBeenCalledWith({ ids: ['task-1'], status: 'done', assignee: null, summary: 'closed' }, { board: 'project-a' })
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined, includeArchived: true })
   })
 
   it('opens board-scoped event streams, refreshes on events, and reconnects on board switch', async () => {
