@@ -630,6 +630,11 @@ export default {
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: '음색',
       edgeVoiceHint: '음성 합성에 사용할 음색 선택',
+      edgeRate: '속도',
+      edgeRateHint: '음성 속도 조절 (0.5~2.0배)',
+      edgePitch: '음높이',
+      edgePitchHint: '음성 음높이 조절 (-20~+20 Hz)',
+
 
       // Test
       testTitle: '음성 테스트',

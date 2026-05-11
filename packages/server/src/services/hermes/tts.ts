@@ -64,6 +64,8 @@ export interface OpenaiTtsRequest {
   input: string
   voice?: string
   speed?: number
+  rate?: string   // Edge TTS rate format, e.g. "+20%". Takes priority over speed.
+  pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
 }
 
 export async function openaiCompatibleTts(
@@ -72,7 +74,7 @@ export async function openaiCompatibleTts(
   return textToSpeech({
     text: body.input,
     voice: body.voice || FIXED_VOICE,
-    rate: body.speed ? speedToEdgeRate(body.speed) : FIXED_RATE,
-    pitch: FIXED_PITCH,
+    rate: body.rate || (body.speed ? speedToEdgeRate(body.speed) : FIXED_RATE),
+    pitch: body.pitch || FIXED_PITCH,
   })
 }

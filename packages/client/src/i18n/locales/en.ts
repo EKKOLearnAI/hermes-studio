@@ -804,6 +804,11 @@ export default {
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: 'Voice',
       edgeVoiceHint: 'Select a voice for speech synthesis',
+      edgeRate: 'Speed',
+      edgeRateHint: 'Adjust speech speed (0.5x ~ 2.0x)',
+      edgePitch: 'Pitch',
+      edgePitchHint: 'Adjust speech pitch (-20 ~ +20 Hz)',
+
 
       // Test
       testTitle: 'Test Voice',

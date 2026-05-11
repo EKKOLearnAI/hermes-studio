@@ -38,6 +38,8 @@ export async function openaiProxy(ctx: Context) {
     voice?: string
     speed?: number
     model?: string
+    rate?: string
+    pitch?: string
   }
 
   if (!body.input || typeof body.input !== 'string') {
@@ -57,6 +59,8 @@ export async function openaiProxy(ctx: Context) {
     voice: body.voice,
     speed: body.speed,
     model: body.model,
+    rate: body.rate,
+    pitch: body.pitch,
   })
 
   ctx.set('Content-Type', 'audio/mpeg')

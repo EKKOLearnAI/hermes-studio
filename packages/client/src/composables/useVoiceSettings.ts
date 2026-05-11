@@ -21,6 +21,8 @@ export interface VoiceSettingsData {
   // Edge TTS
   edgeUrl: string
   edgeVoice: string
+  edgeRate: number    // 语速倍率 0.5~2.0，1.0 = 正常
+  edgePitchHz: number // 音调偏移 Hz，-20~20，0 = 正常
 }
 
 const STORAGE_KEY = 'hermes-tts-settings-v2'
@@ -63,6 +65,8 @@ const DEFAULT: VoiceSettingsData = {
 
   edgeUrl: '',
   edgeVoice: 'zh-CN-XiaoxiaoNeural',
+  edgeRate: 1.0,
+  edgePitchHz: 0,
 }
 
 function sanitize(data: VoiceSettingsData): VoiceSettingsData {
@@ -103,11 +107,13 @@ const customApiKey = ref<string>(load().customApiKey)
 // Edge TTS
 const edgeUrl = ref<string>(load().edgeUrl)
 const edgeVoice = ref<string>(load().edgeVoice)
+const edgeRate = ref<number>(load().edgeRate)
+const edgePitchHz = ref<number>(load().edgePitchHz)
 
 // Auto-persist on change
 watch(
   [provider, webspeechVoice, openaiApiKey, openaiBaseUrl, openaiModel, openaiVoice,
-   customUrl, customApiKey, edgeUrl, edgeVoice],
+   customUrl, customApiKey, edgeUrl, edgeVoice, edgeRate, edgePitchHz],
   () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       provider: provider.value,
@@ -120,6 +126,8 @@ watch(
       customApiKey: customApiKey.value,
       edgeUrl: edgeUrl.value,
       edgeVoice: edgeVoice.value,
+      edgeRate: edgeRate.value,
+      edgePitchHz: edgePitchHz.value,
     }))
   },
 )
@@ -136,6 +144,8 @@ export function useVoiceSettings() {
     customApiKey,
     edgeUrl,
     edgeVoice,
+    edgeRate,
+    edgePitchHz,
 
     setProvider(v: TtsProvider) { provider.value = v },
     setWebSpeechVoice(v: string) { webspeechVoice.value = v },
@@ -147,6 +157,8 @@ export function useVoiceSettings() {
     setCustomApiKey(v: string) { customApiKey.value = v },
     setEdgeUrl(v: string) { edgeUrl.value = v },
     setEdgeVoice(v: string) { edgeVoice.value = v },
+    setEdgeRate(v: number) { edgeRate.value = v },
+    setEdgePitchHz(v: number) { edgePitchHz.value = v },
 
     reset() {
       provider.value = DEFAULT.provider
@@ -159,6 +171,8 @@ export function useVoiceSettings() {
       customApiKey.value = DEFAULT.customApiKey
       edgeUrl.value = DEFAULT.edgeUrl
       edgeVoice.value = DEFAULT.edgeVoice
+      edgeRate.value = DEFAULT.edgeRate
+      edgePitchHz.value = DEFAULT.edgePitchHz
     },
   }
 }

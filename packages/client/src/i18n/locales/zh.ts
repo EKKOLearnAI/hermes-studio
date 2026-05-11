@@ -796,6 +796,11 @@ export default {
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: '音色',
       edgeVoiceHint: '选择用于语音合成的音色',
+      edgeRate: '语速',
+      edgeRateHint: '调整语音速度（0.5～2.0 倍）',
+      edgePitch: '音调',
+      edgePitchHint: '调整语音音调（-20～+20 Hz）',
+
 
       // 试听
       testTitle: '试听测试',

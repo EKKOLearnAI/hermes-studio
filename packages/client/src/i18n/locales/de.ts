@@ -630,6 +630,11 @@ jobTriggered: 'Job ausgelost',
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: 'Stimme',
       edgeVoiceHint: 'Waehlen Sie eine Stimme fuer die Sprachsynthese',
+      edgeRate: 'Geschwindigkeit',
+      edgeRateHint: 'Sprachgeschwindigkeit anpassen (0,5x ~ 2,0x)',
+      edgePitch: 'Tonhöhe',
+      edgePitchHint: 'Tonhöhe anpassen (-20 ~ +20 Hz)',
+
 
       // Test
       testTitle: 'Sprachtest',

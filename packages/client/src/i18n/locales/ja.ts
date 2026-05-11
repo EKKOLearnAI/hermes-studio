@@ -630,6 +630,11 @@ export default {
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: '音色',
       edgeVoiceHint: '音声合成に使用する音色を選択',
+      edgeRate: '速度',
+      edgeRateHint: '音声の速度を調整（0.5～2.0倍）',
+      edgePitch: 'ピッチ',
+      edgePitchHint: '音声のピッチを調整（-20～+20 Hz）',
+
 
       // Test
       testTitle: '音声テスト',

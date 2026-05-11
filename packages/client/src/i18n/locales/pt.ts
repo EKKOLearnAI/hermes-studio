@@ -630,6 +630,11 @@ jobTriggered: 'Job acionado',
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: 'Voz',
       edgeVoiceHint: 'Selecione uma voz para sintese de fala',
+      edgeRate: 'Velocidade',
+      edgeRateHint: 'Ajustar velocidade da fala (0.5x ~ 2.0x)',
+      edgePitch: 'Tom',
+      edgePitchHint: 'Ajustar tom da fala (-20 ~ +20 Hz)',
+
 
       // Test
       testTitle: 'Teste de voz',

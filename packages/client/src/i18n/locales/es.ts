@@ -630,6 +630,11 @@ jobTriggered: 'Job ejecutado',
       edgeUrlPlaceholder: 'http://127.0.0.1:9882',
       edgeVoice: 'Voz',
       edgeVoiceHint: 'Seleccione una voz para la sintesis de voz',
+      edgeRate: 'Velocidad',
+      edgeRateHint: 'Ajustar velocidad del habla (0.5x ~ 2.0x)',
+      edgePitch: 'Tono',
+      edgePitchHint: 'Ajustar tono del habla (-20 ~ +20 Hz)',
+
 
       // Test
       testTitle: 'Prueba de voz',
