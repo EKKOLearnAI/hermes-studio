@@ -115,7 +115,7 @@ export function disableExclusivePlatformsInConfig(configPath: string): {
   const original = readFileSync(configPath, 'utf-8')
   let cfg: any
   try {
-    cfg = yaml.load(original)
+    cfg = yaml.load(original, { json: true })
   } catch {
     return { disabled: [], strippedConfigCredentials: [] }
   }

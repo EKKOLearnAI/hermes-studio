@@ -73,7 +73,7 @@ const configPath = () => getActiveConfigPath()
 export async function readConfigYaml(): Promise<Record<string, any>> {
   const raw = await safeReadFile(configPath())
   if (!raw) return {}
-  return (YAML.load(raw) as Record<string, any>) || {}
+  return (YAML.load(raw, { json: true }) as Record<string, any>) || {}
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {

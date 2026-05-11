@@ -52,7 +52,7 @@ function loadConfig(profileDir: string): any | null {
   const configPath = join(profileDir, 'config.yaml')
   if (!existsSync(configPath)) return null
   try {
-    return yaml.load(readFileSync(configPath, 'utf-8')) as any
+    return yaml.load(readFileSync(configPath, 'utf-8'), { json: true }) as any
   } catch {
     return null
   }

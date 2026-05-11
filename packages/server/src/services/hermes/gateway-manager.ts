@@ -187,7 +187,7 @@ export class GatewayManager {
 
     try {
       const content = readFileSync(configPath, 'utf-8')
-      const cfg = yaml.load(content) as any || {}
+      const cfg = yaml.load(content, { json: true }) as any || {}
 
       const extra = cfg?.platforms?.api_server?.extra
       const rawPort = extra?.port || 8642
@@ -302,7 +302,7 @@ export class GatewayManager {
     const configPath = join(this.profileDir(name), 'config.yaml')
     try {
       const content = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
-      const cfg = (yaml.load(content) as any) || {}
+      const cfg = (yaml.load(content, { json: true }) as any) || {}
 
       // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
       if (!cfg.platforms) cfg.platforms = {}

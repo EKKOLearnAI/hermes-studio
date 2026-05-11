@@ -91,7 +91,7 @@ async function readEnvPlatforms(): Promise<Record<string, any>> {
 
 async function readConfig(): Promise<Record<string, any>> {
   const raw = await readFile(configPath(), 'utf-8')
-  return (YAML.load(raw) as Record<string, any>) || {}
+  return (YAML.load(raw, { json: true }) as Record<string, any>) || {}
 }
 
 async function writeConfig(data: Record<string, any>): Promise<void> {
