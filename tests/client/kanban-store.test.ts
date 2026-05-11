@@ -165,7 +165,7 @@ describe('Kanban store', () => {
 
     socketA.onmessage?.({ data: JSON.stringify({ type: 'event', line: 'changed' }) })
     await vi.advanceTimersByTimeAsync(100)
-    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined })
+    expect(mockKanbanApi.listTasks).toHaveBeenCalledWith({ board: 'project-a', status: undefined, assignee: undefined, includeArchived: true })
     expect(mockKanbanApi.getStats).toHaveBeenCalledWith({ board: 'project-a' })
     expect(mockKanbanApi.getAssignees).toHaveBeenCalledWith({ board: 'project-a' })
 
