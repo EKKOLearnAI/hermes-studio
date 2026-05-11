@@ -236,11 +236,15 @@ function resolveHermesAgentRoot(): string {
     process.env.HERMES_AGENT_ROOT?.trim(),
     ...maybeRootFromHermesBin(),
     '/opt/hermes',
-    join(homedir(), '.hermes', 'hermes-agent'),     // Unix/Linux
-    join(process.env.LOCALAPPDATA || '', 'hermes', 'hermes-agent'), // Windows
-  ].filter(Boolean) as string[]
+    join(homedir(), '.hermes', 'hermes-agent'),     // Unix/Linux/macOS
+  ]
 
-  return candidates.find(hasHermesPluginModule) || ''
+  // Windows specific path
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    candidates.push(join(process.env.LOCALAPPDATA, 'hermes', 'hermes-agent'))
+  }
+
+  return candidates.filter(Boolean).find(hasHermesPluginModule) || ''
 }
 
 function pythonCandidates(agentRoot: string): string[] {
