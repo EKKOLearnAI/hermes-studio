@@ -39,14 +39,41 @@ function collectLiteralTranslationKeys(): string[] {
   return [...keys].sort()
 }
 
-function hasPath(messages: Record<string, unknown>, key: string): boolean {
+function getPath(messages: Record<string, unknown>, key: string): unknown {
   let current: unknown = messages
   for (const part of key.split('.')) {
-    if (!current || typeof current !== 'object' || !(part in current)) return false
+    if (!current || typeof current !== 'object' || !(part in current)) return undefined
     current = (current as Record<string, unknown>)[part]
   }
-  return typeof current !== 'undefined'
+  return current
 }
+
+function hasPath(messages: Record<string, unknown>, key: string): boolean {
+  return typeof getPath(messages, key) !== 'undefined'
+}
+
+const SKILLS_USAGE_LOCALIZED_KEYS = [
+  'sidebar.skillsUsage',
+  'skillsUsage.title',
+  'skillsUsage.subtitle',
+  'skillsUsage.refresh',
+  'skillsUsage.periodSelector',
+  'skillsUsage.periodLabel',
+  'skillsUsage.summary',
+  'skillsUsage.totalActions',
+  'skillsUsage.loads',
+  'skillsUsage.edits',
+  'skillsUsage.distinctSkills',
+  'skillsUsage.topSkills',
+  'skillsUsage.dailyTrend',
+  'skillsUsage.periodSummary',
+  'skillsUsage.skill',
+  'skillsUsage.share',
+  'skillsUsage.lastUsed',
+  'skillsUsage.noData',
+  'skillsUsage.loadFailed',
+  'skillsUsage.otherSkills',
+]
 
 describe('i18n locale coverage', () => {
   // Keys that are newly added but not yet translated in all locales
@@ -73,6 +100,21 @@ describe('i18n locale coverage', () => {
     )
 
     expect(missing).toEqual([])
+  })
+
+  it('localizes Skills Usage page copy in every non-English locale instead of falling back to English', () => {
+    const englishMessages = rawMessages.en
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return SKILLS_USAGE_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
   })
 
   it('keeps the coverage scanner rooted in client source files', () => {
