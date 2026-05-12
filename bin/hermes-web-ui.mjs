@@ -2,7 +2,7 @@
 import { spawn, execSync } from 'child_process'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { homedir } from 'os'
 
@@ -61,7 +61,18 @@ function getCliBin() {
 }
 
 function getWindowsShell() {
-  return process.env.ComSpec || 'cmd.exe'
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+  const candidates = [
+    process.env.ComSpec,
+    join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    join(systemRoot, 'System32', 'cmd.exe'),
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  return 'cmd.exe'
 }
 
 function quoteForWindowsCommand(value) {
@@ -70,6 +81,11 @@ function quoteForWindowsCommand(value) {
 
 function spawnCli(command, args, options) {
   if (process.platform === 'win32') {
+    const lowerCommand = String(command).toLowerCase()
+    if (!lowerCommand.endsWith('.cmd') && !lowerCommand.endsWith('.bat')) {
+      return spawn(command, args, options)
+    }
+
     const commandLine = `${quoteForWindowsCommand(command)} ${args.map(arg => String(arg)).join(' ')}`
     return spawn(getWindowsShell(), ['/d', '/s', '/c', commandLine], options)
   }
@@ -123,20 +139,62 @@ function getPort() {
   return argPort ?? DEFAULT_PORT
 }
 
-function getPid() {
+function getListeningPids(port) {
+  if (!port || isNaN(port)) return []
+
   try {
-    return parseInt(readFileSync(PID_FILE, 'utf-8').trim())
+    if (process.platform === 'win32') {
+      const out = execSync('netstat -aon -p tcp', { encoding: 'utf-8' })
+      return [...new Set(out.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.includes('LISTENING'))
+        .map(line => line.split(/\s+/))
+        .filter(parts => {
+          const address = parts[1] || ''
+          const listenPort = parseInt(address.split(':').pop(), 10)
+          return listenPort === port
+        })
+        .map(parts => parseInt(parts[parts.length - 1], 10))
+        .filter(pid => Number.isFinite(pid)))]
+    }
+
+    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, { encoding: 'utf-8' }).trim()
+    return [...new Set(out.split('\n').map(pid => parseInt(pid, 10)).filter(pid => Number.isFinite(pid)))]
   } catch {
-    return null
+    return []
   }
+}
+
+function recoverPidFromPort() {
+  const port = getPortFromArgs() ?? DEFAULT_PORT
+  for (const pid of getListeningPids(port)) {
+    if (isRunning(pid)) {
+      mkdirSync(PID_DIR, { recursive: true })
+      writePid(pid)
+      return pid
+    }
+  }
+  return null
+}
+
+function getPid() {
+  const recovered = recoverPidFromPort()
+  if (recovered) return recovered
+
+  try {
+    const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim())
+    if (pid && isRunning(pid)) return pid
+  } catch {}
+
+  return null
 }
 
 function isRunning(pid) {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (err) {
+    return err?.code === 'EPERM'
   }
 }
 
@@ -202,10 +260,16 @@ function startDaemon(port) {
   } catch { }
 
   const logStream = openSync(LOG_FILE, 'a')
+  const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
+  const serverEnv = { ...process.env, NODE_ENV: 'production', PORT: String(port), AUTH_TOKEN: token }
+  if (windowsShell) {
+    serverEnv.SHELL = serverEnv.SHELL?.trim() || windowsShell
+    serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
+  }
   const child = spawn(process.execPath, [serverEntry], {
     detached: true,
     stdio: ['ignore', logStream, logStream],
-    env: { ...process.env, NODE_ENV: 'production', PORT: String(port), AUTH_TOKEN: token },
+    env: serverEnv,
     windowsHide: true,
   })
 
@@ -391,9 +455,19 @@ switch (command) {
   default:
     ensureNativeModules()
     const port = !isNaN(command) ? parseInt(command) : DEFAULT_PORT
+    const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
+    const serverEnv = {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(port),
+    }
+    if (windowsShell) {
+      serverEnv.SHELL = serverEnv.SHELL?.trim() || windowsShell
+      serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
+    }
     const child = spawn(process.execPath, [serverEntry], {
       stdio: 'inherit',
-      env: { ...process.env, NODE_ENV: 'production', PORT: String(port) },
+      env: serverEnv,
       windowsHide: true,
     })
     child.on('exit', (code) => process.exit(code ?? 1))

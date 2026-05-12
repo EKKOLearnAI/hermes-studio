@@ -200,15 +200,28 @@ export class GatewayManager {
     }
   }
 
-  /** 从 profile 的 gateway.pid 文件读取 PID（JSON 格式 { "pid": 12345 }） */
+  /** Read a profile gateway PID, falling back to runtime state when gateway.pid is missing. */
   private readPidFile(name: string): number | null {
-    const pidPath = join(this.profileDir(name), 'gateway.pid')
-    if (!existsSync(pidPath)) return null
+    const profilePath = this.profileDir(name)
+    const pidPath = join(profilePath, 'gateway.pid')
 
     try {
-      const content = readFileSync(pidPath, 'utf-8').trim()
+      if (existsSync(pidPath)) {
+        const content = readFileSync(pidPath, 'utf-8').trim()
+        const data = JSON.parse(content)
+        return typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
+      }
+    } catch {}
+
+    const statePath = join(profilePath, 'gateway_state.json')
+    if (!existsSync(statePath)) return null
+
+    try {
+      const content = readFileSync(statePath, 'utf-8').trim()
       const data = JSON.parse(content)
-      return typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
+      const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
+      const state = data?.gateway_state
+      return pid && (state === 'running' || state === 'starting') ? pid : null
     } catch {
       return null
     }
@@ -218,13 +231,13 @@ export class GatewayManager {
   // 进程 & 端口检测工具
   // ============================
 
-  /** 检查进程是否存活（发送信号 0，不实际杀死进程） */
+  /** Check process liveness without sending a terminating signal. */
   private isProcessAlive(pid: number): boolean {
     try {
       process.kill(pid, 0)
       return true
-    } catch {
-      return false
+    } catch (err: any) {
+      return err?.code === 'EPERM'
     }
   }
 
