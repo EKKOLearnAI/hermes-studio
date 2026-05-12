@@ -10,6 +10,7 @@ const mockSystemApi = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/hermes/system', () => mockSystemApi)
+vi.mock('@/api/client', () => ({ hasApiKey: () => true }))
 
 import { useAppStore } from '@/stores/hermes/app'
 import { useModelsStore } from '@/stores/hermes/models'

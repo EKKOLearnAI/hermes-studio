@@ -256,7 +256,7 @@ function resolveHermesAgentRoot(): string {
     '/opt/hermes',
     join(homedir(), '.hermes', 'hermes-agent'),     // Unix/Linux/macOS
   ]
- 
+
   // Windows specific path
   if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
     candidates.push(join(process.env.LOCALAPPDATA, 'hermes', 'hermes-agent'))

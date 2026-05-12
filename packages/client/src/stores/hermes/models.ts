@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as systemApi from '@/api/hermes/system'
 import type { AvailableModelGroup, CustomProvider } from '@/api/hermes/system'
+import { hasApiKey } from '@/api/client'
 import { useAppStore } from './app'
 
 export const useModelsStore = defineStore('models', () => {
@@ -31,6 +32,7 @@ export const useModelsStore = defineStore('models', () => {
   )
 
   async function fetchProviders() {
+    if (!hasApiKey()) return
     loading.value = true
     try {
       const res = await systemApi.fetchAvailableModels()

@@ -125,7 +125,7 @@ export async function resolveCopilotOAuthTokenWithSource(
   const appsToken = await readGhAppsToken()
   if (appsToken) return { token: appsToken, source: 'apps-json' }
   try {
-    const { stdout } = await execFileAsync('gh', ['auth', 'token'], { timeout: 3000 })
+    const { stdout } = await execFileAsync('gh', ['auth', 'token'], { timeout: 3000, windowsHide: true })
     const v = stdout.trim()
     if (isUsableOAuthToken(v)) return { token: v, source: 'gh-cli' }
   } catch { /* ignore */ }

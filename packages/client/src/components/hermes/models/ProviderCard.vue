@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NButton, NCheckbox, NCheckboxGroup, NModal, useMessage, useDialog } from 'naive-ui'
+import { NButton, NCheckbox, NCheckboxGroup, NModal, NInput, useMessage, useDialog } from 'naive-ui'
 import type { AvailableModelGroup } from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useAppStore } from '@/stores/hermes/app'
@@ -21,6 +21,13 @@ const isCustom = computed(() => !props.provider.builtin && props.provider.provid
 const isCopilot = computed(() => props.provider.provider === 'copilot')
 const displayName = computed(() => props.provider.label)
 const deleting = ref(false)
+
+const showAliasListModal = ref(false)
+const showAliasModal = ref(false)
+const aliasProvider = ref('')
+const aliasModel = ref('')
+const aliasInput = ref('')
+
 const showVisibilityModal = ref(false)
 const visibilitySaving = ref(false)
 const selectedVisibleModels = ref<string[]>([])
@@ -30,6 +37,36 @@ const allModels = computed(() => props.provider.available_models?.length ? props
 const visibilityRule = computed(() => appStore.getProviderVisibility(props.provider.provider))
 const isFiltered = computed(() => visibilityRule.value.mode === 'include')
 const visibleCountLabel = computed(() => `${props.provider.models.length}/${allModels.value.length}`)
+
+function modelAlias(model: string) {
+  return appStore.getModelAlias(model, props.provider.provider)
+}
+
+function modelDisplayName(model: string) {
+  return appStore.displayModelName(model, props.provider.provider)
+}
+
+function openAliasEditor(model: string) {
+  aliasProvider.value = props.provider.provider
+  aliasModel.value = model
+  aliasInput.value = appStore.getModelAlias(model, props.provider.provider)
+  showAliasModal.value = true
+}
+
+async function saveAlias() {
+  if (!aliasModel.value || !aliasProvider.value) return
+  try {
+    await appStore.setModelAlias(aliasModel.value, aliasProvider.value, aliasInput.value)
+    showAliasModal.value = false
+  } catch (e: any) {
+    message.error(e.message || t('models.aliasSaveFailed'))
+  }
+}
+
+async function clearAlias() {
+  aliasInput.value = ''
+  await saveAlias()
+}
 
 function openVisibilityModal() {
   const rule = appStore.getProviderVisibility(props.provider.provider)
@@ -137,11 +174,17 @@ async function handleDelete() {
         </span>
       </div>
       <div class="models-list">
-        <span
+        <button
           v-for="model in provider.models.slice(0, 20)"
           :key="model"
-          class="model-tag"
-        >{{ model }}</span>
+          class="model-tag model-tag-button"
+          type="button"
+          :title="t('models.aliasTitleFor', { model })"
+          @click="openAliasEditor(model)"
+        >
+          <span class="model-tag-name">{{ modelDisplayName(model) }}</span>
+          <span v-if="modelAlias(model)" class="model-tag-id">{{ model }}</span>
+        </button>
         <span v-if="provider.models.length > 20" class="model-tag model-tag-more">
           +{{ provider.models.length - 20 }} {{ t('models.more') }}
         </span>
@@ -149,9 +192,58 @@ async function handleDelete() {
     </div>
 
     <div class="card-actions">
+      <NButton size="tiny" quaternary @click="showAliasListModal = true">{{ t('models.aliasManage') }}</NButton>
       <NButton size="tiny" quaternary @click="openVisibilityModal">{{ t('models.manageVisibleModels') }}</NButton>
       <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ t('common.delete') }}</NButton>
     </div>
+
+    <NModal
+      v-model:show="showAliasListModal"
+      preset="card"
+      :title="t('models.aliasManageFor', { provider: displayName })"
+      :style="{ width: 'min(560px, calc(100vw - 32px))' }"
+      :mask-closable="true"
+    >
+      <div class="alias-list-hint">{{ t('models.aliasHint') }}</div>
+      <div class="alias-list">
+        <div v-for="model in provider.models" :key="model" class="alias-row">
+          <div class="alias-row-text">
+            <span class="alias-row-name">{{ modelDisplayName(model) }}</span>
+            <code class="alias-row-id">{{ model }}</code>
+          </div>
+          <NButton size="tiny" quaternary @click="openAliasEditor(model)">{{ t('models.aliasEdit') }}</NButton>
+        </div>
+      </div>
+    </NModal>
+
+    <NModal
+      v-model:show="showAliasModal"
+      preset="card"
+      :title="aliasModel ? t('models.aliasTitleFor', { model: aliasModel }) : t('models.aliasTitle')"
+      :style="{ width: 'min(420px, calc(100vw - 32px))' }"
+      :mask-closable="true"
+    >
+      <NInput
+        v-model:value="aliasInput"
+        :placeholder="t('models.aliasPlaceholder')"
+        clearable
+        @keydown.enter="saveAlias"
+      />
+      <div v-if="aliasModel" class="model-alias-canonical">
+        {{ t('models.aliasCanonical', { model: aliasModel }) }}
+      </div>
+      <div class="model-alias-hint">{{ t('models.aliasHint') }}</div>
+      <template #footer>
+        <div class="model-alias-actions">
+          <NButton quaternary :disabled="!appStore.getModelAlias(aliasModel, aliasProvider)" @click="clearAlias">
+            {{ t('models.aliasUseOriginal') }}
+          </NButton>
+          <div class="model-alias-spacer" />
+          <NButton @click="showAliasModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="saveAlias">{{ t('common.save') }}</NButton>
+        </div>
+      </template>
+    </NModal>
 
     <NModal
       v-model:show="showVisibilityModal"
@@ -172,7 +264,8 @@ async function handleDelete() {
             :value="model"
             class="visibility-model"
           >
-            <code>{{ model }}</code>
+            <code>{{ modelDisplayName(model) }}</code>
+            <code v-if="modelAlias(model)" class="visibility-model-id">{{ model }}</code>
           </NCheckbox>
         </NCheckboxGroup>
       </div>
@@ -291,7 +384,8 @@ async function handleDelete() {
 .model-tag {
   display: inline-flex;
   align-items: center;
-  height: 20px;
+  gap: 5px;
+  min-height: 22px;
   font-size: 10px;
   font-family: $font-code;
   padding: 2px 6px;
@@ -299,7 +393,7 @@ async function handleDelete() {
   background: rgba(var(--accent-primary-rgb), 0.08);
   color: $text-secondary;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
 
@@ -310,11 +404,105 @@ async function handleDelete() {
   }
 }
 
+.model-tag-button {
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    background: rgba(var(--accent-primary-rgb), 0.16);
+    color: $text-primary;
+  }
+}
+
+.model-tag-name,
+.model-tag-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-tag-id {
+  color: $text-muted;
+  font-size: 9px;
+}
+
 .card-actions {
   display: flex;
   gap: 8px;
   border-top: 1px solid $border-light;
   padding-top: 10px;
+}
+
+.alias-list-hint,
+.model-alias-hint {
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.alias-list-hint {
+  margin-bottom: 12px;
+}
+
+.alias-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.alias-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+}
+
+.alias-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.alias-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-primary;
+  font-family: $font-code;
+  font-size: 12px;
+}
+
+.alias-row-id,
+.model-alias-canonical {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 11px;
+}
+
+.model-alias-canonical {
+  margin-top: 8px;
+}
+
+.model-alias-hint {
+  margin-top: 6px;
+}
+
+.model-alias-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-alias-spacer {
+  flex: 1;
 }
 
 .visibility-hint {
@@ -348,6 +536,12 @@ async function handleDelete() {
     font-size: 12px;
     color: $text-secondary;
   }
+}
+
+.visibility-model-id {
+  margin-left: 6px;
+  color: $text-muted !important;
+  font-size: 11px !important;
 }
 
 .visibility-actions {

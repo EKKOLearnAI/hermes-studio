@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockFetchProviderModels: vi.fn(),
   mockBuildModelGroups: vi.fn(() => ({ default: '', groups: [] })),
   mockReadAppConfig: vi.fn(),
   mockWriteAppConfig: vi.fn(),
+  mockExistsSync: vi.fn(() => false),
+  mockReadFileSync: vi.fn(),
 }))
 
 vi.mock('fs/promises', () => ({
@@ -14,8 +16,8 @@ vi.mock('fs/promises', () => ({
 }))
 
 vi.mock('fs', () => ({
-  existsSync: vi.fn(() => false),
-  readFileSync: vi.fn(),
+  existsSync: mockExistsSync,
+  readFileSync: mockReadFileSync,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -30,12 +32,14 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   buildModelGroups: mockBuildModelGroups,
   PROVIDER_ENV_MAP: {
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY' },
+    openrouter: {},
   },
 }))
 
 vi.mock('../../packages/server/src/shared/providers', () => ({
   buildProviderModelMap: () => ({
     deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    openrouter: ['openrouter/auto'],
   }),
   PROVIDER_PRESETS: [
     {
@@ -43,6 +47,12 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       label: 'DeepSeek',
       base_url: 'https://api.deepseek.com/v1',
       models: ['deepseek-chat', 'deepseek-reasoner'],
+    },
+    {
+      value: 'openrouter',
+      label: 'OpenRouter',
+      base_url: 'https://openrouter.ai/api/v1',
+      models: ['openrouter/auto'],
     },
   ],
 }))
@@ -78,6 +88,8 @@ beforeEach(() => {
   mockBuildModelGroups.mockReturnValue({ default: '', groups: [] })
   mockReadAppConfig.mockResolvedValue({})
   mockWriteAppConfig.mockImplementation(async patch => patch)
+  mockExistsSync.mockReturnValue(false)
+  mockReadFileSync.mockReturnValue('{}')
 })
 
 describe('models controller — model visibility', () => {
@@ -103,6 +115,27 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.model_visibility).toEqual({
       deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
     })
+  })
+  it('accepts OAuth providers stored in credential_pool entries', async () => {
+    mockExistsSync.mockReturnValue(true)
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      credential_pool: {
+        openrouter: [{ label: 'primary', access_token: 'oauth-token' }],
+      },
+    }))
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'openrouter',
+        label: 'OpenRouter',
+        models: ['openrouter/auto'],
+        available_models: ['openrouter/auto'],
+      }),
+    ]))
   })
 
 

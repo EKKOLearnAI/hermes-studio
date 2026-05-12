@@ -18,6 +18,10 @@ export interface AppConfig {
   // owns the provider list, system credentials are merely a fallback source.
   copilotEnabled?: boolean
 
+  // Web UI-only model display aliases. Keys are provider -> canonical model ID -> display label.
+  // These aliases never replace the canonical model ID sent back to Hermes.
+  modelAliases?: Record<string, Record<string, string>>
+
   // Web UI-only model picker visibility. This filters what the WUI exposes in
   // its sidebar/model pages and never renames or rewrites Hermes canonical
   // provider/model IDs. Hermes CLI config remains the upstream source of truth.
