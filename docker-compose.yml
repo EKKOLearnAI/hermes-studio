@@ -35,6 +35,7 @@ services:
       - HERMES_HOME=/home/agent/.hermes
       - HERMES_BIN=${HERMES_BIN:-/opt/hermes/.venv/bin/hermes}
       - AUTH_DISABLED=${AUTH_DISABLED:-false}
+      - HERMES_ALLOW_ROOT_GATEWAY=${HERMES_ALLOW_ROOT_GATEWAY:-1}
       - PATH=/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     restart: unless-stopped
 
