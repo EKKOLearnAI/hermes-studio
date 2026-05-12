@@ -39,18 +39,22 @@ async function removeCustomModel(model: string, provider: string) {
   await appStore.removeCustomModel(model, provider)
 }
 
+function safeLower(value: unknown) {
+  return typeof value === 'string' ? value.toLowerCase() : ''
+}
+
 const filteredGroups = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
+  const q = safeLower(searchQuery.value).trim()
   if (!q) return modelGroupsWithCustom.value
   return modelGroupsWithCustom.value
     .map(g => ({
       ...g,
       models: g.models.filter(m => {
         const displayName = appStore.displayModelName(m, g.provider)
-        return m.toLowerCase().includes(q) || displayName.toLowerCase().includes(q)
+        return safeLower(m).includes(q) || safeLower(displayName).includes(q)
       }),
     }))
-    .filter(g => g.models.length > 0 || g.label.toLowerCase().includes(q))
+    .filter(g => g.models.length > 0 || safeLower(g.label).includes(q))
 })
 
 function toggleGroup(provider: string) {
