@@ -6,6 +6,7 @@ import {
   safeReadFile, extractDescription, listFilesRecursive, getHermesDir,
 } from '../../services/config-helpers'
 import { pinSkill } from '../../services/hermes/hermes-cli'
+import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
 
 /** Read bundled manifest as a name→hash map from ~/.hermes/skills/.bundled_manifest */
 function readBundledManifest(manifestContent: string | null): Map<string, string> {
@@ -236,6 +237,18 @@ export async function list(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skills directory: ${err.message}` }
+  }
+}
+
+export async function usageStats(ctx: any) {
+  const rawDays = parseInt(String(ctx.query?.days ?? '7'), 10)
+  const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 7
+
+  try {
+    ctx.body = await getSkillUsageStatsFromDb(days)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
   }
 }
 
