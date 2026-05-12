@@ -8,6 +8,7 @@ import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import { normalizeToolName, sanitizeHermesChatText } from '@/utils/chat-protocol'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -138,7 +139,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (tc.id) {
-          if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
+          if (tc.function?.name) toolNameMap.set(tc.id, normalizeToolName(tc.function.name))
           if (tc.function?.arguments) toolArgsMap.set(tc.id, tc.function.arguments)
         }
       }
@@ -206,7 +207,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     result.push({
       id: String(msg.id),
       role: msg.role,
-      content: msg.content || '',
+      content: sanitizeHermesChatText(msg.content || '').text,
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,
     })
@@ -879,20 +880,22 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'message.delta': {
               if (evt.delta) runProducedAssistantText = true
+              const sanitizedDelta = sanitizeHermesChatText(evt.delta || '')
+              if (!sanitizedDelta.text) break
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : null
               if (last?.role === 'assistant' && last.isStreaming) {
                 const prev = last.content
-                const next = prev + (evt.delta || '')
+                const next = prev + sanitizedDelta.text
                 noteThinkingDelta(last.id, prev, next)
                 // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
                 if (last.reasoning) noteReasoningEnd(last.id)
                 last.content = next
               } else {
                 const newId = uid()
-                const nextContent = evt.delta || ''
+                const nextContent = sanitizedDelta.text
                 noteThinkingDelta(newId, '', nextContent)
                 addMessage(sid, {
                   id: newId,
@@ -918,12 +921,13 @@ export const useChatStore = defineStore('chat', () => {
                 updateMessage(sid, last.id, { isStreaming: false })
               }
               activeAssistantMessageId = null
+              const normalizedToolName = normalizeToolName(evt.tool || evt.name)
               const existingTool = toolCallId
                 ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
                 : null
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
-                  toolName: evt.tool || evt.name,
+                  toolName: normalizedToolName,
                   toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : existingTool.toolArgs,
                   toolPreview: evt.preview || existingTool.toolPreview,
                   toolStatus: existingTool.toolStatus || 'running',
@@ -935,7 +939,7 @@ export const useChatStore = defineStore('chat', () => {
                 role: 'tool',
                 content: '',
                 timestamp: Date.now(),
-                toolName: evt.tool || evt.name,
+                toolName: normalizedToolName,
                 toolCallId,
                 toolPreview: evt.preview,
                 toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
@@ -998,8 +1002,9 @@ export const useChatStore = defineStore('chat', () => {
                   ? msgs.find(m => m.id === activeAssistantMessageId)
                   : [...msgs].reverse().find(m => m.role === 'assistant')
                 if (lastAssistant) {
+                  const parsedContent = sanitizeHermesChatText((evt as any).parsed_content || '')
                   updateMessage(sid, lastAssistant.id, {
-                    content: (evt as any).parsed_content || '',
+                    content: parsedContent.text,
                   })
                   if ((evt as any).parsed_reasoning) {
                     updateMessage(sid, lastAssistant.id, {
@@ -1435,18 +1440,19 @@ export const useChatStore = defineStore('chat', () => {
               }
               finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
             }
-          } else {
-            // Fallback to output field (legacy behavior)
-            const finalOutput = typeof evt.output === 'string' ? evt.output : ''
-            finalOutputTrimmed = finalOutput.trim()
-            if (!runProducedAssistantText && finalOutputTrimmed !== '') {
-              addMessage(sid, {
-                id: uid(),
-                role: 'assistant',
-                content: finalOutput,
-                timestamp: Date.now(),
-              })
-            }
+              } else {
+                // Fallback to output field (legacy behavior)
+                const finalOutput = typeof evt.output === 'string' ? evt.output : ''
+                const sanitizedOutput = sanitizeHermesChatText(finalOutput)
+                finalOutputTrimmed = sanitizedOutput.text.trim()
+                if (!runProducedAssistantText && finalOutputTrimmed !== '') {
+                  addMessage(sid, {
+                    id: uid(),
+                    role: 'assistant',
+                    content: sanitizedOutput.text,
+                    timestamp: Date.now(),
+                  })
+                }
           }
           const swallowedError = !runProducedAssistantText && !runHadToolActivity && finalOutputTrimmed === ''
           if (swallowedError) {

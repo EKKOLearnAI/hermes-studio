@@ -24,6 +24,7 @@ import { getModelContextLength } from './model-context'
 import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
 import { parseAnthropicContentArray } from '../../lib/llm-json'
+import { normalizeToolName, sanitizeAssistantText } from '../../lib/chat-protocol'
 import { updateUsage } from '../../db/hermes/usage-store'
 import { logger } from '../logger'
 
@@ -335,7 +336,8 @@ export class ChatRunSocket {
                   }
                 }
 
-                msg.content = textBlocks.join('') || ''
+                const sanitizedText = sanitizeAssistantText(textBlocks.join('') || '')
+                msg.content = sanitizedText.text
                 if (toolCalls.length > 0) {
                   msg.tool_calls = toolCalls
                 }
@@ -370,10 +372,11 @@ export class ChatRunSocket {
               }
             }
 
-            msg.content = textBlocks.join('') || ''
-            if (toolCalls.length > 0) {
-              msg.tool_calls = toolCalls
-            }
+              const sanitizedText = sanitizeAssistantText(textBlocks.join('') || '')
+              msg.content = sanitizedText.text
+              if (toolCalls.length > 0) {
+                msg.tool_calls = toolCalls
+              }
             if (reasoningContent) {
               msg.reasoning = reasoningContent
             }
@@ -401,7 +404,7 @@ export class ChatRunSocket {
               const prevMsg = arr[idx - 1]
               if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
                 // Find matching tool_call by tool_name
-                const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
+                const tc = prevMsg.tool_calls.find((t: any) => normalizeToolName(t.function?.name) === normalizeToolName(m.tool_name))
                 if (tc?.id) {
                   callId = tc.id
                 }
@@ -1061,17 +1064,19 @@ export class ChatRunSocket {
     if (eventType === 'response.output_text.delta') {
       const deltaText = parsed.delta || parsed.text || ''
       if (!deltaText) return null
+      const sanitizedDelta = sanitizeAssistantText(deltaText)
+      if (!sanitizedDelta.text) return null
 
       const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
       if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
-        last.content += deltaText
+        last.content += sanitizedDelta.text
       } else {
         state.messages.push({
           id: state.messages.length + 1,
           session_id: sessionId,
           runMarker,
           role: 'assistant',
-          content: deltaText,
+          content: sanitizedDelta.text,
           timestamp: now(),
         })
       }
@@ -1081,7 +1086,7 @@ export class ChatRunSocket {
           event: 'message.delta',
           run_id: run.responseId,
           response_id: run.responseId,
-          delta: deltaText,
+          delta: sanitizedDelta.text,
         },
       }
     }
@@ -1529,7 +1534,7 @@ function parseSseFrame(raw: string): { event?: string; data: string } | null {
 
 function responseFunctionCallToToolCall(item: any): any {
   const callId = item.call_id || item.id || ''
-  const name = item.name || item.function?.name || ''
+  const name = normalizeToolName(item.name || item.function?.name || '')
   let args = item.arguments ?? item.function?.arguments ?? '{}'
   if (typeof args !== 'string') {
     args = JSON.stringify(args ?? {})
@@ -1576,6 +1581,6 @@ function extractResponseText(response: any): string {
       }
     }
   }
-  if (parts.length > 0) return parts.join('')
-  return typeof response?.output_text === 'string' ? response.output_text : ''
+  const joined = parts.length > 0 ? parts.join('') : (typeof response?.output_text === 'string' ? response.output_text : '')
+  return sanitizeAssistantText(joined).text
 }

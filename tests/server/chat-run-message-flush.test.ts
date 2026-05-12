@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { normalizeToolName, sanitizeAssistantText } from '../../packages/server/src/lib/chat-protocol'
 
 // Mock DB module before importing
 const addMessageMock = vi.fn()
@@ -172,6 +173,21 @@ const MARKER = 'resp_run_abc123'
 describe('chat-run message flush', () => {
   beforeEach(() => {
     addMessageMock.mockClear()
+  })
+
+  it('sanitizes leaked tool protocol fragments before display', () => {
+    const input = '你好 我动了你很多源码怎么办呢? {"command":"git status --short","timeout":60,"workdir":"/mnt/e/agents/hermes/source"} to=functions.terminal'
+    const sanitized = sanitizeAssistantText(input)
+
+    expect(sanitized.stripped).toBe(true)
+    expect(sanitized.text).toContain('你好 我动了你很多源码怎么办呢?')
+    expect(sanitized.text).not.toContain('command')
+    expect(sanitized.text).not.toContain('to=functions.terminal')
+  })
+
+  it('normalizes namespaced tool names', () => {
+    expect(normalizeToolName('functions.terminal')).toBe('terminal')
+    expect(normalizeToolName('terminal')).toBe('terminal')
   })
 
   it('flushes simple text response to DB on normal completion', () => {

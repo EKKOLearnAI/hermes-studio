@@ -12,6 +12,7 @@ import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, exportSession, type SessionSummary } from '@/api/hermes/sessions'
+import { normalizeToolName, sanitizeHermesChatText } from '@/utils/chat-protocol'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -75,13 +76,13 @@ async function handleSessionClick(sessionId: string) {
         id: String(m.id),
         sessionId: m.session_id,
         role: m.role,
-        content: m.content || '',
+        content: sanitizeHermesChatText(m.content || '').text,
         timestamp: m.timestamp * 1000,
       }
 
       // Preserve tool-related fields
       if (m.role === 'tool') {
-        msg.toolName = m.tool_name
+        msg.toolName = normalizeToolName(m.tool_name)
         msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
           ? JSON.stringify(m.tool_calls[0].function.arguments)
           : undefined
