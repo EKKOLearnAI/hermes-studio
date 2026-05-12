@@ -220,14 +220,6 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.usage") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.skillsUsage' }" @click="handleNav('hermes.skillsUsage')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 20V10" />
-              <path d="M18 20V4" />
-              <path d="M6 20v-6" />
-            </svg>
-            <span>{{ t("sidebar.skillsUsage") }}</span>
-          </button>
         </div>
       </div>
 

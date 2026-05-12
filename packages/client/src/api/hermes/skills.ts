@@ -45,50 +45,9 @@ export interface SkillsData {
   archived: SkillInfo[]
 }
 
-export interface SkillUsageRow {
-  skill: string
-  view_count: number
-  manage_count: number
-  total_count: number
-  percentage: number
-  last_used_at: number | null
-}
-
-export interface SkillUsageDailySkillRow {
-  skill: string
-  view_count: number
-  manage_count: number
-  total_count: number
-}
-
-export interface SkillUsageDailyRow {
-  date: string
-  view_count: number
-  manage_count: number
-  total_count: number
-  skills: SkillUsageDailySkillRow[]
-}
-
-export interface SkillUsageStats {
-  period_days: number
-  summary: {
-    total_skill_loads: number
-    total_skill_edits: number
-    total_skill_actions: number
-    distinct_skills_used: number
-  }
-  by_day: SkillUsageDailyRow[]
-  top_skills: SkillUsageRow[]
-}
-
 export async function fetchSkills(): Promise<SkillsData> {
   const res = await request<SkillListResponse>('/api/hermes/skills')
   return { categories: res.categories, archived: res.archived ?? [] }
-}
-
-export async function fetchSkillUsageStats(days = 7): Promise<SkillUsageStats> {
-  const params = new URLSearchParams({ days: String(days) })
-  return request<SkillUsageStats>(`/api/hermes/skills/usage/stats?${params}`)
 }
 
 export async function fetchSkillContent(skillPath: string): Promise<string> {
