@@ -187,6 +187,7 @@ interface ResponseRunState {
   responseId?: string
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
+  protocolLeakLogged?: boolean
 }
 
 // --- ChatRunSocket ---
@@ -1066,6 +1067,9 @@ export class ChatRunSocket {
       if (!deltaText) return null
       const sanitizedDelta = sanitizeAssistantText(deltaText)
       if (!sanitizedDelta.text) return null
+      if (sanitizedDelta.stripped) {
+        this.logProtocolLeakOnce(state, sessionId, runMarker, 'response.output_text.delta')
+      }
 
       const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
       if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
@@ -1212,9 +1216,25 @@ export class ChatRunSocket {
         runMarker,
         insertedKeys: new Set<string>(),
         toolCalls: new Map<string, any>(),
+        protocolLeakLogged: false,
       }
     }
     return state.responseRun
+  }
+
+  private logProtocolLeakOnce(
+    state: SessionState,
+    sessionId: string,
+    runMarker: string | undefined,
+    source: string,
+  ) {
+    const run = this.getResponseRunState(state, runMarker)
+    if (run.protocolLeakLogged) return
+    run.protocolLeakLogged = true
+    logger.warn(
+      { sessionId, runMarker, source },
+      '[chat-run-socket] stripped leaked tool-protocol fragment from assistant text',
+    )
   }
 
   /** Flush all non-user messages for this run to DB in order. */
