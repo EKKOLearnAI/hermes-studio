@@ -428,7 +428,7 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
 
     const result: Record<string, string> = {}
     for (const line of stdout.trim().split('\n')) {
-      const match = line.match(/^(\w[\w\s]*?):\s+(.+)$/)
+      const match = line.match(/^([^\s:]+):\s+(.+)$/)
       if (match) {
         result[match[1].trim().toLowerCase().replace(/\s+/g, '_')] = match[2].trim()
       }
@@ -446,7 +446,7 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
       gateway: result.gateway || '',
       skills: parseInt(result.skills || '0', 10),
       hasEnv: result['.env'] === 'exists',
-      hasSoulMd: result.soul_md === 'exists',
+      hasSoulMd: result['soul.md'] === 'exists',
     }
   } catch (err: any) {
     if (err.code === 1 || err.status === 1) {
