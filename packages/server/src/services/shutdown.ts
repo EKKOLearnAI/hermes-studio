@@ -3,8 +3,8 @@ import { closeDb } from '../db'
 import { getGatewayManagerInstance } from './gateway-bootstrap'
 
 function shouldStopGatewaysOnShutdown(signal: string): boolean {
-  // 总是停止网关，无论是开发环境还是生产环境
-  // 这样可以避免 nodemon 重启时的孤儿进程问题
+  // nodemon may use SIGTERM on Windows restarts, so dev mode opts out via env.
+  // Production keeps stopping owned gateways by default.
   const override = process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN?.trim()
   if (override === '0' || override === 'false') return false
   if (override === '1' || override === 'true') return true
