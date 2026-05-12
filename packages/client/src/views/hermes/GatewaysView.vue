@@ -47,6 +47,11 @@ async function handleToggle(name: string, running: boolean) {
                 <span class="meta-item">{{ gw.host }}:{{ gw.port }}</span>
                 <span v-if="gw.pid" class="meta-item">PID: {{ gw.pid }}</span>
               </div>
+              <div v-if="gw.diagnostics" class="gateway-diagnostics">
+                <span class="diag-item">{{ gw.diagnostics.reason }}</span>
+                <span class="diag-item">PID: {{ gw.diagnostics.pid_path }}</span>
+                <span class="diag-item">Config: {{ gw.diagnostics.config_path }}</span>
+              </div>
             </div>
             <div class="gateway-actions">
               <NTag :type="gw.running ? 'success' : 'default'" size="small" round>
@@ -122,9 +127,24 @@ async function handleToggle(name: string, running: boolean) {
   gap: 12px;
 }
 
+.gateway-diagnostics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .meta-item {
   font-size: 12px;
   color: $text-muted;
+}
+
+.diag-item {
+  font-size: 12px;
+  color: $text-muted;
+  background: rgba(127, 127, 127, 0.08);
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
 .gateway-actions {
