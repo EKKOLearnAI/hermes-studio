@@ -747,7 +747,7 @@ export default {
     estimatedCost: '推定コスト',
     cacheHitRate: 'キャッシュヒット率',
     modelBreakdown: 'モデル別内訳',
-    dailyTrend: '日別使用量（過去30日間）',
+    dailyTrend: '日別使用量',
     date: '日付',
     tokens: 'トークン',
     cache: 'キャッシュ',

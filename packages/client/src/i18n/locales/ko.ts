@@ -747,7 +747,7 @@ export default {
     estimatedCost: '예상 비용',
     cacheHitRate: '캐시 적중률',
     modelBreakdown: '모델별 분포',
-    dailyTrend: '일별 사용량 (최근 30일)',
+    dailyTrend: '일별 사용량',
     date: '날짜',
     tokens: '토큰',
     cache: '캐시',

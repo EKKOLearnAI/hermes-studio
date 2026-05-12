@@ -10,6 +10,21 @@ vi.mock('@/api/hermes/sessions', () => ({
   fetchUsageStats: usageApiMock.fetchUsageStats,
 }))
 
+function emptyStats(totalSessions = 0, periodDays = 30) {
+  return {
+    total_input_tokens: totalSessions,
+    total_output_tokens: 0,
+    total_cache_read_tokens: 0,
+    total_cache_write_tokens: 0,
+    total_reasoning_tokens: 0,
+    total_cost: 0,
+    total_sessions: totalSessions,
+    period_days: periodDays,
+    model_usage: [],
+    daily_usage: [],
+  }
+}
+
 describe('usage store analytics adapter', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -31,8 +46,8 @@ describe('usage store analytics adapter', () => {
         { model: '', input_tokens: 20, output_tokens: 10, cache_read_tokens: 5, cache_write_tokens: 2, reasoning_tokens: 3, sessions: 1 },
       ],
       daily_usage: [
-        { date: '2026-04-29', tokens: 100, cache: 20, sessions: 1, cost: 0.01 },
-        { date: '2026-04-30', tokens: 50, cache: 5, sessions: 1, cost: 0.0023 },
+        { date: '2026-04-29', input_tokens: 80, output_tokens: 20, cache_read_tokens: 40, cache_write_tokens: 4, sessions: 1, errors: 0, cost: 0.01 },
+        { date: '2026-04-30', input_tokens: 30, output_tokens: 20, cache_read_tokens: 5, cache_write_tokens: 1, sessions: 1, errors: 0, cost: 0.0023 },
       ],
     })
 
@@ -44,28 +59,51 @@ describe('usage store analytics adapter', () => {
     expect(store.totalTokens).toBe(150)
     expect(store.cacheHitRate).toBeCloseTo(25 / 125 * 100)
     expect(store.hasData).toBe(true)
-    expect(store.modelUsage).toEqual([
-      { model: 'gpt-5', totalTokens: 120, inputTokens: 80, outputTokens: 40, cacheTokens: 20, sessions: 1 },
-      { model: 'unknown', totalTokens: 30, inputTokens: 20, outputTokens: 10, cacheTokens: 5, sessions: 1 },
-    ])
-    expect(store.dailyUsage).toEqual([
-      { date: '2026-04-29', tokens: 100, cache: 20, sessions: 1, cost: 0.01 },
-      { date: '2026-04-30', tokens: 50, cache: 5, sessions: 1, cost: 0.0023 },
-    ])
+    expect(store.modelUsage).toHaveLength(2)
+    expect(store.modelUsage[0]).toMatchObject({
+      model: 'gpt-5',
+      totalTokens: 120,
+      inputTokens: 80,
+      outputTokens: 40,
+      cacheTokens: 20,
+      cacheWriteTokens: 3,
+      visualTokens: 140,
+      sessions: 1,
+    })
+    expect(store.modelUsage[0].color).toMatch(/^#[0-9a-f]{6}$/i)
+    expect(store.modelUsage[0].inputPercent).toBeCloseTo(80 / 140 * 100)
+    expect(store.modelUsage[0].outputPercent).toBeCloseTo(40 / 140 * 100)
+    expect(store.modelUsage[0].cachePercent).toBeCloseTo(20 / 140 * 100)
+    expect(store.modelUsage[1]).toMatchObject({
+      model: 'unknown',
+      totalTokens: 30,
+      inputTokens: 20,
+      outputTokens: 10,
+      cacheTokens: 5,
+      cacheWriteTokens: 2,
+      visualTokens: 35,
+      sessions: 1,
+    })
+    expect(store.modelUsage[1].color).toBe(store.getModelColor('unknown'))
+    expect(store.modelLegend.map(m => m.model)).toEqual(['gpt-5', 'unknown'])
+    expect(store.dailyUsage).toHaveLength(2)
+    expect(store.dailyUsage[0]).toMatchObject({
+      date: '2026-04-29',
+      input_tokens: 80,
+      output_tokens: 20,
+      cache_read_tokens: 40,
+      cache_write_tokens: 4,
+      visualTokens: 140,
+      sessions: 1,
+      cost: 0.01,
+    })
+    expect(store.dailyUsage[0].inputPercent).toBeCloseTo(80 / 140 * 100)
+    expect(store.dailyUsage[0].outputPercent).toBeCloseTo(20 / 140 * 100)
+    expect(store.dailyUsage[0].cachePercent).toBeCloseTo(40 / 140 * 100)
   })
 
   it('allows callers to request a different period', async () => {
-    usageApiMock.fetchUsageStats.mockResolvedValue({
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      total_reasoning_tokens: 0,
-      total_cost: 0,
-      total_sessions: 0,
-      model_usage: [],
-      daily_usage: [],
-    })
+    usageApiMock.fetchUsageStats.mockResolvedValue(emptyStats())
 
     const { useUsageStore } = await import('@/stores/hermes/usage')
     const store = useUsageStore()
@@ -73,5 +111,59 @@ describe('usage store analytics adapter', () => {
 
     expect(usageApiMock.fetchUsageStats).toHaveBeenCalledWith(7)
     expect(store.hasData).toBe(false)
+  })
+
+  it('keeps loading true when an older overlapping request resolves first', async () => {
+    let resolve30: (value: ReturnType<typeof emptyStats>) => void = () => {}
+    let resolve7: (value: ReturnType<typeof emptyStats>) => void = () => {}
+    usageApiMock.fetchUsageStats.mockImplementation((days: number) => new Promise(resolve => {
+      if (days === 30) resolve30 = resolve
+      if (days === 7) resolve7 = resolve
+    }))
+
+    const { useUsageStore } = await import('@/stores/hermes/usage')
+    const store = useUsageStore()
+    const firstLoad = store.loadSessions(30)
+    const secondLoad = store.loadSessions(7)
+
+    expect(store.isLoading).toBe(true)
+    resolve30(emptyStats(30, 30))
+    await firstLoad
+
+    expect(store.isLoading).toBe(true)
+    expect(store.stats).toBeNull()
+
+    resolve7(emptyStats(7, 7))
+    await secondLoad
+
+    expect(store.isLoading).toBe(false)
+    expect(store.stats?.period_days).toBe(7)
+    expect(store.totalSessions).toBe(7)
+  })
+
+  it('ignores stale overlapping responses that resolve after the selected period', async () => {
+    let resolve30: (value: ReturnType<typeof emptyStats>) => void = () => {}
+    let resolve7: (value: ReturnType<typeof emptyStats>) => void = () => {}
+    usageApiMock.fetchUsageStats.mockImplementation((days: number) => new Promise(resolve => {
+      if (days === 30) resolve30 = resolve
+      if (days === 7) resolve7 = resolve
+    }))
+
+    const { useUsageStore } = await import('@/stores/hermes/usage')
+    const store = useUsageStore()
+    const firstLoad = store.loadSessions(30)
+    const secondLoad = store.loadSessions(7)
+
+    resolve7(emptyStats(7, 7))
+    await secondLoad
+
+    expect(store.isLoading).toBe(false)
+    expect(store.stats?.period_days).toBe(7)
+
+    resolve30(emptyStats(30, 30))
+    await firstLoad
+
+    expect(store.stats?.period_days).toBe(7)
+    expect(store.totalSessions).toBe(7)
   })
 })

@@ -975,7 +975,7 @@ export default {
     estimatedCost: '预估费用',
     cacheHitRate: '缓存命中率',
     modelBreakdown: '模型分布',
-    dailyTrend: '每日用量（近 30 天）',
+    dailyTrend: '每日用量',
     date: '日期',
     tokens: 'Token',
     cache: '缓存',

@@ -450,8 +450,9 @@ export async function usageStats(ctx: any) {
   const totalSessions = local.sessions + hermes.sessions
 
   const modelMap = new Map<string, UsageStatsModelRow>()
-  for (const m of [...local.by_model, ...hermes.by_model].filter(m => m.model)) {
-    const existing = modelMap.get(m.model)
+  for (const m of [...local.by_model, ...hermes.by_model]) {
+    const model = (m.model || '').trim() || 'unknown'
+    const existing = modelMap.get(model)
     if (existing) {
       existing.input_tokens += m.input_tokens
       existing.output_tokens += m.output_tokens
@@ -460,7 +461,7 @@ export async function usageStats(ctx: any) {
       existing.reasoning_tokens += m.reasoning_tokens
       existing.sessions += m.sessions
     } else {
-      modelMap.set(m.model, { ...m })
+      modelMap.set(model, { ...m, model })
     }
   }
 

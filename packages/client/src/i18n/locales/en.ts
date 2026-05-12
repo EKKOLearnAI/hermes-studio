@@ -973,7 +973,7 @@ export default {
     estimatedCost: 'Est. Cost',
     cacheHitRate: 'Cache Hit Rate',
     modelBreakdown: 'Model Breakdown',
-    dailyTrend: 'Daily Usage (Last 30 Days)',
+    dailyTrend: 'Daily Usage',
     date: 'Date',
     tokens: 'Tokens',
     cache: 'Cache',
