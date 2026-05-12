@@ -188,6 +188,7 @@ interface ResponseRunState {
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
   protocolLeakLogged?: boolean
+  protocolLeakCount: number
 }
 
 // --- ChatRunSocket ---
@@ -998,6 +999,7 @@ export class ChatRunSocket {
             })
           }
           const eventName = upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed'
+          const protocolLeakCount = session_id ? this.sessionMap.get(session_id)?.responseRun?.protocolLeakCount || 0 : 0
           emit(eventName, {
             event: eventName,
             run_id: responseId || finalOutput.id,
@@ -1005,6 +1007,7 @@ export class ChatRunSocket {
             output: finalText,
             usage: finalOutput.usage,
             error: finalOutput.error || parsed.error,
+            protocol_leak_count: protocolLeakCount,
             queue_remaining: queueLen,
           })
           if (session_id && queueLen > 0) {
@@ -1217,6 +1220,7 @@ export class ChatRunSocket {
         insertedKeys: new Set<string>(),
         toolCalls: new Map<string, any>(),
         protocolLeakLogged: false,
+        protocolLeakCount: 0,
       }
     }
     return state.responseRun
@@ -1229,6 +1233,7 @@ export class ChatRunSocket {
     source: string,
   ) {
     const run = this.getResponseRunState(state, runMarker)
+    run.protocolLeakCount += 1
     if (run.protocolLeakLogged) return
     run.protocolLeakLogged = true
     logger.warn(
