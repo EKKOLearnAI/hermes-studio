@@ -2,7 +2,7 @@ services:
   hermes-webui:
     build:
       context: .
-      dockerfile: Dockerfile.merged
+      dockerfile: Dockerfile
       args:
         BASE_IMAGE: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
     image: ${WEBUI_IMAGE:-hermes-web-ui-local:latest}
