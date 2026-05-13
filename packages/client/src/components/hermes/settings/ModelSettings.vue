@@ -31,6 +31,20 @@ const isCustom = (provider: string) => {
   return !g?.builtin && provider.startsWith('custom:')
 }
 
+const isCodex = (provider: string) => {
+  const key = provider.toLowerCase()
+  return key === 'openai-codex' || key === 'codex' || key.includes('codex')
+}
+
+const codexProvider = computed(() => modelsStore.providers.find(g => isCodex(g.provider)))
+
+const codexAccountOptions = computed(() =>
+  codexStatus.value.accounts.map(account => ({
+    label: account.email || account.label || account.id,
+    value: account.id,
+  })),
+)
+
 function getEditKey(provider: string): string {
   if (!(provider in editKeys.value)) {
     const g = modelsStore.providers.find(p => p.provider === provider)

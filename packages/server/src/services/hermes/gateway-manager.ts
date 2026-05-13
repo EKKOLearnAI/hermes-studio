@@ -228,28 +228,16 @@ export class GatewayManager {
       }
     } catch {}
 
-    const statePath = join(profilePath, 'gateway_state.json')
-    if (!existsSync(statePath)) return null
-
-    try {
-      const content = readFileSync(statePath, 'utf-8').trim()
-      const data = JSON.parse(content)
-      const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
-      const state = data?.gateway_state
-      return pid && Number.isFinite(pid) && pid > 0 && (state === 'running' || state === 'starting') ? pid : null
-    } catch {
-      return null
-    }
-
     // Fallback: check gateway_state.json (written by `hermes gateway run`)
-    const statePath = join(this.profileDir(name), 'gateway_state.json')
+    const statePath = join(profilePath, 'gateway_state.json')
     if (existsSync(statePath)) {
       try {
         const content = readFileSync(statePath, 'utf-8').trim()
         const data = JSON.parse(content)
-        if (data.pid) {
-          const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10)
-          if (pid && this.isProcessAlive(pid)) return pid
+        const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10) || null
+        const state = data?.gateway_state
+        if (pid && Number.isFinite(pid) && pid > 0 && this.isProcessAlive(pid) && (!state || state === 'running' || state === 'starting')) {
+          return pid
         }
       } catch { }
     }

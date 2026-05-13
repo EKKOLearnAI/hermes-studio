@@ -59,7 +59,13 @@ export function useSpeech() {
     availableVoices.value = synth && typeof synth.getVoices === 'function' ? synth.getVoices() : []
   }
 
-  synth.addEventListener('voiceschanged', loadVoices)
+  // 浏览器会在语音列表变化时触发 voiceschanged；SSR/jsdom/mock 可能没有 EventTarget 方法
+  const supportsVoiceEvents = !!synth && typeof (synth as any).addEventListener === 'function'
+  if (supportsVoiceEvents) {
+    ;(synth as any).addEventListener('voiceschanged', loadVoices)
+  } else if (synth) {
+    ;(synth as any).onvoiceschanged = loadVoices
+  }
   loadVoices()
 
   /**
@@ -117,7 +123,7 @@ export function useSpeech() {
       currentAudio = null
     }
     // Stop browser speech
-    if (synth.speaking || synth.pending || synth.paused) {
+    if (synth && (synth.speaking || synth.pending || synth.paused)) {
       synth.cancel()
     }
     utterance = null
@@ -178,6 +184,13 @@ export function useSpeech() {
   // ─── Browser Engine (Web Speech API) ────────────────────────
 
   function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token?: number) {
+    if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+      state.value.isPlaying = false
+      state.value.isPaused = false
+      state.value.currentMessageId = null
+      state.value.engine = 'none'
+      return
+    }
     token = token || ++playbackToken
     utterance = new SpeechSynthesisUtterance(text)
     const activeUtterance = utterance
@@ -412,7 +425,7 @@ export function useSpeech() {
     if (state.value.engine === 'tts' && currentAudio) {
       currentAudio.pause()
       state.value.isPaused = true
-    } else if (synth.speaking && !state.value.isPaused) {
+    } else if (synth && synth.speaking && !state.value.isPaused) {
       synth.pause()
       state.value.isPaused = true
     }
@@ -422,7 +435,7 @@ export function useSpeech() {
     if (state.value.isPaused) {
       if (state.value.engine === 'tts' && currentAudio) {
         currentAudio.play()
-      } else {
+      } else if (synth) {
         synth.resume()
       }
       state.value.isPaused = false
