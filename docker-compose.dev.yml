@@ -11,13 +11,13 @@ services:
     ports:
       - "${SSH_PORT:-2222}:22"
       - "${PORT:-6060}:6060"
+      - "5173:5173"
+      - "8648:8648"
       - "8642-8670:8642-8670"
     volumes:
       - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes:z
       - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui:z
       - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace:z
-      # Optional: mount SSH keys
-      # - ~/.ssh/id_rsa.pub:/root/.ssh/authorized_keys:ro
     environment:
       - HOME=/home/agent
       - HERMES_HOME=/home/agent/.hermes
