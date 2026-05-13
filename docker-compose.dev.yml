@@ -15,9 +15,9 @@ services:
       - "8648:8648"
       - "8642-8670:8642-8670"
     volumes:
-      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes:z
-      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui:z
-      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace:z
+      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace
     environment:
       - HOME=/home/agent
       - HERMES_HOME=/home/agent/.hermes
