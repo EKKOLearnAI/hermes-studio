@@ -11,6 +11,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
+import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, exportSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const chatStore = useChatStore()
@@ -27,6 +28,7 @@ const hermesSessionsLoaded = ref(false)
 // History page's own selected session (independent from chatStore)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
+const showOutline = ref(true)
 
 async function loadHermesSessions() {
   if (hermesSessionsLoading.value) return
@@ -496,33 +498,56 @@ async function handleWorkspaceConfirm() {
       <FolderPicker v-model="workspaceValue" />
     </NModal>
 
-    <div class="chat-main">
-      <header class="chat-header">
-        <div class="header-left">
-          <NButton quaternary size="small" @click="showSessions = !showSessions" circle>
-            <template #icon>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-            </template>
-          </NButton>
-          <span class="header-session-title">{{ activeSessionTitle }}</span>
-          <span v-if="activeSessionSource" class="source-badge">{{ getSourceLabel(activeSessionSource) }}</span>
-          <span v-if="historySession?.workspace" class="workspace-badge" :title="historySession.workspace">📁 {{ historySession.workspace.split('/').pop() || historySession.workspace }}</span>
-        </div>
-        <div class="header-actions">
-          <NTooltip trigger="hover">
-            <template #trigger>
-              <NButton quaternary size="small" @click="copySessionId()" circle>
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                </template>
-              </NButton>
-            </template>
-            {{ t('chat.copySessionId') }}
-          </NTooltip>
-        </div>
-      </header>
+    <div class="history-wrapper">
+      <div class="chat-main">
+        <header class="chat-header">
+          <div class="header-left">
+            <NButton quaternary size="small" @click="showSessions = !showSessions" circle>
+              <template #icon>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="7" height="7"/>
+                  <rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/>
+                </svg>
+              </template>
+            </NButton>
+            <span class="header-session-title">{{ activeSessionTitle }}</span>
+            <span v-if="activeSessionSource" class="source-badge">{{ getSourceLabel(activeSessionSource) }}</span>
+            <span v-if="historySession?.workspace" class="workspace-badge" :title="historySession.workspace">📁 {{ historySession.workspace.split('/').pop() || historySession.workspace }}</span>
+          </div>
+          <div class="header-actions">
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton quaternary size="small" @click="showOutline = !showOutline" circle>
+                  <template #icon>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M3 12h18M3 6h18M3 18h18" />
+                    </svg>
+                  </template>
+                </NButton>
+              </template>
+              会话大纲
+            </NTooltip>
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton quaternary size="small" @click="copySessionId()" circle>
+                  <template #icon>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </template>
+                </NButton>
+              </template>
+              {{ t("chat.copySessionId") }}
+            </NTooltip>
+          </div>
+        </header>
 
-      <HistoryMessageList :session="historySession" />
+        <HistoryMessageList :session="historySession" />
+      </div>
+      <OutlinePanel v-if="showOutline && historySession" :messages="historySession.messages" />
     </div>
   </div>
 </template>
@@ -534,6 +559,13 @@ async function handleWorkspaceConfirm() {
   display: flex;
   height: 100%;
   position: relative;
+}
+
+.history-wrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .session-list {

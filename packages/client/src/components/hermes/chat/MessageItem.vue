@@ -21,11 +21,13 @@ import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
-const props = defineProps<{ message: Message; highlight?: boolean }>();
+const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
 const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+
+const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 
 // Parse ContentBlock[] from JSON string
 const contentBlocks = computed(() => {
@@ -654,6 +656,7 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render user message content -->
@@ -691,16 +694,17 @@ onBeforeUnmount(() => {
                     </template>
                   </div>
                 </div>
-                <MarkdownRenderer v-if="displayText" :content="displayText" />
+                <MarkdownRenderer v-if="displayText" :content="displayText" :heading-id-prefix="message.role === 'assistant' ? effectiveHeadingIdPrefix : ''" />
               </template>
               <!-- Plain text format -->
-              <MarkdownRenderer v-else-if="message.content" :content="message.content" />
+              <MarkdownRenderer v-else-if="message.content" :content="message.content" :heading-id-prefix="message.role === 'assistant' ? effectiveHeadingIdPrefix : ''" />
             </template>
 
             <!-- Render assistant message content -->
             <MarkdownRenderer
               v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
               :content="message.content"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <span v-if="message.isStreaming && !message.content" class="streaming-dots">

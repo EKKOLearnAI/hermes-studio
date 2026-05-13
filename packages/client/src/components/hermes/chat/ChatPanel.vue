@@ -21,6 +21,7 @@ import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
+import OutlinePanel from "./OutlinePanel.vue";
 
 const chatStore = useChatStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
@@ -29,6 +30,7 @@ const { t } = useI18n();
 
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
+const showOutline = ref(true);
 
 const currentMode = ref<"chat" | "live">("chat");
 
@@ -695,105 +697,132 @@ async function handleWorkspaceConfirm() {
       <FolderPicker v-model="workspaceValue" />
     </NModal>
 
-    <div class="chat-main">
-      <header class="chat-header">
-        <div class="header-left">
-          <NButton
-            v-if="currentMode === 'chat'"
-            quaternary
-            size="small"
-            @click="showSessions = !showSessions"
-            circle
-          >
-            <template #icon>
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-              </svg>
-            </template>
-          </NButton>
-          <span class="header-session-title">{{ headerTitle }}</span>
-          <span v-if="activeSessionSource" class="source-badge">{{
-            getSourceLabel(activeSessionSource)
-          }}</span>
-          <span
-            v-if="chatStore.activeSession?.workspace"
-            class="workspace-badge"
-            :title="chatStore.activeSession.workspace"
-            >📁
-            {{
-              chatStore.activeSession.workspace.split("/").pop() ||
-              chatStore.activeSession.workspace
-            }}</span
-          >
-        </div>
-        <div class="header-actions">
-          <!-- chat/live mode toggle hidden -->
-          <template v-if="currentMode === 'chat'">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  quaternary
-                  size="small"
-                  @click="copySessionId()"
-                  circle
-                >
-                  <template #icon>
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path
-                        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                      />
-                    </svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("chat.copySessionId") }}
-            </NTooltip>
-            <NButton size="small" :circle="isMobile" @click="handleNewChat">
+    <div class="chat-wrapper">
+      <div class="chat-main">
+        <header class="chat-header">
+          <div class="header-left">
+            <NButton
+              v-if="currentMode === 'chat'"
+              quaternary
+              size="small"
+              @click="showSessions = !showSessions"
+              circle
+            >
               <template #icon>
                 <svg
-                  width="14"
-                  height="14"
+                  width="16"
+                  height="16"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="2"
+                  stroke-width="1.5"
                 >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
                 </svg>
               </template>
-              <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
             </NButton>
-          </template>
-        </div>
-      </header>
+            <span class="header-session-title">{{ headerTitle }}</span>
+            <span v-if="activeSessionSource" class="source-badge">{{
+              getSourceLabel(activeSessionSource)
+            }}</span>
+            <span
+              v-if="chatStore.activeSession?.workspace"
+              class="workspace-badge"
+              :title="chatStore.activeSession.workspace"
+              >📁
+              {{
+                chatStore.activeSession.workspace.split("/").pop() ||
+                chatStore.activeSession.workspace
+              }}</span
+            >
+          </div>
+          <div class="header-actions">
+            <!-- chat/live mode toggle hidden -->
+            <template v-if="currentMode === 'chat'">
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      quaternary
+                      size="small"
+                      @click="showOutline = !showOutline"
+                      circle
+                    >
+                      <template #icon>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <path d="M3 12h18M3 6h18M3 18h18" />
+                        </svg>
+                      </template>
+                    </NButton>
+                  </template>
+                  会话大纲
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      quaternary
+                      size="small"
+                      @click="copySessionId()"
+                      circle
+                    >
+                      <template #icon>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.5"
+                        >
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                          <path
+                            d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                          />
+                        </svg>
+                      </template>
+                    </NButton>
+                  </template>
+                  {{ t("chat.copySessionId") }}
+                </NTooltip>
+                <NButton size="small" :circle="isMobile" @click="handleNewChat">
+                <template #icon>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </template>
+                <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
+              </NButton>
+            </template>
+          </div>
+        </header>
 
-      <template v-if="currentMode === 'chat'">
-        <MessageList />
-        <ChatInput />
-      </template>
-      <ConversationMonitorPane
-        v-else
-        :human-only="sessionBrowserPrefsStore.humanOnly"
-      />
+        <template v-if="currentMode === 'chat'">
+          <MessageList />
+          <ChatInput />
+        </template>
+        <ConversationMonitorPane
+          v-else
+          :human-only="sessionBrowserPrefsStore.humanOnly"
+        />
+      </div>
+      <OutlinePanel v-if="showOutline && currentMode === 'chat'" :messages="chatStore.messages" />
     </div>
 
     <!-- Floating drawer button -->
@@ -1132,6 +1161,13 @@ async function handleWorkspaceConfirm() {
     color: $error;
     background: rgba($error, 0.1);
   }
+}
+
+.chat-wrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .chat-main {
