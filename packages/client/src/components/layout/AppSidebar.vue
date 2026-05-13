@@ -31,6 +31,7 @@ function isGroupCollapsed(key: string) {
 }
 
 function handleNav(key: string) {
+  window.dispatchEvent(new CustomEvent("hermes:primary-nav"));
   router.push({ name: key });
 }
 
@@ -362,6 +363,7 @@ function openChangelog() {
 
 .sidebar {
   position: relative;
+  z-index: 1200;
   width: $sidebar-width;
   height: calc(100 * var(--vh));
   background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.55);

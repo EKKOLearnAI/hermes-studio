@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
+import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
 import {
   NButton,
   NDropdown,
   NInput,
   NModal,
+  NPopover,
   NTooltip,
   NPopconfirm,
   useMessage,
@@ -16,6 +18,8 @@ import { useI18n } from "vue-i18n";
 import { getSourceLabel } from "@/shared/session-display";
 import { copyToClipboard } from "@/utils/clipboard";
 import FolderPicker from "./FolderPicker.vue";
+import ProfileSelector from "@/components/layout/ProfileSelector.vue";
+import ModelSelector from "@/components/layout/ModelSelector.vue";
 import ChatInput from "./ChatInput.vue";
 import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
@@ -23,6 +27,7 @@ import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
 
 const chatStore = useChatStore();
+const profilesStore = useProfilesStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const message = useMessage();
 const { t } = useI18n();
@@ -65,10 +70,15 @@ onMounted(() => {
   mobileQuery = window.matchMedia("(max-width: 768px)");
   handleMobileChange(mobileQuery);
   mobileQuery.addEventListener("change", handleMobileChange);
+  window.addEventListener("hermes:primary-nav", handlePrimaryNavInteraction);
+  if (profilesStore.profiles.length === 0) {
+    void profilesStore.fetchProfiles();
+  }
 });
 
 onUnmounted(() => {
   mobileQuery?.removeEventListener("change", handleMobileChange);
+  window.removeEventListener("hermes:primary-nav", handlePrimaryNavInteraction);
 });
 const showRenameModal = ref(false);
 const renameValue = ref("");
@@ -203,6 +213,21 @@ const headerTitle = computed(() =>
 const activeSessionSource = computed(() =>
   currentMode.value === "chat" ? chatStore.activeSession?.source || "" : "",
 );
+
+const activeProfileName = computed(
+  () => profilesStore.activeProfileName || profilesStore.activeProfile?.name || "default",
+);
+
+const activeProfileInitial = computed(() => {
+  const first = activeProfileName.value.trim().charAt(0);
+  return first ? first.toUpperCase() : "H";
+});
+
+function handlePrimaryNavInteraction() {
+  showDrawer.value = false;
+  showSessions.value = false;
+  showContextMenu.value = false;
+}
 
 function handleNewChat() {
   chatStore.newChat();
@@ -737,6 +762,36 @@ async function handleWorkspaceConfirm() {
           >
         </div>
         <div class="header-actions">
+          <NPopover trigger="click" placement="bottom-end" :show-arrow="false" raw>
+            <template #trigger>
+              <button
+                class="account-trigger"
+                :title="t('chat.accountPanelTitle')"
+                :aria-label="t('chat.accountPanelTitle')"
+              >
+                <span class="account-avatar">{{ activeProfileInitial }}</span>
+                <span class="account-name">{{ activeProfileName }}</span>
+              </button>
+            </template>
+            <div class="account-popover">
+              <div class="account-popover-header">
+                <div>
+                  <div class="account-popover-title">{{ t('chat.accountPanelTitle') }}</div>
+                  <div class="account-popover-subtitle">{{ t('chat.accountPanelSubtitle') }}</div>
+                </div>
+                <span class="account-popover-avatar">{{ activeProfileInitial }}</span>
+              </div>
+              <ProfileSelector class="account-popover-selector" />
+              <ModelSelector class="account-popover-selector" />
+              <RouterLink class="account-manage-link" :to="{ name: 'hermes.profiles' }">
+                {{ t('chat.manageProfiles') }}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
+              </RouterLink>
+            </div>
+          </NPopover>
           <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
             <NTooltip trigger="hover">
@@ -1188,8 +1243,146 @@ async function handleWorkspaceConfirm() {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
+}
+
+.account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  max-width: 150px;
+  padding: 4px 10px 4px 5px;
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.2);
+  border-radius: 999px;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.54);
+  color: $text-primary;
+  cursor: pointer;
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  transition:
+    transform $transition-fast,
+    border-color $transition-fast,
+    background $transition-fast,
+    box-shadow $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: rgba(var(--accent-primary-rgb), 0.34);
+    background: rgba(var(--accent-primary-rgb), 0.09);
+    box-shadow: 0 6px 18px rgba(var(--accent-primary-rgb), 0.12);
+  }
+}
+
+.account-avatar,
+.account-popover-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.95), rgba(72, 219, 251, 0.78));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(var(--accent-primary-rgb), 0.28);
+}
+
+.account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.account-popover {
+  width: min(320px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid rgba(var(--border-color-rgb, 224, 224, 224), 0.22);
+  border-radius: 18px;
+  background: rgba(var(--bg-card-rgb, 255, 255, 255), 0.84);
+  color: $text-primary;
+  backdrop-filter: blur(28px) saturate(1.45);
+  -webkit-backdrop-filter: blur(28px) saturate(1.45);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+:global(.dark) .account-popover {
+  background: rgba(var(--bg-card-rgb, 60, 60, 60), 0.78);
+  box-shadow:
+    0 18px 52px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.account-popover-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.account-popover-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: $text-primary;
+}
+
+.account-popover-subtitle {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: $text-muted;
+}
+
+.account-popover-avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+
+.account-popover :deep(.profile-selector),
+.account-popover :deep(.model-selector) {
+  padding: 0;
+  margin-bottom: 10px;
+}
+
+.account-popover :deep(.selector-label),
+.account-popover :deep(.model-label) {
+  margin-bottom: 5px;
+  font-size: 10px;
+}
+
+.account-manage-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: $radius-sm;
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  color: $accent-primary;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    transform $transition-fast,
+    background $transition-fast;
+
+  &:hover {
+    transform: translateY(-1px);
+    background: rgba(var(--accent-primary-rgb), 0.14);
+  }
 }
 
 .chat-mode-toggle {
@@ -1202,6 +1395,16 @@ async function handleWorkspaceConfirm() {
 @media (max-width: $breakpoint-mobile) {
   .chat-header {
     padding: 16px 12px 16px 52px;
+  }
+
+  .account-trigger {
+    width: 32px;
+    padding: 4px;
+    justify-content: center;
+  }
+
+  .account-name {
+    display: none;
   }
 }
 
