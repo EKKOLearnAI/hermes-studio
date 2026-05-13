@@ -32,7 +32,6 @@ RUN mkdir -p /var/run/sshd \
     && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
     && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
-    # Allow SSH to work with non-privileged users
     && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
 
 # Install Node.js
@@ -49,34 +48,18 @@ RUN ARCH=$(dpkg --print-architecture) \
 RUN npm install -g \
     typescript \
     ts-node \
-    nodemon \
-    npm-check-updates
+    nodemon
 
 WORKDIR /app
 
-# Copy package files first for better caching
+# Copy project files
 COPY package*.json ./
-
-# Increase Node.js memory limit to prevent OOM during build
-ENV NODE_OPTIONS=--max-old-space-size=4096
-RUN npm install && npm rebuild node-pty
-
-# Copy source code (will be overridden by volume mount in dev mode)
 COPY . .
 
-# Build the project
-RUN npm run build
+# Install dependencies (including devDependencies)
+RUN npm install && npm rebuild node-pty
 
-# Keep dev dependencies for development
-# RUN npm prune --omit=dev  # Commented out for development
-
-# Create development user with sudo
-RUN useradd -m -s /bin/bash developer \
-    && echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
-    && mkdir -p /home/developer/.ssh \
-    && chown -R developer:developer /home/developer
-
-# Set up SSH keys directory for root
+# Set up SSH
 RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
 
 # Copy startup script
@@ -87,19 +70,12 @@ RUN chmod +x /start-dev.sh
 ENV NODE_ENV=development
 ENV HOME=/home/agent
 ENV HERMES_HOME=/home/agent/.hermes
-ENV PORT=6060
 ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
 ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# SSH port
-ENV SSH_PORT=22
 
 # Expose ports
-# 22: SSH server
-# 6060: Web UI port
-# 8642-8670: Hermes Agent gateway ports
-# 9229: Node.js debug port
 EXPOSE 22 6060 8642-8670 9229
 
-# Use development startup script
+# Use development startup script (SSH only, no auto-start)
 ENTRYPOINT ["/start-dev.sh"]
 CMD []
