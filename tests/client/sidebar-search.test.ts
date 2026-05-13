@@ -42,6 +42,9 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key,
   }),
+  createI18n: () => ({
+    global: { locale: { value: 'en' }, setLocaleMessage: vi.fn() },
+  }),
 }))
 
 vi.mock('@/composables/useTheme', () => ({

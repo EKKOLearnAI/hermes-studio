@@ -1,19 +1,14 @@
 import { createI18n } from 'vue-i18n'
-import { messages } from './messages'
+import { en, loadLocale, supportedLocales } from './messages'
+import type { SupportedLocale } from './messages'
 
 const saved = localStorage.getItem('hermes_locale')
-
-const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt'] as const
-type SupportedLocale = (typeof supportedLocales)[number]
 
 function resolveLocale(saved: string | null): SupportedLocale {
   if (saved && (supportedLocales as readonly string[]).includes(saved)) {
     return saved as SupportedLocale
   }
 
-  // Normalize a single BCP-47 tag to a supported locale key.
-  // Covers zh-Hant-TW, zh-TW, zh-HK, zh-MO, zh-Hant → zh-TW
-  //        zh-Hans-*, zh-CN, zh-SG, zh            → zh
   function normalize(tag: string): SupportedLocale | null {
     const lower = tag.toLowerCase()
     if (lower.startsWith('zh')) {
@@ -38,9 +33,28 @@ function resolveLocale(saved: string | null): SupportedLocale {
   return 'en'
 }
 
+const locale = resolveLocale(saved)
+
 export const i18n = createI18n({
   legacy: false,
-  locale: resolveLocale(saved),
+  locale: 'en',
   fallbackLocale: 'en',
-  messages,
+  messages: { en },
 })
+
+export async function setupI18n(): Promise<void> {
+  if (locale !== 'en') {
+    const msgs = await loadLocale(locale)
+    if (msgs) {
+      i18n.global.setLocaleMessage(locale, msgs)
+    }
+    ;(i18n.global.locale as any).value = locale
+  }
+}
+
+export async function switchLocale(newLocale: string): Promise<void> {
+  const msgs = await loadLocale(newLocale)
+  if (msgs) {
+    i18n.global.setLocaleMessage(newLocale, msgs)
+  }
+}

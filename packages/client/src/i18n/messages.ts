@@ -1,26 +1,9 @@
-import de from './locales/de'
 import en from './locales/en'
-import es from './locales/es'
-import fr from './locales/fr'
-import ja from './locales/ja'
-import ko from './locales/ko'
-import pt from './locales/pt'
-import zh from './locales/zh'
-import zhTW from './locales/zh-TW'
 
 export type LocaleMessages = Record<string, unknown>
 
-export const rawMessages = {
-  'en': en,
-  'zh': zh,
-  'zh-TW': zhTW,
-  'ja': ja,
-  'ko': ko,
-  'fr': fr,
-  'es': es,
-  'de': de,
-  'pt': pt,
-} satisfies Record<string, LocaleMessages>
+export const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt'] as const
+export type SupportedLocale = (typeof supportedLocales)[number]
 
 function isPlainObject(value: unknown): value is LocaleMessages {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -42,11 +25,25 @@ export function mergeMessagesWithFallback(
   return merged
 }
 
-export const messages = Object.fromEntries(
-  Object.entries(rawMessages).map(([locale, localeMessages]) => [
-    locale,
-    locale === 'en'
-      ? localeMessages
-      : mergeMessagesWithFallback(en, localeMessages),
-  ]),
-) as typeof rawMessages
+const localeLoaders: Record<string, () => Promise<{ default: LocaleMessages }>> = {
+  'zh': () => import('./locales/zh'),
+  'zh-TW': () => import('./locales/zh-TW'),
+  'ja': () => import('./locales/ja'),
+  'ko': () => import('./locales/ko'),
+  'fr': () => import('./locales/fr'),
+  'es': () => import('./locales/es'),
+  'de': () => import('./locales/de'),
+  'pt': () => import('./locales/pt'),
+}
+
+export { en }
+
+export async function loadLocale(locale: string): Promise<LocaleMessages | null> {
+  if (locale === 'en') return en
+
+  const loader = localeLoaders[locale]
+  if (!loader) return null
+
+  const mod = await loader()
+  return mergeMessagesWithFallback(en, mod.default)
+}
