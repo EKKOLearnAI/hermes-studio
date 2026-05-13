@@ -82,6 +82,120 @@ function readUsageStats(usageContent: string | null): Map<string, UsageStats> {
   return map
 }
 
+/**
+ * Scan for skills at different directory depths.
+ *
+ * Supports both:
+ *   - Three-level: skills/<category>/<skill-name>/SKILL.md  (category is a container)
+ *   - Two-level:   skills/<skill-name>/SKILL.md            (flat skill under "misc" category)
+ *
+ * Categories are identified by having a DESCRIPTION.md at the category level
+ * or by containing subdirectories with SKILL.md (three-level pattern).
+ * Skills without a parent category (flat skills) are grouped under the "misc" category.
+ */
+async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, string>, hubNames: Set<string>, disabledList: string[], usageStats: Map<string, UsageStats>) {
+  const allEntries = await readdir(skillsDir, { withFileTypes: true })
+  const dirNames = allEntries
+    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+    .map(e => e.name)
+
+  // Classify directories: categories vs. flat skills
+  const categoryDirs: { name: string; description: string }[] = []
+  const flatSkills: { name: string; skillMd: string; source: string }[] = []
+
+  for (const dirName of dirNames) {
+    const catDir = join(skillsDir, dirName)
+    const hasDesc = await safeReadFile(join(catDir, 'DESCRIPTION.md'))
+    const hasSkillMd = await safeReadFile(join(catDir, 'SKILL.md'))
+    const subEntries = await readdir(catDir, { withFileTypes: true })
+    const subDirs = subEntries.filter(se => se.isDirectory())
+
+    // Priority: SKILL.md at top level → flat skill
+    //           DESCRIPTION.md or subdirs (without SKILL.md) → category
+    if (hasSkillMd) {
+      // Flat skill: has SKILL.md at the top level (two-level pattern)
+      // Could also have subdirectories (references/, scripts/, etc.)
+      flatSkills.push({
+        name: dirName,
+        skillMd: hasSkillMd,
+        source: getSkillSource(dirName, bundledManifest, hubNames),
+      })
+    } else if (!!hasDesc || subDirs.length > 0) {
+      // True category: has DESCRIPTION.md or subdirs, but no SKILL.md at top level
+      const catDescription = hasDesc ? hasDesc.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 100) : ''
+      categoryDirs.push({ name: dirName, description: catDescription })
+    }
+  }
+
+  // Build categories with their nested skills
+  const categories: any[] = []
+
+  for (const cat of categoryDirs) {
+    const catDir = join(skillsDir, cat.name)
+    const subEntries = await readdir(catDir, { withFileTypes: true })
+    const skills: any[] = []
+    for (const se of subEntries) {
+      if (!se.isDirectory()) continue
+      const skillMd = await safeReadFile(join(catDir, se.name, 'SKILL.md'))
+      if (skillMd) {
+        const source = getSkillSource(se.name, bundledManifest, hubNames)
+        let modified = false
+        if (source === 'builtin') {
+          const manifestHash = bundledManifest.get(se.name)
+          if (manifestHash) {
+            const currentHash = await dirHash(join(catDir, se.name))
+            modified = currentHash !== manifestHash
+          }
+        }
+        const usage = usageStats.get(se.name)
+        skills.push({
+          name: se.name,
+          description: extractDescription(skillMd),
+          enabled: !disabledList.includes(se.name),
+          source,
+          modified: modified || undefined,
+          patchCount: usage?.patch_count,
+          useCount: usage?.use_count,
+          viewCount: usage?.view_count,
+          pinned: usage?.pinned || undefined,
+        })
+      }
+    }
+    if (skills.length > 0) {
+      categories.push({ name: cat.name, description: cat.description, skills })
+    }
+  }
+
+  // Group flat skills into a "misc" (雜項) category
+  if (flatSkills.length > 0) {
+    const miscSkills: any[] = []
+    for (const fs of flatSkills) {
+      const usage = usageStats.get(fs.name)
+      miscSkills.push({
+        name: fs.name,
+        description: extractDescription(fs.skillMd),
+        enabled: !disabledList.includes(fs.name),
+        source: fs.source,
+        modified: undefined,
+        patchCount: usage?.patch_count,
+        useCount: usage?.use_count,
+        viewCount: usage?.view_count,
+        pinned: usage?.pinned || undefined,
+      })
+    }
+    miscSkills.sort((a: any, b: any) => a.name.localeCompare(b.name))
+    categories.push({
+      name: 'misc',
+      description: '雜項',
+      skills: miscSkills,
+    })
+  }
+
+  categories.sort((a, b) => a.name.localeCompare(b.name))
+  for (const cat of categories) { cat.skills.sort((a: any, b: any) => a.name.localeCompare(b.name)) }
+  return categories
+}
+
 export async function list(ctx: any) {
   const skillsDir = join(getHermesDir(), 'skills')
   try {
@@ -93,52 +207,8 @@ export async function list(ctx: any) {
     const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
     const usageStats = readUsageStats(await safeReadFile(join(skillsDir, '.usage.json')))
 
-    const entries = await readdir(skillsDir, { withFileTypes: true })
-    const categories: any[] = []
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-      const catDir = join(skillsDir, entry.name)
-      const catDesc = await safeReadFile(join(catDir, 'DESCRIPTION.md'))
-      const catDescription = catDesc ? catDesc.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 100) : ''
-      const skillEntries = await readdir(catDir, { withFileTypes: true })
-      const skills: any[] = []
-      for (const se of skillEntries) {
-        if (!se.isDirectory()) continue
-        const skillMd = await safeReadFile(join(catDir, se.name, 'SKILL.md'))
-        if (skillMd) {
-          const source = getSkillSource(se.name, bundledManifest, hubNames)
-
-          // Check if builtin skill has been user-modified
-          let modified = false
-          if (source === 'builtin') {
-            const manifestHash = bundledManifest.get(se.name)
-            if (manifestHash) {
-              const currentHash = await dirHash(join(catDir, se.name))
-              modified = currentHash !== manifestHash
-            }
-          }
-
-          const usage = usageStats.get(se.name)
-
-          skills.push({
-            name: se.name,
-            description: extractDescription(skillMd),
-            enabled: !disabledList.includes(se.name),
-            source,
-            modified: modified || undefined,
-            patchCount: usage?.patch_count,
-            useCount: usage?.use_count,
-            viewCount: usage?.view_count,
-            pinned: usage?.pinned || undefined,
-          })
-        }
-      }
-      if (skills.length > 0) {
-        categories.push({ name: entry.name, description: catDescription, skills })
-      }
-    }
-    categories.sort((a, b) => a.name.localeCompare(b.name))
-    for (const cat of categories) { cat.skills.sort((a: any, b: any) => a.name.localeCompare(b.name)) }
+    // Scan all skills (supports both two-level and three-level directory structures)
+    const categories = await scanSkillsDir(skillsDir, bundledManifest, hubNames, disabledList, usageStats)
 
     // Read archived skills from .archive/
     const archived: any[] = []
@@ -194,7 +264,10 @@ export async function toggle(ctx: any) {
 
 export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
-  const skillDir = join(getHermesDir(), 'skills', category, skill)
+  const hd = getHermesDir()
+  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
+  const realDir = category === 'misc' ? skill : join(category, skill)
+  const skillDir = join(hd, 'skills', realDir)
   try {
     const allFiles = await listFilesRecursive(skillDir, '')
     const files = allFiles.filter(f => f.path !== 'SKILL.md')
@@ -208,7 +281,12 @@ export async function listFiles(ctx: any) {
 export async function readFile_(ctx: any) {
   const filePath = (ctx.params as any).path
   const hd = getHermesDir()
-  const fullPath = resolve(join(hd, 'skills', filePath))
+  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
+  let realPath = filePath
+  if (filePath.startsWith('misc/')) {
+    realPath = filePath.slice(5)
+  }
+  const fullPath = resolve(join(hd, 'skills', realPath))
   if (!fullPath.startsWith(join(hd, 'skills'))) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }

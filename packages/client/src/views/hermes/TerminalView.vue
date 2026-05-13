@@ -265,6 +265,13 @@ const terminalBg = computed(
 
 // ─── WebSocket ──────────────────────────────────────────────────
 
+function formatHostForPort(hostname: string, port: number): string {
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return `${hostname}:${port}`;
+  }
+  return hostname.includes(":") ? `[${hostname}]:${port}` : `${hostname}:${port}`;
+}
+
 function buildWsUrl(): string {
   const token = getApiKey();
   const base = getBaseUrlValue();
@@ -282,7 +289,7 @@ function buildWsUrl(): string {
 
   // Dev mode: connect directly to backend port; Production: same host
   const host = import.meta.env.DEV
-    ? `${location.hostname}:8648`
+    ? formatHostForPort(location.hostname, 8648)
     : location.host;
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }

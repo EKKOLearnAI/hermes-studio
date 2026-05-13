@@ -70,7 +70,6 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
   reasoning: 'TEXT',
   reasoning_details: 'TEXT',
   reasoning_content: 'TEXT',
-  codex_reasoning_items: 'TEXT',
 }
 
 export const MESSAGES_INDEX = 'CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)'
@@ -88,6 +87,21 @@ export const COMPRESSION_SNAPSHOT_SCHEMA: Record<string, string> = {
   message_count_at_time: 'INTEGER NOT NULL DEFAULT 0',
   updated_at: 'INTEGER NOT NULL',
 }
+
+// ============================================================================
+// Model Context (model-context.ts)
+// ============================================================================
+
+export const MODEL_CONTEXT_TABLE = 'model_context'
+
+export const MODEL_CONTEXT_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  provider: 'TEXT NOT NULL',
+  model: 'TEXT NOT NULL',
+  context_limit: 'INTEGER NOT NULL',
+}
+
+export const MODEL_CONTEXT_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_model_context_provider_model ON model_context(provider, model)'
 
 // ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
@@ -468,6 +482,13 @@ export function initAllHermesTables(retryCount = 0): void {
 
     // Compression snapshot
     syncTable(COMPRESSION_SNAPSHOT_TABLE, COMPRESSION_SNAPSHOT_SCHEMA)
+
+    // Model context
+    syncTable(MODEL_CONTEXT_TABLE, MODEL_CONTEXT_SCHEMA, {
+      indexes: {
+        idx_model_context_provider_model: MODEL_CONTEXT_INDEX,
+      }
+    })
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)

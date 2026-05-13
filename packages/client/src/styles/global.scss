@@ -2,12 +2,67 @@
 @use 'code-block';
 @use 'liquid-glass';
 
+@font-face {
+  font-family: 'Comic Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ComicNeue-Bold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'ZCOOL KuaiLe';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ZCOOLKuaiLe-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ZenMaruGothic-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ZenMaruGothic-Bold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Gaegu';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Gaegu-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Gaegu';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/Gaegu-Bold.ttf') format('truetype');
+}
+
 *,
 *::before,
 *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 :root {
@@ -45,6 +100,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+
 
 code, pre, .mono {
   font-family: $font-code;
@@ -204,7 +261,7 @@ a {
 .hamburger-btn {
   display: none;
   position: fixed;
-  top: 16px;
+  top: 10px;
   left: 12px;
   z-index: 99;
   width: 36px;
@@ -229,7 +286,7 @@ a {
   }
 
   .page-header {
-    padding: 16px 12px 16px 52px;
+    padding: 16px 12px 16px 52px !important;
   }
 
   .input-sm,

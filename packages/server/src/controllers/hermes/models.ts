@@ -4,9 +4,120 @@ import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/herme
 import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
-import { readAppConfig } from '../../services/app-config'
+import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
+import { getDb } from '../../db'
+import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
+
+type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[] }
+type ModelVisibility = Record<string, ModelVisibilityRule>
+
+const RESERVED_ALIAS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+function isSafeAliasKey(value: string): boolean {
+  const trimmed = value.trim()
+  return !!trimmed && trimmed.length <= 512 && !RESERVED_ALIAS_KEYS.has(trimmed)
+}
+
+function createAliasMap(): Record<string, string> {
+  return Object.create(null) as Record<string, string>
+}
+
+function createProviderAliasMap(): Record<string, Record<string, string>> {
+  return Object.create(null) as Record<string, Record<string, string>>
+}
+
+function normalizeAliases(value: unknown): Record<string, Record<string, string>> {
+  const normalized = createProviderAliasMap()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized
+  for (const [provider, models] of Object.entries(value as Record<string, unknown>)) {
+    if (!isSafeAliasKey(provider) || !models || typeof models !== 'object' || Array.isArray(models)) continue
+    for (const [model, alias] of Object.entries(models as Record<string, unknown>)) {
+      if (!isSafeAliasKey(model) || typeof alias !== 'string') continue
+      const trimmed = alias.trim()
+      if (!trimmed || trimmed.length > 512) continue
+      if (!Object.hasOwn(normalized, provider)) normalized[provider] = createAliasMap()
+      normalized[provider][model] = trimmed
+    }
+  }
+  return normalized
+}
+
+function applyModelAliases<T extends { provider: string; models: string[]; model_meta?: Record<string, ModelMeta> }>(groups: T[], aliases: Record<string, Record<string, string>>): T[] {
+  return groups.map((group) => {
+    const providerAliases = aliases[group.provider]
+    if (!providerAliases) return group
+    const modelMeta: Record<string, ModelMeta> = { ...(group.model_meta || {}) }
+    let changed = false
+    for (const model of group.models) {
+      const alias = providerAliases[model]
+      if (!alias) continue
+      modelMeta[model] = { ...(modelMeta[model] || {}), alias }
+      changed = true
+    }
+    return changed ? { ...group, model_meta: modelMeta } : group
+  })
+}
+
+function uniqueStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  return Array.from(new Set(values.map(v => String(v || '').trim()).filter(Boolean)))
+}
+
+function normalizeModelVisibility(input: unknown): ModelVisibility {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const out: ModelVisibility = {}
+  for (const [provider, rawRule] of Object.entries(input as Record<string, unknown>)) {
+    const providerKey = String(provider || '').trim()
+    if (!providerKey || !rawRule || typeof rawRule !== 'object' || Array.isArray(rawRule)) continue
+    const rule = rawRule as { mode?: unknown; models?: unknown }
+    const mode = rule.mode === 'include' ? 'include' : 'all'
+    const models = uniqueStrings(rule.models)
+    if (mode === 'include') {
+      if (models.length > 0) out[providerKey] = { mode, models }
+    } else {
+      out[providerKey] = { mode: 'all', models: [] }
+    }
+  }
+  return out
+}
+
+function filterModelsForProvider(provider: string, models: string[], visibility: ModelVisibility): string[] {
+  const rule = visibility[provider]
+  if (!rule || rule.mode !== 'include') return models
+  const allowed = new Set(rule.models)
+  const visible = models.filter(model => allowed.has(model))
+  // If a stale hand-edited rule references models that are no longer present,
+  // fail open so the provider remains recoverable from the Web UI.
+  return visible.length > 0 ? visible : models
+}
+
+function applyModelVisibility(groups: AvailableGroup[], visibility: ModelVisibility): AvailableGroup[] {
+  return groups
+    .map(group => {
+      const availableModels = group.available_models || group.models
+      return {
+        ...group,
+        available_models: availableModels,
+        models: filterModelsForProvider(group.provider, availableModels, visibility),
+      }
+    })
+    .filter(group => group.models.length > 0)
+}
+
+function resolveVisibleDefault(defaultModel: string, defaultProvider: string, groups: AvailableGroup[]) {
+  if (defaultModel) {
+    const explicit = groups.find(group => group.provider === defaultProvider && group.models.includes(defaultModel))
+    if (explicit) return { defaultModel, defaultProvider }
+    const inferred = groups.find(group => group.models.includes(defaultModel))
+    if (inferred) return { defaultModel, defaultProvider: inferred.provider }
+  }
+  const fallback = groups.find(group => group.models.length > 0)
+  return { defaultModel: fallback?.models[0] || '', defaultProvider: fallback?.provider || '' }
+}
+
 
 // Copilot 授权检测：复用同一套 token 解析逻辑（含 ~/.config/github-copilot/apps.json
 // 与 ghp_ PAT 跳过），与 getCopilotModels 行为一致，避免出现"模型能拉到却被判未授权"。
@@ -39,7 +150,7 @@ export async function getAvailable(ctx: any) {
       currentDefault = modelSection.trim()
     }
 
-    const groups: Array<{ provider: string; label: string; base_url: string; models: string[]; api_key: string; model_meta?: Record<string, { preview?: boolean; disabled?: boolean }> }> = []
+    const groups: AvailableGroup[] = []
     const seenProviders = new Set<string>()
 
     let envContent = ''
@@ -55,10 +166,11 @@ export async function getAvailable(ctx: any) {
       const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
       return match?.[1]?.trim() || ''
     }
-    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, model_meta?: Record<string, { preview?: boolean; disabled?: boolean }>) => {
+    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
-      groups.push({ provider, label, base_url, models: [...models], api_key, ...(model_meta ? { model_meta } : {}) })
+      const availableModels = [...models]
+      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
     }
 
     const isOAuthAuthorized = (providerKey: string): boolean => {
@@ -67,12 +179,14 @@ export async function getAvailable(ctx: any) {
         if (!existsSync(authPath)) return false
         const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
         const provider = auth.providers?.[providerKey]
-        if (!provider) return false
-        // Codex: providers.openai-codex.tokens.access_token
-        // Nous:  providers.nous.access_token
+        const pool = auth.credential_pool?.[providerKey]
+        // Legacy OAuth providers are stored under providers.*; newer Hermes
+        // credential pools store Codex-style OAuth entries under
+        // credential_pool.*. Treat either shape as an authorized provider.
         return !!(
-          provider.tokens?.access_token ||
-          provider.access_token
+          provider?.tokens?.access_token ||
+          provider?.access_token ||
+          (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
         )
       } catch { return false }
     }
@@ -91,6 +205,8 @@ export async function getAvailable(ctx: any) {
     // 时也不返回。避免误把 VS Code/gh CLI 用户的全局凭证当作 hermes provider。
     const appConfig = await readAppConfig()
     const copilotEnabled = appConfig.copilotEnabled === true
+    const modelAliases = normalizeAliases(appConfig.modelAliases)
+    const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
 
     // 兼容老用户：上一版本会"自动 fallback discovery"出 Copilot；升级后这些用户的
     // config.yaml 可能仍把 model.default 指向某个 copilot 模型。若此时 copilot 已不
@@ -118,7 +234,7 @@ export async function getAvailable(ctx: any) {
       }
       const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
       let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
-      let modelMeta: Record<string, { preview?: boolean; disabled?: boolean }> | undefined
+      let modelMeta: Record<string, ModelMeta> | undefined
       if (providerKey === 'copilot') {
         const live = await getCopilotLive()
         if (live.length > 0) {
@@ -148,7 +264,7 @@ export async function getAvailable(ctx: any) {
       }
       if (modelsList.length > 0) {
         const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
-        addGroup(providerKey, label, baseUrl, modelsList, apiKey, modelMeta)
+        addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
       }
     }
 
@@ -164,23 +280,27 @@ export async function getAvailable(ctx: any) {
         const bareKey = cp.name.trim().toLowerCase().replace(/ /g, '-')
         const builtinPreset = PROVIDER_PRESETS.find(p => p.value === bareKey)
         let models = builtinPreset?.models?.length ? [...builtinPreset.models] : [cp.model]
-        if (cp.api_key) {
+        // Skip dynamic fetch for builtin presets — their model list is maintained in providers.ts
+        if (!builtinPreset && cp.api_key) {
           try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
         }
         const label = builtinPreset?.label || cp.name
         const presetBaseUrl = builtinPreset?.base_url || ''
-        return { providerKey, label, base_url: presetBaseUrl || baseUrl, models, api_key: cp.api_key || '' }
+        return { providerKey, label, base_url: presetBaseUrl || baseUrl, models, api_key: cp.api_key || '', builtin: !!builtinPreset }
       }),
     )
 
     for (const result of customFetches) {
       if (result.status === 'fulfilled' && result.value) {
-        const { providerKey, label, base_url, models, api_key: cpApiKey } = result.value
-        addGroup(providerKey, label, base_url, models, cpApiKey)
+        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin } = result.value as any
+        addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin)
       }
     }
 
     for (const g of groups) { g.models = Array.from(new Set(g.models)) }
+    const groupsWithAliases = applyModelAliases(groups, modelAliases)
+    const visibleGroups = applyModelVisibility(groupsWithAliases, modelVisibility)
+    const visibleDefault = resolveVisibleDefault(currentDefault, currentDefaultProvider, visibleGroups)
 
     // 动态拉一次 copilot 模型用于 allProviders 展示（同一请求复用缓存）
     // 未启用 Copilot 时跳过拉取，避免空跑网络请求。
@@ -193,14 +313,92 @@ export async function getAvailable(ctx: any) {
       base_url: p.base_url,
       models: p.value === 'copilot' && liveCopilotIds.length > 0 ? liveCopilotIds : p.models,
     }))
+    const allProviders = applyModelAliases(allProvidersBase, modelAliases)
 
     if (groups.length === 0) {
       const fallback = buildModelGroups(config)
-      ctx.body = { ...fallback, allProviders: allProvidersBase }
+      const fallbackGroups: AvailableGroup[] = fallback.groups.map(group => {
+        const models = group.models.map(model => model.id)
+        return {
+          provider: group.provider,
+          label: group.provider,
+          base_url: '',
+          models,
+          available_models: models,
+          api_key: '',
+        }
+      })
+      const fallbackGroupsWithAliases = applyModelAliases(fallbackGroups, modelAliases)
+      const visibleFallbackGroups = applyModelVisibility(fallbackGroupsWithAliases, modelVisibility)
+      const fallbackDefault = resolveVisibleDefault(fallback.default, currentDefaultProvider, visibleFallbackGroups)
+      ctx.body = {
+        default: fallbackDefault.defaultModel,
+        default_provider: fallbackDefault.defaultProvider,
+        groups: visibleFallbackGroups,
+        allProviders,
+        model_aliases: modelAliases,
+        model_visibility: modelVisibility,
+      }
       return
     }
 
-    ctx.body = { default: currentDefault, default_provider: currentDefaultProvider, groups, allProviders: allProvidersBase }
+    ctx.body = {
+      default: visibleDefault.defaultModel,
+      default_provider: visibleDefault.defaultProvider,
+      groups: visibleGroups,
+      allProviders,
+      model_aliases: modelAliases,
+      model_visibility: modelVisibility,
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+
+export async function setModelAlias(ctx: any) {
+  const body = ctx.request.body
+  const provider = body && typeof body === 'object' && !Array.isArray(body) ? body.provider : undefined
+  const model = body && typeof body === 'object' && !Array.isArray(body) ? body.model : undefined
+  const alias = body && typeof body === 'object' && !Array.isArray(body) ? body.alias : undefined
+
+  if (typeof provider !== 'string' || typeof model !== 'string' || (alias !== undefined && typeof alias !== 'string')) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider, model, or alias' }
+    return
+  }
+
+  const cleanProvider = provider.trim()
+  const cleanModel = model.trim()
+  const cleanAlias = (alias || '').trim()
+
+  if (!isSafeAliasKey(cleanProvider) || !isSafeAliasKey(cleanModel)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid provider or model' }
+    return
+  }
+
+  if (cleanAlias.length > 512) {
+    ctx.status = 400
+    ctx.body = { error: 'Alias is too long' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const modelAliases = normalizeAliases(appConfig.modelAliases)
+    if (cleanAlias) {
+      if (!Object.hasOwn(modelAliases, cleanProvider)) modelAliases[cleanProvider] = createAliasMap()
+      modelAliases[cleanProvider][cleanModel] = cleanAlias
+    } else {
+      if (Object.hasOwn(modelAliases, cleanProvider)) delete modelAliases[cleanProvider][cleanModel]
+      if (Object.hasOwn(modelAliases, cleanProvider) && Object.keys(modelAliases[cleanProvider]).length === 0) {
+        delete modelAliases[cleanProvider]
+      }
+    }
+    await writeAppConfig({ modelAliases })
+    ctx.body = { success: true, model_aliases: modelAliases }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -231,6 +429,166 @@ export async function setConfigModel(ctx: any) {
     if (reqProvider) { config.model.provider = reqProvider }
     await writeConfigYaml(config)
     ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/**
+ * 设置模型上下文配置（UPSERT：存在则更新，不存在则插入）
+ * 支持路径参数和查询参数两种方式
+ */
+export async function updateModelContext(ctx: any) {
+  // 支持两种方式：
+  // 1. 路径参数: /api/hermes/model-context/:provider/:model
+  // 2. 查询参数: /api/hermes/model-context?provider=xxx&model=xxx
+  let provider: string | undefined
+  let model: string | undefined
+
+  // 优先从路径参数获取
+  if (ctx.params.provider && ctx.params.model) {
+    provider = ctx.params.provider
+    model = ctx.params.model
+  } else {
+    // 从查询参数获取
+    const query = ctx.query as { provider?: string; model?: string }
+    provider = query.provider
+    model = query.model
+  }
+
+  // 如果没有参数，从请求体获取
+  if (!provider || !model) {
+    const body = ctx.request.body as { provider?: string; model?: string; context_limit?: number }
+    provider = body.provider
+    model = body.model
+  }
+
+  const { context_limit } = ctx.request.body as { context_limit: number }
+
+  if (!provider || !model || !context_limit) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing required fields: provider, model, context_limit' }
+    return
+  }
+
+  if (typeof context_limit !== 'number' || context_limit <= 0) {
+    ctx.status = 400
+    ctx.body = { error: 'Context limit must be a positive number' }
+    return
+  }
+
+  try {
+    const db = getDb()
+    if (!db) {
+      ctx.status = 500
+      ctx.body = { error: 'Database not available' }
+      return
+    }
+
+    // 使用 REPLACE 实现 UPSERT：存在则替换，不存在则插入
+    db.prepare(
+      `REPLACE INTO ${MODEL_CONTEXT_TABLE} (provider, model, context_limit) VALUES (?, ?, ?)`
+    ).run(provider, model, context_limit)
+
+    // 查询并返回更新后的数据
+    const row = db.prepare(
+      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
+    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number }
+
+    ctx.body = {
+      success: true,
+      data: row
+    }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/**
+ * 查询模型上下文配置
+ */
+export async function getModelContext(ctx: any) {
+  // 支持两种方式：
+  // 1. 路径参数: /api/hermes/model-context/:provider/:model
+  // 2. 查询参数: /api/hermes/model-context?provider=xxx&model=xxx
+  let provider: string | undefined
+  let model: string | undefined
+
+  // 优先从路径参数获取
+  if (ctx.params.provider && ctx.params.model) {
+    provider = ctx.params.provider
+    model = ctx.params.model
+  } else {
+    // 从查询参数获取
+    const query = ctx.query as { provider?: string; model?: string }
+    provider = query.provider
+    model = query.model
+  }
+
+  if (!provider || !model) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing provider or model parameter' }
+    return
+  }
+
+  try {
+    const db = getDb()
+    if (!db) {
+      ctx.status = 500
+      ctx.body = { error: 'Database not available' }
+      return
+    }
+
+    const row = db.prepare(
+      `SELECT id, provider, model, context_limit FROM ${MODEL_CONTEXT_TABLE} WHERE provider = ? AND model = ?`
+    ).get(provider, model) as { id: number; provider: string; model: string; context_limit: number } | undefined
+
+    if (!row) {
+      ctx.status = 404
+      ctx.body = { error: 'Model context not found' }
+      return
+    }
+
+    ctx.body = { data: { ...row, limit: row.context_limit } }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+
+export async function setModelVisibility(ctx: any) {
+  const { provider, mode, models } = ctx.request.body as { provider?: string; mode?: string; models?: string[] }
+  const providerKey = String(provider || '').trim()
+  if (!providerKey) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing provider' }
+    return
+  }
+  if (mode !== 'all' && mode !== 'include') {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid visibility mode' }
+    return
+  }
+  const selectedModels = uniqueStrings(models)
+  if (mode === 'include' && selectedModels.length === 0) {
+    ctx.status = 400
+    ctx.body = { error: 'Select at least one model' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
+    if (mode === 'all') {
+      delete modelVisibility[providerKey]
+    } else {
+      modelVisibility[providerKey] = { mode: 'include', models: selectedModels }
+    }
+    const saved = await writeAppConfig({ modelVisibility })
+    ctx.body = { success: true, model_visibility: normalizeModelVisibility(saved.modelVisibility) }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

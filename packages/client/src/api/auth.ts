@@ -19,7 +19,9 @@ export async function loginWithPassword(username: string, password: string): Pro
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.error || 'Login failed')
+    const err: any = new Error(data.error || 'Login failed')
+    err.status = res.status
+    throw err
   }
   const data = await res.json()
   return data.token
@@ -50,4 +52,29 @@ export async function removePassword(): Promise<void> {
   return request('/api/auth/password', {
     method: 'DELETE',
   })
+}
+
+export interface LockedIp {
+  ip: string
+  type: 'password' | 'token'
+  failures: number
+  lockedUntil: number
+}
+
+export async function fetchLockedIps(): Promise<LockedIp[]> {
+  const res = await request<{ locks: LockedIp[] }>('/api/auth/locked-ips')
+  return res.locks
+}
+
+export async function unlockSpecificIp(ip: string): Promise<void> {
+  return request(`/api/auth/locked-ips?ip=${encodeURIComponent(ip)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function unlockAllIps(): Promise<number> {
+  const res = await request<{ count: number }>('/api/auth/locked-ips', {
+    method: 'DELETE',
+  })
+  return res.count
 }

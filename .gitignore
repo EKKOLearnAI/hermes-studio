@@ -18,6 +18,10 @@ ROADMAP.md
 packages/server/data/
 packages/server/node_modules/
 .hermes-web-ui/
+
+# Hermes config files (should be in user data directory, not project root)
+config.yaml
+.env
 hermes_data/
 hermes-dependencies.md
 # Editor directories and files
@@ -31,3 +35,6 @@ hermes-dependencies.md
 *.sln
 *.sw?
 .superpowers/
+CLAUDE.md
+# Client source map artifacts
+packages/client/src/**/*.js

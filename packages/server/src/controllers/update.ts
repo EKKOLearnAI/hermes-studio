@@ -1,69 +1,99 @@
 import { execFileSync, spawn } from 'child_process'
-import { dirname, join } from 'path'
+import { existsSync } from 'fs'
+import { delimiter, dirname, join } from 'path'
 
 function getNodeBinDir() {
   return dirname(process.execPath)
 }
 
-function getNpmBin() {
-  return join(getNodeBinDir(), process.platform === 'win32' ? 'npm.cmd' : 'npm')
+function getNodePrefix() {
+  return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
 }
 
-function getCliBin() {
-  return join(getNodeBinDir(), process.platform === 'win32' ? 'hermes-web-ui.cmd' : 'hermes-web-ui')
+function getNpmCliPath() {
+  const prefix = getNodePrefix()
+  const candidates = process.platform === 'win32'
+    ? [
+        join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        join(getNodeBinDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      ]
+    : [join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  const npmCli = candidates.find(existsSync)
+
+  if (!npmCli) {
+    throw new Error(`Unable to locate npm CLI for ${process.execPath}; checked ${candidates.join(', ')}`)
+  }
+
+  return npmCli
 }
 
-function getWindowsShell() {
-  return process.env.ComSpec || 'cmd.exe'
+function getGlobalPackageBin(prefix: string) {
+  return process.platform === 'win32'
+    ? join(prefix, 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+    : join(prefix, 'lib', 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
 }
 
-function quoteForWindowsCommand(value: string) {
-  return `"${value.replace(/"/g, '""')}"`
+function getCurrentNodeEnv() {
+  return {
+    ...process.env,
+    PATH: [getNodeBinDir(), process.env.PATH].filter(Boolean).join(delimiter),
+    npm_node_execpath: process.execPath,
+  }
+}
+
+function runNpm(args: string[], options: { timeout?: number } = {}) {
+  return execFileSync(process.execPath, [getNpmCliPath(), ...args], {
+    encoding: 'utf-8',
+    timeout: options.timeout,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: getCurrentNodeEnv(),
+  }).trim()
+}
+
+function getGlobalPrefix() {
+  return runNpm(['prefix', '-g'])
+}
+
+function getGlobalCliScript() {
+  return getGlobalPackageBin(getGlobalPrefix())
 }
 
 function runUpdateInstall() {
-  if (process.platform === 'win32') {
-    return execFileSync(getWindowsShell(), ['/d', '/s', '/c', `${quoteForWindowsCommand(getNpmBin())} install -g hermes-web-ui@latest`], {
-      encoding: 'utf-8',
-      timeout: 120000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-  }
-
-  return execFileSync(getNpmBin(), ['install', '-g', 'hermes-web-ui@latest'], {
-    encoding: 'utf-8',
-    timeout: 120000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  return runNpm(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
 }
 
 function spawnRestart(port: string) {
-  if (process.platform === 'win32') {
-    return spawn(getWindowsShell(), ['/d', '/s', '/c', `${quoteForWindowsCommand(getCliBin())} restart --port ${port}`], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-  }
+  const cli = getGlobalCliScript()
 
-  return spawn(getCliBin(), ['restart', '--port', port], {
+  return spawn(process.execPath, [cli, 'restart', '--port', port], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    env: getCurrentNodeEnv(),
   })
 }
 
 export async function handleUpdate(ctx: any) {
   try {
     const output = runUpdateInstall()
-    ctx.body = { success: true, message: output.trim() }
+
+    ctx.body = {
+      success: true,
+      message: output.trim() || 'hermes-web-ui updated successfully',
+    }
+
     setTimeout(() => {
-      spawnRestart(process.env.PORT || '8648').unref()
-      process.exit(0)
-    }, 2000)
+      try {
+        spawnRestart(process.env.PORT || '8648').unref()
+      } finally {
+        process.exit(0)
+      }
+    }, 3000)
   } catch (err: any) {
     ctx.status = 500
-    ctx.body = { success: false, message: err.stderr || err.message }
+    ctx.body = {
+      success: false,
+      message: err.stderr?.toString() || err.message || String(err),
+    }
   }
 }

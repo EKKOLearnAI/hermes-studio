@@ -26,19 +26,10 @@ const codexActionLoading = ref(false)
 const codexStatus = ref<CodexStatusResult>({ authenticated: false, accounts: [] })
 const selectedCodexAccountId = ref<string | null>(null)
 
-const isCustom = (provider: string) => provider.startsWith('custom:')
-const isCodex = (provider: string) => provider === 'openai-codex'
-
-const codexProvider = computed(() =>
-  modelsStore.providers.find(item => item.provider === 'openai-codex'),
-)
-
-const codexAccountOptions = computed(() =>
-  (codexStatus.value.accounts || []).map(item => ({
-    label: item.email ? `${item.label} (${item.email})` : item.label,
-    value: item.id,
-  })),
-)
+const isCustom = (provider: string) => {
+  const g = modelsStore.providers.find(p => p.provider === provider)
+  return !g?.builtin && provider.startsWith('custom:')
+}
 
 function getEditKey(provider: string): string {
   if (!(provider in editKeys.value)) {

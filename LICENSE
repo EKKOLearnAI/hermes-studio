@@ -1,21 +1,48 @@
-MIT License
+Business Source License 1.1
 
-Copyright (c) 2025 EKKOLearnAI
+Parameters
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licensor:             EKKOLearnAI
+Licensed Work:        Hermes Web UI
+Additional Use Grant: You may use the Licensed Work for non-commercial purposes,
+                      including personal use, education, and research.
+                      Commercial use (including but not limited to selling,
+                      licensing, SaaS hosting, or embedding in a commercial
+                      product) requires a separate commercial license from the
+                      Licensor.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Change Date:          2029-05-10
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Change License:       Apache License 2.0
+
+Notice
+
+The Licensed Work is provided under the Business Source License 1.1 (BSL 1.1).
+You may not use the Licensed Work except in compliance with the License.
+
+You may obtain a copy of the License at
+https://mariadb.com/bsl11/
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+For the purposes of this License:
+
+- "Licensed Work" refers to all source code, documentation, and associated
+  files in this repository.
+
+- "Non-commercial use" means use that is not primarily intended for or
+  directed toward commercial advantage or monetary compensation.
+
+- The Licensor (EKKOLearnAI) and its authorized representatives are not
+  subject to the Additional Use Grant restrictions and may use the Licensed
+  Work for any purpose, including commercial purposes, without limitation.
+
+On the Change Date (2029-05-10), this License will automatically convert to
+the Apache License 2.0, at which point all users may use the Licensed Work
+under the terms of the Apache License 2.0.

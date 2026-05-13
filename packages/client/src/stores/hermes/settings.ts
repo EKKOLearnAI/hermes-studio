@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as configApi from '@/api/hermes/config'
-import type { DisplayConfig, AgentConfig, MemoryConfig, SessionResetConfig, PrivacyConfig } from '@/api/hermes/config'
+import type { DisplayConfig, AgentConfig, MemoryConfig, SessionResetConfig, PrivacyConfig, ApprovalConfig } from '@/api/hermes/config'
 
 export const useSettingsStore = defineStore('settings', () => {
   const loading = ref(false)
@@ -12,6 +12,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const memory = ref<MemoryConfig>({})
   const sessionReset = ref<SessionResetConfig>({})
   const privacy = ref<PrivacyConfig>({})
+  const approvals = ref<ApprovalConfig>({})
   const telegram = ref<Record<string, any>>({})
   const discord = ref<Record<string, any>>({})
   const slack = ref<Record<string, any>>({})
@@ -32,6 +33,7 @@ export const useSettingsStore = defineStore('settings', () => {
       memory.value = data.memory || {}
       sessionReset.value = data.session_reset || {}
       privacy.value = data.privacy || {}
+      approvals.value = data.approvals || {}
       telegram.value = data.telegram || {}
       discord.value = data.discord || {}
       slack.value = data.slack || {}
@@ -59,6 +61,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'memory': memory.value = { ...memory.value, ...values }; break
       case 'session_reset': sessionReset.value = { ...sessionReset.value, ...values }; break
       case 'privacy': privacy.value = { ...privacy.value, ...values }; break
+      case 'approvals': approvals.value = { ...approvals.value, ...values }; break
       case 'telegram': telegram.value = { ...telegram.value, ...values }; break
       case 'discord': discord.value = { ...discord.value, ...values }; break
       case 'slack': slack.value = { ...slack.value, ...values }; break
@@ -86,7 +89,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     loading, saving,
-    display, agent, memory, sessionReset, privacy,
+    display, agent, memory, sessionReset, privacy, approvals,
     telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, weixin, platforms,
     fetchSettings, saveSection,
   }

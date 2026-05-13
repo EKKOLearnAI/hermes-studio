@@ -1,10 +1,12 @@
 import type { Context } from 'koa'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
-import { config } from '../../config'
 
 function getUpstream(profile: string): string {
   const mgr = getGatewayManagerInstance()
-  return mgr ? mgr.getUpstream(profile) : config.upstream.replace(/\/$/, '')
+  if (!mgr) {
+    throw new Error('GatewayManager not initialized')
+  }
+  return mgr.getUpstream(profile)
 }
 
 function getApiKey(profile: string): string | null {
@@ -13,7 +15,20 @@ function getApiKey(profile: string): string | null {
 }
 
 function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  // Use header/query from request first, then fall back to authoritative source
+  const requestedProfile = ctx.get('x-hermes-profile') || (ctx.query.profile as string)
+
+  if (requestedProfile) {
+    return requestedProfile
+  }
+
+  // Fallback: read from authoritative source (active_profile file)
+  try {
+    const { getActiveProfileName } = require('../../services/hermes/hermes-profile')
+    return getActiveProfileName()
+  } catch {
+    return 'default'
+  }
 }
 
 function buildHeaders(profile: string): Record<string, string> {
@@ -41,7 +56,15 @@ async function readUpstreamError(res: Response): Promise<unknown> {
 
 async function proxyRequest(ctx: Context, upstreamPath: string, method?: string): Promise<void> {
   const profile = resolveProfile(ctx)
-  const upstream = getUpstream(profile)
+  let upstream: string
+  try {
+    upstream = getUpstream(profile)
+  } catch (e: any) {
+    ctx.status = 503
+    ctx.set('Content-Type', 'application/json')
+    ctx.body = { error: { message: e?.message || 'GatewayManager not initialized' } }
+    return
+  }
   const params = new URLSearchParams(ctx.search || '')
   params.delete('token')
   const search = params.toString()

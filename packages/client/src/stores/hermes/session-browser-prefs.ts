@@ -7,8 +7,9 @@ const HUMAN_ONLY_KEY_PREFIX = 'hermes_human_only_v1_'
 
 function currentProfileName(): string {
   try {
-    return useProfilesStore().activeProfileName || localStorage.getItem('hermes_active_profile_name') || 'default'
+    return useProfilesStore().activeProfileName || 'default'
   } catch {
+    // Fallback during store initialization
     return localStorage.getItem('hermes_active_profile_name') || 'default'
   }
 }

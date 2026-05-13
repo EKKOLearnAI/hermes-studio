@@ -9,9 +9,11 @@ import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
 import { getToken, requireAuth } from './services/auth'
+import { initLoginLimiter } from './services/login-limiter'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
+import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
 import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
@@ -28,15 +30,54 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
+  console.error('FATAL: Uncaught exception')
+  console.error(err)
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
 })
 
 process.on('unhandledRejection', (reason) => {
+  console.error('FATAL: Unhandled rejection')
+  console.error(reason)
   logger.error(reason, 'Unhandled rejection')
+  process.exit(1)
 })
 
 let server: any = null
+let servers: any[] = []
+let chatRunServer: any = null
+
+interface ListenResult {
+  primary: any
+  servers: any[]
+}
+
+function listen(app: Koa, port: number, host: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const s = app.listen(port, host)
+    s.once('listening', () => resolve(s))
+    s.once('error', reject)
+  })
+}
+
+async function listenWithFallback(app: Koa, port: number, host?: string): Promise<ListenResult> {
+  const bindHost = host || '0.0.0.0'
+  console.log(`[bootstrap] listening on ${bindHost}:${port}`)
+  const primary = await listen(app, port, bindHost)
+  return { primary, servers: [primary] }
+}
+
+/**
+ * 安全获取网络接口信息（兼容 Termux/proot 环境）
+ * 在 proot 环境中 os.networkInterfaces() 会抛出权限错误（errno 13）
+ */
+function safeNetworkInterfaces() {
+  try {
+    return os.networkInterfaces()
+  } catch {
+    return {}
+  }
+}
 
 export async function bootstrap() {
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
@@ -44,6 +85,11 @@ export async function bootstrap() {
   await mkdir(config.dataDir, { recursive: true })
 
   const authToken = await getToken()
+  await initLoginLimiter()
+
+  // Debug: log environment variable
+  console.log('[bootstrap] HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN =', process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN)
+
   const app = new Koa()
 
   await initGatewayManager()
@@ -89,21 +135,23 @@ export async function bootstrap() {
   })
   console.log('[bootstrap] SPA fallback registered')
 
-  // Start server
-  console.log(`[bootstrap] listening on port ${config.port}`)
-  server = app.listen(config.port, '0.0.0.0')
+  // Start server using the configured bind host. Default is IPv4 for WSL stability.
+  const listenResult = await listenWithFallback(app, config.port, config.host)
+  server = listenResult.primary
+  servers = listenResult.servers
   console.log('[bootstrap] app.listen called')
 
-  setupTerminalWebSocket(server)
-  console.log('[bootstrap] terminal websocket setup')
+  setupTerminalWebSocket(servers)
+  setupKanbanEventsWebSocket(servers)
+  console.log('[bootstrap] terminal + kanban websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
-  const groupChatServer = new GroupChatServer(server)
+  const groupChatServer = new GroupChatServer(servers)
   setGroupChatServer(groupChatServer)
   groupChatServer.setGatewayManager(getGatewayManagerInstance())
 
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
-  const chatRunServer = new ChatRunSocket(groupChatServer.getIO(), getGatewayManagerInstance())
+  chatRunServer = new ChatRunSocket(groupChatServer.getIO(), getGatewayManagerInstance())
   setChatRunServer(chatRunServer)
   chatRunServer.init()
 
@@ -115,33 +163,38 @@ export async function bootstrap() {
   console.log('[bootstrap] session deleter started, profile=%s', activeProfile)
 
   // Catch-all: destroy upgrade requests not handled by terminal or Socket.IO
-  server.on('upgrade', (req: any, socket: any) => {
-    const url = new URL(req.url || '', `http://${req.headers.host}`)
-    if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
-      socket.destroy()
-    }
+  servers.forEach((httpServer) => {
+    httpServer.on('upgrade', (req: any, socket: any) => {
+      const url = new URL(req.url || '', `http://${req.headers.host}`)
+      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
+        socket.destroy()
+      }
+    })
   })
 
-  server.on('listening', () => {
-    const interfaces = os.networkInterfaces()
-    const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
-    console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
-    console.log(`Upstream: ${config.upstream}`)
-    console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
-    logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
-    logger.info('Upstream: %s', config.upstream)
+  const interfaces = safeNetworkInterfaces()
+  const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
+  console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
+  console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
+  logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
 
-    // Restore group chat agents after server is ready
-    groupChatServer.restoreWhenReady()
+  // Restore group chat agents after server is ready.
+  groupChatServer.restoreWhenReady()
+
+  servers.forEach((httpServer) => {
+    httpServer.on('error', (err: any) => {
+      console.error('[bootstrap] server error:', err.code || err.message)
+      logger.error({ err }, 'Server error')
+    })
   })
 
-  server.on('error', (err: any) => {
-    console.error('[bootstrap] server error:', err.code || err.message)
-    logger.error({ err }, 'Server error')
-  })
-
-  bindShutdown(server, groupChatServer)
+  bindShutdown(servers, groupChatServer, chatRunServer)
   startVersionCheck()
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('FATAL: Failed to start Hermes Web UI')
+  console.error(error)
+  logger.fatal(error, 'Fatal error during bootstrap')
+  process.exit(1)
+})

@@ -45,7 +45,6 @@ export interface HermesMessageRow {
   finish_reason: string | null
   reasoning: string | null
   reasoning_details?: string | null
-  codex_reasoning_items?: string | null
   reasoning_content?: string | null
 }
 
@@ -121,7 +120,6 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
     finish_reason: row.finish_reason != null ? String(row.finish_reason) : null,
     reasoning: row.reasoning != null ? String(row.reasoning) : null,
     reasoning_details: row.reasoning_details != null ? String(row.reasoning_details) : null,
-    codex_reasoning_items: row.codex_reasoning_items != null ? String(row.codex_reasoning_items) : null,
     reasoning_content: row.reasoning_content != null ? String(row.reasoning_content) : null,
   }
 }
@@ -318,7 +316,7 @@ export function getSessionDetail(id: string): HermesSessionDetailRow | null {
   const sessionRow = db.prepare(`SELECT * FROM ${SESSIONS_TABLE} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
   if (!sessionRow) return null
   const msgRows = db.prepare(
-    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp, id`,
+    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY id`,
   ).all(id) as Record<string, unknown>[]
   const session = mapSessionRow(sessionRow)
   return {
@@ -343,21 +341,20 @@ export function addMessage(msg: {
   reasoning?: string | null
   reasoning_details?: string | null
   reasoning_content?: string | null
-  codex_reasoning_items?: string | null
 }): number | undefined {
   if (!isSqliteAvailable()) return undefined
   const db = getDb()!
   const toolCallsJson = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null
   const result = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content, codex_reasoning_items)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.session_id, msg.role, msg.content,
     msg.tool_call_id ?? null, toolCallsJson, msg.tool_name ?? null,
     msg.timestamp ?? Math.floor(Date.now() / 1000),
     msg.token_count ?? null, msg.finish_reason ?? null,
     msg.reasoning ?? null, msg.reasoning_details ?? null,
-    msg.reasoning_content ?? null, msg.codex_reasoning_items ?? null,
+    msg.reasoning_content ?? null,
   )
   return result.lastInsertRowid as number
 }
@@ -375,13 +372,12 @@ export function addMessages(msgs: Array<{
   reasoning?: string | null
   reasoning_details?: string | null
   reasoning_content?: string | null
-  codex_reasoning_items?: string | null
 }>): void {
   if (!isSqliteAvailable() || msgs.length === 0) return
   const db = getDb()!
   const insert = db.prepare(
-    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content, codex_reasoning_items)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   db.exec('BEGIN')
   try {
@@ -393,7 +389,7 @@ export function addMessages(msgs: Array<{
         msg.timestamp ?? Math.floor(Date.now() / 1000),
         msg.token_count ?? null, msg.finish_reason ?? null,
         msg.reasoning ?? null, msg.reasoning_details ?? null,
-        msg.reasoning_content ?? null, msg.codex_reasoning_items ?? null,
+        msg.reasoning_content ?? null,
       )
     }
     db.exec('COMMIT')
@@ -445,9 +441,10 @@ export function getSessionDetailPaginated(
   ).get(id) as { total: number } | undefined
   const total = countResult?.total || 0
 
-  // Get paginated messages (newest first from DB, then reverse)
+  // Get paginated messages (newest first from DB, then reverse).
+  // Timestamp precision is mixed across message sources; id is insertion order.
   const msgRows = db.prepare(
-    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM ${MESSAGES_TABLE} WHERE session_id = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
   ).all(id, limit, offset) as Record<string, unknown>[]
 
   const session = mapSessionRow(sessionRow)

@@ -1,13 +1,13 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.8",
-  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model (Claude, GPT, Gemini, DeepSeek) web UI with Telegram, Discord, Slack, WhatsApp integration",
+  "version": "0.5.17",
+  "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-web-ui.git"
   },
-  "homepage": "https://github.com/EKKOLearnAI/hermes-web-ui",
-  "license": "MIT",
+  "homepage": "https://ekkolearnai.com",
+  "license": "BSL-1.1",
   "engines": {
     "node": ">=23.0.0"
   },
@@ -20,23 +20,11 @@
     "ai-agent",
     "ai-chat",
     "ai-dashboard",
-    "chatgpt",
-    "claude",
-    "openai",
-    "gemini",
-    "deepseek",
     "llm",
     "multi-model",
     "chat-ui",
     "dashboard",
     "self-hosted",
-    "telegram",
-    "discord",
-    "slack",
-    "whatsapp",
-    "matrix",
-    "feishu",
-    "weixin",
     "multi-platform",
     "vue3",
     "typescript"
@@ -48,13 +36,18 @@
     "start": "vite --host --port 8650",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite --host",
-    "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec TS_NODE_PROJECT=packages/server/tsconfig.json node -r ts-node/register packages/server/src/index.ts",
+    "dev:server": "nodemon",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "dev:website": "vite --config vite.config.website.ts",
+    "build:website": "vite build --config vite.config.website.ts",
+    "preview:website": "vite preview --config vite.config.website.ts",
+    "openapi:generate": "node scripts/generate-openapi.mjs",
+    "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
     "bin/",
@@ -63,12 +56,12 @@
   "dependencies": {
     "eventsource": "^4.1.0",
     "js-tiktoken": "^1.0.21",
+    "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "esbuild": "^0.27.0",
     "@koa/bodyparser": "^5.0.0",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.4.0",
@@ -93,6 +86,8 @@
     "@xterm/xterm": "^6.0.0",
     "axios": "^1.9.0",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "esbuild": "^0.27.0",
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.1",
     "jsdom": "^27.0.1",
@@ -110,13 +105,15 @@
     "qrcode": "^1.5.4",
     "sass": "^1.99.0",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "tsoa": "^7.0.0-alpha.0",
     "typescript": "~6.0.2",
     "vite": "^8.0.4",
     "vitest": "^3.2.4",
     "vue": "^3.5.32",
     "vue-i18n": "^11.3.2",
     "vue-router": "^4.6.4",
-    "vue-tsc": "^3.2.6",
+    "vue-tsc": "^3.2.8",
     "ws": "^8.20.0"
   }
 }

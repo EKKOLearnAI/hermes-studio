@@ -1,5 +1,4 @@
 import type { Context } from 'koa'
-import { config } from '../../config'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { updateUsage } from '../../db/hermes/usage-store'
 
@@ -49,20 +48,33 @@ async function waitForGatewayReady(upstream: string, timeoutMs: number = 5000): 
 
 /** Resolve profile name from request */
 function resolveProfile(ctx: Context): string {
-  return ctx.get('x-hermes-profile') || (ctx.query.profile as string) || 'default'
+  // Use header/query from request, but fall back to authoritative source if not provided
+  const requestedProfile = ctx.get('x-hermes-profile') || (ctx.query.profile as string)
+
+  if (requestedProfile) {
+    return requestedProfile
+  }
+
+  // Fallback: read from authoritative source (active_profile file)
+  try {
+    const { getActiveProfileName } = require('../../services/hermes/hermes-profile')
+    return getActiveProfileName()
+  } catch {
+    return 'default'
+  }
 }
 
 /** Resolve upstream URL for a request based on profile header/query */
 function resolveUpstream(ctx: Context): string {
   const mgr = getGatewayManager()
-  if (mgr) {
-    const profile = resolveProfile(ctx)
-    if (profile && profile !== 'default') {
-      return mgr.getUpstream(profile)
-    }
-    return mgr.getUpstream()
+  if (!mgr) {
+    throw new Error('GatewayManager not initialized')
   }
-  return config.upstream.replace(/\/$/, '')
+  const profile = resolveProfile(ctx)
+  if (profile && profile !== 'default') {
+    return mgr.getUpstream(profile)
+  }
+  return mgr.getUpstream()
 }
 
 function buildProxyHeaders(ctx: Context, upstream: string): Record<string, string> {
@@ -172,7 +184,14 @@ async function streamSSE(ctx: Context, res: Response, profile: string): Promise<
 
 export async function proxy(ctx: Context) {
   const profile = resolveProfile(ctx)
-  const upstream = resolveUpstream(ctx)
+  let upstream: string
+  try {
+    upstream = resolveUpstream(ctx)
+  } catch (e: any) {
+    ctx.status = 503
+    ctx.body = { error: { message: e?.message || 'GatewayManager not initialized' } }
+    return
+  }
   const upstreamPath = ctx.path.replace(/^\/api\/hermes\/v1/, '/v1').replace(/^\/api\/hermes/, '/api')
   const params = new URLSearchParams(ctx.search || '')
   params.delete('token')

@@ -1,8 +1,9 @@
 import { resolve, join } from 'path'
 import { homedir } from 'os'
 import { readFileSync, existsSync } from 'fs'
+import { detectHermesHome } from './hermes-path'
 
-const HERMES_BASE = process.env.HERMES_HOME || resolve(homedir(), '.hermes')
+const HERMES_BASE = detectHermesHome()
 
 /**
  * Get the active profile's home directory.

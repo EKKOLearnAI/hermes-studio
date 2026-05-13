@@ -16,6 +16,8 @@ import {
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
+import { useVoiceSettings } from "@/composables/useVoiceSettings";
+import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
@@ -79,6 +81,7 @@ const previewUrl = ref<string | null>(null);
 const chatStore = useChatStore();
 const settingsStore = useSettingsStore();
 const speech = useGlobalSpeech();
+const voiceSettings = useVoiceSettings();
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -351,60 +354,93 @@ const renderedToolResult = computed(() => {
 
 // 语音播放相关
 const canPlaySpeech = computed(() => {
-  // 只有 assistant 消息可以播放，且浏览器支持 Web Speech API
-  return props.message.role === 'assistant' &&
-         speech.isSupported &&
-         copyableContent.value;
-});
+  // 只有 assistant 消息可以播放
+  if (props.message.role !== 'assistant') return false
+  if (!copyableContent.value) return false
+  // OpenAI / Custom / Edge 不依赖浏览器 Web Speech API
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') return true
+  return speech.isSupported
+})
 
 const isPlayingThisMessage = computed(() => {
-  return speech.currentMessageId.value === props.message.id && speech.isPlaying.value;
-});
+  // OpenAI / Custom / Edge 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') {
+    return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
+  }
+  return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
+})
 
 const isPausedThisMessage = computed(() => {
-  return speech.currentMessageId.value === props.message.id && speech.isPaused.value;
-});
+  // OpenAI / Custom / Edge 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') {
+    return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
+  }
+  return speech.currentMessageId.value === props.message.id && speech.isPaused.value
+})
 
 function handleSpeechToggle() {
   if (!canPlaySpeech.value) {
-    console.log('Speech not supported or no content')
     return
   }
   const content = props.message.content || ''
-  console.log('Toggling speech for message:', props.message.id)
-  console.log('Current playing:', speech.currentMessageId.value, speech.isPlaying.value)
-  console.log('Call stack:', new Error().stack)
 
-  // 尝试获取男声语音包
-  const allVoices = speech.getAllVoices()
-  let maleVoice = null
-
-  // 查找可能的男声语音包
-  for (const voice of allVoices) {
-    const name = voice.name.toLowerCase()
-    // 常见男声关键词
-    if (name.includes('male') || name.includes('david') || name.includes('daniel') ||
-        name.includes('mark') || name.includes('yaoyao') || name.includes('google')) {
-      // 优先选择中文男声
-      if (voice.lang.startsWith('zh')) {
-        maleVoice = voice
-        break
-      }
-      // 如果没有找到中文男声，记住第一个男声
-      if (!maleVoice) {
-        maleVoice = voice
-      }
+  // OpenAI TTS 模式
+  if (voiceSettings.provider.value === 'openai') {
+    const apiUrl = voiceSettings.openaiBaseUrl.value
+    if (!apiUrl) {
+      console.warn('[MessageItem] OpenAI TTS 地址为空')
+      return
     }
+    speech.openaiToggle(props.message.id, content, {
+      baseUrl: voiceSettings.openaiBaseUrl.value,
+      apiKey: voiceSettings.openaiApiKey.value,
+      model: voiceSettings.openaiModel.value,
+      voice: voiceSettings.openaiVoice.value,
+    })
+    return
   }
 
-  console.log('Selected male voice:', maleVoice?.name, maleVoice?.lang)
+  // 自定义端点模式（OpenAI 兼容，如 GPT-SoVITS）
+  if (voiceSettings.provider.value === 'custom') {
+    const apiUrl = voiceSettings.customUrl.value
+    if (!apiUrl) {
+      console.warn('[MessageItem] 自定义 TTS 地址为空')
+      return
+    }
+    speech.openaiToggle(props.message.id, content, {
+      baseUrl: voiceSettings.customUrl.value,
+      apiKey: voiceSettings.customApiKey.value || undefined,
+    })
+    return
+  }
 
-  // 快速男声：语速快、音调低
-  speech.toggle(props.message.id, content, {
-    pitch: 0.5,   // 低沉
-    rate: 1.2,    // 快速
-    voice: maleVoice || undefined, // 使用男声，如果没有就用默认
-  })
+  // Edge TTS 模式
+  if (voiceSettings.provider.value === 'edge') {
+    // URL 为空时使用内建后端代理
+    const apiUrl = voiceSettings.edgeUrl.value || '/api/tts/proxy'
+    speech.openaiToggle(props.message.id, content, {
+      baseUrl: apiUrl,
+      voice: voiceSettings.edgeVoice.value,
+      rate: speedToEdgeRate(voiceSettings.edgeRate.value),
+      pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
+    })
+    return
+  }
+
+  // Web Speech API 模式
+  if (voiceSettings.provider.value === 'webspeech') {
+    const text = speech.extractReadableText(content)
+    if (text) {
+      speech.stop(false)
+      speech.speakViaBrowser(props.message.id, text, {
+        voiceName: voiceSettings.webspeechVoice.value || undefined,
+      })
+    }
+    return
+  }
+
+  // 后备（无 provider 匹配时）
+  speech.toggle(props.message.id, content)
 }
 
 // 监听自动播放事件
@@ -414,8 +450,39 @@ onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
     if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
-      console.log('Auto-play triggered for message:', props.message.id)
-      handleSpeechToggle()
+      const content = customEvent.detail.content || props.message.content || ''
+      if (voiceSettings.provider.value === 'openai') {
+        const apiUrl = voiceSettings.openaiBaseUrl.value
+        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+          baseUrl: voiceSettings.openaiBaseUrl.value,
+          apiKey: voiceSettings.openaiApiKey.value,
+          model: voiceSettings.openaiModel.value,
+          voice: voiceSettings.openaiVoice.value,
+        })
+      } else if (voiceSettings.provider.value === 'custom') {
+        const apiUrl = voiceSettings.customUrl.value
+        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+          baseUrl: voiceSettings.customUrl.value,
+          apiKey: voiceSettings.customApiKey.value || undefined,
+        })
+      } else if (voiceSettings.provider.value === 'edge') {
+        speech.openaiPlay(props.message.id, content, {
+          baseUrl: '/api/tts/proxy',
+          voice: voiceSettings.edgeVoice.value,
+          rate: speedToEdgeRate(voiceSettings.edgeRate.value),
+          pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
+        })
+      } else if (voiceSettings.provider.value === 'webspeech') {
+        const text = speech.extractReadableText(content)
+        if (text) {
+          speech.stop(false)
+          speech.speakViaBrowser(props.message.id, text, {
+            voiceName: voiceSettings.webspeechVoice.value || undefined,
+          })
+        }
+      } else {
+        speech.enqueue(props.message.id, content)
+      }
     }
   }
   window.addEventListener('auto-play-speech', autoPlayHandler)

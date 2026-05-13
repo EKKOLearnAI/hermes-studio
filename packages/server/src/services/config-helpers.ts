@@ -8,6 +8,8 @@ import { logger } from './logger'
 
 // --- Provider env var mapping (from hermes providers.py HERMES_OVERLAYS + config.py) ---
 export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_env: string }> = {
+  'fun-codex': { api_key_env: '', base_url_env: '' },
+  'fun-claude': { api_key_env: '', base_url_env: '' },
   openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: '' },
   'glm-coding-plan': { api_key_env: '', base_url_env: '' },
   zai: { api_key_env: 'GLM_API_KEY', base_url_env: '' },
@@ -26,8 +28,8 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: '' },
   'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: '' },
   cliproxyapi: { api_key_env: '', base_url_env: '' },
-  'opencode-zen': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
-  'opencode-go': { api_key_env: 'OPENCODE_API_KEY', base_url_env: '' },
+  'opencode-zen': { api_key_env: 'OPENCODE_ZEN_API_KEY', base_url_env: '' },
+  'opencode-go': { api_key_env: 'OPENCODE_GO_API_KEY', base_url_env: '' },
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
   arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: '' },
   stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: '' },
@@ -71,7 +73,7 @@ const configPath = () => getActiveConfigPath()
 export async function readConfigYaml(): Promise<Record<string, any>> {
   const raw = await safeReadFile(configPath())
   if (!raw) return {}
-  return (YAML.load(raw) as Record<string, any>) || {}
+  return (YAML.load(raw, { json: true }) as Record<string, any>) || {}
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {

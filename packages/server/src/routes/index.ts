@@ -11,6 +11,7 @@ import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { sessionRoutes } from './hermes/sessions'
 import { profileRoutes } from './hermes/profiles'
 import { skillRoutes } from './hermes/skills'
+import { pluginRoutes } from './hermes/plugins'
 import { memoryRoutes } from './hermes/memory'
 import { modelRoutes } from './hermes/models'
 import { providerRoutes } from './hermes/providers'
@@ -25,6 +26,8 @@ import { fileRoutes } from './hermes/files'
 import { downloadRoutes } from './hermes/download'
 import { jobRoutes } from './hermes/jobs'
 import { cronHistoryRoutes } from './hermes/cron-history'
+import { kanbanRoutes } from './hermes/kanban'
+import { ttsRoutes } from './hermes/tts'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { tunnelRoutes } from './hermes/tunnels'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
@@ -39,6 +42,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
+  app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---
   app.use(requireAuth)
@@ -50,6 +54,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(sessionRoutes.routes())
   app.use(profileRoutes.routes())
   app.use(skillRoutes.routes())
+  app.use(pluginRoutes.routes())
   app.use(memoryRoutes.routes())
   app.use(modelRoutes.routes())
   app.use(providerRoutes.routes())
@@ -66,6 +71,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(downloadRoutes.routes())          // Must be before proxy
   app.use(jobRoutes.routes())               // Must be before proxy
   app.use(cronHistoryRoutes.routes())        // Must be before proxy
+  app.use(kanbanRoutes.routes())             // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)

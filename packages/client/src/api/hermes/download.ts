@@ -6,8 +6,27 @@ import { getApiKey, getBaseUrlValue } from '../client'
  */
 export function getDownloadUrl(filePath: string, fileName?: string): string {
   const base = getBaseUrlValue()
-  const params = new URLSearchParams({ path: filePath })
-  if (fileName) params.set('name', fileName)
+
+  // Guard: if filePath is already a full download URL, extract the real path
+  // to prevent double-wrapping (/api/hermes/download?path=/api/hermes/download?path=...)
+  if (filePath.startsWith('/api/hermes/download?')) {
+    try {
+      const parsed = new URL(filePath, 'http://localhost')
+      const realPath = parsed.searchParams.get('path')
+      if (realPath) filePath = realPath
+    } catch {
+      // fall through with original filePath
+    }
+  }
+
+  // Decode the path first in case it's already encoded (e.g., from AI responses)
+  // URLSearchParams will encode it again, so we need to start with decoded text
+  const decodedPath = decodeURIComponent(filePath)
+  const params = new URLSearchParams({ path: decodedPath })
+  if (fileName) {
+    const decodedName = decodeURIComponent(fileName)
+    params.set('name', decodedName)
+  }
   const token = getApiKey()
   if (token) params.set('token', token)
   return `${base}/api/hermes/download?${params.toString()}`

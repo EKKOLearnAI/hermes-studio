@@ -9,25 +9,22 @@
  * the client emits 'resume' to rejoin its session room.
  */
 import type { Server, Socket } from 'socket.io'
-import { EventSource } from 'eventsource'
-import { setRunSession } from '../../routes/hermes/proxy-handler'
-import { updateUsage } from '../../db/hermes/usage-store'
+import { getSystemPrompt } from '../../lib/llm-prompt'
 import {
   getSession,
   getSessionDetail,
   getSessionDetailPaginated,
   createSession,
   addMessage,
-  addMessages,
   updateSessionStats,
   useLocalSessionStore,
 } from '../../db/hermes/session-store'
-import { getDb } from '../../db/index'
 import { getSessionDetailFromDb } from '../../db/hermes/sessions-db'
 import { getModelContextLength } from './model-context'
 import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
-import { parseLLMJSON, parseToolArguments, parseAnthropicContentArray } from '../../lib/llm-json'
+import { parseAnthropicContentArray } from '../../lib/llm-json'
+import { updateUsage } from '../../db/hermes/usage-store'
 import { logger } from '../logger'
 
 /**
@@ -68,25 +65,36 @@ function isContentBlockArray(input: any): input is ContentBlock[] {
 }
 
 /**
- * Convert file/image blocks with path to base64 format for upstream API
+ * Convert ContentBlock[] to multimodal format for /v1/responses API.
  *
- * Converts images to base64 data URLs for Anthropic/OpenAI API compatibility.
- * File attachments are converted to text mentions.
+ * - text → { type: "input_text", text }
+ * - image → { type: "input_image", image_url: "data:image/...;base64,..." }
+ * - file → text mention [File: name]
  */
-async function convertContentBlocks(blocks: ContentBlock[]): Promise<string> {
-  let contentStr = ''
+async function convertContentBlocks(blocks: ContentBlock[]): Promise<Array<{ type: string; text?: string; image_url?: string }>> {
+  const parts: Array<{ type: string; text?: string; image_url?: string }> = []
+  const fs = await import('fs/promises')
+  const path = await import('path')
 
   for (const block of blocks) {
     if (block.type === 'text') {
-      contentStr += block.text
+      parts.push({ type: 'input_text', text: block.text })
     } else if (block.type === 'image') {
-      contentStr += `[Image: ${block.path}]`
+      try {
+        const buf = await fs.readFile(block.path)
+        const ext = path.extname(block.path).toLowerCase().replace('.', '')
+        const mime = ext === 'jpg' ? 'jpeg' : ext || 'png'
+        const base64 = buf.toString('base64')
+        parts.push({ type: 'input_image', image_url: `data:image/${mime};base64,${base64}` })
+      } catch {
+        parts.push({ type: 'input_text', text: `[Image: ${block.path}]` })
+      }
     } else if (block.type === 'file') {
-      contentStr += `[File: ${block.path}]`
+      parts.push({ type: 'input_text', text: `[File: ${block.name || block.path}]` })
     }
   }
 
-  return contentStr
+  return parts
 }
 
 const compressor = new ChatContextCompressor()
@@ -115,8 +123,12 @@ function convertHistoryFormat(messages: any[]): any[] {
       if (typeof content === 'string') {
         result.push({ role: 'user', content: content })
       } else if (Array.isArray(content)) {
-        // Already in array format, assume it's correct
-        result.push({ role: 'user', content: convertContentBlocks(content) })
+        // Extract text from content blocks for history
+        const textParts = content
+          .filter((b: any) => b.type === 'text')
+          .map((b: any) => b.text)
+          .join('\n')
+        result.push({ role: 'user', content: textParts || JSON.stringify(content) })
       }
       continue
     }
@@ -135,7 +147,7 @@ interface SessionMessage {
   session_id: string
   role: string
   content: string
-  hermesSessionId?: string
+  runMarker?: string
   tool_call_id?: string | null
   tool_calls?: any[] | null
   tool_name?: string | null
@@ -145,7 +157,14 @@ interface SessionMessage {
   reasoning?: string | null
   reasoning_details?: string | null
   reasoning_content?: string | null
-  codex_reasoning_items?: string | null
+}
+
+interface QueuedRun {
+  queue_id: string
+  input: string | ContentBlock[]
+  model?: string
+  instructions?: string
+  profile: string
 }
 
 interface SessionState {
@@ -157,6 +176,16 @@ interface SessionState {
   profile?: string
   inputTokens?: number
   outputTokens?: number
+  isAborting?: boolean
+  queue: QueuedRun[]
+  responseRun?: ResponseRunState
+}
+
+interface ResponseRunState {
+  runMarker?: string
+  responseId?: string
+  insertedKeys: Set<string>
+  toolCalls: Map<string, any>
 }
 
 // --- ChatRunSocket ---
@@ -166,7 +195,6 @@ export class ChatRunSocket {
   private gatewayManager: any
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
-  private hermesSessionIds = new Map<string, any>()
 
   constructor(io: Server, gatewayManager: any) {
     this.nsp = io.of('/chat-run')
@@ -199,12 +227,48 @@ export class ChatRunSocket {
     const profile = (socket.handshake.query?.profile as string) || 'default'
 
     socket.on('run', async (data: {
-      input: string
+      input: string | ContentBlock[]
       session_id?: string
       model?: string
       instructions?: string
+      queue_id?: string
     }) => {
+      if (data.session_id) {
+        const state = this.getOrCreateSession(data.session_id)
+        if (state.isWorking) {
+          state.queue.push({
+            queue_id: data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+            input: data.input,
+            model: data.model,
+            instructions: data.instructions,
+            profile,
+          })
+          this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
+            event: 'run.queued',
+            session_id: data.session_id,
+            queue_length: state.queue.length,
+          })
+          logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
+          return
+        }
+      }
       await this.handleRun(socket, data, profile)
+    })
+
+    socket.on('cancel_queued_run', (data: { session_id?: string; queue_id?: string }) => {
+      if (!data.session_id || !data.queue_id) return
+      const state = this.sessionMap.get(data.session_id)
+      if (!state?.queue.length) return
+      const before = state.queue.length
+      state.queue = state.queue.filter(item => item.queue_id !== data.queue_id)
+      if (state.queue.length === before) return
+      this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
+        event: 'run.queued',
+        session_id: data.session_id,
+        queue_length: state.queue.length,
+      })
+      logger.info('[chat-run-socket] cancelled queued run %s for session %s (queue: %d)',
+        data.queue_id, data.session_id, state.queue.length)
     })
 
     socket.on('resume', async (data: { session_id?: string }) => {
@@ -217,7 +281,7 @@ export class ChatRunSocket {
 
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
-        this.handleAbort(socket, data.session_id)
+        void this.handleAbort(socket, data.session_id)
       }
     })
   }
@@ -363,55 +427,61 @@ export class ChatRunSocket {
   private async resumeSession(socket: Socket, sid: string) {
     let state = this.sessionMap.get(sid)
     if (!state) {
-      try {
-        const detail = useLocalSessionStore()
-          ? getSessionDetailPaginated(sid)
-          : await getSessionDetailFromDb(sid)
-        const messages = detail?.messages ? this.handleMessage(detail.messages, sid) : []
-        // Calculate context tokens — aware of compression snapshot
-
-        let inputTokens: number
-        let outputTokens: number
-        const snapshot = getCompressionSnapshot(sid)
-        if (snapshot) {
-          const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
-          inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-            newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-          outputTokens = newMessages
-            .filter(m => m.role === 'assistant' || m.role === 'tool')
-            .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
-        } else {
-          inputTokens = messages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-          outputTokens = messages
-            .filter(m => m.role === 'assistant' || m.role === 'tool')
-            .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
-        }
-        state = {
-          messages,
-          isWorking: false,
-          events: [],
-          inputTokens,
-          outputTokens,
-        }
-        this.sessionMap.set(sid, state)
-        logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
-      } catch (err) {
-        logger.warn(err, '[chat-run-socket] failed to load session %s from DB on resume', sid)
-        state = { messages: [], isWorking: false, events: [] }
-        this.sessionMap.set(sid, state)
-      }
+      state = await this.loadSessionStateFromDb(sid)
+      this.sessionMap.set(sid, state)
     }
     socket.emit('resumed', {
       session_id: sid,
       messages: state.messages,
       isWorking: state.isWorking,
+      isAborting: state.isAborting || false,
       events: state.isWorking ? state.events : [],
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
+      queueLength: state.queue?.length || 0,
     })
 
     logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d)',
       socket.id, sid, state.isWorking, state.messages.length)
+  }
+
+  private async loadSessionStateFromDb(sid: string): Promise<SessionState> {
+    try {
+      const detail = useLocalSessionStore()
+        ? getSessionDetailPaginated(sid)
+        : await getSessionDetailFromDb(sid)
+      const messages = detail?.messages ? this.handleMessage(detail.messages, sid) : []
+
+      let inputTokens: number
+      let outputTokens: number
+      const snapshot = getCompressionSnapshot(sid)
+      if (snapshot) {
+        const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
+        inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
+          newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        outputTokens = newMessages
+          .filter(m => m.role === 'assistant' || m.role === 'tool')
+          .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+      } else {
+        inputTokens = messages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
+        outputTokens = messages
+          .filter(m => m.role === 'assistant' || m.role === 'tool')
+          .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+      }
+
+      logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
+      return {
+        messages,
+        isWorking: false,
+        events: [],
+        inputTokens,
+        outputTokens,
+        queue: [],
+      }
+    } catch (err) {
+      logger.warn(err, '[chat-run-socket] failed to load session %s from DB', sid)
+      return { messages: [], isWorking: false, events: [], queue: [] }
+    }
   }
   // --- Run handler ---
 
@@ -419,48 +489,80 @@ export class ChatRunSocket {
     socket: Socket,
     data: { input: string | ContentBlock[]; session_id?: string; model?: string; instructions?: string },
     profile: string,
+    skipUserMessage = false,
   ) {
     const { input, session_id, model, instructions } = data
     const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
     const apiKey = this.gatewayManager.getApiKey(profile) || undefined
 
-    // Generate ephemeral session ID for Hermes (fresh session per run)
-    const hermesSessionId = session_id
-      ? `eph_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    // Local marker used only to group in-memory messages for this streamed response.
+    const runMarker = session_id
+      ? `resp_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
       : undefined
 
     const now = Math.floor(Date.now() / 1000)
     // Mark working immediately on run start, and append user message
     if (session_id) {
-      const state = this.getOrCreateSession(session_id)
-      this.hermesSessionIds.set(session_id, hermesSessionId)
+      let state = this.sessionMap.get(session_id)
+      if (!state) {
+        state = getSession(session_id)
+          ? await this.loadSessionStateFromDb(session_id)
+          : { messages: [], isWorking: false, events: [], queue: [] }
+        this.sessionMap.set(session_id, state)
+      }
       state.isWorking = true
       state.profile = profile
 
-      // Convert ContentBlock[] to string for storage
-      const inputStr = contentBlocksToString(input)
-      state.messages.push({
-        id: state.messages.length + 1,
-        session_id,
-        role: 'user',
-        content: inputStr,
-        timestamp: now,
-      })
+      if (!skipUserMessage) {
+        // Convert ContentBlock[] to string for storage
+        const inputStr = contentBlocksToString(input)
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id,
+          runMarker,
+          role: 'user',
+          content: inputStr,
+          timestamp: now,
+        })
 
-      // Create session in local DB if it doesn't exist
-      if (!getSession(session_id)) {
-        const previewText = extractTextForPreview(input)
-        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, model, title: preview })
+        // Create session in local DB if it doesn't exist
+        if (!getSession(session_id)) {
+          const previewText = extractTextForPreview(input)
+          const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+          createSession({ id: session_id, profile, model, title: preview })
+        }
+
+        // Write user message to local DB immediately
+        addMessage({
+          session_id,
+          role: 'user',
+          content: inputStr,
+          timestamp: now,
+        })
+      } else {
+        // Dequeued: write the user message into both memory and DB so the
+        // backend transcript keeps the same run boundary as the client.
+        const inputStr = contentBlocksToString(input)
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id,
+          runMarker,
+          role: 'user',
+          content: inputStr,
+          timestamp: now,
+        })
+        if (!getSession(session_id)) {
+          const previewText = extractTextForPreview(input)
+          const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+          createSession({ id: session_id, profile, model, title: preview })
+        }
+        addMessage({
+          session_id,
+          role: 'user',
+          content: inputStr,
+          timestamp: now,
+        })
       }
-
-      // Write user message to local DB immediately
-      addMessage({
-        session_id,
-        role: 'user',
-        content: inputStr,
-        timestamp: now,
-      })
 
       socket.join(`session:${session_id}`)
     }
@@ -477,17 +579,20 @@ export class ChatRunSocket {
     try {
       // Build upstream request body
       const body: Record<string, any> = { input }
-      if (hermesSessionId) body.session_id = hermesSessionId
       if (model) body.model = model
-      if (instructions) body.instructions = instructions
+      if (instructions) {
+        body.instructions = `${getSystemPrompt()}\n${instructions}`
+      } else {
+        body.instructions = getSystemPrompt()
+      }
       // Inject workspace context if set for this session
       if (session_id) {
         const sessionRow = getSession(session_id)
         if (sessionRow?.workspace) {
           const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
           body.instructions = body.instructions
-            ? `${workspaceCtx}\n${body.instructions}`
-            : workspaceCtx
+            ? `\n${workspaceCtx}\n${body.instructions}`
+            : `\n${workspaceCtx}`
         }
       }
       // Build conversation_history from DB if session_id is provided
@@ -570,7 +675,7 @@ export class ChatRunSocket {
               logger.info('[context-compress] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
                 session_id, snapshot.lastMessageIndex, newMessages.length, totalTokens, triggerTokens)
               // triggerTokens
-              if (totalTokens <= triggerTokens) {
+              if (totalTokens <= triggerTokens && newMessages.length <= 150) {
                 // Under threshold — use assembled context directly, no LLM call needed
                 history = [
                   { role: 'user', content: SUMMARY_PREFIX + '\n\n' + snapshot.summary },
@@ -676,7 +781,7 @@ export class ChatRunSocket {
             } else if (history.length > 4) {
               // No snapshot — check if raw history exceeds threshold
 
-              if (totalTokens <= triggerTokens) {
+              if (totalTokens <= triggerTokens && history.length <= 150) {
                 // Under threshold — use raw history as-is
                 logger.info('[context-compress] session=%s: %d messages, ~%d tokens — under threshold, skip', session_id, history.length, totalTokens)
               } else {
@@ -790,9 +895,10 @@ export class ChatRunSocket {
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-      // Convert input from ContentBlock[] to Anthropic format (with base64 images)
+      // Convert input from ContentBlock[] to multimodal message format for /v1/responses
       if (isContentBlockArray(input)) {
-        body.input = await convertContentBlocks(input)
+        const parts = await convertContentBlocks(input)
+        body.input = [{ role: 'user', content: parts }]
       }
 
       // Debug: write history to JSON file for analysis (before conversion)
@@ -801,295 +907,482 @@ export class ChatRunSocket {
       if (body.conversation_history && Array.isArray(body.conversation_history)) {
         body.conversation_history = convertHistoryFormat(body.conversation_history)
       }
-      const res = await fetch(`${upstream}/v1/runs`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(120_000),
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        emit('run.failed', { event: 'run.failed', error: `Upstream ${res.status}: ${text}` })
-        return
-      }
-
-      const runData = await res.json() as any
-      const runId = runData.run_id
-      if (!runId) {
-        emit('run.failed', { event: 'run.failed', error: 'No run_id in upstream response' })
-        return
-      }
-
-      if (session_id) {
-        setRunSession(runId, session_id)
-      }
+      body.stream = true
+      body.store = false
 
       const abortController = new AbortController()
       if (session_id) {
         const state = this.getOrCreateSession(session_id)
         state.isWorking = true
-        state.runId = runId
+        state.runId = undefined
         state.abortController = abortController
       }
 
-      emit('run.started', { event: 'run.started', run_id: runId, status: runData.status })
+      const res = await fetch(`${upstream}/v1/responses`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
+        if (session_id) await this.markCompleted(socket, session_id, { event: 'run.failed' })
+        emit('run.failed', { event: 'run.failed', error: `Upstream ${res.status}: ${text}`, queue_remaining: queueLen })
+        if (session_id && queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
+        return
+      }
+      if (!res.body) {
+        const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
+        if (session_id) await this.markCompleted(socket, session_id, { event: 'run.failed' })
+        emit('run.failed', { event: 'run.failed', error: 'Upstream response stream missing', queue_remaining: queueLen })
+        if (session_id && queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
+        return
+      }
 
-      // Stream upstream events via EventSource — survives socket disconnect
-      const eventsUrl = new URL(`${upstream}/v1/runs/${runId}/events`)
-
-      // Use Authorization header instead of query parameter for better compatibility
-      const eventSourceInit: any = apiKey ? {
-        fetch: (url: string, init: any = {}) => fetch(url, {
-          ...init,
-          headers: {
-            ...(init.headers || {}),
-            Authorization: `Bearer ${apiKey}`,
-          },
-        }),
-      } : {}
-
-      // @ts-ignore - eventsource library types are too strict
-      const source = new EventSource(eventsUrl.toString(), eventSourceInit)
-
-      source.onmessage = (event: MessageEvent) => {
+      let responseId: string | undefined
+      for await (const frame of readSseFrames(res.body)) {
+        let parsed: any
         try {
-          const parsed = JSON.parse(event.data as string)
-          // Debug: log all events from upstream
-          if (parsed.event?.includes('reasoning') || parsed.event?.includes('thinking')) {
-            logger.info('[chat-run-socket] upstream event: %s, data: %j', parsed.event, parsed)
-          } else {
-            logger.info('[chat-run-socket] upstream event: %s', parsed.event)
-          }
+          parsed = JSON.parse(frame.data)
+        } catch {
+          continue
+        }
+        const upstreamEvent = parsed.type || frame.event || parsed.event
+        logger.info('[chat-run-socket] upstream response event: %s', upstreamEvent)
 
-          // Track messages into sessionMap
-          if (session_id) {
-            const state = this.sessionMap.get(session_id)
-            if (state) {
-              const msgs = state.messages
-              const last = msgs[msgs.length - 1]
-
-              switch (parsed.event) {
-                case 'message.delta': {
-                  let deltaText = parsed.delta || ''
-
-                  // Try to extract text from JSON delta (e.g., "[{\"type\":\"text\",\"text\":\"hello\"}]")
-                  if (deltaText.trim().startsWith('[') && deltaText.trim().endsWith(']')) {
-                    try {
-                      const parsedDelta = parseAnthropicContentArray(deltaText)
-                      const textParts = parsedDelta
-                        .filter((b: any) => b.type === 'text')
-                        .map((b: any) => b.text || '')
-                      deltaText = textParts.join('')
-                    } catch {
-                      // If parsing fails, use delta as-is
-                    }
-                  }
-
-                  if (last?.role === 'assistant' && last.finish_reason == null) {
-                    last.content += deltaText
-                  } else {
-                    msgs.push({
-                      id: msgs.length + 1,
-                      session_id,
-                      hermesSessionId,
-                      role: 'assistant',
-                      content: deltaText,
-                      timestamp: Math.floor(Date.now() / 1000),
-                    })
-                  }
-                  break
-                }
-                case 'reasoning.delta':
-                case 'thinking.delta': {
-                  const text = parsed.text || parsed.delta || ''
-                  if (!text) break
-                  if (last?.role === 'assistant' && last.finish_reason == null) {
-                    last.reasoning = (last.reasoning || '') + text
-                  } else {
-                    msgs.push({
-                      id: msgs.length + 1,
-                      session_id,
-                      role: 'assistant',
-                      hermesSessionId,
-                      content: '',
-                      reasoning: text,
-                      timestamp: Math.floor(Date.now() / 1000),
-                    })
-                  }
-                  break
-                }
-                case 'tool.started': {
-                  if (last?.role === 'assistant' && last.finish_reason == null) {
-                    last.finish_reason = 'tool_calls'
-                  }
-                  msgs.push({
-                    id: msgs.length + 1,
-                    session_id,
-                    role: 'tool',
-                    hermesSessionId,
-                    content: '',
-                    tool_call_id: parsed.tool_call_id || null,
-                    tool_name: parsed.tool || parsed.name || null,
-                    timestamp: Math.floor(Date.now() / 1000),
-                  })
-                  break
-                }
-                case 'tool.completed': {
-                  const toolMsg = [...msgs].reverse().find(m => m.role === 'tool' && !m.content)
-                  if (toolMsg && parsed.output) {
-                    toolMsg.content = typeof parsed.output === 'string' ? parsed.output : JSON.stringify(parsed.output)
-                  }
-                  break
-                }
-                case 'run.completed': {
-                  logger.info('[chat-run-socket] ENTER run.completed case, session_id: %s, messages: %d',
-                    session_id, msgs.length)
-
-                  if (last?.role === 'assistant' && last.finish_reason == null) {
-                    last.finish_reason = parsed.finish_reason || 'stop'
-                  }
-
-                  // Debug: log run.completed to check if reasoning is included
-                  logger.info('[chat-run-socket] run.completed keys: %s', Object.keys(parsed))
-                  // Finalize assistant message — if no content was streamed, use output
-                  if (parsed.output && !runProducedAssistantText(msgs)) {
-                    let outputContent = parsed.output
-
-                    // Parse output if it's a stringified array
-                    if (typeof outputContent === 'string' &&
-                      outputContent.trim().startsWith('[') &&
-                      outputContent.trim().endsWith(']')) {
-                      try {
-                        const parsedOutput = parseAnthropicContentArray(outputContent)
-                        const textParts = parsedOutput
-                          .filter((b: any) => b.type === 'text')
-                          .map((b: any) => b.text || '')
-                        outputContent = textParts.join('')
-                      } catch {
-                        // If parsing fails, use output as-is
-                      }
-                    }
-
-                    if (last?.role === 'assistant') {
-                      last.content = outputContent
-                    } else {
-                      msgs.push({
-                        id: msgs.length + 1,
-                        session_id,
-                        hermesSessionId,
-                        role: 'assistant',
-                        content: outputContent,
-                        timestamp: Math.floor(Date.now() / 1000),
-                      })
-                    }
-                  }
-
-                  // Always parse output if it's an array format (for parsed_content field)
-                  // Only extract text content (tool_calls and reasoning are already sent via other events)
-                  if (parsed.output && typeof parsed.output === 'string' &&
-                    parsed.output.trim().startsWith('[') && parsed.output.trim().endsWith(']')) {
-                    try {
-                      const parsedOutput = parseAnthropicContentArray(parsed.output)
-                      const textParts = parsedOutput
-                        .filter((b: any) => b.type === 'text')
-                        .map((b: any) => b.text || '')
-
-                      // Set parsed_content for frontend (only text content)
-                      parsed.parsed_content = textParts.join('') || ''
-                      logger.info('[chat-run-socket] parsed output from run.completed event')
-                    } catch (e) {
-                      logger.error(e, '[chat-run-socket] failed to parse output from run.completed')
-                    }
-                  }
-
-                  // Parse stringified array content for all assistant messages
-                  // Only extract text content (tool_calls and reasoning are already in message fields)
-                  let parsedCount = 0
-                  for (const msg of msgs) {
-                    if (msg.role === 'assistant' && typeof msg.content === 'string' &&
-                      msg.content.trim().startsWith('[') && msg.content.trim().endsWith(']')) {
-                      try {
-                        logger.info('[chat-run-socket] parsing array content for message %s, content preview: %s',
-                          msg.id, msg.content.slice(0, 100))
-                        const parsedContent = parseAnthropicContentArray(msg.content)
-                        const textBlocks = parsedContent
-                          .filter((b: any) => b.type === 'text')
-                          .map((b: any) => b.text || '')
-
-                        msg.content = textBlocks.join('') || ''
-                        parsedCount++
-                      } catch (e) {
-                        logger.error(e, '[chat-run-socket] failed to parse array content for message %s', msg.id)
-                      }
-                    }
-                  }
-
-                  logger.info('[chat-run-socket] EXIT run.completed case, parsed %d messages', parsedCount)
-
-                  // Attach the last assistant message's parsed content to fix stringified array format
-                  const lastAssistantMsg = msgs.filter((m: any) => m.role === 'assistant').pop()
-                  if (lastAssistantMsg && parsedCount > 0) {
-                    parsed.parsed_content = lastAssistantMsg.content || ''
-                    parsed.parsed_tool_calls = lastAssistantMsg.tool_calls || null
-                    parsed.parsed_reasoning = lastAssistantMsg.reasoning || null
-                    logger.info('[chat-run-socket] attached parsed content to run.completed event for message %s', lastAssistantMsg.id)
-                  }
-
-                  break
-                }
+        if (session_id) {
+          const state = this.sessionMap.get(session_id)
+          if (state) {
+            const mapped = this.applyResponseStreamEvent(state, session_id, runMarker, upstreamEvent, parsed)
+            if (mapped) {
+              if (mapped.runId) {
+                responseId = mapped.runId
+                state.runId = responseId
               }
+              emit(mapped.event, mapped.payload)
             }
           }
+        }
 
-          // Usage will be calculated after syncFromHermes completes (in markCompleted)
-
-          emit(parsed.event || 'message', parsed)
-
-          if (parsed.event === 'run.completed' || parsed.event === 'run.failed') {
-            source.close()
-            if (session_id) this.markCompleted(socket, session_id, { event: parsed.event, run_id: parsed.run_id })
+        if (upstreamEvent === 'response.completed' || upstreamEvent === 'response.failed') {
+          if (session_id && this.sessionMap.get(session_id)?.isAborting) {
+            logger.info({
+              sessionId: session_id,
+              runId: responseId,
+              event: upstreamEvent,
+            }, '[chat-run-socket][abort] suppressing upstream terminal event during abort')
+            return
           }
-        } catch { /* not JSON, skip */ }
+          const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
+          if (session_id) await this.markCompleted(socket, session_id, {
+            event: upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed',
+            run_id: responseId,
+          })
+          const finalOutput = parsed.response || parsed
+          const finalText = extractResponseText(finalOutput)
+          if (upstreamEvent === 'response.completed' && session_id) {
+            const usage = finalOutput.usage || {}
+            updateUsage(session_id, {
+              inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
+              outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
+              cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
+              cacheWriteTokens: usage.cache_write_tokens ?? usage.cacheWriteTokens ?? 0,
+              reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
+              model: finalOutput.model || '',
+              profile: this.sessionMap.get(session_id)?.profile,
+            })
+          }
+          const eventName = upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed'
+          emit(eventName, {
+            event: eventName,
+            run_id: responseId || finalOutput.id,
+            response_id: responseId || finalOutput.id,
+            output: finalText,
+            usage: finalOutput.usage,
+            error: finalOutput.error || parsed.error,
+            queue_remaining: queueLen,
+          })
+          if (session_id && queueLen > 0) {
+            this.dequeueNextQueuedRun(socket, session_id)
+          }
+          return
+        }
+      }
+      const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
+      if (session_id) await this.markCompleted(socket, session_id, { event: 'run.failed', run_id: responseId })
+      emit('run.failed', {
+        event: 'run.failed',
+        run_id: responseId,
+        response_id: responseId,
+        error: 'Response stream ended without a terminal event',
+        queue_remaining: queueLen,
+      })
+      if (session_id && queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
+    } catch (err: any) {
+      const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
+      if (session_id) {
+        void this.markCompleted(socket, session_id, { event: 'run.failed' }).then(() => {
+          emit('run.failed', { event: 'run.failed', error: err.message, queue_remaining: queueLen })
+          if (queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
+        })
+      } else {
+        emit('run.failed', { event: 'run.failed', error: err.message })
+      }
+    }
+  }
+
+  private applyResponseStreamEvent(
+    state: SessionState,
+    sessionId: string,
+    runMarker: string | undefined,
+    eventType: string,
+    parsed: any,
+  ): { event: string; payload: any; runId?: string } | null {
+    const run = this.getResponseRunState(state, runMarker)
+    const now = () => Math.floor(Date.now() / 1000)
+
+    if (eventType === 'response.created') {
+      const response = parsed.response || parsed
+      run.responseId = response.id || run.responseId
+      return {
+        event: 'run.started',
+        runId: run.responseId,
+        payload: {
+          event: 'run.started',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          status: response.status || 'in_progress',
+          queue_length: state.queue.length || 0,
+        },
+      }
+    }
+
+    if (eventType === 'response.output_text.delta') {
+      const deltaText = parsed.delta || parsed.text || ''
+      if (!deltaText) return null
+
+      const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+      if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
+        last.content += deltaText
+      } else {
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id: sessionId,
+          runMarker,
+          role: 'assistant',
+          content: deltaText,
+          timestamp: now(),
+        })
+      }
+      return {
+        event: 'message.delta',
+        payload: {
+          event: 'message.delta',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          delta: deltaText,
+        },
+      }
+    }
+
+    if (eventType === 'response.output_text.done') {
+      // Just mark the last assistant message as complete.
+      // Content is already accumulated correctly via deltas.
+      const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+      if (last?.role === 'assistant' && last.finish_reason == null) {
+        last.finish_reason = 'stop'
+      }
+      return null
+    }
+
+    if (eventType === 'response.output_item.added') {
+      const item = parsed.item || parsed.output_item || parsed
+      if (item.type !== 'function_call') return null
+      const callId = item.call_id || item.id
+      if (!callId) return null
+      const toolCall = responseFunctionCallToToolCall(item)
+      run.toolCalls.set(callId, { ...toolCall, startedAt: Date.now() })
+      return {
+        event: 'tool.started',
+        payload: {
+          event: 'tool.started',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          tool_call_id: callId,
+          tool: toolCall.function.name,
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+          preview: summarizeToolArguments(toolCall.function.arguments),
+        },
+      }
+    }
+
+    if (eventType === 'response.output_item.done') {
+      const item = parsed.item || parsed.output_item || parsed
+      if (item.type === 'function_call') {
+        const callId = item.call_id || item.id
+        if (!callId) return null
+        const toolCall = responseFunctionCallToToolCall(item)
+        const existing = run.toolCalls.get(callId)
+        run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt || Date.now() })
+
+        const key = `assistant:${callId}`
+        if (!run.insertedKeys.has(key)) {
+          run.insertedKeys.add(key)
+          state.messages.push({
+            id: state.messages.length + 1,
+            session_id: sessionId,
+            runMarker,
+            role: 'assistant',
+            content: '',
+            tool_calls: [toolCall],
+            finish_reason: 'tool_calls',
+            timestamp: now(),
+          })
+        }
+        return null
       }
 
-      source.onerror = () => {
-        source.close()
-        emit('run.failed', { event: 'run.failed', error: 'EventSource connection lost' })
-        if (session_id) this.markCompleted(socket, session_id, { event: 'run.failed' })
+      if (item.type === 'function_call_output') {
+        const callId = item.call_id || item.id
+        if (!callId) return null
+        const key = `tool:${callId}`
+        const output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '')
+        const toolCallEntry = run.toolCalls.get(callId)
+        const toolName = toolCallEntry?.function?.name || null
+        const startedAt = toolCallEntry?.startedAt
+        const duration = startedAt ? Math.round((Date.now() - startedAt) / 10) / 100 : undefined
+        const hasError = typeof item.output === 'string' && item.output.startsWith('Error')
+        if (!run.insertedKeys.has(key)) {
+          run.insertedKeys.add(key)
+          state.messages.push({
+            id: state.messages.length + 1,
+            session_id: sessionId,
+            runMarker,
+            role: 'tool',
+            content: output,
+            tool_call_id: callId,
+            tool_name: toolName,
+            timestamp: now(),
+          })
+        }
+        return {
+          event: 'tool.completed',
+          payload: {
+            event: 'tool.completed',
+            run_id: run.responseId,
+            response_id: run.responseId,
+            tool_call_id: callId,
+            tool: toolName,
+            name: toolName,
+            output,
+            duration,
+            error: hasError || undefined,
+          },
+        }
       }
-    } catch (err: any) {
-      emit('run.failed', { event: 'run.failed', error: err.message })
-      if (session_id) this.markCompleted(socket, session_id, { event: 'run.failed' })
     }
+
+    if (eventType === 'response.completed') {
+      const response = parsed.response || parsed
+      run.responseId = response.id || run.responseId
+      const output = Array.isArray(response.output) ? response.output : []
+      for (const item of output) {
+        if (item.type === 'function_call') {
+          this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.added', { item })
+          this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
+        } else if (item.type === 'function_call_output') {
+          this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
+        }
+      }
+    }
+
+    return null
+  }
+
+  private getResponseRunState(state: SessionState, runMarker?: string): ResponseRunState {
+    if (!state.responseRun || state.responseRun.runMarker !== runMarker) {
+      state.responseRun = {
+        runMarker,
+        insertedKeys: new Set<string>(),
+        toolCalls: new Map<string, any>(),
+      }
+    }
+    return state.responseRun
+  }
+
+  /** Flush all non-user messages for this run to DB in order. */
+  private flushResponseRunToDb(state: SessionState, sessionId: string) {
+    const run = state.responseRun
+    if (!run?.runMarker) return
+    let flushed = 0
+    for (const msg of state.messages) {
+      if (msg.runMarker !== run.runMarker) continue
+      if (msg.role === 'user') continue
+      addMessage({
+        session_id: sessionId,
+        role: msg.role,
+        content: msg.content || '',
+        tool_call_id: msg.tool_call_id ?? null,
+        tool_calls: msg.tool_calls ?? null,
+        tool_name: msg.tool_name ?? null,
+        finish_reason: msg.finish_reason ?? null,
+        timestamp: msg.timestamp,
+      })
+      flushed++
+    }
+    logger.info('[chat-run-socket] flushResponseRunToDb: flushed %d messages for session %s',
+      flushed, sessionId)
   }
 
   // --- Abort handler ---
 
-  private handleAbort(socket: Socket, sessionId: string) {
+  private async handleAbort(socket: Socket, sessionId: string) {
     const state = this.sessionMap.get(sessionId)
-    if (state?.isWorking && state.abortController) {
-      state.abortController.abort()
-      this.markCompleted(socket, sessionId, { event: 'run.failed', run_id: state.runId })
+    if (!state?.isWorking || (!state.runId && !state.abortController)) {
+      logger.info({ sessionId }, '[chat-run-socket][abort] ignored: no active run')
+      if (state) {
+        state.isWorking = false
+        state.isAborting = false
+        state.abortController = undefined
+        state.runId = undefined
+        state.events = []
+      }
+      this.emitToSession(socket, sessionId, 'abort.completed', {
+        event: 'abort.completed',
+        synced: false,
+        ignored: true,
+      })
+      return
     }
+
+    const runId = state.runId
+    state.isAborting = true
+    this.replaceState(sessionId, 'abort.started', {
+      event: 'abort.started',
+      run_id: runId,
+      graceMs: 5000,
+    })
+    this.emitToSession(socket, sessionId, 'abort.started', {
+      event: 'abort.started',
+      run_id: runId,
+      graceMs: 5000,
+    })
+    logger.info({ sessionId, runId }, '[chat-run-socket][abort] started')
+
+    // Flush in-memory assistant text to DB before aborting the stream.
+    this.flushResponseRunToDb(state, sessionId)
+
+    if (state.abortController) {
+      state.abortController.abort()
+    }
+
+    await this.markAbortCompleted(socket, sessionId, runId || 'response_stream')
   }
 
   /** Mark a session run as completed/failed so reconnecting clients get notified */
-  private markCompleted(socket: Socket, sessionId: string, _info: { event: string; run_id?: string }) {
+  private async markCompleted(_socket: Socket, sessionId: string, _info: { event: string; run_id?: string }) {
     const state = this.sessionMap.get(sessionId)
     if (state) {
+      if (state.isAborting) {
+        logger.info({
+          sessionId,
+          runId: state.runId,
+        }, '[chat-run-socket][abort] terminal upstream event observed; abort handler will finish cleanup')
+        return
+      }
       state.isWorking = false
       state.abortController = undefined
       state.runId = undefined
       state.events = []
-      // Sync messages from Hermes ephemeral session to local DB
-      if (useLocalSessionStore() && this.hermesSessionIds.get(sessionId)) {
-        const hermesId = this.hermesSessionIds.get(sessionId)
-        const prof = state.profile
-        this.hermesSessionIds.delete(sessionId)
-        state.profile = undefined
-        this.syncFromHermes(socket, sessionId, hermesId, prof)
+      this.flushResponseRunToDb(state, sessionId)
+      state.responseRun = undefined
+      state.profile = undefined
+      updateSessionStats(sessionId)
+      const emit = (event: string, payload: any) => {
+        this.nsp.to(`session:${sessionId}`).emit(event, { ...payload, session_id: sessionId })
       }
+      await this.calcAndUpdateUsage(sessionId, state, emit)
     }
+  }
+
+  private dequeueNextQueuedRun(socket: Socket, sessionId: string, fallbackProfile = 'default') {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.queue.length) return false
+
+    const next = state.queue.shift()!
+    logger.info('[chat-run-socket] dequeuing queued run for session %s (remaining: %d)', sessionId, state.queue.length)
+    this.nsp.to(`session:${sessionId}`).emit('run.queued', {
+      event: 'run.queued',
+      session_id: sessionId,
+      queue_length: state.queue.length,
+    })
+    void this.handleRun(socket, {
+      input: next.input,
+      session_id: sessionId,
+      model: next.model,
+      instructions: next.instructions,
+    }, next.profile || fallbackProfile, true)
+    return true
+  }
+
+  private async markAbortCompleted(socket: Socket, sessionId: string, runId: string) {
+    const state = this.sessionMap.get(sessionId)
+    if (!state) return
+
+    const profile = state.profile
+    updateSessionStats(sessionId)
+
+    state.isWorking = false
+    state.isAborting = false
+    state.profile = undefined
+    state.abortController = undefined
+    state.runId = undefined
+    state.responseRun = undefined
+
+    // Process queued messages after abort completes
+    if (state.queue.length > 0) {
+      const next = state.queue.shift()!
+      logger.info('[chat-run-socket][abort] dequeuing queued run for session %s (remaining: %d)', sessionId, state.queue.length)
+      this.replaceState(sessionId, 'abort.completed', {
+        event: 'abort.completed',
+        run_id: runId,
+        synced: true,
+        queue_length: state.queue.length + 1,
+      })
+      this.emitToSession(socket, sessionId, 'abort.completed', {
+        event: 'abort.completed',
+        run_id: runId,
+        synced: true,
+        queue_length: state.queue.length + 1,
+      })
+      this.emitToSession(socket, sessionId, 'run.queued', {
+        event: 'run.queued',
+        queue_length: state.queue.length,
+      })
+      state.events = []
+      void this.handleRun(socket, {
+        input: next.input,
+        session_id: sessionId,
+        model: next.model,
+        instructions: next.instructions,
+      }, next.profile || profile || 'default', true)
+      return
+    }
+
+    state.events = []
+    this.replaceState(sessionId, 'abort.completed', {
+      event: 'abort.completed',
+      run_id: runId,
+      synced: true,
+    })
+    this.emitToSession(socket, sessionId, 'abort.completed', {
+      event: 'abort.completed',
+      run_id: runId,
+      synced: true,
+    })
+    logger.info({ sessionId, runId, synced: true }, '[chat-run-socket][abort] completed')
   }
 
   /**
@@ -1137,177 +1430,11 @@ export class ChatRunSocket {
     }
   }
 
-  /**
-   * Read complete messages from Hermes state.db for the ephemeral session
-   * and write to local DB. This gives us tool results that SSE events don't include.
-   * After sync, enqueues the ephemeral session for deletion.
-   */
-  private syncFromHermes(socket: Socket, localSessionId: string, hermesSessionId: string, profile?: string) {
-    getSessionDetailFromDb(hermesSessionId)
-      .then((detail) => {
-        if (!detail || !detail.messages?.length) {
-          logger.warn('[chat-run-socket] syncFromHermes: no data for Hermes session %s', hermesSessionId)
-          return
-        }
-        // Skip user messages — already written to local DB in handleRun
-        const toInsert = detail.messages.filter(m => m.role !== 'user')
-
-        // Build tool_call_id → function.name lookup from assistant messages
-        // (Hermes stores tool_name as NULL, name lives inside tool_calls JSON)
-        const toolNameMap = new Map<string, string>()
-        for (const msg of detail.messages) {
-          if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
-            for (const tc of msg.tool_calls) {
-              const id = tc.id || tc.call_id || tc.tool_call_id
-              const name = tc.function?.name || tc.name
-              if (id && name) toolNameMap.set(id, name)
-            }
-          }
-        }
-
-        if (toInsert.length > 0) {
-          // Get in-memory messages to preserve reasoning that was streamed via SSE
-          const state = this.sessionMap.get(localSessionId)
-          const memoryMessages = state?.messages || []
-          logger.info('[chat-run-socket] syncFromHermes: memory has %d messages, DB has %d messages',
-            memoryMessages.length, toInsert.length)
-
-          // Match messages by order since Hermes DB and memory should have same sequence
-          let memoryIdx = 0
-          let mergedCount = 0
-          for (let i = 0; i < toInsert.length && memoryIdx < memoryMessages.length; i++) {
-            const dbMsg = toInsert[i]
-            // Skip user messages in memory when matching
-            while (memoryIdx < memoryMessages.length && memoryMessages[memoryIdx].role === 'user') {
-              memoryIdx++
-            }
-            if (memoryIdx >= memoryMessages.length) break
-            const memoryMsg = memoryMessages[memoryIdx]
-            // Only merge if roles match
-            if (dbMsg.role === memoryMsg.role) {
-              // Merge reasoning from memory if DB doesn't have it
-              if (!dbMsg.reasoning && memoryMsg.reasoning) {
-                dbMsg.reasoning = memoryMsg.reasoning
-                mergedCount++
-                logger.info('[chat-run-socket] syncFromHermes: merged reasoning from memory to DB for %s message at index %d',
-                  dbMsg.role, i)
-              }
-            }
-            memoryIdx++
-          }
-
-          if (mergedCount > 0) {
-            logger.info('[chat-run-socket] syncFromHermes: merged reasoning for %d messages', mergedCount)
-          }
-
-          // Batch insert with transaction for atomicity
-          addMessages(toInsert.map(msg => {
-            // Resolve tool_name from assistant's tool_calls if missing
-            let toolName = msg.tool_name || null
-            if (!toolName && msg.tool_call_id) {
-              toolName = toolNameMap.get(msg.tool_call_id) || null
-            }
-            return {
-              session_id: localSessionId,
-              role: msg.role,
-              content: msg.content || '',
-              tool_call_id: msg.tool_call_id || null,
-              tool_calls: msg.tool_calls || null,
-              tool_name: toolName,
-              timestamp: msg.timestamp || Math.floor(Date.now() / 1000),
-              token_count: msg.token_count || null,
-              finish_reason: msg.finish_reason || null,
-              reasoning: msg.reasoning || null,
-              reasoning_details: msg.reasoning_details || null,
-              reasoning_content: msg.reasoning_content || null,
-              codex_reasoning_items: msg.codex_reasoning_items || null,
-            }
-          }))
-
-          logger.info('[chat-run-socket] syncFromHermes: synced %d messages to local session %s', toInsert.length, localSessionId)
-        }
-
-        updateSessionStats(localSessionId)
-
-        // Record usage from Hermes session
-        updateUsage(localSessionId, {
-          inputTokens: detail.input_tokens,
-          outputTokens: detail.output_tokens,
-          cacheReadTokens: detail.cache_read_tokens,
-          cacheWriteTokens: detail.cache_write_tokens,
-          reasoningTokens: detail.reasoning_tokens,
-          model: detail.model,
-          profile: profile || 'default',
-        })
-
-        // Calculate usage from DB now that data is complete
-        // Use inputTokens already set by compression path if available
-        const state = this.sessionMap.get(localSessionId)
-        if (state) {
-          const messages = this.handleMessage(toInsert, localSessionId)
-          if (messages.length > 0) {
-            this.replaceByHermesSessionId(localSessionId, hermesSessionId, messages)
-          }
-          const emit = (event: string, payload: any) => {
-            const tagged = localSessionId ? { ...payload, localSessionId } : payload
-            if (localSessionId) {
-              this.nsp.to(`session:${localSessionId}`).emit(event, tagged)
-            } else if (socket.connected) {
-              socket.emit(event, tagged)
-            }
-          }
-          this.calcAndUpdateUsage(localSessionId, state, emit)
-        }
-
-        // Enqueue ephemeral session for deferred deletion
-        this.enqueueEphemeralDelete(hermesSessionId, profile)
-      })
-      .catch((err: any) => {
-        logger.warn(err, '[chat-run-socket] syncFromHermes failed for session %s (hermesId: %s, profile: %s)', localSessionId, hermesSessionId, profile || 'default')
-      })
-  }
-  private replaceByHermesSessionId(session_id: string, hermesSessionId: string, newItems: SessionMessage[]) {
-    let start = -1
-    let end = -1
-    const state = this.sessionMap.get(session_id)
-    const msg = state?.messages || []
-    // 找区间
-    for (let i = 0; i < msg.length; i++) {
-      if (msg[i].hermesSessionId === hermesSessionId) {
-        if (start === -1) start = i
-        end = i
-      } else if (start !== -1) {
-        // 已经找到一段，后面断了就可以结束
-        break
-      }
-    }
-
-    // 没找到
-    if (start === -1) return
-    // 替换
-    msg.splice(start, end - start + 1, ...newItems)
-  }
-  /** Enqueue an ephemeral Hermes session for deferred deletion */
-  private enqueueEphemeralDelete(hermesSessionId: string, profile?: string) {
-    try {
-      const db = getDb()
-      if (!db) return
-      const now = Date.now()
-      db.prepare(
-        `INSERT INTO gc_pending_session_deletes (session_id, profile_name, status, attempt_count, last_error, created_at, updated_at, next_attempt_at)
-         VALUES (?, ?, 'pending', 0, NULL, ?, ?, ?)
-         ON CONFLICT(session_id) DO NOTHING`,
-      ).run(hermesSessionId, profile || 'default', now, now, now)
-      logger.info('[chat-run-socket] enqueued ephemeral session %s for deletion', hermesSessionId)
-    } catch { /* best-effort */ }
-  }
-
-
   /** Get or create session state in sessionMap */
   private getOrCreateSession(sessionId: string): SessionState {
     let state = this.sessionMap.get(sessionId)
     if (!state) {
-      state = { messages: [], isWorking: false, events: [] }
+      state = { messages: [], isWorking: false, events: [], queue: [] }
       this.sessionMap.set(sessionId, state)
     }
     return state
@@ -1331,9 +1458,124 @@ export class ChatRunSocket {
     }
     this.pushState(sessionId, event, data)
   }
+
+  private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
+    const tagged = { ...payload, session_id: sessionId }
+    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+    if (!this.nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
+      socket.emit(event, tagged)
+    }
+  }
+
+  /** Close all active upstream response streams */
+  close() {
+    for (const [sessionId, state] of this.sessionMap.entries()) {
+      if (state.abortController) {
+        try {
+          state.abortController.abort()
+        } catch (e) {
+          logger.warn(e, '[chat-run-socket] failed to abort controller for session %s', sessionId)
+        }
+      }
+    }
+    this.sessionMap.clear()
+    logger.info('[chat-run-socket] closed all connections and cleared state')
+  }
 }
 
-/** Check if any assistant message in the list has non-empty content */
-function runProducedAssistantText(messages: SessionMessage[]): boolean {
-  return messages.some(m => m.role === 'assistant' && m.content?.trim())
+async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: string }> {
+  const decoder = new TextDecoder()
+  const reader = stream.getReader()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const frame = parseSseFrame(raw)
+        if (frame?.data) yield frame
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+
+    buffer += decoder.decode()
+    const frame = parseSseFrame(buffer)
+    if (frame?.data) yield frame
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function parseSseFrame(raw: string): { event?: string; data: string } | null {
+  let event: string | undefined
+  const data: string[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      data.push(line.slice(5).trimStart())
+    }
+  }
+  if (data.length === 0) return null
+  return { event, data: data.join('\n') }
+}
+
+function responseFunctionCallToToolCall(item: any): any {
+  const callId = item.call_id || item.id || ''
+  const name = item.name || item.function?.name || ''
+  let args = item.arguments ?? item.function?.arguments ?? '{}'
+  if (typeof args !== 'string') {
+    args = JSON.stringify(args ?? {})
+  }
+  return {
+    id: callId,
+    type: 'function',
+    function: {
+      name,
+      arguments: args || '{}',
+    },
+  }
+}
+
+function summarizeToolArguments(args: string): string | undefined {
+  if (!args) return undefined
+  try {
+    const parsed = JSON.parse(args)
+    if (!parsed || typeof parsed !== 'object') return args.slice(0, 120)
+    const preferredKeys = ['cmd', 'command', 'code', 'query', 'path', 'url', 'prompt']
+    for (const key of preferredKeys) {
+      const value = parsed[key]
+      if (typeof value === 'string' && value.trim()) {
+        return value.replace(/\s+/g, ' ').slice(0, 160)
+      }
+    }
+    const first = Object.entries(parsed).find(([, value]) => typeof value === 'string' && value.trim())
+    if (first) return String(first[1]).replace(/\s+/g, ' ').slice(0, 160)
+    return JSON.stringify(parsed).slice(0, 160)
+  } catch {
+    return args.replace(/\s+/g, ' ').slice(0, 160)
+  }
+}
+
+function extractResponseText(response: any): string {
+  const output = Array.isArray(response?.output) ? response.output : []
+  const parts: string[] = []
+  for (const item of output) {
+    if (item.type !== 'message') continue
+    const content = Array.isArray(item.content) ? item.content : []
+    for (const part of content) {
+      if (part.type === 'output_text' || part.type === 'text') {
+        parts.push(part.text || '')
+      }
+    }
+  }
+  if (parts.length > 0) return parts.join('')
+  return typeof response?.output_text === 'string' ? response.output_text : ''
 }
