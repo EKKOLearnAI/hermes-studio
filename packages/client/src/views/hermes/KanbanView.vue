@@ -113,6 +113,7 @@ watch(() => route.query.board, async () => {
 onMounted(async () => {
   await Promise.all([kanbanStore.fetchBoards(), kanbanStore.fetchCapabilities()])
   await applyBoardSelection(routeBoard(), true, true)
+  kanbanStore.startEventStream()
   routeReady.value = true
   refreshTimer.value = setInterval(() => {
     if (document.visibilityState === 'visible') {
@@ -122,6 +123,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  kanbanStore.stopEventStream()
   if (refreshTimer.value) clearInterval(refreshTimer.value)
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
     "start": "vite --host --port 8648",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite --host",
-    "dev:server": "nodemon --signal SIGTERM --watch packages/server/src -e ts,tsx --exec TS_NODE_PROJECT=packages/server/tsconfig.json node -r ts-node/register packages/server/src/index.ts",
+    "dev:server": "nodemon",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
@@ -86,6 +86,7 @@
     "@xterm/xterm": "^6.0.0",
     "axios": "^1.9.0",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "esbuild": "^0.27.0",
     "highlight.js": "^11.11.1",
     "js-yaml": "^4.1.1",
@@ -104,6 +105,7 @@
     "qrcode": "^1.5.4",
     "sass": "^1.99.0",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "tsoa": "^7.0.0-alpha.0",
     "typescript": "~6.0.2",
     "vite": "^8.0.4",

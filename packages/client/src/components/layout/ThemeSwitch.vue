@@ -5,7 +5,7 @@ const { isDark, isComic, toggleBrightness, toggleStyle } = useTheme()
 </script>
 
 <template>
-  <div style="display: flex; gap: 4px; align-items: center;">
+  <div class="theme-switch-container" style="display: flex; gap: 4px; align-items: center;">
     <button class="theme-switch" :title="isComic ? 'Ink style' : 'Comic style'" @click="toggleStyle">
       <!-- Palette icon for comic toggle -->
       <svg v-if="isComic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

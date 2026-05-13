@@ -192,14 +192,14 @@ hermes-web-ui start
 
 ### Docker Compose
 
-使用仓库内置的 compose 文件联合运行 Hermes Agent + Web UI：
+单容器部署，内置 Hermes Agent 运行时：
 
 ```bash
 # 使用预构建镜像（推荐）
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest docker compose up -d hermes-agent hermes-webui
+WEBUI_IMAGE=ekkoye8888/hermes-web-ui docker compose up -d
 
 # 或从源码构建
-docker compose up -d --build hermes-agent hermes-webui
+docker compose up -d --build
 
 docker compose logs -f hermes-webui
 ```

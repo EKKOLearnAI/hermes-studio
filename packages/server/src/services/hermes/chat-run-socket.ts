@@ -1101,8 +1101,21 @@ export class ChatRunSocket {
       if (item.type !== 'function_call') return null
       const callId = item.call_id || item.id
       if (!callId) return null
-      run.toolCalls.set(callId, responseFunctionCallToToolCall(item))
-      return null
+      const toolCall = responseFunctionCallToToolCall(item)
+      run.toolCalls.set(callId, { ...toolCall, startedAt: Date.now() })
+      return {
+        event: 'tool.started',
+        payload: {
+          event: 'tool.started',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          tool_call_id: callId,
+          tool: toolCall.function.name,
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+          preview: summarizeToolArguments(toolCall.function.arguments),
+        },
+      }
     }
 
     if (eventType === 'response.output_item.done') {
@@ -1111,7 +1124,8 @@ export class ChatRunSocket {
         const callId = item.call_id || item.id
         if (!callId) return null
         const toolCall = responseFunctionCallToToolCall(item)
-        run.toolCalls.set(callId, toolCall)
+        const existing = run.toolCalls.get(callId)
+        run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt || Date.now() })
 
         const key = `assistant:${callId}`
         if (!run.insertedKeys.has(key)) {
@@ -1127,19 +1141,7 @@ export class ChatRunSocket {
             timestamp: now(),
           })
         }
-        return {
-          event: 'tool.started',
-          payload: {
-            event: 'tool.started',
-            run_id: run.responseId,
-            response_id: run.responseId,
-            tool_call_id: callId,
-            tool: toolCall.function.name,
-            name: toolCall.function.name,
-            arguments: toolCall.function.arguments,
-            preview: summarizeToolArguments(toolCall.function.arguments),
-          },
-        }
+        return null
       }
 
       if (item.type === 'function_call_output') {
@@ -1147,7 +1149,11 @@ export class ChatRunSocket {
         if (!callId) return null
         const key = `tool:${callId}`
         const output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '')
-        const toolName = run.toolCalls.get(callId)?.function?.name || null
+        const toolCallEntry = run.toolCalls.get(callId)
+        const toolName = toolCallEntry?.function?.name || null
+        const startedAt = toolCallEntry?.startedAt
+        const duration = startedAt ? Math.round((Date.now() - startedAt) / 10) / 100 : undefined
+        const hasError = typeof item.output === 'string' && item.output.startsWith('Error')
         if (!run.insertedKeys.has(key)) {
           run.insertedKeys.add(key)
           state.messages.push({
@@ -1171,6 +1177,8 @@ export class ChatRunSocket {
             tool: toolName,
             name: toolName,
             output,
+            duration,
+            error: hasError || undefined,
           },
         }
       }
@@ -1182,6 +1190,7 @@ export class ChatRunSocket {
       const output = Array.isArray(response.output) ? response.output : []
       for (const item of output) {
         if (item.type === 'function_call') {
+          this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.added', { item })
           this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
         } else if (item.type === 'function_call_output') {
           this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })

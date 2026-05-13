@@ -13,6 +13,8 @@ const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
 
+const selectedDisplayName = computed(() => appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider))
+
 const providerOptions = computed(() => {
   const current = appStore.selectedProvider
   customProvider.value = current
@@ -29,23 +31,30 @@ const modelGroupsWithCustom = computed(() =>
   }))
 )
 
-const customModelSet = computed(() => {
-  const set = new Set<string>()
-  for (const models of Object.values(appStore.customModels)) {
-    models.forEach(m => set.add(m))
-  }
-  return set
-})
+function isCustomModel(model: string, provider: string) {
+  return (appStore.customModels[provider] || []).includes(model)
+}
+
+async function removeCustomModel(model: string, provider: string) {
+  await appStore.removeCustomModel(model, provider)
+}
+
+function safeLower(value: unknown) {
+  return typeof value === 'string' ? value.toLowerCase() : ''
+}
 
 const filteredGroups = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
+  const q = safeLower(searchQuery.value).trim()
   if (!q) return modelGroupsWithCustom.value
   return modelGroupsWithCustom.value
     .map(g => ({
       ...g,
-      models: g.models.filter(m => m.toLowerCase().includes(q)),
+      models: g.models.filter(m => {
+        const displayName = appStore.displayModelName(m, g.provider)
+        return safeLower(m).includes(q) || safeLower(displayName).includes(q)
+      }),
     }))
-    .filter(g => g.models.length > 0 || g.label.toLowerCase().includes(q))
+    .filter(g => g.models.length > 0 || safeLower(g.label).includes(q))
 })
 
 function toggleGroup(provider: string) {
@@ -62,6 +71,14 @@ function handleSelect(model: string, provider: string) {
   appStore.switchModel(model, provider)
   showModal.value = false
   searchQuery.value = ''
+}
+
+function modelDisplayName(model: string, provider: string) {
+  return appStore.displayModelName(model, provider)
+}
+
+function modelAlias(model: string, provider: string) {
+  return appStore.getModelAlias(model, provider)
 }
 
 function handleCustomSubmit() {
@@ -89,7 +106,7 @@ function openModal() {
   <div class="model-selector">
     <div class="model-label">{{ t('models.title') }}</div>
     <button class="model-trigger" @click="openModal">
-      <span class="model-name" :title="appStore.selectedModel">{{ appStore.selectedModel || '—' }}</span>
+      <span class="model-name" :title="appStore.selectedModel">{{ selectedDisplayName || '—' }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
       </svg>
@@ -134,10 +151,24 @@ function openModal() {
               :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
               @click="handleSelect(model, group.provider)"
             >
-              <span class="model-item-name">{{ model }}</span>
+              <span class="model-item-label">
+                <span class="model-item-name">{{ modelDisplayName(model, group.provider) }}</span>
+                <span v-if="modelAlias(model, group.provider)" class="model-item-id">
+                  {{ t('models.aliasCanonical', { model }) }}
+                </span>
+              </span>
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
-              <span v-if="customModelSet.has(model)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
+              <span v-if="isCustomModel(model, group.provider)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
+              <button
+                v-if="isCustomModel(model, group.provider)"
+                class="model-custom-remove"
+                type="button"
+                :title="t('models.removeCustomModel')"
+                @click.stop="removeCustomModel(model, group.provider)"
+              >
+                ×
+              </button>
               <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
@@ -169,6 +200,7 @@ function openModal() {
         </div>
       </div>
     </NModal>
+
   </div>
 </template>
 
@@ -308,14 +340,32 @@ function openModal() {
   }
 }
 
-.model-item-name {
+.model-item-label {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-item-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: $font-code;
   font-size: 12px;
 }
+
+.model-item-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 
 .model-check {
   flex-shrink: 0;
@@ -332,6 +382,25 @@ function openModal() {
   border-radius: 3px;
   margin-right: 4px;
   letter-spacing: 0.03em;
+}
+
+
+.model-custom-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  line-height: 18px;
+  padding: 0;
+
+  &:hover {
+    background: rgba(var(--error-rgb), 0.12);
+    color: $error;
+  }
 }
 
 .model-badge-preview {

@@ -33,6 +33,13 @@ function cleanupExpiredSessions() {
 
 // --- Auth file helpers ---
 interface AuthJson { version?: number; active_provider?: string; providers?: Record<string, any>; credential_pool?: Record<string, any[]>; updated_at?: string }
+interface CodexCredentialRef {
+  accessToken: string
+  refreshToken?: string
+  lastRefresh?: string
+  provider?: any
+  poolEntry?: any
+}
 
 function loadAuthJson(authPath: string): AuthJson {
   try { return JSON.parse(readFileSync(authPath, 'utf-8')) as AuthJson } catch { return { version: 1 } }
@@ -61,6 +68,35 @@ function decodeJwtExp(token: string): number | null {
     const claims = JSON.parse(payload)
     return typeof claims.exp === 'number' ? claims.exp : null
   } catch { return null }
+}
+
+function getCodexCredential(auth: AuthJson): CodexCredentialRef | null {
+  const provider = auth.providers?.['openai-codex']
+  const providerTokens = provider?.tokens
+  const providerAccessToken = providerTokens?.access_token || provider?.access_token
+  const pool = auth.credential_pool?.['openai-codex']
+  const poolEntry = Array.isArray(pool) ? pool.find(entry => entry?.access_token) : undefined
+
+  if (providerAccessToken) {
+    return {
+      accessToken: providerAccessToken,
+      refreshToken: providerTokens?.refresh_token || provider?.refresh_token,
+      lastRefresh: provider.last_refresh,
+      provider,
+      poolEntry,
+    }
+  }
+
+  if (poolEntry?.access_token) {
+    return {
+      accessToken: poolEntry.access_token,
+      refreshToken: poolEntry.refresh_token,
+      lastRefresh: poolEntry.last_refresh,
+      poolEntry,
+    }
+  }
+
+  return null
 }
 
 // --- Background login worker ---
@@ -145,32 +181,42 @@ export async function status(ctx: any) {
   try {
     const authPath = getActiveAuthPath()
     const auth = loadAuthJson(authPath)
-    const tokens = auth.providers?.['openai-codex']?.tokens
-    if (!tokens?.access_token || !auth.providers) { ctx.body = { authenticated: false }; return }
-    const codexProvider = auth.providers['openai-codex']!
-    const exp = decodeJwtExp(tokens.access_token)
+    const credential = getCodexCredential(auth)
+    if (!credential) { ctx.body = { authenticated: false }; return }
+    const exp = decodeJwtExp(credential.accessToken)
     if (exp && exp <= Date.now() / 1000 + 120) {
-      if (tokens.refresh_token) {
+      if (credential.refreshToken) {
         try {
           const refreshRes = await fetch(CODEX_OAUTH_TOKEN_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: CODEX_CLIENT_ID }).toString(),
+            body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: credential.refreshToken, client_id: CODEX_CLIENT_ID }).toString(),
             signal: AbortSignal.timeout(15000),
           })
           if (refreshRes.ok) {
             const newTokens = await refreshRes.json() as { access_token: string; refresh_token?: string }
-            codexProvider.tokens.access_token = newTokens.access_token
-            if (newTokens.refresh_token) { codexProvider.tokens.refresh_token = newTokens.refresh_token }
-            codexProvider.last_refresh = new Date().toISOString()
+            const lastRefresh = new Date().toISOString()
+            if (credential.provider?.tokens) {
+              credential.provider.tokens.access_token = newTokens.access_token
+              if (newTokens.refresh_token) { credential.provider.tokens.refresh_token = newTokens.refresh_token }
+              credential.provider.last_refresh = lastRefresh
+            } else if (credential.provider) {
+              credential.provider.access_token = newTokens.access_token
+              if (newTokens.refresh_token) { credential.provider.refresh_token = newTokens.refresh_token }
+              credential.provider.last_refresh = lastRefresh
+            }
+            if (credential.poolEntry) {
+              credential.poolEntry.access_token = newTokens.access_token
+              if (newTokens.refresh_token) { credential.poolEntry.refresh_token = newTokens.refresh_token }
+              credential.poolEntry.last_refresh = lastRefresh
+            }
             saveAuthJson(authPath, auth)
-            saveCodexCliTokens(newTokens.access_token, newTokens.refresh_token || tokens.refresh_token)
-            if (auth.credential_pool?.['openai-codex']?.[0]) { auth.credential_pool['openai-codex'][0].access_token = newTokens.access_token; saveAuthJson(authPath, auth) }
-            ctx.body = { authenticated: true, last_refresh: codexProvider.last_refresh }; return
+            saveCodexCliTokens(newTokens.access_token, newTokens.refresh_token || credential.refreshToken)
+            ctx.body = { authenticated: true, last_refresh: lastRefresh }; return
           }
         } catch { }
       }
       ctx.body = { authenticated: false }; return
     }
-    ctx.body = { authenticated: true, last_refresh: codexProvider.last_refresh }
+    ctx.body = { authenticated: true, last_refresh: credential.lastRefresh }
   } catch { ctx.body = { authenticated: false } }
 }

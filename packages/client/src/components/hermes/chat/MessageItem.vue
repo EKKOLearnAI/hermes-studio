@@ -17,6 +17,7 @@ import {
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
+import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
@@ -420,6 +421,8 @@ function handleSpeechToggle() {
     speech.openaiToggle(props.message.id, content, {
       baseUrl: apiUrl,
       voice: voiceSettings.edgeVoice.value,
+      rate: speedToEdgeRate(voiceSettings.edgeRate.value),
+      pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
     })
     return
   }
@@ -466,6 +469,8 @@ onMounted(() => {
         speech.openaiPlay(props.message.id, content, {
           baseUrl: '/api/tts/proxy',
           voice: voiceSettings.edgeVoice.value,
+          rate: speedToEdgeRate(voiceSettings.edgeRate.value),
+          pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
         })
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)

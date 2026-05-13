@@ -8,6 +8,7 @@ import { config } from '../../config'
 import { getActiveProfileDir, getActiveEnvPath } from './hermes-profile'
 
 const execFileAsync = promisify(execFile)
+const execOpts = { windowsHide: true }
 
 // Max download file size (default 200MB)
 const MAX_DOWNLOAD_SIZE = parseInt(process.env.MAX_DOWNLOAD_SIZE || '', 10) || 200 * 1024 * 1024
@@ -714,7 +715,7 @@ export function getTerminalConfig(): TerminalConfig {
     const configPath = `${getActiveProfileDir()}/config.yaml`
     if (!existsSync(configPath)) return { backend: 'local' }
     const raw = readFileSync(configPath, 'utf-8')
-    const doc = YAML.load(raw) as any
+    const doc = YAML.load(raw, { json: true }) as any
     const t = doc?.terminal || {}
     return {
       backend: (t.backend as BackendType) || 'local',

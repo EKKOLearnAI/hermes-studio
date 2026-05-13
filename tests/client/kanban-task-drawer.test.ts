@@ -204,6 +204,35 @@ describe('KanbanTaskDrawer', () => {
     expect(mockRouterPush).toHaveBeenCalledWith({ name: 'hermes.chat', query: { session: 'session-2' } })
   })
 
+  it('does not expose mutation actions for archived tasks', async () => {
+    mockGetTask.mockResolvedValueOnce({
+      task: {
+        id: 'task-archived',
+        title: 'Archived task',
+        body: null,
+        assignee: 'alice',
+        status: 'archived',
+        priority: 1,
+        created_at: 100,
+        started_at: 110,
+        completed_at: 120,
+        tenant: null,
+        result: 'Archived summary',
+      },
+      latest_summary: 'Archived summary',
+      comments: [],
+      events: [],
+      runs: [],
+    })
+
+    const wrapper = mount(KanbanTaskDrawer, { props: { taskId: 'task-archived' } })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('kanban.action.complete')
+    expect(wrapper.text()).not.toContain('kanban.action.block')
+    expect(wrapper.text()).not.toContain('kanban.action.assign')
+  })
+
   it('executes complete, block, unblock, and assign actions', async () => {
     mockGetTask.mockResolvedValueOnce({
       task: {

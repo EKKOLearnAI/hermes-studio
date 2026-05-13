@@ -1,5 +1,31 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
+import { getGatewayManagerInstance } from './gateway-bootstrap'
+
+function shouldStopGatewaysOnShutdown(signal: string): boolean {
+  // nodemon may use SIGTERM on Windows restarts, so dev mode opts out via env.
+  // Production keeps stopping owned gateways by default.
+  const override = process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN?.trim()
+
+  console.log(`[shutdown] Signal: ${signal}, HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: ${override}`)
+
+  // Explicit '0' or 'false' means dev mode: never stop gateways
+  if (override === '0' || override === 'false') {
+    console.log('[shutdown] Dev mode detected: NOT stopping gateways')
+    return false
+  }
+
+  // Explicit '1' or 'true' means always stop gateways
+  if (override === '1' || override === 'true') {
+    console.log('[shutdown] Explicit gateway shutdown enabled: stopping gateways')
+    return true
+  }
+
+  // Default behavior: only stop gateways on explicit termination, not on reload
+  const shouldStop = signal !== 'SIGUSR2'
+  console.log(`[shutdown] Default behavior: ${shouldStop ? 'STOPPING' : 'NOT stopping'} gateways (signal: ${signal})`)
+  return shouldStop
+}
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any): void {
   let isShuttingDown = false
@@ -12,8 +38,26 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     setTimeout(() => process.exit(0), 3000)
 
     logger.info('Shutting down (%s)...', signal)
+    console.log(`[shutdown] Received signal: ${signal}`)
+    console.log(`[shutdown] HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN = ${process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN}`)
+    console.log(`[shutdown] shouldStopGatewaysOnShutdown = ${shouldStopGatewaysOnShutdown(signal)}`)
 
     try {
+      if (shouldStopGatewaysOnShutdown(signal)) {
+        // Stop gateway processes owned by this Web UI instance first.
+        try {
+          const gatewayManager = getGatewayManagerInstance()
+          if (gatewayManager) {
+            await gatewayManager.stopAll()
+            logger.info('All gateways stopped')
+          }
+        } catch (err) {
+          logger.warn(err, 'Failed to stop gateways (non-fatal)')
+        }
+      } else {
+        logger.info('Skipping gateway shutdown for %s', signal)
+      }
+
       // Close ChatRunSocket first to abort all active runs and close EventSource connections
       if (chatRunServer) {
         chatRunServer.close()

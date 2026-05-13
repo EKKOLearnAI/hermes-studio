@@ -12,7 +12,7 @@ function walkFiles(dir: string, files: string[] = []): string[] {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
       walkFiles(path, files)
-    } else if (/\.(ts|vue)$/.test(entry.name) && !path.includes('/i18n/locales/')) {
+    } else if (/\.(ts|vue)$/.test(entry.name) && !path.replace(/\\/g, '/').includes('/i18n/locales/')) {
       files.push(path)
     }
   }
@@ -76,6 +76,6 @@ describe('i18n locale coverage', () => {
   })
 
   it('keeps the coverage scanner rooted in client source files', () => {
-    expect(relative(process.cwd(), SOURCE_ROOT)).toBe('packages/client/src')
+    expect(relative(process.cwd(), SOURCE_ROOT)).toBe(join('packages', 'client', 'src'))
   })
 })

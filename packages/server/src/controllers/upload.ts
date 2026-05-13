@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto'
 import { writeFile } from 'fs/promises'
+import { join } from 'path'
 import { config } from '../config'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
@@ -42,7 +43,7 @@ export async function handleUpload(ctx: any) {
     }
     const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
     const savedName = randomBytes(8).toString('hex') + ext
-    const savedPath = `${config.uploadDir}/${savedName}`
+    const savedPath = join(config.uploadDir, savedName)
     await writeFile(savedPath, data)
     results.push({ name: filename, path: savedPath })
   }

@@ -29,7 +29,12 @@ export async function getToken(): Promise<string | null> {
   } catch {
     const token = generateToken()
     await mkdir(APP_HOME, { recursive: true })
-    await writeFile(TOKEN_FILE, token + '\n', { mode: 0o600 })
+    // Only set mode on Unix systems (Windows ignores this)
+    const options: any = {}
+    if (process.platform !== 'win32') {
+      options.mode = 0o600
+    }
+    await writeFile(TOKEN_FILE, token + '\n', options)
     return token
   }
 }
