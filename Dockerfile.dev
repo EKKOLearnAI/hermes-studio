@@ -44,25 +44,14 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm -f /tmp/node.tar.gz \
     && node --version
 
-# Pre-install VSCode Server
-# This downloads the latest stable VSCode Server for remote-ssh connections
-RUN mkdir -p /root/.vscode-server/cli/servers/Stable \
-    && VSCODE_CLI_COMMIT=$(curl -fsSL https://update.code.visualstudio.com/api/releases/stable/linux-x64 | jq -r '.[0].commit') \
-    && echo "Downloading VSCode Server for commit: ${VSCODE_CLI_COMMIT}" \
-    && mkdir -p "/root/.vscode-server/bin/${VSCODE_CLI_COMMIT}" \
-    && curl -fsSL "https://update.code.visualstudio.com/commit:${VSCODE_CLI_COMMIT}/server-linux-x64/stable" \
-       -o /tmp/vscode-server.tar.gz \
-    && tar -xzf /tmp/vscode-server.tar.gz -C "/root/.vscode-server/bin/${VSCODE_CLI_COMMIT}" --strip-components=1 \
-    && rm -f /tmp/vscode-server.tar.gz \
-    && echo "VSCode Server installed at /root/.vscode-server/bin/${VSCODE_CLI_COMMIT}"
-
 WORKDIR /app
 
 # Copy project files
 COPY package*.json ./
 COPY . .
 
-# Install all dependencies (including devDependencies)
+# Install all dependencies (including devDependencies like concurrently, nodemon, etc.)
+# NODE_ENV is not set to 'production', so devDependencies will be installed
 RUN npm install && npm rebuild node-pty
 
 # Set up SSH
