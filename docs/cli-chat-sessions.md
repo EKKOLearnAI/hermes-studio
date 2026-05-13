@@ -1,369 +1,429 @@
-# CLI Chat Sessions 功能设计文档
+# CLI/Bridge Chat Sessions 实现文档
 
 > 分支：`feat/cli-chat-sessions`
 
 ## 概述
 
-本功能为 Hermes Web UI 新增了 **CLI 聊天会话**模式。用户可以在 Web UI 中创建 CLI 类型的会话，通过 Socket.IO 直接与 Hermes Agent 的 Python `AIAgent` 进程交互，绕过原有的 API Server `/v1/responses` 路径。
+当前实现把原来的聊天通道统一到 Socket.IO namespace `/chat-run`。前端仍使用同一套 `ChatPanel + MessageList + ChatInput`，通过会话的 `source` 字段区分运行方式：
 
-CLI 会话支持：流式对话、斜杠命令（`/new`、`/reset`、`/undo`、`/retry`、`/branch`、`/compress`、`/save`、`/title` 等）、中断（abort）、转向（steer）、会话恢复（resume）。
+| source | 运行路径 | 说明 |
+|--------|----------|------|
+| `api_server` | Web UI Server → Hermes Gateway `/v1/responses` | 默认聊天路径 |
+| `cli` | Web UI Server → Python agent bridge → `AIAgent` | Bridge(beta)，在 Web UI 服务端子进程里直接运行 Hermes Agent |
 
----
+Bridge 会话不是一个独立 UI 面板，而是普通会话的一种来源。用户通过“新建聊天”下拉菜单选择 `API` 或 `Bridge (beta)`。
 
-## 架构
+Bridge 模式支持：
 
-### 整体数据流
+- 流式文本输出
+- reasoning/thinking 增量
+- tool started/completed 事件
+- 工具审批请求与响应
+- abort 中断
+- per-session 队列
+- profile 隔离
+- 从 DB resume 会话
+- 与 API Server 路径共用上下文压缩逻辑
 
-```
-前端 CliChatPanel
-  ↕ Socket.IO (/cli-chat-run)
-CliChatRunSocket (Node.js)
-  ↕ TCP/Unix Socket (JSON 协议)
-hermes_bridge.py (Python 子进程)
-  ↕ 直接 import
-AIAgent (hermes-agent)
-```
-
-### 组件关系
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    ChatPanel.vue                     │
-│  source === 'cli' ? CliChatPanel : MessageList+Input│
-└──────────────────┬──────────────────────────────────┘
-                   │
-         ┌─────────┴──────────┐
-         │  CliChatPanel.vue  │
-         │  ├─ MessageList    │
-         │  └─ ChatInput      │
-         └─────────┬──────────┘
-                   │ Socket.IO
-         ┌─────────┴──────────────┐
-         │  CliChatRunSocket      │
-         │  (namespace: /cli-chat-run)│
-         └─────────┬──────────────┘
-                   │ AgentBridgeClient
-         ┌─────────┴──────────────┐
-         │  hermes_bridge.py       │
-         │  (Python 子进程)        │
-         │  └─ AgentPool           │
-         │     └─ AIAgent instances│
-         └────────────────────────┘
-```
+当前不再支持旧文档里的独立 `/cli-chat-run` namespace、`CliChatPanel.vue`、`cli-chat.ts` 和 CLI 命令控制层。前端不会再发送 `command` 或 `steer` socket 事件，也不会把 `/new`、`/reset`、`/undo`、`/retry`、`/branch`、`/compress` 等输入当作特殊命令处理。
 
 ---
 
-## 新增文件
+## 整体架构
 
-### 后端
+```text
+ChatPanel.vue
+  ├─ MessageList.vue
+  └─ ChatInput.vue
+        │
+        │ Socket.IO /chat-run
+        ▼
+ChatRunSocket (Node.js)
+  ├─ source=api_server → Hermes Gateway /v1/responses
+  └─ source=cli        → AgentBridgeClient
+                              │ TCP/Unix socket, newline JSON
+                              ▼
+                         hermes_bridge.py
+                              │ in-process import
+                              ▼
+                         AIAgent (hermes-agent)
+```
 
-| 文件 | 说明 |
-|------|------|
-| `packages/server/src/services/hermes/agent-bridge/index.ts` | 模块入口，re-export client 和 manager |
-| `packages/server/src/services/hermes/agent-bridge/client.ts` | `AgentBridgeClient` — 通过 TCP/Unix socket 与 Python bridge 通信的 Node.js 客户端 |
-| `packages/server/src/services/hermes/agent-bridge/manager.ts` | `AgentBridgeManager` — 管理 Python 子进程的生命周期（启动、就绪检测、关闭） |
-| `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python bridge 服务 — 在进程内直接运行 `AIAgent`，管理会话池，暴露 JSON 协议 |
-| `packages/server/src/services/hermes/cli-chat-run-socket.ts` | `CliChatRunSocket` — Socket.IO namespace `/cli-chat-run`，桥接前端与 `AgentBridgeClient` |
+### 分流规则
+
+`ChatRunSocket.resolveRunSource()` 决定本轮运行走哪个后端：
+
+1. `run` payload 中 `source === 'cli'` 时走 bridge。
+2. `source === 'api_server'` 时走 gateway。
+3. 未显式传 `source` 时，如果 DB 中已有 session 的 `source` 是 `cli`，继续走 bridge。
+4. 其他情况默认走 `api_server`。
+
+---
+
+## 主要文件
 
 ### 前端
 
 | 文件 | 说明 |
 |------|------|
-| `packages/client/src/api/hermes/cli-chat.ts` | 前端 Socket.IO 客户端，提供 `connectCliChatRun`、`startCliRun`、`watchCliSession`、`resumeCliSession` |
-| `packages/client/src/components/hermes/chat/CliChatPanel.vue` | CLI 聊天专用面板，管理消息渲染、流式 delta、斜杠命令、中断/转向 |
+| `packages/client/src/components/hermes/chat/ChatPanel.vue` | 统一聊天面板；新建菜单包含 `API` 和 `Bridge (beta)`；渲染审批条 |
+| `packages/client/src/components/hermes/chat/MessageList.vue` | 统一消息列表；展示文本、reasoning、tool 消息等 |
+| `packages/client/src/components/hermes/chat/ChatInput.vue` | 统一输入框；发送、停止、附件上传入口 |
+| `packages/client/src/api/hermes/chat.ts` | `/chat-run` Socket.IO 客户端；注册 session 事件处理器；发送 run/abort/approval |
+| `packages/client/src/stores/hermes/chat.ts` | 会话状态、发送流程、resume、队列、审批、消息映射 |
 
----
+### 后端
 
-## 修改文件
-
-### 前端组件
-
-**`ChatInput.vue`** — 新增 props 使其可被外部控制：
-
-| Prop | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `sendHandler` | `(text, attachments?) => void \| Promise<void>` | — | 覆盖默认的 `chatStore.sendMessage` |
-| `stopHandler` | `() => void` | — | 覆盖默认的 `chatStore.stopStreaming` |
-| `streaming` | `boolean` | `chatStore.isStreaming` | 外部注入流式状态 |
-| `aborting` | `boolean` | `chatStore.isAborting` | 外部注入中止状态 |
-| `allowAttachments` | `boolean` | `true` | 是否允许附件上传 |
-| `showTopBar` | `boolean` | `true` | 是否显示顶部工具栏 |
-
-**`MessageList.vue`** — 新增 props：
-
-| Prop | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `runActive` | `boolean` | `chatStore.isRunActive` | 外部注入运行状态 |
-| `abortState` | `{ aborting: boolean; synced?: boolean \| null } \| null` | `chatStore.abortState` | 外部注入中止状态 |
-
-**`ChatPanel.vue`** — 变更：
-
-- 新增 `handleNewCliChat()` 方法和"新建 CLI"按钮（终端图标 `>_`）
-- 会话列表头部和空状态均显示"新建 CLI"按钮
-- 当 `activeSession.source === 'cli'` 时渲染 `CliChatPanel` 替代 `MessageList + ChatInput`
-
-### Pinia Store
-
-**`chat.ts`** — 变更：
-
-- `createSession(source)` — 新增 `source` 参数（默认 `'api_server'`）
-- `newCliChat()` — 创建 `source: 'cli'` 的会话
-- `replaceActiveSessionId(nextId)` — 替换当前会话 ID（用于 `/new`、`/reset` 命令后服务端返回新 session_id 的场景）
-- `isCliSession(session)` — 判断是否为 CLI 会话
-- `loadSessionDetailFromHistory(session)` — 从 Hermes `state.db` 加载 CLI 会话详情
-- `uploadFiles` / `buildContentBlocks` — 从私有导出改为公开导出（供 `CliChatPanel` 使用）
-- 切换会话时，CLI 会话直接从 DB 加载而非走 Socket.IO resume
-- 页面可见性恢复时，CLI 会话走 `refreshActiveSession` 而非 resume
-
-### 后端 Controller
-
-**`sessions.ts`** — 变更：
-
-- `list()` — 合并本地 store（`api_server` 会话）和 Hermes `state.db`（`cli` 会话），按 `last_active` 排序
-- `get()` — 先查本地 store，未命中则回退到 Hermes `state.db`
-- `listHermesSessions()` — 过滤掉 `cli` 来源（避免重复）
-
-### 服务器启动与关闭
-
-**`index.ts`** — 变更：
-
-- 启动 `AgentBridgeManager`（Python 子进程）
-- 创建 `CliChatRunSocket` 并挂载到 Socket.IO
-
-**`shutdown.ts`** — 变更：
-
-- 关闭时依次停止：`agentBridgeManager.stop()` → `cliChatRunServer.close()`
-
-### 构建
-
-**`build-server.mjs`** — 变更：
-
-- 构建后将 `hermes_bridge.py` 复制到 `dist/server/agent-bridge/`
-
-### 国际化
-
-**`en.ts` / `zh.ts`** — 新增：
-
-- `chat.newCliChat`: `"New CLI"` / `"新建 CLI"`
-
-### 其他
-
-**`.gitignore`** — 新增忽略 `__pycache__/` 和 `*.py[cod]`
-
----
-
-## Python Bridge（hermes_bridge.py）
-
-### 协议
-
-请求/响应均为单行 JSON，通过 socket 以 `\n` 分隔。
-
-**请求格式：**
-
-```json
-{ "action": "chat", "session_id": "xxx", "message": "hello" }
-```
-
-**响应格式：**
-
-```json
-{ "ok": true, "run_id": "xxx", "session_id": "xxx", "status": "running" }
-```
-
-### 支持的 action
-
-| Action | 说明 |
-|--------|------|
-| `ping` | 健康检查 |
-| `chat` | 启动一轮对话（异步，返回 `run_id`） |
-| `command` | 执行斜杠命令 |
-| `get_output` | 获取 run 的增量输出（通过 `cursor` 实现流式） |
-| `get_result` | 获取 run 的完整结果 |
-| `interrupt` | 中断当前运行 |
-| `steer` | 向运行中的 agent 注入提示 |
-| `get_history` | 获取会话历史 |
-| `destroy` | 销毁会话 |
-| `list` | 列出所有活跃会话 |
-| `shutdown` | 关闭 bridge 服务 |
-
-### 支持的斜杠命令
-
-| 命令 | 说明 |
+| 文件 | 说明 |
 |------|------|
-| `/new` `/reset` | 重置会话（返回 `new_session_id`） |
-| `/clear` | 清空会话 |
-| `/undo` | 撤销最后一轮对话 |
-| `/retry` | 重试最后一轮对话 |
-| `/save` | 保存对话快照到文件 |
-| `/title <text>` | 设置会话标题 |
-| `/branch` `/fork` | 分支当前会话 |
-| `/compress` | 压缩上下文 |
-| `/stop` | 停止当前运行 |
-| `/steer <prompt>` | 向运行中的 agent 注入提示 |
-| `/status` | 查看会话状态 |
-| `/history` | 查看对话历史摘要 |
-| `/help` | 显示帮助 |
+| `packages/server/src/services/hermes/chat-run-socket.ts` | `/chat-run` Socket.IO 服务；同时处理 API Server 和 Bridge 运行 |
+| `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 端 bridge 客户端；通过 socket 请求 Python bridge |
+| `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge 子进程生命周期管理 |
+| `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python bridge 服务；创建并复用 `AIAgent` 实例 |
+| `packages/server/src/services/hermes/agent-bridge/index.ts` | bridge 模块导出 |
+| `packages/server/src/index.ts` | 启动 `AgentBridgeManager` 和 `ChatRunSocket` |
+| `packages/server/src/services/shutdown.ts` | 关闭时停止 chat socket 和 bridge 子进程 |
+| `packages/server/src/controllers/hermes/sessions.ts` | 会话列表和详情读取，包含 `source` 信息 |
+| `packages/server/src/controllers/hermes/profiles.ts` | profile 切换/管理时清理 bridge 内存会话 |
 
-### 会话管理
+### 已移除的旧文件
 
-- `AgentPool` 维护 `session_id → AgentSession` 映射，每个会话持有独立的 `AIAgent` 实例
-- 首次访问时通过 `state.db`（`SessionDB`）加载历史消息并注入 agent
-- agent 运行在独立线程中，通过 `stream_callback` 收集 delta
-- `RunRecord` 跟踪每次运行的状态、delta 列表和事件
+| 文件 | 状态 |
+|------|------|
+| `packages/client/src/api/hermes/cli-chat.ts` | 已删除 |
+| `packages/client/src/components/hermes/chat/CliChatPanel.vue` | 已删除 |
+| `packages/server/src/services/hermes/cli-chat-run-socket.ts` | 已删除 |
 
 ---
 
-## AgentBridgeClient（Node.js）
+## 前端流程
 
-### 通信方式
+### 新建会话
 
-- 支持 `ipc:///path/to.sock`（Unix domain socket）和 `tcp://host:port` 两种端点
-- 每次请求建立新的 socket 连接，发送一行 JSON，读取一行 JSON 响应
-- 请求通过 `lock` 串行化，避免并发
+`ChatPanel.vue` 中的新建按钮使用下拉菜单：
 
-### 流式输出
+- `API`：调用 `chatStore.newChat()`，创建默认 `api_server` 会话。
+- `Bridge (beta)`：调用 `chatStore.newCliSession()`，创建 `source: 'cli'` 会话。
 
-`streamOutput(runId)` 是一个 `AsyncGenerator`，以固定间隔（默认 100ms）轮询 `get_output`，通过 `cursor` 机制获取增量 delta：
+Bridge 会话 ID 使用类似 `YYYYMMDD_HHMMSS_xxxxxx` 的格式，便于与 Hermes CLI 风格的 session ID 对齐。
+
+### 发送消息
+
+1. `ChatInput.vue` 触发 store 的发送逻辑。
+2. `chat.ts` 根据 active session 组装输入内容，附件会被转为 `ContentBlock[]`。
+3. 调用 `startRunViaSocket()`。
+4. 前端向 `/chat-run` emit：
 
 ```ts
-for await (const chunk of client.streamOutput(runId)) {
-  // chunk.delta — 增量文本
-  // chunk.done  — 是否结束
+socket.emit('run', {
+  session_id,
+  input,
+  instructions,
+  model,
+  queue_id,
+  source, // api_server 或 cli
+})
+```
+
+5. 前端注册本 session 的事件 handler，通过 `session_id` 隔离多会话并发事件。
+
+### Resume
+
+切换会话、页面恢复可见、或刷新后，前端通过：
+
+```ts
+socket.emit('resume', { session_id })
+```
+
+服务端返回：
+
+```ts
+{
+  session_id,
+  messages,
+  isWorking,
+  isAborting,
+  events,
+  inputTokens,
+  outputTokens,
+  queueLength,
 }
 ```
 
----
+如果服务端发现该 session 仍在运行，前端会重新注册 handler，并允许继续 abort。
 
-## AgentBridgeManager（Node.js）
+### 审批
 
-### 职责
+Bridge 工具需要人工确认时，服务端会发 `approval.requested`，前端 store 记录为 `activePendingApproval`，`ChatPanel.vue` 在输入框上方显示审批条。
 
-1. 发现 `hermes-agent` 安装路径（按优先级搜索多个候选目录）
-2. 发现 Python 解释器（venv → shebang → uv → 系统 python）
-3. 以子进程方式启动 `hermes_bridge.py`
-4. 监听 stdout，等待 `{"event": "ready"}` 信号
-5. 15 秒启动超时
-6. 关闭时发送 `SIGTERM`，1.5 秒后 `SIGKILL`
+前端响应审批：
 
-### Python 路径发现优先级
-
-1. `HERMES_AGENT_BRIDGE_PYTHON` 环境变量
-2. `agentRoot/venv/bin/python3`
-3. `hermes` 二进制的 shebang 行
-4. `uv run --project <agentRoot> python`
-5. 系统 `python3` / `python`
+```ts
+socket.emit('approval.respond', {
+  session_id,
+  approval_id,
+  choice, // once | session | always | deny
+})
+```
 
 ---
 
-## Socket.IO 事件（/cli-chat-run）
+## `/chat-run` Socket.IO 协议
 
 ### 客户端 → 服务端
 
 | 事件 | 数据 | 说明 |
 |------|------|------|
-| `resume` | `{ session_id }` | 恢复会话，获取当前状态 |
-| `run` | `{ session_id, input }` | 发送消息启动对话 |
-| `command` | `{ session_id, command }` | 执行斜杠命令 |
-| `abort` | `{ session_id, message? }` | 中断当前运行 |
-| `steer` | `{ session_id, text }` | 注入提示 |
+| `run` | `{ session_id, input, model?, instructions?, queue_id?, source? }` | 启动一轮运行；`source` 决定 API Server 或 Bridge |
+| `resume` | `{ session_id }` | 加入 session room 并恢复状态 |
+| `abort` | `{ session_id }` | 中断当前运行 |
+| `cancel_queued_run` | `{ session_id, queue_id }` | 取消等待队列中的一条 run |
+| `approval.respond` | `{ session_id, approval_id, choice }` | 响应 Bridge 工具审批 |
+
+当前没有 `command`、`steer` 或 slash-command 相关 Socket.IO 事件。
 
 ### 服务端 → 客户端
 
 | 事件 | 说明 |
 |------|------|
-| `resumed` | 恢复完成，返回工作状态和已有输出 |
-| `run.started` | 对话开始 |
-| `message.delta` | 增量文本输出 |
-| `run.completed` | 对话完成 |
-| `run.failed` | 对话失败 |
-| `abort.started` | 开始中断 |
-| `abort.completed` | 中断完成（含 `synced` 状态） |
-| `steer.completed` | 转向完成 |
-| `command.started` | 命令开始执行 |
-| `command.completed` | 命令执行完成（含 `new_session_id`、`retry`、`history` 等） |
+| `resumed` | 返回 DB 消息、运行状态、队列长度和最近事件 |
+| `run.started` | 运行开始 |
+| `run.queued` | 当前 session 已有运行，新请求进入队列 |
+| `message.delta` | 文本增量 |
+| `reasoning.delta` | reasoning 增量 |
+| `thinking.delta` | thinking 增量 |
+| `reasoning.available` | reasoning 内容可用 |
+| `tool.started` | 工具调用开始 |
+| `tool.completed` | 工具调用结束 |
+| `approval.requested` | Bridge 工具请求人工审批 |
+| `approval.resolved` | 审批完成或超时 |
+| `compression.started` | 上下文压缩开始 |
+| `compression.completed` | 上下文压缩结束 |
+| `usage.updated` | token 用量更新 |
+| `abort.started` | 中断开始 |
+| `abort.completed` | 中断结束 |
+| `run.completed` | 运行完成 |
+| `run.failed` | 运行失败 |
 
 ### 认证
 
-与现有 Socket.IO 认证一致：通过 `socket.handshake.auth.token` 传递 Bearer token，与服务器 token 比对。
+`/chat-run` 使用 Socket.IO auth token：
+
+```ts
+io(`${baseUrl}/chat-run`, {
+  auth: { token },
+  query: { profile },
+})
+```
+
+如果未设置 `AUTH_DISABLED=1`，服务端会与 Web UI token 比对。
 
 ---
 
-## 前端 API 层（cli-chat.ts）
+## ChatRunSocket 后端行为
 
-### 核心函数
+### API Server 路径
 
-| 函数 | 说明 |
-|------|------|
-| `connectCliChatRun()` | 建立或复用 Socket.IO 连接 |
-| `disconnectCliChatRun()` | 断开连接 |
-| `startCliRun(sessionId, input, handlers)` | 发送消息并监听事件，返回 `{ abort, steer, command, cleanup }` |
-| `watchCliSession(sessionId, handlers)` | 仅监听事件不发送消息（用于恢复/旁观） |
-| `resumeCliSession(sessionId, onResumed)` | 恢复已有会话 |
+`source=api_server` 时：
 
-### 事件处理器（CliRunHandlers）
+1. 写入用户消息到 Web UI 本地 session DB。
+2. 通过 `buildCompressedHistory()` 构建上下文。
+3. 请求当前 profile 的 Hermes Gateway：
+
+```text
+POST <upstream>/v1/responses
+```
+
+4. 读取 SSE frame，映射为统一的 `/chat-run` 事件。
+5. 完成后写入 assistant/tool 消息，更新 usage。
+
+### Bridge 路径
+
+`source=cli` 时：
+
+1. 写入用户消息到 Web UI 本地 session DB。
+2. 复用同一套 `buildCompressedHistory()` 构建压缩上下文。
+3. 调用：
 
 ```ts
-interface CliRunHandlers {
-  onStarted?: (event: CliRunEvent) => void
-  onDelta?: (event: CliRunEvent) => void
-  onCompleted?: (event: CliRunEvent) => void
-  onFailed?: (event: CliRunEvent) => void
-  onAbortStarted?: (event: CliRunEvent) => void
-  onAbortCompleted?: (event: CliRunEvent) => void
-  onSteerCompleted?: (event: CliRunEvent) => void
-  onCommandCompleted?: (event: CliRunEvent) => void
+this.bridge.chat(session_id, input, history, instructions, profile)
+```
+
+4. 轮询 `AgentBridgeClient.streamOutput(run_id)`。
+5. 将 Python bridge 的 delta 和 events 映射成统一事件。
+6. 将 assistant 文本、reasoning、tool 调用结果 flush 回 DB。
+
+### 队列
+
+同一个 `session_id` 同时只能有一个 active run。新的 `run` 到达时：
+
+- 如果当前 session 正在运行，则放入 `state.queue`。
+- 发送 `run.queued` 更新队列长度。
+- 当前 run 结束或 abort 完成后，自动执行下一条 queued run。
+
+---
+
+## Python Agent Bridge
+
+### 通信协议
+
+Node 和 Python bridge 之间使用本地 socket 的单行 JSON 协议：
+
+```json
+{ "action": "chat", "session_id": "xxx", "message": "hello" }
+```
+
+响应也是单行 JSON：
+
+```json
+{ "ok": true, "run_id": "xxx", "session_id": "xxx", "status": "running" }
+```
+
+### Endpoint
+
+默认 endpoint 按平台选择：
+
+| 平台 | 默认 endpoint |
+|------|---------------|
+| Windows | `tcp://127.0.0.1:18765` |
+| macOS/Linux | `ipc:///tmp/hermes-agent-bridge.sock` |
+
+Windows 使用 TCP 是因为部分 Python/Windows 环境没有 Unix domain socket 支持。
+
+### 当前实际使用的 action
+
+| Action | 说明 |
+|--------|------|
+| `chat` | 启动一轮 `AIAgent.run_conversation()` |
+| `get_output` | 通过 `cursor` 和 `event_cursor` 获取增量文本与事件 |
+| `interrupt` | 调用 agent 中断当前运行 |
+| `approval_respond` | 响应工具审批 |
+| `destroy_all` | profile 切换/管理时销毁全部 bridge 内存 session |
+
+bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_result`、`get_history`、`destroy`、`list`、`shutdown`、`steer`，但当前 `/chat-run` 前端路径不会暴露这些能力。
+
+旧的 `command` action 已移除，bridge 不再处理 `/new`、`/undo`、`/retry`、`/branch`、`/compress` 等斜杠命令。
+
+### 会话和 profile
+
+`AgentPool` 维护 `session_id -> AgentSession`：
+
+- 每个 session 持有独立 `AIAgent` 实例。
+- session 按 profile 创建，profile 改变时会重建对应 agent。
+- `HERMES_HOME` 会在创建 agent 时临时切到 profile home。
+- `SessionDB` 按 profile 的 `state.db` 路径缓存。
+- 空闲 session 会被 bridge GC，默认 30 分钟无运行后销毁内存态。
+
+### 工具和审批事件
+
+bridge 从 `AIAgent` 回调中收集事件：
+
+- `stream.delta`
+- `reasoning.delta`
+- `thinking.delta`
+- `tool.started`
+- `tool.completed`
+- `tool.progress`
+- `approval.requested`
+- `approval.resolved`
+- `turn.boundary`
+- `status`
+
+`ChatRunSocket` 会把这些事件转换为前端统一事件，并负责 DB 落盘。
+
+审批默认等待 60 秒，超时自动 `deny`。
+
+---
+
+## AgentBridgeClient
+
+`AgentBridgeClient` 是 Node 端本地 socket 客户端。
+
+行为：
+
+- 支持 `ipc://` 和 `tcp://` endpoint。
+- 每次请求新建 socket，发送一行 JSON，读取一行 JSON。
+- 请求通过内部 lock 串行化。
+- 默认请求响应超时为 `120000ms`。
+- `streamOutput()` 每 100ms 轮询一次 `get_output`。
+
+示例：
+
+```ts
+const started = await bridge.chat(sessionId, input, history, instructions, profile)
+
+for await (const chunk of bridge.streamOutput(started.run_id)) {
+  // chunk.delta
+  // chunk.events
+  // chunk.done
 }
 ```
 
----
-
-## CliChatPanel.vue 工作流程
-
-### 发送消息
-
-1. 用户输入文本 → `handleSend(text, attachments)`
-2. 如有附件，上传文件并构建 `ContentBlock[]`
-3. 将用户消息追加到本地 `session.messages`
-4. 创建空的 assistant 消息（`isStreaming: true`）
-5. 调用 `startCliRun(sessionId, input, handlers)`
-6. `onDelta` 追加文本到 assistant 消息
-7. `onCompleted` 标记完成，更新标题
-
-### 斜杠命令
-
-1. 用户输入 `/command` 开头的文本
-2. 显示 "Running /xxx..." 系统消息
-3. 调用 `activeHandle.command(text)`
-4. `onCommandCompleted` 处理结果：
-   - `new_session_id`：调用 `replaceActiveSessionId`，清空消息（`/new`、`/reset`、`/clear`）
-   - `retry` + `retry_input`：自动重新发送上一条用户消息
-   - `history`：用 bridge 返回的历史替换本地消息列表
-   - `title`：更新会话标题
-
-### 中断与转向
-
-- **中断**：`handleStop()` → `activeHandle.abort()` → `onAbortStarted` / `onAbortCompleted`
-- **转向**：`activeHandle.steer(text)` → `onSteerCompleted`
-
-### 会话恢复
-
-- `onMounted` 和 `activeCliSessionId` 变化时调用 `attachToActiveSession()`
-- `watchCliSession` + `resumeCliSession` 恢复已有会话状态
+注意：目前 socket connect 阶段没有独立 connect timeout，主要依赖系统连接错误和请求响应 timeout。
 
 ---
 
-## 与原有 Chat 系统的对比
+## AgentBridgeManager
 
-| 维度 | API Server Chat（原有） | CLI Chat（新增） |
-|------|------------------------|-----------------|
-| 后端通道 | SSE (`EventSource`) → `/v1/runs` | Socket.IO → Python bridge → `AIAgent` |
-| Agent 运行位置 | Hermes Gateway 进程 | Web UI 服务端子进程内 |
-| 会话来源 | `api_server` | `cli` |
-| 消息加载 | Socket.IO resume（从 DB） | 直接从 Hermes `state.db` 查询 |
-| 附件支持 | 支持 | 支持（上传后构建 ContentBlock） |
-| 斜杠命令 | 无 | 支持（`/new`、`/undo`、`/retry` 等） |
-| 中断机制 | HTTP abort | `agent.interrupt()` |
-| 转向 | 无 | `agent.steer()` |
+`AgentBridgeManager` 负责启动和停止 Python bridge。
+
+启动流程：
+
+1. 定位 `hermes_bridge.py`。
+2. 发现 `hermes-agent` 根目录。
+3. 选择 Python 解释器。
+4. 以子进程启动：
+
+```text
+python hermes_bridge.py --endpoint <endpoint> --agent-root <root> --hermes-home <home>
+```
+
+5. 监听 stdout，等待：
+
+```json
+{ "event": "ready", "endpoint": "..." }
+```
+
+6. 默认 ready 超时为 `120000ms`。
+
+Python 选择优先级：
+
+1. `HERMES_AGENT_BRIDGE_PYTHON`
+2. `agentRoot/venv` 或 `agentRoot/.venv`
+3. installed `hermes` 命令 shebang
+4. `uv run --project <agentRoot> python`
+5. 系统 `python3` / `python`
+
+关闭时先发 `SIGTERM`，1.5 秒后仍未退出则 `SIGKILL`。
+
+---
+
+## 启动与关闭
+
+### 启动
+
+`bootstrap()` 中会先尝试启动 bridge：
+
+```ts
+agentBridgeManager = await startAgentBridgeManager()
+```
+
+bridge 启动失败不会阻止 Web UI 启动，但 Bridge(beta) 会话后续运行会失败。
+
+随后创建统一的 chat socket：
+
+```ts
+chatRunServer = new ChatRunSocket(groupChatServer.getIO(), getGatewayManagerInstance())
+chatRunServer.init()
+```
+
+### 关闭
+
+服务关闭时会清理：
+
+- `/chat-run` Socket.IO 状态
+- Python agent bridge 子进程
+- 其他 WebSocket/Socket.IO 服务
 
 ---
 
@@ -371,14 +431,29 @@ interface CliRunHandlers {
 
 | 变量 | 说明 |
 |------|------|
-| `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge 服务端点（默认 Unix/macOS 为 `ipc:///tmp/hermes-agent-bridge.sock`，Windows 为 `tcp://127.0.0.1:18765`） |
-| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Bridge 请求响应超时（默认 `120000` ms） |
-| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Bridge 启动 ready 超时（默认 `120000` ms） |
+| `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge endpoint；Windows 默认 `tcp://127.0.0.1:18765`，macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock` |
+| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 `120000` ms |
+| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Node 等待 Python bridge ready 的超时，默认 `120000` ms |
 | `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器路径 |
 | `HERMES_AGENT_ROOT` | hermes-agent 安装目录 |
-| `HERMES_AGENT_BRIDGE_UV` | uv 可执行文件路径 |
-| `HERMES_AGENT_BRIDGE_PLATFORM` | Bridge 平台标识（默认 `cli`） |
-| `HERMES_AGENT_BRIDGE_TOOLSETS` | 启用的工具集（逗号分隔，`all` 或 `*` 表示全部） |
-| `HERMES_BRIDGE_PROVIDER` | 指定推理 provider |
-| `HERMES_BRIDGE_MAX_TURNS` | 最大对话轮数 |
-| `UV` | uv 可执行文件路径 |
+| `HERMES_AGENT_BRIDGE_UV` | 指定 uv 可执行文件路径 |
+| `HERMES_AGENT_BRIDGE_PLATFORM` | bridge 传给 Hermes Agent 的平台标识，默认 `cli` |
+| `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge 使用的 provider |
+| `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数 |
+| `UV` | uv 可执行文件路径 fallback |
+
+Windows 首次启动慢时可以临时放大：
+
+```powershell
+$env:HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = "300000"
+$env:HERMES_AGENT_BRIDGE_TIMEOUT_MS = "300000"
+```
+
+---
+
+## 当前限制
+
+- Bridge(beta) 仍依赖 Python bridge 成功启动；启动失败时 Web UI 可用，但 bridge 会话不可用。
+- bridge socket connect 阶段还没有单独 connect timeout。
+- 旧 CLI 独立面板和独立 `/cli-chat-run` namespace 已移除。
+- 旧 bridge 斜杠命令和 `command/steer` socket 控制层已移除；现在输入框内容一律按普通用户消息发送。
