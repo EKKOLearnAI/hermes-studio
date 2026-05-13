@@ -286,7 +286,7 @@ export class ChatRunSocket {
     })
   }
   private handleMessage(messages: SessionMessage[], sid: string): any[] {
-    let _messages = []
+    let _messages: any[] = []
     try {
       _messages = messages
         .filter(m => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined)
@@ -420,19 +420,24 @@ export class ChatRunSocket {
         })
         .filter(m => m !== null)
     } catch (error) {
-
+      logger.error(error, '[chat-run-socket] handleMessage: error processing messages for session %s', sid)
     }
     return _messages
   }
   private async resumeSession(socket: Socket, sid: string) {
     let state = this.sessionMap.get(sid)
+    let processedMessages
     if (!state) {
       state = await this.loadSessionStateFromDb(sid)
       this.sessionMap.set(sid, state)
+      processedMessages = state.messages // already processed by loadSessionStateFromDb
+    } else {
+      // Need to process in-memory messages through handleMessage too
+      processedMessages = this.handleMessage(state.messages, sid)
     }
     socket.emit('resumed', {
       session_id: sid,
-      messages: state.messages,
+      messages: processedMessages,
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: state.isWorking ? state.events : [],
@@ -442,7 +447,7 @@ export class ChatRunSocket {
     })
 
     logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d)',
-      socket.id, sid, state.isWorking, state.messages.length)
+      socket.id, sid, state.isWorking, processedMessages.length)
   }
 
   private async loadSessionStateFromDb(sid: string): Promise<SessionState> {
