@@ -12,12 +12,12 @@ services:
       - "${PORT:-6060}:${PORT:-6060}"
       - "8642-8670:8642-8670"
     volumes:
-      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes:z
-      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui:z
-      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace:z
+      - ${HERMES_DATA_DIR:-./hermes_data}:/root/.hermes:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/root/.hermes-web-ui:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/root/workspace:z
     environment:
       - PORT=${PORT:-6060}
-      - HERMES_HOME=/home/agent/.hermes
+      - HERMES_HOME=/root/.hermes
       - HERMES_BIN=/opt/hermes/.venv/bin/hermes
       - AUTH_DISABLED=${AUTH_DISABLED:-false}
       - HERMES_ALLOW_ROOT_GATEWAY=1

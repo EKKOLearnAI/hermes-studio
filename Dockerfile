@@ -38,10 +38,11 @@ RUN chmod +x /start.sh
 
 # Environment variables
 ENV NODE_ENV=production
-ENV HOME=/home/agent
-ENV HERMES_HOME=/home/agent/.hermes
+ENV HOME=/root
+ENV HERMES_HOME=/root/.hermes
 ENV PORT=6060
 ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
+ENV HERMES_ALLOW_ROOT_GATEWAY=1
 ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Expose ports
