@@ -41,6 +41,7 @@ All key runtime settings are configured from compose variables.
 | `WEBUI_IMAGE` | `hermes-web-ui-local:latest` | Web UI image (set to `ekkoye8888/hermes-web-ui` to use pre-built) |
 | `HERMES_DATA_DIR` | `./hermes_data` | Hermes runtime data directory |
 | `AUTH_DISABLED` | `false` | Set to `true` to disable login authentication |
+| `GATEWAY_DEFAULT_HOST` | `127.0.0.1` | Default gateway host. Override if gateway runs on different host. |
 
 Override variables directly from shell:
 
@@ -64,9 +65,11 @@ AUTH_DISABLED=false
 |---|---|
 | `${HERMES_DATA_DIR}` (`./hermes_data`) | Hermes runtime data (sessions, config, profiles) |
 | `${HERMES_DATA_DIR}/hermes-web-ui` | Web UI data (auth token, etc.) |
+| `${HERMES_DATA_DIR}/workspace` | Hermes workspace directory |
 
 - Hermes data persists in `./hermes_data`, mapped to `/home/agent/.hermes` in the container.
 - Web UI data persists in `./hermes_data/hermes-web-ui/`, mapped to `/home/agent/.hermes-web-ui` in the container.
+- Workspace persists in `./hermes_data/workspace/`, mapped to `/home/agent/workspace` in the container.
 - When `AUTH_DISABLED=false`, the auth token is auto-generated on first run and printed to container logs.
 - Deleting the token file and restarting will generate a new one.
 
@@ -75,8 +78,9 @@ AUTH_DISABLED=false
 | Port | Description |
 |---|---|
 | `${PORT}` (6060) | Web UI dashboard |
+| `8642-8670` | Hermes Agent gateway ports (for multi-profile support) |
 
-Hermes Agent gateway ports (8642-8670) are used internally within the container and are not exposed to the host.
+Hermes Agent gateway ports (8642-8670) are exposed to the host for multi-profile gateway support.
 
 ## Code Runtime Behavior
 
@@ -84,6 +88,16 @@ Hermes Agent gateway ports (8642-8670) are used internally within the container 
 - If `HERMES_BIN` is not provided, code falls back to `hermes` in `PATH`.
 - Profile switching dynamically resolves upstream URLs via `GatewayManager`.
 - The Web UI automatically starts and manages the Hermes Agent gateway process on startup.
+
+## Container Configuration
+
+The container runs as `root` for simplicity and compatibility with various environments (Docker, Podman, SELinux).
+
+Key configurations:
+- `HOME=/home/agent` - User home directory
+- `HERMES_HOME=/home/agent/.hermes` - Hermes configuration directory
+- `HERMES_BIN=/opt/hermes/.venv/bin/hermes` - Hermes CLI binary path
+- Volume mounts use `:z` suffix for SELinux compatibility (Podman)
 
 ## Common Operations
 
@@ -106,3 +120,21 @@ Stop:
 ```bash
 docker compose down
 ```
+
+## Advanced Configuration
+
+### Custom Gateway Host
+
+If your Hermes Agent gateway runs on a different host (e.g., in a separate container), set:
+
+```bash
+GATEWAY_DEFAULT_HOST=hermes-agent docker compose up -d
+```
+
+### SELinux Compatibility
+
+For Podman or systems with SELinux enabled, volume mounts automatically include `:z` suffix for proper labeling.
+
+### Multi-Profile Support
+
+Gateway ports 8642-8670 are exposed to support multiple Hermes profiles. Each profile gets its own gateway port starting from 8642.

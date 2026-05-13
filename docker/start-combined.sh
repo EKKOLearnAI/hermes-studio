@@ -19,16 +19,16 @@ touch /.dockerenv 2>/dev/null || true
 
 # Ensure .hermes directory exists
 echo "[start-combined] Ensuring .hermes directory..."
-mkdir -p /opt/data/.hermes/logs
-mkdir -p /opt/data/.hermes-web-ui
+mkdir -p /home/agent/.hermes/logs
+mkdir -p /home/agent/.hermes-web-ui
 
 # Ensure workspace directory exists
-mkdir -p /opt/data/workspace
+mkdir -p /home/agent/workspace
 
-# Set hermes default working directory to /opt/data/workspace
-echo "[start-combined] Setting hermes cwd to /opt/data/workspace..."
-/opt/hermes/.venv/bin/hermes config set messaging.cwd /opt/data/workspace 2>/dev/null || true
-/opt/hermes/.venv/bin/hermes config set terminal.cwd /opt/data/workspace 2>/dev/null || true
+# Set hermes default working directory to /home/agent/workspace
+echo "[start-combined] Setting hermes cwd to /home/agent/workspace..."
+/opt/hermes/.venv/bin/hermes config set messaging.cwd /home/agent/workspace 2>/dev/null || true
+/opt/hermes/.venv/bin/hermes config set terminal.cwd /home/agent/workspace 2>/dev/null || true
 
 # Start hermes-webui in foreground (as root, no su)
 # The web-ui's GatewayManager will start hermes-agent automatically
