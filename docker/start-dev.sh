@@ -16,15 +16,17 @@ trap cleanup SIGTERM SIGINT SIGQUIT
 # Mark container environment
 touch /.dockerenv 2>/dev/null || true
 
-# Force PATH to include hermes
+# Force environment variables
 export PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HERMES_HOME=/root/.hermes
+export HERMES_BIN=/opt/hermes/.venv/bin/hermes
 export HERMES_ALLOW_ROOT_GATEWAY=1
 
 # Ensure .hermes directory exists
 echo "[start-dev] Setting up environment..."
-mkdir -p /home/agent/.hermes/logs
-mkdir -p /home/agent/.hermes-web-ui
-mkdir -p /home/agent/workspace
+mkdir -p /root/.hermes/logs
+mkdir -p /root/.hermes-web-ui
+mkdir -p /root/workspace
 
 # Generate SSH host keys if not present
 ssh-keygen -A 2>/dev/null || true
@@ -42,10 +44,13 @@ if [ -f /root/.ssh/authorized_keys ]; then
 fi
 
 # Add environment variables to /root/.bashrc for SSH sessions
-echo 'export PATH=/opt/hermes/.venv/bin:$PATH' >> /root/.bashrc
-echo 'export HERMES_HOME=/home/agent/.hermes' >> /root/.bashrc
-echo 'export HERMES_BIN=/opt/hermes/.venv/bin/hermes' >> /root/.bashrc
-echo 'export HERMES_ALLOW_ROOT_GATEWAY=1' >> /root/.bashrc
+cat >> /root/.bashrc << 'EOF'
+export PATH=/opt/hermes/.venv/bin:$PATH
+export HERMES_HOME=/root/.hermes
+export HERMES_BIN=/opt/hermes/.venv/bin/hermes
+export HERMES_ALLOW_ROOT_GATEWAY=1
+export GATEWAY_DEFAULT_HOST=127.0.0.1
+EOF
 
 # Start SSH server
 echo "[start-dev] Starting SSH server..."

@@ -15,12 +15,11 @@ services:
       - "8648:8648"
       - "8642-8670:8642-8670"
     volumes:
-      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
-      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui
-      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace
+      - ${HERMES_DATA_DIR:-./hermes_data}:/root/.hermes:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/root/.hermes-web-ui:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/root/workspace:z
     environment:
-      - HOME=/home/agent
-      - HERMES_HOME=/home/agent/.hermes
+      - HERMES_HOME=/root/.hermes
       - HERMES_BIN=/opt/hermes/.venv/bin/hermes
       - HERMES_ALLOW_ROOT_GATEWAY=1
       - GATEWAY_DEFAULT_HOST=127.0.0.1
