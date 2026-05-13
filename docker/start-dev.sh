@@ -18,6 +18,7 @@ touch /.dockerenv 2>/dev/null || true
 
 # Force PATH to include hermes
 export PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HERMES_ALLOW_ROOT_GATEWAY=1
 
 # Ensure .hermes directory exists
 echo "[start-dev] Setting up environment..."
@@ -40,10 +41,11 @@ if [ -f /root/.ssh/authorized_keys ]; then
     chmod 600 /root/.ssh/authorized_keys
 fi
 
-# Add PATH to /root/.bashrc for SSH sessions
+# Add environment variables to /root/.bashrc for SSH sessions
 echo 'export PATH=/opt/hermes/.venv/bin:$PATH' >> /root/.bashrc
 echo 'export HERMES_HOME=/home/agent/.hermes' >> /root/.bashrc
 echo 'export HERMES_BIN=/opt/hermes/.venv/bin/hermes' >> /root/.bashrc
+echo 'export HERMES_ALLOW_ROOT_GATEWAY=1' >> /root/.bashrc
 
 # Start SSH server
 echo "[start-dev] Starting SSH server..."
