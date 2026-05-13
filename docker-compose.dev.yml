@@ -1,0 +1,44 @@
+services:
+  hermes-webui-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        BASE_IMAGE: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
+    image: ${DEV_IMAGE:-hermes-web-ui-dev:latest}
+    container_name: ${DEV_CONTAINER_NAME:-hermes-webui-dev}
+    user: root
+    ports:
+      - "${PORT:-6060}:${PORT:-6060}"
+      - "${SSH_PORT:-22}:22"
+      - "8642-8670:8642-8670"
+      - "9229:9229"
+    volumes:
+      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/home/agent/workspace:z
+      # Mount source code for development
+      - ./packages:/app/packages:z
+      - ./bin:/app/bin:z
+      - ./tests:/app/tests:z
+      - ./tsconfig.json:/app/tsconfig.json:z
+      - ./vite.config.ts:/app/vite.config.ts:z
+      - ./vitest.config.ts:/app/vitest.config.ts:z
+      # Optional: mount SSH keys for authentication
+      # - ~/.ssh/id_rsa.pub:/root/.ssh/authorized_keys:ro
+    environment:
+      - PORT=${PORT:-6060}
+      - HERMES_HOME=/home/agent/.hermes
+      - HERMES_BIN=/opt/hermes/.venv/bin/hermes
+      - AUTH_DISABLED=${AUTH_DISABLED:-true}
+      - HERMES_ALLOW_ROOT_GATEWAY=1
+      - GATEWAY_DEFAULT_HOST=127.0.0.1
+      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # SSH configuration
+      - SSH_PORT=22
+      - SSH_PASSWORD=${SSH_PASSWORD:-hermes}
+      # Enable Node.js debug mode
+      - DEBUG=${DEBUG:-false}
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

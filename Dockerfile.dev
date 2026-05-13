@@ -1,0 +1,105 @@
+ARG BASE_IMAGE=nousresearch/hermes-agent:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Install build dependencies and SSH server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    make \
+    g++ \
+    openssh-server \
+    # VSCode Remote-SSH dependencies
+    libstdc++6 \
+    zlib1g \
+    libgcc1 \
+    libc6 \
+    # Development tools
+    sudo \
+    vim \
+    nano \
+    htop \
+    jq \
+    # Required for node-pty
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH server
+RUN mkdir -p /var/run/sshd \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    # Allow SSH to work with non-privileged users
+    && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
+
+# Install Node.js
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="$ARCH"; fi \
+    && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${NODE_ARCH}.tar.gz" \
+       -o /tmp/node.tar.gz \
+    && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.gz \
+    && node --version
+
+# Install global npm packages for development
+RUN npm install -g \
+    typescript \
+    ts-node \
+    nodemon \
+    npm-check-updates
+
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY package*.json ./
+
+# Increase Node.js memory limit to prevent OOM during build
+ENV NODE_OPTIONS=--max-old-space-size=4096
+RUN npm install && npm rebuild node-pty
+
+# Copy source code (will be overridden by volume mount in dev mode)
+COPY . .
+
+# Build the project
+RUN npm run build
+
+# Keep dev dependencies for development
+# RUN npm prune --omit=dev  # Commented out for development
+
+# Create development user with sudo
+RUN useradd -m -s /bin/bash developer \
+    && echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && mkdir -p /home/developer/.ssh \
+    && chown -R developer:developer /home/developer
+
+# Set up SSH keys directory for root
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
+# Copy startup script
+COPY docker/start-dev.sh /start-dev.sh
+RUN chmod +x /start-dev.sh
+
+# Environment variables
+ENV NODE_ENV=development
+ENV HOME=/home/agent
+ENV HERMES_HOME=/home/agent/.hermes
+ENV PORT=6060
+ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
+ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# SSH port
+ENV SSH_PORT=22
+
+# Expose ports
+# 22: SSH server
+# 6060: Web UI port
+# 8642-8670: Hermes Agent gateway ports
+# 9229: Node.js debug port
+EXPOSE 22 6060 8642-8670 9229
+
+# Use development startup script
+ENTRYPOINT ["/start-dev.sh"]
+CMD []
