@@ -29,6 +29,11 @@
 
 ---
 
+## Local deployment update notes
+
+- On 2026-05-13, the `chat.allapple.top` local deployment was upgraded from Web UI `0.5.8` to `0.5.17` (official release tag `v0.5.18`) while preserving local configuration and custom features such as Liquid Glass styling, Cloudflare Tunnel management, Codex multi-account auth, and in-chat account/model switching.
+- Details: [docs/upgrade-2026-05-13-v0.5.17.md](./docs/upgrade-2026-05-13-v0.5.17.md)
+
 ## Features
 
 ### AI Chat
