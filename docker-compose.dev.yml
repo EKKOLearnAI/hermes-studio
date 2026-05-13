@@ -19,6 +19,7 @@ services:
       # Optional: mount SSH keys
       # - ~/.ssh/id_rsa.pub:/root/.ssh/authorized_keys:ro
     environment:
+      - HOME=/home/agent
       - HERMES_HOME=/home/agent/.hermes
       - HERMES_BIN=/opt/hermes/.venv/bin/hermes
       - HERMES_ALLOW_ROOT_GATEWAY=1
