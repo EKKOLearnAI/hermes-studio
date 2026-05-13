@@ -159,6 +159,7 @@ export default {
     searchEnterHint: 'Enter 打开 · Esc 关闭',
     searchFailed: '搜索会话失败',
     newChat: '新建对话',
+    newCliChat: '新建 CLI',
     deleteSession: '确定删除此会话？',
     sessionDeleted: '会话已删除',
     toggleBatchMode: '批量选择',

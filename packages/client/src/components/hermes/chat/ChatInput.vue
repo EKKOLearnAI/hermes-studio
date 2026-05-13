@@ -9,6 +9,18 @@ import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'na
 import { computed, ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+const props = withDefaults(defineProps<{
+  sendHandler?: (text: string, attachments?: Attachment[]) => void | Promise<void>
+  stopHandler?: () => void
+  streaming?: boolean
+  aborting?: boolean
+  allowAttachments?: boolean
+  showTopBar?: boolean
+}>(), {
+  allowAttachments: true,
+  showTopBar: true,
+})
+
 const chatStore = useChatStore()
 const { t } = useI18n()
 const message = useMessage()
@@ -40,7 +52,11 @@ watch(autoPlaySpeech, (value) => {
   chatStore.setAutoPlaySpeech(value)
 })
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const effectiveStreaming = computed(() => props.streaming ?? chatStore.isStreaming)
+const effectiveAborting = computed(() => props.aborting ?? chatStore.isAborting)
+const canSend = computed(() =>
+  inputText.value.trim() || (props.allowAttachments && attachments.value.length > 0),
+)
 
 // --- Context info ---
 
@@ -133,10 +149,12 @@ function addFile(file: File) {
 }
 
 function handleAttachClick() {
+  if (!props.allowAttachments) return
   fileInputRef.value?.click()
 }
 
 function handleFileChange(e: Event) {
+  if (!props.allowAttachments) return
   const input = e.target as HTMLInputElement
   if (!input.files) return
   for (const file of input.files) addFile(file)
@@ -146,6 +164,7 @@ function handleFileChange(e: Event) {
 // --- Paste image ---
 
 function handlePaste(e: ClipboardEvent) {
+  if (!props.allowAttachments) return
   const items = Array.from(e.clipboardData?.items || [])
   const imageItems = items.filter(i => i.type.startsWith('image/'))
   if (!imageItems.length) return
@@ -162,10 +181,12 @@ function handlePaste(e: ClipboardEvent) {
 // --- Drag and drop ---
 
 function handleDragOver(e: DragEvent) {
+  if (!props.allowAttachments) return
   e.preventDefault()
 }
 
 function handleDragEnter(e: DragEvent) {
+  if (!props.allowAttachments) return
   e.preventDefault()
   if (e.dataTransfer?.types.includes('Files')) {
     dragCounter.value++
@@ -182,6 +203,7 @@ function handleDragLeave() {
 }
 
 function handleDrop(e: DragEvent) {
+  if (!props.allowAttachments) return
   e.preventDefault()
   dragCounter.value = 0
   isDragging.value = false
@@ -193,17 +215,34 @@ function handleDrop(e: DragEvent) {
 
 // --- Send ---
 
-function handleSend() {
+async function handleSend() {
   const text = inputText.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
+  const payloadAttachments = props.allowAttachments && attachments.value.length > 0
+    ? attachments.value
+    : undefined
+
+  if (props.sendHandler) {
+    await props.sendHandler(text, payloadAttachments)
+  } else {
+    chatStore.sendMessage(text, payloadAttachments)
+  }
+
   inputText.value = ''
   attachments.value = []
 
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
   }
+}
+
+function handleStop() {
+  if (props.stopHandler) {
+    props.stopHandler()
+    return
+  }
+  chatStore.stopStreaming()
 }
 
 function handleCompositionStart() {
@@ -256,10 +295,16 @@ function isImage(type: string): boolean {
 <template>
   <div class="chat-input-area">
     <!-- Top bar: attach + auto play speech + context info -->
-    <div class="input-top-bar">
+    <div v-if="props.showTopBar" class="input-top-bar">
       <NTooltip trigger="hover">
         <template #trigger>
-          <NButton quaternary size="tiny" @click="handleAttachClick" circle>
+          <NButton
+            v-if="props.allowAttachments"
+            quaternary
+            size="tiny"
+            @click="handleAttachClick"
+            circle
+          >
             <template #icon>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             </template>
@@ -347,6 +392,7 @@ function isImage(type: string): boolean {
         type="file"
         multiple
         class="file-input-hidden"
+        :disabled="!props.allowAttachments"
         @change="handleFileChange"
       />
       <textarea
@@ -363,11 +409,11 @@ function isImage(type: string): boolean {
       ></textarea>
       <div class="input-actions">
         <NButton
-          v-if="chatStore.isStreaming"
+          v-if="effectiveStreaming"
           size="small"
           type="error"
-          :disabled="chatStore.isAborting"
-          @click="chatStore.stopStreaming()"
+          :disabled="effectiveAborting"
+          @click="handleStop"
         >
           {{ t('chat.stop') }}
         </NButton>

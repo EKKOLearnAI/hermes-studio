@@ -1,7 +1,7 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { listConversationSummaries, getConversationDetail } from '../../services/hermes/conversations'
 import { listConversationSummariesFromDb, getConversationDetailFromDb } from '../../db/hermes/conversations-db'
-import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, searchSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb, type HermesSessionRow } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -142,8 +142,24 @@ export async function list(ctx: any) {
     const source = (ctx.query.source as string) || undefined
     const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
     const profile = getActiveProfileName()
-    const sessions = localListSessions(profile, source, limit && limit > 0 ? limit : 2000)
-    ctx.body = { sessions: filterPendingDeletedSessions(sessions) }
+    const effectiveLimit = limit && limit > 0 ? limit : 2000
+
+    // Merge local store (api_server sessions) with Hermes state.db (cli + other sources)
+    const localSessions = localListSessions(profile, source, effectiveLimit)
+    let cliSessions: HermesSessionRow[] = []
+    try {
+      // Only fetch cli sessions from Hermes state.db (local store only has api_server)
+      const sourceFilter = source || 'cli'
+      cliSessions = await listSessionSummaries(sourceFilter, effectiveLimit, profile)
+      if (sourceFilter === 'cli') {
+        cliSessions = cliSessions.filter(s => s.source === 'cli')
+      }
+    } catch { /* state.db may not exist */ }
+
+    const seen = new Set(localSessions.map(s => s.id))
+    const merged = [...localSessions, ...cliSessions.filter(s => !seen.has(s.id))]
+    merged.sort((a, b) => Number(b.last_active || b.started_at || 0) - Number(a.last_active || a.started_at || 0))
+    ctx.body = { sessions: filterPendingDeletedSessions(merged.slice(0, effectiveLimit)) }
     return
   }
 
@@ -172,14 +188,14 @@ export async function listHermesSessions(ctx: any) {
 
   try {
     const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
-    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cli')) }
     return
   } catch (err) {
     logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
   }
 
   const sessions = await hermesCli.listSessions(source, limit)
-  ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
+  ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cli')) }
 }
 
 export async function search(ctx: any) {
@@ -210,13 +226,23 @@ export async function search(ctx: any) {
 
 export async function get(ctx: any) {
   if (useLocalSessionStore()) {
+    // Try local store first (api_server sessions)
     const session = localGetSessionDetail(ctx.params.id)
-    if (!session) {
-      ctx.status = 404
-      ctx.body = { error: 'Session not found' }
+    if (session) {
+      ctx.body = { session }
       return
     }
-    ctx.body = { session }
+    // Fallback to Hermes state.db (cli sessions)
+    try {
+      const hermesSession = await getSessionDetailFromDb(ctx.params.id)
+      if (hermesSession) {
+        ctx.body = { session: hermesSession }
+        return
+      }
+    } catch { /* state.db may not exist */ }
+
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
     return
   }
 

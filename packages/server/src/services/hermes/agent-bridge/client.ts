@@ -1,0 +1,287 @@
+import { setTimeout as delay } from 'timers/promises'
+import { createConnection, type Socket } from 'net'
+import { URL } from 'url'
+
+export const DEFAULT_AGENT_BRIDGE_ENDPOINT = 'ipc:///tmp/hermes-agent-bridge.sock'
+
+export type AgentBridgeStatus = 'running' | 'complete' | 'interrupted' | 'error'
+
+export interface AgentBridgeOptions {
+  endpoint?: string
+  timeoutMs?: number
+}
+
+export interface AgentBridgeRequestOptions {
+  timeoutMs?: number
+}
+
+export type AgentBridgeMessage =
+  | string
+  | Array<Record<string, unknown>>
+
+export interface AgentBridgeResponse {
+  ok: true
+  [key: string]: unknown
+}
+
+export interface AgentBridgeChatStarted extends AgentBridgeResponse {
+  run_id: string
+  session_id: string
+  status: AgentBridgeStatus
+}
+
+export interface AgentBridgeOutput extends AgentBridgeResponse {
+  run_id: string
+  session_id: string
+  status: AgentBridgeStatus
+  delta: string
+  cursor: number
+  output: string
+  done: boolean
+  result?: unknown
+  error?: string | null
+}
+
+export interface AgentBridgeRunResult extends AgentBridgeResponse {
+  run_id: string
+  session_id: string
+  status: AgentBridgeStatus
+  output: string
+  deltas: string[]
+  events: unknown[]
+  result?: unknown
+  error?: string | null
+}
+
+export interface AgentBridgeCommandResult extends AgentBridgeResponse {
+  session_id: string
+  command: string
+  handled: boolean
+  message?: string
+  new_session_id?: string
+  history?: unknown[]
+  retry?: boolean
+  retry_input?: AgentBridgeMessage
+  title?: string
+}
+
+export class AgentBridgeError extends Error {
+  response?: unknown
+}
+
+export class AgentBridgeClient {
+  readonly endpoint: string
+  readonly timeoutMs: number
+  private lock: Promise<unknown> = Promise.resolve()
+
+  constructor(options: AgentBridgeOptions = {}) {
+    this.endpoint = options.endpoint || process.env.HERMES_AGENT_BRIDGE_ENDPOINT || DEFAULT_AGENT_BRIDGE_ENDPOINT
+    this.timeoutMs = options.timeoutMs || 30000
+  }
+
+  async connect(): Promise<this> {
+    return this
+  }
+
+  async close(): Promise<void> {
+    return undefined
+  }
+
+  private connectSocket(): Promise<Socket> {
+    return new Promise((resolveConnect, rejectConnect) => {
+      const endpoint = this.endpoint
+      let socket: Socket
+      if (endpoint.startsWith('ipc://')) {
+        socket = createConnection(endpoint.slice('ipc://'.length))
+      } else if (endpoint.startsWith('tcp://')) {
+        const url = new URL(endpoint)
+        socket = createConnection({
+          host: url.hostname || '127.0.0.1',
+          port: Number(url.port),
+        })
+      } else {
+        rejectConnect(new Error(`unsupported agent bridge endpoint: ${endpoint}`))
+        return
+      }
+
+      const cleanup = () => {
+        socket.off('connect', onConnect)
+        socket.off('error', onError)
+      }
+      const onConnect = () => {
+        cleanup()
+        resolveConnect(socket)
+      }
+      const onError = (err: Error) => {
+        cleanup()
+        socket.destroy()
+        rejectConnect(err)
+      }
+      socket.once('connect', onConnect)
+      socket.once('error', onError)
+    })
+  }
+
+  private readResponse(socket: Socket, timeoutMs: number): Promise<string> {
+    return new Promise((resolveRead, rejectRead) => {
+      let buffer = ''
+      const timeout = timeoutMs > 0
+        ? setTimeout(() => {
+            cleanup()
+            socket.destroy()
+            rejectRead(new Error(`Agent bridge request timed out after ${timeoutMs}ms`))
+          }, timeoutMs)
+        : null
+
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout)
+        socket.off('data', onData)
+        socket.off('error', onError)
+        socket.off('end', onEnd)
+        socket.off('close', onClose)
+      }
+      const finish = (line: string) => {
+        cleanup()
+        socket.end()
+        resolveRead(line)
+      }
+      const onData = (chunk: Buffer) => {
+        buffer += chunk.toString('utf8')
+        const idx = buffer.indexOf('\n')
+        if (idx >= 0) finish(buffer.slice(0, idx))
+      }
+      const onError = (err: Error) => {
+        cleanup()
+        socket.destroy()
+        rejectRead(err)
+      }
+      const onEnd = () => {
+        const line = buffer.trim()
+        if (line) finish(line)
+      }
+      const onClose = () => {
+        if (!buffer.trim()) {
+          cleanup()
+          rejectRead(new Error('Agent bridge socket closed without a response'))
+        }
+      }
+
+      socket.on('data', onData)
+      socket.once('error', onError)
+      socket.once('end', onEnd)
+      socket.once('close', onClose)
+    })
+  }
+
+  async request<T extends AgentBridgeResponse = AgentBridgeResponse>(
+    payload: Record<string, unknown>,
+    options: AgentBridgeRequestOptions = {},
+  ): Promise<T> {
+    const run = async (): Promise<T> => {
+      const timeoutMs = options.timeoutMs || this.timeoutMs
+      const socket = await this.connectSocket()
+      socket.write(`${JSON.stringify(payload)}\n`)
+      const raw = await this.readResponse(socket, timeoutMs)
+      const response = JSON.parse(raw) as { ok?: boolean; error?: string }
+      if (!response.ok) {
+        const error = new AgentBridgeError(response.error || 'Agent bridge request failed')
+        error.response = response
+        throw error
+      }
+      return response as T
+    }
+
+    const next = this.lock.then(run, run)
+    this.lock = next.catch(() => undefined)
+    return next
+  }
+
+  ping(): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'ping' })
+  }
+
+  chat(sessionId: string, message: AgentBridgeMessage): Promise<AgentBridgeChatStarted> {
+    return this.request<AgentBridgeChatStarted>({
+      action: 'chat',
+      session_id: sessionId,
+      message,
+    })
+  }
+
+  command(sessionId: string, command: string): Promise<AgentBridgeCommandResult> {
+    return this.request<AgentBridgeCommandResult>({
+      action: 'command',
+      session_id: sessionId,
+      command,
+    })
+  }
+
+  getOutput(runId: string, cursor = 0, options: AgentBridgeRequestOptions = {}): Promise<AgentBridgeOutput> {
+    return this.request<AgentBridgeOutput>({
+      action: 'get_output',
+      run_id: runId,
+      cursor,
+    }, options)
+  }
+
+  async *streamOutput(
+    runId: string,
+    options: AgentBridgeRequestOptions & { intervalMs?: number } = {},
+  ): AsyncGenerator<AgentBridgeOutput> {
+    const intervalMs = options.intervalMs || 100
+    let cursor = 0
+    for (;;) {
+      const chunk = await this.getOutput(runId, cursor, options)
+      cursor = chunk.cursor
+      if (chunk.delta || chunk.done) yield chunk
+      if (chunk.done) return
+      await delay(intervalMs)
+    }
+  }
+
+  async chatStream(
+    sessionId: string,
+    message: AgentBridgeMessage,
+    onDelta: (delta: string, chunk: AgentBridgeOutput) => void | Promise<void>,
+    options: AgentBridgeRequestOptions & { intervalMs?: number } = {},
+  ): Promise<AgentBridgeOutput> {
+    const started = await this.chat(sessionId, message)
+    let last: AgentBridgeOutput | null = null
+    for await (const chunk of this.streamOutput(started.run_id, options)) {
+      last = chunk
+      if (chunk.delta) await onDelta(chunk.delta, chunk)
+    }
+    if (!last) throw new Error(`Agent bridge run ${started.run_id} produced no output state`)
+    return last
+  }
+
+  getResult(runId: string, options: AgentBridgeRequestOptions = {}): Promise<AgentBridgeRunResult> {
+    return this.request<AgentBridgeRunResult>({ action: 'get_result', run_id: runId }, options)
+  }
+
+  interrupt(sessionId: string, message?: string): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'interrupt', session_id: sessionId, message })
+  }
+
+  steer(sessionId: string, text: string): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'steer', session_id: sessionId, text })
+  }
+
+  getHistory(sessionId: string): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'get_history', session_id: sessionId })
+  }
+
+  destroy(sessionId: string): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'destroy', session_id: sessionId })
+  }
+
+  list(): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'list' })
+  }
+
+  shutdown(): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'shutdown' })
+  }
+}
+
+export default AgentBridgeClient

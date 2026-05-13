@@ -10,6 +10,8 @@ package-lock.json
 node_modules
 dist
 dist-ssr
+__pycache__/
+*.py[cod]
 server/dist
 packages/server/dist
 *.local

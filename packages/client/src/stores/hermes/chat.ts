@@ -64,7 +64,7 @@ function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
-async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
+export async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
   if (attachments.length === 0) return []
   const formData = new FormData()
   for (const att of attachments) {
@@ -81,7 +81,7 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   return data.files
 }
 
-async function buildContentBlocks(
+export async function buildContentBlocks(
   content: string,
   attachments?: Attachment[],
   uploadedFiles?: { name: string; path: string }[]
@@ -369,6 +369,31 @@ export const useChatStore = defineStore('chat', () => {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
 
+  function isCliSession(session: Session | null | undefined): boolean {
+    return session?.source === 'cli'
+  }
+
+  async function loadSessionDetailFromHistory(session: Session): Promise<boolean> {
+    try {
+      const detail = await fetchSession(session.id)
+      if (!detail) return false
+      session.messages = mapHermesMessages(detail.messages || [])
+      if (detail.title) session.title = detail.title
+      session.model = detail.model || session.model
+      session.provider = detail.billing_provider || session.provider || ''
+      session.messageCount = detail.message_count
+      session.inputTokens = detail.input_tokens
+      session.outputTokens = detail.output_tokens
+      session.endedAt = detail.ended_at != null ? Math.round(detail.ended_at * 1000) : null
+      session.lastActiveAt = detail.last_active != null ? Math.round(detail.last_active * 1000) : session.lastActiveAt
+      session.workspace = detail.workspace || null
+      return true
+    } catch (err) {
+      console.error('Failed to load session detail from history:', err)
+      return false
+    }
+  }
+
   async function loadSessions() {
     isLoadingSessions.value = true
     try {
@@ -419,11 +444,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
 
-  function createSession(): Session {
+  function createSession(source: string = 'api_server'): Session {
     const session: Session = {
       id: uid(),
       title: '',
-      source: 'api_server',
+      source,
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -446,6 +471,14 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingMessages.value = true
 
     try {
+      if (isCliSession(activeSession.value)) {
+        await loadSessionDetailFromHistory(activeSession.value)
+        serverWorking.value.delete(sessionId)
+        queueLengths.value.delete(sessionId)
+        setAbortState(null)
+        return
+      }
+
       // Load messages via Socket.IO resume (server loads from DB if not in memory)
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
@@ -525,6 +558,22 @@ export const useChatStore = defineStore('chat', () => {
     const appStore = useAppStore()
     session.model = appStore.selectedModel || undefined
     switchSession(session.id)
+  }
+
+  function newCliChat() {
+    const session = createSession('cli')
+    session.title = 'CLI Chat'
+    switchSession(session.id)
+  }
+
+  function replaceActiveSessionId(nextId: string) {
+    if (!activeSession.value || !nextId || activeSession.value.id === nextId) return
+    const oldId = activeSession.value.id
+    activeSession.value.id = nextId
+    activeSessionId.value = nextId
+    setItemBestEffort(storageKey(), nextId)
+    const idx = sessions.value.findIndex(s => s.id === oldId)
+    if (idx >= 0) sessions.value[idx] = activeSession.value
   }
 
   async function switchSessionModel(modelId: string, provider?: string) {
@@ -1587,6 +1636,10 @@ export const useChatStore = defineStore('chat', () => {
       if (document.visibilityState === 'visible' && activeSessionId.value && !isStreaming.value) {
         const sid = activeSessionId.value
         if (sid && !streamStates.value.has(sid)) {
+          if (isCliSession(activeSession.value)) {
+            void refreshActiveSession()
+            return
+          }
           // Re-load messages via resume (server loads from DB)
           resumeSession(sid, (data) => {
             if (data.isWorking) {
@@ -1695,6 +1748,8 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingMessages,
 
     newChat,
+    newCliChat,
+    replaceActiveSessionId,
     switchSession,
     switchSessionModel,
     addOrUpdateSession,

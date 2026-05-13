@@ -12,6 +12,16 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const listRef = ref<HTMLElement>();
 
+const props = defineProps<{
+  runActive?: boolean
+  abortState?: { aborting: boolean; synced?: boolean | null } | null
+}>()
+
+const effectiveRunActive = computed(() => props.runActive ?? chatStore.isRunActive)
+const effectiveAbortState = computed(() =>
+  props.abortState === undefined ? chatStore.abortState : props.abortState,
+)
+
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
@@ -109,7 +119,7 @@ watch(
 
 // When a run starts (user just sent a message), always scroll to bottom once
 watch(
-  () => chatStore.isRunActive,
+  () => effectiveRunActive.value,
   (v) => {
     if (v) scrollToBottom();
   },
@@ -150,7 +160,7 @@ watch(currentToolCalls, () => {
       :highlight="chatStore.focusMessageId === msg.id"
     />
     <Transition name="fade">
-      <div v-if="chatStore.isRunActive || chatStore.abortState" class="streaming-indicator">
+      <div v-if="effectiveRunActive || effectiveAbortState" class="streaming-indicator">
         <video
           :src="isDark ? thinkingVideoDark : thinkingVideoLight"
           autoplay
@@ -159,11 +169,11 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
+        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState || effectiveAbortState" class="tool-calls-panel">
           <!-- Abort indicator -->
-          <div v-if="chatStore.abortState" class="tool-call-item compression-item">
+          <div v-if="effectiveAbortState" class="tool-call-item compression-item">
             <svg
-              v-if="chatStore.abortState.aborting"
+              v-if="effectiveAbortState.aborting"
               width="12"
               height="12"
               viewBox="0 0 24 24"
@@ -188,15 +198,15 @@ watch(currentToolCalls, () => {
             </svg>
             <span class="tool-call-name">
               {{
-                chatStore.abortState.aborting
+                effectiveAbortState.aborting
                   ? 'Pausing... waiting for the run to stop and sync'
-                  : chatStore.abortState.synced
+                  : effectiveAbortState.synced
                     ? 'Paused and synced'
                     : 'Paused'
               }}
             </span>
             <span
-              v-if="chatStore.abortState.aborting"
+              v-if="effectiveAbortState.aborting"
               class="tool-call-spinner"
             ></span>
           </div>

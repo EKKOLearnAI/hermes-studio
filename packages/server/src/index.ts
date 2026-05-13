@@ -20,6 +20,8 @@ import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/chat-run-socket'
+import { CliChatRunSocket } from './services/hermes/cli-chat-run-socket'
+import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { logger } from './services/logger'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -46,6 +48,8 @@ process.on('unhandledRejection', (reason) => {
 let server: any = null
 let servers: any[] = []
 let chatRunServer: any = null
+let cliChatRunServer: any = null
+let agentBridgeManager: any = null
 
 interface ListenResult {
   primary: any
@@ -94,6 +98,13 @@ export async function bootstrap() {
 
   await initGatewayManager()
   console.log('[bootstrap] gateway manager initialized')
+  try {
+    agentBridgeManager = await startAgentBridgeManager()
+    console.log('[bootstrap] agent bridge started')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] agent bridge failed to start')
+    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+  }
   await new Promise(resolve => setTimeout(resolve, 1000))
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
@@ -154,6 +165,9 @@ export async function bootstrap() {
   setChatRunServer(chatRunServer)
   chatRunServer.init()
 
+  cliChatRunServer = new CliChatRunSocket(groupChatServer.getIO())
+  cliChatRunServer.init()
+
   // Session deleter — periodically drain pending session deletes
   const { SessionDeleter } = await import('./services/hermes/session-deleter')
   const sessionDeleter = SessionDeleter.getInstance()
@@ -187,7 +201,7 @@ export async function bootstrap() {
     })
   })
 
-  bindShutdown(servers, groupChatServer, chatRunServer)
+  bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager, cliChatRunServer)
   startVersionCheck()
 }
 

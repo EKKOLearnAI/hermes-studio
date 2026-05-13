@@ -17,6 +17,7 @@ import { getSourceLabel } from "@/shared/session-display";
 import { copyToClipboard } from "@/utils/clipboard";
 import FolderPicker from "./FolderPicker.vue";
 import ChatInput from "./ChatInput.vue";
+import CliChatPanel from "./CliChatPanel.vue";
 import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
@@ -206,6 +207,10 @@ const activeSessionSource = computed(() =>
 
 function handleNewChat() {
   chatStore.newChat();
+}
+
+function handleNewCliChat() {
+  chatStore.newCliChat();
 }
 
 async function copySessionId(id?: string) {
@@ -571,6 +576,27 @@ async function handleWorkspaceConfirm() {
               </svg>
             </template>
           </NButton>
+          <NButton
+            quaternary
+            size="tiny"
+            @click="handleNewCliChat"
+            :title="t('chat.newCliChat')"
+            circle
+          >
+            <template #icon>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+            </template>
+          </NButton>
         </div>
       </div>
       <div v-if="showSessions" class="session-scope-note">
@@ -782,13 +808,32 @@ async function handleWorkspaceConfirm() {
               </template>
               <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
             </NButton>
+            <NButton size="small" :circle="isMobile" @click="handleNewCliChat">
+              <template #icon>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              </template>
+              <template v-if="!isMobile">{{ t("chat.newCliChat") }}</template>
+            </NButton>
           </template>
         </div>
       </header>
 
       <template v-if="currentMode === 'chat'">
-        <MessageList />
-        <ChatInput />
+        <CliChatPanel v-if="chatStore.activeSession?.source === 'cli'" />
+        <template v-else>
+          <MessageList />
+          <ChatInput />
+        </template>
       </template>
       <ConversationMonitorPane
         v-else

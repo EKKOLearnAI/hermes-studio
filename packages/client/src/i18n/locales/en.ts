@@ -159,6 +159,7 @@ export default {
     searchEnterHint: 'Enter to open · Esc to close',
     searchFailed: 'Failed to search sessions',
     newChat: 'New Chat',
+    newCliChat: 'New CLI',
     deleteSession: 'Delete this session?',
     sessionDeleted: 'Session deleted',
     toggleBatchMode: 'Batch selection',

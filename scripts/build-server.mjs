@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { readFileSync } from 'fs'
+import { cpSync, mkdirSync, readFileSync } from 'fs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
@@ -23,3 +23,10 @@ await esbuild.build({
   treeShaking: true,
   logLevel: 'info',
 })
+
+const bridgeOutDir = resolve(rootDir, 'dist/server/agent-bridge')
+mkdirSync(bridgeOutDir, { recursive: true })
+cpSync(
+  resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/hermes_bridge.py'),
+  resolve(bridgeOutDir, 'hermes_bridge.py'),
+)
