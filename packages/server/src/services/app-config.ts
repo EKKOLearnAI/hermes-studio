@@ -5,6 +5,11 @@ import { homedir } from 'os'
 const APP_HOME = join(homedir(), '.hermes-web-ui')
 const APP_CONFIG_FILE = join(APP_HOME, 'config.json')
 
+export interface ModelVisibilityRule {
+  mode: 'all' | 'include'
+  models: string[]
+}
+
 export interface AppConfig {
   // Whether GitHub Copilot has been explicitly added by the user in web-ui.
   // Default false: even when COPILOT_GITHUB_TOKEN / gh-cli / apps.json can
@@ -12,6 +17,15 @@ export interface AppConfig {
   // via "Add Provider". Mirrors how the user manages Codex/Nous: the web-ui
   // owns the provider list, system credentials are merely a fallback source.
   copilotEnabled?: boolean
+
+  // Web UI-only model display aliases. Keys are provider -> canonical model ID -> display label.
+  // These aliases never replace the canonical model ID sent back to Hermes.
+  modelAliases?: Record<string, Record<string, string>>
+
+  // Web UI-only model picker visibility. This filters what the WUI exposes in
+  // its sidebar/model pages and never renames or rewrites Hermes canonical
+  // provider/model IDs. Hermes CLI config remains the upstream source of truth.
+  modelVisibility?: Record<string, ModelVisibilityRule>
 }
 
 let cache: AppConfig | null = null

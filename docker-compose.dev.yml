@@ -1,0 +1,29 @@
+services:
+  hermes-webui-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        BASE_IMAGE: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
+    image: ${DEV_IMAGE:-hermes-web-ui-dev:latest}
+    container_name: ${DEV_CONTAINER_NAME:-hermes-webui-dev}
+    user: root
+    ports:
+      - "${SSH_PORT:-2222}:22"
+      - "${PORT:-6060}:6060"
+      - "5173:5173"
+      - "8648:8648"
+      - "8642-8670:8642-8670"
+    volumes:
+      - ${HERMES_DATA_DIR:-./hermes_data}:/root/.hermes:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/root/.hermes-web-ui:z
+      - ${HERMES_DATA_DIR:-./hermes_data}/workspace:/root/workspace:z
+    environment:
+      - HERMES_HOME=/root/.hermes
+      - HERMES_BIN=/opt/hermes/.venv/bin/hermes
+      - HERMES_ALLOW_ROOT_GATEWAY=1
+      - GATEWAY_DEFAULT_HOST=127.0.0.1
+      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - SSH_PASSWORD=${SSH_PASSWORD:-hermes}
+    stdin_open: true
+    tty: true

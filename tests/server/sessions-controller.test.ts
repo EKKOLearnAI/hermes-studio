@@ -220,6 +220,43 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('keeps blank model usage under an unknown bucket', async () => {
+    getLocalUsageStatsMock.mockReturnValue({
+      input_tokens: 3,
+      output_tokens: 1,
+      cache_read_tokens: 2,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      sessions: 1,
+      by_model: [
+        { model: '', input_tokens: 3, output_tokens: 1, cache_read_tokens: 2, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },
+      ],
+      by_day: [],
+    })
+    getUsageStatsFromDbMock.mockResolvedValue({
+      input_tokens: 2,
+      output_tokens: 1,
+      cache_read_tokens: 1,
+      cache_write_tokens: 1,
+      reasoning_tokens: 0,
+      sessions: 1,
+      cost: 0,
+      total_api_calls: 0,
+      by_model: [
+        { model: ' ', input_tokens: 2, output_tokens: 1, cache_read_tokens: 1, cache_write_tokens: 1, reasoning_tokens: 0, sessions: 1 },
+      ],
+      by_day: [],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { days: '2' }, body: null }
+    await mod.usageStats(ctx)
+
+    expect(ctx.body.model_usage).toEqual([
+      { model: 'unknown', input_tokens: 5, output_tokens: 2, cache_read_tokens: 3, cache_write_tokens: 1, reasoning_tokens: 0, sessions: 2 },
+    ])
+  })
+
   describe('exportSession', () => {
     it('returns session as JSON download with correct headers (full mode)', async () => {
       const sessionData = { id: 'abc-123', title: 'Test Session', messages: [{ id: 1, role: 'user', content: 'hello' }] }

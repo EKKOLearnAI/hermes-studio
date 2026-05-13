@@ -6,18 +6,20 @@ import ja from './locales/ja'
 import ko from './locales/ko'
 import pt from './locales/pt'
 import zh from './locales/zh'
+import zhTW from './locales/zh-TW'
 
 export type LocaleMessages = Record<string, unknown>
 
 export const rawMessages = {
-  en,
-  zh,
-  ja,
-  ko,
-  fr,
-  es,
-  de,
-  pt,
+  'en': en,
+  'zh': zh,
+  'zh-TW': zhTW,
+  'ja': ja,
+  'ko': ko,
+  'fr': fr,
+  'es': es,
+  'de': de,
+  'pt': pt,
 } satisfies Record<string, LocaleMessages>
 
 function isPlainObject(value: unknown): value is LocaleMessages {

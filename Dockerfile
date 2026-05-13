@@ -3,6 +3,7 @@ FROM ${BASE_IMAGE}
 
 USER root
 
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -10,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="$ARCH"; fi \
     && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
@@ -21,21 +23,33 @@ RUN ARCH=$(dpkg --print-architecture) \
 
 WORKDIR /app
 
+# Copy and build web-ui
 COPY package*.json ./
 # Increase Node.js memory limit to prevent OOM during build
 ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm install --ignore-scripts && npm rebuild node-pty
 
 COPY . .
-
 RUN npm run build && npm prune --omit=dev
 
+# Copy startup script
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh
+
+# Environment variables
 ENV NODE_ENV=production
-ENV HOME=/home/agent
-ENV HERMES_HOME=/home/agent/.hermes
+ENV HOME=/root
+ENV HERMES_HOME=/root/.hermes
+ENV PORT=6060
+ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
+ENV HERMES_ALLOW_ROOT_GATEWAY=1
+ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-EXPOSE 6060
+# Expose ports
+# 8642-8670: Hermes Agent gateway ports
+# 6060: Web UI port
+EXPOSE 8642-8670 6060
 
-# 强制覆盖基础镜像的默认启动脚本，让镜像本身具备独立运行的能力
-ENTRYPOINT ["node", "dist/server/index.js"]
+# Use startup script
+ENTRYPOINT ["/start.sh"]
 CMD []

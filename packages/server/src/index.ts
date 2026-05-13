@@ -13,6 +13,7 @@ import { initLoginLimiter } from './services/login-limiter'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
+import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
 import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
@@ -29,12 +30,17 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
+  console.error('FATAL: Uncaught exception')
+  console.error(err)
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
 })
 
 process.on('unhandledRejection', (reason) => {
+  console.error('FATAL: Unhandled rejection')
+  console.error(reason)
   logger.error(reason, 'Unhandled rejection')
+  process.exit(1)
 })
 
 let server: any = null
@@ -80,6 +86,10 @@ export async function bootstrap() {
 
   const authToken = await getToken()
   await initLoginLimiter()
+
+  // Debug: log environment variable
+  console.log('[bootstrap] HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN =', process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN)
+
   const app = new Koa()
 
   await initGatewayManager()
@@ -131,7 +141,8 @@ export async function bootstrap() {
   console.log('[bootstrap] app.listen called')
 
   setupTerminalWebSocket(servers)
-  console.log('[bootstrap] terminal websocket setup')
+  setupKanbanEventsWebSocket(servers)
+  console.log('[bootstrap] terminal + kanban websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -154,7 +165,7 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
+      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }
     })
@@ -180,4 +191,9 @@ export async function bootstrap() {
   startVersionCheck()
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('FATAL: Failed to start Hermes Web UI')
+  console.error(error)
+  logger.fatal(error, 'Fatal error during bootstrap')
+  process.exit(1)
+})

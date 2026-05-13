@@ -172,7 +172,7 @@ export async function listHermesSessions(ctx: any) {
 
   try {
     const sessions = await listSessionSummaries(source, limit && limit > 0 ? limit : 2000)
-    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server' && s.source !== 'cron')) }
+    ctx.body = { sessions: filterPendingDeletedSessions(sessions.filter(s => s.source !== 'api_server')) }
     return
   } catch (err) {
     logger.warn(err, 'Hermes Session DB: summary query failed, falling back to CLI')
@@ -237,7 +237,7 @@ export async function getHermesSession(ctx: any) {
   // Try database first (consistent with listHermesSessions)
   try {
     const session = await getSessionDetailFromDb(ctx.params.id)
-    if (session && session.source !== 'api_server' && session.source !== 'cron') {
+    if (session && session.source !== 'api_server') {
       ctx.body = { session }
       return
     }
@@ -450,8 +450,9 @@ export async function usageStats(ctx: any) {
   const totalSessions = local.sessions + hermes.sessions
 
   const modelMap = new Map<string, UsageStatsModelRow>()
-  for (const m of [...local.by_model, ...hermes.by_model].filter(m => m.model)) {
-    const existing = modelMap.get(m.model)
+  for (const m of [...local.by_model, ...hermes.by_model]) {
+    const model = (m.model || '').trim() || 'unknown'
+    const existing = modelMap.get(model)
     if (existing) {
       existing.input_tokens += m.input_tokens
       existing.output_tokens += m.output_tokens
@@ -460,7 +461,7 @@ export async function usageStats(ctx: any) {
       existing.reasoning_tokens += m.reasoning_tokens
       existing.sessions += m.sessions
     } else {
-      modelMap.set(m.model, { ...m })
+      modelMap.set(model, { ...m, model })
     }
   }
 

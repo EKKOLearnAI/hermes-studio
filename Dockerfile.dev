@@ -1,0 +1,77 @@
+ARG BASE_IMAGE=nousresearch/hermes-agent:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Install system dependencies and SSH server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    make \
+    g++ \
+    openssh-server \
+    # VSCode Remote-SSH dependencies
+    libstdc++6 \
+    zlib1g \
+    libgcc1 \
+    libc6 \
+    # Development tools
+    sudo \
+    vim \
+    nano \
+    htop \
+    jq \
+    # Required for node-pty
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure SSH server
+RUN mkdir -p /var/run/sshd \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
+
+# Install Node.js
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="$ARCH"; fi \
+    && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${NODE_ARCH}.tar.gz" \
+       -o /tmp/node.tar.gz \
+    && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.gz \
+    && node --version
+
+WORKDIR /app
+
+# Copy project files
+COPY package*.json ./
+COPY . .
+
+# Install all dependencies (including devDependencies like concurrently, nodemon, etc.)
+# NODE_ENV is not set to 'production', so devDependencies will be installed
+RUN npm install && npm rebuild node-pty
+
+# Set up SSH
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
+# Copy startup script
+COPY docker/start-dev.sh /start-dev.sh
+RUN chmod +x /start-dev.sh
+
+# Environment variables
+ENV NODE_ENV=development
+ENV HOME=/root
+ENV HERMES_HOME=/root/.hermes
+ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
+ENV HERMES_ALLOW_ROOT_GATEWAY=1
+ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Expose ports
+EXPOSE 22 5173 6060 8642-8670 8648 9229
+
+# Use development startup script (SSH only, no auto-start)
+ENTRYPOINT ["/start-dev.sh"]
+CMD []

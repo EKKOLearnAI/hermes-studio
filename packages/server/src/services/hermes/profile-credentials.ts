@@ -16,8 +16,9 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import yaml from 'js-yaml'
+import { detectHermesHome } from './hermes-path'
 
-const HERMES_BASE = join(homedir(), '.hermes')
+const HERMES_BASE = detectHermesHome()
 
 /**
  * 已知"独占型"平台的环境变量前缀正则
@@ -114,7 +115,7 @@ export function disableExclusivePlatformsInConfig(configPath: string): {
   const original = readFileSync(configPath, 'utf-8')
   let cfg: any
   try {
-    cfg = yaml.load(original)
+    cfg = yaml.load(original, { json: true })
   } catch {
     return { disabled: [], strippedConfigCredentials: [] }
   }

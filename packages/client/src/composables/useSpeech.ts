@@ -11,6 +11,8 @@ export interface OpenaiTtsOptions {
   apiKey?: string
   model?: string
   voice?: string
+  rate?: string   // Edge TTS rate format, e.g. "+20%"
+  pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
 }
 
 export interface SpeechState {
@@ -266,6 +268,9 @@ export function useSpeech() {
       input: text,
       voice: opts.voice || 'alloy',
     }
+    // Edge TTS proxy 支持 rate/pitch 参数
+    if (opts.rate) body.rate = opts.rate
+    if (opts.pitch) body.pitch = opts.pitch
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
