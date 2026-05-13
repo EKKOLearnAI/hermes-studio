@@ -33,8 +33,8 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 # Copy startup script
-COPY docker/start-combined.sh /start-combined.sh
-RUN chmod +x /start-combined.sh
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh
 
 # Environment variables
 ENV NODE_ENV=production
@@ -49,6 +49,6 @@ ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 # 6060: Web UI port
 EXPOSE 8642-8670 6060
 
-# Use combined startup script
-ENTRYPOINT ["/start-combined.sh"]
+# Use startup script
+ENTRYPOINT ["/start.sh"]
 CMD []
