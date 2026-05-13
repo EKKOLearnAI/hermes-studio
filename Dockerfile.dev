@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 
 USER root
 
-# Install build dependencies and SSH server
+# Install system dependencies and SSH server
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -44,19 +44,14 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm -f /tmp/node.tar.gz \
     && node --version
 
-# Install global npm packages for development
-RUN npm install -g \
-    typescript \
-    ts-node \
-    nodemon
-
 WORKDIR /app
 
 # Copy project files
 COPY package*.json ./
 COPY . .
 
-# Install dependencies (including devDependencies)
+# Install all dependencies (including devDependencies like concurrently, nodemon, etc.)
+# NODE_ENV is not set to 'production', so devDependencies will be installed
 RUN npm install && npm rebuild node-pty
 
 # Set up SSH
