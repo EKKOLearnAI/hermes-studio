@@ -69,7 +69,7 @@ ENV HERMES_BIN=/opt/hermes/.venv/bin/hermes
 ENV PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Expose ports
-EXPOSE 22 6060 8642-8670 9229
+EXPOSE 22 5173 6060 8642-8670 8648 9229
 
 # Use development startup script (SSH only, no auto-start)
 ENTRYPOINT ["/start-dev.sh"]
