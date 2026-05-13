@@ -5,6 +5,8 @@ import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
 import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
+const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
+
 export interface AgentBridgeManagerOptions {
   endpoint?: string
   python?: string
@@ -18,6 +20,13 @@ interface BridgeCommand {
   argsPrefix: string[]
   agentRoot?: string
   hermesHome: string
+}
+
+function envPositiveInt(name: string): number | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 function pathCandidates(agentRoot?: string): string[] {
@@ -255,10 +264,13 @@ export class AgentBridgeManager {
 
     await new Promise<void>((resolveReady, rejectReady) => {
       let buffered = ''
+      const startupTimeoutMs = this.options.startupTimeoutMs
+        ?? envPositiveInt('HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS')
+        ?? DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS
       const timeout = setTimeout(() => {
         cleanup()
-        rejectReady(new Error(`agent bridge did not become ready within ${this.options.startupTimeoutMs || 15000}ms`))
-      }, this.options.startupTimeoutMs || 15000)
+        rejectReady(new Error(`agent bridge did not become ready within ${startupTimeoutMs}ms`))
+      }, startupTimeoutMs)
 
       const cleanup = () => {
         clearTimeout(timeout)

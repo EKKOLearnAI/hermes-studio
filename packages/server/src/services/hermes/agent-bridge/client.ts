@@ -5,6 +5,14 @@ import { URL } from 'url'
 export const DEFAULT_AGENT_BRIDGE_ENDPOINT = process.platform === 'win32'
   ? 'tcp://127.0.0.1:18765'
   : 'ipc:///tmp/hermes-agent-bridge.sock'
+export const DEFAULT_AGENT_BRIDGE_TIMEOUT_MS = 120000
+
+function envPositiveInt(name: string): number | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
 
 export type AgentBridgeStatus = 'running' | 'complete' | 'interrupted' | 'error'
 
@@ -80,7 +88,7 @@ export class AgentBridgeClient {
 
   constructor(options: AgentBridgeOptions = {}) {
     this.endpoint = options.endpoint || process.env.HERMES_AGENT_BRIDGE_ENDPOINT || DEFAULT_AGENT_BRIDGE_ENDPOINT
-    this.timeoutMs = options.timeoutMs || 30000
+    this.timeoutMs = options.timeoutMs ?? envPositiveInt('HERMES_AGENT_BRIDGE_TIMEOUT_MS') ?? DEFAULT_AGENT_BRIDGE_TIMEOUT_MS
   }
 
   async connect(): Promise<this> {

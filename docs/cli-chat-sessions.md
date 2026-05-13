@@ -372,6 +372,8 @@ interface CliRunHandlers {
 | 变量 | 说明 |
 |------|------|
 | `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge 服务端点（默认 Unix/macOS 为 `ipc:///tmp/hermes-agent-bridge.sock`，Windows 为 `tcp://127.0.0.1:18765`） |
+| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Bridge 请求响应超时（默认 `120000` ms） |
+| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Bridge 启动 ready 超时（默认 `120000` ms） |
 | `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器路径 |
 | `HERMES_AGENT_ROOT` | hermes-agent 安装目录 |
 | `HERMES_AGENT_BRIDGE_UV` | uv 可执行文件路径 |
