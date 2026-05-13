@@ -250,7 +250,7 @@ export async function getAvailable(ctx: any) {
           }
           if (Object.keys(modelMeta).length === 0) modelMeta = undefined
         }
-      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi') {
+      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
         // OpenRouter and local CLIProxyAPI expose dynamic OpenAI-compatible /models catalogs.
         if (envMapping.api_key_env) {
           const apiKey = envGetValue(envMapping.api_key_env)

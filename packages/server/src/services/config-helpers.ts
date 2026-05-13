@@ -33,6 +33,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
   arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: '' },
   stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: '' },
+  'ollama-cloud': { api_key_env: 'OLLAMA_API_KEY', base_url_env: 'OLLAMA_BASE_URL' },
   nous: { api_key_env: '', base_url_env: '' },
   'openai-codex': { api_key_env: '', base_url_env: '' },
   copilot: { api_key_env: '', base_url_env: '' },

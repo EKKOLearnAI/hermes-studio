@@ -388,6 +388,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: ['step-3.5-flash', 'step-3.5-flash-2603'],
   },
   {
+    label: 'Ollama Cloud',
+    value: 'ollama-cloud',
+    builtin: true,
+    base_url: 'https://ollama.com/v1',
+    models: [],
+  },
+  {
     label: 'OpenRouter',
     value: 'openrouter',
     builtin: true,

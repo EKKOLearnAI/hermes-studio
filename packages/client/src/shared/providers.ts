@@ -267,6 +267,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: ['trinity-large-thinking', 'trinity-large-preview', 'trinity-mini'],
   },
   {
+    label: 'Ollama Cloud',
+    value: 'ollama-cloud',
+    base_url: 'https://ollama.com/v1',
+    models: [],
+  },
+  {
     label: 'OpenRouter',
     value: 'openrouter',
     base_url: 'https://openrouter.ai/api/v1',
