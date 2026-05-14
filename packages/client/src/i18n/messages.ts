@@ -1,6 +1,6 @@
 import en from './locales/en'
 
-export type LocaleMessages = Record<string, unknown>
+export type LocaleMessages = Record<string, any>
 
 export const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt'] as const
 export type SupportedLocale = (typeof supportedLocales)[number]

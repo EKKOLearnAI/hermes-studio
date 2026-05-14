@@ -46,7 +46,7 @@ export async function setupI18n(): Promise<void> {
   if (locale !== 'en') {
     const msgs = await loadLocale(locale)
     if (msgs) {
-      i18n.global.setLocaleMessage(locale, msgs)
+      i18n.global.setLocaleMessage(locale, msgs as any)
     }
     ;(i18n.global.locale as any).value = locale
   }
@@ -55,6 +55,6 @@ export async function setupI18n(): Promise<void> {
 export async function switchLocale(newLocale: string): Promise<void> {
   const msgs = await loadLocale(newLocale)
   if (msgs) {
-    i18n.global.setLocaleMessage(newLocale, msgs)
+    i18n.global.setLocaleMessage(newLocale, msgs as any)
   }
 }
