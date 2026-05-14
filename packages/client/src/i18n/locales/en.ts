@@ -1129,6 +1129,7 @@ export default {
     new_0_5_18_7: 'Docker single-container deployment with docker-compose and gateway startup fixes',
     new_0_5_18_8: 'Fix plugins page HERMES_HOME fallback warning for non-default profiles',
     new_0_5_18_9: 'Fix gateway stability across dev restarts and improve Windows compatibility',
+    new_0_5_22_1: 'Fix Hermes session list API reading the Web UI local session store instead of the Hermes profile database',
 
     new_0_5_13_1: 'Add message queue for sequential run processing to prevent concurrent request conflicts',
     new_0_5_13_2: 'Support two-level skills directory structure with misc category for flat skills',

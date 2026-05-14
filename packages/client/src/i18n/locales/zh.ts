@@ -1131,6 +1131,7 @@ export default {
     new_0_5_18_7: 'Docker 单容器部署，更新 docker-compose 配置并修复 gateway 启动问题',
     new_0_5_18_8: '修复插件页面非默认 profile 下 HERMES_HOME fallback 警告',
     new_0_5_18_9: '修复 dev 模式重启时网关稳定性，改善 Windows 兼容性',
+    new_0_5_22_1: '修复 Hermes 会话列表接口错误读取 Web UI 本地会话库的问题',
 
     new_0_5_13_1: '新增消息队列，顺序处理运行请求，避免并发冲突',
     new_0_5_13_2: '支持二级 Skills 目录结构，扁平化 Skill 归入"杂项"分类',

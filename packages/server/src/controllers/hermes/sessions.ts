@@ -114,7 +114,7 @@ export async function listHermesSessions(ctx: any) {
   const profile = getActiveProfileName()
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
-  const allSessions = localListSessions(profile, source, effectiveLimit)
+  const allSessions = await listSessionSummaries(source, effectiveLimit, profile)
   ctx.body = { sessions: filterPendingDeletedSessions(allSessions.filter(s => s.source !== 'api_server')) }
 }
 

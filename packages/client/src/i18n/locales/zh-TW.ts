@@ -1131,6 +1131,7 @@ export default {
     new_0_5_18_7: 'Docker single-container deployment with docker-compose and gateway startup fixes',
     new_0_5_18_8: 'Fix plugins page HERMES_HOME fallback warning for non-default profiles',
     new_0_5_18_9: 'Fix gateway stability across dev restarts and improve Windows compatibility',
+    new_0_5_22_1: '修復 Hermes 會話列表介面錯誤讀取 Web UI 本地會話庫的問題',
     new_0_5_13_1: '新增訊息佇列，順序處理執行請求，避免並發衝突',
     new_0_5_13_2: '支援二級 Skills 目錄結構，扁平化 Skill 歸入「雜項」分類',
     new_0_5_13_3: '啟動同步時過濾暫時工作階段（eph_*），避免匯入內部工作階段',
