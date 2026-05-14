@@ -397,6 +397,7 @@ class AgentPool:
                     acp_command=runtime.get("command"),
                     acp_args=runtime.get("args"),
                     credential_pool=runtime.get("credential_pool"),
+                    default_headers=runtime.get("default_headers"),
                     quiet_mode=True,
                     verbose_logging=False,
                     reasoning_config=_load_reasoning_config(),
