@@ -57,6 +57,12 @@ function getNpmBin() {
 }
 
 function getCliBin() {
+  // On macOS/Linux, global npm bins are often in a different directory than
+  // Node itself (e.g. /opt/homebrew/bin vs /opt/homebrew/Cellar/node/.../bin).
+  // process.argv[1] is the real path to this CLI script.
+  if (process.platform !== 'win32' && process.argv[1]) {
+    return process.argv[1]
+  }
   return join(getNodeBinDir(), process.platform === 'win32' ? 'hermes-web-ui.cmd' : 'hermes-web-ui')
 }
 
