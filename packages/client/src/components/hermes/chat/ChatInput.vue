@@ -20,6 +20,37 @@ const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
 
+// 自定义高度拖拽
+const textareaHeight = ref<number | null>(null) // null = auto
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const el = textareaRef.value
+  if (!el) return
+  // 如果当前是 auto，用实际 clientHeight 作为起始值
+  const startHeight = el.clientHeight
+  const startY = e.clientY
+
+  function onMouseMove(e: MouseEvent) {
+    const deltaY = e.clientY - startY
+    // 往上拖 (deltaY < 0) → 高度增加
+    const newHeight = startHeight - deltaY
+    textareaHeight.value = Math.max(20, Math.min(400, Math.round(newHeight)))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
@@ -349,10 +380,12 @@ function isImage(type: string): boolean {
         class="file-input-hidden"
         @change="handleFileChange"
       />
+      <div class="resize-handle" @mousedown="startResize"></div>
       <textarea
         ref="textareaRef"
         v-model="inputText"
         class="input-textarea"
+        :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
         :placeholder="t('chat.inputPlaceholder')"
         rows="1"
         @keydown="handleKeydown"
@@ -594,6 +627,7 @@ function isImage(type: string): boolean {
   border: 1px solid $border-color;
   border-radius: $radius-md;
   padding: 10px 12px;
+  position: relative;
   transition: border-color $transition-fast, background-color $transition-fast;
 
   &:focus-within {
@@ -602,6 +636,21 @@ function isImage(type: string): boolean {
 
   .dark & {
     background-color: #333333;
+  }
+}
+
+.resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+  z-index: 2;
+
+  &:hover {
+    background: rgba($accent-primary, 0.15);
+    border-radius: 4px;
   }
 }
 
@@ -615,7 +664,7 @@ function isImage(type: string): boolean {
   font-size: 14px;
   line-height: 1.5;
   resize: none;
-  max-height: 100px;
+  max-height: 400px;
   min-height: 20px;
   overflow-y: auto;
 
