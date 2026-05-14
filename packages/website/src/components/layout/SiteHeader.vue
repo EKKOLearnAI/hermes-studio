@@ -8,7 +8,6 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const { isDark, toggleTheme } = useTheme()
 const mobileMenuOpen = ref(false)
-const showQQModal = ref(false)
 
 function switchLocale() {
   const next = locale.value === 'en' ? 'zh' : 'en'
@@ -51,9 +50,6 @@ function goHome() {
             <line x1="10" y1="14" x2="21" y2="3" />
           </svg>
         </a>
-        <a class="nav-link" @click.prevent="showQQModal = true">
-          {{ t('nav.qqGroup') }}
-        </a>
         <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? '中文' : 'English'">
           {{ locale === 'en' ? '中' : 'EN' }}
         </button>
@@ -89,7 +85,6 @@ function goHome() {
         <a class="mobile-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
         <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
-        <a class="mobile-link" @click.prevent="showQQModal = true; mobileMenuOpen = false">{{ t('nav.qqGroup') }}</a>
         <div class="mobile-actions">
           <button class="mobile-action-btn" @click="switchLocale">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
@@ -120,15 +115,6 @@ function goHome() {
       </div>
     </div>
   </header>
-  <Teleport to="body">
-    <div v-if="showQQModal" class="qq-modal-overlay" @click="showQQModal = false">
-      <div class="qq-modal-content" @click.stop>
-        <h3 class="qq-modal-title">{{ t('nav.qqGroup') }}</h3>
-        <img src="/qrcode.png" alt="QQ Group" class="qq-modal-qr" />
-        <button class="qq-modal-close" @click="showQQModal = false">&times;</button>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped lang="scss">
@@ -316,58 +302,5 @@ function goHome() {
   .mobile-toggle {
     display: flex;
   }
-}
-</style>
-
-<style lang="scss">
-.qq-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.qq-modal-content {
-  position: relative;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 32px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
-.qq-modal-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.qq-modal-qr {
-  width: 260px;
-  height: 260px;
-  border-radius: 4px;
-  object-fit: contain;
-}
-
-.qq-modal-close {
-  position: absolute;
-  top: 8px;
-  right: 12px;
-  background: none;
-  border: none;
-  font-size: 24px;
-  color: var(--text-muted);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.qq-modal-close:hover {
-  color: var(--text-primary);
 }
 </style>

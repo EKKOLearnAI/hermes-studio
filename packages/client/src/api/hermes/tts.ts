@@ -1,6 +1,8 @@
 export interface TtsOptions {
   text: string
   lang?: string
+  rate?: string   // Edge TTS rate format: "+NN%" or "-NN%"
+  pitch?: string  // Edge TTS pitch format: "+NNHz" or "-NNHz"
 }
 
 export async function generateSpeech(opts: TtsOptions): Promise<{ audio: Blob; engine: string }> {

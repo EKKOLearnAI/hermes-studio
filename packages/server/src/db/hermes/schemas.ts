@@ -115,7 +115,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   inviteCode: 'TEXT UNIQUE',
   triggerTokens: 'INTEGER NOT NULL DEFAULT 100000',
   maxHistoryTokens: 'INTEGER NOT NULL DEFAULT 32000',
-  tailMessageCount: 'INTEGER NOT NULL DEFAULT 20',
+  tailMessageCount: 'INTEGER NOT NULL DEFAULT 10',
   totalTokens: 'INTEGER NOT NULL DEFAULT 0',
 }
 
@@ -208,90 +208,6 @@ function tableExists(db: NonNullable<ReturnType<typeof getDb>>, tableName: strin
 }
 
 /**
- * 获取表的实际结构（包括主键）
- */
-function getTableStructure(db: NonNullable<ReturnType<typeof getDb>>, tableName: string): {
-  columns: Map<string, string>
-  primaryKey: string | null
-} {
-  // 获取列信息
-  const columns = db.prepare(`PRAGMA table_info("${tableName}")`).all() as Array<{ name: string; type: string; pk: number }>
-  const columnMap = new Map<string, string>()
-
-  for (const col of columns) {
-    columnMap.set(col.name, col.type)
-  }
-
-  // 获取主键信息
-  const tableInfo = db.prepare(
-    `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`
-  ).get(tableName) as { sql: string } | undefined
-
-  // 从 CREATE TABLE 语句中提取主键定义
-  const sql = tableInfo?.sql || ''
-  const pkMatch = sql.match(/PRIMARY KEY\s*\(([^)]+)\)/i)
-  const primaryKey = pkMatch ? pkMatch[1].replace(/\s+/g, '') : null
-
-  return { columns: columnMap, primaryKey }
-}
-
-/**
- * 提取列类型（从 schema 定义中）
- */
-function extractType(schemaDef: string): string {
-  const types = ['TEXT', 'INTEGER', 'REAL', 'BLOB', 'NUMERIC']
-  for (const type of types) {
-    if (schemaDef.toUpperCase().includes(type)) {
-      return type
-    }
-  }
-  return 'TEXT'
-}
-
-/**
- * 检查表结构是否完全匹配 schema（包括主键和列类型）
- */
-function structureMatches(
-  actual: { columns: Map<string, string>; primaryKey: string | null },
-  schema: Record<string, string>,
-  expectedPrimaryKey?: string
-): boolean {
-  // 1. 检查主键
-  if (expectedPrimaryKey) {
-    const expectedPKClean = expectedPrimaryKey.replace(/\s+/g, '')
-    if (actual.primaryKey !== expectedPKClean) {
-      return false  // 主键不匹配
-    }
-  } else {
-    if (actual.primaryKey) {
-      return false  // 期望没有主键，但实际有
-    }
-  }
-
-  // 2. 检查列数量
-  const columnMap = actual.columns as Map<string, string>
-  if (columnMap.size !== Object.keys(schema).length) {
-    return false
-  }
-
-  // 3. 检查列名和类型
-  for (const [colName, colDef] of Object.entries(schema)) {
-    if (!columnMap.has(colName)) {
-      return false  // 列不存在
-    }
-
-    const actualType = columnMap.get(colName)!
-    const expectedType = extractType(colDef)
-
-    if (actualType !== expectedType) {
-      return false  // 类型不匹配
-    }
-  }
-
-  return true
-}
-
-/**
  * 创建表（带完整 schema）
  */
 function createTable(
@@ -314,102 +230,35 @@ function createTable(
   db.exec(`CREATE TABLE ${quoteIdentifier(tableName)} (${colDefs.join(', ')})`)
 }
 
-/**
- * 重建表（保留数据）
- */
-function rebuildTable(
+function canAddColumnToExistingTable(schemaDef: string): boolean {
+  const normalized = schemaDef.toUpperCase()
+  if (normalized.includes('PRIMARY KEY')) return false
+  if (normalized.includes('NOT NULL') && !normalized.includes('DEFAULT')) return false
+  return true
+}
+
+function addMissingSafeColumns(
   db: NonNullable<ReturnType<typeof getDb>>,
   tableName: string,
   schema: Record<string, string>,
-  primaryKey?: string
 ): void {
-  const tempTable = `${tableName}_rebuild_${Date.now()}`
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
+  const existingColumns = new Set(columns.map(col => col.name))
 
-  // 1. 创建新表
-  createTable(db, tempTable, schema, primaryKey)
-
-  // 2. 找出两表共有的列（只复制这些列）
-  const actual = getTableStructure(db, tableName)
-  const commonCols = Array.from(actual.columns.keys()).filter((col) => schema[col])
-
-  // 3. 复制数据
-  if (commonCols.length > 0) {
-    const colList = commonCols.map(c => quoteIdentifier(c)).join(', ')
-    db.exec(`
-      INSERT INTO ${quoteIdentifier(tempTable)} (${colList})
-      SELECT ${colList} FROM ${quoteIdentifier(tableName)}
-    `)
-  }
-
-  // 4. 删除旧表
-  db.exec(`DROP TABLE ${quoteIdentifier(tableName)}`)
-
-  // 5. 重命名新表
-  db.exec(`ALTER TABLE ${quoteIdentifier(tempTable)} RENAME TO ${quoteIdentifier(tableName)}`)
-}
-
-/**
- * 同步表的列（不重建表）
- */
-function syncColumns(
-  db: NonNullable<ReturnType<typeof getDb>>,
-  tableName: string,
-  schema: Record<string, string>
-): void {
-  const actual = getTableStructure(db, tableName)
-  const expectedCols = new Set(Object.keys(schema))
-
-  // 添加缺失的列
-  for (const colName of expectedCols) {
-    if (!actual.columns.has(colName)) {
-      db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(colName)} ${schema[colName]}`)
+  for (const [columnName, columnDef] of Object.entries(schema)) {
+    if (existingColumns.has(columnName)) continue
+    if (!canAddColumnToExistingTable(columnDef)) {
+      console.warn(`[Schema] ${tableName}.${columnName} cannot be added safely to existing table; skipping`)
+      continue
     }
-  }
-
-  // 删除多余的列
-  for (const colName of actual.columns.keys()) {
-    if (!expectedCols.has(colName)) {
-      db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} DROP COLUMN ${quoteIdentifier(colName)}`)
-    }
-  }
-}
-
-/**
- * 同步索引
- */
-function syncIndexes(
-  db: NonNullable<ReturnType<typeof getDb>>,
-  tableName: string,
-  indexes: Record<string, string>
-): void {
-  const existingIndexes = db.prepare(
-    `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?`
-  ).all(tableName) as Array<{ name: string }>
-
-  const existingNames = new Set(existingIndexes.map(i => i.name))
-  const expectedNames = new Set(Object.keys(indexes))
-
-  // 删除多余索引
-  for (const name of existingNames) {
-    if (expectedNames.has(name)) {
-      try { db.exec(`DROP INDEX ${quoteIdentifier(name)}`) } catch { }
-    }
-  }
-
-  // 创建新索引
-  for (const [name, sql] of Object.entries(indexes)) {
-    if (!existingNames.has(name)) {
-      try { db.exec(sql) } catch { }
-    }
+    db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDef}`)
   }
 }
 
 /**
  * 主同步函数
  * - 表不存在：创建
- * - 表存在但结构不匹配（主键/类型）：重建
- * - 表存在且结构匹配：同步列（增删）
- * - 同步索引
+ * - 表存在：只追加安全的新列，不删除、不重建、不修改主键/类型
  */
 export function syncTable(
   tableName: string,
@@ -435,22 +284,7 @@ export function syncTable(
     return
   }
 
-  // 2. 表存在 → 检查结构
-  const actual = getTableStructure(db, tableName)
-  const matches = structureMatches(actual, schema, options?.primaryKey)
-
-  if (matches) {
-    // 结构完全匹配 → 同步列（理论上不会做任何事，但确保一致性）
-    syncColumns(db, tableName, schema)
-  } else {
-    // 结构不匹配 → 重建表
-    rebuildTable(db, tableName, schema, options?.primaryKey)
-  }
-
-  // 3. 同步索引（不管是否重建）
-  if (options?.indexes) {
-    syncIndexes(db, tableName, options.indexes)
-  }
+  addMissingSafeColumns(db, tableName, schema)
 }
 
 // ============================================================================
@@ -458,16 +292,11 @@ export function syncTable(
 // ============================================================================
 
 /**
- * Initialize all Hermes SQLite tables with proper schemas.
- * This function automatically syncs all tables to match their schema definitions.
+ * Initialize missing Hermes SQLite tables with proper schemas.
+ * Existing tables only receive safe additive columns.
  * Call this once at application bootstrap.
  */
-export function initAllHermesTables(retryCount = 0): void {
-  // 防止无限重试（最多重试 1 次）
-  if (retryCount > 1) {
-    throw new Error('[Schema] ❌ Database initialization failed after multiple retry attempts. Please delete the database file manually and restart.')
-  }
-
+export function initAllHermesTables(): void {
   const db = getDb()
   if (!db) return
 
@@ -511,73 +340,7 @@ export function initAllHermesTables(retryCount = 0): void {
     })
   } catch (e) {
     console.error('Error initializing Hermes SQLite tables:', e)
-
-    // 自动恢复：备份数据库 → 删除损坏的数据库 → 重新初始化
-    console.warn('[Schema] Database initialization failed. Attempting automatic recovery...')
-
-    try {
-      const dbPath = getStoragePath()
-      const { unlinkSync, copyFileSync, existsSync } = require('fs')
-
-      if (!existsSync(dbPath)) {
-        console.log('[Schema] Database file does not exist. Creating new database...')
-        initAllHermesTables()
-        console.log('[Schema] Database created successfully!')
-        return
-      }
-
-      // 检查是否已经存在备份（避免重复失败时创建多个备份）
-      const existingBackup = dbPath + '.corrupted.last'
-      let finalBackupPath: string | undefined
-
-      if (existsSync(existingBackup)) {
-        console.log(`[Schema] Backup already exists: ${existingBackup}`)
-        console.log('[Schema] Deleting corrupted database without re-backup...')
-        try {
-          unlinkSync(dbPath)
-        } catch (deleteError) {
-          console.warn('[Schema] Failed to delete corrupted database:', deleteError)
-        }
-      } else {
-        // 没有备份，创建新备份
-        const timestamp = Date.now()
-        const backupPath = dbPath + '.corrupted.' + timestamp
-        let backupSuccess = false
-
-        try {
-          copyFileSync(dbPath, backupPath)
-          backupSuccess = true
-          finalBackupPath = backupPath
-          console.log(`[Schema] Backed up corrupted database to: ${backupPath}`)
-        } catch (backupError) {
-          console.warn('[Schema] Failed to backup database:', backupError)
-        }
-
-        // 只有备份成功后才删除原文件
-        if (backupSuccess) {
-          try {
-            unlinkSync(dbPath)
-          } catch (deleteError) {
-            console.warn('[Schema] Failed to delete corrupted database:', deleteError)
-          }
-        }
-      }
-
-      // 3. 删除 WAL 和 SHM 文件
-      try { unlinkSync(dbPath + '-wal') } catch { }
-      try { unlinkSync(dbPath + '-shm') } catch { }
-
-      // 4. 重新初始化（增加重试计数）
-      console.log('[Schema] Reinitializing database...')
-      initAllHermesTables(retryCount + 1)
-      console.log('[Schema] Database recovered successfully! System is ready to use.')
-      const backupLocation = finalBackupPath || existingBackup
-      if (backupLocation) {
-        console.log(`[Schema] If you need to recover old data, restore from: ${backupLocation}`)
-      }
-    } catch (recoveryError) {
-      console.error('[Schema] Failed to recover database:', recoveryError)
-      throw recoveryError
-    }
+    console.error(`[Schema] Database initialization failed. Existing database was left untouched: ${getStoragePath()}`)
+    throw e
   }
 }

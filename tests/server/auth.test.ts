@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'path'
 
 type FsMocks = {
   readFile: ReturnType<typeof vi.fn>
@@ -20,8 +21,8 @@ async function loadAuth(overrides: Partial<FsMocks> & { home?: string } = {}) {
   return {
     ...mod,
     mocks: { readFile, writeFile, mkdir },
-    appHome: `${home}/.hermes-web-ui`,
-    tokenFile: `${home}/.hermes-web-ui/.token`,
+    appHome: join(home, '.hermes-web-ui'),
+    tokenFile: join(home, '.hermes-web-ui', '.token'),
   }
 }
 
@@ -94,12 +95,14 @@ describe('Auth Service', () => {
 
       const token = await getToken()
 
+      const expectedWriteOptions = process.platform === 'win32' ? {} : { mode: 0o600 }
+
       expect(token).toMatch(/^[a-f0-9]{64}$/)
       expect(mkdir).toHaveBeenCalledWith(appHome, { recursive: true })
       expect(writeFile).toHaveBeenCalledWith(
         tokenFile,
         expect.stringMatching(/^[a-f0-9]{64}\n$/),
-        { mode: 0o600 },
+        expectedWriteOptions,
       )
     })
   })

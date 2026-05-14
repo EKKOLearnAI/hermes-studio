@@ -4,6 +4,9 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 let homeDir = ''
+const originalHermesHome = process.env.HERMES_HOME
+const originalLocalAppData = process.env.LOCALAPPDATA
+const originalAppData = process.env.APPDATA
 
 function hermesPath(...parts: string[]) {
   return join(homeDir, '.hermes', ...parts)
@@ -20,6 +23,9 @@ function writeModelsCache(data: Record<string, unknown>) {
 }
 
 async function loadModelContext() {
+  process.env.HERMES_HOME = hermesPath()
+  delete process.env.LOCALAPPDATA
+  delete process.env.APPDATA
   vi.resetModules()
   vi.doMock('os', async () => ({
     ...(await vi.importActual<typeof import('os')>('os')),
@@ -43,6 +49,12 @@ describe('getModelContextLength', () => {
 
   afterEach(() => {
     vi.doUnmock('os')
+    if (originalHermesHome === undefined) delete process.env.HERMES_HOME
+    else process.env.HERMES_HOME = originalHermesHome
+    if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA
+    else process.env.LOCALAPPDATA = originalLocalAppData
+    if (originalAppData === undefined) delete process.env.APPDATA
+    else process.env.APPDATA = originalAppData
     if (homeDir) rmSync(homeDir, { recursive: true, force: true })
     homeDir = ''
   })

@@ -3,7 +3,6 @@ export default {
     home: '首页',
     docs: '文档',
     github: 'GitHub',
-    qqGroup: 'QQ 群',
   },
   hero: {
     title: '自托管 AI 聊天仪表板',
@@ -101,7 +100,7 @@ export default {
   },
   footer: {
     description: 'Hermes Agent 的自托管 AI 聊天仪表板。',
-    license: 'MIT 开源协议',
+    license: 'BSL-1.1 开源协议',
     madeWith: '使用 Vue 3、Naive UI 和 TypeScript 构建。',
   },
   docs: {

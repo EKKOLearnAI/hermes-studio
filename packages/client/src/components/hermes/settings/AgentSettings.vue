@@ -8,13 +8,32 @@ const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
 
-async function save(values: Record<string, any>) {
-  try {
-    await settingsStore.saveSection('agent', values)
+// 防抖保存：每个字段独立定时器，300ms 内只发最后一次 HTTP 请求
+const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
+function save(values: Record<string, any>) {
+  // NSelect 等一次性操作，直接保存，不需要防抖
+  settingsStore.updateLocal('agent', values)
+  settingsStore.saveSection('agent', values).then(() => {
     message.success(t('settings.saved'))
-  } catch (err: any) {
+  }).catch(() => {
     message.error(t('settings.saveFailed'))
-  }
+  })
+}
+
+function debouncedSave(key: string, value: any) {
+  // 先立即更新本地 store（UI 即时响应）
+  settingsStore.updateLocal('agent', { [key]: value })
+  // 再防抖发 HTTP 保存
+  if (debounceTimers[key]) clearTimeout(debounceTimers[key])
+  debounceTimers[key] = setTimeout(async () => {
+    try {
+      await settingsStore.saveSection('agent', { [key]: value })
+      message.success(t('settings.saved'))
+    } catch (err: any) {
+      message.error(t('settings.saveFailed'))
+    }
+  }, 300)
 }
 </script>
 
@@ -25,7 +44,7 @@ async function save(values: Record<string, any>) {
         :value="settingsStore.agent.max_turns"
         :min="1" :max="200" :step="5"
         size="small" class="input-sm"
-        @update:value="v => v != null && save({ max_turns: v })"
+        @update:value="v => v != null && debouncedSave('max_turns', v)"
       />
     </SettingRow>
     <SettingRow :label="t('settings.agent.gatewayTimeout')" :hint="t('settings.agent.gatewayTimeoutHint')">
@@ -33,7 +52,7 @@ async function save(values: Record<string, any>) {
         :value="settingsStore.agent.gateway_timeout"
         :min="60" :max="7200" :step="60"
         size="small" class="input-sm"
-        @update:value="v => v != null && save({ gateway_timeout: v })"
+        @update:value="v => v != null && debouncedSave('gateway_timeout', v)"
       />
     </SettingRow>
     <SettingRow :label="t('settings.agent.restartDrainTimeout')" :hint="t('settings.agent.restartDrainTimeoutHint')">
@@ -41,7 +60,7 @@ async function save(values: Record<string, any>) {
         :value="settingsStore.agent.restart_drain_timeout"
         :min="10" :max="300" :step="10"
         size="small" class="input-sm"
-        @update:value="v => v != null && save({ restart_drain_timeout: v })"
+        @update:value="v => v != null && debouncedSave('restart_drain_timeout', v)"
       />
     </SettingRow>
     <SettingRow :label="t('settings.agent.toolEnforcement')" :hint="t('settings.agent.toolEnforcementHint')">

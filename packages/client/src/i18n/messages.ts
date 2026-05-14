@@ -1,24 +1,17 @@
-import de from './locales/de'
 import en from './locales/en'
-import es from './locales/es'
-import fr from './locales/fr'
+import zh from './locales/zh'
+import zhTW from './locales/zh-TW'
 import ja from './locales/ja'
 import ko from './locales/ko'
+import fr from './locales/fr'
+import es from './locales/es'
+import de from './locales/de'
 import pt from './locales/pt'
-import zh from './locales/zh'
 
-export type LocaleMessages = Record<string, unknown>
+export type LocaleMessages = Record<string, any>
 
-export const rawMessages = {
-  en,
-  zh,
-  ja,
-  ko,
-  fr,
-  es,
-  de,
-  pt,
-} satisfies Record<string, LocaleMessages>
+export const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt'] as const
+export type SupportedLocale = (typeof supportedLocales)[number]
 
 function isPlainObject(value: unknown): value is LocaleMessages {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -40,11 +33,11 @@ export function mergeMessagesWithFallback(
   return merged
 }
 
-export const messages = Object.fromEntries(
-  Object.entries(rawMessages).map(([locale, localeMessages]) => [
-    locale,
-    locale === 'en'
-      ? localeMessages
-      : mergeMessagesWithFallback(en, localeMessages),
-  ]),
-) as typeof rawMessages
+const rawMessages: Record<string, LocaleMessages> = { en, zh, 'zh-TW': zhTW, ja, ko, fr, es, de, pt }
+
+export const messages: Record<string, LocaleMessages> = {}
+for (const [locale, msg] of Object.entries(rawMessages)) {
+  messages[locale] = locale === 'en' ? msg : mergeMessagesWithFallback(en, msg)
+}
+
+export { en }

@@ -22,7 +22,7 @@ const roomInput = ref<InputLikeInstance | null>(null)
 const compression = ref({
     triggerTokens: 100000,
     maxHistoryTokens: 32000,
-    tailMessageCount: 20,
+    tailMessageCount: 10,
 })
 
 function generateCode(): string {

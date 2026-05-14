@@ -26,10 +26,6 @@ function formatToolDuration(seconds: number): string {
   return `${mins}m ${secs}s`
 }
 
-const displayMessages = computed(() =>
-  chatStore.messages.filter((m) => m.role !== "tool"),
-);
-
 const currentToolCalls = computed(() => {
   const msgs = chatStore.messages;
   // Find the last user message index
@@ -44,6 +40,22 @@ const currentToolCalls = computed(() => {
   const tools = msgs.filter((m, i) => m.role === "tool" && i > lastUserIdx);
   return [...tools].reverse();
 });
+
+const displayMessages = computed(() =>
+  chatStore.messages.filter((m) => {
+    if (m.role === "tool") return false;
+    if (
+      m.role === "assistant" &&
+      m.isStreaming &&
+      !m.content?.trim() &&
+      !!m.reasoning?.trim() &&
+      currentToolCalls.value.length === 0
+    ) {
+      return false;
+    }
+    return true;
+  }),
+);
 
 const queuedMessages = computed(() => {
   const sid = chatStore.activeSessionId;

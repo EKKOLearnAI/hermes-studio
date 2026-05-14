@@ -101,6 +101,8 @@ class AgentClient {
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 30000,
+            randomizationFactor: 0.5,
+            timeout: 30000,
         })
 
         this.bindEvents()

@@ -241,7 +241,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 name,
                 inviteCode,
                 agents: agentList,
-                compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 20 },
+                compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
             })
             rooms.value.push(res.room)
             return res

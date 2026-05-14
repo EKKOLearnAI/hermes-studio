@@ -51,6 +51,35 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  function updateLocal(section: string, values: Record<string, any>) {
+    switch (section) {
+      case 'display': display.value = { ...display.value, ...values }; break
+      case 'agent': agent.value = { ...agent.value, ...values }; break
+      case 'memory': memory.value = { ...memory.value, ...values }; break
+      case 'session_reset': sessionReset.value = { ...sessionReset.value, ...values }; break
+      case 'privacy': privacy.value = { ...privacy.value, ...values }; break
+      case 'approvals': approvals.value = { ...approvals.value, ...values }; break
+      case 'telegram': telegram.value = { ...telegram.value, ...values }; break
+      case 'discord': discord.value = { ...discord.value, ...values }; break
+      case 'slack': slack.value = { ...slack.value, ...values }; break
+      case 'whatsapp': whatsapp.value = { ...whatsapp.value, ...values }; break
+      case 'matrix': matrix.value = { ...matrix.value, ...values }; break
+      case 'wecom': wecom.value = { ...wecom.value, ...values }; break
+      case 'feishu': feishu.value = { ...feishu.value, ...values }; break
+      case 'dingtalk': dingtalk.value = { ...dingtalk.value, ...values }; break
+      case 'weixin': weixin.value = { ...weixin.value, ...values }; break
+      case 'platforms': {
+        for (const [key, val] of Object.entries(values)) {
+          platforms.value = {
+            ...platforms.value,
+            [key]: { ...(platforms.value[key] || {}), ...(val as Record<string, any>) },
+          }
+        }
+        break
+      }
+    }
+  }
+
   async function saveSection(section: string, values: Record<string, any>) {
     saving.value = true
     try {
@@ -91,6 +120,6 @@ export const useSettingsStore = defineStore('settings', () => {
     loading, saving,
     display, agent, memory, sessionReset, privacy, approvals,
     telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, weixin, platforms,
-    fetchSettings, saveSection,
+    fetchSettings, saveSection, updateLocal,
   }
 })

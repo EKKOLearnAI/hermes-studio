@@ -184,14 +184,14 @@ hermes-web-ui start
 
 ### Docker Compose
 
-Run Web UI together with Hermes Agent:
+Single-container deployment with integrated Hermes Agent:
 
 ```bash
 # Use pre-built image (Recommended)
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest docker compose up -d hermes-agent hermes-webui
+WEBUI_IMAGE=ekkoye8888/hermes-web-ui docker compose up -d
 
 # Or build from source
-docker compose up -d --build hermes-agent hermes-webui
+docker compose up -d --build
 
 docker compose logs -f hermes-webui
 ```

@@ -41,7 +41,7 @@ describe('Hermes schema initialization', () => {
     expect(usageCols.some(c => c.name === 'output_tokens')).toBe(true)
   })
 
-  it('preserves existing data when syncing schemas', async () => {
+  it('preserves existing data when adding safe schema columns', async () => {
     const { initAllHermesTables, USAGE_TABLE, USAGE_SCHEMA } =
       await import('../../packages/server/src/db/hermes/schemas')
 
@@ -51,7 +51,7 @@ describe('Hermes schema initialization', () => {
     // Insert test data
     db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id, created_at) VALUES (?, ?)`).run('test-session', Date.now())
 
-    // Run initialization (should sync schema)
+    // Run initialization (should add safe missing columns)
     expect(() => initAllHermesTables()).not.toThrow()
 
     // Verify data is preserved
@@ -59,7 +59,7 @@ describe('Hermes schema initialization', () => {
     expect(row).toBeTruthy()
     expect(row.session_id).toBe('test-session')
 
-    // Verify new columns were added
+    // Verify safe new columns were added
     const cols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
     expect(cols.some(c => c.name === 'input_tokens')).toBe(true)
     expect(cols.some(c => c.name === 'output_tokens')).toBe(true)

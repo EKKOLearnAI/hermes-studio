@@ -1,42 +1,22 @@
 services:
-  hermes-agent:
-    image: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
-    container_name: ${HERMES_AGENT_CONTAINER_NAME:-hermes-agent}
-    volumes:
-      - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
-      - hermes-agent-src:/opt/hermes
-    environment:
-      - HERMES_HOME=/home/agent/.hermes
-    stdin_open: true
-    tty: true
-    restart: unless-stopped
-    ports:
-      - "8642-8670:8642-8670"
-
   hermes-webui:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        BASE_IMAGE: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
     image: ${WEBUI_IMAGE:-hermes-web-ui-local:latest}
     container_name: ${WEBUI_CONTAINER_NAME:-hermes-webui}
-    entrypoint: ["node", "dist/server/index.js"]
-    depends_on:
-      - hermes-agent
     ports:
       - "${PORT:-6060}:${PORT:-6060}"
     volumes:
       - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
       - ${HERMES_DATA_DIR:-./hermes_data}/hermes-web-ui:/home/agent/.hermes-web-ui
-      - hermes-agent-src:/opt/hermes
     environment:
       - PORT=${PORT:-6060}
       - HERMES_HOME=/home/agent/.hermes
-      - HERMES_BIN=${HERMES_BIN:-/opt/hermes/.venv/bin/hermes}
+      - HERMES_BIN=/opt/hermes/.venv/bin/hermes
+      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - AUTH_DISABLED=${AUTH_DISABLED:-false}
-      - PATH=/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - HERMES_ALLOW_ROOT_GATEWAY=1
     restart: unless-stopped
-
-volumes:
-  hermes-agent-src:
+    stdin_open: true
+    tty: true

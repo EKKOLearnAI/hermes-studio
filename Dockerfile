@@ -33,6 +33,7 @@ RUN npm run build && npm prune --omit=dev
 ENV NODE_ENV=production
 ENV HOME=/home/agent
 ENV HERMES_HOME=/home/agent/.hermes
+ENV PATH=/opt/hermes/.venv/bin:$PATH
 
 EXPOSE 6060
 

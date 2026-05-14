@@ -13,12 +13,14 @@ import { initLoginLimiter } from './services/login-limiter'
 import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
+import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
 import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/chat-run-socket'
+import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { logger } from './services/logger'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -29,17 +31,23 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 // Global error handlers
 process.on('uncaughtException', (err) => {
+  console.error('FATAL: Uncaught exception')
+  console.error(err)
   logger.fatal(err, 'Uncaught exception')
   process.exit(1)
 })
 
 process.on('unhandledRejection', (reason) => {
+  console.error('FATAL: Unhandled rejection')
+  console.error(reason)
   logger.error(reason, 'Unhandled rejection')
+  process.exit(1)
 })
 
 let server: any = null
 let servers: any[] = []
 let chatRunServer: any = null
+let agentBridgeManager: any = null
 
 interface ListenResult {
   primary: any
@@ -80,10 +88,21 @@ export async function bootstrap() {
 
   const authToken = await getToken()
   await initLoginLimiter()
+
+  // Debug: log environment variable
+  console.log('[bootstrap] HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN =', process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN)
+
   const app = new Koa()
 
   await initGatewayManager()
   console.log('[bootstrap] gateway manager initialized')
+  try {
+    agentBridgeManager = await startAgentBridgeManager()
+    console.log('[bootstrap] agent bridge started')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] agent bridge failed to start')
+    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+  }
   await new Promise(resolve => setTimeout(resolve, 1000))
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
@@ -91,11 +110,6 @@ export async function bootstrap() {
   initAllStores()
   await new Promise(resolve => setTimeout(resolve, 1000))
   console.log('[bootstrap] all stores initialized')
-
-  // Sync Hermes sessions from all profiles (only if local DB is empty)
-  const { syncAllHermesSessionsOnStartup } = await import('./services/hermes/session-sync')
-  await syncAllHermesSessionsOnStartup()
-  console.log('[bootstrap] Hermes session sync completed')
 
   app.use(cors({ origin: config.corsOrigins }))
   app.use(bodyParser())
@@ -131,7 +145,8 @@ export async function bootstrap() {
   console.log('[bootstrap] app.listen called')
 
   setupTerminalWebSocket(servers)
-  console.log('[bootstrap] terminal websocket setup')
+  setupKanbanEventsWebSocket(servers)
+  console.log('[bootstrap] terminal + kanban websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -154,7 +169,7 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
+      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }
     })
@@ -176,8 +191,13 @@ export async function bootstrap() {
     })
   })
 
-  bindShutdown(servers, groupChatServer, chatRunServer)
+  bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager)
   startVersionCheck()
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  console.error('FATAL: Failed to start Hermes Web UI')
+  console.error(error)
+  logger.fatal(error, 'Fatal error during bootstrap')
+  process.exit(1)
+})

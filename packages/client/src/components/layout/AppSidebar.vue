@@ -43,6 +43,10 @@ async function handleUpdate() {
   }
 }
 
+function handleReloadClient() {
+  appStore.reloadClient();
+}
+
 function handleLogout() {
   localStorage.clear();
   router.replace({ name: 'login' });
@@ -216,6 +220,12 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.usage") }}</span>
           </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.skillsUsage' }" @click="handleNav('hermes.skillsUsage')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <span>{{ t("sidebar.skillsUsage") }}</span>
+          </button>
         </div>
       </div>
 
@@ -296,6 +306,9 @@ function openChangelog() {
         <span class="version-text" @click="openChangelog">Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
+      <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
+        {{ t('sidebar.reloadClientVersion', { version: appStore.serverVersion }) }}
+      </NButton>
       <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
         {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
       </NButton>
@@ -688,6 +701,19 @@ function openChangelog() {
 
     .status-row {
       justify-content: center;
+
+      :deep(.input-sm) {
+        display: none;
+      }
+    }
+
+    .version-info {
+      justify-content: center;
+      padding: 4px 0;
+
+      :deep(.theme-switch-container) {
+        flex-direction: column;
+      }
     }
   }
 }

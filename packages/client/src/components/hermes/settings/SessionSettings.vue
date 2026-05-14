@@ -10,13 +10,32 @@ const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const message = useMessage();
 const { t } = useI18n();
 
-async function save(values: Record<string, any>) {
-  try {
-    await settingsStore.saveSection("session_reset", values);
+// 防抖保存：每个字段独立定时器，300ms 内只发最后一次 HTTP 请求
+const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+function save(values: Record<string, any>) {
+  // NSelect/NSwitch 等一次性操作，直接保存，不需要防抖
+  settingsStore.updateLocal('session_reset', values)
+  settingsStore.saveSection('session_reset', values).then(() => {
     message.success(t("settings.saved"));
-  } catch (err: any) {
+  }).catch(() => {
     message.error(t("settings.saveFailed"));
-  }
+  });
+}
+
+function debouncedSave(key: string, value: any) {
+  // 先立即更新本地 store（UI 即时响应）
+  settingsStore.updateLocal('session_reset', { [key]: value });
+  // 再防抖发 HTTP 保存
+  if (debounceTimers[key]) clearTimeout(debounceTimers[key])
+  debounceTimers[key] = setTimeout(async () => {
+    try {
+      await settingsStore.saveSection('session_reset', { [key]: value });
+      message.success(t("settings.saved"));
+    } catch (err: any) {
+      message.error(t("settings.saveFailed"));
+    }
+  }, 300);
 }
 
 async function toggleRequireAuth(value: boolean) {
@@ -64,7 +83,7 @@ async function toggleRequireAuth(value: boolean) {
         :step="30"
         size="small"
         class="input-sm"
-        @update:value="(v) => v != null && save({ idle_minutes: v })"
+        @update:value="(v) => v != null && debouncedSave('idle_minutes', v)"
       />
     </SettingRow>
     <SettingRow
@@ -78,7 +97,7 @@ async function toggleRequireAuth(value: boolean) {
         :step="1"
         size="small"
         class="input-sm"
-        @update:value="(v) => v != null && save({ at_hour: v })"
+        @update:value="(v) => v != null && debouncedSave('at_hour', v)"
       />
     </SettingRow>
     <SettingRow

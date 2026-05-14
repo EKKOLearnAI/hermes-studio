@@ -25,7 +25,10 @@ import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../lib/co
 import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
 import { parseAnthropicContentArray } from '../../lib/llm-json'
 import { updateUsage } from '../../db/hermes/usage-store'
-import { logger } from '../logger'
+import { bridgeLogger, logger } from '../logger'
+import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from './agent-bridge'
+import { getActiveProfileName } from './hermes-profile'
+import type { ChatMessage } from '../../lib/context-compressor'
 
 /**
  * Content block types for Anthropic-compatible message format
@@ -165,6 +168,7 @@ interface QueuedRun {
   model?: string
   instructions?: string
   profile: string
+  source?: ChatRunSource
 }
 
 interface SessionState {
@@ -179,6 +183,18 @@ interface SessionState {
   isAborting?: boolean
   queue: QueuedRun[]
   responseRun?: ResponseRunState
+  source?: ChatRunSource
+  bridgePendingAssistantContent?: string
+  bridgePendingReasoningContent?: string
+  bridgeOutput?: string
+  bridgeToolCounter?: number
+  bridgePendingTools?: Array<{
+    id: string
+    name: string
+    arguments: string
+    startedAt: number
+  }>
+  bridgeCompressionResults?: Record<string, BridgeCompressionResult>
 }
 
 interface ResponseRunState {
@@ -188,11 +204,27 @@ interface ResponseRunState {
   toolCalls: Map<string, any>
 }
 
+type ChatRunSource = 'api_server' | 'cli'
+
+interface BridgeCompressionResult {
+  messages: ChatMessage[]
+  beforeMessages: number
+  resultMessages: number
+  beforeTokens: number
+  afterTokens: number
+  compressed: boolean
+  llmCompressed: boolean
+  summaryTokens: number
+  verbatimCount: number
+  compressedStartIndex: number
+}
+
 // --- ChatRunSocket ---
 
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
   private gatewayManager: any
+  private bridge = new AgentBridgeClient()
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
 
@@ -224,7 +256,8 @@ export class ChatRunSocket {
   // --- Connection handler ---
 
   private onConnection(socket: Socket) {
-    const profile = (socket.handshake.query?.profile as string) || 'default'
+    const socketProfile = (socket.handshake.query?.profile as string) || 'default'
+    const currentProfile = () => getActiveProfileName() || socketProfile || 'default'
 
     socket.on('run', async (data: {
       input: string | ContentBlock[]
@@ -232,6 +265,7 @@ export class ChatRunSocket {
       model?: string
       instructions?: string
       queue_id?: string
+      source?: string
     }) => {
       if (data.session_id) {
         const state = this.getOrCreateSession(data.session_id)
@@ -241,7 +275,8 @@ export class ChatRunSocket {
             input: data.input,
             model: data.model,
             instructions: data.instructions,
-            profile,
+            profile: currentProfile(),
+            source: this.resolveRunSource(data.source, data.session_id),
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
             event: 'run.queued',
@@ -252,7 +287,7 @@ export class ChatRunSocket {
           return
         }
       }
-      await this.handleRun(socket, data, profile)
+      await this.handleRun(socket, data, currentProfile())
     })
 
     socket.on('cancel_queued_run', (data: { session_id?: string; queue_id?: string }) => {
@@ -282,6 +317,27 @@ export class ChatRunSocket {
     socket.on('abort', (data: { session_id?: string }) => {
       if (data.session_id) {
         void this.handleAbort(socket, data.session_id)
+      }
+    })
+
+    socket.on('approval.respond', async (data: { session_id?: string; approval_id?: string; choice?: string }) => {
+      if (!data.session_id || !data.approval_id) return
+      try {
+        const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
+        this.emitToSession(socket, data.session_id, 'approval.resolved', {
+          event: 'approval.resolved',
+          approval_id: data.approval_id,
+          choice: data.choice || 'deny',
+          resolved: Boolean(result.resolved),
+        })
+      } catch (err) {
+        this.emitToSession(socket, data.session_id, 'approval.resolved', {
+          event: 'approval.resolved',
+          approval_id: data.approval_id,
+          choice: data.choice || 'deny',
+          resolved: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
       }
     })
   }
@@ -487,11 +543,30 @@ export class ChatRunSocket {
 
   private async handleRun(
     socket: Socket,
-    data: { input: string | ContentBlock[]; session_id?: string; model?: string; instructions?: string },
+    data: { input: string | ContentBlock[]; session_id?: string; model?: string; instructions?: string; source?: string },
     profile: string,
     skipUserMessage = false,
   ) {
     const { input, session_id, model, instructions } = data
+    const source = this.resolveRunSource(data.source, session_id)
+
+    // Build full instructions with system prompt + workspace context (shared by both paths)
+    let fullInstructions = instructions
+      ? `${getSystemPrompt()}\n${instructions}`
+      : getSystemPrompt()
+    if (session_id) {
+      const sessionRow = getSession(session_id)
+      if (sessionRow?.workspace) {
+        const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
+        fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
+      }
+    }
+
+    if (source === 'cli') {
+      await this.handleBridgeRun(socket, { ...data, instructions: fullInstructions }, profile, skipUserMessage)
+      return
+    }
+
     const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
     const apiKey = this.gatewayManager.getApiKey(profile) || undefined
 
@@ -512,6 +587,7 @@ export class ChatRunSocket {
       }
       state.isWorking = true
       state.profile = profile
+      state.source = 'api_server'
 
       if (!skipUserMessage) {
         // Convert ContentBlock[] to string for storage
@@ -529,7 +605,7 @@ export class ChatRunSocket {
         if (!getSession(session_id)) {
           const previewText = extractTextForPreview(input)
           const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-          createSession({ id: session_id, profile, model, title: preview })
+          createSession({ id: session_id, profile, source: 'api_server', model, title: preview })
         }
 
         // Write user message to local DB immediately
@@ -554,7 +630,7 @@ export class ChatRunSocket {
         if (!getSession(session_id)) {
           const previewText = extractTextForPreview(input)
           const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-          createSession({ id: session_id, profile, model, title: preview })
+          createSession({ id: session_id, profile, source: 'api_server', model, title: preview })
         }
         addMessage({
           session_id,
@@ -580,316 +656,12 @@ export class ChatRunSocket {
       // Build upstream request body
       const body: Record<string, any> = { input }
       if (model) body.model = model
-      if (instructions) {
-        body.instructions = `${getSystemPrompt()}\n${instructions}`
-      } else {
-        body.instructions = getSystemPrompt()
-      }
-      // Inject workspace context if set for this session
-      if (session_id) {
-        const sessionRow = getSession(session_id)
-        if (sessionRow?.workspace) {
-          const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
-          body.instructions = body.instructions
-            ? `\n${workspaceCtx}\n${body.instructions}`
-            : `\n${workspaceCtx}`
-        }
-      }
+      body.instructions = fullInstructions
       // Build conversation_history from DB if session_id is provided
       if (session_id) {
-        try {
-          const detail = useLocalSessionStore()
-            ? getSessionDetail(session_id)
-            : await getSessionDetailFromDb(session_id)
-          if (detail?.messages?.length) {
-            // Filter valid messages
-            const validMessages = detail.messages.filter(m =>
-              (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined
-            )
-
-            // Exclude the last user message (just added in handleRun)
-            const lastUserMsgIndex = [...validMessages].reverse().findIndex(m => m.role === 'user')
-            let history: Array<{
-              role: string
-              content: string
-              tool_calls?: any[]
-              tool_call_id?: string
-              name?: string
-              reasoning_content?: string | null
-            }> = (lastUserMsgIndex >= 0
-              ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
-              : validMessages
-            ).map((m, idx, arr) => {
-              const msg: any = { role: m.role, content: m.content || '' }
-              if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
-              if (m.tool_calls?.length) {
-                // Filter out tool_calls with empty/invalid id and remove internal fields
-                const cleanedToolCalls = m.tool_calls
-                  .filter((tc: any) => tc.id && tc.id.length > 0)
-                  .map((tc: any) => ({
-                    id: tc.id,
-                    type: tc.type,
-                    function: tc.function
-                  }))
-                if (cleanedToolCalls.length > 0) {
-                  msg.tool_calls = cleanedToolCalls
-                }
-              }
-
-              // For tool messages, ensure tool_call_id exists
-              if (m.role === 'tool') {
-                let callId = m.tool_call_id
-                if (!callId || callId.length === 0) {
-                  // Try to reconstruct tool_call_id from previous assistant message
-                  const prevMsg = arr[idx - 1]
-                  if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
-                    const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
-                    if (tc?.id) {
-                      callId = tc.id
-                    }
-                  }
-                }
-                // Skip tool message if no valid tool_call_id
-                if (!callId || callId.length === 0) {
-                  return null
-                }
-                msg.tool_call_id = callId
-              }
-
-              if (m.tool_name) msg.name = m.tool_name
-              return msg
-            })
-              .filter(m => m !== null)
-            // Context compression with snapshot awareness
-            const contextLength = getModelContextLength(profile)
-            const triggerTokens = Math.floor(contextLength / 2)
-            const cState = this.getOrCreateSession(session_id)
-
-            // Calculate inputTokens + outputTokens from DB (unified method)
-            const assembledTokens = await this.calcAndUpdateUsage(session_id, cState, emit)
-            const totalTokens = assembledTokens.inputTokens + assembledTokens.outputTokens
-            // Step 1: Check existing snapshot — if present, assemble summary + new messages
-            const snapshot = session_id ? getCompressionSnapshot(session_id) : null
-            if (snapshot) {
-              const newMessages = history.slice(snapshot.lastMessageIndex + 1)
-              logger.info('[context-compress] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
-                session_id, snapshot.lastMessageIndex, newMessages.length, totalTokens, triggerTokens)
-              // triggerTokens
-              if (totalTokens <= triggerTokens && newMessages.length <= 150) {
-                // Under threshold — use assembled context directly, no LLM call needed
-                history = [
-                  { role: 'user', content: SUMMARY_PREFIX + '\n\n' + snapshot.summary },
-                  ...newMessages,
-                ]
-              } else {
-                this.pushState(session_id, 'compression.started', {
-                  event: 'compression.started',
-                  message_count: newMessages.length,
-                  token_count: totalTokens,
-                })
-                emit('compression.started', {
-                  event: 'compression.started',
-                  message_count: newMessages.length,
-                  token_count: totalTokens,
-                })
-
-                try {
-                  const result = await compressor.compress(
-                    history, upstream, apiKey, session_id,
-                  )
-                  const afterTokens = await this.calcAndUpdateUsage(session_id, cState, emit)
-                  this.replaceState(session_id, 'compression.completed', {
-                    event: 'compression.completed',
-                    compressed: result.meta.compressed,
-                    llmCompressed: result.meta.llmCompressed,
-                    totalMessages: result.meta.totalMessages,
-                    resultMessages: result.messages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: afterTokens.inputTokens + afterTokens.outputTokens,
-                    summaryTokens: result.meta.summaryTokenEstimate,
-                    verbatimCount: result.meta.verbatimCount,
-                    compressedStartIndex: result.meta.compressedStartIndex,
-                  })
-                  logger.info('[context-compress] AFTER  session=%s: %d messages, ~%d tokens (was %d)', session_id, result.messages.length, afterTokens.inputTokens + afterTokens.outputTokens, totalTokens)
-
-                  emit('compression.completed', {
-                    event: 'compression.completed',
-                    compressed: result.meta.compressed,
-                    llmCompressed: result.meta.llmCompressed,
-                    totalMessages: result.meta.totalMessages,
-                    resultMessages: result.messages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: afterTokens.inputTokens + afterTokens.outputTokens,
-                    summaryTokens: result.meta.summaryTokenEstimate,
-                    verbatimCount: result.meta.verbatimCount,
-                    compressedStartIndex: result.meta.compressedStartIndex,
-                  })
-
-                  history = result.messages.map(m => {
-                    const msg: any = {
-                      role: m.role,
-                      content: m.content,
-                      tool_call_id: m.tool_call_id,
-                      name: m.name,
-                    }
-                    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
-                    // Filter tool_calls if present, remove internal fields
-                    if (m.tool_calls?.length) {
-                      const cleanedToolCalls = m.tool_calls
-                        .filter((tc: any) => tc.id && tc.id.length > 0)
-                        .map((tc: any) => ({
-                          id: tc.id,
-                          type: tc.type,
-                          function: tc.function
-                        }))
-                      if (cleanedToolCalls.length > 0) {
-                        msg.tool_calls = cleanedToolCalls
-                      }
-                    }
-                    return msg
-                  })
-                  // Update usage from DB (snapshot now updated by compressor)
-                  await this.calcAndUpdateUsage(session_id, cState, emit)
-                } catch (err: any) {
-                  this.replaceState(session_id, 'compression.completed', {
-                    event: 'compression.completed',
-                    compressed: false,
-                    totalMessages: newMessages.length,
-                    resultMessages: newMessages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: totalTokens,
-                    summaryTokens: 0,
-                    verbatimCount: newMessages.length,
-                    compressedStartIndex: -1,
-                    error: err.message,
-                  })
-                  logger.warn(err, '[chat-run-socket] compression failed for session %s, using assembled context', session_id)
-                  emit('compression.completed', {
-                    event: 'compression.completed',
-                    compressed: false,
-                    totalMessages: newMessages.length,
-                    resultMessages: newMessages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: totalTokens,
-                    summaryTokens: 0,
-                    verbatimCount: newMessages.length,
-                    compressedStartIndex: -1,
-                    error: err.message,
-                  })
-                }
-              }
-            } else if (history.length > 4) {
-              // No snapshot — check if raw history exceeds threshold
-
-              if (totalTokens <= triggerTokens && history.length <= 150) {
-                // Under threshold — use raw history as-is
-                logger.info('[context-compress] session=%s: %d messages, ~%d tokens — under threshold, skip', session_id, history.length, totalTokens)
-              } else {
-                // Over threshold — full LLM compression
-                logger.info('[context-compress] BEFORE session=%s: %d messages, ~%d tokens (threshold %d)', session_id, history.length, totalTokens, triggerTokens)
-
-                this.pushState(session_id, 'compression.started', {
-                  event: 'compression.started',
-                  message_count: history.length,
-                  token_count: totalTokens,
-                })
-                emit('compression.started', {
-                  event: 'compression.started',
-                  message_count: history.length,
-                  token_count: totalTokens,
-                })
-
-                try {
-                  const result = await compressor.compress(
-                    history, upstream, apiKey, session_id,
-                  )
-                  const cState = this.getOrCreateSession(session_id)
-                  const afterTokens = await this.calcAndUpdateUsage(session_id, cState, emit)
-                  this.replaceState(session_id, 'compression.completed', {
-                    event: 'compression.completed',
-                    compressed: result.meta.compressed,
-                    llmCompressed: result.meta.llmCompressed,
-                    totalMessages: result.meta.totalMessages,
-                    resultMessages: result.messages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: afterTokens.inputTokens + afterTokens.outputTokens,
-                    summaryTokens: result.meta.summaryTokenEstimate,
-                    verbatimCount: result.meta.verbatimCount,
-                    compressedStartIndex: result.meta.compressedStartIndex,
-                  })
-                  logger.info('[context-compress] AFTER  session=%s: %d messages, ~%d tokens (was %d)', session_id, result.messages.length, afterTokens.inputTokens + afterTokens.outputTokens, totalTokens)
-
-                  emit('compression.completed', {
-                    event: 'compression.completed',
-                    compressed: result.meta.compressed,
-                    llmCompressed: result.meta.llmCompressed,
-                    totalMessages: result.meta.totalMessages,
-                    resultMessages: result.messages.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: afterTokens.inputTokens + afterTokens.outputTokens,
-                    summaryTokens: result.meta.summaryTokenEstimate,
-                    verbatimCount: result.meta.verbatimCount,
-                    compressedStartIndex: result.meta.compressedStartIndex,
-                  })
-
-                  history = result.messages.map(m => {
-                    const msg: any = {
-                      role: m.role,
-                      content: m.content,
-                      tool_call_id: m.tool_call_id,
-                      name: m.name,
-                    }
-                    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
-                    // Filter tool_calls if present, remove internal fields
-                    if (m.tool_calls?.length) {
-                      const cleanedToolCalls = m.tool_calls
-                        .filter((tc: any) => tc.id && tc.id.length > 0)
-                        .map((tc: any) => ({
-                          id: tc.id,
-                          type: tc.type,
-                          function: tc.function
-                        }))
-                      if (cleanedToolCalls.length > 0) {
-                        msg.tool_calls = cleanedToolCalls
-                      }
-                    }
-                    return msg
-                  })
-                  await this.calcAndUpdateUsage(session_id, cState, emit)
-                } catch (err: any) {
-                  this.replaceState(session_id, 'compression.completed', {
-                    event: 'compression.completed',
-                    compressed: false,
-                    totalMessages: history.length,
-                    resultMessages: history.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: totalTokens,
-                    summaryTokens: 0,
-                    verbatimCount: history.length,
-                    compressedStartIndex: -1,
-                    error: err.message,
-                  })
-                  logger.warn(err, '[chat-run-socket] compression failed for session %s, using raw history', session_id)
-                  emit('compression.completed', {
-                    event: 'compression.completed',
-                    compressed: false,
-                    totalMessages: history.length,
-                    resultMessages: history.length,
-                    beforeTokens: totalTokens,
-                    afterTokens: totalTokens,
-                    summaryTokens: 0,
-                    verbatimCount: history.length,
-                    compressedStartIndex: -1,
-                    error: err.message,
-                  })
-                }
-              }
-            }
-
-            body.conversation_history = history
-          }
-        } catch (err) {
-          logger.warn(err, '[chat-run-socket] failed to load conversation history for session %s', session_id)
+        const compressed = await this.buildCompressedHistory(session_id, profile, upstream, apiKey, emit)
+        if (compressed.length > 0) {
+          body.conversation_history = compressed
         }
       }
 
@@ -1032,6 +804,827 @@ export class ChatRunSocket {
     }
   }
 
+  /**
+   * Load conversation history from DB with full message structure (user/assistant/tool),
+   * then apply context compression (snapshot-aware + LLM) identically for both
+   * api_server and CLI bridge runs.
+   */
+  private async buildDbHistory(
+    sessionId: string,
+    options: { excludeLastUser?: boolean } = {},
+  ): Promise<ChatMessage[]> {
+    const detail = useLocalSessionStore()
+      ? getSessionDetail(sessionId)
+      : await getSessionDetailFromDb(sessionId)
+    if (!detail?.messages?.length) return []
+
+    const validMessages = detail.messages.filter(m =>
+      (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && m.content !== undefined,
+    )
+
+    const sourceMessages = options.excludeLastUser
+      ? (() => {
+          const lastUserMsgIndex = [...validMessages].reverse().findIndex(m => m.role === 'user')
+          return lastUserMsgIndex >= 0
+            ? validMessages.slice(0, validMessages.length - lastUserMsgIndex - 1)
+            : validMessages
+        })()
+      : validMessages
+
+    return sourceMessages.map((m, idx, arr) => {
+      const msg: any = { role: m.role, content: m.content || '' }
+      if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+      if (m.tool_calls?.length) {
+        const cleanedToolCalls = m.tool_calls
+          .filter((tc: any) => tc.id && tc.id.length > 0)
+          .map((tc: any) => ({ id: tc.id, type: tc.type, function: tc.function }))
+        if (cleanedToolCalls.length > 0) msg.tool_calls = cleanedToolCalls
+      }
+      if (m.role === 'tool') {
+        let callId = m.tool_call_id
+        if (!callId || callId.length === 0) {
+          const prevMsg = arr[idx - 1]
+          if (prevMsg?.role === 'assistant' && prevMsg.tool_calls?.length) {
+            const tc = prevMsg.tool_calls.find((t: any) => t.function?.name === m.tool_name)
+            if (tc?.id) callId = tc.id
+          }
+        }
+        if (!callId || callId.length === 0) return null
+        msg.tool_call_id = callId
+      }
+      if (m.tool_name) msg.name = m.tool_name
+      return msg
+    }).filter((m): m is ChatMessage => m !== null)
+  }
+
+  private async buildCompressedHistory(
+    sessionId: string,
+    profile: string,
+    upstream: string,
+    apiKey: string | undefined,
+    emit: (event: string, payload: any) => void,
+  ): Promise<ChatMessage[]> {
+    try {
+      let history = await this.buildDbHistory(sessionId, { excludeLastUser: true })
+
+      if (history.length === 0) return []
+
+      // Context compression with snapshot awareness
+      const contextLength = getModelContextLength(profile)
+      const triggerTokens = Math.floor(contextLength / 2)
+      const cState = this.getOrCreateSession(sessionId)
+      const assembledTokens = await this.calcAndUpdateUsage(sessionId, cState, emit)
+      const totalTokens = assembledTokens.inputTokens + assembledTokens.outputTokens
+
+      const snapshot = getCompressionSnapshot(sessionId)
+
+      if (snapshot) {
+        const newMessages = history.slice(snapshot.lastMessageIndex + 1)
+        logger.info('[context-compress] session=%s: snapshot at %d, %d new messages, assembled ~%d tokens (threshold %d)',
+          sessionId, snapshot.lastMessageIndex, newMessages.length, totalTokens, triggerTokens)
+        if (totalTokens <= triggerTokens && newMessages.length <= 150) {
+          history = [
+            { role: 'user', content: SUMMARY_PREFIX + '\n\n' + snapshot.summary },
+            ...newMessages,
+          ] as ChatMessage[]
+        } else {
+          history = await this.compressHistory(history, newMessages, sessionId, upstream, apiKey, cState, totalTokens, emit)
+        }
+      } else if (history.length > 4) {
+        if (totalTokens <= triggerTokens && history.length <= 150) {
+          logger.info('[context-compress] session=%s: %d messages, ~%d tokens — under threshold, skip', sessionId, history.length, totalTokens)
+        } else {
+          history = await this.compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit)
+        }
+      }
+
+      return history
+    } catch (err) {
+      logger.warn(err, '[chat-run-socket] failed to build compressed history for session %s', sessionId)
+      return []
+    }
+  }
+
+  private async compressHistory(
+    history: ChatMessage[],
+    newMessagesOnly: ChatMessage[] | null,
+    sessionId: string,
+    upstream: string,
+    apiKey: string | undefined,
+    cState: SessionState,
+    totalTokens: number,
+    emit: (event: string, payload: any) => void,
+  ): Promise<ChatMessage[]> {
+    const msgCount = newMessagesOnly ? newMessagesOnly.length : history.length
+    this.pushState(sessionId, 'compression.started', {
+      event: 'compression.started', message_count: msgCount, token_count: totalTokens,
+    })
+    emit('compression.started', {
+      event: 'compression.started', message_count: msgCount, token_count: totalTokens,
+    })
+
+    try {
+      const result = await compressor.compress(history, upstream, apiKey, sessionId)
+      const afterTokens = await this.calcAndUpdateUsage(sessionId, cState, emit)
+      const compressedMeta = {
+        event: 'compression.completed' as const,
+        compressed: result.meta.compressed,
+        llmCompressed: result.meta.llmCompressed,
+        totalMessages: result.meta.totalMessages,
+        resultMessages: result.messages.length,
+        beforeTokens: totalTokens,
+        afterTokens: afterTokens.inputTokens + afterTokens.outputTokens,
+        summaryTokens: result.meta.summaryTokenEstimate,
+        verbatimCount: result.meta.verbatimCount,
+        compressedStartIndex: result.meta.compressedStartIndex,
+      }
+      this.replaceState(sessionId, 'compression.completed', compressedMeta)
+      logger.info('[context-compress] AFTER  session=%s: %d messages, ~%d tokens (was %d)',
+        sessionId, result.messages.length, afterTokens.inputTokens + afterTokens.outputTokens, totalTokens)
+      emit('compression.completed', compressedMeta)
+
+      const compressed = result.messages.map(m => {
+        const msg: any = { role: m.role, content: m.content, tool_call_id: m.tool_call_id, name: m.name }
+        if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+        if (m.tool_calls?.length) {
+          const cleanedToolCalls = m.tool_calls
+            .filter((tc: any) => tc.id && tc.id.length > 0)
+            .map((tc: any) => ({ id: tc.id, type: tc.type, function: tc.function }))
+          if (cleanedToolCalls.length > 0) msg.tool_calls = cleanedToolCalls
+        }
+        return msg
+      })
+      await this.calcAndUpdateUsage(sessionId, cState, emit)
+      return compressed
+    } catch (err: any) {
+      const failedMeta = {
+        event: 'compression.completed' as const,
+        compressed: false,
+        totalMessages: msgCount,
+        resultMessages: msgCount,
+        beforeTokens: totalTokens,
+        afterTokens: totalTokens,
+        summaryTokens: 0,
+        verbatimCount: msgCount,
+        compressedStartIndex: -1,
+        error: err.message,
+      }
+      this.replaceState(sessionId, 'compression.completed', failedMeta)
+      logger.warn(err, '[chat-run-socket] compression failed for session %s, using assembled context', sessionId)
+      emit('compression.completed', failedMeta)
+      return history
+    }
+  }
+
+  private async forceCompressBridgeHistory(
+    sessionId: string,
+    profile: string,
+    _messages: ChatMessage[],
+  ): Promise<BridgeCompressionResult> {
+    const history = await this.buildDbHistory(sessionId, { excludeLastUser: true })
+
+    if (history.length === 0) {
+      return {
+        messages: [],
+        beforeMessages: 0,
+        resultMessages: 0,
+        beforeTokens: 0,
+        afterTokens: 0,
+        compressed: false,
+        llmCompressed: false,
+        summaryTokens: 0,
+        verbatimCount: 0,
+        compressedStartIndex: -1,
+      }
+    }
+
+    const upstream = this.gatewayManager.getUpstream(profile).replace(/\/$/, '')
+    const apiKey = this.gatewayManager.getApiKey(profile) || undefined
+    const totalTokens = countTokens(JSON.stringify(history))
+    bridgeLogger.info({
+      sessionId,
+      profile,
+      historyMessages: history.length,
+      bridgeProvidedMessages: Array.isArray(_messages) ? _messages.length : 0,
+      tokenEstimate: totalTokens,
+      snapshotAware: true,
+    }, '[chat-run-socket] bridge forced compression started')
+
+    const result = await compressor.compress(history, upstream, apiKey, sessionId, profile)
+    const compressedMessages = result.messages.map(m => {
+      const msg: any = { role: m.role, content: m.content }
+      if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+      if (m.tool_calls?.length) {
+        const cleanedToolCalls = m.tool_calls
+          .filter((tc: any) => tc.id && tc.id.length > 0)
+          .map((tc: any) => ({ id: tc.id, type: tc.type, function: tc.function }))
+        if (cleanedToolCalls.length > 0) msg.tool_calls = cleanedToolCalls
+      }
+      if (m.tool_call_id) msg.tool_call_id = m.tool_call_id
+      if (m.name) msg.name = m.name
+      return msg
+    })
+    const afterTokens = countTokens(JSON.stringify(compressedMessages))
+    bridgeLogger.info({
+      sessionId,
+      profile,
+      beforeMessages: history.length,
+      resultMessages: result.messages.length,
+      beforeTokens: totalTokens,
+      afterTokens,
+      compressed: result.meta.compressed,
+      llmCompressed: result.meta.llmCompressed,
+      verbatimCount: result.meta.verbatimCount,
+      compressedStartIndex: result.meta.compressedStartIndex,
+      compressedHistory: result.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        reasoning_content: m.reasoning_content,
+        tool_calls: m.tool_calls,
+        tool_call_id: m.tool_call_id,
+        name: m.name,
+      })),
+    }, '[chat-run-socket] bridge forced compression completed')
+
+    return {
+      messages: compressedMessages,
+      beforeMessages: history.length,
+      resultMessages: compressedMessages.length,
+      beforeTokens: totalTokens,
+      afterTokens,
+      compressed: result.meta.compressed,
+      llmCompressed: result.meta.llmCompressed,
+      summaryTokens: result.meta.summaryTokenEstimate,
+      verbatimCount: result.meta.verbatimCount,
+      compressedStartIndex: result.meta.compressedStartIndex,
+    }
+  }
+
+  private resolveRunSource(source?: string, sessionId?: string): ChatRunSource {
+    const normalized = String(source || '').trim()
+    if (normalized === 'cli') return 'cli'
+    if (normalized === 'api_server') return 'api_server'
+    if (sessionId) {
+      const existing = getSession(sessionId)
+      if (existing?.source === 'cli') return 'cli'
+    }
+    return 'api_server'
+  }
+
+  private async handleBridgeRun(
+    socket: Socket,
+    data: { input: string | ContentBlock[]; session_id?: string; model?: string; instructions?: string; source?: string },
+    profile: string,
+    _skipUserMessage = false,
+  ) {
+    const { input, session_id, model, instructions } = data
+    if (!session_id) {
+      socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
+      return
+    }
+
+    const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    const now = Math.floor(Date.now() / 1000)
+    let state = this.sessionMap.get(session_id)
+    if (!state) {
+      state = getSession(session_id)
+        ? await this.loadSessionStateFromDb(session_id)
+        : { messages: [], isWorking: false, events: [], queue: [] }
+      this.sessionMap.set(session_id, state)
+    }
+
+    state.isWorking = true
+    state.isAborting = false
+    state.profile = profile
+    state.source = 'cli'
+    state.runId = undefined
+    state.abortController = undefined
+    state.bridgeOutput = ''
+    state.bridgePendingAssistantContent = ''
+    state.bridgePendingReasoningContent = ''
+    state.bridgeToolCounter = 0
+    state.bridgePendingTools = []
+    state.responseRun = undefined
+
+    const inputStr = contentBlocksToString(input)
+    state.messages.push({
+      id: state.messages.length + 1,
+      session_id,
+      runMarker,
+      role: 'user',
+      content: inputStr,
+      timestamp: now,
+    })
+
+    if (!getSession(session_id)) {
+      const previewText = extractTextForPreview(input)
+      const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+      createSession({ id: session_id, profile, source: 'cli', model, title: preview })
+    }
+    addMessage({
+      session_id,
+      role: 'user',
+      content: inputStr,
+      timestamp: now,
+    })
+
+    socket.join(`session:${session_id}`)
+    const emit = (event: string, payload: any) => this.emitToSession(socket, session_id, event, payload)
+
+    const history = await this.buildCompressedHistory(
+      session_id, profile,
+      this.gatewayManager.getUpstream(profile).replace(/\/$/, ''),
+      this.gatewayManager.getApiKey(profile) || undefined,
+      emit,
+    )
+
+    try {
+      logger.info('[chat-run-socket] starting CLI bridge run for session %s', session_id)
+      bridgeLogger.info({
+        sessionId: session_id,
+        profile,
+        inputChars: inputStr.length,
+        historyMessages: history.length,
+        hasInstructions: Boolean(instructions),
+      }, '[chat-run-socket] starting CLI bridge run')
+      const started = await this.bridge.chat(session_id, input as AgentBridgeMessage, history, instructions, profile)
+      state.runId = started.run_id
+      bridgeLogger.info({
+        sessionId: session_id,
+        runId: started.run_id,
+        status: started.status,
+      }, '[chat-run-socket] CLI bridge run started')
+      this.pushState(session_id, 'run.started', {
+        event: 'run.started',
+        run_id: started.run_id,
+        queue_length: state.queue.length || 0,
+      })
+      emit('run.started', {
+        event: 'run.started',
+        run_id: started.run_id,
+        queue_length: state.queue.length || 0,
+      })
+
+      for await (const chunk of this.bridge.streamOutput(started.run_id)) {
+        await this.applyBridgeChunk(socket, state, session_id, runMarker, chunk, emit, profile)
+        if (chunk.done) break
+      }
+      // Update usage after normal completion (applyBridgeChunk already did cleanup)
+      const usage = await this.calcAndUpdateUsage(session_id, state, emit)
+      updateUsage(session_id, {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        profile: state.profile,
+      })
+    } catch (err: any) {
+      if (!state.isWorking) return
+      const queueLen = state.queue?.length ?? 0
+      state.isWorking = false
+      state.isAborting = false
+      state.profile = undefined
+      state.runId = undefined
+      state.events = []
+      this.flushBridgePendingToDb(state, session_id)
+      updateSessionStats(session_id)
+      const message = err instanceof Error ? err.message : String(err)
+      emit('run.failed', { event: 'run.failed', error: message, queue_remaining: queueLen })
+      const errUsage = await this.calcAndUpdateUsage(session_id, state, emit)
+      updateUsage(session_id, {
+        inputTokens: errUsage.inputTokens,
+        outputTokens: errUsage.outputTokens,
+        profile: state.profile,
+      })
+      if (queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
+    }
+  }
+
+  private applyBridgeChunk(
+    socket: Socket,
+    state: SessionState,
+    sessionId: string,
+    runMarker: string,
+    chunk: AgentBridgeOutput,
+    emit: (event: string, payload: any) => void,
+    profile: string,
+  ): Promise<void> {
+    return this.applyBridgeChunkAsync(socket, state, sessionId, runMarker, chunk, emit, profile)
+  }
+
+  private async applyBridgeChunkAsync(
+    socket: Socket,
+    state: SessionState,
+    sessionId: string,
+    runMarker: string,
+    chunk: AgentBridgeOutput,
+    emit: (event: string, payload: any) => void,
+    profile: string,
+  ): Promise<void> {
+    state.runId = chunk.run_id
+
+    for (const ev of chunk.events || []) {
+      const evType = ev.event as string | undefined
+      if (evType === 'tool.started') {
+        this.flushBridgePendingToDb(state, sessionId, runMarker)
+        const toolName = (ev.tool_name as string) || ''
+        const args = ev.args as Record<string, unknown> | undefined
+        const tool = this.recordBridgeToolStarted(state, sessionId, runMarker, toolName, args, ev.tool_call_id)
+        const payload = {
+          event: 'tool.started',
+          run_id: chunk.run_id,
+          tool_call_id: tool.id,
+          tool: toolName,
+          name: toolName,
+          arguments: tool.arguments,
+          preview: ev.preview || summarizeToolArguments(tool.arguments),
+        }
+        this.pushState(sessionId, 'tool.started', payload)
+        emit('tool.started', payload)
+      } else if (evType === 'tool.completed') {
+        const toolName = (ev.tool_name as string) || ''
+        const completed = this.recordBridgeToolCompleted(state, sessionId, runMarker, toolName, ev)
+        const payload = {
+          event: 'tool.completed',
+          run_id: chunk.run_id,
+          tool_call_id: completed.id,
+          tool: toolName,
+          name: toolName,
+          output: completed.output,
+          duration: completed.duration ?? ev.duration,
+          error: ev.is_error || undefined,
+        }
+        this.pushState(sessionId, 'tool.completed', payload)
+        emit('tool.completed', payload)
+      } else if (evType === 'turn.boundary') {
+        this.flushBridgePendingToDb(state, sessionId, runMarker)
+      } else if (evType === 'reasoning.delta' || evType === 'thinking.delta') {
+        const text = String(ev.text || '')
+        if (text) {
+          state.bridgePendingReasoningContent = (state.bridgePendingReasoningContent || '') + text
+          const message = this.ensureOpenBridgeAssistantMessage(state, sessionId, runMarker)
+          message.reasoning = (message.reasoning || '') + text
+          message.reasoning_content = (message.reasoning_content || '') + text
+        }
+        emit(evType, {
+          event: evType,
+          run_id: chunk.run_id,
+          text,
+        })
+      } else if (evType === 'reasoning.available') {
+        emit('reasoning.available', {
+          event: 'reasoning.available',
+          run_id: chunk.run_id,
+        })
+      } else if (evType === 'approval.requested') {
+        const payload = {
+          event: 'approval.requested',
+          run_id: chunk.run_id,
+          approval_id: ev.approval_id,
+          command: ev.command,
+          description: ev.description,
+          choices: ev.choices,
+          allow_permanent: ev.allow_permanent,
+          timeout_ms: ev.timeout_ms,
+        }
+        this.replaceState(sessionId, 'approval.requested', payload)
+        emit('approval.requested', payload)
+      } else if (evType === 'approval.resolved') {
+        const payload = {
+          event: 'approval.resolved',
+          run_id: chunk.run_id,
+          approval_id: ev.approval_id,
+          choice: ev.choice,
+        }
+        this.replaceState(sessionId, 'approval.resolved', payload)
+        emit('approval.resolved', payload)
+      } else if (evType === 'bridge.compression.requested') {
+        const bridgeHistory = await this.buildDbHistory(sessionId, { excludeLastUser: true })
+        const tokenCount = bridgeHistory.length > 0
+          ? countTokens(JSON.stringify(bridgeHistory))
+          : ev.approx_tokens
+        const payload = {
+          event: 'compression.started',
+          run_id: chunk.run_id,
+          request_id: ev.request_id,
+          message_count: bridgeHistory.length || ev.message_count,
+          token_count: tokenCount,
+          source: 'bridge',
+        }
+        this.replaceState(sessionId, 'compression.started', payload)
+        emit('compression.started', payload)
+        if (ev.request_id && Array.isArray(ev.messages)) {
+          try {
+            const compressed = await this.forceCompressBridgeHistory(
+              sessionId,
+              profile,
+              ev.messages as ChatMessage[],
+            )
+            state.bridgeCompressionResults = state.bridgeCompressionResults || {}
+            state.bridgeCompressionResults[String(ev.request_id)] = compressed
+            await this.bridge.compressionRespond(String(ev.request_id), { messages: compressed.messages })
+          } catch (err: any) {
+            await this.bridge.compressionRespond(String(ev.request_id), {
+              error: err?.message || String(err),
+            }).catch(() => undefined)
+          }
+        }
+      } else if (evType === 'bridge.compression.completed') {
+        const compressionResult = ev.request_id
+          ? state.bridgeCompressionResults?.[String(ev.request_id)]
+          : undefined
+        const payload = {
+          event: 'compression.completed',
+          run_id: chunk.run_id,
+          request_id: ev.request_id,
+          compressed: compressionResult?.compressed ?? ev.compressed !== false,
+          llmCompressed: compressionResult?.llmCompressed,
+          totalMessages: compressionResult?.beforeMessages ?? ev.message_count,
+          resultMessages: compressionResult?.resultMessages ?? ev.result_messages,
+          beforeTokens: compressionResult?.beforeTokens ?? ev.approx_tokens,
+          afterTokens: compressionResult?.afterTokens,
+          summaryTokens: compressionResult?.summaryTokens,
+          verbatimCount: compressionResult?.verbatimCount,
+          compressedStartIndex: compressionResult?.compressedStartIndex,
+          source: 'bridge',
+        }
+        if (ev.request_id && state.bridgeCompressionResults) {
+          delete state.bridgeCompressionResults[String(ev.request_id)]
+        }
+        this.replaceState(sessionId, 'compression.completed', payload)
+        emit('compression.completed', payload)
+        await this.calcAndUpdateUsage(sessionId, state, emit)
+      } else if (evType === 'bridge.compression.failed') {
+        const payload = {
+          event: 'compression.completed',
+          run_id: chunk.run_id,
+          request_id: ev.request_id,
+          compressed: false,
+          totalMessages: ev.message_count,
+          resultMessages: ev.message_count,
+          beforeTokens: ev.approx_tokens,
+          error: ev.error,
+          source: 'bridge',
+        }
+        if (ev.request_id && state.bridgeCompressionResults) {
+          delete state.bridgeCompressionResults[String(ev.request_id)]
+        }
+        this.replaceState(sessionId, 'compression.completed', payload)
+        emit('compression.completed', payload)
+      } else if (evType === 'status') {
+        emit('agent.event', {
+          event: 'agent.event',
+          run_id: chunk.run_id,
+          ...ev,
+        })
+      }
+    }
+
+    if (chunk.delta) {
+      state.bridgeOutput = (state.bridgeOutput || '') + chunk.delta
+      state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + chunk.delta
+      const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+      if (last?.role === 'assistant' && last.finish_reason == null) {
+        last.content += chunk.delta
+        this.syncBridgeReasoningToMessage(last, state.bridgePendingReasoningContent)
+      } else {
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id: sessionId,
+          runMarker,
+          role: 'assistant',
+          content: chunk.delta,
+          reasoning: state.bridgePendingReasoningContent || null,
+          reasoning_content: state.bridgePendingReasoningContent || null,
+          timestamp: Math.floor(Date.now() / 1000),
+        })
+      }
+      emit('message.delta', {
+        event: 'message.delta',
+        run_id: chunk.run_id,
+        delta: chunk.delta,
+        output: state.bridgeOutput,
+      })
+    }
+
+    if (!chunk.done) return
+    if (!state.isWorking) return
+
+    this.flushBridgePendingToDb(state, sessionId, runMarker)
+    updateSessionStats(sessionId)
+    state.isWorking = false
+    state.isAborting = false
+    state.profile = undefined
+    state.runId = undefined
+    state.events = []
+    const eventName = chunk.status === 'error' ? 'run.failed' : 'run.completed'
+    const payload = {
+      event: eventName,
+      run_id: chunk.run_id,
+      output: chunk.output || state.bridgeOutput || '',
+      result: chunk.result,
+      error: chunk.error,
+      queue_remaining: state.queue.length,
+    }
+    emit(eventName, payload)
+    if (state.queue.length > 0) {
+      this.dequeueNextQueuedRun(socket, sessionId)
+    }
+  }
+
+  private flushBridgePendingToDb(state: SessionState, sessionId: string, runMarker?: string) {
+    const content = state.bridgePendingAssistantContent || ''
+    const reasoning = state.bridgePendingReasoningContent || ''
+    if (!content.trim()) return
+    if (runMarker) {
+      const last = this.findOpenBridgeAssistantMessage(state, runMarker)
+      if (last) this.syncBridgeReasoningToMessage(last, reasoning)
+    }
+    addMessage({
+      session_id: sessionId,
+      role: 'assistant',
+      content,
+      reasoning: reasoning || null,
+      reasoning_content: reasoning || null,
+      timestamp: Math.floor(Date.now() / 1000),
+    })
+    state.bridgePendingAssistantContent = ''
+    state.bridgePendingReasoningContent = ''
+    if (runMarker) {
+      const last = this.findOpenBridgeAssistantMessage(state, runMarker)
+      if (last && last.finish_reason == null) last.finish_reason = 'stop'
+    }
+  }
+
+  private findOpenBridgeAssistantMessage(state: SessionState, runMarker: string): SessionMessage | undefined {
+    return [...state.messages]
+      .reverse()
+      .find(m => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
+  }
+
+  private ensureOpenBridgeAssistantMessage(
+    state: SessionState,
+    sessionId: string,
+    runMarker: string,
+  ): SessionMessage {
+    const existing = this.findOpenBridgeAssistantMessage(state, runMarker)
+    if (existing) return existing
+    const message: SessionMessage = {
+      id: state.messages.length + 1,
+      session_id: sessionId,
+      runMarker,
+      role: 'assistant',
+      content: '',
+      timestamp: Math.floor(Date.now() / 1000),
+    }
+    state.messages.push(message)
+    return message
+  }
+
+  private syncBridgeReasoningToMessage(message: SessionMessage, reasoning?: string) {
+    if (!reasoning) return
+    message.reasoning = reasoning
+    message.reasoning_content = reasoning
+  }
+
+  private recordBridgeToolStarted(
+    state: SessionState,
+    sessionId: string,
+    runMarker: string,
+    toolName: string,
+    args: Record<string, unknown> | undefined,
+    rawToolCallId: unknown,
+  ): { id: string; name: string; arguments: string } {
+    const id = this.bridgeToolCallId(state, rawToolCallId, toolName)
+    const argsString = args ? JSON.stringify(args) : '{}'
+    const reasoning = state.bridgePendingReasoningContent || ''
+    const toolCall = {
+      id,
+      type: 'function',
+      function: {
+        name: toolName,
+        arguments: argsString,
+      },
+    }
+    const timestamp = Math.floor(Date.now() / 1000)
+
+    state.bridgePendingTools = state.bridgePendingTools || []
+    state.bridgePendingTools.push({
+      id,
+      name: toolName,
+      arguments: argsString,
+      startedAt: Date.now(),
+    })
+
+    const openMessage = this.findOpenBridgeAssistantMessage(state, runMarker)
+    if (openMessage && !openMessage.content && !openMessage.tool_calls?.length) {
+      openMessage.tool_calls = [toolCall]
+      openMessage.finish_reason = 'tool_calls'
+      openMessage.reasoning = reasoning || openMessage.reasoning || null
+      openMessage.reasoning_content = reasoning || openMessage.reasoning_content || null
+      openMessage.timestamp = timestamp
+    } else {
+      state.messages.push({
+        id: state.messages.length + 1,
+        session_id: sessionId,
+        runMarker,
+        role: 'assistant',
+        content: '',
+        tool_calls: [toolCall],
+        finish_reason: 'tool_calls',
+        reasoning: reasoning || null,
+        reasoning_content: reasoning || null,
+        timestamp,
+      })
+    }
+    addMessage({
+      session_id: sessionId,
+      role: 'assistant',
+      content: '',
+      tool_calls: [toolCall],
+      finish_reason: 'tool_calls',
+      reasoning: reasoning || null,
+      reasoning_content: reasoning || null,
+      timestamp,
+    })
+    state.bridgePendingReasoningContent = ''
+
+    return { id, name: toolName, arguments: argsString }
+  }
+
+  private recordBridgeToolCompleted(
+    state: SessionState,
+    sessionId: string,
+    runMarker: string,
+    toolName: string,
+    ev: Record<string, unknown>,
+  ): { id: string; output: string; duration?: number } {
+    state.bridgePendingTools = state.bridgePendingTools || []
+    const rawId = ev.tool_call_id
+    let idx = rawId
+      ? state.bridgePendingTools.findIndex(tool => tool.id === String(rawId))
+      : -1
+    if (idx < 0 && toolName) {
+      idx = state.bridgePendingTools.findIndex(tool => tool.name === toolName)
+    }
+    if (idx < 0) {
+      idx = state.bridgePendingTools.length - 1
+    }
+    const pending = idx >= 0 ? state.bridgePendingTools.splice(idx, 1)[0] : undefined
+    const id = pending?.id || this.bridgeToolCallId(state, rawId, toolName)
+    const output = this.bridgeToolOutput(ev)
+    const timestamp = Math.floor(Date.now() / 1000)
+    logger.info(
+      '[chat-run-socket][bridge] recording CLI tool result session=%s tool=%s tool_call_id=%s raw_tool_call_id=%s output_len=%d has_result=%s has_output=%s has_result_preview=%s has_preview=%s event_keys=%s',
+      sessionId,
+      toolName,
+      id,
+      String(rawId || ''),
+      output.length,
+      String(ev.result != null),
+      String(ev.output != null),
+      String(ev.result_preview != null),
+      String(ev.preview != null),
+      Object.keys(ev).join(','),
+    )
+
+    state.messages.push({
+      id: state.messages.length + 1,
+      session_id: sessionId,
+      runMarker,
+      role: 'tool',
+      content: output,
+      tool_call_id: id,
+      tool_name: toolName || pending?.name || null,
+      timestamp,
+    })
+    addMessage({
+      session_id: sessionId,
+      role: 'tool',
+      content: output,
+      tool_call_id: id,
+      tool_name: toolName || pending?.name || null,
+      timestamp,
+    })
+
+    const duration = pending?.startedAt
+      ? Math.round((Date.now() - pending.startedAt) / 10) / 100
+      : undefined
+
+    return { id, output, duration }
+  }
+
+  private bridgeToolCallId(state: SessionState, rawToolCallId: unknown, toolName: string): string {
+    const raw = String(rawToolCallId || '').trim()
+    if (raw) return raw
+    state.bridgeToolCounter = (state.bridgeToolCounter || 0) + 1
+    const safeName = (toolName || 'tool').replace(/[^a-zA-Z0-9_-]/g, '_')
+    return `cli_${safeName}_${state.bridgeToolCounter}`
+  }
+
+  private bridgeToolOutput(ev: Record<string, unknown>): string {
+    const value = ev.result ?? ev.output ?? ev.result_preview ?? ev.preview ?? ''
+    return typeof value === 'string' ? value : JSON.stringify(value ?? '')
+  }
+
   private applyResponseStreamEvent(
     state: SessionState,
     sessionId: string,
@@ -1101,8 +1694,21 @@ export class ChatRunSocket {
       if (item.type !== 'function_call') return null
       const callId = item.call_id || item.id
       if (!callId) return null
-      run.toolCalls.set(callId, responseFunctionCallToToolCall(item))
-      return null
+      const toolCall = responseFunctionCallToToolCall(item)
+      run.toolCalls.set(callId, { ...toolCall, startedAt: Date.now() })
+      return {
+        event: 'tool.started',
+        payload: {
+          event: 'tool.started',
+          run_id: run.responseId,
+          response_id: run.responseId,
+          tool_call_id: callId,
+          tool: toolCall.function.name,
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+          preview: summarizeToolArguments(toolCall.function.arguments),
+        },
+      }
     }
 
     if (eventType === 'response.output_item.done') {
@@ -1111,7 +1717,8 @@ export class ChatRunSocket {
         const callId = item.call_id || item.id
         if (!callId) return null
         const toolCall = responseFunctionCallToToolCall(item)
-        run.toolCalls.set(callId, toolCall)
+        const existing = run.toolCalls.get(callId)
+        run.toolCalls.set(callId, { ...toolCall, startedAt: existing?.startedAt || Date.now() })
 
         const key = `assistant:${callId}`
         if (!run.insertedKeys.has(key)) {
@@ -1127,19 +1734,7 @@ export class ChatRunSocket {
             timestamp: now(),
           })
         }
-        return {
-          event: 'tool.started',
-          payload: {
-            event: 'tool.started',
-            run_id: run.responseId,
-            response_id: run.responseId,
-            tool_call_id: callId,
-            tool: toolCall.function.name,
-            name: toolCall.function.name,
-            arguments: toolCall.function.arguments,
-            preview: summarizeToolArguments(toolCall.function.arguments),
-          },
-        }
+        return null
       }
 
       if (item.type === 'function_call_output') {
@@ -1147,7 +1742,11 @@ export class ChatRunSocket {
         if (!callId) return null
         const key = `tool:${callId}`
         const output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '')
-        const toolName = run.toolCalls.get(callId)?.function?.name || null
+        const toolCallEntry = run.toolCalls.get(callId)
+        const toolName = toolCallEntry?.function?.name || null
+        const startedAt = toolCallEntry?.startedAt
+        const duration = startedAt ? Math.round((Date.now() - startedAt) / 10) / 100 : undefined
+        const hasError = typeof item.output === 'string' && item.output.startsWith('Error')
         if (!run.insertedKeys.has(key)) {
           run.insertedKeys.add(key)
           state.messages.push({
@@ -1171,6 +1770,8 @@ export class ChatRunSocket {
             tool: toolName,
             name: toolName,
             output,
+            duration,
+            error: hasError || undefined,
           },
         }
       }
@@ -1182,6 +1783,7 @@ export class ChatRunSocket {
       const output = Array.isArray(response.output) ? response.output : []
       for (const item of output) {
         if (item.type === 'function_call') {
+          this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.added', { item })
           this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
         } else if (item.type === 'function_call_output') {
           this.applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
@@ -1263,9 +1865,19 @@ export class ChatRunSocket {
     logger.info({ sessionId, runId }, '[chat-run-socket][abort] started')
 
     // Flush in-memory assistant text to DB before aborting the stream.
-    this.flushResponseRunToDb(state, sessionId)
+    if (state.source === 'cli') {
+      this.flushBridgePendingToDb(state, sessionId)
+    } else {
+      this.flushResponseRunToDb(state, sessionId)
+    }
 
-    if (state.abortController) {
+    if (state.source === 'cli') {
+      try {
+        await this.bridge.interrupt(sessionId, 'Aborted by user')
+      } catch (err) {
+        logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
+      }
+    } else if (state.abortController) {
       state.abortController.abort()
     }
 
@@ -1314,6 +1926,7 @@ export class ChatRunSocket {
       session_id: sessionId,
       model: next.model,
       instructions: next.instructions,
+      source: next.source,
     }, next.profile || fallbackProfile, true)
     return true
   }
@@ -1324,6 +1937,10 @@ export class ChatRunSocket {
 
     const profile = state.profile
     updateSessionStats(sessionId)
+    const emit = (event: string, payload: any) => {
+      this.nsp.to(`session:${sessionId}`).emit(event, { ...payload, session_id: sessionId })
+    }
+    await this.calcAndUpdateUsage(sessionId, state, emit)
 
     state.isWorking = false
     state.isAborting = false
@@ -1358,6 +1975,7 @@ export class ChatRunSocket {
         session_id: sessionId,
         model: next.model,
         instructions: next.instructions,
+        source: next.source,
       }, next.profile || profile || 'default', true)
       return
     }

@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import * as hermesCli from '../../services/hermes/hermes-cli'
 
 const WEBUI_LOG_FILE = join(homedir(), '.hermes-web-ui', 'logs', 'server.log')
+const BRIDGE_LOG_FILE = join(homedir(), '.hermes-web-ui', 'logs', 'bridge.log')
 
 interface LogEntry {
   timestamp: string; level: string; logger: string; message: string; raw: string
@@ -15,8 +16,11 @@ function parseLine(line: string): LogEntry {
     const obj = JSON.parse(line)
     if (obj.level && obj.time) {
       const ts = new Date(obj.time).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-      const levelMap: Record<number, string> = { 10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL' }
-      return { timestamp: ts, level: levelMap[obj.level] || 'INFO', logger: obj.msg || '', message: typeof obj.msg === 'string' ? obj.msg : JSON.stringify(obj.msg), raw: line }
+      const levelMap: Record<number, string> = { 10: 'TRACE', 20: 'DEBUG', 30: 'INFO', 40: 'WARN', 50: 'ERROR', 60: 'FATAL' }
+      // Pino 日志格式: { level, time, msg, name (logger name), hostname, pid, ... }
+      const loggerName = obj.name || obj.logger || 'app'
+      const message = obj.msg || (obj.err ? obj.err.message : '')
+      return { timestamp: ts, level: levelMap[obj.level] || 'INFO', logger: loggerName, message: typeof message === 'string' ? message : JSON.stringify(message), raw: line }
     }
   } catch {}
   let match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(\S+?):\s(.*)$/)
@@ -36,6 +40,14 @@ export async function list(ctx: any) {
       files.push({ name: 'webui', size, modified })
     } catch { }
   }
+  if (existsSync(BRIDGE_LOG_FILE)) {
+    try {
+      const stat = statSync(BRIDGE_LOG_FILE)
+      const size = stat.size > 1024 * 1024 ? `${(stat.size / 1024 / 1024).toFixed(1)}MB` : `${(stat.size / 1024).toFixed(1)}KB`
+      const modified = stat.mtime.toLocaleString()
+      files.push({ name: 'bridge', size, modified })
+    } catch { }
+  }
   ctx.body = { files }
 }
 
@@ -50,6 +62,21 @@ export async function read(ctx: any) {
     try {
       if (!existsSync(WEBUI_LOG_FILE)) { ctx.body = { entries: [] }; return }
       const content = await readFile(WEBUI_LOG_FILE, 'utf-8')
+      const rawLines = content.split('\n')
+      const sliced = rawLines.length > lines ? rawLines.slice(-lines) : rawLines
+      const entries: LogEntry[] = []
+      for (const line of sliced) { if (!line.trim()) continue; entries.push(parseLine(line)) }
+      ctx.body = { entries: entries.reverse() }
+    } catch (err: any) {
+      ctx.status = 500; ctx.body = { error: err.message }
+    }
+    return
+  }
+
+  if (logName === 'bridge') {
+    try {
+      if (!existsSync(BRIDGE_LOG_FILE)) { ctx.body = { entries: [] }; return }
+      const content = await readFile(BRIDGE_LOG_FILE, 'utf-8')
       const rawLines = content.split('\n')
       const sliced = rawLines.length > lines ? rawLines.slice(-lines) : rawLines
       const entries: LogEntry[] = []

@@ -66,11 +66,13 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
             name: opts?.userName || localStorage.getItem('gc_user_name') || undefined,
             description: opts?.description || localStorage.getItem('gc_user_description') || undefined,
         },
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 30000,
+        randomizationFactor: 0.5,
+        timeout: 30000,
     })
 
     return socket
@@ -185,4 +187,3 @@ export async function forceCompress(roomId: string): Promise<{ success: boolean;
         method: 'POST',
     })
 }
-

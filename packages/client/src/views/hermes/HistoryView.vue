@@ -240,12 +240,12 @@ watch(hermesSessionsLoaded, (loaded) => {
   if (loaded && hermesSessions.value.length > 0) {
     // Only auto-load if no session is currently active
     if (!historySessionId.value || !hermesSessions.value.find(s => s.id === historySessionId.value)) {
-      // Find first CLI session
+      // Find first CLI session.
       const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
       if (firstCliSession) {
         // Ensure the CLI group is expanded
-        if (collapsedGroups.value.has('cli')) {
-          collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== 'cli'))
+        if (collapsedGroups.value.has(firstCliSession.source)) {
+          collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
         }
         // Load session details
         handleSessionClick(firstCliSession.id)

@@ -190,7 +190,7 @@ class ChatStorage {
     saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
         this.db()?.prepare(
             'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 20)
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10)
     }
 
     updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -424,7 +424,13 @@ export class GroupChatServer {
         const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
         this.io = new Server(servers[0], {
-            cors: { origin: '*' }
+            cors: { origin: '*' },
+            pingInterval: 25_000,
+            pingTimeout: 90_000,
+            connectionStateRecovery: {
+                maxDisconnectionDuration: 2 * 60_000,
+                skipMiddlewares: true,
+            },
         })
         servers.slice(1).forEach((httpServer) => this.io.attach(httpServer))
         this.nsp = this.io.of('/group-chat')
@@ -442,13 +448,15 @@ export class GroupChatServer {
         const contextEngine = new ContextEngine({
             messageFetcher: this.storage,
             sessionCleaner: async (sessionId: string) => {
-                try {
-                    const profile = this.storage.getSessionProfile(sessionId)
-                    const profileName = profile?.profile_name || 'default'
-                    this.storage.enqueuePendingSessionDelete(sessionId, profileName)
-                } catch (err: any) {
-                    logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
-                }
+                // TODO: re-enable session deletion after confirming it doesn't
+                // accidentally remove user-created sessions outside group chat.
+                // try {
+                //     const profile = this.storage.getSessionProfile(sessionId)
+                //     const profileName = profile?.profile_name || 'default'
+                //     this.storage.enqueuePendingSessionDelete(sessionId, profileName)
+                // } catch (err: any) {
+                //     logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
+                // }
             },
         })
         this.agentClients.setContextEngine(contextEngine)

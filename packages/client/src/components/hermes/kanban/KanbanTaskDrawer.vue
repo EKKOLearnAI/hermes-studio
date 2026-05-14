@@ -43,6 +43,11 @@ const localizedTaskStatus = computed(() => {
   return t(`kanban.columns.${detail.value.task.status}`, detail.value.task.status)
 })
 
+const canMutateTask = computed(() => {
+  const status = detail.value?.task.status
+  return status !== 'done' && status !== 'archived'
+})
+
 const sessionResults = ref<any[]>([])
 const sessionLoading = ref(false)
 const showSessions = ref(false)
@@ -243,8 +248,8 @@ async function handleAssign() {
             <div class="result-summary" @click="openResultDetail">{{ completionSummary }}</div>
           </div>
 
-          <!-- Actions (only for non-completed tasks) -->
-          <div v-if="detail.task.status !== 'done'" class="detail-section">
+          <!-- Actions (only for active, mutable tasks) -->
+          <div v-if="canMutateTask" class="detail-section">
             <div class="section-title">{{ t('kanban.action.title') }}</div>
             <div class="action-group">
               <template v-if="!showCompleteInput">

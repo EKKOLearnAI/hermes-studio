@@ -8,13 +8,32 @@ const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
 
-async function save(values: Record<string, any>) {
-  try {
-    await settingsStore.saveSection('memory', values)
+// 防抖保存：每个字段独立定时器，300ms 内只发最后一次 HTTP 请求
+const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
+function save(values: Record<string, any>) {
+  // Switch 等一次性操作，直接保存，不需要防抖
+  settingsStore.updateLocal('memory', values)
+  settingsStore.saveSection('memory', values).then(() => {
     message.success(t('settings.saved'))
-  } catch (err: any) {
+  }).catch(() => {
     message.error(t('settings.saveFailed'))
-  }
+  })
+}
+
+function debouncedSave(key: string, value: any) {
+  // 先立即更新本地 store（UI 即时响应）
+  settingsStore.updateLocal('memory', { [key]: value })
+  // 再防抖发 HTTP 保存
+  if (debounceTimers[key]) clearTimeout(debounceTimers[key])
+  debounceTimers[key] = setTimeout(async () => {
+    try {
+      await settingsStore.saveSection('memory', { [key]: value })
+      message.success(t('settings.saved'))
+    } catch (err: any) {
+      message.error(t('settings.saveFailed'))
+    }
+  }, 300)
 }
 </script>
 
@@ -31,7 +50,7 @@ async function save(values: Record<string, any>) {
         :value="settingsStore.memory.memory_char_limit"
         :min="100" :max="10000" :step="100"
         size="small" class="input-sm"
-        @update:value="v => v != null && save({ memory_char_limit: v })"
+        @update:value="v => v != null && debouncedSave('memory_char_limit', v)"
       />
     </SettingRow>
     <SettingRow :label="t('settings.memory.userCharLimit')" :hint="t('settings.memory.userCharLimitHint')">
@@ -39,7 +58,7 @@ async function save(values: Record<string, any>) {
         :value="settingsStore.memory.user_char_limit"
         :min="100" :max="10000" :step="100"
         size="small" class="input-sm"
-        @update:value="v => v != null && save({ user_char_limit: v })"
+        @update:value="v => v != null && debouncedSave('user_char_limit', v)"
       />
     </SettingRow>
   </section>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NSelect, NInput, NButton } from 'naive-ui'
+import { NSelect, NInput, NButton, NSlider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { useSpeech } from '@/composables/useSpeech'
+import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import SettingRow from './SettingRow.vue'
 
 const { t } = useI18n()
@@ -40,6 +41,12 @@ const edgeVoiceOptions = [
   { label: '云希 (zh-CN-YunxiNeural)', value: 'zh-CN-YunxiNeural' },
   { label: '云健 (zh-CN-YunjianNeural)', value: 'zh-CN-YunjianNeural' },
   { label: '云扬 (zh-CN-YunyangNeural)', value: 'zh-CN-YunyangNeural' },
+  { label: '小晨 (zh-TW-HsiaoChenNeural)', value: 'zh-TW-HsiaoChenNeural' },
+  { label: '小宇 (zh-TW-HsiaoYuNeural)', value: 'zh-TW-HsiaoYuNeural' },
+  { label: '云哲 (zh-TW-YunJheNeural)', value: 'zh-TW-YunJheNeural' },
+  { label: '希雅 (zh-HK-HiuGaaiNeural)', value: 'zh-HK-HiuGaaiNeural' },
+  { label: '希文 (zh-HK-HiuMaanNeural)', value: 'zh-HK-HiuMaanNeural' },
+  { label: '文龙 (zh-HK-WanLungNeural)', value: 'zh-HK-WanLungNeural' },
   { label: 'Jenny (en-US-JennyNeural)', value: 'en-US-JennyNeural' },
   { label: 'Aria (en-US-AriaNeural)', value: 'en-US-AriaNeural' },
   { label: 'Guy (en-US-GuyNeural)', value: 'en-US-GuyNeural' },
@@ -103,6 +110,8 @@ async function handleTest() {
       await speech.openaiPlay('__test__', text, {
         baseUrl: '/api/tts/proxy',
         voice: vs.edgeVoice.value,
+        rate: speedToEdgeRate(vs.edgeRate.value),
+        pitch: hzToEdgePitch(vs.edgePitchHz.value),
       })
     }
   } catch (err) {
@@ -267,6 +276,40 @@ async function handleTest() {
         />
       </SettingRow>
 
+      <SettingRow
+        :label="t('settings.voice.edgeRate')"
+        :hint="t('settings.voice.edgeRateHint')"
+      >
+        <div class="slider-row">
+          <NSlider
+            :value="vs.edgeRate.value"
+            :min="0.5"
+            :max="2.0"
+            :step="0.05"
+            style="width: 200px"
+            @update:value="vs.setEdgeRate"
+          />
+          <span class="slider-value">{{ vs.edgeRate.value.toFixed(2) }}x ({{ speedToEdgeRate(vs.edgeRate.value) }})</span>
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        :label="t('settings.voice.edgePitch')"
+        :hint="t('settings.voice.edgePitchHint')"
+      >
+        <div class="slider-row">
+          <NSlider
+            :value="vs.edgePitchHz.value"
+            :min="-20"
+            :max="20"
+            :step="1"
+            style="width: 200px"
+            @update:value="vs.setEdgePitchHz"
+          />
+          <span class="slider-value">{{ vs.edgePitchHz.value > 0 ? '+' : '' }}{{ vs.edgePitchHz.value }} Hz ({{ hzToEdgePitch(vs.edgePitchHz.value) }})</span>
+        </div>
+      </SettingRow>
+
     </template>
 
     <!-- ─── Test / Audition ─── -->
@@ -323,5 +366,18 @@ async function handleTest() {
     gap: 8px;
     align-items: center;
   }
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-value {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+  min-width: 120px;
 }
 </style>

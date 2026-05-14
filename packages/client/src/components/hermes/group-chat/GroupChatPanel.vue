@@ -18,7 +18,7 @@ const showSidebar = ref(window.innerWidth > 768)
 const showCreateModal = ref(false)
 const showAddAgentModal = ref(false)
 const showCompressionModal = ref(false)
-const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 20 })
+const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 })
 const isCompressing = ref(false)
 const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
@@ -119,7 +119,7 @@ function handleOpenCompressionConfig() {
         compressionConfig.value = {
             triggerTokens: room.triggerTokens ?? 100000,
             maxHistoryTokens: room.maxHistoryTokens ?? 32000,
-            tailMessageCount: room.tailMessageCount ?? 20,
+            tailMessageCount: room.tailMessageCount ?? 10,
         }
     }
     showCompressionModal.value = true

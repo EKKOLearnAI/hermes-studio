@@ -15,9 +15,9 @@ const showModal = ref(false)
 
 onMounted(async () => {
   // 先 invalidate 后端 copilot 缓存（gh logout / VS Code 退出后下一次 list 立刻反映），
-  // 再拉 providers。check-token 失败不阻断。
+  // 再拉 providers 与 appStore 的模型显示名配置。check-token 失败不阻断。
   try { await checkCopilotToken() } catch { /* ignore */ }
-  modelsStore.fetchProviders()
+  await Promise.all([modelsStore.fetchProviders(), appStore.loadModels()])
 })
 
 function openCreateModal() {

@@ -136,8 +136,8 @@ describe('Database Schema Synchronization', () => {
     })
   })
 
-  describe('Schema sync with column additions', () => {
-    it('adds missing columns to existing table without rebuilding', async () => {
+  describe('Safe additive schema changes', () => {
+    it('adds missing safe columns to existing table without rebuilding', async () => {
       const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
 
       // Create initial table without some columns
@@ -150,7 +150,7 @@ describe('Database Schema Synchronization', () => {
       // Sync with full schema
       syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
 
-      // Verify all columns now exist
+      // Verify safe missing columns now exist
       const cols = getTableColumns(db, USAGE_TABLE)
       expect(cols.has('input_tokens')).toBe(true)
       expect(cols.has('output_tokens')).toBe(true)
@@ -209,8 +209,8 @@ describe('Database Schema Synchronization', () => {
     })
   })
 
-  describe('Primary key changes trigger table rebuild', () => {
-    it('rebuilds table when primary key changes from single column to id column', async () => {
+  describe('Destructive schema changes are not applied automatically', () => {
+    it('does not rebuild table when primary key differs', async () => {
       const { syncTable, GC_ROOM_MEMBERS_TABLE, GC_ROOM_MEMBERS_SCHEMA } =
         await import('../../packages/server/src/db/hermes/schemas')
 
@@ -228,9 +228,9 @@ describe('Database Schema Synchronization', () => {
         primaryKey: 'id',
       })
 
-      // Verify id-based primary key
-      const pk = getTablePrimaryKey(db, GC_ROOM_MEMBERS_TABLE)
-      expect(pk).toBe('id')
+      // Verify existing primary key was left untouched
+      const tableCols = db.prepare(`PRAGMA table_info("${GC_ROOM_MEMBERS_TABLE}")`).all() as Array<{ name: string; pk: number }>
+      expect(tableCols.find(c => c.name === 'roomId')?.pk).toBe(1)
 
       // Verify data was preserved
       const row = db.prepare(`SELECT * FROM "${GC_ROOM_MEMBERS_TABLE}" WHERE roomId = ? AND userId = ?`).get('room-1', 'user-1')
@@ -238,10 +238,8 @@ describe('Database Schema Synchronization', () => {
       expect(row.roomId).toBe('room-1')
       expect(row.userId).toBe('user-1')
     })
-  })
 
-  describe('Schema sync with type changes', () => {
-    it('rebuilds table when column types change', async () => {
+    it('does not rebuild table when column types differ', async () => {
       const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
 
       const db = getTestDb()
@@ -255,17 +253,13 @@ describe('Database Schema Synchronization', () => {
       // Sync with correct schema
       syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
 
-      // Verify column type is correct (should be TEXT now)
+      // Verify column type was left untouched
       const cols = getTableColumns(db, USAGE_TABLE)
-      expect(cols.get('session_id')).toBe('TEXT')
+      expect(cols.get('session_id')).toBe('INTEGER')
 
-      // Verify data was preserved (SQLite can convert INTEGER to TEXT)
+      // Verify data was preserved
       const rows = db.prepare(`SELECT COUNT(*) as count FROM "${USAGE_TABLE}"`).get() as { count: number }
       expect(rows.count).toBe(1)
-
-      // Verify the converted value
-      const row = db.prepare(`SELECT session_id FROM "${USAGE_TABLE}"`).get() as { session_id: string }
-      expect(row.session_id).toBe('12345')
     })
   })
 
@@ -287,7 +281,7 @@ describe('Database Schema Synchronization', () => {
       expect(indexes).toBeTruthy()
     })
 
-    it('removes obsolete indexes', async () => {
+    it('does not alter indexes on existing tables', async () => {
       const { syncTable, MESSAGES_TABLE, MESSAGES_SCHEMA } =
         await import('../../packages/server/src/db/hermes/schemas')
 
@@ -304,18 +298,18 @@ describe('Database Schema Synchronization', () => {
         },
       })
 
-      // Verify extra index was removed
+      // Verify extra index remains
       const extraIndex = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`).get('idx_extra')
-      expect(extraIndex).toBeFalsy()
+      expect(extraIndex).toBeTruthy()
 
-      // Verify correct index was created
+      // Verify expected index was not added to an existing table
       const correctIndex = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`).get('idx_messages_session_id')
-      expect(correctIndex).toBeTruthy()
+      expect(correctIndex).toBeFalsy()
     })
   })
 
   describe('Data preservation during schema sync', () => {
-    it('preserves data when only adding columns', async () => {
+    it('preserves data when adding safe columns', async () => {
       const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
 
       const db = getTestDb()
@@ -327,16 +321,19 @@ describe('Database Schema Synchronization', () => {
       const sessionId = 'test-session-123'
       db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id, created_at) VALUES (?, ?)`).run(sessionId, Date.now())
 
-      // Sync with full schema (should add columns without rebuilding)
+      // Sync with full schema (should add safe columns only)
       syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
 
       // Verify data is still there
       const row = db.prepare(`SELECT * FROM "${USAGE_TABLE}" WHERE session_id = ?`).get(sessionId)
       expect(row).toBeTruthy()
       expect(row.session_id).toBe(sessionId)
+
+      const cols = getTableColumns(db, USAGE_TABLE)
+      expect(cols.has('input_tokens')).toBe(true)
     })
 
-    it('preserves data when rebuilding table with compatible columns', async () => {
+    it('preserves data and existing table definition when primary key is missing', async () => {
       const { syncTable, GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA } =
         await import('../../packages/server/src/db/hermes/schemas')
 
@@ -349,10 +346,12 @@ describe('Database Schema Synchronization', () => {
       db.prepare(`INSERT INTO "${GC_ROOM_AGENTS_TABLE}" (id, roomId, agentId, profile, name, description, invited) VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .run('agent-1', 'room-1', 'agent-1', 'default', 'Test Agent', '', 0)
 
-      // Sync with id primary key (triggers rebuild)
+      // Sync with id primary key expectation; should not rebuild existing table
       syncTable(GC_ROOM_AGENTS_TABLE, GC_ROOM_AGENTS_SCHEMA, {
         primaryKey: 'id',
       })
+
+      expect(getTablePrimaryKey(db, GC_ROOM_AGENTS_TABLE)).toBe(null)
 
       // Verify data was preserved
       const row = db.prepare(`SELECT * FROM "${GC_ROOM_AGENTS_TABLE}" WHERE id = ?`)
@@ -365,8 +364,8 @@ describe('Database Schema Synchronization', () => {
     })
   })
 
-  describe('Column deletion', () => {
-    it('removes extra columns from existing table', async () => {
+  describe('Column preservation', () => {
+    it('keeps extra columns on existing table', async () => {
       const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
 
       // Create table with extra columns
@@ -377,13 +376,13 @@ describe('Database Schema Synchronization', () => {
       db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id, created_at, extra_col, another_extra) VALUES (?, ?, ?, ?)`)
         .run('test-1', Date.now(), 'value', 123)
 
-      // Sync with schema (should remove extra columns)
+      // Sync with schema (should keep extra columns)
       syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
 
-      // Verify extra columns are gone
+      // Verify extra columns are preserved
       const cols = getTableColumns(db, USAGE_TABLE)
-      expect(cols.has('extra_col')).toBe(false)
-      expect(cols.has('another_extra')).toBe(false)
+      expect(cols.has('extra_col')).toBe(true)
+      expect(cols.has('another_extra')).toBe(true)
 
       // Verify data is still there
       const row = db.prepare(`SELECT * FROM "${USAGE_TABLE}" WHERE session_id = ?`).get('test-1')

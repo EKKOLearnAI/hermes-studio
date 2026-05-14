@@ -3,7 +3,6 @@ export default {
     home: 'Home',
     docs: 'Documentation',
     github: 'GitHub',
-    qqGroup: 'QQ Group',
   },
   hero: {
     title: 'Self-Hosted AI Chat Dashboard',
@@ -101,7 +100,7 @@ export default {
   },
   footer: {
     description: 'Self-hosted AI chat dashboard for Hermes Agent.',
-    license: 'MIT License',
+    license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
   },
   docs: {

@@ -2,6 +2,8 @@ import { execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { delimiter, dirname, join } from 'path'
 
+let updateInProgress = false
+
 function getNodeBinDir() {
   return dirname(process.execPath)
 }
@@ -10,27 +12,39 @@ function getNodePrefix() {
   return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
 }
 
-function getNpmCliPath() {
+function getHomebrewPrefix() {
+  const match = process.execPath.match(/^(.*)\/Cellar\/[^/]+\/[^/]+\/bin\/node$/)
+  return match?.[1] || null
+}
+
+function getNpmCliCandidates() {
   const prefix = getNodePrefix()
-  const candidates = process.platform === 'win32'
+  const homebrewPrefix = getHomebrewPrefix()
+
+  return process.platform === 'win32'
     ? [
         join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
         join(getNodeBinDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
       ]
-    : [join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')]
-  const npmCli = candidates.find(existsSync)
-
-  if (!npmCli) {
-    throw new Error(`Unable to locate npm CLI for ${process.execPath}; checked ${candidates.join(', ')}`)
-  }
-
-  return npmCli
+    : [
+        join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        ...(homebrewPrefix ? [join(homebrewPrefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')] : []),
+      ]
 }
 
-function getGlobalPackageBin(prefix: string) {
-  return process.platform === 'win32'
-    ? join(prefix, 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
-    : join(prefix, 'lib', 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+function getNpmCliPath() {
+  const candidates = getNpmCliCandidates()
+  const npmCli = candidates.find(existsSync)
+
+  return npmCli || null
+}
+
+function getNpmBin() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
+}
+
+function getGlobalPackageBin(root: string) {
+  return join(root, 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
 }
 
 function getCurrentNodeEnv() {
@@ -42,7 +56,11 @@ function getCurrentNodeEnv() {
 }
 
 function runNpm(args: string[], options: { timeout?: number } = {}) {
-  return execFileSync(process.execPath, [getNpmCliPath(), ...args], {
+  const npmCli = getNpmCliPath()
+  const command = npmCli ? process.execPath : getNpmBin()
+  const commandArgs = npmCli ? [npmCli, ...args] : args
+
+  return execFileSync(command, commandArgs, {
     encoding: 'utf-8',
     timeout: options.timeout,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -50,12 +68,16 @@ function runNpm(args: string[], options: { timeout?: number } = {}) {
   }).trim()
 }
 
-function getGlobalPrefix() {
-  return runNpm(['prefix', '-g'])
+function getGlobalRoot() {
+  return runNpm(['root', '-g'])
 }
 
 function getGlobalCliScript() {
-  return getGlobalPackageBin(getGlobalPrefix())
+  const cli = getGlobalPackageBin(getGlobalRoot())
+  if (!existsSync(cli)) {
+    throw new Error(`Updated hermes-web-ui CLI not found: ${cli}`)
+  }
+  return cli
 }
 
 function runUpdateInstall() {
@@ -74,6 +96,17 @@ function spawnRestart(port: string) {
 }
 
 export async function handleUpdate(ctx: any) {
+  if (updateInProgress) {
+    ctx.status = 409
+    ctx.body = {
+      success: false,
+      message: 'hermes-web-ui update is already in progress',
+    }
+    return
+  }
+
+  updateInProgress = true
+
   try {
     const output = runUpdateInstall()
 
@@ -83,13 +116,27 @@ export async function handleUpdate(ctx: any) {
     }
 
     setTimeout(() => {
+      let restart
       try {
-        spawnRestart(process.env.PORT || '8648').unref()
-      } finally {
-        process.exit(0)
+        restart = spawnRestart(process.env.PORT || '8648')
+      } catch (err) {
+        updateInProgress = false
+        console.error('[update] failed to spawn restart:', err)
+        return
       }
+
+      restart.on('error', (err) => {
+        updateInProgress = false
+        console.error('[update] restart process failed:', err)
+      })
+      restart.on('exit', (code, signal) => {
+        updateInProgress = false
+        console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+      })
+      restart.unref()
     }, 3000)
   } catch (err: any) {
+    updateInProgress = false
     ctx.status = 500
     ctx.body = {
       success: false,
