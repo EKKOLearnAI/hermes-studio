@@ -154,8 +154,10 @@ function selectMention(name: string) {
             const newPos = before.length + name.length + 2
             el.setSelectionRange(newPos, newPos)
             el.focus()
-            el.style.height = 'auto'
-            el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+            if (textareaHeight.value === null) {
+                el.style.height = 'auto'
+                el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+            }
         }
     })
 }
@@ -202,15 +204,12 @@ function handleSend() {
     emit('send', content)
     inputText.value = ''
     mentionActive.value = false
-
-    nextTick(() => {
-        if (textareaRef.value) {
-            textareaRef.value.style.height = 'auto'
-        }
-    })
+    // 发送后重置到自定义高度（不清除拖拽状态）
 }
 
 function handleInput(e: Event) {
+    // 用户手动拖拽自定义高度时，不覆盖
+    if (textareaHeight.value !== null) return
     store.emitTyping()
     const el = e.target as HTMLTextAreaElement
     el.style.height = 'auto'
