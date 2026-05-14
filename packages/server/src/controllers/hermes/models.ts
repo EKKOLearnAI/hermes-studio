@@ -277,16 +277,11 @@ export async function getAvailable(ctx: any) {
         if (!cp.base_url) return null
         const providerKey = `custom:${cp.name.trim().toLowerCase().replace(/ /g, '-')}`
         const baseUrl = cp.base_url.replace(/\/+$/, '')
-        const bareKey = cp.name.trim().toLowerCase().replace(/ /g, '-')
-        const builtinPreset = PROVIDER_PRESETS.find(p => p.value === bareKey)
-        let models = builtinPreset?.models?.length ? [...builtinPreset.models] : [cp.model]
-        // Skip dynamic fetch for builtin presets — their model list is maintained in providers.ts
-        if (!builtinPreset && cp.api_key) {
+        let models = [cp.model]
+        if (cp.api_key) {
           try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
         }
-        const label = builtinPreset?.label || cp.name
-        const presetBaseUrl = builtinPreset?.base_url || ''
-        return { providerKey, label, base_url: presetBaseUrl || baseUrl, models, api_key: cp.api_key || '', builtin: !!builtinPreset }
+        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '' }
       }),
     )
 
