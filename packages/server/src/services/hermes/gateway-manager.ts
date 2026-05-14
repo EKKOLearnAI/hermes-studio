@@ -839,6 +839,25 @@ export class GatewayManager {
    *   Phase 2 — 并行启动网关进程
    */
   async startAll(): Promise<void> {
+    // 确保使用 default profile 启动网关
+    const currentProfile = this.getActiveProfile()
+    if (currentProfile !== 'default') {
+      logger.info('Current profile is "%s", switching to "default" for gateway startup', currentProfile)
+      try {
+        await execFileAsync(HERMES_BIN, ['profile', 'use', 'default'], {
+          timeout: 10000,
+          windowsHide: true,
+        })
+        this.setActiveProfile('default')
+        logger.info('Waiting for profile switch to take effect...')
+        // 等待一下让 profile 切换完全生效，确保配置文件更新完成
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        logger.info('Successfully switched to default profile')
+      } catch (err) {
+        logger.error(err, 'Failed to switch to default profile, continuing with current profile')
+      }
+    }
+
     // 清空已分配端口集合，确保每次启动都从干净状态开始
     this.allocatedPorts.clear()
 
