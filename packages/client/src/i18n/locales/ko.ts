@@ -424,6 +424,7 @@ export default {
     customModelPlaceholder: '목록에 없는 모델 ID',
     customModelHint: '제공자는 지원하지만 API가 반환하지 않는 모델용입니다. 표시 이름 변경이 아닙니다. Enter로 불러옵니다.',
     noProviders: 'Provider가 없습니다. 사용자 지정 Provider를 추가하여 시작하세요.',
+    clearVisibleModels: '선택 지우기',
     builtIn: '내장',
     customType: '사용자 지정',
     provider: 'Provider',
