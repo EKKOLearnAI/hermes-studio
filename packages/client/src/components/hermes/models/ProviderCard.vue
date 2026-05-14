@@ -98,6 +98,10 @@ function resetVisibility() {
   selectedVisibleModels.value = [...allModels.value]
 }
 
+function clearVisibility() {
+  selectedVisibleModels.value = []
+}
+
 async function handleDelete() {
   let copilotMsg = ''
   if (isCopilot.value) {
@@ -272,6 +276,9 @@ async function handleDelete() {
       <div class="visibility-actions">
         <NButton size="small" quaternary :disabled="visibilitySaving" @click="resetVisibility">
           {{ t('models.showAllModels') }}
+        </NButton>
+        <NButton size="small" quaternary :disabled="visibilitySaving" @click="clearVisibility">
+          {{ t('models.clearVisibleModels') }}
         </NButton>
         <div class="visibility-action-spacer" />
         <NButton size="small" :disabled="visibilitySaving" @click="showVisibilityModal = false">

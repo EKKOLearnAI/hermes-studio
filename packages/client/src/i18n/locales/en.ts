@@ -575,6 +575,7 @@ export default {
     visibilitySaved: 'Visible models saved',
     visibilitySaveFailed: 'Failed to save visible models',
     showAllModels: 'Show all models',
+    clearVisibleModels: 'Clear selection',
     builtIn: 'Built-in',
     customType: 'Custom',
     provider: 'Provider',
