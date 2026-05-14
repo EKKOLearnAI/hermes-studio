@@ -448,13 +448,15 @@ export class GroupChatServer {
         const contextEngine = new ContextEngine({
             messageFetcher: this.storage,
             sessionCleaner: async (sessionId: string) => {
-                try {
-                    const profile = this.storage.getSessionProfile(sessionId)
-                    const profileName = profile?.profile_name || 'default'
-                    this.storage.enqueuePendingSessionDelete(sessionId, profileName)
-                } catch (err: any) {
-                    logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
-                }
+                // TODO: re-enable session deletion after confirming it doesn't
+                // accidentally remove user-created sessions outside group chat.
+                // try {
+                //     const profile = this.storage.getSessionProfile(sessionId)
+                //     const profileName = profile?.profile_name || 'default'
+                //     this.storage.enqueuePendingSessionDelete(sessionId, profileName)
+                // } catch (err: any) {
+                //     logger.warn(`[GroupChat] failed to enqueue compression session delete ${sessionId}: ${err.message}`)
+                // }
             },
         })
         this.agentClients.setContextEngine(contextEngine)

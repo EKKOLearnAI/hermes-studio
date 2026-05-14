@@ -235,18 +235,19 @@ export async function switchProfile(ctx: any) {
       logger.error(err, 'Ensure config failed')
     }
 
-    const drainResult = await SessionDeleter.getInstance().drain(name)
+    // TODO: re-enable pending session delete drain after confirming safety
+    // const drainResult = await SessionDeleter.getInstance().drain(name)
     SessionDeleter.getInstance().switchProfile(name)
-    logger.info('[switchProfile] drain result for profile "%s": %d deleted, %d failed', name, drainResult.deleted.length, drainResult.failed.length)
-    if (drainResult.failed.length > 0) {
-      logger.warn({ profile: name, failed: drainResult.failed }, 'Failed to drain some pending session deletes after profile switch')
-    }
+    logger.info('[switchProfile] switched session deleter to profile "%s"', name)
+    // if (drainResult.failed.length > 0) {
+    //   logger.warn({ profile: name, failed: drainResult.failed }, 'Failed to drain some pending session deletes after profile switch')
+    // }
 
     ctx.body = {
       success: true,
       message: output.trim(),
-      drained_session_deletes: drainResult.deleted.length,
-      failed_session_deletes: drainResult.failed.length,
+      // drained_session_deletes: drainResult.deleted.length,
+      // failed_session_deletes: drainResult.failed.length,
     }
   } catch (err: any) {
     ctx.status = 500
