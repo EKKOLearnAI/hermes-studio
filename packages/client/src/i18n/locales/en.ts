@@ -1119,6 +1119,17 @@ export default {
     new_0_5_17_23: 'Gateway port ownership now based on PID file, preventing cross-profile port hijacking',
     new_0_5_17_24: 'History page now shows Cron session records',
     new_0_5_17_25: 'Fix language switch and theme icons squeezed in collapsed sidebar',
+
+    new_0_5_18_1: 'Add Skills Usage monitoring page with daily trend chart and top skills statistics',
+    new_0_5_18_2: 'Add CLI chat session bridge with Python agent bridge for WebSocket-based sessions',
+    new_0_5_18_3: 'Add Ollama Cloud provider preset with dynamic model catalog',
+    new_0_5_18_4: 'Support model display name renaming (aliases)',
+    new_0_5_18_5: 'Support model visibility management in Web UI',
+    new_0_5_18_6: 'Enhance usage analytics dashboard',
+    new_0_5_18_7: 'Docker single-container deployment with docker-compose and gateway startup fixes',
+    new_0_5_18_8: 'Fix plugins page HERMES_HOME fallback warning for non-default profiles',
+    new_0_5_18_9: 'Fix gateway stability across dev restarts and improve Windows compatibility',
+
     new_0_5_13_1: 'Add message queue for sequential run processing to prevent concurrent request conflicts',
     new_0_5_13_2: 'Support two-level skills directory structure with misc category for flat skills',
     new_0_5_13_3: 'Filter out ephemeral sessions during startup sync to avoid importing internal sessions',
