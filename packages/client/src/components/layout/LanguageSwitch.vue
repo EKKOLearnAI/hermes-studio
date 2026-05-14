@@ -17,9 +17,8 @@ const options = [
   { label: 'Português', value: 'pt' },
 ]
 
-async function handleChange(val: string) {
-  await switchLocale(val)
-  locale.value = val
+function handleChange(val: string) {
+  switchLocale(val)
   localStorage.setItem('hermes_locale', val)
 }
 </script>

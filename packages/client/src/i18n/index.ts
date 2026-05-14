@@ -1,5 +1,5 @@
 import { createI18n } from 'vue-i18n'
-import { en, loadLocale, supportedLocales } from './messages'
+import { messages, supportedLocales } from './messages'
 import type { SupportedLocale } from './messages'
 
 const saved = localStorage.getItem('hermes_locale')
@@ -37,24 +37,11 @@ const locale = resolveLocale(saved)
 
 export const i18n = createI18n({
   legacy: false,
-  locale: 'en',
+  locale,
   fallbackLocale: 'en',
-  messages: { en },
+  messages,
 })
 
-export async function setupI18n(): Promise<void> {
-  if (locale !== 'en') {
-    const msgs = await loadLocale(locale)
-    if (msgs) {
-      i18n.global.setLocaleMessage(locale, msgs as any)
-    }
-    ;(i18n.global.locale as any).value = locale
-  }
-}
-
-export async function switchLocale(newLocale: string): Promise<void> {
-  const msgs = await loadLocale(newLocale)
-  if (msgs) {
-    i18n.global.setLocaleMessage(newLocale, msgs as any)
-  }
+export function switchLocale(newLocale: string): void {
+  ;(i18n.global.locale as any).value = newLocale
 }
