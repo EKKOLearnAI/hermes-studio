@@ -154,7 +154,7 @@ onMounted(() => {
 <template>
   <div class="skills-usage-view">
     <header class="page-header">
-      <div>
+      <div class="header-text">
         <h2 class="header-title">{{ t('skillsUsage.title') }}</h2>
         <p class="header-subtitle">{{ t('skillsUsage.subtitle') }}</p>
       </div>
@@ -310,10 +310,18 @@ onMounted(() => {
 
 .page-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
+  padding: 21px 20px;
+  border-bottom: 1px solid $border-color;
+}
+
+.header-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .header-subtitle {
