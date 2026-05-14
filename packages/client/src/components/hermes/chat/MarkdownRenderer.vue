@@ -28,6 +28,7 @@ const message = useMessage()
 
 const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
+  breaks: true,
   linkify: true,
   typographer: true,
   highlight(str: string, lang: string): string {
