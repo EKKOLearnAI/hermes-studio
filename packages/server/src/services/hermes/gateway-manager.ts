@@ -664,6 +664,23 @@ export class GatewayManager {
         child.unref()
       }
 
+      // Clean up gateway state when child process exits or errors
+      child.on('exit', (code, signal) => {
+        const entry = this.gateways.get(name)
+        if (entry?.process === child) {
+          this.gateways.delete(name)
+          logger.warn('Gateway child process for profile "%s" exited (code: %s, signal: %s) — removed from gateways map', name, code, signal)
+        }
+      })
+
+      child.on('error', (err) => {
+        logger.error(err, 'Gateway child process for profile "%s" errored', name)
+        const entry = this.gateways.get(name)
+        if (entry?.process === child) {
+          this.gateways.delete(name)
+        }
+      })
+
       const pid = child.pid ?? 0
       logger.info('Starting gateway for profile "%s" (run mode, PID: %d, port: %d, detached: %s)', name, pid, port, detachGateway)
 

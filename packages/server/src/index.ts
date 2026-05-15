@@ -38,10 +38,14 @@ process.on('uncaughtException', (err) => {
 })
 
 process.on('unhandledRejection', (reason) => {
-  console.error('FATAL: Unhandled rejection')
+  console.error('Unhandled rejection (non-fatal — server continues)')
   console.error(reason)
   logger.error(reason, 'Unhandled rejection')
-  process.exit(1)
+  // Do NOT call process.exit(1) here — most unhandled rejections are transient
+  // (ECONNRESET during gateway restart, brief network hiccups) that the server
+  // can safely recover from. Killing the entire process forces users to manually
+  // restart hermes-web-ui even though the gateway itself recovers fine.
+  // See https://github.com/EKKOLearnAI/hermes-web-ui/issues/737
 })
 
 let server: any = null
