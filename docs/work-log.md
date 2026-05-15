@@ -104,3 +104,91 @@
 - 已保持所有上游专有名词和技术标识不变
 - 已完成工作日志落盘
 - 已准备将当前所有本地工作保存到 git 提交
+
+## 2026-05-15 - 定制版更新机制改造
+
+### 任务背景
+
+- 评估页面内置“更新”功能是否会覆盖定制化开发内容
+- 设计并落地“自有包名 + 自有更新源”的更新方案
+- 默认阻止定制版继续从上游 `hermes-web-ui` 包执行自更新
+- 将更新机制改造过程、配置项和验证结果记录到工作日志，便于后续追踪问题
+
+### 问题分析
+
+- 原有更新提示并不是根据上游源码仓库提交变化触发，而是通过 npm registry 比较版本号
+- 原有更新执行会直接运行 `npm install -g hermes-web-ui@latest`
+- 对定制版而言，这意味着用户在页面点击更新后，可能直接安装上游官方包并覆盖定制逻辑
+- 原有实现还把版本检测源写死为 `https://registry.npmjs.org`
+- 更新后的 CLI 路径也写死为 `hermes-web-ui/bin/hermes-web-ui.mjs`，无法支持自有包名
+
+### 实施方案
+
+- 新增服务端更新配置：
+  - `WEBUI_UPDATE_ENABLED`
+  - `WEBUI_UPDATE_PACKAGE`
+  - `WEBUI_UPDATE_REGISTRY`
+  - `WEBUI_UPDATE_SOURCE_LABEL`
+  - `WEBUI_UPDATE_CLI_BIN`
+- 默认行为改为：
+  - 未启用或配置不完整时，不检查更新、不显示可升级版本、不允许执行应用内更新
+- 自有更新源启用后：
+  - 版本检查使用 `WEBUI_UPDATE_REGISTRY + WEBUI_UPDATE_PACKAGE`
+  - 安装命令使用自定义包名与自定义 registry
+  - 重启时根据自定义 CLI 文件名定位全局安装后的启动脚本
+
+### 实际修改内容
+
+- 服务端配置化更新能力：
+  - `packages/server/src/config.ts`
+- 服务端版本检测改造：
+  - `packages/server/src/controllers/health.ts`
+- 服务端更新执行改造：
+  - `packages/server/src/controllers/update.ts`
+- 前端健康状态类型扩展：
+  - `packages/client/src/api/hermes/system.ts`
+- 前端更新状态管理改造：
+  - `packages/client/src/stores/hermes/app.ts`
+- 侧边栏更新入口显示逻辑改造：
+  - `packages/client/src/components/layout/AppSidebar.vue`
+- 多语言更新文案调整：
+  - `packages/client/src/i18n/locales/en.ts`
+  - `packages/client/src/i18n/locales/zh.ts`
+  - `packages/client/src/i18n/locales/zh-TW.ts`
+  - `packages/client/src/i18n/locales/de.ts`
+  - `packages/client/src/i18n/locales/es.ts`
+  - `packages/client/src/i18n/locales/fr.ts`
+  - `packages/client/src/i18n/locales/ja.ts`
+  - `packages/client/src/i18n/locales/ko.ts`
+  - `packages/client/src/i18n/locales/pt.ts`
+- 文档补充：
+  - `README.md`
+  - `README_zh.md`
+
+### 关键行为变化
+
+- 不再默认向上游 npm 仓库检查更新
+- 不再默认执行 `npm install -g hermes-web-ui@latest`
+- 只有在显式设置 `WEBUI_UPDATE_ENABLED=true` 且补齐自有更新源配置后，页面才会出现可升级逻辑
+- 侧边栏在未启用更新时会提示当前为定制版，升级由内部发布流程管理
+- 页面显示的更新源标签可通过 `WEBUI_UPDATE_SOURCE_LABEL` 配置
+
+### 推荐配置
+
+```env
+WEBUI_UPDATE_ENABLED=true
+WEBUI_UPDATE_PACKAGE=quanthermes-web-ui
+WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
+WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
+WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
+```
+
+### 验证计划
+
+- 检查 TypeScript 诊断是否新增错误
+- 执行构建验证更新链路改造后前后端是否仍可正常打包
+- 确认未配置更新源时：
+  - `webui_update_enabled=false`
+  - 前端不显示更新按钮
+- 确认配置完成后：
+  - 版本检测和安装都只指向自有包与自有 registry

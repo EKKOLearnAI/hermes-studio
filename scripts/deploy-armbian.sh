@@ -32,6 +32,18 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return 0
+  fi
+  if command_exists docker-compose; then
+    echo "docker-compose"
+    return 0
+  fi
+  return 1
+}
+
 is_clock_synchronized() {
   if ! command_exists timedatectl; then
     return 1
@@ -135,14 +147,25 @@ install_base_packages() {
     software-properties-common
 }
 
-install_docker() {
-  if command_exists docker && run docker compose version >/dev/null 2>&1; then
-    info "Docker 与 Docker Compose 已安装，跳过安装。"
-    return
+install_docker_from_system_repo() {
+  step "回退到系统仓库安装 Docker"
+  if run apt-get install -y docker.io docker-compose-v2; then
+    info "已通过系统仓库安装 docker.io + docker-compose-v2"
+    return 0
   fi
 
-  step "安装 Docker 与 Docker Compose 插件"
+  warn "docker-compose-v2 安装失败，尝试安装 docker-compose-plugin"
+  if run apt-get install -y docker.io docker-compose-plugin; then
+    info "已通过系统仓库安装 docker.io + docker-compose-plugin"
+    return 0
+  fi
 
+  warn "docker-compose-plugin 安装失败，尝试安装 legacy docker-compose"
+  run apt-get install -y docker.io docker-compose
+  info "已通过系统仓库安装 docker.io + docker-compose"
+}
+
+install_docker_from_official_repo() {
   run install -m 0755 -d /etc/apt/keyrings
   if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | run gpg --dearmor -o /etc/apt/keyrings/docker.asc
@@ -170,6 +193,24 @@ EOF
     containerd.io \
     docker-buildx-plugin \
     docker-compose-plugin
+}
+
+install_docker() {
+  if command_exists docker && compose_cmd >/dev/null 2>&1; then
+    info "Docker 与 Docker Compose 已安装，跳过安装。"
+    return
+  fi
+
+  step "安装 Docker 与 Docker Compose 插件"
+
+  if install_docker_from_official_repo; then
+    run systemctl enable --now docker
+    info "Docker 官方源安装完成。"
+    return
+  fi
+
+  warn "Docker 官方源安装失败，自动回退到系统仓库。"
+  install_docker_from_system_repo
 
   run systemctl enable --now docker
   info "Docker 安装完成。"
@@ -179,7 +220,10 @@ ensure_docker_running() {
   step "检查 Docker 服务状态"
   run systemctl enable --now docker
   run docker version >/dev/null
-  run docker compose version >/dev/null
+  if ! compose_cmd >/dev/null 2>&1; then
+    err "Docker Compose 不可用，请检查 Docker 安装。"
+    exit 1
+  fi
   info "Docker 服务运行正常。"
 }
 
@@ -216,10 +260,17 @@ write_compose_file() {
 
 pull_and_start() {
   step "拉取并启动 hermes-web-ui 容器"
+  local compose
+  compose="$(compose_cmd)"
   (
     cd "${DEPLOY_DIR}"
-    run docker compose pull
-    run docker compose up -d
+    if [[ "$compose" == "docker compose" ]]; then
+      run docker compose pull
+      run docker compose up -d
+    else
+      run docker-compose pull
+      run docker-compose up -d
+    fi
   )
   info "容器已启动。"
 }
@@ -240,6 +291,8 @@ wait_for_webui() {
 }
 
 show_summary() {
+  local compose
+  compose="$(compose_cmd || echo 'docker compose')"
   echo
   info "部署完成"
   echo "----------------------------------------"
@@ -249,10 +302,10 @@ show_summary() {
   echo "数据目录: ${HERMES_DATA_DIR}"
   echo
   echo "常用命令:"
-  echo "  cd ${DEPLOY_DIR} && sudo docker compose ps"
-  echo "  cd ${DEPLOY_DIR} && sudo docker compose logs -f ${WEBUI_CONTAINER_NAME}"
-  echo "  cd ${DEPLOY_DIR} && sudo docker compose restart"
-  echo "  cd ${DEPLOY_DIR} && sudo docker compose down"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} ps"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} logs -f ${WEBUI_CONTAINER_NAME}"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} restart"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} down"
   echo
   echo "人工绑定 / 配置 Hermes:"
   echo "  sudo docker exec -it ${WEBUI_CONTAINER_NAME} /opt/hermes/.venv/bin/hermes setup"
@@ -264,7 +317,7 @@ show_summary() {
     echo
   else
     echo "首次启动 Token 可能还在日志里，查看方式:"
-    echo "  cd ${DEPLOY_DIR} && sudo docker compose logs ${WEBUI_CONTAINER_NAME} | grep token"
+    echo "  cd ${DEPLOY_DIR} && sudo ${compose} logs ${WEBUI_CONTAINER_NAME} | grep token"
     echo
   fi
 }

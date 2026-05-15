@@ -226,6 +226,27 @@ docker compose logs -f hermes-webui
 | `hermes-web-ui -v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
 
+### 定制版更新策略
+
+对于定制版，不要再把应用内更新指向上游 `hermes-web-ui` 包，否则用户在页面里触发更新后，可能会直接用上游发布物覆盖你们的定制代码。
+
+推荐做法：
+
+- 在自有更新包准备好之前，先设置 `WEBUI_UPDATE_ENABLED=false`
+- 发布你们自己的包名，例如 `quanthermes-web-ui`
+- 让版本检测和实际安装都指向你们自己的内部 registry
+- 上游同步继续走独立的 git 合并与发布流程，不直接影响线上更新源
+
+示例配置：
+
+```env
+WEBUI_UPDATE_ENABLED=true
+WEBUI_UPDATE_PACKAGE=quanthermes-web-ui
+WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
+WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
+WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
+```
+
 ### 自动配置
 
 启动时 BFF 服务器会自动：

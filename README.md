@@ -218,6 +218,27 @@ For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md)
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
 
+### Customized Build Updates
+
+For customized builds, do not point the in-app update feature at the upstream `hermes-web-ui` package. Otherwise, a user-triggered update can overwrite your custom code with the upstream release.
+
+Recommended setup:
+
+- Set `WEBUI_UPDATE_ENABLED=false` until your internal package is ready
+- Publish your own package, for example `quanthermes-web-ui`
+- Point both update checks and installs to your internal registry
+- Keep upstream sync as a separate git merge/release workflow
+
+Example configuration:
+
+```env
+WEBUI_UPDATE_ENABLED=true
+WEBUI_UPDATE_PACKAGE=quanthermes-web-ui
+WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
+WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
+WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
+```
+
 ### Auto Configuration
 
 On startup the BFF server automatically:

@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { delimiter, dirname, join } from 'path'
+import { config } from '../config'
 
 let updateInProgress = false
 
@@ -43,8 +44,20 @@ function getNpmBin() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
-function getGlobalPackageBin(root: string) {
-  return join(root, 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+function getConfiguredUpdatePackageName() {
+  return config.update.packageName.trim()
+}
+
+function getConfiguredUpdateCliBin() {
+  return config.update.cliBin.trim()
+}
+
+function isUpdateConfigured() {
+  return Boolean(config.update.enabled && getConfiguredUpdatePackageName() && config.update.registry)
+}
+
+function getGlobalPackageBin(root: string, packageName: string, cliBin: string) {
+  return join(root, ...packageName.split('/').filter(Boolean), 'bin', cliBin)
 }
 
 function getCurrentNodeEnv() {
@@ -73,15 +86,21 @@ function getGlobalRoot() {
 }
 
 function getGlobalCliScript() {
-  const cli = getGlobalPackageBin(getGlobalRoot())
+  const packageName = getConfiguredUpdatePackageName()
+  const cliBin = getConfiguredUpdateCliBin()
+  const cli = getGlobalPackageBin(getGlobalRoot(), packageName, cliBin)
   if (!existsSync(cli)) {
-    throw new Error(`Updated hermes-web-ui CLI not found: ${cli}`)
+    throw new Error(`Updated package CLI not found: ${cli}`)
   }
   return cli
 }
 
 function runUpdateInstall() {
-  return runNpm(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
+  const packageName = getConfiguredUpdatePackageName()
+  return runNpm(
+    ['install', '-g', `${packageName}@latest`, '--registry', config.update.registry],
+    { timeout: 10 * 60 * 1000 },
+  )
 }
 
 function spawnRestart(port: string) {
@@ -96,6 +115,24 @@ function spawnRestart(port: string) {
 }
 
 export async function handleUpdate(ctx: any) {
+  if (!config.update.enabled) {
+    ctx.status = 403
+    ctx.body = {
+      success: false,
+      message: 'In-app update is disabled for this customized build',
+    }
+    return
+  }
+
+  if (!isUpdateConfigured()) {
+    ctx.status = 500
+    ctx.body = {
+      success: false,
+      message: 'Update source is not fully configured. Set WEBUI_UPDATE_PACKAGE, WEBUI_UPDATE_REGISTRY, and WEBUI_UPDATE_CLI_BIN.',
+    }
+    return
+  }
+
   if (updateInProgress) {
     ctx.status = 409
     ctx.body = {

@@ -127,6 +127,7 @@ sudo docker compose logs -f hermes-webui
 10. 启动 `hermes-webui` 容器
 11. 等待 Web UI 健康检查通过
 12. 如设备时间未同步，自动尝试 `timesyncd` 校时；若仍失败，则对 `apt update` 使用日期校验兜底
+13. 如 Docker 官方源或 GPG key 下载失败，自动回退到系统仓库安装 `docker.io`
 
 ## 默认部署参数
 
@@ -329,7 +330,35 @@ timedatectl status
 apt-get -o Acquire::Check-Date=false update
 ```
 
-### 5. 想重置部署
+### 5. Docker 官方源 / GPG key 下载失败
+
+如果设备访问 `download.docker.com` 不稳定，脚本会自动回退到系统仓库安装 Docker。
+
+典型报错包括：
+
+```text
+curl: (35) Recv failure: Connection reset by peer
+gpg: no valid OpenPGP data found.
+```
+
+脚本会自动尝试：
+
+1. 官方 Docker 源安装
+2. 若失败，则回退到系统仓库安装：
+   - `docker.io`
+   - `docker-compose-v2`
+   - 或兼容的 `docker-compose-plugin` / `docker-compose`
+
+如果你想手动验证系统仓库安装，也可以执行：
+
+```bash
+apt-get install -y docker.io docker-compose-v2
+systemctl enable --now docker
+docker version
+docker compose version
+```
+
+### 6. 想重置部署
 
 ```bash
 cd /opt/hermes-web-ui
