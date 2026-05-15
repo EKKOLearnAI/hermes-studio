@@ -32,6 +32,63 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+is_clock_synchronized() {
+  if ! command_exists timedatectl; then
+    return 1
+  fi
+
+  local value
+  value="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
+  [[ "$value" == "yes" ]]
+}
+
+try_sync_clock() {
+  if ! command_exists timedatectl; then
+    warn "系统未提供 timedatectl，跳过时间同步检测。"
+    return 1
+  fi
+
+  step "检查系统时间同步状态"
+  if is_clock_synchronized; then
+    info "系统时间已同步。"
+    return 0
+  fi
+
+  warn "系统时间尚未同步，尝试启用 NTP 并等待同步。"
+  run timedatectl set-ntp true || true
+  if command_exists systemctl; then
+    run systemctl restart systemd-timesyncd || true
+  fi
+
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 3
+    if is_clock_synchronized; then
+      info "系统时间同步成功。"
+      return 0
+    fi
+  done
+
+  warn "系统时间仍未同步，将在 apt update 时尝试跳过日期校验。"
+  return 1
+}
+
+apt_update() {
+  if run apt-get update -y; then
+    return 0
+  fi
+
+  warn "apt-get update 失败，尝试自动同步系统时间后重试。"
+  try_sync_clock || true
+
+  if run apt-get update -y; then
+    return 0
+  fi
+
+  warn "时间同步后仍失败，使用 Acquire::Check-Date=false 兜底更新软件源。"
+  run apt-get -o Acquire::Check-Date=false update -y
+}
+
 require_debian_like() {
   if [[ ! -r /etc/os-release ]]; then
     err "无法读取 /etc/os-release，当前系统不受支持。"
@@ -68,7 +125,7 @@ require_supported_arch() {
 
 install_base_packages() {
   step "安装基础依赖"
-  run apt-get update -y
+  apt_update
   run apt-get install -y \
     ca-certificates \
     curl \
@@ -106,7 +163,7 @@ install_docker() {
 deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${repo_os} ${codename} stable
 EOF
 
-  run apt-get update -y
+  apt_update
   run apt-get install -y \
     docker-ce \
     docker-ce-cli \

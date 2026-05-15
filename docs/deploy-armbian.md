@@ -126,6 +126,7 @@ sudo docker compose logs -f hermes-webui
 9. 拉取 `ekkoye8888/hermes-web-ui` 预构建镜像
 10. 启动 `hermes-webui` 容器
 11. 等待 Web UI 健康检查通过
+12. 如设备时间未同步，自动尝试 `timesyncd` 校时；若仍失败，则对 `apt update` 使用日期校验兜底
 
 ## 默认部署参数
 
@@ -306,7 +307,29 @@ sudo PORT=8080 ./scripts/deploy-armbian.sh
 sudo docker pull ekkoye8888/hermes-web-ui
 ```
 
-### 4. 想重置部署
+### 4. 系统时间未同步，`apt update` 报 `Release file ... is not valid yet`
+
+脚本已内置以下处理顺序：
+
+1. 先正常执行 `apt-get update`
+2. 失败后自动尝试：
+   - `timedatectl set-ntp true`
+   - `systemctl restart systemd-timesyncd`
+3. 若系统时间仍未同步，则自动使用：
+
+```bash
+apt-get -o Acquire::Check-Date=false update
+```
+
+如果你想手动验证，可以执行：
+
+```bash
+date
+timedatectl status
+apt-get -o Acquire::Check-Date=false update
+```
+
+### 5. 想重置部署
 
 ```bash
 cd /opt/hermes-web-ui
