@@ -223,8 +223,11 @@ docker compose logs -f hermes-webui
 | `hermes-web-ui restart` | 重启后台进程 |
 | `hermes-web-ui status` | 查看运行状态 |
 | `hermes-web-ui update` | 更新到最新版本并重启 |
+| `hermes-web-ui upgrade` | `update` 的别名 |
 | `hermes-web-ui -v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
+
+`update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再执行 `npm install -g hermes-web-ui@latest` 并重启。缓存清理是 best-effort；如果清理失败，只提示 warning，升级安装会继续执行。
 
 ### 自动配置
 

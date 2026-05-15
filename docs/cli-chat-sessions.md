@@ -1,6 +1,6 @@
 # CLI/Bridge Chat Sessions 实现文档
 
-> 分支：`feat/cli-chat-sessions`
+> 状态：本文档描述当前 `main` 中 Web UI 聊天会话的 API Server / Bridge(beta) 双路径实现。
 
 ## 概述
 

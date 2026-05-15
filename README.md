@@ -215,8 +215,11 @@ For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md)
 | `hermes-web-ui restart`           | Restart background process         |
 | `hermes-web-ui status`            | Check if running                   |
 | `hermes-web-ui update`            | Update to latest version & restart |
+| `hermes-web-ui upgrade`           | Alias for `update`                 |
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
+
+`update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
 
 ### Auto Configuration
 

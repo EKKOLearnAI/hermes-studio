@@ -434,6 +434,7 @@ Commands:
   restart [port]     Restart the server
   status             Show server status
   update             Update to latest version and restart
+  upgrade            Alias for update
   version            Show version number
 
 Options:
