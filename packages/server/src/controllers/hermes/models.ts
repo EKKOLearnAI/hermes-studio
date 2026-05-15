@@ -424,7 +424,11 @@ export async function setConfigModel(ctx: any) {
   }
   try {
     const config = await readConfigYaml()
-    config.model = {}
+    // Preserve existing model sub-keys (base_url, context_length, api_mode, etc.)
+    // by spreading the existing model dict. This prevents silent deletion of
+    // keys when the CLI (which stores model as a dict) reads back the config.
+    if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
+    config.model = { ...config.model } // defensive copy to avoid mutation surprises
     config.model.default = defaultModel
     if (reqProvider) { config.model.provider = reqProvider }
     await writeConfigYaml(config)

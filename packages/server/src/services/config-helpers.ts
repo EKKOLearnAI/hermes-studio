@@ -1,4 +1,4 @@
-import { readFile, writeFile, copyFile, chmod } from 'fs/promises'
+import { readFile, writeFile, copyFile, rename, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -80,12 +80,23 @@ export async function readConfigYaml(): Promise<Record<string, any>> {
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {
   const cp = configPath()
   await copyFile(cp, cp + '.bak')
+
+  // Write to temp file first, then atomically rename.
+  // This prevents concurrent readers (other Hermes processes) from
+  // seeing a partially-written config when multiple code paths write
+  // to the same config.yaml simultaneously.
+  const tmpPath = cp + '.tmp'
   const yamlStr = YAML.dump(config, {
     lineWidth: -1,
     noRefs: true,
-    quotingType: '"',
+    // Intentionally omitting quotingType to let js-yaml choose
+    // quoting naturally. Forcing all strings to be double-quoted
+    // with quotingType: '"' produces YAML that differs from
+    // Python's PyYAML output, causing misalignment when CLI
+    // tools and web UI write to the same file.
   })
-  await writeFile(cp, yamlStr, 'utf-8')
+  await writeFile(tmpPath, yamlStr, 'utf-8')
+  await rename(tmpPath, cp)
 }
 
 // --- .env helpers ---
