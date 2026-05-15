@@ -169,6 +169,7 @@ export default {
     noSessions: 'No sessions',
     searchTitle: 'Search Sessions',
     searchSubtitle: 'Search by title or message content',
+    searchScope: 'Search scope: Web UI local session database only. Read-only Hermes history sessions are not included.',
     searchHint: 'Cmd/Ctrl+K',
     searchPlaceholder: 'Search sessions...',
     searchEmpty: 'Recent sessions',

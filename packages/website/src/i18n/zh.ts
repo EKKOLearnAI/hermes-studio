@@ -16,7 +16,7 @@ export default {
     desc: '开箱即用的完整 AI Agent 管理仪表板。',
     streaming: {
       title: '流式聊天',
-      desc: '基于 SSE 的实时 AI 对话，支持多会话管理、Markdown 渲染和代码语法高亮。',
+      desc: '基于 Socket.IO 的实时 AI 对话，支持多会话管理、Markdown 渲染和代码语法高亮。',
     },
     platforms: {
       title: '8 大平台',
@@ -156,7 +156,7 @@ export default {
       intro: '探索 Hermes Web UI 的核心功能。',
       chat: {
         title: 'AI 聊天',
-        content: '基于 Server-Sent Events 的实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、文件上传/下载以及全局搜索 (Ctrl+K)。',
+        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、文件上传/下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
       },
       kanban: {
         title: '看板管理',

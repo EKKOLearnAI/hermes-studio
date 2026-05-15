@@ -16,7 +16,7 @@ export default {
     desc: 'A complete AI agent management dashboard with rich features out of the box.',
     streaming: {
       title: 'Streaming Chat',
-      desc: 'Real-time SSE-powered AI conversations with multi-session management, Markdown rendering, and code syntax highlighting.',
+      desc: 'Real-time Socket.IO-powered AI conversations with multi-session management, Markdown rendering, and code syntax highlighting.',
     },
     platforms: {
       title: '8 Platforms',
@@ -156,7 +156,7 @@ export default {
       intro: 'Explore the core features of Hermes Web UI.',
       chat: {
         title: 'AI Chat',
-        content: 'Real-time streaming chat powered by Server-Sent Events. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and global search across all conversations (Ctrl+K).',
+        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and Ctrl+K search across the Web UI local session database.',
       },
       kanban: {
         title: 'Kanban Board',

@@ -169,6 +169,7 @@ export default {
     noSessions: '暂无会话',
     searchTitle: '搜索会话',
     searchSubtitle: '按标题或消息内容搜索',
+    searchScope: '搜索范围：仅 Web UI 本地会话库；不包含只读 Hermes 历史会话。',
     searchHint: 'Cmd/Ctrl+K',
     searchPlaceholder: '搜索会话...',
     searchEmpty: '最近会话',

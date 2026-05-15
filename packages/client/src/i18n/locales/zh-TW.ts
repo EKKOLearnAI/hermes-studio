@@ -168,6 +168,7 @@ export default {
     noSessions: '目前無工作階段',
     searchTitle: '搜尋工作階段',
     searchSubtitle: '依標題或訊息內容搜尋',
+    searchScope: '搜尋範圍：僅 Web UI 本地工作階段資料庫；不包含唯讀 Hermes 歷史工作階段。',
     searchHint: 'Cmd/Ctrl+K',
     searchPlaceholder: '搜尋工作階段...',
     searchEmpty: '最近工作階段',
