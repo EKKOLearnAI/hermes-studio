@@ -6,6 +6,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.23',
+    date: '2026-05-15',
+    changes: [
+      'changelog.new_0_5_23_1',
+      'changelog.new_0_5_23_2',
+      'changelog.new_0_5_23_3',
+      'changelog.new_0_5_23_4',
+      'changelog.new_0_5_23_5',
+    ],
+  },
+  {
     version: '0.5.22',
     date: '2026-05-14',
     changes: [
@@ -94,73 +105,6 @@ export const changelog: ChangelogEntry[] = [
       'changelog.new_0_5_14_3',
       'changelog.new_0_5_14_4',
       'changelog.new_0_5_14_5',
-    ],
-  },
-  {
-    version: '0.5.13',
-    date: '2026-05-07',
-    changes: [
-      'changelog.new_0_5_13_1',
-      'changelog.new_0_5_13_2',
-      'changelog.new_0_5_13_3',
-      'changelog.new_0_5_13_4',
-      'changelog.new_0_5_13_5',
-      'changelog.new_0_5_13_6',
-      'changelog.new_0_5_13_7',
-      'changelog.new_0_5_13_8',
-      'changelog.new_0_5_13_9',
-      'changelog.new_0_5_13_10',
-    ],
-  },
-  {
-    version: '0.5.12',
-    date: '2026-05-06',
-    changes: [
-      'changelog.new_0_5_12_1',
-      'changelog.new_0_5_12_2',
-      'changelog.new_0_5_12_3',
-      'changelog.new_0_5_12_4',
-      'changelog.new_0_5_12_5',
-      'changelog.new_0_5_12_6',
-    ],
-  },
-  {
-    version: '0.5.11',
-    date: '2026-05-05',
-    changes: [
-      'changelog.new_0_5_10_1',
-      'changelog.new_0_5_10_2',
-      'changelog.new_0_5_10_3',
-      'changelog.new_0_5_10_4',
-      'changelog.new_0_5_10_5',
-    ],
-  },
-  {
-    version: '0.5.9',
-    date: '2026-05-04',
-    changes: [
-      'changelog.new_0_5_9_1',
-      'changelog.new_0_5_9_2',
-    ],
-  },
-  {
-    version: '0.5.8',
-    date: '2026-05-03',
-    changes: [
-      'changelog.new_0_5_8_1',
-      'changelog.new_0_5_8_2',
-      'changelog.new_0_5_8_3',
-      'changelog.new_0_5_8_4',
-      'changelog.new_0_5_8_5',
-    ],
-  },
-  {
-    version: '0.5.7',
-    date: '2026-05-02',
-    changes: [
-      'changelog.new_0_5_7_1',
-      'changelog.new_0_5_7_2',
-      'changelog.new_0_5_7_3',
     ],
   },
 ]
