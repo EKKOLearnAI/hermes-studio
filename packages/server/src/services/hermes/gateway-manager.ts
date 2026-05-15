@@ -107,6 +107,73 @@ const needsRunMode = true
 // 启动时输出 init 系统检测结果（方便调试）
 logger.debug('Detected init system: %s (needsRunMode: %s, platform: %s)', initSystem, needsRunMode, process.platform)
 
+const GATEWAY_RUNTIME_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'USERNAME',
+  'SHELL',
+  'LANG',
+  'TZ',
+  'TMP',
+  'TEMP',
+  'TMPDIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'HERMES_BIN',
+  'HERMES_ALLOW_ROOT_GATEWAY',
+  'SYSTEMROOT',
+  'COMSPEC',
+  'APPDATA',
+  'LOCALAPPDATA',
+])
+
+function parseEnvKeys(raw: string): Set<string> {
+  const keys = new Set<string>()
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)
+    if (match) keys.add(match[1])
+  }
+  return keys
+}
+
+function readProfileEnvKeys(): Set<string> {
+  const keys = new Set<string>()
+  const envPaths = [join(HERMES_BASE, '.env')]
+  const profilesDir = join(HERMES_BASE, 'profiles')
+
+  if (existsSync(profilesDir)) {
+    for (const entry of readdirSync(profilesDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) envPaths.push(join(profilesDir, entry.name, '.env'))
+    }
+  }
+
+  for (const envPath of envPaths) {
+    try {
+      for (const key of parseEnvKeys(readFileSync(envPath, 'utf-8'))) keys.add(key)
+    } catch {}
+  }
+
+  return keys
+}
+
+export function buildGatewayProcessEnv(profileName: string, hermesHome: string): NodeJS.ProcessEnv {
+  const base = { ...process.env }
+
+  if (profileName !== 'default') {
+    for (const key of readProfileEnvKeys()) {
+      if (!GATEWAY_RUNTIME_ENV_KEYS.has(key.toUpperCase())) delete base[key]
+    }
+  }
+
+  return {
+    ...base,
+    HERMES_HOME: hermesHome,
+  }
+}
+
 // ============================
 // 类型定义
 // ============================
@@ -577,7 +644,7 @@ export class GatewayManager {
 
     // 所有平台统一使用 run 模式；dev/nodemon 可通过 env 保留 gateway 进程。
     return new Promise((resolve, reject) => {
-      const env = { ...process.env, HERMES_HOME: hermesHome }
+      const env = buildGatewayProcessEnv(name, hermesHome)
       const detachGateway = shouldDetachGatewayProcess()
       const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
         stdio: 'ignore',
@@ -689,7 +756,7 @@ export class GatewayManager {
       const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
         timeout: 15000,
         windowsHide: true,
-        env: { ...process.env, HERMES_HOME: hermesHome },
+        env: buildGatewayProcessEnv(name, hermesHome),
       })
       const output = `${stdout}${stderr}`.trim()
       if (output) logger.debug('%s: hermes gateway stop: %s', name, output)

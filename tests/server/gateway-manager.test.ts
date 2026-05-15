@@ -4,6 +4,7 @@ import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const originalHermesHome = process.env.HERMES_HOME
+const originalEnv = { ...process.env }
 const tempHomes: string[] = []
 
 function createHermesHome(): string {
@@ -22,6 +23,7 @@ async function createManager(home: string): Promise<any> {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.resetModules()
+  process.env = { ...originalEnv }
   if (originalHermesHome === undefined) {
     delete process.env.HERMES_HOME
   } else {
@@ -93,5 +95,78 @@ describe('GatewayManager Windows process recovery', () => {
     const manager = await createManager(home)
 
     expect(manager.readPidFile('work')).toBe(33333)
+  })
+})
+
+describe('GatewayManager gateway process env', () => {
+  it('keeps full inherited env for the default profile for compatibility', async () => {
+    const home = createHermesHome()
+    process.env.WEIXIN_TOKEN = 'from-parent'
+    process.env.CUSTOM_GATEWAY_SETTING = 'keep-me'
+    process.env.HERMES_HOME = home
+    vi.resetModules()
+    const { buildGatewayProcessEnv } = await import('../../packages/server/src/services/hermes/gateway-manager')
+
+    const env = buildGatewayProcessEnv('default', home)
+
+    expect(env.WEIXIN_TOKEN).toBe('from-parent')
+    expect(env.CUSTOM_GATEWAY_SETTING).toBe('keep-me')
+    expect(env.HERMES_HOME).toBe(home)
+  })
+
+  it('removes parent env keys defined by any profile env for non-default profile gateways', async () => {
+    const home = createHermesHome()
+    const workHome = join(home, 'profiles', 'work')
+    mkdirSync(workHome, { recursive: true })
+    writeFileSync(join(home, '.env'), [
+      'WEIXIN_TOKEN=default-weixin',
+      'WECOM_SECRET=default-wecom',
+      'FUTURE_PLATFORM_TOKEN=default-future',
+      'export EXPORTED_SECRET=default-export',
+      'PATH=/default/path',
+      'HTTP_PROXY=http://default-proxy.local:8080',
+      'COMMENTED_OUT_SECRET=not-commented',
+      '# COMMENTED_OUT_SECRET=commented',
+    ].join('\n'))
+    writeFileSync(join(workHome, '.env'), [
+      'WORK_ONLY_TOKEN=work-profile',
+      'PARENT_OVERRIDE_ME=work-profile',
+    ].join('\n'))
+
+    process.env.PATH = '/opt/hermes/.venv/bin:/usr/bin'
+    process.env.HOME = '/home/agent'
+    process.env.HTTP_PROXY = 'http://proxy.local:8080'
+    process.env.HERMES_BIN = '/opt/hermes/.venv/bin/hermes'
+    process.env.HERMES_ALLOW_ROOT_GATEWAY = '1'
+    process.env.HERMES_HOME = home
+    process.env.WEIXIN_TOKEN = 'from-parent'
+    process.env.WECOM_SECRET = 'from-parent'
+    process.env.FUTURE_PLATFORM_TOKEN = 'from-parent'
+    process.env.EXPORTED_SECRET = 'from-parent'
+    process.env.WORK_ONLY_TOKEN = 'from-parent'
+    process.env.PARENT_OVERRIDE_ME = 'from-parent'
+    process.env.UNKNOWN_SERVICE_TOKEN = 'keep-me'
+    process.env.COMMENTED_OUT_SECRET = 'from-parent'
+    process.env.CUSTOM_GATEWAY_SETTING = 'from-parent'
+    vi.resetModules()
+    const { buildGatewayProcessEnv } = await import('../../packages/server/src/services/hermes/gateway-manager')
+
+    const env = buildGatewayProcessEnv('work', join(home, 'profiles', 'work'))
+
+    expect(env.HERMES_HOME).toBe(join(home, 'profiles', 'work'))
+    expect(env.PATH).toBe('/opt/hermes/.venv/bin:/usr/bin')
+    expect(env.HOME).toBe('/home/agent')
+    expect(env.HTTP_PROXY).toBe('http://proxy.local:8080')
+    expect(env.HERMES_BIN).toBe('/opt/hermes/.venv/bin/hermes')
+    expect(env.HERMES_ALLOW_ROOT_GATEWAY).toBe('1')
+    expect(env.WEIXIN_TOKEN).toBeUndefined()
+    expect(env.WECOM_SECRET).toBeUndefined()
+    expect(env.FUTURE_PLATFORM_TOKEN).toBeUndefined()
+    expect(env.EXPORTED_SECRET).toBeUndefined()
+    expect(env.WORK_ONLY_TOKEN).toBeUndefined()
+    expect(env.PARENT_OVERRIDE_ME).toBeUndefined()
+    expect(env.COMMENTED_OUT_SECRET).toBeUndefined()
+    expect(env.UNKNOWN_SERVICE_TOKEN).toBe('keep-me')
+    expect(env.CUSTOM_GATEWAY_SETTING).toBe('from-parent')
   })
 })
