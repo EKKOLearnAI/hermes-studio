@@ -189,3 +189,62 @@ export async function authenticate(page: Page, accessKey = TEST_ACCESS_KEY, prof
     }
   }, { storedToken: accessKey, storedProfileName: profileName })
 }
+
+export async function mockChatSocket(page: Page) {
+  await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: `
+const state = window.__PW_CHAT_SOCKET__ || (window.__PW_CHAT_SOCKET__ = { sockets: [], emitted: [] })
+function makeSocket(url, options) {
+  const listeners = new Map()
+  const onceListeners = new Map()
+  const socket = {
+    connected: true,
+    url,
+    options,
+    on(event, handler) {
+      const handlers = listeners.get(event) || []
+      handlers.push(handler)
+      listeners.set(event, handlers)
+      return this
+    },
+    once(event, handler) {
+      const handlers = onceListeners.get(event) || []
+      handlers.push(handler)
+      onceListeners.set(event, handlers)
+      return this
+    },
+    emit(event, payload) {
+      state.emitted.push({ event, payload })
+      return this
+    },
+    removeAllListeners() {
+      listeners.clear()
+      onceListeners.clear()
+      return this
+    },
+    disconnect() {
+      this.connected = false
+      return this
+    },
+    __trigger(event, payload) {
+      for (const handler of listeners.get(event) || []) handler(payload)
+      const handlers = onceListeners.get(event) || []
+      onceListeners.delete(event)
+      for (const handler of handlers) handler(payload)
+    },
+  }
+  state.sockets.push(socket)
+  state.latest = socket
+  return socket
+}
+export function io(url, options) {
+  return makeSocket(url, options)
+}
+export default { io }
+`,
+    })
+  })
+}
