@@ -271,6 +271,8 @@ npm run dev
 npm run build   # outputs to dist/
 ```
 
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for project development guidelines.
+
 ## Architecture
 
 ```

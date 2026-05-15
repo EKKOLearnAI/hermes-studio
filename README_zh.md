@@ -279,6 +279,8 @@ npm run dev
 npm run build   # 构建输出到 dist/
 ```
 
+项目开发规范见：[DEVELOPMENT.md](./DEVELOPMENT.md)。
+
 ## 架构
 
 ```
