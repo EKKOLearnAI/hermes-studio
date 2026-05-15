@@ -147,8 +147,15 @@ install_base_packages() {
     software-properties-common
 }
 
+cleanup_docker_official_repo() {
+  warn "清理失败的 Docker 官方源配置"
+  run rm -f /etc/apt/sources.list.d/docker.list
+  run rm -f /etc/apt/keyrings/docker.asc
+}
+
 install_docker_from_system_repo() {
   step "回退到系统仓库安装 Docker"
+  apt_update
   if run apt-get install -y docker.io docker-compose-v2; then
     info "已通过系统仓库安装 docker.io + docker-compose-v2"
     return 0
@@ -166,6 +173,7 @@ install_docker_from_system_repo() {
 }
 
 install_docker_from_official_repo() {
+  cleanup_docker_official_repo
   run install -m 0755 -d /etc/apt/keyrings
   if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | run gpg --dearmor -o /etc/apt/keyrings/docker.asc
@@ -210,6 +218,7 @@ install_docker() {
   fi
 
   warn "Docker 官方源安装失败，自动回退到系统仓库。"
+  cleanup_docker_official_repo
   install_docker_from_system_repo
 
   run systemctl enable --now docker

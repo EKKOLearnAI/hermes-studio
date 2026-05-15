@@ -348,10 +348,16 @@ gpg: no valid OpenPGP data found.
    - `docker.io`
    - `docker-compose-v2`
    - 或兼容的 `docker-compose-plugin` / `docker-compose`
+3. 在回退前自动清理失败残留：
+   - `/etc/apt/sources.list.d/docker.list`
+   - `/etc/apt/keyrings/docker.asc`
 
 如果你想手动验证系统仓库安装，也可以执行：
 
 ```bash
+rm -f /etc/apt/sources.list.d/docker.list
+rm -f /etc/apt/keyrings/docker.asc
+apt-get -o Acquire::Check-Date=false update -y
 apt-get install -y docker.io docker-compose-v2
 systemctl enable --now docker
 docker version
