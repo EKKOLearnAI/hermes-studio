@@ -4,7 +4,7 @@ import bodyParser from '@koa/bodyparser'
 import serve from 'koa-static'
 import send from 'koa-send'
 import os from 'os'
-import { resolve } from 'path'
+import { resolve, sep } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
@@ -127,13 +127,26 @@ export async function bootstrap() {
 
   // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')
-  app.use(serve(distDir))
+  app.use(serve(distDir, {
+    index: false,
+    setHeaders(res, filePath) {
+      const normalizedPath = filePath.split(sep).join('/')
+      if (normalizedPath.includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      }
+    },
+  }))
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
       ctx.path !== '/webhook') {
-      await send(ctx, 'index.html', { root: distDir })
+      await send(ctx, 'index.html', {
+        root: distDir,
+        setHeaders(res) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+        },
+      })
     }
   })
   console.log('[bootstrap] SPA fallback registered')
