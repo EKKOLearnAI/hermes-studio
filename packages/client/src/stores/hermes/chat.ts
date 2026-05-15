@@ -845,6 +845,7 @@ export const useChatStore = defineStore('chat', () => {
     // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
     const isBridgeSlashCommand = activeSession.value?.source === 'cli' && content.trim().startsWith('/')
+    const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
     const wasLiveBeforeSend = isSessionLive(sid)
     const shouldQueue = wasLiveBeforeSend && !isBridgeSlashCommand
 
@@ -1348,7 +1349,7 @@ export const useChatStore = defineStore('chat', () => {
         undefined,
       )
 
-      if (!isBridgeSlashCommand || !wasLiveBeforeSend) {
+      if (!isBridgeSlashCommand || isBridgeCompressCommand) {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {

@@ -19,7 +19,7 @@ import { readSseFrames } from './sse-utils'
 import { extractResponseText } from './response-utils'
 import { applyResponseStreamEvent, flushResponseRunToDb } from './response-stream'
 import { buildCompressedHistory, getOrCreateSession } from './compression'
-import { calcAndUpdateUsage } from './usage'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
@@ -47,16 +47,14 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
     const snapshot = getCompressionSnapshot(sid)
     if (snapshot) {
       const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
+      const newUsage = estimateUsageTokensFromMessages(newMessages)
       inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-        newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      outputTokens = newMessages
-        .filter(m => m.role === 'assistant' || m.role === 'tool')
-        .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+        newUsage.inputTokens
+      outputTokens = newUsage.outputTokens
     } else {
-      inputTokens = messages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      outputTokens = messages
-        .filter(m => m.role === 'assistant' || m.role === 'tool')
-        .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+      const usage = estimateUsageTokensFromMessages(messages)
+      inputTokens = usage.inputTokens
+      outputTokens = usage.outputTokens
     }
 
     logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)

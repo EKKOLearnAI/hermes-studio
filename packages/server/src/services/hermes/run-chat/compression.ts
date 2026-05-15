@@ -7,11 +7,11 @@ import {
   getSessionDetail,
 } from '../../../db/hermes/session-store'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
-import { ChatContextCompressor, countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
+import { ChatContextCompressor, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getModelContextLength } from '../model-context'
 import { logger } from '../../logger'
 import { bridgeLogger } from '../../logger'
-import { calcAndUpdateUsage } from './usage'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import type { SessionState, BridgeCompressionResult } from './types'
 
@@ -210,7 +210,8 @@ export async function forceCompressBridgeHistory(
 
   const upstream = getUpstream(profile).replace(/\/$/, '')
   const apiKey = getApiKey(profile) || undefined
-  const totalTokens = countTokens(JSON.stringify(history))
+  const beforeUsage = estimateUsageTokensFromMessages(history)
+  const totalTokens = beforeUsage.inputTokens + beforeUsage.outputTokens
   bridgeLogger.info({
     sessionId,
     profile,
@@ -234,7 +235,8 @@ export async function forceCompressBridgeHistory(
     if (m.name) msg.name = m.name
     return msg
   })
-  const afterTokens = countTokens(JSON.stringify(compressedMessages))
+  const afterUsage = estimateUsageTokensFromMessages(compressedMessages)
+  const afterTokens = afterUsage.inputTokens + afterUsage.outputTokens
   bridgeLogger.info({
     sessionId,
     profile,

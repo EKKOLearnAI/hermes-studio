@@ -5,8 +5,7 @@ import type { AgentBridgeClient } from '../agent-bridge'
 import { flushBridgePendingToDb } from './bridge-message'
 import { buildDbHistory, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
 import { handleAbort } from './abort'
-import { calcAndUpdateUsage } from './usage'
-import { countTokens } from '../../../lib/context-compressor'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 
 type CommandName =
@@ -233,7 +232,8 @@ export async function handleSessionCommand(
       const emit = (event: string, payload: any) => emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
       try {
         const history = await buildDbHistory(sessionId, { excludeLastUser: true })
-        const tokenEstimate = history.length > 0 ? countTokens(JSON.stringify(history)) : 0
+        const usageEstimate = estimateUsageTokensFromMessages(history)
+        const tokenEstimate = usageEstimate.inputTokens + usageEstimate.outputTokens
         emit('compression.started', {
           event: 'compression.started',
           message_count: history.length,

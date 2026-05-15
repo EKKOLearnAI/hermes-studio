@@ -11,6 +11,35 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { logger } from '../../logger'
 import type { SessionState } from './types'
 
+type UsageTokenMessage = {
+  role?: string
+  content?: unknown
+  tool_calls?: unknown
+}
+
+function contentToUsageText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!content) return ''
+  if (Array.isArray(content)) {
+    return content.map((block: any) => {
+      if (typeof block?.text === 'string') return block.text
+      if (typeof block?.type === 'string') return `[${block.type}]`
+      return String(block || '')
+    }).join('\n')
+  }
+  return String(content)
+}
+
+export function estimateUsageTokensFromMessages(messages: UsageTokenMessage[]): { inputTokens: number; outputTokens: number } {
+  const inputTokens = messages
+    .filter(m => m.role === 'user')
+    .reduce((sum, m) => sum + countTokens(contentToUsageText(m.content)), 0)
+  const outputTokens = messages
+    .filter(m => m.role === 'assistant' || m.role === 'tool')
+    .reduce((sum, m) => sum + countTokens(contentToUsageText(m.content)) + countTokens(String(m.tool_calls || '')), 0)
+  return { inputTokens, outputTokens }
+}
+
 export async function calcAndUpdateUsage(
   sid: string,
   state: SessionState,
@@ -26,16 +55,14 @@ export async function calcAndUpdateUsage(
     let outputTokens: number
     if (snapshot && msgs.length) {
       const newMessages = msgs.slice(snapshot.lastMessageIndex + 1)
+      const newUsage = estimateUsageTokensFromMessages(newMessages)
       inputTokens = countTokens(SUMMARY_PREFIX + snapshot.summary) +
-        newMessages.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      outputTokens = newMessages
-        .filter(m => m.role === 'assistant' || m.role === 'tool')
-        .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+        newUsage.inputTokens
+      outputTokens = newUsage.outputTokens
     } else {
-      inputTokens = msgs.filter(m => m.role === 'user').reduce((sum, m) => sum + countTokens(m.content || ''), 0)
-      outputTokens = msgs
-        .filter(m => m.role === 'assistant' || m.role === 'tool')
-        .reduce((sum, m) => sum + countTokens(m.content || '') + countTokens(m.tool_calls + '' || ''), 0)
+      const usage = estimateUsageTokensFromMessages(msgs)
+      inputTokens = usage.inputTokens
+      outputTokens = usage.outputTokens
     }
     state.inputTokens = inputTokens
     state.outputTokens = outputTokens

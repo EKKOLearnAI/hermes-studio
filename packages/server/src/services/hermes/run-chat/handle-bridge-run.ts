@@ -6,13 +6,12 @@
 import type { Server, Socket } from 'socket.io'
 import { getSession, createSession, addMessage, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
-import { countTokens } from '../../../lib/context-compressor'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { contentBlocksToString, extractTextForPreview } from './content-blocks'
 import { buildCompressedHistory } from './compression'
 import { pushState, replaceState } from './compression'
-import { calcAndUpdateUsage } from './usage'
+import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import {
   flushBridgePendingToDb,
   ensureOpenBridgeAssistantMessage,
@@ -267,8 +266,9 @@ async function applyBridgeChunkAsync(
       emit('approval.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
+      const bridgeUsage = estimateUsageTokensFromMessages(bridgeHistory)
       const tokenCount = bridgeHistory.length > 0
-        ? countTokens(JSON.stringify(bridgeHistory))
+        ? bridgeUsage.inputTokens + bridgeUsage.outputTokens
         : ev.approx_tokens
       const payload = {
         event: 'compression.started',
