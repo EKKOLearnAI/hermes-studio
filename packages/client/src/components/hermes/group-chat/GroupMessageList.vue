@@ -37,7 +37,7 @@ defineExpose({ scrollToBottom })
 <template>
     <div ref="listRef" class="message-list" @scroll="handleScroll">
         <div v-if="store.sortedMessages.length === 0" class="empty-state">
-            <img src="/logo.png" alt="Hermes" class="empty-logo" />
+            <img src="/logo.png" alt="audbuild" class="empty-logo" />
             <p>{{ t("chat.emptyState") }}</p>
         </div>
         <GroupMessageItem

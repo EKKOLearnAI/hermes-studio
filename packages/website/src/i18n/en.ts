@@ -9,7 +9,7 @@ export default {
     subtitle: 'Open-source AI agent dashboard — streaming chat, multi-model routing, Kanban boards, usage analytics, web terminal, all in one self-hosted interface.',
     cta: 'Get Started',
     viewGithub: 'View on GitHub',
-    install: 'npm install -g hermes-web-ui',
+    install: 'npm install -g audbuild',
   },
   features: {
     title: 'Everything You Need',
@@ -77,11 +77,11 @@ export default {
   },
   install: {
     title: 'Quick Start',
-    desc: 'Get Hermes Web UI running in under a minute.',
+    desc: 'Get audbuild running in under a minute.',
     npm: {
       title: 'npm',
-      cmd1: 'npm install -g hermes-web-ui',
-      cmd2: 'hermes-web-ui start',
+      cmd1: 'npm install -g audbuild',
+      cmd2: 'audbuild start',
     },
     docker: {
       title: 'Docker',
@@ -89,8 +89,8 @@ export default {
     },
     source: {
       title: 'From Source',
-      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-web-ui.git',
-      cmd2: 'cd hermes-web-ui && npm install && npm run dev',
+      cmd1: 'git clone https://github.com/EKKOLearnAI/audbuild.git',
+      cmd2: 'cd audbuild && npm install && npm run dev',
     },
     prereq: 'Requires Node.js >= 23',
   },
@@ -99,7 +99,7 @@ export default {
     desc: 'Star us on GitHub and join the community.',
   },
   footer: {
-    description: 'Self-hosted AI chat dashboard for Hermes Agent.',
+    description: 'Self-hosted AI chat dashboard for audbuild.',
     license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
   },
@@ -113,23 +113,23 @@ export default {
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Hermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
+      intro: 'audbuild is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the audbuild CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
         content: 'Install globally via npm. Node.js 23 or higher is required.',
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Hermes Web UI will automatically generate an auth token, validate configuration files, start the Hermes gateway, and open the dashboard in your browser.',
+        content: 'On first start, audbuild will automatically generate an auth token, validate configuration files, start the audbuild gateway, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
-        content: 'The auto-generated token is stored in ~/.hermes-web-ui/.token. You can also set up username/password login from the Settings page after your first login.',
+        content: 'The auto-generated token is stored in ~/.audbuild/.token. You can also set up username/password login from the Settings page after your first login.',
       },
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Hermes Web UI can be configured via environment variables.',
+      intro: 'audbuild can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
@@ -144,16 +144,16 @@ export default {
       },
       gateway: {
         title: 'Gateway Management',
-        content: 'The gateway is the Hermes Agent process that handles AI conversations. Hermes Web UI manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles, and each profile resolves its own gateway host/port from its Hermes config.',
+        content: 'The gateway is the audbuild process that handles AI conversations. audbuild manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles, and each profile resolves its own gateway host/port from its audbuild config.',
       },
       profiles: {
         title: 'Profiles',
-        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own Hermes config, cache, and gateway. Create, clone, import, or export profiles from the Profiles page.',
+        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own audbuild config, cache, and gateway. Create, clone, import, or export profiles from the Profiles page.',
       },
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Hermes Web UI.',
+      intro: 'Explore the core features of audbuild.',
       chat: {
         title: 'AI Chat',
         content: 'Real-time streaming chat powered by Server-Sent Events. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and global search across all conversations (Ctrl+K).',
@@ -229,18 +229,18 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Hermes Web UI provides both a local BFF API and proxies requests to the upstream Hermes gateway.',
+      intro: 'audbuild provides both a local BFF API and proxies requests to the upstream audbuild gateway.',
       local: {
         title: 'Local BFF Endpoints',
-        content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, and memory operations. These endpoints call the Hermes CLI directly.',
+        content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, and memory operations. These endpoints call the audbuild CLI directly.',
       },
       proxy: {
         title: 'Gateway Proxy',
-        content: 'Requests to /api/hermes/v1/* are forwarded to the Hermes gateway. This includes AI model interactions, run management, and streaming events.',
+        content: 'Requests to /api/hermes/v1/* are forwarded to the audbuild gateway. This includes AI model interactions, run management, and streaming events.',
       },
       auth: {
         title: 'Authentication',
-        content: 'All API endpoints require a Bearer token via the Authorization header. The token is auto-generated on first run and stored in ~/.hermes-web-ui/.token. Optional username/password login can be configured from the Settings page.',
+        content: 'All API endpoints require a Bearer token via the Authorization header. The token is auto-generated on first run and stored in ~/.audbuild/.token. Optional username/password login can be configured from the Settings page.',
       },
     },
   },

@@ -63,8 +63,8 @@ function openChangelog() {
 <template>
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
     <div class="sidebar-logo" @click="router.push('/hermes/chat')">
-      <img :src="logoPath" alt="Hermes" class="logo-img" />
-      <span class="logo-text">Hermes</span>
+      <img :src="logoPath" alt="audbuild" class="logo-img" />
+      <span class="logo-text">audbuild</span>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </div>
 

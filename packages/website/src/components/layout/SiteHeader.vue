@@ -30,8 +30,8 @@ function goHome() {
   <header class="site-header">
     <div class="header-inner">
       <div class="header-left" @click="goHome">
-        <img src="/logo.png" alt="Hermes" class="logo-icon" />
-        <span class="logo-text">Hermes Web UI</span>
+        <img src="/logo.png" alt="audbuild" class="logo-icon" />
+        <span class="logo-text">audbuild</span>
       </div>
 
       <nav class="header-nav">
