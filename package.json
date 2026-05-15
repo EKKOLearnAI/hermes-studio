@@ -79,6 +79,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.5",
+    "@vitest/coverage-v8": "^3.2.4",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.9.1",
     "@xterm/addon-fit": "^0.11.0",
