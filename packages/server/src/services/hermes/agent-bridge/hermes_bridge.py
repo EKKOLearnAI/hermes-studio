@@ -356,6 +356,7 @@ class AgentPool:
         self._run_lock = threading.Lock()
         self._db = SessionDbHolder()
         self._approval_requests: dict[str, queue.Queue[str]] = {}
+        self._gateway_approval_requests: dict[str, str] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
 
     def get_or_create(
@@ -673,6 +674,24 @@ class AgentPool:
 
         return callback
 
+    def _gateway_approval_notify(self, session_id: str):
+        def callback(approval_data: dict[str, Any]) -> None:
+            approval_id = uuid.uuid4().hex
+            choices = ["once", "session", "always", "deny"]
+            with self._lock:
+                self._gateway_approval_requests[approval_id] = session_id
+            self._append_event(session_id, {
+                "event": "approval.requested",
+                "approval_id": approval_id,
+                "command": str(approval_data.get("command") or ""),
+                "description": str(approval_data.get("description") or ""),
+                "choices": choices,
+                "allow_permanent": True,
+                "timeout_ms": 300_000,
+            })
+
+        return callback
+
     def _prepersist_user_message(
         self,
         session: AgentSession,
@@ -833,13 +852,16 @@ class AgentPool:
                 previous_approval_callback = None
                 previous_exec_ask = os.environ.get("HERMES_EXEC_ASK")
                 approval_session_token = None
+                registered_gateway_approval_session = None
                 try:
                     from tools.terminal_tool import _get_approval_callback, set_approval_callback
-                    from tools.approval import set_current_session_key
+                    from tools.approval import register_gateway_notify, set_current_session_key
 
                     previous_approval_callback = _get_approval_callback()
                     set_approval_callback(self._approval_callback(session.session_id))
                     approval_session_token = set_current_session_key(session.session_id)
+                    register_gateway_notify(session.session_id, self._gateway_approval_notify(session.session_id))
+                    registered_gateway_approval_session = session.session_id
                     os.environ["HERMES_EXEC_ASK"] = "1"
                 except Exception:
                     previous_approval_callback = None
@@ -905,8 +927,10 @@ class AgentPool:
                     pass
                 if approval_session_token is not None:
                     try:
-                        from tools.approval import reset_current_session_key
+                        from tools.approval import reset_current_session_key, unregister_gateway_notify
 
+                        if registered_gateway_approval_session is not None:
+                            unregister_gateway_notify(registered_gateway_approval_session)
                         reset_current_session_key(approval_session_token)
                     except Exception:
                         pass
@@ -950,7 +974,22 @@ class AgentPool:
         with self._lock:
             response_queue = self._approval_requests.get(approval_id)
         if response_queue is None:
-            return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
+            with self._lock:
+                gateway_session_id = self._gateway_approval_requests.pop(approval_id, None)
+            if gateway_session_id is None:
+                return {"approval_id": approval_id, "resolved": False, "choice": cleaned}
+            try:
+                from tools.approval import resolve_gateway_approval
+
+                resolved = resolve_gateway_approval(gateway_session_id, cleaned) > 0
+            except Exception:
+                resolved = False
+            self._append_event(gateway_session_id, {
+                "event": "approval.resolved",
+                "approval_id": approval_id,
+                "choice": cleaned,
+            })
+            return {"approval_id": approval_id, "resolved": resolved, "choice": cleaned}
         try:
             response_queue.put_nowait(cleaned)
         except queue.Full:
