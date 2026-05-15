@@ -49,9 +49,7 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   getUsageStatsFromDb: getUsageStatsFromDbMock,
 }))
 
-// Mock useLocalSessionStore to return false so we test the CLI path
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
-  useLocalSessionStore: () => false,
   listSessions: localListSessionsMock,
   searchSessions: localSearchSessionsMock,
   getSessionDetail: localGetSessionDetailMock,

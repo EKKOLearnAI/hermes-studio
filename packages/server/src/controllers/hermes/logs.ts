@@ -1,11 +1,11 @@
 import { existsSync, statSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
 import * as hermesCli from '../../services/hermes/hermes-cli'
+import { config } from '../../config'
 
-const WEBUI_LOG_FILE = join(homedir(), '.hermes-web-ui', 'logs', 'server.log')
-const BRIDGE_LOG_FILE = join(homedir(), '.hermes-web-ui', 'logs', 'bridge.log')
+const WEBUI_LOG_FILE = join(config.appHome, 'logs', 'server.log')
+const BRIDGE_LOG_FILE = join(config.appHome, 'logs', 'bridge.log')
 
 interface LogEntry {
   timestamp: string; level: string; logger: string; message: string; raw: string

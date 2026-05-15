@@ -469,11 +469,3 @@ export function getSessionDetailPaginated(
     hasMore: offset + messages.length < total,
   }
 }
-
-// --- Session store mode ---
-
-import { config } from '../../config'
-
-export function useLocalSessionStore(): boolean {
-  return config.sessionStore === 'local'
-}

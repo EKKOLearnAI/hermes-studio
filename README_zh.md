@@ -213,6 +213,28 @@ docker compose logs -f hermes-webui
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)
 
+## Web UI 环境变量
+
+这些变量只用于配置 Hermes Web UI 自身。Provider API Key 和 Hermes Agent 相关设置仍通过 Hermes profile 管理。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PORT` | `8648` | Web UI 监听端口。 |
+| `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
+| `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传目录。 |
+| `CORS_ORIGINS` | `*` | Koa CORS origin 配置。 |
+| `AUTH_DISABLED` | 未设置 | 设置为 `1` 或 `true` 可关闭 Web UI 认证。 |
+| `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
+| `PROFILE` | `default` | 初始 Hermes profile 名称。 |
+| `LOG_LEVEL` | `info` | Server 日志级别。 |
+| `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |
+| `MAX_DOWNLOAD_SIZE` | `200MB` | 最大文件下载大小。 |
+| `MAX_EDIT_SIZE` | `10MB` | 最大可编辑文件大小。 |
+| `WORKSPACE_BASE` | `/opt/data/workspace` | Workspace 浏览根目录。 |
+| `GATEWAY_HOST` | `127.0.0.1` | 写入 profile config 的默认 gateway host。 |
+| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | 视环境而定 | Web UI 关闭时是否同时停止托管的 gateways。 |
+
 ### CLI 命令
 
 | 命令 | 说明 |

@@ -1,10 +1,10 @@
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { homedir } from 'os'
 import { checkToken, recordTokenFailure, extractIp } from './login-limiter'
+import { config } from '../config'
 
-const APP_HOME = join(homedir(), '.hermes-web-ui')
+const APP_HOME = config.appHome
 const TOKEN_FILE = join(APP_HOME, '.token')
 
 function generateToken(): string {

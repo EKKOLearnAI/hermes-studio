@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
-import { homedir } from 'os'
+import { config } from '../config'
 
 const isDev = process.env.NODE_ENV !== 'production'
 const isTest = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test'
@@ -11,7 +11,7 @@ const DB_DIR = isTest
   ? resolve(process.cwd(), 'packages/server/data/test-runtime')
   : isDev
   ? resolve(process.cwd(), 'packages/server/data')
-  : resolve(homedir(), '.hermes-web-ui')
+  : config.appHome
 const DB_PATH = resolve(DB_DIR, 'hermes-web-ui.db')
 const JSON_PATH = resolve(DB_DIR, 'hermes-web-ui.json')
 

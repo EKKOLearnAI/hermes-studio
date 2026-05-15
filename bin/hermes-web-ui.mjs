@@ -11,7 +11,10 @@ const serverEntry = resolve(__dirname, '..', 'dist', 'server', 'index.js')
 const pkgDir = resolve(__dirname, '..')
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf-8'))
 const VERSION = pkg.version
-const PID_DIR = resolve(homedir(), '.hermes-web-ui')
+const WEB_UI_HOME = process.env.HERMES_WEB_UI_HOME?.trim()
+  ? resolve(process.env.HERMES_WEB_UI_HOME.trim())
+  : resolve(homedir(), '.hermes-web-ui')
+const PID_DIR = WEB_UI_HOME
 const PID_FILE = join(PID_DIR, 'server.pid')
 const LOG_FILE = join(PID_DIR, 'server.log')
 const TOKEN_FILE = join(PID_DIR, '.token')

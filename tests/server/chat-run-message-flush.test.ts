@@ -9,11 +9,6 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetailPaginated: vi.fn(),
   createSession: vi.fn(),
   updateSessionStats: vi.fn(),
-  useLocalSessionStore: vi.fn(() => false),
-}))
-
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
-  getSessionDetailFromDb: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
@@ -44,7 +39,7 @@ vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
   updateUsage: vi.fn(),
 }))
 
-// --- Types mirroring chat-run-socket.ts ---
+// --- Types mirroring run-chat response flushing ---
 
 interface SessionMessage {
   id: number | string

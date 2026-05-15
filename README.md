@@ -205,6 +205,28 @@ Open **http://localhost:6060**
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 
+## Web UI Environment Variables
+
+These variables configure Hermes Web UI itself. Provider API keys and Hermes Agent settings are managed separately through Hermes profiles.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8648` | Web UI listen port. |
+| `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
+| `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload directory override. |
+| `CORS_ORIGINS` | `*` | Koa CORS origin setting. |
+| `AUTH_DISABLED` | unset | Set to `1` or `true` to disable Web UI auth. |
+| `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
+| `PROFILE` | `default` | Initial Hermes profile name. |
+| `LOG_LEVEL` | `info` | Server log level. |
+| `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
+| `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
+| `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
+| `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
+| `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config. |
+| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | environment-dependent | Whether Web UI shutdown also stops managed gateways. |
+
 ### CLI Commands
 
 | Command                           | Description                        |

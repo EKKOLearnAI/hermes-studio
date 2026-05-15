@@ -1,10 +1,10 @@
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { scryptSync, randomBytes } from 'node:crypto'
+import { config } from '../config'
 
-const APP_HOME = join(homedir(), '.hermes-web-ui')
+const APP_HOME = config.appHome
 const CREDENTIALS_FILE = join(APP_HOME, '.credentials')
 
 export interface Credentials {
