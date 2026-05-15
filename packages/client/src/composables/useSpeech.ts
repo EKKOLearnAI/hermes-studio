@@ -388,9 +388,6 @@ export function useSpeech() {
         ? `${desc}\n风格指令：${opts.stylePrompt}`
         : desc
       messages.push({ role: 'user', content: userContent || '默认音色' })
-    } else if (opts.model === 'mimo-v2.5-tts-voiceclone') {
-      // Voice clone: user message = style prompt or empty
-      messages.push({ role: 'user', content: opts.stylePrompt || '' })
     } else {
       // Preset voices: user message = style prompt or empty
       messages.push({ role: 'user', content: opts.stylePrompt || '' })

@@ -86,7 +86,6 @@ const mimoBaseUrlOptions = [
 const mimoModelOptions = [
   { label: t('settings.voice.mimoModelPreset'), value: 'mimo-v2.5-tts' },
   { label: t('settings.voice.mimoModelVoiceDesign'), value: 'mimo-v2.5-tts-voicedesign' },
-  { label: t('settings.voice.mimoModelVoiceClone'), value: 'mimo-v2.5-tts-voiceclone' },
 ]
 
 const mimoVoiceOptions = [
@@ -99,36 +98,6 @@ const mimoVoiceOptions = [
   { label: 'Milo (English·Male)', value: 'Milo' },
   { label: 'Dean (English·Male)', value: 'Dean' },
 ]
-
-const cloneAudioName = ref('')
-const cloneAudioInput = ref<HTMLInputElement | null>(null)
-
-function handleCloneAudioUpload(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  if (file.size > 10 * 1024 * 1024) {
-    console.warn('[VoiceSettings] MiMo clone audio file too large (max 10MB)')
-    return
-  }
-
-  const reader = new FileReader()
-  reader.onload = () => {
-    const base64 = reader.result as string
-    vs.setMimoCloneAudioBase64(base64)
-    cloneAudioName.value = file.name
-  }
-  reader.readAsDataURL(file)
-}
-
-function clearCloneAudio() {
-  vs.setMimoCloneAudioBase64('')
-  cloneAudioName.value = ''
-  if (cloneAudioInput.value) {
-    cloneAudioInput.value.value = ''
-  }
-}
 
 async function handleTest() {
   const text = testText.value.trim()
@@ -172,19 +141,11 @@ async function handleTest() {
         console.warn('[VoiceSettings] MiMo API Key empty')
         return
       }
-      let voice = vs.mimoVoice.value
-      if (vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone') {
-        voice = vs.mimoCloneAudioBase64.value
-        if (!voice) {
-          console.warn('[VoiceSettings] MiMo clone audio empty')
-          return
-        }
-      }
       await speech.mimoPlay('__test__', text, {
         baseUrl: vs.mimoBaseUrl.value,
         apiKey: vs.mimoApiKey.value,
         model: vs.mimoModel.value,
-        voice,
+        voice: vs.mimoVoice.value,
         voiceDesignDesc: vs.mimoVoiceDesignDesc.value || undefined,
         stylePrompt: vs.mimoStylePrompt.value || undefined,
       })
@@ -468,31 +429,6 @@ async function handleTest() {
         />
       </SettingRow>
 
-      <!-- Voice clone mode -->
-      <template v-if="vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone'">
-        <SettingRow
-          :label="t('settings.voice.mimoCloneAudio')"
-          :hint="t('settings.voice.mimoCloneAudioHint')"
-        >
-          <div class="clone-audio-row">
-            <input
-              ref="cloneAudioInput"
-              type="file"
-              accept=".mp3,.wav,audio/mpeg,audio/wav"
-              style="display: none"
-              @change="handleCloneAudioUpload"
-            />
-            <NButton size="small" @click="($refs.cloneAudioInput as HTMLInputElement)?.click()">
-              {{ t('settings.voice.mimoCloneAudioUpload') }}
-            </NButton>
-            <span v-if="cloneAudioName" class="clone-audio-name">{{ cloneAudioName }}</span>
-            <NButton v-if="vs.mimoCloneAudioBase64.value" size="small" @click="clearCloneAudio">
-              {{ t('settings.voice.mimoCloneAudioClear') }}
-            </NButton>
-          </div>
-        </SettingRow>
-      </template>
-
       <!-- Style prompt (available for all models) -->
       <SettingRow
         :label="t('settings.voice.mimoStylePrompt')"
@@ -577,20 +513,5 @@ async function handleTest() {
   color: #999;
   white-space: nowrap;
   min-width: 120px;
-}
-
-.clone-audio-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.clone-audio-name {
-  font-size: 12px;
-  color: #888;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

@@ -27,11 +27,10 @@ export interface VoiceSettingsData {
   // MiMo TTS
   mimoApiKey: string
   mimoBaseUrl: string
-  mimoModel: string            // 'mimo-v2.5-tts' | 'mimo-v2.5-tts-voicedesign' | 'mimo-v2.5-tts-voiceclone'
+  mimoModel: string            // 'mimo-v2.5-tts' | 'mimo-v2.5-tts-voicedesign'
   mimoVoice: string            // 预置音色 ID
   mimoVoiceDesignDesc: string  // 音色设计描述文本
   mimoStylePrompt: string      // 风格指令
-  mimoCloneAudioBase64: string // 音色复刻音频 base64
 }
 
 const STORAGE_KEY = 'hermes-tts-settings-v2'
@@ -83,7 +82,6 @@ const DEFAULT: VoiceSettingsData = {
   mimoVoice: '冰糖',
   mimoVoiceDesignDesc: '',
   mimoStylePrompt: '',
-  mimoCloneAudioBase64: '',
 }
 
 function sanitize(data: VoiceSettingsData): VoiceSettingsData {
@@ -134,13 +132,12 @@ const mimoModel = ref<string>(load().mimoModel)
 const mimoVoice = ref<string>(load().mimoVoice)
 const mimoVoiceDesignDesc = ref<string>(load().mimoVoiceDesignDesc)
 const mimoStylePrompt = ref<string>(load().mimoStylePrompt)
-const mimoCloneAudioBase64 = ref<string>(load().mimoCloneAudioBase64)
 
 // Auto-persist on change
 watch(
   [provider, webspeechVoice, openaiApiKey, openaiBaseUrl, openaiModel, openaiVoice,
    customUrl, customApiKey, edgeUrl, edgeVoice, edgeRate, edgePitchHz,
-   mimoApiKey, mimoBaseUrl, mimoModel, mimoVoice, mimoVoiceDesignDesc, mimoStylePrompt, mimoCloneAudioBase64],
+   mimoApiKey, mimoBaseUrl, mimoModel, mimoVoice, mimoVoiceDesignDesc, mimoStylePrompt],
   () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       provider: provider.value,
@@ -161,7 +158,6 @@ watch(
       mimoVoice: mimoVoice.value,
       mimoVoiceDesignDesc: mimoVoiceDesignDesc.value,
       mimoStylePrompt: mimoStylePrompt.value,
-      mimoCloneAudioBase64: mimoCloneAudioBase64.value,
     }))
   },
 )
@@ -186,7 +182,6 @@ export function useVoiceSettings() {
     mimoVoice,
     mimoVoiceDesignDesc,
     mimoStylePrompt,
-    mimoCloneAudioBase64,
 
     setProvider(v: TtsProvider) { provider.value = v },
     setWebSpeechVoice(v: string) { webspeechVoice.value = v },
@@ -206,7 +201,6 @@ export function useVoiceSettings() {
     setMimoVoice(v: string) { mimoVoice.value = v },
     setMimoVoiceDesignDesc(v: string) { mimoVoiceDesignDesc.value = v },
     setMimoStylePrompt(v: string) { mimoStylePrompt.value = v },
-    setMimoCloneAudioBase64(v: string) { mimoCloneAudioBase64.value = v },
 
     reset() {
       provider.value = DEFAULT.provider
@@ -227,7 +221,6 @@ export function useVoiceSettings() {
       mimoVoice.value = DEFAULT.mimoVoice
       mimoVoiceDesignDesc.value = DEFAULT.mimoVoiceDesignDesc
       mimoStylePrompt.value = DEFAULT.mimoStylePrompt
-      mimoCloneAudioBase64.value = DEFAULT.mimoCloneAudioBase64
     },
   }
 }

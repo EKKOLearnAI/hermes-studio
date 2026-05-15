@@ -434,20 +434,11 @@ function handleSpeechToggle() {
       console.warn('[MessageItem] MiMo TTS API Key 为空')
       return
     }
-    let voice = voiceSettings.mimoVoice.value
-    // Voice clone mode: use base64 audio data
-    if (voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone') {
-      voice = voiceSettings.mimoCloneAudioBase64.value
-      if (!voice) {
-        console.warn('[MessageItem] MiMo TTS 音色复刻音频为空')
-        return
-      }
-    }
     speech.mimoToggle(props.message.id, content, {
       baseUrl: voiceSettings.mimoBaseUrl.value,
       apiKey,
       model: voiceSettings.mimoModel.value,
-      voice,
+      voice: voiceSettings.mimoVoice.value,
       voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
       stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
     })
@@ -502,20 +493,14 @@ onMounted(() => {
       } else if (voiceSettings.provider.value === 'mimo') {
         const apiKey = voiceSettings.mimoApiKey.value
         if (apiKey) {
-          let voice = voiceSettings.mimoVoice.value
-          if (voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone') {
-            voice = voiceSettings.mimoCloneAudioBase64.value
-          }
-          if (voice) {
-            speech.mimoPlay(props.message.id, content, {
-              baseUrl: voiceSettings.mimoBaseUrl.value,
-              apiKey,
-              model: voiceSettings.mimoModel.value,
-              voice,
-              voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-              stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-            })
-          }
+          speech.mimoPlay(props.message.id, content, {
+            baseUrl: voiceSettings.mimoBaseUrl.value,
+            apiKey,
+            model: voiceSettings.mimoModel.value,
+            voice: voiceSettings.mimoVoice.value,
+            voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+            stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
+          })
         }
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)
