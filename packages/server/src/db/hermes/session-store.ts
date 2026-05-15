@@ -201,6 +201,14 @@ export function deleteSession(id: string): boolean {
   return result.changes > 0
 }
 
+export function clearSessionMessages(id: string): number {
+  if (!isSqliteAvailable()) return 0
+  const db = getDb()!
+  const result = db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+  updateSessionStats(id)
+  return Number(result.changes)
+}
+
 export function renameSession(id: string, title: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!

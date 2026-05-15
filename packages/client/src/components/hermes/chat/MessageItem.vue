@@ -26,6 +26,20 @@ const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
+const isCommandError = computed(() => props.message.role === "command" && props.message.systemType === "error");
+const isStatusCommand = computed(() => isCommandMessage.value && props.message.commandAction === "status");
+const statusItems = computed(() => {
+  const data = props.message.commandData || {};
+  return [
+    { key: "status", value: data.isWorking ? "running" : "idle" },
+    { key: "source", value: data.source },
+    { key: "profile", value: data.profile },
+    { key: "model", value: data.model || "-" },
+    { key: "queue", value: data.queueLength ?? 0 },
+    { key: "run", value: data.runId || "-" },
+  ];
+});
 
 // Parse ContentBlock[] from JSON string
 const contentBlocks = computed(() => {
@@ -572,7 +586,15 @@ onBeforeUnmount(() => {
           class="msg-avatar"
         />
         <div class="msg-content" :class="message.role">
-          <div class="message-bubble" :class="{ system: isSystem, 'speech-playing': isPlayingThisMessage && !isPausedThisMessage }">
+          <div
+            class="message-bubble"
+            :class="{
+              system: isSystem,
+              command: isCommandMessage,
+              'command-error': isCommandError,
+              'speech-playing': isPlayingThisMessage && !isPausedThisMessage,
+            }"
+          >
             <div v-if="hasAttachments" class="msg-attachments">
               <div
                 v-for="att in message.attachments"
@@ -703,6 +725,29 @@ onBeforeUnmount(() => {
               :content="message.content"
             />
 
+            <!-- Render system message content -->
+            <MarkdownRenderer
+              v-if="message.role === 'system' && message.content && !isCommandMessage"
+              :content="message.content"
+            />
+            <div v-if="isStatusCommand" class="command-result command-status">
+              <span class="command-result-icon">/</span>
+              <div class="command-status-grid">
+                <span
+                  v-for="item in statusItems"
+                  :key="item.key"
+                  class="command-status-item"
+                >
+                  <span class="command-status-key">{{ item.key }}</span>
+                  <span class="command-status-value">{{ item.value }}</span>
+                </span>
+              </div>
+            </div>
+            <div v-else-if="isCommandMessage && message.content" class="command-result">
+              <span class="command-result-icon">/</span>
+              <MarkdownRenderer :content="message.content" />
+            </div>
+
             <span v-if="message.isStreaming && !message.content" class="streaming-dots">
               <span></span><span></span><span></span>
             </span>
@@ -806,6 +851,10 @@ onBeforeUnmount(() => {
     align-items: flex-start;
   }
 
+  &.command {
+    align-items: flex-start;
+  }
+
   &.highlight {
     .message-bubble {
       box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.45);
@@ -855,6 +904,20 @@ onBeforeUnmount(() => {
     background-color: rgba(var(--warning-rgb), 0.06);
   }
 
+  &.command {
+    border-left: none;
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.12);
+    background-color: rgba(var(--accent-primary-rgb), 0.04);
+    color: $text-secondary;
+    max-width: min(100%, 960px);
+    padding: 8px 10px;
+  }
+
+  &.command-error {
+    border-color: rgba(var(--warning-rgb), 0.28);
+    background-color: rgba(var(--warning-rgb), 0.06);
+  }
+
   &.speech-playing {
     box-shadow:
       0 0 0 2px #ff6b6b,
@@ -862,6 +925,74 @@ onBeforeUnmount(() => {
       0 0 20px rgba(255, 107, 107, 0.2);
     animation: rainbow-glow 4s linear infinite;
   }
+}
+
+.command-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+
+  :deep(.markdown-body) {
+    min-width: 0;
+  }
+
+  :deep(.markdown-body p) {
+    margin: 0;
+  }
+}
+
+.command-status {
+  align-items: center;
+}
+
+.command-status-grid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.command-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.1);
+  border-radius: 999px;
+  background: rgba(var(--accent-primary-rgb), 0.035);
+  line-height: 1.4;
+}
+
+.command-status-key {
+  color: $text-muted;
+  font-size: 11px;
+}
+
+.command-status-value {
+  color: $text-primary;
+  font-family: $font-code;
+  font-size: 11px;
+}
+
+.command-result-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(var(--accent-primary-rgb), 0.1);
+  color: $accent-primary;
+  font-family: $font-code;
+  font-size: 12px;
+  line-height: 1;
+  margin-top: 2px;
 }
 
 @keyframes rainbow-glow {

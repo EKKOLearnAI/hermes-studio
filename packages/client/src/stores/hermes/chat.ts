@@ -23,7 +23,7 @@ export interface Attachment {
 
 export interface Message {
   id: string
-  role: 'user' | 'assistant' | 'system' | 'tool'
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
   content: string
   timestamp: number
   toolName?: string
@@ -41,6 +41,9 @@ export interface Message {
   // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
+  systemType?: 'command' | 'error'
+  commandAction?: string
+  commandData?: Record<string, unknown>
 }
 
 export interface PendingApproval {
@@ -212,13 +215,14 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       continue
     }
 
-    // Normal user/assistant messages
+    // Normal user/assistant/command messages
     result.push({
       id: String(msg.id),
       role: msg.role,
       content: msg.content || '',
       timestamp: Math.round(msg.timestamp * 1000),
       reasoning: msg.reasoning ? msg.reasoning : undefined,
+      systemType: msg.role === 'command' ? 'command' : undefined,
     })
   }
   return result
@@ -663,6 +667,70 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function handleSessionCommandEvent(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const target = sessions.value.find(s => s.id === sid)
+    const action = (evt as any).action as string | undefined
+
+    if (action === 'clear') {
+      if (target) target.messages = []
+      queuedUserMessages.value.delete(sid)
+      queueLengths.value.delete(sid)
+      if ((evt as any).clearHistory) {
+        const message = String((evt as any).message || '')
+        if (message) {
+          addMessage(sid, {
+            id: uid(),
+            role: 'command',
+            content: message,
+            timestamp: Date.now(),
+            systemType: (evt as any).ok === false ? 'error' : 'command',
+            commandAction: action,
+            commandData: { ...(evt as any) },
+          })
+        }
+      }
+      return
+    }
+
+    if (action === 'title' && target && typeof (evt as any).title === 'string') {
+      target.title = (evt as any).title
+      target.updatedAt = Date.now()
+    }
+
+    if (action === 'usage' && target) {
+      target.inputTokens = (evt as any).inputTokens
+      target.outputTokens = (evt as any).outputTokens
+    }
+
+    if (action === 'destroy') {
+      streamStates.value.delete(sid)
+      serverWorking.value.delete(sid)
+      queueLengths.value.delete(sid)
+      queuedUserMessages.value.delete(sid)
+      setAbortState(null)
+      const msgs = getSessionMsgs(sid)
+      msgs.forEach(m => {
+        if (m.isStreaming) updateMessage(sid, m.id, { isStreaming: false })
+        if (m.role === 'tool' && m.toolStatus === 'running') m.toolStatus = 'error'
+      })
+    }
+
+    const message = String((evt as any).message || '')
+    if (message) {
+      addMessage(sid, {
+        id: uid(),
+        role: 'command',
+        content: message,
+        timestamp: Date.now(),
+        systemType: (evt as any).ok === false ? 'error' : 'command',
+        commandAction: action,
+        commandData: { ...(evt as any) },
+      })
+    }
+  }
+
   function enqueueUserMessage(sessionId: string, message: Message) {
     const queue = queuedUserMessages.value.get(sessionId) || []
     queue.push({ ...message, queued: true })
@@ -776,15 +844,18 @@ export const useChatStore = defineStore('chat', () => {
 
     // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
-    const shouldQueue = isSessionLive(sid)
+    const isBridgeSlashCommand = activeSession.value?.source === 'cli' && content.trim().startsWith('/')
+    const wasLiveBeforeSend = isSessionLive(sid)
+    const shouldQueue = wasLiveBeforeSend && !isBridgeSlashCommand
 
     const userMsg: Message = {
       id: uid(),
-      role: 'user',
+      role: isBridgeSlashCommand ? 'command' : 'user',
       content: content.trim(),
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
       queued: shouldQueue,
+      systemType: isBridgeSlashCommand ? 'command' : undefined,
     }
 
     if (!shouldQueue) {
@@ -894,6 +965,11 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'run.queued': {
               queueLengths.value.set(sid, (evt as any).queue_length || 0)
+              break
+            }
+
+            case 'session.command': {
+              handleSessionCommandEvent(evt)
               break
             }
 
@@ -1272,7 +1348,9 @@ export const useChatStore = defineStore('chat', () => {
         undefined,
       )
 
-      streamStates.value.set(sid, ctrl)
+      if (!isBridgeSlashCommand || !wasLiveBeforeSend) {
+        streamStates.value.set(sid, ctrl)
+      }
     } catch (err: any) {
       addMessage(sid, {
         id: uid(),
@@ -1330,6 +1408,11 @@ export const useChatStore = defineStore('chat', () => {
       switch (evt.event) {
         case 'run.queued': {
           queueLengths.value.set(sid, (evt as any).queue_length || 0)
+          break
+        }
+
+        case 'session.command': {
+          handleSessionCommandEvent(evt)
           break
         }
 
@@ -1685,6 +1768,7 @@ export const useChatStore = defineStore('chat', () => {
       onAbortStarted: (evt) => handleEvent(evt),
       onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
+      onSessionCommand: (evt) => handleEvent(evt),
       onRunQueued: (evt) => handleEvent(evt),
     })
 

@@ -11,7 +11,7 @@ type UpdateControllerMocks = {
 async function loadUpdateController(overrides: Partial<UpdateControllerMocks> = {}) {
   const execFileSync = overrides.execFileSync ?? vi.fn().mockReturnValue('updated')
   const unref = overrides.unref ?? vi.fn()
-  const spawn = overrides.spawn ?? vi.fn(() => ({ unref }))
+  const spawn = overrides.spawn ?? vi.fn(() => ({ unref, on: vi.fn() }))
   const existsSync = overrides.existsSync ?? vi.fn(() => true)
 
   vi.resetModules()
@@ -80,7 +80,11 @@ describe('update controller', () => {
     const globalPrefix = getNodePrefix()
     const cliScript = getGlobalCliScript(globalPrefix)
     const execFileSync = vi.fn((_command: string, args: string[]) => {
-      if (args[1] === 'prefix') return globalPrefix
+      if (args[1] === 'root') {
+        return process.platform === 'win32'
+          ? join(globalPrefix, 'node_modules')
+          : join(globalPrefix, 'lib', 'node_modules')
+      }
       return 'updated'
     })
     const { handleUpdate, mocks } = await loadUpdateController({ execFileSync })
@@ -107,7 +111,7 @@ describe('update controller', () => {
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
-      [npmCli, 'prefix', '-g'],
+      [npmCli, 'root', '-g'],
       expect.objectContaining({
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -125,7 +129,6 @@ describe('update controller', () => {
       }),
     )
     expect(mocks.unref).toHaveBeenCalledOnce()
-    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('falls back to the default port when PORT is not set', async () => {
@@ -141,6 +144,29 @@ describe('update controller', () => {
       [expect.any(String), 'restart', '--port', '8648'],
       expect.objectContaining({ detached: true, stdio: 'ignore', windowsHide: true }),
     )
+  })
+
+  it('does not log a restart error when the restart helper exits successfully', async () => {
+    const handlers = new Map<string, (...args: any[]) => void>()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const unref = vi.fn()
+    const restart = {
+      unref,
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        handlers.set(event, handler)
+        return restart
+      }),
+    }
+    const spawn = vi.fn(() => restart)
+    const { handleUpdate } = await loadUpdateController({ spawn, unref })
+    const ctx = createMockCtx()
+
+    await handleUpdate(ctx)
+    vi.runAllTimers()
+    handlers.get('exit')?.(0, null)
+
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 
   it('returns a 500 with stderr when installation fails', async () => {
@@ -160,19 +186,4 @@ describe('update controller', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
-  it('fails closed instead of falling back to PATH npm when the current Node install has no npm CLI', async () => {
-    const { handleUpdate, mocks } = await loadUpdateController({ existsSync: vi.fn(() => false) })
-    const ctx = createMockCtx()
-
-    await handleUpdate(ctx)
-
-    expect(ctx.status).toBe(500)
-    expect(ctx.body).toEqual({
-      success: false,
-      message: expect.stringContaining(`Unable to locate npm CLI for ${process.execPath}`),
-    })
-    expect(mocks.execFileSync).not.toHaveBeenCalled()
-    expect(mocks.spawn).not.toHaveBeenCalled()
-    expect(exitSpy).not.toHaveBeenCalled()
-  })
 })

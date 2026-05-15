@@ -18,6 +18,7 @@ import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle
 import { handleBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
+import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 
 export type { ContentBlock } from './types'
@@ -70,6 +71,32 @@ export class ChatRunSocket {
     }) => {
       if (data.session_id) {
         const state = getOrCreateSession(this.sessionMap, data.session_id)
+        const source = resolveRunSource(data.source, data.session_id)
+        const command = parseSessionCommand(data.input)
+        if (command && source === 'cli') {
+          try {
+            await handleSessionCommand(data.session_id, command, {
+              nsp: this.nsp,
+              socket,
+              sessionMap: this.sessionMap,
+              bridge: this.bridge,
+              gatewayManager: this.gatewayManager,
+              profile: currentProfile(),
+              model: data.model,
+              instructions: data.instructions,
+              runQueuedItem: this.runQueuedItem.bind(this),
+            })
+          } catch (err) {
+            this.emitToSession(socket, data.session_id, 'session.command', {
+              event: 'session.command',
+              command: command.rawName,
+              ok: false,
+              action: 'error',
+              message: err instanceof Error ? err.message : String(err),
+            })
+          }
+          return
+        }
         if (state.isWorking) {
           state.queue.push({
             queue_id: data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -77,7 +104,7 @@ export class ChatRunSocket {
             model: data.model,
             instructions: data.instructions,
             profile: currentProfile(),
-            source: resolveRunSource(data.source, data.session_id),
+            source,
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
             event: 'run.queued',
@@ -89,7 +116,7 @@ export class ChatRunSocket {
         }
         state.isWorking = true
         state.profile = currentProfile()
-        state.source = resolveRunSource(data.source, data.session_id)
+        state.source = source
       }
       try {
         await this.handleRun(socket, data, currentProfile())
@@ -169,6 +196,7 @@ export class ChatRunSocket {
     skipUserMessage = false,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
+    if (data.session_id && source === 'cli' && isSessionCommand(data.input)) return
 
     if (source === 'cli') {
       let fullInstructions = data.instructions

@@ -77,6 +77,7 @@ const sessionEventHandlers = new Map<string, {
   onAbortStarted: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
+  onSessionCommand?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
@@ -291,6 +292,16 @@ function globalUsageUpdatedHandler(event: RunEvent): void {
   }
 }
 
+function globalSessionCommandHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onSessionCommand) {
+    handlers.onSessionCommand(event)
+  }
+}
+
 function globalApprovalRequestedHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
@@ -334,6 +345,7 @@ export function registerSessionHandlers(
     onAbortStarted: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
+    onSessionCommand?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
@@ -436,6 +448,7 @@ export function connectChatRun(): Socket {
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
+    chatRunSocket.on('session.command', globalSessionCommandHandler)
 
     globalListenersRegistered = true
   }
@@ -564,6 +577,14 @@ export function startRunViaSocket(
     onUsageUpdated: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
+    },
+    onSessionCommand: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+      if ((evt as any).terminal === false) return
+      closed = true
+      sessionEventHandlers.delete(sid)
+      onDone()
     },
     onRunQueued: (evt: RunEvent) => {
       if (closed) return

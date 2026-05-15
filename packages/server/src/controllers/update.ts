@@ -131,7 +131,10 @@ export async function handleUpdate(ctx: any) {
       })
       restart.on('exit', (code, signal) => {
         updateInProgress = false
-        console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+        const failed = (typeof code === 'number' && code !== 0) || Boolean(signal)
+        if (failed) {
+          console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+        }
       })
       restart.unref()
     }, 3000)
