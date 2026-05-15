@@ -1,7 +1,7 @@
 export default {
   // 登入
   login: {
-    title: 'Hermes Web UI',
+    title: 'QuantHermes Web UI',
     description: '輸入存取權杖以繼續。權杖可在伺服器啟動日誌中查看。',
     placeholder: '存取權杖',
     submit: '登入',
@@ -146,8 +146,8 @@ export default {
     webUiSessions: '工作階段',
     sessionScopeHint: '這裡只顯示目前工作階段；CLI、Telegram、Discord、Cron 等頻道工作階段在歷史中以唯讀方式查看。',
     openHistory: '開啟歷史',
-    hermesHistory: 'Hermes 歷史',
-    historyScopeHint: '這裡按來源以唯讀方式查看 Hermes 歷史工作階段。',
+    hermesHistory: 'QuantHermes 歷史',
+    historyScopeHint: '這裡按來源以唯讀方式查看 QuantHermes 歷史工作階段。',
     noSessions: '目前無工作階段',
     searchTitle: '搜尋工作階段',
     searchSubtitle: '依標題或訊息內容搜尋',
@@ -410,7 +410,7 @@ export default {
   plugins: {
     title: '插件',
     refresh: '重新整理',
-    notice: '唯讀顯示可發現的 Hermes 插件 manifest。發現元資料讀取不會載入插件程式碼。v1 管理動作仍保留在 CLI，新 Hermes 工作階段生效。',
+    notice: '唯讀顯示可發現的 QuantHermes 插件 manifest。發現元資料讀取不會載入插件程式碼。v1 管理動作仍保留在 CLI，新 QuantHermes 工作階段生效。',
     loadFailed: '載入插件失敗',
     commandCopied: '指令已複製',
     searchPlaceholder: '搜尋 key、名稱、描述、路徑...',
@@ -538,13 +538,13 @@ export default {
     copilotDenied: '授權被拒絕。',
     copilotExpired: '授權連結已過期，請重試。',
     copilotAddDetectedTitle: '偵測到 GitHub Copilot',
-    copilotAddDetected: '已在本機偵測到 GitHub Copilot OAuth 憑證，點擊「新增」即可在 Hermes 中啟用 Copilot。',
+    copilotAddDetected: '已在本機偵測到 GitHub Copilot OAuth 憑證，點擊「新增」即可在 QuantHermes 中啟用 Copilot。',
     copilotAddSourceEnv: '來源：~/.hermes/.env（COPILOT_GITHUB_TOKEN）',
     copilotAddSourceGhCli: '來源：gh CLI（gh auth token）',
     copilotAddSourceAppsJson: '來源：VS Code Copilot 插件（apps.json）',
     copilotDeleteHintEnv: '此操作會清除 ~/.hermes/.env 中的 COPILOT_GITHUB_TOKEN，不影響其他工具。',
-    copilotDeleteHintGhCli: 'Copilot 將從 Hermes 清單移除。不會影響 gh CLI —— `gh auth status` 仍顯示已登入。',
-    copilotDeleteHintAppsJson: 'Copilot 將從 Hermes 清單移除。不會影響 VS Code Copilot 插件的登入。',
+    copilotDeleteHintGhCli: 'Copilot 將從 QuantHermes 清單移除。不會影響 gh CLI —— `gh auth status` 仍顯示已登入。',
+    copilotDeleteHintAppsJson: 'Copilot 將從 QuantHermes 清單移除。不會影響 VS Code Copilot 插件的登入。',
     customBadge: '自訂',
     previewBadge: '預覽',
     disabledBadge: '不可用',
@@ -989,7 +989,7 @@ export default {
 
   skillsUsage: {
     title: '技能用量',
-    subtitle: '追蹤 Hermes 工作階段中的技能載入與編輯',
+    subtitle: '追蹤 QuantHermes 工作階段中的技能載入與編輯',
     refresh: '重新整理',
     periodSelector: '技能用量期間',
     periodLabel: '{days}天',

@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Hermes Web UI</strong>
+  <strong>QuantHermes Web UI</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="Hermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="QuantHermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="Hermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="QuantHermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">

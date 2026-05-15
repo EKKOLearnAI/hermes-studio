@@ -1,7 +1,7 @@
 export default {
   // ログイン
   login: {
-    title: 'Hermes Web UI',
+    title: 'QuantHermes Web UI',
     description: 'アクセストークンを入力して続行してください。サーバーの起動ログで確認できます。',
     placeholder: 'アクセストークン',
     submit: 'ログイン',
@@ -131,8 +131,8 @@ export default {
     webUiSessions: 'セッション',
     sessionScopeHint: 'チャットには Web UI/API Server セッションのみ表示されます。CLI、Telegram、Discord、Cron などのチャンネルセッションは履歴で読み取り専用として表示されます。',
     openHistory: '履歴を開く',
-    hermesHistory: 'Hermes 履歴',
-    historyScopeHint: 'ソース別にグループ化された Hermes 履歴セッションを読み取り専用で表示します。',
+    hermesHistory: 'QuantHermes 履歴',
+    historyScopeHint: 'ソース別にグループ化された QuantHermes 履歴セッションを読み取り専用で表示します。',
     noSessions: 'セッションがありません',
     newChat: '新しいチャット',
     deleteSession: 'このセッションを削除しますか？',
@@ -284,7 +284,7 @@ export default {
   plugins: {
     title: 'プラグイン',
     refresh: '更新',
-    notice: '検出可能な Hermes プラグイン manifest の読み取り専用インベントリです。検出メタデータはプラグインコードを読み込まずに取得します。v1 の管理操作は CLI のままで、変更は新しい Hermes セッションで有効になります。',
+    notice: '検出可能な QuantHermes プラグイン manifest の読み取り専用インベントリです。検出メタデータはプラグインコードを読み込まずに取得します。v1 の管理操作は CLI のままで、変更は新しい QuantHermes セッションで有効になります。',
     loadFailed: 'プラグインの読み込みに失敗しました',
     commandCopied: 'コマンドをコピーしました',
     searchPlaceholder: 'key、名前、説明、パスを検索...',
@@ -410,13 +410,13 @@ export default {
     copilotDenied: '認証が拒否されました。',
     copilotExpired: '認証リンクの有効期限が切れました。もう一度お試しください。',
     copilotAddDetectedTitle: 'GitHub Copilot を検出しました',
-    copilotAddDetected: 'このマシンで GitHub Copilot OAuth トークンを検出しました。「追加」をクリックして Hermes で Copilot を有効化します。',
+    copilotAddDetected: 'このマシンで GitHub Copilot OAuth トークンを検出しました。「追加」をクリックして QuantHermes で Copilot を有効化します。',
     copilotAddSourceEnv: 'ソース: ~/.hermes/.env (COPILOT_GITHUB_TOKEN)',
     copilotAddSourceGhCli: 'ソース: gh CLI (gh auth token)',
     copilotAddSourceAppsJson: 'ソース: VS Code Copilot 拡張機能 (apps.json)',
     copilotDeleteHintEnv: 'この操作で ~/.hermes/.env の COPILOT_GITHUB_TOKEN を消去します。他のツールには影響しません。',
-    copilotDeleteHintGhCli: 'Copilot は Hermes 上で非表示になります。gh CLI のログインには影響しません — `gh auth status` は引き続きログイン状態を表示します。',
-    copilotDeleteHintAppsJson: 'Copilot は Hermes 上で非表示になります。VS Code Copilot 拡張機能のログインには影響しません。',
+    copilotDeleteHintGhCli: 'Copilot は QuantHermes 上で非表示になります。gh CLI のログインには影響しません — `gh auth status` は引き続きログイン状態を表示します。',
+    copilotDeleteHintAppsJson: 'Copilot は QuantHermes 上で非表示になります。VS Code Copilot 拡張機能のログインには影響しません。',
     customBadge: 'カスタム',
     previewBadge: 'プレビュー',
     disabledBadge: '利用不可',
@@ -761,7 +761,7 @@ export default {
 
   skillsUsage: {
     title: 'スキル使用状況',
-    subtitle: 'Hermes セッションでのスキル読み込みと編集を追跡します',
+    subtitle: 'QuantHermes セッションでのスキル読み込みと編集を追跡します',
     refresh: '更新',
     periodSelector: 'スキル使用期間',
     periodLabel: '{days}日',

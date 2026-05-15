@@ -1,7 +1,7 @@
 export default {
   // 로그인
   login: {
-    title: 'Hermes Web UI',
+    title: 'QuantHermes Web UI',
     description: '계속하려면 액세스 토큰을 입력하세요. 서버 시작 로그에서 확인할 수 있습니다.',
     placeholder: '액세스 토큰',
     submit: '로그인',
@@ -131,8 +131,8 @@ export default {
     webUiSessions: '세션',
     sessionScopeHint: '채팅에는 Web UI/API Server 세션만 표시됩니다. CLI, Telegram, Discord, Cron 등 채널 세션은 기록에서 읽기 전용으로 볼 수 있습니다.',
     openHistory: '기록 열기',
-    hermesHistory: 'Hermes 기록',
-    historyScopeHint: '소스별로 그룹화된 Hermes 기록 세션을 읽기 전용으로 봅니다.',
+    hermesHistory: 'QuantHermes 기록',
+    historyScopeHint: '소스별로 그룹화된 QuantHermes 기록 세션을 읽기 전용으로 봅니다.',
     noSessions: '세션 없음',
     newChat: '새 채팅',
     deleteSession: '이 세션을 삭제하시겠습니까?',
@@ -284,7 +284,7 @@ export default {
   plugins: {
     title: '플러그인',
     refresh: '새로고침',
-    notice: '탐색 가능한 Hermes 플러그인 manifest의 읽기 전용 인벤토리입니다. 탐색 메타데이터는 플러그인 코드를 로드하지 않고 읽습니다. v1의 관리 작업은 CLI에 유지되며, 변경 사항은 새 Hermes 세션에서 적용됩니다.',
+    notice: '탐색 가능한 QuantHermes 플러그인 manifest의 읽기 전용 인벤토리입니다. 탐색 메타데이터는 플러그인 코드를 로드하지 않고 읽습니다. v1의 관리 작업은 CLI에 유지되며, 변경 사항은 새 QuantHermes 세션에서 적용됩니다.',
     loadFailed: '플러그인을 불러오지 못했습니다',
     commandCopied: '명령을 복사했습니다',
     searchPlaceholder: 'key, 이름, 설명, 경로 검색...',
@@ -410,13 +410,13 @@ export default {
     copilotDenied: '인증이 거부되었습니다.',
     copilotExpired: '인증 링크가 만료되었습니다. 다시 시도하세요.',
     copilotAddDetectedTitle: 'GitHub Copilot 감지됨',
-    copilotAddDetected: '이 컴퓨터에서 GitHub Copilot OAuth 토큰이 감지되었습니다. 추가를 클릭하여 Hermes에서 Copilot을 활성화하세요.',
+    copilotAddDetected: '이 컴퓨터에서 GitHub Copilot OAuth 토큰이 감지되었습니다. 추가를 클릭하여 QuantHermes에서 Copilot을 활성화하세요.',
     copilotAddSourceEnv: '출처: ~/.hermes/.env (COPILOT_GITHUB_TOKEN)',
     copilotAddSourceGhCli: '출처: gh CLI (gh auth token)',
     copilotAddSourceAppsJson: '출처: VS Code Copilot 확장 (apps.json)',
     copilotDeleteHintEnv: '이 작업은 ~/.hermes/.env의 COPILOT_GITHUB_TOKEN을 지웁니다. 다른 도구에는 영향이 없습니다.',
-    copilotDeleteHintGhCli: 'Copilot이 Hermes에서 숨겨집니다. gh CLI 로그인에는 영향이 없으며 `gh auth status`는 여전히 로그인 상태를 표시합니다.',
-    copilotDeleteHintAppsJson: 'Copilot이 Hermes에서 숨겨집니다. VS Code Copilot 확장 로그인에는 영향이 없습니다.',
+    copilotDeleteHintGhCli: 'Copilot이 QuantHermes에서 숨겨집니다. gh CLI 로그인에는 영향이 없으며 `gh auth status`는 여전히 로그인 상태를 표시합니다.',
+    copilotDeleteHintAppsJson: 'Copilot이 QuantHermes에서 숨겨집니다. VS Code Copilot 확장 로그인에는 영향이 없습니다.',
     customBadge: '커스텀',
     previewBadge: '프리뷰',
     disabledBadge: '사용 불가',
@@ -761,7 +761,7 @@ export default {
 
   skillsUsage: {
     title: '스킬 사용량',
-    subtitle: 'Hermes 세션의 스킬 로드와 편집을 추적합니다',
+    subtitle: 'QuantHermes 세션의 스킬 로드와 편집을 추적합니다',
     refresh: '새로고침',
     periodSelector: '스킬 사용량 기간',
     periodLabel: '{days}일',

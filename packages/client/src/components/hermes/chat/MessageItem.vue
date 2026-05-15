@@ -568,7 +568,7 @@ onBeforeUnmount(() => {
         <img
           v-if="message.role === 'assistant'"
           src="/logo.png"
-          alt="Hermes"
+          alt="QuantHermes"
           class="msg-avatar"
         />
         <div class="msg-content" :class="message.role">
