@@ -49,6 +49,7 @@ const execFileAsync = promisify(execFile)
 
 const HERMES_BASE = detectHermesHome()
 const HERMES_BIN = getHermesBin()
+const DEFAULT_WEB_UI_PORT = 8648
 
 /**
  * 检测系统的 init 系统（服务管理器）
@@ -172,6 +173,11 @@ export function buildGatewayProcessEnv(profileName: string, hermesHome: string):
     ...base,
     HERMES_HOME: hermesHome,
   }
+}
+
+function getWebUiPort(): number | null {
+  const port = parseInt(process.env.PORT || String(DEFAULT_WEB_UI_PORT), 10)
+  return port > 0 && port <= 65535 ? port : null
 }
 
 // ============================
@@ -472,6 +478,8 @@ export class GatewayManager {
         usedPorts.add(gw.port)
       }
     }
+    const webUiPort = getWebUiPort()
+    if (webUiPort !== null) usedPorts.add(webUiPort)
 
     const port = await this.findFreePort(8642, host, usedPorts)
     if (configuredPort !== port) {

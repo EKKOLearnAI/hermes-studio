@@ -170,3 +170,20 @@ describe('GatewayManager gateway process env', () => {
     expect(env.CUSTOM_GATEWAY_SETTING).toBe('from-parent')
   })
 })
+
+describe('GatewayManager gateway port allocation', () => {
+  it('skips the Web UI listen port when assigning gateway ports', async () => {
+    const home = createHermesHome()
+    mkdirSync(join(home, 'profiles', 'work'), { recursive: true })
+    process.env.HERMES_HOME = home
+    process.env.PORT = '8648'
+    vi.resetModules()
+    const { GatewayManager } = await import('../../packages/server/src/services/hermes/gateway-manager')
+    const manager = new GatewayManager('default') as any
+    manager.allocatedPorts = new Set([8642, 8643, 8644, 8645, 8646, 8647])
+
+    const endpoint = await manager.resolvePort('work')
+
+    expect(endpoint.port).toBe(8649)
+  })
+})
