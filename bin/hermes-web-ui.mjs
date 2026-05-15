@@ -447,7 +447,22 @@ Options:
 function doUpdate() {
   console.log('  ⬆ Updating hermes-web-ui...')
 
-  const child = spawnCli(getNpmBin(), ['install', '-g', 'hermes-web-ui@latest'], {
+  const npm = getNpmBin()
+  try {
+    console.log('  🧹 Cleaning npm cache...')
+    execFileSync(npm, ['cache', 'clean', '--force'], {
+      stdio: 'inherit',
+      env: getCurrentNodeEnv(),
+    })
+  } catch (err) {
+    console.log(`  ⚠ Failed to clean npm cache, continuing update: ${err?.message || err}`)
+  }
+
+  runUpdateInstall(npm)
+}
+
+function runUpdateInstall(npm) {
+  const child = spawnCli(npm, ['install', '-g', 'hermes-web-ui@latest'], {
     stdio: 'inherit',
     windowsHide: true,
     env: getCurrentNodeEnv(),

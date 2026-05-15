@@ -81,6 +81,12 @@ function getGlobalCliScript() {
 }
 
 function runUpdateInstall() {
+  try {
+    runNpm(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
+  } catch (err) {
+    console.warn('[update] failed to clean npm cache, continuing update:', err)
+  }
+
   return runNpm(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
 }
 
