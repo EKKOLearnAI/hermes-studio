@@ -17,6 +17,15 @@ function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+function generateInviteCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    let code = ''
+    for (let i = 0; i < 6; i++) {
+        code += chars[Math.floor(Math.random() * chars.length)]
+    }
+    return code
+}
+
 // Create room
 groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     if (!chatServer) {
@@ -58,6 +67,61 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
             await chatServer.agentClients.addAgentToRoom(roomId, client)
         } catch (err: any) {
             console.error(`[GroupChat] Failed to connect agent ${a.profile} to room ${roomId}: ${err.message}`)
+        }
+    }
+
+    const room = storage.getRoom(roomId)
+    ctx.body = { room, agents: addedAgents }
+})
+
+// Clone room roles/config without copying the conversation context.
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const sourceRoom = chatServer.getStorage().getRoom(ctx.params.roomId)
+    if (!sourceRoom) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+
+    const { name, inviteCode } = ctx.request.body as { name?: string; inviteCode?: string }
+    const roomId = generateId()
+    const storage = chatServer.getStorage()
+    const code = inviteCode?.trim() || generateInviteCode()
+    storage.saveRoom(roomId, name?.trim() || `${sourceRoom.name} Copy`, code, {
+        triggerTokens: sourceRoom.triggerTokens,
+        maxHistoryTokens: sourceRoom.maxHistoryTokens,
+        tailMessageCount: sourceRoom.tailMessageCount,
+    })
+
+    const addedAgents = []
+    for (const sourceAgent of storage.getRoomAgents(sourceRoom.id)) {
+        const agentId = generateId()
+        const agent = storage.addRoomAgent(
+            roomId,
+            agentId,
+            sourceAgent.profile,
+            sourceAgent.name,
+            sourceAgent.description,
+            sourceAgent.invited,
+        )
+        addedAgents.push(agent)
+
+        try {
+            const client = await chatServer.agentClients.createAgent({
+                profile: agent.profile,
+                name: agent.name,
+                description: agent.description,
+                invited: agent.invited,
+            })
+            await chatServer.agentClients.addAgentToRoom(roomId, client)
+        } catch (err: any) {
+            console.error(`[GroupChat] Failed to connect cloned agent ${agent.profile} to room ${roomId}: ${err.message}`)
         }
     }
 
@@ -216,6 +280,26 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     // Delete all data
     chatServer.getStorage().deleteRoom(roomId)
     ctx.body = { success: true }
+})
+
+// Clear current room context while keeping members, agents, and room config.
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clear-context', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const roomId = ctx.params.roomId
+    if (!chatServer.getStorage().getRoom(roomId)) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+
+    chatServer.getStorage().clearRoomContext(roomId)
+    chatServer.clearRoomRuntimeState(roomId)
+    ctx.body = { success: true, room: chatServer.getStorage().getRoom(roomId) }
 })
 
 // Update room compression config

@@ -233,6 +233,14 @@ class ChatStorage {
         ).run(msg.id, msg.roomId, msg.senderId, msg.senderName, msg.content, msg.timestamp)
     }
 
+    clearRoomContext(roomId: string): void {
+        const db = this.db()
+        if (!db) return
+        db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+        db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+        db.prepare('UPDATE gc_rooms SET totalTokens = 0 WHERE id = ?').run(roomId)
+    }
+
     pruneMessages(roomId: string, keep = 500): void {
         const db = this.db()
         if (!db) return
@@ -481,6 +489,18 @@ export class GroupChatServer {
 
     getRoomIds(): string[] {
         return Array.from(this.rooms.keys())
+    }
+
+    clearRoomRuntimeState(roomId: string): void {
+        const roomTyping = this.typingState.get(roomId)
+        if (roomTyping) {
+            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+            this.typingState.delete(roomId)
+        }
+        this.contextStatusState.delete(roomId)
+        this.agentClients.resetRoomContext(roomId)
+        this.nsp.to(roomId).emit('room_cleared', { roomId, totalTokens: 0 })
+        this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens: 0 })
     }
 
     // ─── Restore Agents ─────────────────────────────────────────

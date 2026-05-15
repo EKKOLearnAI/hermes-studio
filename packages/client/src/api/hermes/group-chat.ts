@@ -125,6 +125,14 @@ export async function createRoom(data: {
     })
 }
 
+export async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }): Promise<{ room: RoomInfo; agents: RoomAgent[] }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+    })
+}
+
 export async function listRooms(): Promise<{ rooms: RoomInfo[] }> {
     return request('/api/hermes/group-chat/rooms')
 }
@@ -171,6 +179,12 @@ export async function removeAgent(roomId: string, agentId: string): Promise<void
 export async function deleteRoom(roomId: string): Promise<void> {
     return request(`/api/hermes/group-chat/rooms/${roomId}`, {
         method: 'DELETE',
+    })
+}
+
+export async function clearRoomContext(roomId: string): Promise<{ success: boolean; room: RoomInfo }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/clear-context`, {
+        method: 'POST',
     })
 }
 
