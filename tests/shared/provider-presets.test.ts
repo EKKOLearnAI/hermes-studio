@@ -7,6 +7,8 @@ import {
 
 const OPENAI_CODEX_PROVIDER = 'openai-codex'
 const GPT_5_5_MODEL = 'gpt-5.5'
+const HERMES_AGENT_PROVIDER = 'hermes-agent'
+const HERMES_AGENT_MODEL = 'hermes-agent'
 
 function modelsForProvider(providerPresets: Array<{ value: string; models: string[] }>, provider: string): string[] {
   const preset = providerPresets.find((candidate) => candidate.value === provider)
@@ -21,5 +23,10 @@ describe('provider presets', () => {
 
   it('exposes GPT-5.5 through provider model maps', () => {
     expect(buildServerProviderModelMap()[OPENAI_CODEX_PROVIDER]).toContain(GPT_5_5_MODEL)
+  })
+
+  it('lists the local Hermes Agent model', () => {
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, HERMES_AGENT_PROVIDER)).toContain(HERMES_AGENT_MODEL)
+    expect(buildServerProviderModelMap()[HERMES_AGENT_PROVIDER]).toContain(HERMES_AGENT_MODEL)
   })
 })

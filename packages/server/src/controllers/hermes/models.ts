@@ -9,6 +9,7 @@ import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
+const LOCAL_NO_AUTH_PROVIDERS = new Set(['cliproxyapi', 'hermes-agent'])
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
 type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[] }
@@ -222,6 +223,8 @@ export async function getAvailable(ctx: any) {
         if (providerKey === 'copilot') {
           if (!copilotEnabled) continue
           if (!(await isCopilotAuthorized(envContent))) continue
+        } else if (LOCAL_NO_AUTH_PROVIDERS.has(providerKey)) {
+          // Server-local OpenAI-compatible endpoints do not need Hermes auth entries.
         } else if (!isOAuthAuthorized(providerKey)) {
           continue
         }
@@ -250,11 +253,11 @@ export async function getAvailable(ctx: any) {
           }
           if (Object.keys(modelMeta).length === 0) modelMeta = undefined
         }
-      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
-        // OpenRouter and local CLIProxyAPI expose dynamic OpenAI-compatible /models catalogs.
-        if (envMapping.api_key_env) {
+      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'hermes-agent' || providerKey === 'ollama-cloud') {
+        // OpenRouter and local endpoints expose dynamic OpenAI-compatible /models catalogs.
+        if (envMapping.api_key_env || LOCAL_NO_AUTH_PROVIDERS.has(providerKey)) {
           const apiKey = envGetValue(envMapping.api_key_env)
-          if (apiKey) {
+          if (apiKey || LOCAL_NO_AUTH_PROVIDERS.has(providerKey)) {
             try {
               const fetched = await fetchProviderModels(baseUrl, apiKey, providerKey === 'openrouter')
               if (fetched.length > 0) modelsList = fetched

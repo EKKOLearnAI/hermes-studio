@@ -6,7 +6,7 @@ import { readConfigYaml, writeConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from 
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'hermes-agent'])
 
 async function clearStoredAuthProvider(poolKey: string) {
   try {

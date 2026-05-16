@@ -279,6 +279,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'Hermes Agent',
+    value: 'hermes-agent',
+    builtin: true,
+    base_url: 'http://127.0.0.1:8642/v1',
+    models: ['hermes-agent'],
+  },
+  {
     label: 'OpenCode Zen',
     value: 'opencode-zen',
     builtin: true,

@@ -28,6 +28,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
   kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: '' },
   'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: '' },
   cliproxyapi: { api_key_env: '', base_url_env: '' },
+  'hermes-agent': { api_key_env: '', base_url_env: '' },
   'opencode-zen': { api_key_env: 'OPENCODE_ZEN_API_KEY', base_url_env: '' },
   'opencode-go': { api_key_env: 'OPENCODE_GO_API_KEY', base_url_env: '' },
   huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
@@ -195,8 +196,10 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
   const base = baseUrl.replace(/\/+$/, '')
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
+    const headers: Record<string, string> = {}
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`
     const res = await fetch(modelsUrl, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers,
       signal: AbortSignal.timeout(8000),
     })
     if (!res.ok) {
