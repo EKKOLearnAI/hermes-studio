@@ -192,3 +192,99 @@ WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
   - 前端不显示更新按钮
 - 确认配置完成后：
   - 版本检测和安装都只指向自有包与自有 registry
+
+## 2026-05-16 - Armbian 源码部署改造
+
+### 任务背景
+
+- 在 Armbian / Ubuntu ARM64 设备上尝试使用 Docker 部署 `hermes-web-ui`
+- 已对 Docker 镜像源、镜像拉取失败、本地构建 fallback 做过多轮修复
+- 设备最终仍无法稳定访问 `docker.io`，导致：
+  - 预构建镜像拉取失败
+  - 本地构建时基础镜像 `nousresearch/hermes-agent:latest` 拉取失败
+- 目标切换为：提供一套宿主机源码部署方案，绕开 Docker Hub 依赖，同时保持一键安装、开机自启和文档可追踪
+
+### 问题分析
+
+- 设备对 `hub-mirror.c.163.com` 解析失败，脚本已能自动摘除坏镜像源
+- 回退到直连 `docker.io` 后，`registry-1.docker.io` 仍然超时
+- 继续坚持 Docker 方案意味着还需要同时处理：
+  - Docker Hub 镜像源
+  - `nousresearch/hermes-agent` 基础镜像获取
+  - `nodejs.org` 下载链路
+  - npm registry
+- 相比之下，源码部署虽然仍依赖网络，但链路可以拆成：
+  - Git 源码
+  - Hermes 官方安装脚本
+  - Node.js 二进制镜像
+  - npm 包镜像
+- 用户确认切换为源码部署，并要求 Hermes 也纳入自动安装流程，而不是手工前置安装
+
+### 方案设计
+
+- 新增独立的源码部署脚本，不与现有 Docker 部署脚本混在一起，避免两套路径互相污染
+- 脚本职责：
+  - 安装基础依赖
+  - 自动校时并兜底 `apt update`
+  - 创建专用运行用户
+  - 通过 `npmmirror` 下载 Node.js 23
+  - 调用 Hermes 官方安装脚本自动安装 Hermes Agent
+  - 为运行用户写入 npm 国内源配置
+  - 执行 `npm ci` 和 `npm run build`
+  - 生成 systemd 环境文件和服务文件
+  - 开机自启 `hermes-web-ui.service`
+- 运行模式改为：
+  - 宿主机源码构建
+  - `node dist/server/index.js`
+  - `systemd` 守护
+- Hermes 首次配置与绑定仍保留人工执行，避免在脚本中硬编码用户私有凭证流程
+
+### 实际修改内容
+
+- 新增源码部署脚本：
+  - `scripts/deploy-source-armbian.sh`
+- 新增 systemd 模板：
+  - `scripts/hermes-web-ui.service`
+- 新增源码部署文档：
+  - `docs/deploy-source-armbian.md`
+- README 增补源码部署入口：
+  - `README.md`
+  - `README_zh.md`
+- 工作日志补充：
+  - `docs/work-log.md`
+
+### 关键实现点
+
+- 运行用户默认使用 `hermesui`，避免直接以交互用户承载 systemd 服务
+- Node.js 23 默认从 `npmmirror` 下载，失败时回退官方源
+- Hermes 官方安装脚本默认先走 `jsdelivr`，失败时回退 `raw.githubusercontent.com`
+- Hermes 官方安装默认附带：
+  - `--skip-setup`
+  - `--skip-browser`
+- npm 默认写入：
+  - `https://registry.npmmirror.com`
+  - `https://cdn.npmmirror.com/binaries`
+- 服务环境写入 `/etc/default/hermes-web-ui`
+- systemd 服务名固定为：
+  - `hermes-web-ui.service`
+
+### 验证记录
+
+- 对新增脚本和文档进行了静态复读，确认：
+  - Node 安装链路、Hermes 安装链路、npm 源配置、构建命令、systemd 变量传递逻辑完整
+  - README 与中文 README 均已增加源码部署入口
+- 计划对以下文件执行诊断检查：
+  - `scripts/deploy-source-armbian.sh`
+  - `scripts/hermes-web-ui.service`
+  - `docs/deploy-source-armbian.md`
+  - `README.md`
+  - `README_zh.md`
+
+### 当前结论
+
+- Docker 路径保留，但不再作为这类受限网络设备的唯一方案
+- 已为 Armbian / Ubuntu 设备补充源码部署通道
+- 下一步重点是：
+  - 校验新增脚本和文档诊断
+  - 提交本轮改动到 Git
+  - 由用户推送远端并在目标设备执行源码部署脚本验证

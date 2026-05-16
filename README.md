@@ -205,6 +205,21 @@ Open **http://localhost:6060**
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 
+### Armbian / Ubuntu Source Deployment
+
+If your device cannot reliably pull from Docker Hub, use the host-level source deployment path instead:
+
+```bash
+git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
+cd hermes-web-ui
+chmod +x scripts/deploy-source-armbian.sh
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+This path installs Hermes Agent, downloads Node.js 23 from a mirror, builds `hermes-web-ui` from source, and registers a `systemd` service.
+
+See [`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md) for the full workflow, custom env vars, and troubleshooting steps.
+
 ### CLI Commands
 
 | Command                           | Description                        |

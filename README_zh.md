@@ -213,6 +213,21 @@ docker compose logs -f hermes-webui
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)
 
+### Armbian / Ubuntu 源码部署
+
+如果你的设备无法稳定拉取 Docker Hub 镜像，推荐改用宿主机源码部署：
+
+```bash
+git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
+cd hermes-web-ui
+chmod +x scripts/deploy-source-armbian.sh
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+这条路径会自动安装 Hermes Agent、从镜像站下载 Node.js 23、源码构建 `hermes-web-ui`，并注册 `systemd` 服务。
+
+完整步骤、自定义变量和排障说明见：[`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md)
+
 ### CLI 命令
 
 | 命令 | 说明 |

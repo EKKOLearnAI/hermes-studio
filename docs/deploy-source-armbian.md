@@ -1,0 +1,385 @@
+# Armbian/Ubuntu 源码部署指南
+
+本文档面向无法稳定访问 Docker Hub 的 `Armbian / Ubuntu 24.04` 设备，目标是直接在宿主机完成：
+
+- 自动安装 `Hermes Agent`
+- 自动安装 `Node.js 23`
+- 自动配置国内 npm 源
+- 自动构建 `hermes-web-ui`
+- 自动写入 `systemd` 服务并设置开机自启
+- 保留 `Hermes` 首次绑定与模型配置为人工操作
+
+## 适用环境
+
+- Debian / Ubuntu / Armbian 系列系统
+- 推荐架构：
+  - `arm64 / aarch64`
+  - `amd64 / x86_64`
+- 设备可以访问：
+  - GitHub 仓库或其可用镜像/CDN
+  - `npmmirror` 镜像
+
+## 适用场景
+
+当以下任一条件成立时，推荐使用源码部署：
+
+- `docker.io` 无法稳定拉取镜像
+- Docker 国内镜像源无法解析或频繁超时
+- 设备网络对 `Docker Hub` 不友好，但 npm / Git 下载仍可用
+- 你希望直接使用宿主机进程 + `systemd` 管理服务
+
+## 相关文件
+
+- 部署脚本：`scripts/deploy-source-armbian.sh`
+- systemd 模板：`scripts/hermes-web-ui.service`
+
+## 快速开始
+
+### 1. 安装 Git
+
+```bash
+apt-get update -y
+apt-get install -y git
+```
+
+### 2. 拉取仓库
+
+```bash
+cd /opt
+git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
+cd /opt/hermes-web-ui
+```
+
+### 3. 执行源码一键部署
+
+```bash
+chmod +x scripts/deploy-source-armbian.sh
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+### 4. 完成 Hermes 首次配置
+
+默认运行用户是 `hermesui`，默认 `HERMES_HOME` 是 `/opt/hermes-web-ui/hermes_data`。
+
+部署完成后，手工执行：
+
+```bash
+sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesui/.local/bin/hermes setup
+sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesui/.local/bin/hermes model
+```
+
+完成后重启服务：
+
+```bash
+sudo systemctl restart hermes-web-ui.service
+```
+
+## 脚本默认行为
+
+脚本默认会按顺序执行：
+
+1. 检测系统是否为 Debian / Ubuntu / Armbian
+2. 检测 CPU 架构并匹配 Node 二进制包
+3. 自动校时；如失败则对 `apt update` 使用日期校验兜底
+4. 安装基础依赖：
+   - `git`
+   - `curl`
+   - `python3`
+   - `python3-venv`
+   - `python3-pip`
+   - `build-essential`
+   - `ffmpeg`
+   - `xz-utils`
+5. 创建运行用户 `hermesui`
+6. 使用 `npmmirror` 下载并安装 `Node.js 23`
+7. 自动执行官方 `Hermes Agent` 安装脚本
+   - 默认附带 `--skip-setup --skip-browser`
+8. 为运行用户写入 `~/.npmrc` 国内镜像配置
+9. 执行 `npm ci`
+10. 执行 `npm run build`
+11. 生成 `/etc/default/hermes-web-ui`
+12. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
+13. 启动并设置 `hermes-web-ui.service` 开机自启
+
+## 默认参数
+
+```bash
+DEPLOY_DIR=/opt/hermes-web-ui
+HERMES_HOME_DIR=/opt/hermes-web-ui/hermes_data
+APP_USER=hermesui
+PORT=6060
+AUTH_DISABLED=false
+NODE_REQUIRED_MAJOR=23
+NODE_VERSION=23.11.1
+NODE_INSTALL_DIR=/opt/node-v23
+NPM_REGISTRY=https://registry.npmmirror.com
+NODE_MIRROR_URL=https://npmmirror.com/mirrors/node
+HERMES_INSTALL_FLAGS="--skip-setup --skip-browser"
+```
+
+## 自定义参数
+
+你可以在运行脚本时覆盖这些变量。
+
+### 修改端口
+
+```bash
+sudo PORT=8080 ./scripts/deploy-source-armbian.sh
+```
+
+### 修改运行用户
+
+```bash
+sudo APP_USER=quantui ./scripts/deploy-source-armbian.sh
+```
+
+### 修改 Hermes 数据目录
+
+```bash
+sudo HERMES_HOME_DIR=/data/hermes ./scripts/deploy-source-armbian.sh
+```
+
+### 修改 Node 版本
+
+```bash
+sudo NODE_VERSION=23.12.0 ./scripts/deploy-source-armbian.sh
+```
+
+### 关闭认证
+
+```bash
+sudo AUTH_DISABLED=true ./scripts/deploy-source-armbian.sh
+```
+
+## 部署后目录说明
+
+典型目录结构如下：
+
+```text
+/opt/hermes-web-ui
+├─ dist
+├─ node_modules
+├─ packages
+├─ scripts
+└─ hermes_data
+```
+
+额外运行资产：
+
+```text
+/opt/node-v23
+└─ bin/node
+
+/etc/default/hermes-web-ui
+/etc/systemd/system/hermes-web-ui.service
+/home/hermesui/.local/bin/hermes
+/home/hermesui/.npmrc
+```
+
+## 服务管理
+
+### 查看状态
+
+```bash
+sudo systemctl status hermes-web-ui.service
+```
+
+### 查看日志
+
+```bash
+sudo journalctl -u hermes-web-ui.service -f
+```
+
+### 重启服务
+
+```bash
+sudo systemctl restart hermes-web-ui.service
+```
+
+### 停止服务
+
+```bash
+sudo systemctl stop hermes-web-ui.service
+```
+
+### 禁用开机自启
+
+```bash
+sudo systemctl disable --now hermes-web-ui.service
+```
+
+## 访问地址
+
+默认端口是 `6060`：
+
+```text
+http://设备IP:6060
+http://127.0.0.1:6060
+```
+
+## 手动验证
+
+### 检查 Node 版本
+
+```bash
+/opt/node-v23/bin/node -v
+/opt/node-v23/bin/npm -v
+```
+
+### 检查 Hermes 是否安装成功
+
+```bash
+sudo -u hermesui -H /home/hermesui/.local/bin/hermes version
+sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesui/.local/bin/hermes doctor
+```
+
+### 检查 Web UI 构建产物
+
+```bash
+ls -lah /opt/hermes-web-ui/dist
+ls -lah /opt/hermes-web-ui/dist/server
+```
+
+### 检查服务环境变量
+
+```bash
+cat /etc/default/hermes-web-ui
+systemctl cat hermes-web-ui.service
+```
+
+## 排障建议
+
+### 1. `apt update` 报 `Release file ... is not valid yet`
+
+脚本会自动：
+
+1. 尝试 `timedatectl set-ntp true`
+2. 尝试重启 `systemd-timesyncd`
+3. 如果仍失败，则使用：
+
+```bash
+apt-get -o Acquire::Check-Date=false update
+```
+
+### 2. Node 下载失败
+
+脚本默认先尝试：
+
+- `https://npmmirror.com/mirrors/node`
+
+失败后回退：
+
+- `https://nodejs.org/dist`
+
+如果你所在网络只能访问其他镜像，可手工覆盖：
+
+```bash
+sudo NODE_MIRROR_URL=https://your-node-mirror.example.com ./scripts/deploy-source-armbian.sh
+```
+
+### 3. Hermes 官方安装脚本下载失败
+
+脚本默认先尝试：
+
+- `https://cdn.jsdelivr.net/gh/NousResearch/hermes-agent@main/scripts/install.sh`
+
+失败后回退：
+
+- `https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh`
+
+如果你本地已有更稳定的镜像，也可以覆盖：
+
+```bash
+sudo HERMES_INSTALLER_MIRROR=https://your-mirror/install.sh ./scripts/deploy-source-armbian.sh
+```
+
+### 4. `npm ci` 很慢或失败
+
+脚本会为运行用户写入 `~/.npmrc`，默认使用：
+
+- `https://registry.npmmirror.com`
+- `https://cdn.npmmirror.com/binaries`
+
+如果你要手工验证：
+
+```bash
+sudo -u hermesui -H cat /home/hermesui/.npmrc
+sudo -u hermesui -H env PATH=/opt/node-v23/bin:$PATH npm config get registry
+```
+
+### 5. Hermes 已安装但还未配置
+
+源码部署脚本默认会给 Hermes 安装命令附带：
+
+```bash
+--skip-setup --skip-browser
+```
+
+这样可以避免一键部署过程中卡在交互式配置，也能减少 Playwright/Chromium 下载对网络的要求。
+
+部署完成后，请手工执行：
+
+```bash
+sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesui/.local/bin/hermes setup
+sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesui/.local/bin/hermes model
+```
+
+### 6. `systemd` 已启动但页面打不开
+
+先看服务状态：
+
+```bash
+sudo systemctl status hermes-web-ui.service
+```
+
+再看日志：
+
+```bash
+sudo journalctl -u hermes-web-ui.service -n 200 --no-pager
+```
+
+常见排查点：
+
+- `dist/server/index.js` 是否存在
+- `HERMES_BIN` 是否指向 `/home/hermesui/.local/bin/hermes`
+- `HERMES_HOME` 是否指向 `/opt/hermes-web-ui/hermes_data`
+- `hermes setup` / `hermes model` 是否已经完成
+
+### 7. 想重新部署
+
+如果你只是更新代码，推荐：
+
+```bash
+cd /opt/hermes-web-ui
+git pull --ff-only
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+如果你要彻底重置源码部署：
+
+```bash
+sudo systemctl disable --now hermes-web-ui.service
+sudo rm -f /etc/systemd/system/hermes-web-ui.service
+sudo rm -f /etc/default/hermes-web-ui
+sudo rm -rf /opt/node-v23
+sudo rm -rf /opt/hermes-web-ui
+sudo userdel -r hermesui
+sudo systemctl daemon-reload
+```
+
+## 为什么这里不用 Docker
+
+这个部署路径主要用于以下网络条件：
+
+- Docker Hub 直连超时
+- Docker 国内镜像源不可解析
+- 容器基础镜像和构建依赖拉取链路不稳定
+
+源码部署仍然需要网络，但它拆分成了：
+
+- `git` 拉取代码
+- `Hermes` 官方安装脚本
+- `Node.js` 二进制镜像
+- `npm` 包镜像
+
+相比单纯依赖 Docker Hub，这条链路在国内网络环境里通常更容易逐段兜底。
