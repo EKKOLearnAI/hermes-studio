@@ -54,6 +54,7 @@
 - 会话搜索 — Ctrl+K 搜索 Web UI 本地会话库；不包含只读 Hermes 历史会话
 - 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
 - 每个会话显示模型标签和上下文 Token 用量
+- 统一 `/chat-run` 管线 — `source=api_server` 通过当前 Profile 的 Hermes Gateway `/v1/responses`；`source=cli` 通过 Agent Bridge 连接进程内 Hermes AIAgent
 
 ### 平台渠道
 
@@ -89,6 +90,10 @@
 - 立即触发执行
 - Cron 表达式快捷预设
 
+### 看板 / 任务管理
+
+- 支持按看板管理任务，包含状态列、负责人、评论、任务关联、诊断、调度，以及会话/产物关联
+
 ### 模型管理
 
 - 从凭证池自动发现模型（`~/.hermes/auth.json`）
@@ -97,6 +102,13 @@
 - OpenAI Codex 和 Nous Portal OAuth 登录
 - Provider URL 自动检测，支持非 v1 API 版本（如 `/v4`）
 - Provider 级别模型分组，支持切换默认模型
+- OpenAI 兼容代理 — `/v1/*` 与未被本地路由处理的 `/api/hermes/*` 请求转发到当前 Profile 的 Hermes Gateway
+
+### 语音合成 TTS
+
+- 支持文本转语音和 Web UI 内播放
+- 内置接口 `/api/hermes/tts`
+- 提供 OpenAI 兼容语音接口 `/api/tts/proxy/audio/speech`
 
 ### 多配置文件与网关
 

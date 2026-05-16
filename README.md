@@ -46,6 +46,7 @@
 - Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
 - Global model selector — discovers models from `~/.hermes/auth.json` credential pool
 - Per-session model display badge and context token usage
+- Unified `/chat-run` pipeline — `source=api_server` routes through the active Hermes Gateway `/v1/responses`; `source=cli` routes through the Agent Bridge to an in-process Hermes AIAgent
 
 ### Platform Channels
 
@@ -81,6 +82,10 @@ Unified configuration for **8 platforms** in one page:
 - Trigger immediate execution
 - Cron expression quick presets
 
+### Kanban / Task Board
+
+- Board-based task management with status columns, assignees, comments, task links, diagnostics, dispatch, and session/artifact integration
+
 ### Model Management
 
 - Auto-discover models from credential pool (`~/.hermes/auth.json`)
@@ -89,6 +94,13 @@ Unified configuration for **8 platforms** in one page:
 - OpenAI Codex & Nous Portal OAuth login
 - Provider URL auto-detection for non-v1 API versions (e.g. `/v4`)
 - Provider-level model grouping with default model switching
+- OpenAI-compatible proxy routes — `/v1/*` and unmatched `/api/hermes/*` requests forward to the active Hermes Gateway profile
+
+### TTS
+
+- Text-to-speech generation with native Web UI playback
+- Built-in endpoint at `/api/hermes/tts`
+- OpenAI-compatible speech endpoint at `/api/tts/proxy/audio/speech`
 
 ### Multi-Profile & Gateway
 
