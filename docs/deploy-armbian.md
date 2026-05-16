@@ -137,6 +137,7 @@ sudo docker compose logs -f hermes-webui
 11. 等待 Web UI 健康检查通过
 12. 如设备时间未同步，自动尝试 `timesyncd` 校时；若仍失败，则对 `apt update` 使用日期校验兜底
 13. 如 Docker 官方源或 GPG key 下载失败，自动回退到系统仓库安装 `docker.io`
+14. 自动配置 Docker daemon 国内镜像源，并在需要时重启 Docker 使其生效
 
 ## 默认部署参数
 
@@ -172,6 +173,14 @@ sudo AUTH_DISABLED=true ./scripts/deploy-armbian.sh
 
 ```bash
 sudo WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest ./scripts/deploy-armbian.sh
+```
+
+### 示例：自定义 Docker 国内镜像源
+
+脚本默认会写入一组公共 `registry-mirrors`。如果你想换成自己的镜像源，可在执行时覆盖：
+
+```bash
+sudo DOCKER_REGISTRY_MIRRORS="https://your-mirror-1,https://your-mirror-2" ./scripts/deploy-armbian.sh
 ```
 
 ## 部署后目录结构
@@ -373,7 +382,30 @@ docker version
 docker compose version
 ```
 
-### 6. 想重置部署
+### 6. Docker Hub 拉镜像超时
+
+如果设备访问 `docker.io` 或 `registry-1.docker.io` 超时，脚本会自动尝试为 Docker daemon 写入国内镜像源：
+
+- `https://docker.m.daocloud.io`
+- `https://mirror.ccs.tencentyun.com`
+- `https://hub-mirror.c.163.com`
+
+脚本会：
+
+1. 检查并创建 `/etc/docker/daemon.json`
+2. 合并写入 `registry-mirrors`
+3. 自动重启 Docker
+4. 再继续执行 `docker compose pull`
+
+如果你想手动验证当前配置，可执行：
+
+```bash
+cat /etc/docker/daemon.json
+systemctl restart docker
+docker info | grep -A5 "Registry Mirrors"
+```
+
+### 7. 想重置部署
 
 ```bash
 cd /opt/hermes-web-ui

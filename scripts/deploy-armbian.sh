@@ -32,6 +32,18 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+python_cmd() {
+  if command_exists python3; then
+    echo "python3"
+    return 0
+  fi
+  if command_exists python; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
 compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
     echo "docker compose"
@@ -236,6 +248,65 @@ ensure_docker_running() {
   info "Docker 服务运行正常。"
 }
 
+configure_docker_registry_mirrors() {
+  step "配置 Docker 国内镜像源"
+
+  local mirror_csv daemon_file python_bin
+  daemon_file="/etc/docker/daemon.json"
+  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://docker.m.daocloud.io,https://mirror.ccs.tencentyun.com,https://hub-mirror.c.163.com}"
+
+  if [[ -z "${mirror_csv// }" ]]; then
+    warn "未提供 Docker 镜像源，跳过镜像源配置。"
+    return 0
+  fi
+
+  python_bin="$(python_cmd || true)"
+  if [[ -z "$python_bin" ]]; then
+    warn "系统中未找到 python3/python，无法安全合并 daemon.json，跳过镜像源配置。"
+    return 0
+  fi
+
+  run install -m 0755 -d /etc/docker
+  if [[ ! -f "$daemon_file" ]]; then
+    run tee "$daemon_file" >/dev/null <<EOF
+{}
+EOF
+  fi
+
+  run env MIRROR_CSV="$mirror_csv" DAEMON_FILE="$daemon_file" "$python_bin" - <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+daemon_path = pathlib.Path(os.environ["DAEMON_FILE"])
+mirror_csv = os.environ["MIRROR_CSV"]
+mirrors = [item.strip() for item in mirror_csv.split(",") if item.strip()]
+
+try:
+    current = json.loads(daemon_path.read_text(encoding="utf-8"))
+    if not isinstance(current, dict):
+        raise ValueError("daemon.json root is not an object")
+except FileNotFoundError:
+    current = {}
+except Exception as exc:
+    print(f"无法解析 {daemon_path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if current.get("registry-mirrors") == mirrors:
+    sys.exit(0)
+
+current["registry-mirrors"] = mirrors
+daemon_path.write_text(
+    json.dumps(current, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+
+  run systemctl restart docker
+  info "已写入 Docker 镜像源: ${mirror_csv}"
+}
+
 prepare_dirs() {
   step "准备部署目录"
   run mkdir -p "${DEPLOY_DIR}" "${HERMES_DATA_DIR}" "${HERMES_DATA_DIR}/hermes-web-ui"
@@ -341,6 +412,7 @@ AUTH_DISABLED="${AUTH_DISABLED:-false}"
 WEBUI_IMAGE="${WEBUI_IMAGE:-ekkoye8888/hermes-web-ui}"
 WEBUI_CONTAINER_NAME="${WEBUI_CONTAINER_NAME:-hermes-webui}"
 HERMES_DATA_DIR="${HERMES_DATA_DIR:-${DEPLOY_DIR}/hermes_data}"
+DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://docker.m.daocloud.io,https://mirror.ccs.tencentyun.com,https://hub-mirror.c.163.com}"
 REPO_REF="${REPO_REF:-main}"
 RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/${REPO_REF}}"
 ENV_FILE="${DEPLOY_DIR}/.env"
@@ -356,6 +428,7 @@ require_debian_like
 require_supported_arch
 install_base_packages
 install_docker
+configure_docker_registry_mirrors
 ensure_docker_running
 prepare_dirs
 write_env_file
