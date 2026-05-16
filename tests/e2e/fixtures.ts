@@ -141,6 +141,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/provider-models') {
+      await route.fulfill(jsonResponse({ models: ['proxy-model-a', 'proxy-model-b'] }))
+      return
+    }
+
     if (pathname === '/api/hermes/profiles') {
       await route.fulfill(jsonResponse({
         profiles: [
