@@ -12,6 +12,7 @@ import { getModelContextLength } from '../model-context'
 import { logger } from '../../logger'
 import { bridgeLogger } from '../../logger'
 import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
+import { isAssistantMessageSendable } from './message-format'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import type { SessionState, BridgeCompressionResult } from './types'
 
@@ -62,6 +63,10 @@ export async function buildDbHistory(
       msg.tool_call_id = callId
     }
     if (m.tool_name) msg.name = m.tool_name
+    if (m.role === 'assistant' && !isAssistantMessageSendable(msg)) {
+      logger.warn('[chat-run-socket] skipped empty assistant message while building history for session %s', sessionId)
+      return null
+    }
     return msg
   }).filter((m): m is ChatMessage => m !== null)
 }
