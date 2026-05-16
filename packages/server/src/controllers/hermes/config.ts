@@ -7,7 +7,7 @@ import { safeFileStore } from '../../services/safe-file-store'
 
 const PLATFORM_SECTIONS = new Set([
   'telegram', 'discord', 'slack', 'whatsapp', 'matrix',
-  'weixin', 'wecom', 'feishu', 'dingtalk',
+  'weixin', 'wecom', 'feishu', 'dingtalk', 'qqbot',
   'approvals',
 ])
 
@@ -25,6 +25,12 @@ const envPlatformMap: Record<string, [string, string]> = {
   DINGTALK_CLIENT_ID: ['dingtalk', 'extra.client_id'],
   DINGTALK_CLIENT_SECRET: ['dingtalk', 'extra.client_secret'],
   DINGTALK_APP_KEY: ['dingtalk', 'extra.app_key'],
+  DINGTALK_ALLOWED_USERS: ['dingtalk', 'allowed_users'],
+  DINGTALK_ALLOW_ALL_USERS: ['dingtalk', 'allow_all_users'],
+  QQ_APP_ID: ['qqbot', 'extra.app_id'],
+  QQ_CLIENT_SECRET: ['qqbot', 'extra.client_secret'],
+  QQ_ALLOWED_USERS: ['qqbot', 'allowed_users'],
+  QQ_ALLOW_ALL_USERS: ['qqbot', 'allow_all_users'],
   WECOM_BOT_ID: ['wecom', 'extra.bot_id'],
   WECOM_SECRET: ['wecom', 'extra.secret'],
   WEIXIN_TOKEN: ['weixin', 'token'],
@@ -82,7 +88,7 @@ async function readEnvPlatforms(): Promise<Record<string, any>> {
       if (val === undefined || val === '') continue
       if (!platforms[platform]) platforms[platform] = {}
       let finalVal: any = val
-      if (cfgPath === 'enabled') finalVal = val === 'true'
+      if (cfgPath === 'enabled' || cfgPath === 'allow_all_users') finalVal = val === 'true'
       setNested(platforms[platform], cfgPath, finalVal)
     }
     return platforms
@@ -100,7 +106,7 @@ export async function getConfig(ctx: any) {
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
       for (const [platform, vals] of Object.entries(envPlatforms)) {
-        existing[platform] = { ...(existing[platform] || {}), ...(vals as Record<string, any>) }
+        existing[platform] = deepMerge(existing[platform] || {}, vals as Record<string, any>)
       }
       config.platforms = existing
     }

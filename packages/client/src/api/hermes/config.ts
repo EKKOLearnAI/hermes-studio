@@ -59,6 +59,7 @@ export interface AppConfig {
   wecom?: Record<string, any>
   feishu?: Record<string, any>
   dingtalk?: Record<string, any>
+  qqbot?: Record<string, any>
   platforms?: Record<string, any>
   [key: string]: any
 }

@@ -105,4 +105,40 @@ describe('config controller locked file updates', () => {
     expect(config.platforms.weixin.extra.base_url).toBe('https://old.example')
     expect(config.model.default).toBe('glm-5.1')
   })
+
+  it('writes QQBot credentials to env and overlays them into platform config reads', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'platforms:',
+      '  qqbot:',
+      '    extra:',
+      '      markdown_support: true',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'OPENROUTER_API_KEY=keep\n', 'utf-8')
+    const { updateCredentials, getConfig } = await loadController()
+
+    await updateCredentials(makeCtx({
+      platform: 'qqbot',
+      values: {
+        extra: { app_id: 'qq-app', client_secret: 'qq-secret' },
+        allowed_users: 'user-1,user-2',
+        allow_all_users: false,
+      },
+    }))
+
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).toContain('QQ_APP_ID=qq-app')
+    expect(env).toContain('QQ_CLIENT_SECRET=qq-secret')
+    expect(env).toContain('QQ_ALLOWED_USERS=user-1,user-2')
+    expect(env).toContain('QQ_ALLOW_ALL_USERS=false')
+
+    const ctx = makeCtx({})
+    await getConfig(ctx)
+    expect(ctx.body.platforms.qqbot.extra.app_id).toBe('qq-app')
+    expect(ctx.body.platforms.qqbot.extra.client_secret).toBe('qq-secret')
+    expect(ctx.body.platforms.qqbot.extra.markdown_support).toBe(true)
+    expect(ctx.body.platforms.qqbot.allowed_users).toBe('user-1,user-2')
+    expect(ctx.body.platforms.qqbot.allow_all_users).toBe(false)
+  })
 })
