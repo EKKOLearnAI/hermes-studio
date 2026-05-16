@@ -12,6 +12,7 @@ export interface MockedRequest {
 
 interface MockHermesApiOptions {
   tokenValidationStatus?: number
+  initialProfileName?: 'default' | 'research'
 }
 
 const sampleModelGroup = {
@@ -76,6 +77,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const requests: MockedRequest[] = []
   const unexpectedRequests: MockedRequest[] = []
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
+  let activeProfileName = options.initialProfileName ?? 'research'
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -141,13 +143,42 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/provider-models') {
+      await route.fulfill(jsonResponse({ models: ['proxy-model-a', 'proxy-model-b'] }))
+      return
+    }
+
     if (pathname === '/api/hermes/profiles') {
       await route.fulfill(jsonResponse({
         profiles: [
-          { name: 'default', active: false, model: 'test-model', gateway: 'test', alias: 'Default' },
-          { name: 'research', active: true, model: 'test-model', gateway: 'test', alias: 'Research' },
+          { name: 'default', active: activeProfileName === 'default', model: 'test-model', gateway: 'test', alias: 'Default' },
+          { name: 'research', active: activeProfileName === 'research', model: 'test-model', gateway: 'test', alias: 'Research' },
         ],
       }))
+      return
+    }
+
+    if (pathname === '/api/hermes/profiles/active') {
+      if (request.method() !== 'PUT') {
+        await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+        return
+      }
+
+      let body: { name?: unknown }
+      try {
+        body = JSON.parse(request.postData() || '{}')
+      } catch {
+        await route.fulfill(jsonResponse({ error: 'Invalid JSON body' }, 400))
+        return
+      }
+
+      if (body.name !== 'default' && body.name !== 'research') {
+        await route.fulfill(jsonResponse({ error: 'Unknown profile' }, 400))
+        return
+      }
+
+      activeProfileName = body.name
+      await route.fulfill(jsonResponse({ success: true, active: activeProfileName }))
       return
     }
 
@@ -246,5 +277,84 @@ export function io(url, options) {
 export default { io }
 `,
     })
+  })
+}
+
+export async function mockTerminalWebSocket(page: Page) {
+  await page.addInitScript(() => {
+    const state = (window as any).__PW_TERMINAL_WS__ = {
+      sockets: [] as any[],
+      sent: [] as any[],
+      createdCount: 0,
+      latest: null as any,
+    }
+    const RealEvent = window.Event
+    const RealMessageEvent = window.MessageEvent
+
+    class MockTerminalWebSocket extends EventTarget {
+      static CONNECTING = 0
+      static OPEN = 1
+      static CLOSING = 2
+      static CLOSED = 3
+
+      readonly CONNECTING = 0
+      readonly OPEN = 1
+      readonly CLOSING = 2
+      readonly CLOSED = 3
+      binaryType: BinaryType = 'blob'
+      bufferedAmount = 0
+      extensions = ''
+      protocol = ''
+      readyState = MockTerminalWebSocket.CONNECTING
+      onopen: ((event: Event) => void) | null = null
+      onmessage: ((event: MessageEvent) => void) | null = null
+      onerror: ((event: Event) => void) | null = null
+      onclose: ((event: CloseEvent) => void) | null = null
+
+      constructor(readonly url: string | URL) {
+        super()
+        state.sockets.push(this)
+        state.latest = this
+        setTimeout(() => {
+          this.readyState = MockTerminalWebSocket.OPEN
+          const openEvent = new RealEvent('open')
+          this.onopen?.(openEvent)
+          this.dispatchEvent(openEvent)
+          this.__createSession('term-1', 'zsh', 101)
+        }, 0)
+      }
+
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        const normalized = typeof data === 'string' ? data : String(data)
+        state.sent.push({ socket: this.url.toString(), data: normalized })
+        if (normalized.charCodeAt(0) !== 0x7B) return
+        try {
+          const message = JSON.parse(normalized)
+          if (message.type === 'create') {
+            this.__createSession(`term-${state.createdCount + 1}`, 'bash', 200 + state.createdCount)
+          }
+          if (message.type === 'switch') {
+            this.__emitMessage(JSON.stringify({ type: 'switched', id: message.sessionId }))
+          }
+        } catch {}
+      }
+
+      close() {
+        this.readyState = MockTerminalWebSocket.CLOSED
+      }
+
+      __createSession(id: string, shell: string, pid: number) {
+        state.createdCount += 1
+        this.__emitMessage(JSON.stringify({ type: 'created', id, shell, pid }))
+      }
+
+      __emitMessage(data: string) {
+        const event = new RealMessageEvent('message', { data })
+        this.onmessage?.(event)
+        this.dispatchEvent(event)
+      }
+    }
+
+    ;(window as any).WebSocket = MockTerminalWebSocket
   })
 }

@@ -356,6 +356,66 @@ export async function getAvailable(ctx: any) {
   }
 }
 
+export async function fetchProviderModelList(ctx: any) {
+  try {
+    const body = ctx.request.body as { base_url?: string; api_key?: string; freeOnly?: boolean }
+    const baseUrl = String(body?.base_url || '').trim()
+    const apiKey = String(body?.api_key || '').trim()
+    const freeOnly = body?.freeOnly === true
+
+    if (!baseUrl) {
+      ctx.status = 400
+      ctx.body = { error: 'Missing base_url' }
+      return
+    }
+
+    let parsed: URL
+    try {
+      parsed = new URL(baseUrl)
+    } catch {
+      ctx.status = 400
+      ctx.body = { error: 'Invalid base_url' }
+      return
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      ctx.status = 400
+      ctx.body = { error: 'base_url must use http or https' }
+      return
+    }
+
+    const base = baseUrl.replace(/\/+$/, '')
+    const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
+    const headers: Record<string, string> = {}
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+
+    const res = await fetch(modelsUrl, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) {
+      ctx.status = 502
+      ctx.body = { error: `Provider returned HTTP ${res.status}` }
+      return
+    }
+
+    const data = await res.json() as { data?: Array<{ id?: unknown }> }
+    if (!Array.isArray(data.data)) {
+      ctx.status = 502
+      ctx.body = { error: 'Provider returned unexpected format' }
+      return
+    }
+
+    let models = data.data
+      .map(m => String(m?.id || '').trim())
+      .filter(Boolean)
+    if (freeOnly) models = models.filter(m => m.endsWith(':free'))
+    ctx.body = { models: Array.from(new Set(models)).sort() }
+  } catch (err: any) {
+    ctx.status = err?.name === 'TimeoutError' ? 504 : 502
+    ctx.body = { error: err?.message || 'Failed to fetch provider models' }
+  }
+}
+
 
 export async function setModelAlias(ctx: any) {
   const body = ctx.request.body

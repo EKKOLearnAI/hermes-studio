@@ -25,7 +25,7 @@ Bridge 模式支持：
 - 从 DB resume 会话
 - 与 API Server 路径共用上下文压缩逻辑
 
-当前不再支持旧文档里的独立 `/cli-chat-run` namespace、`CliChatPanel.vue`、`cli-chat.ts` 和 CLI 命令控制层。前端不会再发送 `command` 或 `steer` socket 事件，也不会把 `/new`、`/reset`、`/undo`、`/retry`、`/branch`、`/compress` 等输入当作特殊命令处理。
+当前不再支持旧文档里的独立 `/cli-chat-run` namespace、`CliChatPanel.vue`、`cli-chat.ts` 和独立 `command` / `steer` socket 事件。CLI/Bridge 会话中的 slash command 现在通过统一 `/chat-run` 的 `run` payload 进入后端解析；当前支持 `/usage`、`/status`、`/abort`、`/queue`、`/clear`、`/title`、`/compress`、`/steer`、`/destroy`。
 
 ---
 
@@ -76,7 +76,10 @@ ChatRunSocket (Node.js)
 
 | 文件 | 说明 |
 |------|------|
-| `packages/server/src/services/hermes/chat-run-socket.ts` | `/chat-run` Socket.IO 服务；同时处理 API Server 和 Bridge 运行 |
+| `packages/server/src/services/hermes/run-chat/index.ts` | `/chat-run` Socket.IO 入口；按 `source` 分流 API Server 与 Bridge 运行 |
+| `packages/server/src/services/hermes/run-chat/handle-api-run.ts` | API Server 路径；调用 Hermes Gateway `/v1/responses` 并消费流式响应 |
+| `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts` | Bridge 路径；调用 Agent Bridge 并写入本地会话库 |
+| `packages/server/src/services/hermes/run-chat/session-command.ts` | CLI/Bridge slash command 解析与处理 |
 | `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 端 bridge 客户端；通过 socket 请求 Python bridge |
 | `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge 子进程生命周期管理 |
 | `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python bridge 服务；创建并复用 `AIAgent` 实例 |
@@ -180,7 +183,7 @@ socket.emit('approval.respond', {
 | `cancel_queued_run` | `{ session_id, queue_id }` | 取消等待队列中的一条 run |
 | `approval.respond` | `{ session_id, approval_id, choice }` | 响应 Bridge 工具审批 |
 
-当前没有 `command`、`steer` 或 slash-command 相关 Socket.IO 事件。
+客户端不再发送独立 `command` 或 `steer` Socket.IO 事件；slash command 作为普通 `run.input` 进入 `/chat-run`，由服务端在 `source=cli` 时解析。
 
 ### 服务端 → 客户端
 
@@ -202,6 +205,7 @@ socket.emit('approval.respond', {
 | `usage.updated` | token 用量更新 |
 | `abort.started` | 中断开始 |
 | `abort.completed` | 中断结束 |
+| `session.command` | slash command 的执行结果或错误反馈 |
 | `run.completed` | 运行完成 |
 | `run.failed` | 运行失败 |
 
@@ -300,9 +304,9 @@ Windows 使用 TCP 是因为部分 Python/Windows 环境没有 Unix domain socke
 | `approval_respond` | 响应工具审批 |
 | `destroy_all` | profile 切换/管理时销毁全部 bridge 内存 session |
 
-bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_result`、`get_history`、`destroy`、`list`、`shutdown`、`steer`，但当前 `/chat-run` 前端路径不会暴露这些能力。
+bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_result`、`get_history`、`destroy`、`list`、`shutdown`、`steer`。当前 `/chat-run` 前端路径不会直接暴露这些 action；需要的能力由 Node `/chat-run` 层封装，例如 `/steer` slash command 会调用 `steer` action。
 
-旧的 `command` action 已移除，bridge 不再处理 `/new`、`/undo`、`/retry`、`/branch`、`/compress` 等斜杠命令。
+旧的 `command` action 已移除，Python bridge 不再直接解析 `/new`、`/undo`、`/retry`、`/branch` 等旧斜杠命令；当前 CLI/Bridge slash command 支持范围以 Node `/chat-run` 的 `session-command.ts` 为准。
 
 ### 会话和 profile
 
@@ -456,4 +460,4 @@ $env:HERMES_AGENT_BRIDGE_TIMEOUT_MS = "300000"
 - Bridge(beta) 仍依赖 Python bridge 成功启动；启动失败时 Web UI 可用，但 bridge 会话不可用。
 - bridge socket connect 阶段还没有单独 connect timeout。
 - 旧 CLI 独立面板和独立 `/cli-chat-run` namespace 已移除。
-- 旧 bridge 斜杠命令和 `command/steer` socket 控制层已移除；现在输入框内容一律按普通用户消息发送。
+- 旧 bridge `command/steer` socket 控制层已移除；CLI/Bridge slash command 现在通过统一 `/chat-run` 的 `run.input` 解析并以 `session.command` 反馈。

@@ -33,9 +33,9 @@
 
 ### AI Chat
 
-- Real-time streaming via SSE with async run support
+- Real-time chat streaming over Socket.IO `/chat-run`; API Server runs consume Hermes Gateway streaming responses
 - Multi-session management — create, rename, delete, switch between sessions
-- **Self-built session database** — local SQLite storage with automatic sync from Hermes state.db on first startup
+- **Self-built session database** — local SQLite storage for Web UI sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
 - Active session indicator — live sessions pin to top with spinner icon
 - Sessions sorted by latest message time
@@ -43,7 +43,7 @@
 - Tool call detail expansion (arguments / result)
 - File upload support
 - File download support — download user-uploaded files and agent-generated files across local, Docker, SSH, and Singularity backends
-- Session search — Ctrl+K global search across all conversations
+- Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
 - Global model selector — discovers models from `~/.hermes/auth.json` credential pool
 - Per-session model display badge and context token usage
 

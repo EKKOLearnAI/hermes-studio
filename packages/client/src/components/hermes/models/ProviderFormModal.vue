@@ -7,6 +7,7 @@ import CodexLoginModal from './CodexLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
 import CopilotLoginModal from './CopilotLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
+import { fetchProviderModels } from '@/api/hermes/system'
 
 const { t } = useI18n()
 
@@ -129,18 +130,11 @@ async function fetchModels() {
 
   fetchingModels.value = true
   try {
-    const base = base_url.replace(/\/+$/, '')
-    const url = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
-    const headers: Record<string, string> = {}
-    if (formData.value.api_key.trim()) {
-      headers['Authorization'] = `Bearer ${formData.value.api_key.trim()}`
-    }
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json() as { data?: Array<{ id: string }> }
-    if (!Array.isArray(data.data)) throw new Error(t('models.unexpectedFormat'))
-
-    modelOptions.value = data.data.map(m => ({ label: m.id, value: m.id }))
+    const data = await fetchProviderModels({
+      base_url: base_url.trim(),
+      api_key: formData.value.api_key.trim(),
+    })
+    modelOptions.value = data.models.map(m => ({ label: m, value: m }))
     if (modelOptions.value.length > 0 && !formData.value.model) {
       formData.value.model = modelOptions.value[0].value
     }

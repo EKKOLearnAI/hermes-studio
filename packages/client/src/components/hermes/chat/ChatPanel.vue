@@ -210,6 +210,7 @@ const activeSessionSource = computed(() =>
 );
 
 const activeApproval = computed(() => chatStore.activePendingApproval);
+const visibleApproval = computed(() => activeApproval.value);
 
 function handleNewChat() {
   chatStore.newChat();
@@ -835,44 +836,64 @@ async function handleWorkspaceConfirm() {
 
       <template v-if="currentMode === 'chat'">
         <MessageList />
-        <div v-if="activeApproval" class="approval-bar">
-          <div class="approval-main">
-            <div class="approval-title">Tool approval required</div>
-            <div class="approval-desc">{{ activeApproval.description }}</div>
-            <code class="approval-command">{{ activeApproval.command }}</code>
+        <div v-if="visibleApproval" class="approval-bar">
+          <div class="approval-icon" aria-hidden="true">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
           </div>
-          <div class="approval-actions">
-            <NButton
-              v-if="activeApproval.choices.includes('once')"
-              size="small"
-              type="primary"
-              @click="handleApproval('once')"
-            >
-              Allow once
-            </NButton>
-            <NButton
-              v-if="activeApproval.choices.includes('session')"
-              size="small"
-              @click="handleApproval('session')"
-            >
-              Allow session
-            </NButton>
-            <NButton
-              v-if="activeApproval.choices.includes('always')"
-              size="small"
-              @click="handleApproval('always')"
-            >
-              Always
-            </NButton>
-            <NButton
-              v-if="activeApproval.choices.includes('deny')"
-              size="small"
-              type="error"
-              ghost
-              @click="handleApproval('deny')"
-            >
-              Deny
-            </NButton>
+          <div class="approval-content">
+            <div class="approval-main">
+              <div class="approval-kicker">{{ t("chat.approvalKicker") }}</div>
+              <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
+              <div class="approval-desc">{{ visibleApproval.description }}</div>
+              <code class="approval-command">{{ visibleApproval.command }}</code>
+            </div>
+            <div class="approval-actions">
+              <NButton
+                v-if="visibleApproval.choices.includes('once')"
+                size="small"
+                type="primary"
+                @click="handleApproval('once')"
+              >
+                {{ t("chat.approvalAllowOnce") }}
+              </NButton>
+              <NButton
+                v-if="visibleApproval.choices.includes('session')"
+                size="small"
+                secondary
+                @click="handleApproval('session')"
+              >
+                {{ t("chat.approvalAllowSession") }}
+              </NButton>
+              <NButton
+                v-if="visibleApproval.choices.includes('always')"
+                size="small"
+                secondary
+                @click="handleApproval('always')"
+              >
+                {{ t("chat.approvalAlways") }}
+              </NButton>
+              <NButton
+                v-if="visibleApproval.choices.includes('deny')"
+                size="small"
+                type="error"
+                secondary
+                @click="handleApproval('deny')"
+              >
+                {{ t("chat.approvalDeny") }}
+              </NButton>
+            </div>
           </div>
         </div>
         <ChatInput />
@@ -1348,50 +1369,118 @@ async function handleWorkspaceConfirm() {
 
 .approval-bar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-top: 1px solid $border-color;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: 8px;
   background: $bg-card;
+  box-shadow: none;
 }
 
-.approval-main {
+.approval-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
+  border-radius: 8px;
+}
+
+.approval-content {
   flex: 1;
   min-width: 0;
 }
 
+.approval-main {
+  min-width: 0;
+}
+
+.approval-kicker {
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+}
+
 .approval-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
   color: $text-primary;
 }
 
 .approval-desc {
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 12px;
+  line-height: 1.45;
   color: $text-secondary;
 }
 
 .approval-command {
   display: block;
-  margin-top: 6px;
-  max-height: 56px;
+  margin-top: 8px;
+  max-height: 96px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
+  font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
   color: $text-primary;
   background: $bg-secondary;
   border: 1px solid $border-color;
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid $border-color;
+}
+
+@media (max-width: 768px) {
+  .approval-bar {
+    margin: 0 10px 10px;
+    padding: 10px;
+  }
+
+  .approval-icon {
+    flex-basis: 28px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .approval-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .approval-actions :deep(.n-button) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .approval-bar {
+    gap: 8px;
+  }
+
+  .approval-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes rainbow-glow {

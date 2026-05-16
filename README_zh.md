@@ -41,9 +41,9 @@
 
 ### AI 聊天
 
-- 通过 SSE 实时流式输出，支持异步 Run
+- 聊天前端通过 Socket.IO `/chat-run` 实时流式更新；API Server 路径内部消费 Hermes Gateway 流式响应
 - 多会话管理 — 创建、重命名、删除、切换会话
-- **自建会话数据库** — 本地 SQLite 存储，首次启动时自动从 Hermes state.db 同步 api_server 会话
+- **自建会话数据库** — Web UI 会话使用本地 SQLite；Hermes state.db 仅作为只读来源用于 Hermes 历史 API
 - 按来源分组会话（Telegram、Discord、Slack 等），可折叠手风琴面板
 - 活跃会话实时指示器 — 正在进行的会话置顶并显示旋转图标
 - 按最新消息时间排序会话列表
@@ -51,7 +51,7 @@
 - 工具调用详情展开（参数 / 结果）
 - 文件上传支持
 - 文件下载支持 — 支持下载用户上传的文件和 Agent 生成的文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
-- 会话搜索 — Ctrl+K 全局搜索所有对话
+- 会话搜索 — Ctrl+K 搜索 Web UI 本地会话库；不包含只读 Hermes 历史会话
 - 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
 - 每个会话显示模型标签和上下文 Token 用量
 
