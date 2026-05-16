@@ -41,22 +41,72 @@ const statusItems = computed(() => {
   ];
 });
 
+type DisplayContentFile = {
+  type: 'image' | 'file'
+  name: string
+  path?: string
+  url?: string
+}
+
+function getBlockText(block: any): string {
+  if (!block || typeof block !== 'object') return ''
+  if (block.type === 'text' || block.type === 'input_text') {
+    return typeof block.text === 'string' ? block.text : ''
+  }
+  return ''
+}
+
+function getImageUrlFromBlock(block: any): string | null {
+  if (!block || typeof block !== 'object') return null
+  if (block.type !== 'input_image' && block.type !== 'image_url') return null
+  const raw = block.image_url
+  if (typeof raw === 'string') return raw
+  if (raw && typeof raw === 'object' && typeof raw.url === 'string') return raw.url
+  return null
+}
+
+function imageNameFromDataUrl(url: string, index: number): string {
+  const match = url.match(/^data:image\/([^;,]+)/i)
+  const ext = match?.[1] === 'jpeg' ? 'jpg' : match?.[1] || 'png'
+  return `image-${index + 1}.${ext}`
+}
+
+function parseContentBlocks(content: string): Array<ContentBlock | Record<string, unknown>> | null {
+  const trimmed = content.trim()
+  if (!trimmed) return null
+
+  const parse = (value: string) => {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]
+      ? parsed as Array<ContentBlock | Record<string, unknown>>
+      : null
+  }
+
+  try {
+    return parse(trimmed)
+  } catch {
+    // Hermes Agent stored some multimodal user messages via Python str(list),
+    // e.g. [{'type': 'text'}, {'type': 'image_url', ...}]. Convert that
+    // legacy repr into JSON for display only.
+    if (!trimmed.startsWith("[{'") && !trimmed.startsWith('[{"')) return null
+    try {
+      return parse(
+        trimmed
+          .replace(/\bNone\b/g, 'null')
+          .replace(/\bTrue\b/g, 'true')
+          .replace(/\bFalse\b/g, 'false')
+          .replace(/'/g, '"'),
+      )
+    } catch {
+      return null
+    }
+  }
+}
+
 // Parse ContentBlock[] from JSON string
 const contentBlocks = computed(() => {
   const content = props.message.content || '';
-  if (!content.trim()) return null;
-
-  try {
-    // Try to parse as ContentBlock[] array
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
-      return parsed as ContentBlock[];
-    }
-  } catch {
-    // Not valid JSON, treat as plain text
-  }
-
-  return null;
+  return parseContentBlocks(content);
 });
 
 // Check if content is in ContentBlock[] format
@@ -70,16 +120,40 @@ const displayText = computed(() => {
 
   // Extract text from blocks
   return contentBlocks.value!
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
+    .map(block => getBlockText(block))
+    .filter(Boolean)
     .join('\n');
 });
 
 // Extract files from ContentBlock[]
-const contentFiles = computed(() => {
+const contentFiles = computed<DisplayContentFile[] | null>(() => {
   if (!isContentBlockArray.value) return null;
 
-  return contentBlocks.value!.filter(block => block.type === 'image' || block.type === 'file');
+  return contentBlocks.value!.flatMap<DisplayContentFile>((block, index) => {
+    if (block.type === 'image') {
+      return [{
+        type: 'image' as const,
+        name: String((block as any).name || `image-${index + 1}`),
+        path: String((block as any).path || ''),
+      }].filter(file => file.path)
+    }
+    if (block.type === 'file') {
+      return [{
+        type: 'file' as const,
+        name: String((block as any).name || `file-${index + 1}`),
+        path: String((block as any).path || ''),
+      }].filter(file => file.path)
+    }
+    const imageUrl = getImageUrlFromBlock(block)
+    if (imageUrl?.startsWith('data:image/')) {
+      return [{
+        type: 'image' as const,
+        name: imageNameFromDataUrl(imageUrl, index),
+        url: imageUrl,
+      }]
+    }
+    return []
+  });
 });
 
 // Generate download URL with auth token
@@ -87,6 +161,11 @@ function getDownloadUrl(path: string, name: string): string {
 	const token = getApiKey();
 	const base = `/api/hermes/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
 	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+}
+
+function getContentFileUrl(file: DisplayContentFile): string {
+  if (file.url) return file.url
+  return file.path ? getDownloadUrl(file.path, file.name) : ''
 }
 
 const toolExpanded = ref(false);
@@ -721,16 +800,16 @@ onBeforeUnmount(() => {
                   >
                     <template v-if="file.type === 'image'">
                       <img
-                        :src="getDownloadUrl(file.path, file.name)"
+                        :src="getContentFileUrl(file)"
                         :alt="file.name"
                         class="msg-attachment-thumb"
-                        @click="previewUrl = getDownloadUrl(file.path, file.name)"
+                        @click="previewUrl = getContentFileUrl(file)"
                       />
                     </template>
                     <template v-else>
                       <div
                         class="msg-attachment-file"
-                        @click="downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
+                        @click="file.path && downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
                         style="cursor: pointer;"
                         :title="t('download.downloadFile')"
                       >

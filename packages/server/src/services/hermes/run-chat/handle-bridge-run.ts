@@ -124,6 +124,9 @@ export async function handleBridgeRun(
     const bridgeInput = isContentBlockArray(input)
       ? await convertContentBlocksForAgent(input)
       : input
+    const bridgeStorageInput = isContentBlockArray(input)
+      ? inputStr
+      : undefined
     logger.info('[chat-run-socket] starting CLI bridge run for session %s', session_id)
     bridgeLogger.info({
       sessionId: session_id,
@@ -133,7 +136,14 @@ export async function handleBridgeRun(
       hasInstructions: Boolean(fullInstructions),
       multimodalInput: isContentBlockArray(input),
     }, '[chat-run-socket] starting CLI bridge run')
-    const started = await bridge.chat(session_id, bridgeInput as AgentBridgeMessage, bridgeHistory, fullInstructions, profile)
+    const started = await bridge.chat(
+      session_id,
+      bridgeInput as AgentBridgeMessage,
+      bridgeHistory,
+      fullInstructions,
+      profile,
+      bridgeStorageInput !== undefined ? { storage_message: bridgeStorageInput } : {},
+    )
     state.runId = started.run_id
     bridgeLogger.info({
       sessionId: session_id,

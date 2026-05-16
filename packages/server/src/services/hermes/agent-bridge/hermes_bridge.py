@@ -719,10 +719,12 @@ class AgentPool:
         self,
         session: AgentSession,
         message: Any,
+        storage_message: Any | None,
         conversation_history: list[dict[str, Any]] | None,
         profile: str | None,
     ) -> bool:
-        user_content = str(message) if not isinstance(message, dict) else str(message.get("content", message))
+        persist_message = storage_message if storage_message is not None else message
+        user_content = str(persist_message) if not isinstance(persist_message, dict) else str(persist_message.get("content", persist_message))
         if not user_content.strip():
             return False
 
@@ -839,6 +841,7 @@ class AgentPool:
         self,
         session_id: str,
         message: Any,
+        storage_message: Any | None = None,
         instructions: str | None = None,
         conversation_history: list[dict[str, Any]] | None = None,
         profile: str | None = None,
@@ -858,14 +861,14 @@ class AgentPool:
 
         thread = threading.Thread(
             target=self._run_chat,
-            args=(session, record, message, instructions, conversation_history, profile, force_compress),
+            args=(session, record, message, storage_message, instructions, conversation_history, profile, force_compress),
             daemon=True,
             name=f"hermes-bridge-run-{run_id[:8]}",
         )
         thread.start()
         return record
 
-    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False) -> None:
+    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False) -> None:
         with self._run_lock:
             def stream_callback(delta: str) -> None:
                 with self._lock:
@@ -888,7 +891,7 @@ class AgentPool:
                     os.environ["HERMES_EXEC_ASK"] = "1"
                 except Exception:
                     previous_approval_callback = None
-                self._prepersist_user_message(session, message, conversation_history, profile)
+                self._prepersist_user_message(session, message, storage_message, conversation_history, profile)
                 db_count_after_prepersist = self._session_db_message_count(session.session_id, profile)
                 if force_compress:
                     compress = getattr(session.agent, "_compress_context", None)
@@ -1154,12 +1157,14 @@ class BridgeServer:
         if action == "chat":
             session_id = str(req.get("session_id") or "").strip() or uuid.uuid4().hex
             message = req.get("message", req.get("input", ""))
+            storage_message = req.get("storage_message")
             instructions = req.get("instructions") or req.get("system_message")
             conversation_history = req.get("conversation_history")
             profile = req.get("profile")
             record = self.pool.start_chat(
                 session_id,
                 message,
+                storage_message,
                 instructions,
                 conversation_history,
                 profile,

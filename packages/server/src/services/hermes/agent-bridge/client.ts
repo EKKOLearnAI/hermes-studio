@@ -280,12 +280,13 @@ export class AgentBridgeClient {
     conversationHistory?: unknown[],
     instructions?: string,
     profile?: string,
-    options: { force_compress?: boolean } = {},
+    options: { force_compress?: boolean; storage_message?: AgentBridgeMessage } = {},
   ): Promise<AgentBridgeChatStarted> {
     return this.request<AgentBridgeChatStarted>({
       action: 'chat',
       session_id: sessionId,
       message,
+      ...(options.storage_message !== undefined ? { storage_message: options.storage_message } : {}),
       ...(conversationHistory ? { conversation_history: conversationHistory } : {}),
       ...(instructions ? { instructions } : {}),
       ...(profile ? { profile } : {}),
