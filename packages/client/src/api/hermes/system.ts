@@ -80,6 +80,17 @@ export async function fetchAvailableModels(): Promise<AvailableModelsResponse> {
   return request<AvailableModelsResponse>('/api/hermes/available-models')
 }
 
+export async function fetchProviderModels(data: {
+  base_url: string
+  api_key?: string
+  freeOnly?: boolean
+}): Promise<{ models: string[] }> {
+  return request<{ models: string[] }>('/api/hermes/provider-models', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 export async function updateDefaultModel(data: {
   default: string
   provider?: string
