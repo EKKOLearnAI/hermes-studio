@@ -386,7 +386,6 @@ docker compose version
 
 如果设备访问 `docker.io` 或 `registry-1.docker.io` 超时，脚本会自动尝试为 Docker daemon 写入国内镜像源：
 
-- `https://docker.m.daocloud.io`
 - `https://mirror.ccs.tencentyun.com`
 - `https://hub-mirror.c.163.com`
 
@@ -404,6 +403,8 @@ cat /etc/docker/daemon.json
 systemctl restart docker
 docker info | grep -A5 "Registry Mirrors"
 ```
+
+当前默认没有使用 `daocloud`，因为在本项目镜像 `ekkoye8888/hermes-web-ui:latest` 的拉取链路上，已验证可能返回 `403 Forbidden`。
 
 ### 7. 想重置部署
 
