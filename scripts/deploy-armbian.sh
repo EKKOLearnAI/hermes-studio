@@ -32,6 +32,13 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
 python_cmd() {
   if command_exists python3; then
     echo "python3"
@@ -248,22 +255,15 @@ ensure_docker_running() {
   info "Docker 服务运行正常。"
 }
 
-configure_docker_registry_mirrors() {
-  step "配置 Docker 国内镜像源"
-
-  local mirror_csv daemon_file python_bin
+update_docker_registry_mirrors_config() {
+  local mirror_csv="$1"
+  local daemon_file python_bin
   daemon_file="/etc/docker/daemon.json"
-  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
-
-  if [[ -z "${mirror_csv// }" ]]; then
-    warn "未提供 Docker 镜像源，跳过镜像源配置。"
-    return 0
-  fi
-
   python_bin="$(python_cmd || true)"
+
   if [[ -z "$python_bin" ]]; then
-    warn "系统中未找到 python3/python，无法安全合并 daemon.json，跳过镜像源配置。"
-    return 0
+    warn "系统中未找到 python3/python，无法安全合并 daemon.json。"
+    return 1
   fi
 
   run install -m 0755 -d /etc/docker
@@ -293,18 +293,150 @@ except Exception as exc:
     print(f"无法解析 {daemon_path}: {exc}", file=sys.stderr)
     sys.exit(1)
 
-if current.get("registry-mirrors") == mirrors:
-    sys.exit(0)
+if mirrors:
+    if current.get("registry-mirrors") == mirrors:
+        sys.exit(0)
+    current["registry-mirrors"] = mirrors
+else:
+    if "registry-mirrors" not in current:
+        sys.exit(0)
+    current.pop("registry-mirrors", None)
 
-current["registry-mirrors"] = mirrors
 daemon_path.write_text(
     json.dumps(current, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
 )
 PY
+}
+
+docker_registry_mirror_healthy() {
+  local mirror="$1"
+  local probe_url http_code
+  probe_url="${mirror%/}/v2/"
+  http_code="$(curl -k -sS -o /dev/null --connect-timeout 5 --max-time 8 -w '%{http_code}' "$probe_url" || true)"
+  case "$http_code" in
+    200|401|404)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+disable_docker_registry_mirrors() {
+  local reason="${1:-检测到当前 Docker 镜像源不可用，自动回退直连 docker.io。}"
+
+  if [[ "${DOCKER_REGISTRY_MIRRORS_DISABLED}" == "1" ]]; then
+    info "当前已处于直连 docker.io 模式，跳过重复切换。"
+    return 0
+  fi
+
+  warn "$reason"
+  if ! update_docker_registry_mirrors_config ""; then
+    warn "移除 Docker registry-mirrors 失败，将继续沿用当前配置。"
+    return 1
+  fi
 
   run systemctl restart docker
-  info "已写入 Docker 镜像源: ${mirror_csv}"
+  DOCKER_REGISTRY_MIRRORS_DISABLED=1
+  ACTIVE_DOCKER_REGISTRY_MIRRORS=""
+  info "已移除 Docker registry-mirrors，回退直连 docker.io"
+}
+
+configure_docker_registry_mirrors() {
+  step "配置 Docker 国内镜像源"
+
+  local mirror_csv
+  local candidate
+  local -a requested_mirrors=()
+  local -a healthy_mirrors=()
+
+  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
+  if [[ -z "${mirror_csv// }" ]]; then
+    warn "未提供 Docker 镜像源，保持直连 docker.io。"
+    disable_docker_registry_mirrors "未配置 Docker 镜像源，自动保持直连 docker.io。" || true
+    return 0
+  fi
+
+  IFS=',' read -r -a requested_mirrors <<< "$mirror_csv"
+  for candidate in "${requested_mirrors[@]}"; do
+    candidate="$(trim_whitespace "$candidate")"
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+
+    if docker_registry_mirror_healthy "$candidate"; then
+      healthy_mirrors+=("$candidate")
+    else
+      warn "Docker 镜像源不可用，已跳过: $candidate"
+    fi
+  done
+
+  if [[ ${#healthy_mirrors[@]} -eq 0 ]]; then
+    disable_docker_registry_mirrors "配置的 Docker 镜像源均不可用，自动回退直连 docker.io。" || true
+    return 0
+  fi
+
+  ACTIVE_DOCKER_REGISTRY_MIRRORS="$(IFS=,; echo "${healthy_mirrors[*]}")"
+  if ! update_docker_registry_mirrors_config "${ACTIVE_DOCKER_REGISTRY_MIRRORS}"; then
+    warn "写入 Docker 镜像源配置失败，将保持当前 Docker 配置。"
+    return 0
+  fi
+
+  run systemctl restart docker
+  DOCKER_REGISTRY_MIRRORS_DISABLED=0
+  info "已写入 Docker 镜像源: ${ACTIVE_DOCKER_REGISTRY_MIRRORS}"
+}
+
+compose_pull() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose pull
+    return
+  fi
+  run docker-compose pull
+}
+
+compose_build_webui() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose build hermes-webui
+    return
+  fi
+  run docker-compose build hermes-webui
+}
+
+compose_up_detached() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose up -d
+    return
+  fi
+  run docker-compose up -d
+}
+
+pull_or_build_webui() {
+  local compose="$1"
+
+  if compose_pull "$compose"; then
+    return 0
+  fi
+
+  warn "拉取预构建镜像失败，尝试禁用 Docker 镜像源后重试。"
+  if disable_docker_registry_mirrors "检测到镜像拉取失败，自动摘除可能失效的 Docker 镜像源。" \
+    && compose_pull "$compose"; then
+    return 0
+  fi
+
+  warn "拉取预构建镜像仍失败，尝试本地构建 hermes-webui"
+  if compose_build_webui "$compose"; then
+    return 0
+  fi
+
+  warn "本地构建失败，尝试在直连 docker.io 模式下再次构建 hermes-webui"
+  disable_docker_registry_mirrors "检测到基础镜像拉取失败，再次确认已切换为直连 docker.io。" || true
+  compose_build_webui "$compose"
 }
 
 prepare_dirs() {
@@ -348,19 +480,8 @@ pull_and_start() {
   compose="$(compose_cmd)"
   (
     cd "${DEPLOY_DIR}"
-    if [[ "$compose" == "docker compose" ]]; then
-      if ! run docker compose pull; then
-        warn "拉取预构建镜像失败，尝试本地构建 hermes-webui"
-        run docker compose build hermes-webui
-      fi
-      run docker compose up -d
-    else
-      if ! run docker-compose pull; then
-        warn "拉取预构建镜像失败，尝试本地构建 hermes-webui"
-        run docker-compose build hermes-webui
-      fi
-      run docker-compose up -d
-    fi
+    pull_or_build_webui "$compose"
+    compose_up_detached "$compose"
   )
   info "容器已启动。"
 }
@@ -419,6 +540,8 @@ WEBUI_IMAGE="${WEBUI_IMAGE:-ekkoye8888/hermes-web-ui}"
 WEBUI_CONTAINER_NAME="${WEBUI_CONTAINER_NAME:-hermes-webui}"
 HERMES_DATA_DIR="${HERMES_DATA_DIR:-${DEPLOY_DIR}/hermes_data}"
 DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
+ACTIVE_DOCKER_REGISTRY_MIRRORS=""
+DOCKER_REGISTRY_MIRRORS_DISABLED=0
 REPO_REF="${REPO_REF:-main}"
 RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/${REPO_REF}}"
 ENV_FILE="${DEPLOY_DIR}/.env"

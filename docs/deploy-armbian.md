@@ -137,8 +137,9 @@ sudo docker compose logs -f hermes-webui
 11. 等待 Web UI 健康检查通过
 12. 如设备时间未同步，自动尝试 `timesyncd` 校时；若仍失败，则对 `apt update` 使用日期校验兜底
 13. 如 Docker 官方源或 GPG key 下载失败，自动回退到系统仓库安装 `docker.io`
-14. 自动配置 Docker daemon 国内镜像源，并在需要时重启 Docker 使其生效
-15. 如预构建镜像拉取失败，自动尝试本地构建 `hermes-webui`
+14. 自动探测并配置可用的 Docker daemon 国内镜像源，并在需要时重启 Docker 使其生效
+15. 如镜像源不可解析或拉取失败，自动移除 `registry-mirrors` 并回退直连 `docker.io`
+16. 如预构建镜像拉取失败，自动尝试本地构建 `hermes-webui`
 
 ## 默认部署参数
 
@@ -178,7 +179,7 @@ sudo WEBUI_IMAGE=ekkoye8888/hermes-web-ui:latest ./scripts/deploy-armbian.sh
 
 ### 示例：自定义 Docker 国内镜像源
 
-脚本默认会写入一组公共 `registry-mirrors`。如果你想换成自己的镜像源，可在执行时覆盖：
+脚本会先探测你传入的镜像源是否可用；不可用的镜像源会被自动跳过。如果全部不可用，脚本会自动移除 `registry-mirrors` 并回退直连 `docker.io`。如果你想换成自己的镜像源，可在执行时覆盖：
 
 ```bash
 sudo DOCKER_REGISTRY_MIRRORS="https://your-mirror-1,https://your-mirror-2" ./scripts/deploy-armbian.sh
@@ -392,9 +393,24 @@ docker compose version
 脚本会：
 
 1. 检查并创建 `/etc/docker/daemon.json`
-2. 合并写入 `registry-mirrors`
-3. 自动重启 Docker
-4. 再继续执行 `docker compose pull`
+2. 先探测镜像源是否可解析、可访问
+3. 仅写入可用的 `registry-mirrors`
+4. 自动重启 Docker
+5. 再继续执行 `docker compose pull`
+
+如果当前镜像源出现类似下面的错误：
+
+```text
+lookup hub-mirror.c.163.com: device or resource busy
+```
+
+脚本会自动：
+
+1. 移除 `/etc/docker/daemon.json` 里的 `registry-mirrors`
+2. 重启 Docker
+3. 回退直连 `docker.io`
+4. 重新尝试 `docker compose pull`
+5. 如仍失败，再尝试 `docker compose build hermes-webui`
 
 如果你想手动验证当前配置，可执行：
 
@@ -404,13 +420,42 @@ systemctl restart docker
 docker info | grep -A5 "Registry Mirrors"
 ```
 
+如果你想手动移除坏掉的镜像源并回退直连，也可以执行：
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/etc/docker/daemon.json")
+data = {}
+if path.exists():
+    data = json.loads(path.read_text(encoding="utf-8"))
+data.pop("registry-mirrors", None)
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+systemctl restart docker
+docker info | grep -A5 "Registry Mirrors"
+```
+
 当前默认没有使用 `daocloud`，因为在本项目镜像 `ekkoye8888/hermes-web-ui:latest` 的拉取链路上，已验证可能返回 `403 Forbidden`。
 
 ### 7. 预构建镜像拉取失败
 
-如果 `docker compose pull` 失败，脚本会自动尝试：
+如果 `docker compose pull` 失败，脚本会按以下顺序自动尝试：
+
+1. 摘除可能失效的 Docker 镜像源并重试拉取
+2. 若拉取仍失败，则尝试本地构建
+3. 若本地构建仍因基础镜像拉取失败，则在直连 `docker.io` 模式下再次重试构建
+
+自动执行的大致流程如下：
 
 ```bash
+docker compose pull
+# pull 失败时：
+systemctl restart docker
+docker compose pull
+# 仍失败时：
 docker compose build hermes-webui
 docker compose up -d
 ```
