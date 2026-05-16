@@ -321,3 +321,248 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
   expect(api.unexpectedRequests).toEqual([])
 })
+
+test('keeps prior tool trace visible while hiding only the active run tool trace', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'First tool trace')
+  const first = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-history-1' })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-history-1',
+      tool_call_id: 'tool-history-1',
+      tool: 'read_file',
+      preview: 'Read historical file',
+      arguments: JSON.stringify({ path: '/tmp/history.txt' }),
+    })
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-history-1',
+      tool_call_id: 'tool-history-1',
+      tool: 'read_file',
+      output: JSON.stringify({ ok: true, path: '/tmp/history.txt' }),
+      duration: 12,
+    })
+    socket.__trigger('message.delta', {
+      event: 'message.delta',
+      session_id: sid,
+      run_id: 'run-history-1',
+      delta: 'First tool answer.',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-history-1',
+      output: 'First fallback should stay hidden.',
+    })
+  }, first.run.session_id)
+
+  const transcriptTools = page.locator('.message.tool .tool-line')
+  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
+
+  await sendChatMessage(page, 'Second tool trace')
+  const second = await waitForRun(page, 1)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-history-2' })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-history-2',
+      tool_call_id: 'tool-history-2',
+      tool: 'write_file',
+      preview: 'Write current file',
+      arguments: JSON.stringify({ path: '/tmp/current.txt', content: 'now' }),
+    })
+  }, second.run.session_id)
+
+  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(transcriptTools.filter({ hasText: 'write_file' })).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toHaveCount(1)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-history-2',
+      tool_call_id: 'tool-history-2',
+      tool: 'write_file',
+      output: JSON.stringify({ ok: true, path: '/tmp/current.txt' }),
+      duration: 15,
+    })
+    socket.__trigger('message.delta', {
+      event: 'message.delta',
+      session_id: sid,
+      run_id: 'run-history-2',
+      delta: 'Second tool answer.',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-history-2',
+      output: 'Second fallback should stay hidden.',
+    })
+  }, second.run.session_id)
+
+  await expect(transcriptTools).toHaveCount(2)
+  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(transcriptTools.filter({ hasText: 'write_file' })).toHaveCount(1)
+  await expect(page.getByText('First fallback should stay hidden.')).toHaveCount(0)
+  await expect(page.getByText('Second fallback should stay hidden.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('keeps completed same-run tool traces hidden until the run finishes', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Run multiple tools')
+  const { run } = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-multi-tool' })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      tool_call_id: 'tool-multi-1',
+      tool: 'read_file',
+      preview: 'Read config',
+      arguments: JSON.stringify({ path: '/tmp/config.json' }),
+    })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      tool_call_id: 'tool-multi-2',
+      tool: 'shell_exec',
+      preview: 'Run command',
+      arguments: JSON.stringify({ command: 'false' }),
+    })
+  }, run.session_id)
+
+  const transcriptTools = page.locator('.message.tool .tool-line')
+  await expect(transcriptTools).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(1)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      tool_call_id: 'tool-multi-1',
+      tool: 'read_file',
+      output: JSON.stringify({ ok: true, path: '/tmp/config.json' }),
+      duration: 11,
+    })
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      tool_call_id: 'tool-multi-2',
+      tool: 'shell_exec',
+      output: 'exit status 1',
+      error: true,
+      duration: 13,
+    })
+  }, run.session_id)
+
+  await expect(transcriptTools).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(1)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('message.delta', {
+      event: 'message.delta',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      delta: 'Multiple tools finished.',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-multi-tool',
+      output: 'Multi-tool fallback should stay hidden.',
+    })
+  }, run.session_id)
+
+  await expect(transcriptTools).toHaveCount(2)
+  await expect(transcriptTools.filter({ hasText: 'read_file' })).toHaveCount(1)
+  await expect(transcriptTools.filter({ hasText: 'shell_exec' })).toHaveCount(1)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'read_file' })).toHaveCount(0)
+  await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'shell_exec' })).toHaveCount(0)
+  await expect(page.locator('.message.tool .tool-error-badge')).toHaveCount(1)
+  await transcriptTools.filter({ hasText: 'shell_exec' }).click()
+  await expect(page.locator('.message.tool .tool-details')).toContainText('exit status 1')
+  await expect(page.getByText('Multi-tool fallback should stay hidden.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('keeps unnamed tool trace messages out of the transcript after completion', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Run internal unnamed tool')
+  const { run } = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-unnamed-tool' })
+    socket.__trigger('tool.started', {
+      event: 'tool.started',
+      session_id: sid,
+      run_id: 'run-unnamed-tool',
+      tool_call_id: 'tool-unnamed-1',
+      preview: 'Internal unnamed work',
+      arguments: JSON.stringify({ internal: true }),
+    })
+    socket.__trigger('tool.completed', {
+      event: 'tool.completed',
+      session_id: sid,
+      run_id: 'run-unnamed-tool',
+      tool_call_id: 'tool-unnamed-1',
+      output: JSON.stringify({ internal: true, ok: true }),
+      duration: 9,
+    })
+    socket.__trigger('message.delta', {
+      event: 'message.delta',
+      session_id: sid,
+      run_id: 'run-unnamed-tool',
+      delta: 'Unnamed internal tool finished.',
+    })
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-unnamed-tool',
+      output: 'Unnamed fallback should stay hidden.',
+    })
+  }, run.session_id)
+
+  await expect(page.locator('.message.tool .tool-line')).toHaveCount(0)
+  await expect(page.getByText('Unnamed internal tool finished.')).toBeVisible()
+  await expect(page.getByText('Unnamed fallback should stay hidden.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
