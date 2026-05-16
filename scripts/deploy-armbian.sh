@@ -253,7 +253,7 @@ configure_docker_registry_mirrors() {
 
   local mirror_csv daemon_file python_bin
   daemon_file="/etc/docker/daemon.json"
-  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://mirror.ccs.tencentyun.com,https://hub-mirror.c.163.com}"
+  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
 
   if [[ -z "${mirror_csv// }" ]]; then
     warn "未提供 Docker 镜像源，跳过镜像源配置。"
@@ -349,10 +349,16 @@ pull_and_start() {
   (
     cd "${DEPLOY_DIR}"
     if [[ "$compose" == "docker compose" ]]; then
-      run docker compose pull
+      if ! run docker compose pull; then
+        warn "拉取预构建镜像失败，尝试本地构建 hermes-webui"
+        run docker compose build hermes-webui
+      fi
       run docker compose up -d
     else
-      run docker-compose pull
+      if ! run docker-compose pull; then
+        warn "拉取预构建镜像失败，尝试本地构建 hermes-webui"
+        run docker-compose build hermes-webui
+      fi
       run docker-compose up -d
     fi
   )
@@ -412,7 +418,7 @@ AUTH_DISABLED="${AUTH_DISABLED:-false}"
 WEBUI_IMAGE="${WEBUI_IMAGE:-ekkoye8888/hermes-web-ui}"
 WEBUI_CONTAINER_NAME="${WEBUI_CONTAINER_NAME:-hermes-webui}"
 HERMES_DATA_DIR="${HERMES_DATA_DIR:-${DEPLOY_DIR}/hermes_data}"
-DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://mirror.ccs.tencentyun.com,https://hub-mirror.c.163.com}"
+DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
 REPO_REF="${REPO_REF:-main}"
 RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/${REPO_REF}}"
 ENV_FILE="${DEPLOY_DIR}/.env"

@@ -138,6 +138,7 @@ sudo docker compose logs -f hermes-webui
 12. 如设备时间未同步，自动尝试 `timesyncd` 校时；若仍失败，则对 `apt update` 使用日期校验兜底
 13. 如 Docker 官方源或 GPG key 下载失败，自动回退到系统仓库安装 `docker.io`
 14. 自动配置 Docker daemon 国内镜像源，并在需要时重启 Docker 使其生效
+15. 如预构建镜像拉取失败，自动尝试本地构建 `hermes-webui`
 
 ## 默认部署参数
 
@@ -386,7 +387,6 @@ docker compose version
 
 如果设备访问 `docker.io` 或 `registry-1.docker.io` 超时，脚本会自动尝试为 Docker daemon 写入国内镜像源：
 
-- `https://mirror.ccs.tencentyun.com`
 - `https://hub-mirror.c.163.com`
 
 脚本会：
@@ -406,7 +406,24 @@ docker info | grep -A5 "Registry Mirrors"
 
 当前默认没有使用 `daocloud`，因为在本项目镜像 `ekkoye8888/hermes-web-ui:latest` 的拉取链路上，已验证可能返回 `403 Forbidden`。
 
-### 7. 想重置部署
+### 7. 预构建镜像拉取失败
+
+如果 `docker compose pull` 失败，脚本会自动尝试：
+
+```bash
+docker compose build hermes-webui
+docker compose up -d
+```
+
+如果你想手动执行，也可以运行：
+
+```bash
+cd /opt/hermes-web-ui
+sudo docker compose build hermes-webui
+sudo docker compose up -d
+```
+
+### 8. 想重置部署
 
 ```bash
 cd /opt/hermes-web-ui
