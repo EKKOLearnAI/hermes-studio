@@ -86,9 +86,10 @@ function handleClose() {
 .drawer-panel {
   position: fixed;
   top: 0;
-  right: -900px;
-  width: 900px;
-  height: 100vh;
+  right: min(-1180px, -88vw);
+  width: min(1180px, 88vw);
+  height: calc(100 * var(--vh));
+  max-height: calc(100 * var(--vh));
   background: $bg-card;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
   display: flex;
@@ -180,5 +181,3 @@ function handleClose() {
   overflow: auto;
 }
 </style>
-
-
