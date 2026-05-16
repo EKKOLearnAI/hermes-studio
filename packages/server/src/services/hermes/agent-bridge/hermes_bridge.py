@@ -36,6 +36,28 @@ def _bridge_platform() -> str:
     return os.environ.get("HERMES_AGENT_BRIDGE_PLATFORM", "cli").strip() or "cli"
 
 
+def _suppress_bridge_platform_hint() -> None:
+    raw = os.environ.get("HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT", "cli").strip()
+    if raw.lower() in {"0", "false", "no", "off"}:
+        return
+    targets = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    if not targets:
+        return
+    try:
+        from agent import prompt_builder
+
+        for target in targets:
+            prompt_builder.PLATFORM_HINTS.pop(target, None)
+    except Exception:
+        pass
+
+    run_agent_module = sys.modules.get("run_agent")
+    hints = getattr(run_agent_module, "PLATFORM_HINTS", None)
+    if isinstance(hints, dict):
+        for target in targets:
+            hints.pop(target, None)
+
+
 def _candidate_agent_roots(raw: str | None = None) -> list[Path]:
     candidates: list[Path] = []
     if raw:
@@ -379,6 +401,7 @@ class AgentPool:
                     return existing
 
             _ensure_agent_imports()
+            _suppress_bridge_platform_hint()
             from run_agent import AIAgent
 
             original_home = _apply_profile_env(profile)
