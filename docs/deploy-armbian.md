@@ -65,6 +65,15 @@ chmod +x scripts/deploy-armbian.sh
 sudo ./scripts/deploy-armbian.sh
 ```
 
+如果你就是在仓库目录本身执行脚本，例如：
+
+```bash
+cd /opt/hermes-web-ui
+sudo ./scripts/deploy-armbian.sh
+```
+
+脚本会直接复用当前目录下已有的 `docker-compose.yml`，不会再重复复制该文件。
+
 ### 4. 自定义端口部署
 
 ```bash

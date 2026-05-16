@@ -258,6 +258,10 @@ EOF
 write_compose_file() {
   step "写入 docker-compose.yml"
   if [[ -f "${LOCAL_COMPOSE_FILE}" ]]; then
+    if [[ "${LOCAL_COMPOSE_FILE}" == "${COMPOSE_FILE}" ]]; then
+      info "当前目录已是部署目录，直接复用现有 docker-compose.yml"
+      return
+    fi
     run cp "${LOCAL_COMPOSE_FILE}" "${COMPOSE_FILE}"
     info "使用仓库内 docker-compose.yml"
     return
