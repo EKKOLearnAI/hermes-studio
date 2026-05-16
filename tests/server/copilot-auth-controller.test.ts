@@ -5,13 +5,14 @@ vi.mock('os', async () => {
   return { ...actual, homedir: () => '/fake/home' }
 })
 
-const { mockReadFile, mockWriteFile, mockMkdir, mockSaveEnvValue, mockReadConfigYaml, mockWriteConfigYaml, mockResolveWithSource, mockInvalidate, mockReadAppConfig, mockWriteAppConfig } = vi.hoisted(() => ({
+const { mockReadFile, mockWriteFile, mockMkdir, mockSaveEnvValue, mockReadConfigYaml, mockWriteConfigYaml, mockUpdateConfigYaml, mockResolveWithSource, mockInvalidate, mockReadAppConfig, mockWriteAppConfig } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockSaveEnvValue: vi.fn().mockResolvedValue(undefined),
   mockReadConfigYaml: vi.fn(),
   mockWriteConfigYaml: vi.fn().mockResolvedValue(undefined),
+  mockUpdateConfigYaml: vi.fn(),
   mockResolveWithSource: vi.fn(),
   mockInvalidate: vi.fn(),
   mockReadAppConfig: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   saveEnvValue: mockSaveEnvValue,
   readConfigYaml: mockReadConfigYaml,
   writeConfigYaml: mockWriteConfigYaml,
+  updateConfigYaml: mockUpdateConfigYaml,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
@@ -58,6 +60,17 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockReadFile.mockResolvedValue('')
   mockReadConfigYaml.mockResolvedValue({})
+  mockUpdateConfigYaml.mockImplementation(async (updater: any) => {
+    const cfg = await mockReadConfigYaml()
+    const updated = await updater(cfg)
+    if (updated && typeof updated === 'object' && Object.hasOwn(updated, 'data')) {
+      if (updated.write === false) return updated.result
+      await mockWriteConfigYaml(updated.data)
+      return updated.result
+    }
+    await mockWriteConfigYaml(updated)
+    return undefined
+  })
 })
 
 afterEach(() => {

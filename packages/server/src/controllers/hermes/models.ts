@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
-import { readConfigYaml, writeConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { readConfigYaml, updateConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
@@ -483,11 +483,12 @@ export async function setConfigModel(ctx: any) {
     return
   }
   try {
-    const config = await readConfigYaml()
-    config.model = {}
-    config.model.default = defaultModel
-    if (reqProvider) { config.model.provider = reqProvider }
-    await writeConfigYaml(config)
+    await updateConfigYaml((config) => {
+      config.model = {}
+      config.model.default = defaultModel
+      if (reqProvider) { config.model.provider = reqProvider }
+      return config
+    })
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500

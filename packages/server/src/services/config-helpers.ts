@@ -1,10 +1,10 @@
-import { readFile, writeFile, copyFile, chmod } from 'fs/promises'
+import { readFile, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import YAML from 'js-yaml'
 import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath } from './hermes/hermes-profile'
 import { logger } from './logger'
+import { safeFileStore } from './safe-file-store'
 
 // --- Provider env var mapping (from hermes providers.py HERMES_OVERLAYS + config.py) ---
 export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_env: string }> = {
@@ -72,56 +72,48 @@ export interface ModelGroup {
 const configPath = () => getActiveConfigPath()
 
 export async function readConfigYaml(): Promise<Record<string, any>> {
-  const raw = await safeReadFile(configPath())
-  if (!raw) return {}
-  return (YAML.load(raw, { json: true }) as Record<string, any>) || {}
+  return safeFileStore.readYaml(configPath())
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {
-  const cp = configPath()
-  await copyFile(cp, cp + '.bak')
-  const yamlStr = YAML.dump(config, {
-    lineWidth: -1,
-    noRefs: true,
-    quotingType: '"',
-  })
-  await writeFile(cp, yamlStr, 'utf-8')
+  await safeFileStore.writeYaml(configPath(), config, { backup: true })
+}
+
+export async function updateConfigYaml<T = void>(
+  updater: (config: Record<string, any>) => Record<string, any> | { data: Record<string, any>; result: T; write?: boolean } | Promise<Record<string, any> | { data: Record<string, any>; result: T; write?: boolean }>,
+): Promise<T | undefined> {
+  return safeFileStore.updateYaml(configPath(), updater, { backup: true })
 }
 
 // --- .env helpers ---
 
 export async function saveEnvValue(key: string, value: string): Promise<void> {
   const envPath = getActiveEnvPath()
-  let raw: string
-  try {
-    raw = await readFile(envPath, 'utf-8')
-  } catch {
-    raw = ''
-  }
-  const remove = !value
-  const lines = raw.split('\n')
-  let found = false
-  const result: string[] = []
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('#') && trimmed.startsWith(`# ${key}=`)) {
-      if (!remove) result.push(`${key}=${value}`)
-      found = true
-    } else {
-      const eqIdx = trimmed.indexOf('=')
-      if (eqIdx !== -1 && trimmed.slice(0, eqIdx).trim() === key) {
+  await safeFileStore.updateText(envPath, (raw) => {
+    const remove = !value
+    const lines = raw.split('\n')
+    let found = false
+    const result: string[] = []
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.startsWith('#') && trimmed.startsWith(`# ${key}=`)) {
         if (!remove) result.push(`${key}=${value}`)
         found = true
       } else {
-        result.push(line)
+        const eqIdx = trimmed.indexOf('=')
+        if (eqIdx !== -1 && trimmed.slice(0, eqIdx).trim() === key) {
+          if (!remove) result.push(`${key}=${value}`)
+          found = true
+        } else {
+          result.push(line)
+        }
       }
     }
-  }
-  if (!found && !remove) {
-    result.push(`${key}=${value}`)
-  }
-  let output = result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '') + '\n'
-  await writeFile(envPath, output, 'utf-8')
+    if (!found && !remove) {
+      result.push(`${key}=${value}`)
+    }
+    return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '') + '\n'
+  })
   try { await chmod(envPath, 0o600) } catch { /* ignore */ }
 }
 
