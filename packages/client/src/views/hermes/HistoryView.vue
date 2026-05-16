@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useChatStore, type Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
-import { NButton, NDropdown, NInput, NModal, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NTooltip, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
-import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
-import { renameSession, setSessionWorkspace, fetchHermesSessions, fetchHermesSession, exportSession, type SessionSummary } from '@/api/hermes/sessions'
+import { fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -125,10 +124,6 @@ onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
 })
 
-const showRenameModal = ref(false)
-const renameValue = ref('')
-const renameSessionId = ref<string | null>(null)
-const renameInputRef = ref<InstanceType<typeof NInput> | null>(null)
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
 
 // Convert SessionSummary to Session format
@@ -272,129 +267,6 @@ async function copySessionId(id?: string) {
   }
 }
 
-const contextSessionId = ref<string | null>(null)
-const contextSessionPinned = computed(() =>
-  contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
-)
-
-const contextMenuOptions = computed(() => [
-  { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
-  { label: t('chat.rename'), key: 'rename' },
-  { label: t('chat.setWorkspace'), key: 'workspace' },
-  {
-    label: t('chat.export'),
-    key: 'export',
-    children: [
-      {
-        label: t('chat.exportFull'),
-        key: 'export-full',
-        children: [
-          { label: 'JSON', key: 'export-full-json' },
-          { label: 'TXT', key: 'export-full-txt' },
-        ],
-      },
-      {
-        label: t('chat.exportCompressed'),
-        key: 'export-compressed',
-        children: [
-          { label: 'JSON', key: 'export-compressed-json' },
-          { label: 'TXT', key: 'export-compressed-txt' },
-        ],
-      },
-    ],
-  },
-  { label: t('chat.copySessionId'), key: 'copy-id' },
-])
-
-function handleContextMenu(e: MouseEvent, sessionId: string) {
-  e.preventDefault()
-  contextSessionId.value = sessionId
-  showContextMenu.value = true
-  contextMenuX.value = e.clientX
-  contextMenuY.value = e.clientY
-}
-
-const showContextMenu = ref(false)
-const contextMenuX = ref(0)
-const contextMenuY = ref(0)
-
-function parseExportKey(key: string): { mode: 'full' | 'compressed'; ext: 'json' | 'txt' } | null {
-  if (key === 'export-full-json') return { mode: 'full', ext: 'json' }
-  if (key === 'export-full-txt') return { mode: 'full', ext: 'txt' }
-  if (key === 'export-compressed-json') return { mode: 'compressed', ext: 'json' }
-  if (key === 'export-compressed-txt') return { mode: 'compressed', ext: 'txt' }
-  return null
-}
-
-async function handleContextMenuSelect(key: string) {
-  showContextMenu.value = false
-  if (!contextSessionId.value) return
-  if (key === 'pin') {
-    sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
-    return
-  }
-  if (key === 'copy-id') {
-    copySessionId(contextSessionId.value)
-  } else if (parseExportKey(key)) {
-    const { mode, ext } = parseExportKey(key)!
-    const loadingMsg = mode === 'compressed' ? message.loading(t('chat.exportCompressing'), { duration: 0 }) : null
-    try {
-      await exportSession(contextSessionId.value, mode, ext)
-      loadingMsg?.destroy()
-      message.success(t('chat.exportSuccess'))
-    } catch {
-      loadingMsg?.destroy()
-      message.error(t('chat.exportFailed'))
-    }
-  } else if (key === 'workspace') {
-    const session = historySessions.value.find(s => s.id === contextSessionId.value)
-    workspaceSessionId.value = contextSessionId.value
-    workspaceValue.value = session?.workspace || ''
-    showWorkspaceModal.value = true
-  } else if (key === 'rename') {
-    const session = historySessions.value.find(s => s.id === contextSessionId.value)
-    renameSessionId.value = contextSessionId.value
-    renameValue.value = session?.title || ''
-    showRenameModal.value = true
-    nextTick(() => {
-      renameInputRef.value?.focus()
-    })
-  }
-}
-
-function handleClickOutside() {
-  showContextMenu.value = false
-}
-
-async function handleRenameConfirm() {
-  if (!renameSessionId.value || !renameValue.value.trim()) return
-  const ok = await renameSession(renameSessionId.value, renameValue.value.trim())
-  if (ok) {
-    // Reload Hermes sessions to get updated title
-    await loadHermesSessions()
-    message.success(t('chat.renamed'))
-  } else {
-    message.error(t('chat.renameFailed'))
-  }
-  showRenameModal.value = false
-}
-
-const showWorkspaceModal = ref(false)
-const workspaceValue = ref('')
-const workspaceSessionId = ref<string | null>(null)
-
-async function handleWorkspaceConfirm() {
-  if (!workspaceSessionId.value) return
-  const ok = await setSessionWorkspace(workspaceSessionId.value, workspaceValue.value || null)
-  if (ok) {
-    // Reload Hermes sessions to get updated workspace
-    await loadHermesSessions()
-    message.success(t('chat.workspaceSet'))
-  } else {
-    message.error(t('chat.workspaceSetFailed'))
-  }
-  showWorkspaceModal.value = false
-}
 </script>
 
 <template>
@@ -430,7 +302,6 @@ async function handleWorkspaceConfirm() {
             :can-delete="false"
             :streaming="false"
             @select="handleSessionClick(s.id)"
-            @contextmenu="handleContextMenu($event, s.id)"
           />
         </template>
 
@@ -450,51 +321,11 @@ async function handleWorkspaceConfirm() {
               :can-delete="false"
               :streaming="false"
               @select="handleSessionClick(s.id)"
-              @contextmenu="handleContextMenu($event, s.id)"
             />
           </template>
         </template>
       </div>
     </aside>
-
-    <NDropdown
-      placement="bottom-start"
-      trigger="manual"
-      :x="contextMenuX"
-      :y="contextMenuY"
-      :options="contextMenuOptions"
-      :show="showContextMenu"
-      @select="handleContextMenuSelect"
-      @clickoutside="handleClickOutside"
-    />
-
-    <NModal
-      v-model:show="showRenameModal"
-      preset="dialog"
-      :title="t('chat.renameSession')"
-      :positive-text="t('common.ok')"
-      :negative-text="t('common.cancel')"
-      @positive-click="handleRenameConfirm"
-    >
-      <NInput
-        ref="renameInputRef"
-        v-model:value="renameValue"
-        :placeholder="t('chat.enterNewTitle')"
-        @keydown.enter="handleRenameConfirm"
-      />
-    </NModal>
-
-    <NModal
-      v-model:show="showWorkspaceModal"
-      preset="dialog"
-      :title="t('chat.setWorkspaceTitle')"
-      :positive-text="t('common.ok')"
-      :negative-text="t('common.cancel')"
-      style="width: 520px"
-      @positive-click="handleWorkspaceConfirm"
-    >
-      <FolderPicker v-model="workspaceValue" />
-    </NModal>
 
     <div class="chat-main">
       <header class="chat-header">

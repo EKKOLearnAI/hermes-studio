@@ -171,6 +171,53 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('clears previous compression status when a new run starts', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Trigger compression before answering')
+  const first = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-1' })
+    socket.__trigger('compression.completed', {
+      event: 'compression.completed',
+      session_id: sid,
+      totalMessages: 12,
+      beforeTokens: 24000,
+      afterTokens: 6000,
+      compressed: true,
+    })
+  }, first.run.session_id)
+
+  await expect(page.getByText(/Compressed 12 msgs/)).toBeVisible()
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-1',
+      output: 'First answer',
+    })
+  }, first.run.session_id)
+
+  await sendChatMessage(page, 'Start another turn')
+  const second = await waitForRun(page, 1)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-2' })
+  }, second.run.session_id)
+
+  await expect(page.getByText(/Compressed 12 msgs/)).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('surfaces an empty completed run as an error instead of leaving chat stalled', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)

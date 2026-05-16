@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import * as hermesCli from '../../services/hermes/hermes-cli'
-import { readConfigYaml, writeConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { updateConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
@@ -50,48 +50,18 @@ export async function create(ctx: any) {
   try {
     const poolKey = providerKey || `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
     const isBuiltin = poolKey in PROVIDER_ENV_MAP
-    const config = await readConfigYaml()
-    if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
-    if (!isBuiltin) {
-      if (!Array.isArray(config.custom_providers)) { config.custom_providers = [] }
-      const existing = (config.custom_providers as any[]).find(
-        (e: any) => `custom:${e.name}` === poolKey
-      )
-      if (existing) {
-        existing.base_url = base_url
-        existing.api_key = api_key
-        existing.model = model
-        const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
-        if (preset?.api_mode) existing.api_mode = preset.api_mode
-        if (context_length && context_length > 0) {
-          if (!existing.models) existing.models = {}
-          existing.models[model] = existing.models[model] || {}
-          existing.models[model].context_length = context_length
-        }
-      } else {
-        const entry = buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length)
-        const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
-        if (preset?.api_mode) entry.api_mode = preset.api_mode
-        config.custom_providers.push(entry)
-      }
-      config.model.default = model
-      config.model.provider = poolKey
-    } else {
-      if (PROVIDER_ENV_MAP[poolKey].api_key_env) {
-        await saveEnvValue(PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
-        if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValue(PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
-        config.model.default = model
-        config.model.provider = poolKey
-      } else {
+    await updateConfigYaml(async (config) => {
+      if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
+      if (!isBuiltin) {
         if (!Array.isArray(config.custom_providers)) { config.custom_providers = [] }
         const existing = (config.custom_providers as any[]).find(
-          (e: any) => `custom:${e.name}` === `custom:${poolKey}`
+          (e: any) => `custom:${e.name}` === poolKey
         )
         if (existing) {
           existing.base_url = base_url
           existing.api_key = api_key
           existing.model = model
-          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) existing.api_mode = preset.api_mode
           if (context_length && context_length > 0) {
             if (!existing.models) existing.models = {}
@@ -99,18 +69,49 @@ export async function create(ctx: any) {
             existing.models[model].context_length = context_length
           }
         } else {
-          const entry = buildProviderEntry(poolKey, base_url, api_key, model, context_length)
-          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+          const entry = buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length)
+          const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) entry.api_mode = preset.api_mode
           config.custom_providers.push(entry)
         }
         config.model.default = model
-        config.model.provider = `custom:${poolKey}`
+        config.model.provider = poolKey
+      } else {
+        if (PROVIDER_ENV_MAP[poolKey].api_key_env) {
+          await saveEnvValue(PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
+          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValue(PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
+          config.model.default = model
+          config.model.provider = poolKey
+        } else {
+          if (!Array.isArray(config.custom_providers)) { config.custom_providers = [] }
+          const existing = (config.custom_providers as any[]).find(
+            (e: any) => `custom:${e.name}` === `custom:${poolKey}`
+          )
+          if (existing) {
+            existing.base_url = base_url
+            existing.api_key = api_key
+            existing.model = model
+            const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+            if (preset?.api_mode) existing.api_mode = preset.api_mode
+            if (context_length && context_length > 0) {
+              if (!existing.models) existing.models = {}
+              existing.models[model] = existing.models[model] || {}
+              existing.models[model].context_length = context_length
+            }
+          } else {
+            const entry = buildProviderEntry(poolKey, base_url, api_key, model, context_length)
+            const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+            if (preset?.api_mode) entry.api_mode = preset.api_mode
+            config.custom_providers.push(entry)
+          }
+          config.model.default = model
+          config.model.provider = `custom:${poolKey}`
+        }
       }
-    }
-    delete config.model.base_url
-    delete config.model.api_key
-    await writeConfigYaml(config)
+      delete config.model.base_url
+      delete config.model.api_key
+      return config
+    })
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
@@ -127,21 +128,21 @@ export async function update(ctx: any) {
   try {
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
-      const config = await readConfigYaml()
-      if (!Array.isArray(config.custom_providers)) {
-        ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
-      }
-      const entry = (config.custom_providers as any[]).find((e: any) => {
-        return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
+      const found = await updateConfigYaml((config) => {
+        if (!Array.isArray(config.custom_providers)) return { data: config, result: false, write: false }
+        const entry = (config.custom_providers as any[]).find((e: any) => {
+          return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
+        })
+        if (!entry) return { data: config, result: false, write: false }
+        if (name !== undefined) entry.name = name
+        if (base_url !== undefined) entry.base_url = base_url
+        if (api_key !== undefined) entry.api_key = api_key
+        if (model !== undefined) entry.model = model
+        return { data: config, result: true }
       })
-      if (!entry) {
+      if (!found) {
         ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
       }
-      if (name !== undefined) entry.name = name
-      if (base_url !== undefined) entry.base_url = base_url
-      if (api_key !== undefined) entry.api_key = api_key
-      if (model !== undefined) entry.model = model
-      await writeConfigYaml(config)
     } else {
       const envMapping = PROVIDER_ENV_MAP[poolKey]
       if (!envMapping?.api_key_env) {
@@ -160,46 +161,49 @@ export async function update(ctx: any) {
 export async function remove(ctx: any) {
   const poolKey = decodeURIComponent(ctx.params.poolKey)
   try {
-    const config = await readConfigYaml()
     const isCustom = poolKey.startsWith('custom:')
-    if (isCustom) {
-      const idx = Array.isArray(config.custom_providers)
-        ? (config.custom_providers as any[]).findIndex((e: any) => {
-          return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
-        })
-        : -1
-      if (idx === -1) {
-        ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
-      }
-      ;(config.custom_providers as any[]).splice(idx, 1)
-      await writeConfigYaml(config)
-      await clearStoredAuthProvider(poolKey)
-    } else {
-      const envMapping = PROVIDER_ENV_MAP[poolKey]
-      if (envMapping?.api_key_env) {
-        await saveEnvValue(envMapping.api_key_env, '')
-        if (envMapping.base_url_env) { await saveEnvValue(envMapping.base_url_env, '') }
-      }
-      await clearStoredAuthProvider(poolKey)
-    }
-    const currentProvider = config.model?.provider
-    if (currentProvider === poolKey) {
-      const freshConfig = await readConfigYaml()
-      const remaining = Array.isArray(freshConfig.custom_providers) ? freshConfig.custom_providers as any[] : []
-      if (remaining.length > 0) {
-        const fallbackCp = remaining[0]
-        const fallbackKey = `custom:${fallbackCp.name.trim().toLowerCase().replace(/ /g, '-')}`
-        if (typeof freshConfig.model !== 'object' || freshConfig.model === null) { freshConfig.model = {} }
-        freshConfig.model.default = fallbackCp.model
-        freshConfig.model.provider = fallbackKey
-        delete freshConfig.model.base_url
-        delete freshConfig.model.api_key
-        await writeConfigYaml(freshConfig)
+    const removed = await updateConfigYaml(async (config) => {
+      if (isCustom) {
+        const idx = Array.isArray(config.custom_providers)
+          ? (config.custom_providers as any[]).findIndex((e: any) => {
+            return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
+          })
+          : -1
+        if (idx === -1) return { data: config, result: false, write: false }
+        ;(config.custom_providers as any[]).splice(idx, 1)
       } else {
-        freshConfig.model = {}
-        await writeConfigYaml(freshConfig)
+        const envMapping = PROVIDER_ENV_MAP[poolKey]
+        if (envMapping?.api_key_env) {
+          await saveEnvValue(envMapping.api_key_env, '')
+          if (envMapping.base_url_env) { await saveEnvValue(envMapping.base_url_env, '') }
+        }
+      }
+      if (config.model?.provider === poolKey) {
+        const remaining = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        if (remaining.length > 0) {
+          const fallbackCp = remaining[0]
+          const fallbackKey = `custom:${fallbackCp.name.trim().toLowerCase().replace(/ /g, '-')}`
+          if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
+          config.model.default = fallbackCp.model
+          config.model.provider = fallbackKey
+          delete config.model.base_url
+          delete config.model.api_key
+        } else {
+          config.model = {}
+        }
+      }
+      return { data: config, result: true }
+    })
+    if (!removed) {
+      ctx.status = 404; ctx.body = { error: `Custom provider "${poolKey}" not found` }; return
+    }
+    if (!isCustom) {
+      const envMapping = PROVIDER_ENV_MAP[poolKey]
+      if (!envMapping) {
+        ctx.status = 404; ctx.body = { error: `Provider "${poolKey}" not found` }; return
       }
     }
+    await clearStoredAuthProvider(poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }

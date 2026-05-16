@@ -2,11 +2,12 @@
 import { spawn, execSync, execFileSync } from 'child_process'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const __filename = fileURLToPath(import.meta.url)
 const serverEntry = resolve(__dirname, '..', 'dist', 'server', 'index.js')
 const pkgDir = resolve(__dirname, '..')
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf-8'))
@@ -160,6 +161,39 @@ function getPort() {
   return argPort ?? DEFAULT_PORT
 }
 
+function commandExists(command) {
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('where', [command], { stdio: 'ignore', windowsHide: true })
+    } else {
+      execFileSync('sh', ['-c', `command -v "$1" >/dev/null 2>&1`, 'sh', command], { stdio: 'ignore' })
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+function parseUnixNetstatListeningPids(out, port) {
+  const pids = []
+  for (const line of out.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 6) continue
+
+    const proto = parts[0]?.toLowerCase()
+    if (!proto?.startsWith('tcp')) continue
+
+    const localAddress = parts[3]
+    const state = parts.find(part => part.toUpperCase() === 'LISTEN' || part.toUpperCase() === 'LISTENING')
+    if (!state || !localAddress?.endsWith(`:${port}`)) continue
+
+    const pidPart = parts.find(part => /^\d+\//.test(part))
+    const pid = pidPart ? parseInt(pidPart.split('/')[0], 10) : NaN
+    if (Number.isFinite(pid)) pids.push(pid)
+  }
+  return pids
+}
+
 function getListeningPids(port) {
   if (!port || isNaN(port)) return []
   const uniquePids = (pids) => [...new Set(pids.filter(pid => Number.isFinite(pid)))]
@@ -182,17 +216,31 @@ function getListeningPids(port) {
     return []
   }
 
-  try {
-    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, { encoding: 'utf-8' }).trim()
-    return uniquePids(out.split('\n').map(pid => parseInt(pid, 10)))
-  } catch {}
+  if (commandExists('ss')) {
+    try {
+      const out = execFileSync('ss', ['-ltnp', `sport = :${port}`], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+      const pids = uniquePids(out.split(/\r?\n/)
+        .map(line => line.match(/pid=(\d+)/)?.[1])
+        .map(pid => parseInt(pid || '', 10)))
+      if (pids.length) return pids
+    } catch {}
+  }
 
-  try {
-    const out = execSync(`ss -ltnp 'sport = :${port}'`, { encoding: 'utf-8' })
-    return uniquePids(out.split('\n')
-      .map(line => line.match(/pid=(\d+)/)?.[1])
-      .map(pid => parseInt(pid || '', 10)))
-  } catch {}
+  if (commandExists('lsof')) {
+    try {
+      const out = execFileSync('lsof', [`-tiTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      const pids = uniquePids(out.split(/\r?\n/).map(pid => parseInt(pid, 10)))
+      if (pids.length) return pids
+    } catch {}
+  }
+
+  if (commandExists('netstat')) {
+    try {
+      const out = execFileSync('netstat', ['-anp', 'tcp'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+      const pids = uniquePids(parseUnixNetstatListeningPids(out, port))
+      if (pids.length) return pids
+    } catch {}
+  }
 
   return []
 }
@@ -418,15 +466,16 @@ function showStatus() {
   }
 }
 
-const command = process.argv[2] || 'start'
+function main() {
+  const command = process.argv[2] || 'start'
 
-if (['-v', '--version', 'version'].includes(command)) {
-  console.log(`hermes-web-ui v${VERSION}`)
-  process.exit(0)
-}
+  if (['-v', '--version', 'version'].includes(command)) {
+    console.log(`hermes-web-ui v${VERSION}`)
+    process.exit(0)
+  }
 
-if (['-h', '--help', 'help'].includes(command)) {
-  console.log(`
+  if (['-h', '--help', 'help'].includes(command)) {
+    console.log(`
 hermes-web-ui v${VERSION}
 
 Usage: hermes-web-ui <command> [options]
@@ -445,7 +494,49 @@ Options:
   -h, --help         Show this help message
   --port <port>      Specify port (used with start/restart)
 `)
-  process.exit(0)
+    process.exit(0)
+  }
+
+  switch (command) {
+    case 'start':
+      startDaemon(getPort())
+      break
+    case 'stop':
+      stopDaemon()
+      break
+    case 'restart':
+      stopDaemon()
+      setTimeout(() => startDaemon(getPort()), 500)
+      break
+    case 'status':
+      showStatus()
+      break
+    case 'update':
+    case 'upgrade':
+      doUpdate()
+      break
+    default:
+      ensureNativeModules()
+      const port = !isNaN(command) ? parseInt(command) : DEFAULT_PORT
+      const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
+      const serverEnv = {
+        ...process.env,
+        NODE_ENV: 'production',
+        PORT: String(port),
+      }
+      if (windowsShell) {
+        serverEnv.SHELL = serverEnv.SHELL?.trim() || windowsShell
+        serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
+      }
+      const child = spawn(process.execPath, [serverEntry], {
+        stdio: 'inherit',
+        env: serverEnv,
+        windowsHide: true,
+      })
+      child.on('exit', (code) => process.exit(code ?? 1))
+      process.on('SIGTERM', () => child.kill('SIGTERM'))
+      process.on('SIGINT', () => child.kill('SIGINT'))
+  }
 }
 
 function doUpdate() {
@@ -503,43 +594,12 @@ function runUpdateInstall(npm) {
   })
 }
 
-switch (command) {
-  case 'start':
-    startDaemon(getPort())
-    break
-  case 'stop':
-    stopDaemon()
-    break
-  case 'restart':
-    stopDaemon()
-    setTimeout(() => startDaemon(getPort()), 500)
-    break
-  case 'status':
-    showStatus()
-    break
-  case 'update':
-  case 'upgrade':
-    doUpdate()
-    break
-  default:
-    ensureNativeModules()
-    const port = !isNaN(command) ? parseInt(command) : DEFAULT_PORT
-    const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
-    const serverEnv = {
-      ...process.env,
-      NODE_ENV: 'production',
-      PORT: String(port),
-    }
-    if (windowsShell) {
-      serverEnv.SHELL = serverEnv.SHELL?.trim() || windowsShell
-      serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
-    }
-    const child = spawn(process.execPath, [serverEntry], {
-      stdio: 'inherit',
-      env: serverEnv,
-      windowsHide: true,
-    })
-    child.on('exit', (code) => process.exit(code ?? 1))
-    process.on('SIGTERM', () => child.kill('SIGTERM'))
-    process.on('SIGINT', () => child.kill('SIGINT'))
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
+  main()
+}
+
+export {
+  commandExists,
+  getListeningPids,
+  parseUnixNetstatListeningPids,
 }

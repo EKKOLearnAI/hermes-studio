@@ -57,29 +57,30 @@ const previewUrl = ref<string | null>(null)
 let renderGeneration = 0
 let unmounted = false
 
+function isLocalFilePath(path: string): boolean {
+  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path)
+}
+
+function normalizeLocalFilePath(path: string): string {
+  return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
+}
+
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
 
   // Replace image src paths with download URLs
-  // Replace both src="/path" and src='/path' formats
-  html = html.replace(/src="\/([^"]+)"/g, (_match, path) => {
-    const originalPath = '/' + path
-    const downloadUrl = getDownloadUrl(originalPath)
-    return `src="${downloadUrl}"`
-  })
-
-  html = html.replace(/src='\/([^']+)'/g, (_match, path) => {
-    const originalPath = '/' + path
-    const downloadUrl = getDownloadUrl(originalPath)
-    return `src='${downloadUrl}'`
+  html = html.replace(/\bsrc=(["'])([^"']+)\1/g, (match, quote, path) => {
+    if (!isLocalFilePath(path)) return match
+    const downloadUrl = getDownloadUrl(normalizeLocalFilePath(path))
+    return `src=${quote}${downloadUrl}${quote}`
   })
 
   // Replace local file links with file card UI or video player
-  // Match <a href="/tmp/file.pdf">filename</a> or <a href="/tmp/video.mp4">filename</a>
-  html = html.replace(/<a href="(\/[^"]+)">([^<]+)<\/a>/g, (match, path, filename) => {
-    // Only replace local file paths (starting with /)
-    if (!path.startsWith('/')) return match
+  // Match <a href="/tmp/file.pdf">filename</a> or <a href="C:/tmp/file.pdf">filename</a>
+  html = html.replace(/<a href="([^"]+)">([^<]+)<\/a>/g, (match, rawPath, filename) => {
+    if (!isLocalFilePath(rawPath)) return match
 
+    const path = normalizeLocalFilePath(rawPath)
     const fileName = filename.trim()
     const ext = path.split('.').pop()?.toLowerCase()
 
@@ -323,13 +324,13 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   }
 
   // File path links: intercept and download
-  if (href.startsWith('/')) {
+  if (isLocalFilePath(href)) {
     event.preventDefault()
     event.stopPropagation()
     const linkText = link.textContent || ''
     const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
     message.info(t('download.downloading'))
-    downloadFile(href, fileName || undefined).catch((err: Error) => {
+    downloadFile(normalizeLocalFilePath(href), fileName || undefined).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))
     })
   }

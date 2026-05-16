@@ -2,6 +2,48 @@ import { parseAnthropicContentArray } from '../../../lib/llm-json'
 import { logger } from '../../logger'
 import type { SessionMessage } from './types'
 
+function cleanToolCalls(toolCalls: any): any[] {
+  return Array.isArray(toolCalls)
+    ? toolCalls
+        .filter((tc: any) => tc?.id && String(tc.id).length > 0)
+        .map((tc: any) => ({
+          id: tc.id,
+          type: tc.type,
+          function: tc.function,
+        }))
+    : []
+}
+
+function hasSendableContent(content: unknown): boolean {
+  if (typeof content === 'string') return content.trim().length > 0
+  if (Array.isArray(content)) {
+    return content.some((block: any) => {
+      if (!block || typeof block !== 'object') return false
+      if (block.type === 'text') return typeof block.text === 'string' && block.text.trim().length > 0
+      return Boolean(block.type && block.type !== 'thinking')
+    })
+  }
+  return false
+}
+
+function toolCallsToText(toolCalls: any[]): string {
+  return toolCalls
+    .map((tc: any) => {
+      const name = tc?.function?.name || 'unknown'
+      let args = typeof tc?.function?.arguments === 'string'
+        ? tc.function.arguments
+        : JSON.stringify(tc?.function?.arguments ?? {})
+      if (args.length > 4000) args = `${args.slice(0, 4000)}...`
+      return `[Calling tool: ${name} with arguments: ${args}]`
+    })
+    .join('\n')
+}
+
+export function isAssistantMessageSendable(message: { content?: unknown; tool_calls?: any }): boolean {
+  if (hasSendableContent(message.content)) return true
+  return cleanToolCalls(message.tool_calls).length > 0
+}
+
 /**
  * Convert OpenAI format conversation history to Anthropic format.
  */
@@ -33,7 +75,18 @@ export function convertHistoryFormat(messages: any[]): any[] {
       continue
     }
     if (role === 'assistant') {
-      result.push({ ...m })
+      const toolCalls = cleanToolCalls(m.tool_calls)
+      const item = { ...m }
+      delete item.reasoning_content
+      if (toolCalls.length > 0 && !hasSendableContent(item.content)) {
+        item.content = toolCallsToText(toolCalls)
+      }
+      delete item.tool_calls
+      if (!isAssistantMessageSendable(item)) {
+        logger.warn('[chat-run-socket] skipped empty assistant message in conversation history')
+        continue
+      }
+      result.push(item)
       continue
     }
   }
@@ -127,14 +180,13 @@ export function handleMessage(messages: SessionMessage[], sid: string): any[] {
         }
 
         if (m.tool_calls?.length) {
-          const cleanedToolCalls = m.tool_calls
-            .filter((tc: any) => tc.id && tc.id.length > 0)
-            .map((tc: any) => ({
-              id: tc.id,
-              type: tc.type,
-              function: tc.function,
-            }))
+          const cleanedToolCalls = cleanToolCalls(m.tool_calls)
           if (cleanedToolCalls.length > 0) msg.tool_calls = cleanedToolCalls
+        }
+
+        if (m.role === 'assistant' && !isAssistantMessageSendable(msg)) {
+          logger.warn('[chat-run-socket] skipped empty assistant message %s while loading session %s', m.id, sid)
+          return null
         }
 
         // For tool messages, ensure tool_call_id exists

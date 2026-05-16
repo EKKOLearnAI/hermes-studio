@@ -7,39 +7,36 @@
  *   3. 启动/停止网关进程
  *
  * 启动检测流程（detectStatus）：
- *   ① 读取 gateway.pid → 获取 PID
+ *   ① 读取 gateway.pid，缺失时回退读取 gateway_state.json → 获取 PID
  *   ② 读取 config.yaml (platforms.api_server.extra.port/host) → 获取配置端口
- *   ③ PID 存活？
+ *   ③ PID 存活且配置端口 health check 通过？
+ *      - 是 → 配置与运行状态匹配，注册网关
  *      - 否 → 标记为 stopped
- *      - 是 → 继续
- *   ④ 对配置端口做 health check？
- *      - 通过 → 配置与运行状态匹配，注册网关
- *      - 失败 → 用 lsof 查 PID 实际监听端口
- *   ⑤ 实际端口 ≠ 配置端口？
- *      - 是 → 更新 config.yaml 到实际端口，重新 health check，通过则注册
- *      - 否 → 标记为 stopped
+ *
+ * detectStatus 只做只读检测：不会认领未知端口上的进程，也不会探测实际监听端口后回写
+ * config.yaml。端口修正发生在启动前的 resolvePort 阶段。
  *
  * 端口分配流程（resolvePort，启动前调用）：
  *   ① 读取配置端口
- *   ② 检查是否被已管理的网关占用
- *   ③ 检查是否被外部系统进程占用（TCP bind 测试）
- *   ④ 冲突则从 base+1 递增找空闲端口，并写入 config.yaml
+ *   ② 如果内存记录或 PID 文件对应的配置端口仍健康运行，复用该端口
+ *   ③ 收集本轮已分配端口、其他已管理网关端口、Web UI 端口
+ *   ④ 从 8642 起递增查找空闲端口，并写入 config.yaml
  *
  * 启动模式：
- *   - 正常系统（macOS/Linux）：hermes gateway start/stop（系统服务管理）
- *   - WSL / Docker：hermes gateway run（detached 子进程，手动 kill）
+ *   - 所有平台统一使用 `hermes gateway run --replace`
+ *   - 停止时先尝试 `hermes gateway stop`，再根据 PID / 监听端口清理进程
  */
 
-import { spawn, execSync, type ChildProcess } from 'child_process'
-import { resolve, join } from 'path'
-import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'fs'
+import { spawn, type ChildProcess } from 'child_process'
+import { join } from 'path'
+import { readFileSync, existsSync, readdirSync, unlinkSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createServer } from 'net'
 import yaml from 'js-yaml'
 import { logger } from '../logger'
 import { detectHermesHome, getHermesBin } from './hermes-path'
+import { safeFileStore } from '../safe-file-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -50,63 +47,6 @@ const execFileAsync = promisify(execFile)
 const HERMES_BASE = detectHermesHome()
 const HERMES_BIN = getHermesBin()
 const DEFAULT_WEB_UI_PORT = 8648
-
-/**
- * 检测系统的 init 系统（服务管理器）
- * - macOS → launchd
- * - Windows → windows-service
- * - Linux → systemd / sysvinit / other
- *
- * 没有 systemd/launchd/windows-service 的环境需要用 "gateway run" 代替 "gateway start"
- * （适用于 WSL/Docker/Termux/proot 等无服务管理器的环境）
- */
-function detectInitSystem(): string {
-  const platform = process.platform
-
-  // macOS → launchd
-  if (platform === 'darwin') {
-    return 'launchd'
-  }
-
-  // Windows → Service Manager
-  if (platform === 'win32') {
-    return 'windows-service'
-  }
-
-  // Linux 才检查 /proc
-  if (platform === 'linux') {
-    try {
-      if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) {
-        return 'container'
-      }
-
-      const comm = readFileSync('/proc/1/comm', 'utf-8').trim()
-
-      if (comm === 'systemd') {
-        return existsSync('/run/systemd/system') ? 'systemd' : 'other'
-      }
-      if (comm === 'init') return 'sysvinit'
-
-      return 'other'
-    } catch {
-      return 'unknown'
-    }
-  }
-
-  return 'unknown'
-}
-
-// 注意：虽然此函数仍然存在，但当前所有平台都统一使用 run 模式
-// 保留此函数是为了将来如果需要切换回 start/stop 模式时可以参考
-const initSystem = detectInitSystem()
-/**
- * 所有平台统一使用 run 模式
- * run 模式会自动处理锁定文件冲突（--replace 标志），更可靠
- * 子进程跟随父进程生命周期，父进程关闭时子进程自动关闭
- */
-const needsRunMode = true
-// 启动时输出 init 系统检测结果（方便调试）
-logger.debug('Detected init system: %s (needsRunMode: %s, platform: %s)', initSystem, needsRunMode, process.platform)
 
 const GATEWAY_RUNTIME_ENV_KEYS = new Set([
   'PATH',
@@ -399,32 +339,30 @@ export class GatewayManager {
    *         host: <host>
    * 同时清理旧的顶层 port/host（避免 Hermes 读取错误）
    */
-  private writeProfilePort(name: string, port: number, host: string): void {
+  private async writeProfilePort(name: string, port: number, host: string): Promise<void> {
     const configPath = join(this.profileDir(name), 'config.yaml')
     try {
-      const content = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
-      const cfg = (yaml.load(content, { json: true }) as any) || {}
+      await safeFileStore.updateYaml(configPath, (cfg) => {
+        // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
+        if (!cfg.platforms) cfg.platforms = {}
+        if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
+        if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}
 
-      // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
-      if (!cfg.platforms) cfg.platforms = {}
-      if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
-      if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}
+        cfg.platforms.api_server.enabled = true
+        cfg.platforms.api_server.key = ''
+        cfg.platforms.api_server.cors_origins = '*'
+        cfg.platforms.api_server.extra.port = port
+        cfg.platforms.api_server.extra.host = host
 
-      cfg.platforms.api_server.enabled = true
-      cfg.platforms.api_server.key = ''
-      cfg.platforms.api_server.cors_origins = '*'
-      cfg.platforms.api_server.extra.port = port
-      cfg.platforms.api_server.extra.host = host
-
-      // 清理旧的顶层 port/host，Hermes 只从 extra 读取
-      if (cfg.platforms.api_server.port !== undefined) {
-        delete cfg.platforms.api_server.port
-      }
-      if (cfg.platforms.api_server.host !== undefined) {
-        delete cfg.platforms.api_server.host
-      }
-
-      writeFileSync(configPath, yaml.dump(cfg, { lineWidth: -1 }), 'utf-8')
+        // 清理旧的顶层 port/host，Hermes 只从 extra 读取
+        if (cfg.platforms.api_server.port !== undefined) {
+          delete cfg.platforms.api_server.port
+        }
+        if (cfg.platforms.api_server.host !== undefined) {
+          delete cfg.platforms.api_server.host
+        }
+        return cfg
+      })
       logger.debug('Updated %s: api_server.extra.port = %d', configPath, port)
     } catch (err) {
       logger.error(err, 'Failed to write config for profile "%s"', name)
@@ -487,7 +425,7 @@ export class GatewayManager {
     } else {
       logger.debug('Assigning port %d for profile "%s"', port, name)
     }
-    this.writeProfilePort(name, port, host)
+    await this.writeProfilePort(name, port, host)
 
     this.allocatedPorts.add(port)
     return { port, host }
