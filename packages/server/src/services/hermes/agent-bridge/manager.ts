@@ -15,7 +15,7 @@ export interface AgentBridgeManagerOptions {
   startupTimeoutMs?: number
 }
 
-interface BridgeCommand {
+export interface BridgeCommand {
   command: string
   argsPrefix: string[]
   agentRoot?: string
@@ -150,7 +150,7 @@ function resolveAgentRoot(explicit?: string, hermesHome = detectHermesHome()): s
   return candidates.find(candidate => existsSync(join(candidate, 'run_agent.py')))
 }
 
-function bridgeCommand(options: AgentBridgeManagerOptions): BridgeCommand {
+export function resolveAgentBridgeCommand(options: AgentBridgeManagerOptions = {}): BridgeCommand {
   const hermesHome = options.hermesHome || detectHermesHome()
   const agentRoot = resolveAgentRoot(options.agentRoot, hermesHome)
   const explicitPython = options.python || process.env.HERMES_AGENT_BRIDGE_PYTHON
@@ -227,7 +227,7 @@ export class AgentBridgeManager {
 
   private async startProcess(): Promise<void> {
     const script = bridgeScriptPath()
-    const command = bridgeCommand(this.options)
+    const command = resolveAgentBridgeCommand(this.options)
     const args = [...command.argsPrefix, script, '--endpoint', this.endpoint]
     const agentRoot = command.agentRoot
     const hermesHome = command.hermesHome

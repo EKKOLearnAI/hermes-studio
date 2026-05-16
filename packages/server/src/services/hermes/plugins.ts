@@ -1,9 +1,7 @@
 import { execFile } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
-import { dirname, join, resolve } from 'path'
-import { homedir } from 'os'
 import { promisify } from 'util'
 import { getActiveProfileDir } from './hermes-profile'
+import { resolveAgentBridgeCommand } from './agent-bridge/manager'
 
 const execFileAsync = promisify(execFile)
 
@@ -215,93 +213,6 @@ print(json.dumps({
 }))
 `
 
-function hasHermesPluginModule(root: string): boolean {
-  return existsSync(join(root, 'hermes_cli', 'plugins.py'))
-}
-
-function maybeRootFromHermesBin(): string[] {
-  const hermesBin = process.env.HERMES_BIN?.trim()
-  if (!hermesBin || hermesBin.includes('\n')) return []
-
-  const resolvedBin = resolve(hermesBin)
-  const candidates = [
-    dirname(dirname(dirname(resolvedBin))), // /opt/hermes/.venv/bin/hermes -> /opt/hermes
-    dirname(dirname(resolvedBin)),
-    dirname(resolvedBin),
-  ]
-  return candidates.filter((candidate, index) => candidates.indexOf(candidate) === index)
-}
-
-/**
- * Parse the shebang of the hermes binary to extract the Python interpreter path.
- * Works with pip-installed launchers, uv tool launchers, and manual venv installs.
- * e.g. "#!/Users/ekko/.hermes/hermes-agent/venv/bin/python3" -> that path
- */
-function pythonFromHermesShebang(): string | undefined {
-  const hermesBin = process.env.HERMES_BIN?.trim() || 'hermes'
-  try {
-    const resolved = resolve(hermesBin)
-    if (!existsSync(resolved)) return undefined
-    const head = readFileSync(resolved, 'utf8').slice(0, 256)
-    const match = head.match(/^#!\s*(\/[^\s\n]+)/)
-    return match ? match[1] : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function resolveHermesAgentRoot(): string {
-  const candidates = [
-    process.env.HERMES_AGENT_ROOT?.trim(),
-    ...maybeRootFromHermesBin(),
-    '/opt/hermes',
-    join(homedir(), '.hermes', 'hermes-agent'),     // Unix/Linux/macOS
-  ]
-
-  // Windows specific path
-  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
-    candidates.push(join(process.env.LOCALAPPDATA, 'hermes', 'hermes-agent'))
-  }
-
-  return (candidates.filter(Boolean) as string[]).find(hasHermesPluginModule) || ''
-}
-
-
-function pythonCandidates(agentRoot: string): string[] {
-  const hermesBin = process.env.HERMES_BIN?.trim()
-  let hermesBinPython: string | undefined
-  if (hermesBin) {
-    // Windows: hermes -> venv\Scripts\python.exe
-    // Unix: hermes -> venv/bin/python
-    if (hermesBin.includes('\\Scripts\\') || hermesBin.includes('/Scripts/')) {
-      hermesBinPython = join(dirname(hermesBin), 'python.exe')
-    } else if (hermesBin.includes('/bin/') || hermesBin.includes('\\bin\\')) {
-      hermesBinPython = join(dirname(hermesBin), 'python')
-    }
-  }
-
-  const rootPythons = agentRoot ? [
-    join(agentRoot, 'venv', 'bin', 'python'),          // Unix
-    join(agentRoot, 'venv', 'Scripts', 'python.exe'),  // Windows
-    join(agentRoot, '.venv', 'bin', 'python'),         // Unix (alternative)
-    join(agentRoot, '.venv', 'Scripts', 'python.exe'), // Windows (alternative)
-  ] : []
-
-  const candidates = [
-    process.env.HERMES_PYTHON?.trim(),
-    hermesBinPython,
-    ...rootPythons,
-    'python3',
-    'python',
-    pythonFromHermesShebang(),
-  ].filter(Boolean) as string[]
-
-  return candidates.filter((candidate) => {
-    if (candidate.includes('/') || candidate.includes('\\')) return existsSync(candidate)
-    return true
-  })
-}
-
 function extractError(err: any): string {
   const stdout = typeof err?.stdout === 'string' ? err.stdout.trim() : ''
   const stderr = typeof err?.stderr === 'string' ? err.stderr.trim() : ''
@@ -309,7 +220,8 @@ function extractError(err: any): string {
 }
 
 export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
-  const agentRoot = resolveHermesAgentRoot()
+  const command = resolveAgentBridgeCommand()
+  const agentRoot = command.agentRoot || ''
   const env = {
     ...process.env,
     HERMES_AGENT_ROOT_RESOLVED: agentRoot,
@@ -317,26 +229,25 @@ export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
   }
 
   const errors: string[] = []
-  for (const python of pythonCandidates(agentRoot)) {
-    try {
-      const { stdout, stderr } = await execFileAsync(python, ['-I', '-c', PYTHON_BRIDGE], {
-        cwd: process.cwd(),
-        env,
-        windowsHide: true,
-        timeout: 15000,
-        maxBuffer: 10 * 1024 * 1024,
-      })
-      const parsed = JSON.parse(stdout) as HermesPluginsResponse & { error?: string; detail?: string }
-      if ((parsed as any).error) {
-        throw new Error(`${(parsed as any).error}: ${(parsed as any).detail || 'unknown error'}`)
-      }
-      if (stderr?.trim()) {
-        parsed.warnings = [...(parsed.warnings || []), stderr.trim()]
-      }
-      return parsed
-    } catch (err: any) {
-      errors.push(`${python}: ${extractError(err)}`)
+  try {
+    const { stdout, stderr } = await execFileAsync(command.command, [...command.argsPrefix, '-I', '-c', PYTHON_BRIDGE], {
+      cwd: process.cwd(),
+      env,
+      windowsHide: true,
+      timeout: 15000,
+      maxBuffer: 10 * 1024 * 1024,
+    })
+    const parsed = JSON.parse(stdout) as HermesPluginsResponse & { error?: string; detail?: string }
+    if ((parsed as any).error) {
+      throw new Error(`${(parsed as any).error}: ${(parsed as any).detail || 'unknown error'}`)
     }
+    if (stderr?.trim()) {
+      parsed.warnings = [...(parsed.warnings || []), stderr.trim()]
+    }
+    return parsed
+  } catch (err: any) {
+    const args = [...command.argsPrefix, '-I', '-c', '<plugin-discovery>'].join(' ')
+    errors.push(`${command.command} ${args}: ${extractError(err)}`)
   }
 
   throw new Error(`Failed to discover Hermes plugins.\n${errors.join('\n')}`)
