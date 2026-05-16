@@ -11,6 +11,24 @@ interface LogEntry {
   timestamp: string; level: string; logger: string; message: string; raw: string
 }
 
+function appendPinoContext(message: string, obj: any): string {
+  const parts: string[] = []
+  const runtime = obj.runtime && typeof obj.runtime === 'object' ? obj.runtime : null
+  if (runtime) {
+    if (runtime.profile) parts.push(`profile=${runtime.profile}`)
+    if (runtime.cwd) parts.push(`cwd=${runtime.cwd}`)
+    if (runtime.profile_dir) parts.push(`profile_dir=${runtime.profile_dir}`)
+    if (runtime.config_path) parts.push(`config=${runtime.config_path}`)
+  } else if (obj.profile) {
+    parts.push(`profile=${obj.profile}`)
+  }
+  if (obj.request?.action) parts.push(`action=${obj.request.action}`)
+  if (obj.sessionId) parts.push(`session=${obj.sessionId}`)
+  if (obj.runId) parts.push(`run=${obj.runId}`)
+  if (obj.status) parts.push(`status=${obj.status}`)
+  return parts.length > 0 ? `${message} ${parts.join(' ')}` : message
+}
+
 function parseLine(line: string): LogEntry {
   try {
     const obj = JSON.parse(line)
@@ -20,7 +38,8 @@ function parseLine(line: string): LogEntry {
       // Pino 日志格式: { level, time, msg, name (logger name), hostname, pid, ... }
       const loggerName = obj.name || obj.logger || 'app'
       const message = obj.msg || (obj.err ? obj.err.message : '')
-      return { timestamp: ts, level: levelMap[obj.level] || 'INFO', logger: loggerName, message: typeof message === 'string' ? message : JSON.stringify(message), raw: line }
+      const baseMessage = typeof message === 'string' ? message : JSON.stringify(message)
+      return { timestamp: ts, level: levelMap[obj.level] || 'INFO', logger: loggerName, message: appendPinoContext(baseMessage, obj), raw: line }
     }
   } catch {}
   let match = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(\S+?):\s(.*)$/)

@@ -1,7 +1,9 @@
 import { setTimeout as delay } from 'timers/promises'
 import { createConnection, type Socket } from 'net'
 import { URL } from 'url'
+import { join } from 'path'
 import { bridgeLogger } from '../../logger'
+import { getActiveProfileName, getProfileDir } from '../hermes-profile'
 
 export const DEFAULT_AGENT_BRIDGE_ENDPOINT = process.platform === 'win32'
   ? 'tcp://127.0.0.1:18765'
@@ -122,6 +124,25 @@ export class AgentBridgeClient {
     return summary
   }
 
+  private runtimeContext(payload: Record<string, unknown>): Record<string, unknown> {
+    const requestedProfile = typeof payload.profile === 'string' ? payload.profile.trim() : ''
+    let profile = requestedProfile || 'default'
+    try {
+      if (!requestedProfile) profile = getActiveProfileName()
+    } catch {}
+
+    const context: Record<string, unknown> = {
+      profile,
+      cwd: process.cwd(),
+    }
+    try {
+      const profileDir = getProfileDir(profile)
+      context.profile_dir = profileDir
+      context.config_path = join(profileDir, 'config.yaml')
+    } catch {}
+    return context
+  }
+
   async connect(): Promise<this> {
     return this
   }
@@ -225,10 +246,12 @@ export class AgentBridgeClient {
       const startedAt = Date.now()
       const action = String(payload.action || '')
       const shouldLogRequest = action !== 'get_output'
+      const runtimeContext = shouldLogRequest ? this.runtimeContext(payload) : undefined
       if (shouldLogRequest) {
         bridgeLogger.info({
           endpoint: this.endpoint,
           timeoutMs,
+          runtime: runtimeContext,
           request: this.summarizePayload(payload),
         }, '[agent-bridge-client] request')
       }
@@ -242,6 +265,7 @@ export class AgentBridgeClient {
           error.response = response
           bridgeLogger.warn({
             durationMs: Date.now() - startedAt,
+            runtime: runtimeContext,
             response: this.summarizeResponse(response as Record<string, unknown>),
           }, '[agent-bridge-client] request rejected')
           throw error
@@ -249,6 +273,7 @@ export class AgentBridgeClient {
         if (shouldLogRequest) {
           bridgeLogger.info({
             durationMs: Date.now() - startedAt,
+            runtime: runtimeContext,
             response: this.summarizeResponse(response as Record<string, unknown>),
           }, '[agent-bridge-client] response')
         }
@@ -258,6 +283,7 @@ export class AgentBridgeClient {
           bridgeLogger.error({
             durationMs: Date.now() - startedAt,
             err: { message: err?.message, name: err?.name },
+            runtime: runtimeContext,
             request: this.summarizePayload(payload),
           }, '[agent-bridge-client] request failed')
         }
