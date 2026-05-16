@@ -86,7 +86,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'glm-coding-plan',
     builtin: true,
     base_url: 'https://api.z.ai/api/anthropic',
-    models: ['glm-5.1', 'glm-5', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
+    models: ['glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
   },
   {
     label: 'Kimi for Coding',
