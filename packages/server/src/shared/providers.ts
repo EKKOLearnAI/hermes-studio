@@ -12,32 +12,6 @@ export interface ProviderPreset {
   api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 }
 
-// Mirrors Hermes Agent's models.dev-backed provider picker for Z.AI.
-// Keep models.dev order: fresh catalog entries first, curated-only fallbacks appended if needed.
-const ZAI_MODELS = [
-  'glm-5.1',
-  'glm-5v-turbo',
-  'glm-4.7-flashx',
-  'glm-4.5-air',
-  'glm-4.5v',
-  'glm-4.7-flash',
-  'glm-4.6',
-  'glm-4.5',
-  'glm-4.5-flash',
-  'glm-5-turbo',
-  'glm-4.7',
-  'glm-5',
-  'glm-4.6v',
-]
-
-const ZAI_CODING_PLAN_MODELS = [
-  'glm-5.1',
-  'glm-4.5-air',
-  'glm-5-turbo',
-  'glm-4.7',
-  'glm-5v-turbo',
-]
-
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     label: 'Codex-apikey.fun',
@@ -106,14 +80,36 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'zai',
     builtin: true,
     base_url: 'https://api.z.ai/api/paas/v4',
-    models: ZAI_MODELS,
+    models: [
+      // Mirrors Hermes Agent's models.dev-backed provider picker for Z.AI.
+      // Keep models.dev order: fresh catalog entries first, curated-only fallbacks appended if needed.
+      'glm-5.1',
+      'glm-5v-turbo',
+      'glm-4.7-flashx',
+      'glm-4.5-air',
+      'glm-4.5v',
+      'glm-4.7-flash',
+      'glm-4.6',
+      'glm-4.5',
+      'glm-4.5-flash',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-5',
+      'glm-4.6v',
+    ],
   },
   {
     label: 'GLM-Coding-Plan',
     value: 'glm-coding-plan',
     builtin: true,
     base_url: 'https://api.z.ai/api/anthropic',
-    models: ZAI_CODING_PLAN_MODELS,
+    models: [
+      'glm-5.1',
+      'glm-4.5-air',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-5v-turbo',
+    ],
   },
   {
     label: 'Kimi for Coding',
