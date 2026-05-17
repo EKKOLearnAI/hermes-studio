@@ -387,18 +387,16 @@ def _refresh_terminal_env() -> None:
                     os.environ[env_var] = json.dumps(val)
                 else:
                     os.environ[env_var] = str(val)
-        # Invalidate the cached "default" terminal environment so the next
-        # tool call (terminal/execute_code/read_file) creates a fresh one
-        # with the updated env vars, rather than reusing the environment
-        # created under a different profile's config (e.g. local vs ssh).
-        try:
-            from tools.terminal_tool import _active_environments, _env_lock
-            with _env_lock:
-                _active_environments.pop("default", None)
-        except ImportError:
-            pass
     except Exception:
         logger.debug("Failed to refresh terminal env from %s", config_path, exc_info=True)
+
+    # Invalidate cached default env on profile switch
+    try:
+        from tools.terminal_tool import _active_environments, _env_lock
+        with _env_lock:
+            _active_environments.pop("default", None)
+    except Exception:
+        pass
 
 
 def _resolve_model(cfg: dict[str, Any]) -> str:
