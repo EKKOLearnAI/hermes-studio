@@ -406,6 +406,11 @@ function openChangelog() {
   }
 }
 
+:deep(.profile-selector) {
+  padding-top: 12px;
+  border-top: 1px solid $border-color;
+}
+
 .nav-group {
   display: flex;
   flex-direction: column;
