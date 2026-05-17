@@ -10,6 +10,7 @@ import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
+import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import { fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const chatStore = useChatStore()
@@ -26,6 +27,7 @@ const hermesSessionsLoaded = ref(false)
 // History page's own selected session (independent from chatStore)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
+const showOutline = ref(true)
 
 async function loadHermesSessions() {
   if (hermesSessionsLoading.value) return
@@ -350,10 +352,25 @@ async function copySessionId(id?: string) {
             </template>
             {{ t('chat.copySessionId') }}
           </NTooltip>
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton quaternary size="small" @click="showOutline = !showOutline" circle>
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                </template>
+              </NButton>
+            </template>
+            会话大纲
+          </NTooltip>
         </div>
       </header>
 
-      <HistoryMessageList :session="historySession" />
+      <div class="history-content-wrapper">
+        <div class="history-main-content">
+          <HistoryMessageList :session="historySession" />
+        </div>
+        <OutlinePanel v-if="showOutline && historySession" :messages="historySession.messages || []" />
+      </div>
     </div>
   </div>
 </template>
@@ -365,6 +382,19 @@ async function copySessionId(id?: string) {
   display: flex;
   height: 100%;
   position: relative;
+}
+
+.history-content-wrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.history-main-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .session-list {
