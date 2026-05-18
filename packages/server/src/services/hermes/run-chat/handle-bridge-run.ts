@@ -417,6 +417,17 @@ async function applyBridgeChunkAsync(
         run_id: chunk.run_id,
         ...ev,
       })
+    } else if (evType === 'clarify.requested') {
+      const payload = {
+        event: 'clarify.requested',
+        run_id: chunk.run_id,
+        clarify_id: ev.clarify_id,
+        question: ev.question,
+        choices: ev.choices,
+        timeout_ms: ev.timeout_ms,
+      }
+      pushState(sessionMap, sessionId, 'clarify.requested', payload)
+      emit('clarify.requested', payload)
     }
   }
 

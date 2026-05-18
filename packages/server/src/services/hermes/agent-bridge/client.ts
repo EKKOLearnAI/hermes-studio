@@ -406,6 +406,14 @@ export class AgentBridgeClient {
     }, { timeoutMs: this.timeoutMs })
   }
 
+  clarifyRespond(clarifyId: string, response: string): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'clarify_respond',
+      clarify_id: clarifyId,
+      response,
+    })
+  }
+
   destroyAll(): Promise<AgentBridgeResponse> {
     return this.request({ action: 'destroy_all' })
   }
