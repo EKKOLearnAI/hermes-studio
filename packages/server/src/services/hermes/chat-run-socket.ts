@@ -1838,7 +1838,8 @@ export class ChatRunSocket {
       return
     }
 
-    const userKey = (socket.data?.user?.openid as string | undefined)?.trim() || profile
+    const ownerOpenId = (socket.data?.user?.openid as string | undefined)?.trim()
+    const userKey = ownerOpenId || profile
     const content = contentBlocksToString(input).trim()
     const metadata: Record<string, any> = {
       source: 'hermes-web-ui',
@@ -1894,6 +1895,10 @@ export class ChatRunSocket {
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (config.runBrokerKey) headers.Authorization = `Bearer ${config.runBrokerKey}`
+      if (ownerOpenId) {
+        headers['X-Hermes-Owner-Open-Id'] = ownerOpenId
+        headers['X-Hermes-Feishu-OpenId'] = ownerOpenId
+      }
       const res = await fetch(`${brokerUrl}/api/run-broker/runs`, {
         method: 'POST',
         headers,

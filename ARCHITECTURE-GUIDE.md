@@ -27,6 +27,8 @@ related:
 
 > [!warning] 2026-05-14 chat-plane 执行边界
 > `3090768` 后，chat plane 不再允许通用 proxy 把 `POST /v1/responses`、`POST /v1/chat/completions`、`POST /v1/runs` 透传到 profile apiserver，也不允许 `/api/hermes/jobs/:id/run` 手动执行 cron。保留的 WebUI 能力是任务创建/管理、只读 response 查询、profile-scoped 文件/记忆等管理面。正常浏览器聊天的 Socket.IO `chat-run-socket.ts` 已新增 WebUI Run Broker client seam：`HERMES_WEBUI_RUN_BROKER=1` 且 `HERMES_RUN_BROKER_URL` 设置时，会构造 `RunRequest(channel="webui", profile_name, user_key, content, session_id, delivery_mode="socket", requires_host_tools=true)` 并 POST 到 `${HERMES_RUN_BROKER_URL}/api/run-broker/runs`，再把 broker 的 `content/done/error/tool_*` 事件映射回 Socket.IO。如果配置了 `HERMES_RUN_BROKER_KEY`，WebUI 会发送 `Authorization: Bearer <key>`，对应 multitenancy 侧 `HERMES_MULTITENANCY_RUN_BROKER_KEY`。生产 66 已开启该路径，Socket.IO canary 通过 terminal 输出 `SANDBOX=1`，说明浏览器 chat-run 已经进入 router-owned bwrap 执行面。
+>
+> 2026-05-18 gotcha：multitenancy Run Broker 在 `HERMES_MULTITENANCY_RUN_BROKER_SERVER=1` 时还会强制要求服务端认证过的 `X-Hermes-Owner-Open-Id`。只带 Bearer shared secret 或旧 `X-Hermes-Feishu-OpenId` 会让 `/api/run-broker/runs` 返回 `403 {"error":"owner identity required (X-Hermes-Owner-Open-Id)"}`，表现为 WebUI 只落 user message、不生成 assistant 回复。WebUI broker client 必须从 `socket.data.user.openid` 派生并发送该 header。
 
 > [!info] 2026-05-15 WebUI Feishu UAT ensure
 > WebUI 的飞书 OAuth 登录仍只负责 `open_id -> profile` 身份绑定，不把 OAuth access token 当工具 UAT 使用，也不把 UAT 存入 cookie/localStorage/WebUI DB。OAuth 登录成功后直接进入 WebUI；UAT 是登录后的侧栏连接状态，不再是进入 `/hermes/chat` 的门禁。左下角飞书连接按钮会调用受保护 BFF 接口 `GET /api/auth/feishu/uat/status`；若 multitenancy credential vault 中当前 `profile + open_id` 缺少有效 UAT 或 scope 不足，按钮显示红点。点击红点会调用 `POST /api/auth/feishu/uat/start`，打开等价于 `/feishu_auth` 的 device-flow 授权链接，并轮询 `/api/auth/feishu/uat/sessions/:sessionId`；授权成功后红点变绿点。
@@ -81,7 +83,7 @@ flowchart LR
 ```
 
 现在 WebUI 的关键边界：
-- 浏览器聊天走 `HERMES_WEBUI_RUN_BROKER=1`，不是 profile apiserver `/v1/responses`。
+- 浏览器聊天走 `HERMES_WEBUI_RUN_BROKER=1`，不是 profile apiserver `/v1/responses`；BFF 提交 run 时必须带 Bearer shared secret 和服务端 session 派生的 `X-Hermes-Owner-Open-Id`。
 - 定时任务创建/管理走 `HERMES_WEBUI_JOBS_BROKER`（默认跟随 run broker），不是 profile apiserver `/api/jobs`。
 - 飞书 OAuth 登录完成后，WebUI 还要确保同一个 `profile + open_id` 有有效 Feishu UAT；缺失时走 Run Broker sidecar 的 device-flow 授权会话，效果等价于在飞书里使用 `/feishu_auth`。
 - profile apiserver 仍可保留给兼容/管理，但 chat plane 的 executable proxy 和手动 job run 是 fail-closed。
@@ -848,6 +850,7 @@ CLAUDE.md 写过：dev 模式下"`hermes` CLI 必须在 `$PATH`"——确实，s
 
 ## Changelog
 
+- 2026-05-18：修复 WebUI chat Run Broker owner 边界：生产 multitenancy `HERMES_MULTITENANCY_RUN_BROKER_SERVER=1` 后 `/api/run-broker/runs` 强制要求 `X-Hermes-Owner-Open-Id`，缺失时 WebUI 只落 user message 并收到 403。`chat-run-socket.ts` 现在从已验证的 Socket.IO `socket.data.user.openid` 发送 `X-Hermes-Owner-Open-Id`，同时保留旧 `X-Hermes-Feishu-OpenId`。
 - 2026-05-18：本机补齐 Kanban owner isolation：`create` 不再允许当前 WebUI 用户伪造其他 `tenant` 或分配给未归属 profile；`complete/block/unblock` 在调用 CLI 前逐 task 校验归属并 fail-closed；`readArtifact` 不再只做字符串前缀检查，改为 `relative()` 目录边界 + task ownership 校验，防止 `workspaces-evil` 这类兄弟目录和未归属 task artifact 被读出。回归：`tests/server/kanban-isolation.test.ts` 新增 create/artifact 红绿用例；Kanban/GroupChat focused `27 passed`，工具流/前端 focused `28 passed`，`pnpm run build` 成功。
 - 2026-05-18：本机补齐 WebUI 交付门禁：在继续验证 tool panel / upstream 语义时，`pnpm run build` 暴露 group-chat owner-boundary 待提交改动的 TypeScript 错误。已做最小类型修正：`group-chat.ts` 使用 `RouterContext` 类型导入，`group-chat/index.ts` 将 SQLite `all()` 结果经 `unknown` 收窄为 `RoomRow[]`。验证：`pnpm vitest run tests/server/chat-run-socket.test.ts tests/client/message-list-streaming.test.ts` 17 passed，`pnpm run build` 成功，本机 `com.hermes.ekko-webui` 重启后 `localhost:8648` 返回 200。
 - 2026-05-17：本机继续修复 WebUI 工具流拆碎成多条“思考过程”的问题。对齐 upstream：工具流为 thinking assistant、tool panel、result assistant；`chat-run-socket.ts` 忽略等待心跳类 broker thinking，`chat.ts` 回归确保 tool 后的多个 `message.delta` 合并成一个结果消息。验证：WebUI focused 回归 26 passed，build 成功。

@@ -264,6 +264,7 @@ describe('ChatRunSocket gateway lifecycle', () => {
       method: 'POST',
       headers: expect.objectContaining({
         Authorization: 'Bearer broker-secret',
+        'X-Hermes-Owner-Open-Id': 'ou_webui_user',
       }),
     }))
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
