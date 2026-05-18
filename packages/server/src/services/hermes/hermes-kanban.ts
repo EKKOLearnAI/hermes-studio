@@ -1,6 +1,8 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { logger } from '../logger'
+import { config } from '../../config'
 
 const execFileAsync = promisify(execFile)
 
@@ -155,6 +157,29 @@ export interface KanbanBoardOptions {
   board?: string
 }
 
+export interface KanbanWatchOptions extends KanbanBoardOptions {
+  interval?: number
+}
+
+export interface KanbanBulkTaskUpdateOptions extends KanbanBoardOptions {
+  ids: string[]
+  status?: KanbanTaskStatus
+  assignee?: string | null
+  archive?: boolean
+  summary?: string
+  reason?: string
+}
+
+export interface KanbanBulkTaskResult {
+  id: string
+  ok: boolean
+  error?: string
+}
+
+export interface KanbanBulkTaskUpdateResult {
+  results: KanbanBulkTaskResult[]
+}
+
 // ─── CLI wrappers ───────────────────────────────────────────────
 
 export async function listBoards(opts?: { includeArchived?: boolean }): Promise<KanbanBoard[]> {
@@ -235,9 +260,11 @@ export async function getCapabilities(): Promise<KanbanCapabilities> {
     { key: 'reassign', status: 'supported', canonicalRoute: '/tasks/{task_id}/reassign', canonicalCommand: 'reassign', requiresBoard: true },
     { key: 'specify', status: 'supported', canonicalRoute: '/tasks/{task_id}/specify', canonicalCommand: 'specify', requiresBoard: true },
     { key: 'dispatch', status: 'supported', canonicalRoute: '/dispatch', canonicalCommand: 'dispatch', requiresBoard: true },
-    { key: 'links', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true },
-    { key: 'bulk', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/tasks/bulk', canonicalCommand: 'bulk-equivalent', requiresBoard: true },
-    { key: 'events', status: 'missing', reason: 'Streaming strategy not selected for WUI yet', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true },
+    { key: 'links', status: 'supported', canonicalRoute: '/links', canonicalCommand: 'link/unlink', requiresBoard: true },
+    { key: 'bulk', status: 'partial', reason: 'WUI applies supported bulk-equivalent CLI transitions per id and returns per-task outcomes; direct priority/status patch parity remains deferred', canonicalRoute: '/tasks/bulk', canonicalCommand: 'bulk-equivalent via complete/block/unblock/archive/assign', requiresBoard: true },
+    config.webPlane === 'chat'
+      ? { key: 'events', status: 'missing', reason: 'Disabled in chat-plane because WebSocket upgrade cannot enforce per-openid owner filtering', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true }
+      : { key: 'events', status: 'partial', reason: 'WUI exposes a board-scoped WebSocket bridge backed by the canonical `kanban watch` stream; payload is currently a refresh invalidation signal, not a typed event model', canonicalRoute: '/events', canonicalCommand: 'watch', requiresBoard: true },
     { key: 'homeSubscriptions', status: 'missing', reason: 'Deferred from current WUI parity batch', canonicalRoute: '/home-channels and subscription routes', canonicalCommand: 'notify-*', requiresBoard: true },
   ]
   const supports = Object.fromEntries(capabilities.map(capability => [capability.key, capability.status === 'supported'])) as Record<string, boolean>
@@ -264,6 +291,58 @@ function isNoWorkerLogError(err: any): boolean {
 
 function pushOptional(args: string[], flag: string, value?: string | number | null): void {
   if (value !== undefined && value !== null && String(value).trim() !== '') args.push(flag, String(value))
+}
+
+function textFromExecValue(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString('utf8')
+  return value === undefined || value === null ? '' : String(value)
+}
+
+async function execKanbanMutation(args: string[], logMessage: string, errorPrefix: string): Promise<string> {
+  try {
+    const { stdout, stderr } = await execFileAsync(HERMES_BIN, args, {
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 30000,
+      ...execOpts,
+    })
+    const stderrText = textFromExecValue(stderr).trim()
+    if (stderrText) throw new Error(stderrText)
+    return textFromExecValue(stdout)
+  } catch (err: any) {
+    logger.error(err, logMessage)
+    throw new Error(`${errorPrefix}: ${err.message}`)
+  }
+}
+
+export function buildWatchArgs(opts?: KanbanWatchOptions): string[] {
+  const args = [...boardArgs(opts?.board), 'watch']
+  pushOptional(args, '--interval', opts?.interval ?? 0.5)
+  return args
+}
+
+export function watchEvents(opts?: KanbanWatchOptions): ChildProcess {
+  return spawn(HERMES_BIN, buildWatchArgs(opts), {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...execOpts,
+  })
+}
+
+export async function linkTasks(parentId: string, childId: string, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output: string }> {
+  const output = await execKanbanMutation(
+    [...boardArgs(opts?.board), 'link', parentId, childId],
+    'Hermes CLI: kanban link failed',
+    'Failed to link kanban tasks',
+  )
+  return { ok: true, output }
+}
+
+export async function unlinkTasks(parentId: string, childId: string, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output: string }> {
+  const output = await execKanbanMutation(
+    [...boardArgs(opts?.board), 'unlink', parentId, childId],
+    'Hermes CLI: kanban unlink failed',
+    'Failed to unlink kanban tasks',
+  )
+  return { ok: true, output }
 }
 
 export async function addComment(taskId: string, body: string, opts?: KanbanBoardOptions & { author?: string }): Promise<{ ok: boolean; output: string }> {
@@ -476,55 +555,72 @@ export async function completeTasks(taskIds: string[], summary?: string, opts?: 
   const args = [...boardArgs(opts?.board), 'complete', ...taskIds]
   if (summary) args.push('--summary', summary)
 
-  try {
-    await execFileAsync(HERMES_BIN, args, {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban complete failed')
-    throw new Error(`Failed to complete kanban tasks: ${err.message}`)
-  }
+  await execKanbanMutation(args, 'Hermes CLI: kanban complete failed', 'Failed to complete kanban tasks')
 }
 
 export async function blockTask(taskId: string, reason: string, opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'block', taskId, reason], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban block failed')
-    throw new Error(`Failed to block kanban task: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'block', taskId, reason],
+    'Hermes CLI: kanban block failed',
+    'Failed to block kanban task',
+  )
 }
 
 export async function unblockTasks(taskIds: string[], opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'unblock', ...taskIds], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban unblock failed')
-    throw new Error(`Failed to unblock kanban tasks: ${err.message}`)
-  }
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'unblock', ...taskIds],
+    'Hermes CLI: kanban unblock failed',
+    'Failed to unblock kanban tasks',
+  )
 }
 
 export async function assignTask(taskId: string, profile: string, opts?: KanbanBoardOptions): Promise<void> {
-  try {
-    await execFileAsync(HERMES_BIN, [...boardArgs(opts?.board), 'assign', taskId, profile], {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 30000,
-      ...execOpts,
-    })
-  } catch (err: any) {
-    logger.error(err, 'Hermes CLI: kanban assign failed')
-    throw new Error(`Failed to assign kanban task: ${err.message}`)
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'assign', taskId, profile],
+    'Hermes CLI: kanban assign failed',
+    'Failed to assign kanban task',
+  )
+}
+
+export async function archiveTasks(taskIds: string[], opts?: KanbanBoardOptions): Promise<void> {
+  await execKanbanMutation(
+    [...boardArgs(opts?.board), 'archive', ...taskIds],
+    'Hermes CLI: kanban archive failed',
+    'Failed to archive kanban tasks',
+  )
+}
+
+async function applyBulkStatus(taskId: string, opts: KanbanBulkTaskUpdateOptions): Promise<void> {
+  switch (opts.status) {
+    case undefined:
+      return
+    case 'done':
+      return completeTasks([taskId], opts.summary, opts)
+    case 'blocked':
+      return blockTask(taskId, opts.reason?.trim() || 'Bulk update', opts)
+    case 'ready':
+      return unblockTasks([taskId], opts)
+    case 'archived':
+      return archiveTasks([taskId], opts)
+    default:
+      throw new Error(`Bulk status ${opts.status} is not supported by the CLI bridge`)
   }
+}
+
+export async function bulkUpdateTasks(opts: KanbanBulkTaskUpdateOptions): Promise<KanbanBulkTaskUpdateResult> {
+  const ids = opts.ids.map(id => id.trim()).filter(Boolean)
+  const results: KanbanBulkTaskResult[] = []
+  for (const id of ids) {
+    try {
+      if (opts.archive) await archiveTasks([id], opts)
+      else await applyBulkStatus(id, opts)
+      if (opts.assignee !== undefined) await assignTask(id, opts.assignee?.trim() || 'none', opts)
+      results.push({ id, ok: true })
+    } catch (err: any) {
+      results.push({ id, ok: false, error: err?.message || String(err) })
+    }
+  }
+  return { results }
 }
 
 export async function getStats(opts?: KanbanBoardOptions): Promise<KanbanStats> {

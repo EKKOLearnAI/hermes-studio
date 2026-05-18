@@ -32,6 +32,8 @@ const mockSetFilter = vi.hoisted(() => vi.fn())
 const mockRecoverSelectedBoard = vi.hoisted(() => vi.fn())
 const mockCreateBoard = vi.hoisted(() => vi.fn())
 const mockArchiveSelectedBoard = vi.hoisted(() => vi.fn())
+const mockStartEventStream = vi.hoisted(() => vi.fn())
+const mockStopEventStream = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-router', () => ({
   useRoute: () => routeState,
@@ -57,6 +59,8 @@ vi.mock('@/stores/hermes/kanban', () => ({
     recoverSelectedBoard: mockRecoverSelectedBoard,
     createBoard: mockCreateBoard,
     archiveSelectedBoard: mockArchiveSelectedBoard,
+    startEventStream: mockStartEventStream,
+    stopEventStream: mockStopEventStream,
   }),
 }))
 

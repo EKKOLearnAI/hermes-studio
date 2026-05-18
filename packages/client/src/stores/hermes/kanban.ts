@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as kanbanApi from '@/api/hermes/kanban'
-import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions } from '@/api/hermes/kanban'
+import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions, KanbanBulkUpdateRequest } from '@/api/hermes/kanban'
 
 export const KANBAN_SELECTED_BOARD_STORAGE_KEY = 'hermes.kanban.selectedBoard'
 export const DEFAULT_KANBAN_BOARD = 'default'
@@ -53,6 +53,11 @@ export const useKanbanStore = defineStore('kanban', () => {
   let statsRequestSeq = 0
   let assigneesRequestSeq = 0
   let loadingRequestSeq = 0
+  let eventStreamSeq = 0
+  let eventSocket: WebSocket | null = null
+  let eventReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let eventRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let eventStreamEnabled = false
 
   const activeBoards = computed(() => {
     const visible = boards.value.filter(board => !board.archived)
@@ -86,6 +91,19 @@ export const useKanbanStore = defineStore('kanban', () => {
     }
   }
 
+  function hasCapabilityStatus(key: string, statuses: Array<'supported' | 'partial' | 'missing'>): boolean {
+    const detail = capabilities.value?.capabilities?.find(capability => capability.key === key)
+    if (detail) return statuses.includes(detail.status)
+    if (statuses.includes('supported')) return isCapabilitySupported(key)
+    return false
+  }
+
+  function assertCapabilityStatus(key: string, statuses: Array<'supported' | 'partial' | 'missing'>): void {
+    if (!hasCapabilityStatus(key, statuses)) {
+      throw new Error(`Kanban capability "${key}" is not available with the required status`)
+    }
+  }
+
   function boardExists(board: string): boolean {
     return activeBoards.value.some(item => item.slug === board)
   }
@@ -102,6 +120,97 @@ export const useKanbanStore = defineStore('kanban', () => {
     assignees.value = []
   }
 
+  function clearEventTimers() {
+    if (eventReconnectTimer) clearTimeout(eventReconnectTimer)
+    if (eventRefreshTimer) clearTimeout(eventRefreshTimer)
+    eventReconnectTimer = null
+    eventRefreshTimer = null
+  }
+
+  function closeEventSocket() {
+    if (!eventSocket) return
+    const socket = eventSocket
+    eventSocket = null
+    socket.onclose = null
+    socket.onerror = null
+    socket.onmessage = null
+    try { socket.close() } catch { }
+  }
+
+  function stopEventStream() {
+    eventStreamEnabled = false
+    eventStreamSeq++
+    clearEventTimers()
+    closeEventSocket()
+  }
+
+  function scheduleEventRefresh(board: string, generation: number, seq: number) {
+    if (eventRefreshTimer) clearTimeout(eventRefreshTimer)
+    eventRefreshTimer = setTimeout(() => {
+      if (!eventStreamEnabled || seq !== eventStreamSeq || generation !== boardGeneration || board !== selectedBoard.value) return
+      void Promise.all([fetchBoards(), fetchTasks(true), fetchStats(), fetchAssignees()])
+    }, 100)
+  }
+
+  function scheduleEventReconnect(board: string, generation: number, seq: number) {
+    if (eventReconnectTimer) clearTimeout(eventReconnectTimer)
+    eventReconnectTimer = setTimeout(() => {
+      if (!eventStreamEnabled || seq !== eventStreamSeq || generation !== boardGeneration || board !== selectedBoard.value) return
+      connectEventStream(board, generation, seq)
+    }, 3000)
+  }
+
+  function connectEventStream(board: string, generation: number, seq: number) {
+    closeEventSocket()
+    let socket: WebSocket
+    try {
+      socket = kanbanApi.openKanbanEventStream({ board })
+    } catch (err) {
+      console.error('Failed to open kanban event stream:', err)
+      scheduleEventReconnect(board, generation, seq)
+      return
+    }
+    eventSocket = socket
+    socket.onmessage = (event) => {
+      if (!eventStreamEnabled || seq !== eventStreamSeq || generation !== boardGeneration || board !== selectedBoard.value) return
+      try {
+        const payload = JSON.parse(String(event.data))
+        if (payload?.type === 'event') scheduleEventRefresh(board, generation, seq)
+      } catch {
+        scheduleEventRefresh(board, generation, seq)
+      }
+    }
+    socket.onerror = () => {
+      if (eventSocket === socket) console.error('Kanban event stream error')
+    }
+    socket.onclose = () => {
+      if (eventSocket === socket) {
+        eventSocket = null
+        scheduleEventReconnect(board, generation, seq)
+      }
+    }
+  }
+
+  function hasEventStreamCapability(): boolean {
+    const status = capabilities.value?.capabilities?.find(capability => capability.key === 'events')?.status
+    return status === 'supported' || status === 'partial' || isCapabilitySupported('events')
+  }
+
+  function startEventStream() {
+    if (!hasEventStreamCapability()) return false
+    eventStreamEnabled = true
+    const seq = ++eventStreamSeq
+    const generation = boardGeneration
+    const board = selectedBoard.value
+    clearEventTimers()
+    connectEventStream(board, generation, seq)
+    return true
+  }
+
+  function restartEventStreamIfActive() {
+    if (eventStreamEnabled) startEventStream()
+  }
+
   function setSelectedBoard(board?: string | null): string {
     const resolved = resolveAvailableBoard(board)
     const changed = selectedBoard.value !== resolved
@@ -111,6 +220,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     if (changed) {
       clearBoardScopedState()
       boardGeneration++
+      restartEventStreamIfActive()
     }
     return resolved
   }
@@ -276,6 +386,30 @@ export const useKanbanStore = defineStore('kanban', () => {
     return kanbanApi.addComment(taskId, { body, author }, { board: selectedBoard.value })
   }
 
+  async function linkTasks(parentId: string, childId: string) {
+    assertCapability('links')
+    const board = selectedBoard.value
+    const result = await kanbanApi.linkTasks({ parent_id: parentId, child_id: childId }, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards()])
+    return result
+  }
+
+  async function unlinkTasks(parentId: string, childId: string) {
+    assertCapability('links')
+    const board = selectedBoard.value
+    const result = await kanbanApi.unlinkTasks({ parent_id: parentId, child_id: childId }, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards()])
+    return result
+  }
+
+  async function bulkUpdateTasks(data: Omit<KanbanBulkUpdateRequest, 'ids'> & { ids: string[] }) {
+    assertCapabilityStatus('bulk', ['supported', 'partial'])
+    const board = selectedBoard.value
+    const result = await kanbanApi.bulkUpdateTasks(data, { board })
+    if (board === selectedBoard.value) await Promise.all([fetchTasks(true), fetchStats(), fetchBoards(), fetchAssignees()])
+    return result
+  }
+
   async function getTaskLog(taskId: string, tail?: number) {
     assertCapability('taskLog')
     return kanbanApi.getTaskLog(taskId, { board: selectedBoard.value, tail })
@@ -358,6 +492,9 @@ export const useKanbanStore = defineStore('kanban', () => {
     unblockTasks,
     assignTask,
     addComment,
+    linkTasks,
+    unlinkTasks,
+    bulkUpdateTasks,
     getTaskLog,
     getDiagnostics,
     reclaimTask,
@@ -366,6 +503,8 @@ export const useKanbanStore = defineStore('kanban', () => {
     dispatch,
     setFilter,
     setSelectedBoard,
+    startEventStream,
+    stopEventStream,
     recoverSelectedBoard,
     resolveAvailableBoard,
     clearBoardScopedState,

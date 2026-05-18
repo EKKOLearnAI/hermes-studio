@@ -1,4 +1,4 @@
-import { request } from '../client'
+import { request, getApiKey, getBaseUrlValue } from '../client'
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -84,6 +84,8 @@ export interface KanbanTaskDetail {
   comments: KanbanComment[]
   events: KanbanEvent[]
   runs: KanbanRun[]
+  parents?: string[]
+  children?: string[]
 }
 
 export interface KanbanStats {
@@ -198,6 +200,26 @@ export interface KanbanDispatchOptions extends KanbanBoardOptions {
   failureLimit?: number
 }
 
+export interface KanbanLinkRequest {
+  parent_id: string
+  child_id: string
+}
+
+export interface KanbanBulkUpdateRequest {
+  ids: string[]
+  status?: KanbanTaskStatus
+  assignee?: string | null
+  archive?: boolean
+  summary?: string
+  reason?: string
+}
+
+export interface KanbanBulkTaskResult {
+  id: string
+  ok: boolean
+  error?: string
+}
+
 function normalizedBoard(board?: string): string {
   const trimmed = board?.trim()
   return trimmed || 'default'
@@ -212,6 +234,37 @@ function boardParams(board?: string): URLSearchParams {
   const params = new URLSearchParams()
   params.set('board', normalizedBoard(board))
   return params
+}
+
+function websocketProtocol(base?: string): string {
+  if (base) return base.startsWith('https') ? 'wss:' : 'ws:'
+  return location.protocol === 'https:' ? 'wss:' : 'ws:'
+}
+
+function formatHostForPort(hostname: string, port: number): string {
+  if (hostname.startsWith('[') && hostname.endsWith(']')) return `${hostname}:${port}`
+  return hostname.includes(':') ? `[${hostname}]:${port}` : `${hostname}:${port}`
+}
+
+export function buildKanbanEventsWebSocketUrl(opts?: KanbanBoardOptions): string {
+  const base = getBaseUrlValue()
+  const params = boardParams(opts?.board)
+  const token = getApiKey()
+  if (token) params.set('token', token)
+  const path = `/api/hermes/kanban/events?${params.toString()}`
+
+  if (base) {
+    return `${websocketProtocol(base)}//${new URL(base).host}${path}`
+  }
+
+  const host = import.meta.env.DEV
+    ? formatHostForPort(location.hostname, 8648)
+    : location.host
+  return `${websocketProtocol()}//${host}${path}`
+}
+
+export function openKanbanEventStream(opts?: KanbanBoardOptions): WebSocket {
+  return new WebSocket(buildKanbanEventsWebSocketUrl(opts))
 }
 
 // ─── API functions ───────────────────────────────────────────────
@@ -294,6 +347,29 @@ export async function assignTask(taskId: string, profile: string, opts?: KanbanB
 
 export async function addComment(taskId: string, data: KanbanCommentCreateRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
   return request<{ ok: boolean; output?: string }>(appendQuery(`/api/hermes/kanban/${encodeURIComponent(taskId)}/comments`, boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function linkTasks(data: KanbanLinkRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
+  return request<{ ok: boolean; output?: string }>(appendQuery('/api/hermes/kanban/links', boardParams(opts?.board)), {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function unlinkTasks(data: KanbanLinkRequest, opts?: KanbanBoardOptions): Promise<{ ok: boolean; output?: string }> {
+  const params = boardParams(opts?.board)
+  params.set('parent_id', data.parent_id)
+  params.set('child_id', data.child_id)
+  return request<{ ok: boolean; output?: string }>(appendQuery('/api/hermes/kanban/links', params), {
+    method: 'DELETE',
+  })
+}
+
+export async function bulkUpdateTasks(data: KanbanBulkUpdateRequest, opts?: KanbanBoardOptions): Promise<{ results: KanbanBulkTaskResult[] }> {
+  return request<{ results: KanbanBulkTaskResult[] }>(appendQuery('/api/hermes/kanban/tasks/bulk', boardParams(opts?.board)), {
     method: 'POST',
     body: JSON.stringify(data),
   })
