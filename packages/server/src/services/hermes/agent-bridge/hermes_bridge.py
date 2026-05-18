@@ -555,6 +555,7 @@ class AgentPool:
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
+        self._clarify_requests: dict[str, queue.Queue[str]] = {}
 
     def get_or_create(
         self,
@@ -623,6 +624,7 @@ class AgentPool:
                     tool_progress_callback=self._tool_progress_callback(session_id),
                     tool_start_callback=self._tool_start_callback(session_id),
                     tool_complete_callback=self._tool_complete_callback(session_id),
+                    clarify_callback=self._clarify_callback(session_id),
                 )
                 agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
@@ -896,6 +898,30 @@ class AgentPool:
                 "allow_permanent": True,
                 "timeout_ms": 300_000,
             })
+
+        return callback
+
+    def _clarify_callback(self, session_id: str):
+        def callback(question: str, choices: list[str] | None = None) -> str:
+            clarify_id = uuid.uuid4().hex
+            response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+            with self._lock:
+                self._clarify_requests[clarify_id] = response_queue
+            self._append_event(session_id, {
+                "event": "clarify.requested",
+                "clarify_id": clarify_id,
+                "question": str(question or ""),
+                "choices": list(choices) if choices else None,
+                "timeout_ms": 300_000,
+            })
+            try:
+                user_response = response_queue.get(timeout=300)
+            except queue.Empty:
+                user_response = "[user did not respond within 5m]"
+            finally:
+                with self._lock:
+                    self._clarify_requests.pop(clarify_id, None)
+            return user_response
 
         return callback
 
@@ -1216,6 +1242,17 @@ class AgentPool:
             pass
         return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
 
+    def respond_clarify(self, clarify_id: str, response: str) -> dict[str, Any]:
+        with self._lock:
+            response_queue = self._clarify_requests.get(clarify_id)
+        if response_queue is None:
+            return {"clarify_id": clarify_id, "resolved": False}
+        try:
+            response_queue.put_nowait(response)
+        except queue.Full:
+            pass
+        return {"clarify_id": clarify_id, "resolved": True}
+
     def get_history(self, session_id: str) -> dict[str, Any]:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -1402,6 +1439,13 @@ class BridgeServer:
             if not approval_id:
                 raise ValueError("approval_id is required")
             return self.pool.respond_approval(approval_id, str(req.get("choice") or "deny"))
+
+        if action == "clarify_respond":
+            clarify_id = str(req.get("clarify_id") or "").strip()
+            if not clarify_id:
+                raise ValueError("clarify_id is required")
+            response = str(req.get("response") or "").strip()
+            return self.pool.respond_clarify(clarify_id, response)
 
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
