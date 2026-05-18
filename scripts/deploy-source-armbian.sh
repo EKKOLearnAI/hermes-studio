@@ -322,7 +322,7 @@ install_webui_dependencies() {
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
   run chown -R "${APP_USER}:${APP_USER}" "${DEPLOY_DIR}"
-  run_as_app_user "cd '${DEPLOY_DIR}' && PATH='${path_env}' npm ci"
+  run_as_app_user "cd '${DEPLOY_DIR}' && PATH='${path_env}' npm install"
 }
 
 build_webui() {

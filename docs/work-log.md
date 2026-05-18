@@ -230,7 +230,7 @@ WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
   - 通过 `npmmirror` 下载 Node.js 23
   - 调用 Hermes 官方安装脚本自动安装 Hermes Agent
   - 为运行用户写入 npm 国内源配置
-  - 执行 `npm ci` 和 `npm run build`
+  - 执行 `npm install` 和 `npm run build`
   - 生成 systemd 环境文件和服务文件
   - 开机自启 `hermes-web-ui.service`
 - 运行模式改为：
@@ -273,6 +273,11 @@ WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
 - 对新增脚本和文档进行了静态复读，确认：
   - Node 安装链路、Hermes 安装链路、npm 源配置、构建命令、systemd 变量传递逻辑完整
   - README 与中文 README 均已增加源码部署入口
+- 2026-05-18 追加排障确认：
+  - 当前仓库根目录未提交 `package-lock.json`
+  - 源码部署脚本中的 `npm ci` 会在干净环境直接失败
+  - 已将源码部署脚本调整为 `npm install`
+  - 已同步修正源码部署文档，避免脚本与文档不一致
 - 计划对以下文件执行诊断检查：
   - `scripts/deploy-source-armbian.sh`
   - `scripts/hermes-web-ui.service`
