@@ -6,6 +6,7 @@ import { setRuntimeMode } from '@/api/client'
 const WEB_UI_VERSION = __APP_VERSION__
 
 const SIDEBAR_COLLAPSED_KEY = 'hermes_sidebar_collapsed'
+const MODELS_CACHE_TTL_MS = 60_000
 
 export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
@@ -28,6 +29,8 @@ export const useAppStore = defineStore('app', () => {
   const streamEnabled = ref(true)
   const sessionPersistence = ref(true)
   const maxTokens = ref(4096)
+  let modelsLoadPromise: Promise<void> | null = null
+  let modelsLastRequestedAt = 0
 
   async function checkConnection() {
     try {
@@ -44,15 +47,36 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function loadModels() {
-    try {
-      const res = await fetchAvailableModels()
-      modelGroups.value = res.groups
-      selectedModel.value = res.default
-      selectedProvider.value = res.default_provider || ''
-    } catch {
-      // ignore
-    }
+  async function loadModels(force = false) {
+    if (!force && modelsLoadPromise) return modelsLoadPromise
+    if (!force && modelsLastRequestedAt > 0 && Date.now() - modelsLastRequestedAt < MODELS_CACHE_TTL_MS) return
+    modelsLastRequestedAt = Date.now()
+    modelsLoadPromise = (async () => {
+      try {
+        const res = await fetchAvailableModels()
+        modelGroups.value = res.groups
+        selectedModel.value = res.default
+        selectedProvider.value = res.default_provider || ''
+      } catch {
+        // ignore
+      } finally {
+        modelsLoadPromise = null
+      }
+    })()
+    return modelsLoadPromise
+  }
+
+  async function waitForModelsForRun(timeoutMs = 15000) {
+    const pending = modelsLoadPromise || (modelsLastRequestedAt === 0 ? loadModels() : null)
+    if (!pending) return
+    await Promise.race([
+      pending,
+      new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
+    ])
+  }
+
+  async function reloadModels() {
+    return loadModels(true)
   }
 
   async function switchModel(modelId: string, providerOverride?: string) {
@@ -126,6 +150,8 @@ export const useAppStore = defineStore('app', () => {
     maxTokens,
     checkConnection,
     loadModels,
+    waitForModelsForRun,
+    reloadModels,
     switchModel,
     startHealthPolling,
     stopHealthPolling,

@@ -20,6 +20,7 @@ vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => ({
     selectedModel: 'default-model',
     selectedProvider: 'default-provider',
+    waitForModelsForRun: vi.fn(() => Promise.resolve()),
     switchModel: switchModelMock,
   }),
 }))
@@ -307,6 +308,31 @@ describe('chat store user-mode model selection', () => {
 
     const systemMessage = store.activeSession!.messages.find(m => m.role === 'system')
     expect(systemMessage?.content).toContain('Agent returned no output')
+  })
+
+  it('clears stale compression status when a new run starts', async () => {
+    const store = useChatStore()
+    store.newChat()
+
+    await store.sendMessage('compress then answer')
+
+    const onEvent = startRunViaSocketMock.mock.calls[0][1]
+    onEvent({
+      event: 'compression.completed',
+      session_id: store.activeSession!.id,
+      totalMessages: 12,
+      beforeTokens: 24000,
+      afterTokens: 6000,
+      compressed: true,
+    })
+    expect(store.compressionState?.compressed).toBe(true)
+
+    onEvent({
+      event: 'run.started',
+      session_id: store.activeSession!.id,
+      run_id: 'next-run',
+    })
+    expect(store.compressionState).toBeNull()
   })
 
   it('keeps a tool run as one thinking message, tool card, then one streamed result message', async () => {

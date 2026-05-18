@@ -11,6 +11,7 @@ import {
     type ChatMessage,
     type MemberInfo,
     createRoom,
+    cloneRoom as cloneRoomApi,
     listRooms,
     getRoomDetail,
     joinRoomByCode,
@@ -18,6 +19,7 @@ import {
     listAgents,
     removeAgent,
     deleteRoom as deleteRoomApi,
+    clearRoomContext,
 } from '@/api/hermes/group-chat'
 
 export const useGroupChatStore = defineStore('groupChat', () => {
@@ -138,6 +140,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('room_updated', (data: { roomId: string; totalTokens: number }) => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (room) room.totalTokens = data.totalTokens
+        })
+
+        socket.on('room_cleared', (data: { roomId: string; totalTokens: number }) => {
+            const room = rooms.value.find(r => r.id === data.roomId)
+            if (room) room.totalTokens = data.totalTokens
+            if (data.roomId === currentRoomId.value) {
+                messages.value = []
+                typingUsers.value.clear()
+                contextStatuses.value.clear()
+            }
         })
     }
 
@@ -279,6 +291,33 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }) {
+        try {
+            const res = await cloneRoomApi(roomId, data)
+            rooms.value.push(res.room)
+            return res
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function clearCurrentRoomContext() {
+        if (!currentRoomId.value) return
+        try {
+            const res = await clearRoomContext(currentRoomId.value)
+            messages.value = []
+            typingUsers.value.clear()
+            contextStatuses.value.clear()
+            const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
+            if (idx >= 0 && res.room) rooms.value[idx] = res.room
+            return res
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     // ─── Agent Actions ─────────────────────────────────────
     async function loadAgents(roomId: string) {
         try {
@@ -356,6 +395,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         emitTyping,
         emitStopTyping,
         createNewRoom,
+        cloneRoom,
+        clearCurrentRoomContext,
         joinByCode,
         deleteRoom,
         loadAgents,

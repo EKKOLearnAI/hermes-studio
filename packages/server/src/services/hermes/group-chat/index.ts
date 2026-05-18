@@ -1,5 +1,6 @@
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
+import { randomUUID } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { config } from '../../../config'
 import { logger } from '../../../services/logger'
@@ -292,6 +293,14 @@ class ChatStorage {
         ).run(msg.id, msg.roomId, msg.senderId, msg.senderName, msg.content, msg.timestamp)
     }
 
+    clearRoomContext(roomId: string): void {
+        const db = this.db()
+        if (!db) return
+        db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+        db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+        db.prepare('UPDATE gc_rooms SET totalTokens = 0 WHERE id = ?').run(roomId)
+    }
+
     pruneMessages(roomId: string, keep = 500): void {
         const db = this.db()
         if (!db) return
@@ -463,6 +472,8 @@ export class GroupChatServer {
     /** Map: userId → { name, description } (from auth) */
     private userInfoMap = new Map<string, { name: string; description: string }>()
     readonly agentClients = new AgentClients()
+    private readonly agentSocketSecret = randomUUID()
+    private agentSocketIds = new Set<string>()
     private _contextEngine: ContextEngine | null = null
     private _restoreScheduled = false
     /** roomId -> (userId -> { userName, timer }) */
@@ -480,6 +491,7 @@ export class GroupChatServer {
     constructor(httpServers: HttpServer | HttpServer[]) {
         this.storage = new ChatStorage()
         this.storage.init()
+        this.agentClients.setAgentAuthSecret(this.agentSocketSecret)
         const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
         // SECURITY: Socket.IO has its own CORS config that is independent
@@ -538,6 +550,18 @@ export class GroupChatServer {
         return Array.from(this.rooms.keys())
     }
 
+    clearRoomRuntimeState(roomId: string): void {
+        const roomTyping = this.typingState.get(roomId)
+        if (roomTyping) {
+            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+            this.typingState.delete(roomId)
+        }
+        this.contextStatusState.delete(roomId)
+        this.agentClients.resetRoomContext(roomId)
+        this.nsp.to(roomId).emit('room_cleared', { roomId, totalTokens: 0 })
+        this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens: 0 })
+    }
+
     // ─── Restore Agents ─────────────────────────────────────────
 
     /**
@@ -559,6 +583,7 @@ export class GroupChatServer {
             for (const agent of agents) {
                 try {
                     const client = await this.agentClients.createAgent({
+                        agentId: agent.agentId,
                         profile: agent.profile,
                         name: agent.name,
                         description: agent.description,
@@ -629,12 +654,14 @@ export class GroupChatServer {
     // ─── Connection ─────────────────────────────────────────────
 
     private onConnection(socket: Socket): void {
-        const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string }
-        const userId = auth.userId || socket.id
+        const auth = socket.handshake.auth as { userId?: string; agentId?: string; agentSecret?: string; name?: string; description?: string }
+        const isInternalAgent = Boolean(auth.agentId && auth.agentSecret === this.agentSocketSecret)
+        const userId = isInternalAgent ? auth.agentId! : auth.userId || socket.id
         const userName = auth.name || `User-${userId.slice(0, 6)}`
         const description = auth.description || ''
 
         this.socketUserMap.set(socket.id, userId)
+        if (isInternalAgent) this.agentSocketIds.add(socket.id)
         this.userInfoMap.set(userId, { name: userName, description })
 
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
@@ -751,6 +778,7 @@ export class GroupChatServer {
             content: msg.content,
             senderName: msg.senderName,
             senderId: msg.senderId,
+            senderIsAgent: this.agentSocketIds.has(socketId),
             timestamp: msg.timestamp,
         }).catch((err) => {
             logger.error(`[GroupChat] processMentions error: ${err.message}`)
@@ -851,6 +879,7 @@ export class GroupChatServer {
 
         this.leaveAllRooms(socket, socketId)
         this.socketUserMap.delete(socketId)
+        this.agentSocketIds.delete(socketId)
         // Don't delete userInfoMap — it persists across reconnects
     }
 

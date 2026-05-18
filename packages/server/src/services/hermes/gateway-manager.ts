@@ -236,6 +236,18 @@ export interface GatewayStatus {
   url: string
   running: boolean
   pid?: number
+  diagnostics?: GatewayDiagnostics
+}
+
+export interface GatewayDiagnostics {
+  pid_path: string
+  config_path: string
+  pid_file_exists: boolean
+  config_exists: boolean
+  health_url: string
+  health_checked_at: string
+  health_ok?: boolean
+  reason: string
 }
 
 interface ManagedGateway {
@@ -598,21 +610,43 @@ export class GatewayManager {
     const pid = this.readPidFile(name)
     const { port, host } = this.readProfilePort(name)
     const url = buildHttpUrl(host, port)
+    const pidPath = join(this.profileDir(name), 'gateway.pid')
+    const configPath = join(this.profileDir(name), 'config.yaml')
+    const diagnostics: GatewayDiagnostics = {
+      pid_path: pidPath,
+      config_path: configPath,
+      pid_file_exists: existsSync(pidPath),
+      config_exists: existsSync(configPath),
+      health_url: `${url.replace(/\/$/, '')}/health`,
+      health_checked_at: new Date().toISOString(),
+      reason: 'stopped',
+    }
 
     if (pid && this.isProcessAlive(pid) && await this.checkHealth(url)) {
+      diagnostics.health_ok = true
+      diagnostics.reason = 'pid alive and health check passed'
       this.gateways.set(name, { pid, port, host, url, mode: 'profile' })
-      return { profile: name, port, host, url, running: true, pid }
+      return { profile: name, port, host, url, running: true, pid, diagnostics }
+    }
+
+    if (pid) {
+      diagnostics.health_ok = false
+      diagnostics.reason = this.isProcessAlive(pid) ? 'pid alive but health check failed' : 'stale pid file'
+    } else if (!diagnostics.pid_file_exists) {
+      diagnostics.reason = 'missing pid file'
     }
 
     const apiOnlyPid = this.readApiOnlyPidFile(name)
     if (apiOnlyPid && this.isProcessAlive(apiOnlyPid) && await this.checkHealth(url)) {
+      diagnostics.health_ok = true
+      diagnostics.reason = 'api-only pid alive and health check passed'
       this.gateways.set(name, { pid: apiOnlyPid, port, host, url, mode: 'api-only' })
-      return { profile: name, port, host, url, running: true, pid: apiOnlyPid }
+      return { profile: name, port, host, url, running: true, pid: apiOnlyPid, diagnostics }
     }
 
     // 未运行或端口不匹配
     this.gateways.delete(name)
-    return { profile: name, port, host, url, running: false }
+    return { profile: name, port, host, url, running: false, diagnostics }
   }
 
   /** 检测所有 profile 的网关状态 */

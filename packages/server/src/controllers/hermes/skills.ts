@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'path'
 import { createHash } from 'crypto'
 import YAML from 'js-yaml'
 import {
-  readConfigYaml, writeConfigYaml,
+  readConfigYaml, updateConfigYaml,
   safeReadFile, extractDescription, listFilesRecursive, getHermesDir,
 } from '../../services/config-helpers'
 import { pinSkill } from '../../services/hermes/hermes-cli'
@@ -274,14 +274,15 @@ export async function toggle(ctx: any) {
     return
   }
   try {
-    const config = await readConfigYaml()
-    if (!config.skills) config.skills = {}
-    if (!Array.isArray(config.skills.disabled)) config.skills.disabled = []
-    const disabled = config.skills.disabled as string[]
-    const idx = disabled.indexOf(name)
-    if (enabled) { if (idx !== -1) disabled.splice(idx, 1) }
-    else { if (idx === -1) disabled.push(name) }
-    await writeConfigYaml(config)
+    await updateConfigYaml((config) => {
+      if (!config.skills) config.skills = {}
+      if (!Array.isArray(config.skills.disabled)) config.skills.disabled = []
+      const disabled = config.skills.disabled as string[]
+      const idx = disabled.indexOf(name)
+      if (enabled) { if (idx !== -1) disabled.splice(idx, 1) }
+      else { if (idx === -1) disabled.push(name) }
+      return config
+    })
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500

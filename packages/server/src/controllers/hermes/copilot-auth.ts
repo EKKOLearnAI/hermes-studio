@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { startDeviceFlow, pollDeviceFlow } from '../../services/hermes/copilot-device-flow'
-import { saveEnvValue, readConfigYaml, writeConfigYaml } from '../../services/config-helpers'
+import { saveEnvValue, updateConfigYaml } from '../../services/config-helpers'
 import {
   invalidateAllCaches,
   resolveCopilotOAuthTokenWithSource,
@@ -192,16 +192,17 @@ export async function disable(ctx: any): Promise<void> {
   // 不能 swallow —— 否则会出现 "list 已隐藏 copilot 但 default 仍是 copilot" 的中间态。
   let clearedDefault = false
   try {
-    const cfg = await readConfigYaml()
-    const modelSection = cfg.model
-    if (typeof modelSection === 'object' && modelSection !== null) {
-      const provider = String(modelSection.provider || '').trim().toLowerCase()
-      if (provider === 'copilot') {
-        cfg.model = {}
-        await writeConfigYaml(cfg)
-        clearedDefault = true
+    clearedDefault = await updateConfigYaml((cfg) => {
+      const modelSection = cfg.model
+      if (typeof modelSection === 'object' && modelSection !== null) {
+        const provider = String(modelSection.provider || '').trim().toLowerCase()
+        if (provider === 'copilot') {
+          cfg.model = {}
+          return { data: cfg, result: true }
+        }
       }
-    }
+      return { data: cfg, result: false, write: false }
+    }) || false
   } catch (err: any) {
     logger.error(err, 'Copilot disable failed: cannot clear default model')
     ctx.status = 500

@@ -20,6 +20,15 @@ related:
 > ⚠️ 别把它跟同名笔记里的 `hermes-webui (nesquena)` 混了——那是另一条嵌入式单体 Python 实现，对比详见 [[对比 — hermes-webui (nesquena) vs hermes-web-ui (EKKO) 架构 2026-05-06]]。
 > 当前本机开发入口是 `/Users/kite/code/hermes-web-ui`；生产入口是 `root@10.250.1.66` 的 `hermes-web-ui.service`，监听 `0.0.0.0:8648`。不要用旧 launchd PID 判断生产状态。
 
+> [!warning] 2026-05-18 `webui-upstream-safe-ports` — upstream 安全移植，不整支合并
+> 本轮在 ftask worktree `/Users/kite/code/hermes-web-ui.tasks/webui-upstream-safe-ports` 手工吸收 upstream 中对侧栏能力有价值且不冲突多租户目标的补丁。仍禁止整支 merge `EKKOLearnAI/main`：upstream 大规模替换 `chat-run-socket`/`run-chat`、删除本地 `request-context.ts`、`feishu-oauth.ts` 和 user-mode/Feishu/Run Broker 测试，会冲掉 `X-Hermes-Owner-Open-Id`、profile owner isolation、Feishu UAT/lark-cli connector 与本地文档。
+>
+> 已移植：群聊 `8196e49/4f246c7` 的房间克隆、清空上下文、稳定 agent identity、agent mention loop 防护；看板 `e0e4096` 的 archived 任务计数/列表刷新，但保留 `requireOpenId + taskOwnedBy` owner 过滤；通用安全和体验补丁 `67723d9/ce5a9bb` 的配置/`.env` 锁写入与非法 key 拦截、`6516d86` 的运行时模型列表等待上限、`f2c8ace` 的 custom provider `base_url` 保真、`8571a7d` 的 gateway stopped diagnostics、`217b721` 的新 run 清理 stale compression status、`aff3546/bbfd818` 的 FUN-Codex responses transport、Z.AI 模型列表和 sidebar divider。
+>
+> 跳过/暂不吸收：channel 设置、QQBot/DingTalk/MiMo TTS、xAI OAuth、session-level bridge settings、Windows-only 修复、Kanban 事件/链接/批量操作大重写，以及 upstream `run-chat/*` 架构替换。原因是本轮优先群聊/看板/通用稳定性；这些改动要么不影响当前多租户目标，要么会扩大与 Run Broker/owner isolation 的冲突面。
+>
+> 验证：`pnpm vitest run` focused 14 files / 85 tests passed；`pnpm run build` passed。build 仍有既有 `INEFFECTIVE_DYNAMIC_IMPORT` 与大 chunk warning；不是本轮新增阻塞。生产尚未发布，后续只能从本 worktree 经 ftask review/ship 后按标准 GitHub main → 66 pull/build/restart/verify 流程进入生产。
+
 > [!warning] 2026-05-14 Cron 投递语义
 > WebUI 创建定时任务时，主流场景是投递到飞书，而不是投递到本地 WebUI。生产默认用户身份是 `sunke` UAT profile；job 写入 `profiles/sunke/cron/jobs.json`，由 `hermes-gateway.service` 的 multitenancy cron worker 执行并通过 Feishu adapter 投递给 owner open_id。投递成功后 multitenancy 会 mirror 到 `multitenancy_sessions`，这样用户基于飞书推送继续对话时有上下文。
 >

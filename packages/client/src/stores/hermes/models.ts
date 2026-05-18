@@ -48,21 +48,21 @@ export const useModelsStore = defineStore('models', () => {
     await systemApi.updateDefaultModel({ default: modelId, provider })
     defaultModel.value = modelId
     const appStore = useAppStore()
-    appStore.loadModels()
+    appStore.reloadModels()
   }
 
   async function addProvider(data: CustomProvider) {
     await systemApi.addCustomProvider(data)
     await fetchProviders()
     const appStore = useAppStore()
-    appStore.loadModels()
+    appStore.reloadModels()
   }
 
   async function removeProvider(name: string) {
     await systemApi.removeCustomProvider(name)
     await fetchProviders()
     const appStore = useAppStore()
-    appStore.loadModels()
+    appStore.reloadModels()
   }
 
   return {

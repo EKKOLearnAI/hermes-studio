@@ -16,6 +16,7 @@ const profilesStore = useProfilesStore()
 
 const showSidebar = ref(window.innerWidth > 768)
 const showCreateModal = ref(false)
+const showCloneModal = ref(false)
 const showAddAgentModal = ref(false)
 const showCompressionModal = ref(false)
 const compressionConfig = ref({ triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 20 })
@@ -23,6 +24,9 @@ const isCompressing = ref(false)
 const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
 const agentDescription = ref('')
+const cloneSourceRoomId = ref<string | null>(null)
+const cloneRoomName = ref('')
+const cloneInviteCode = ref('')
 
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
@@ -48,6 +52,15 @@ function toggleSidebar() {
     showSidebar.value = !showSidebar.value
 }
 
+function generateCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    let code = ''
+    for (let i = 0; i < 6; i++) {
+        code += chars[Math.floor(Math.random() * chars.length)]
+    }
+    return code
+}
+
 async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
     try {
         store.setUserInfo(userName, description)
@@ -66,6 +79,46 @@ async function handleDeleteRoom(roomId: string) {
         message.success(t('groupChat.roomDeleted'))
     } catch {
         message.error(t('common.saveFailed'))
+    }
+}
+
+function handleOpenCloneRoom(roomId: string) {
+    const room = store.rooms.find(r => r.id === roomId)
+    cloneSourceRoomId.value = roomId
+    cloneRoomName.value = room?.name ? `${room.name} Copy` : ''
+    cloneInviteCode.value = generateCode()
+    showCloneModal.value = true
+}
+
+async function confirmCloneRoom() {
+    if (!cloneSourceRoomId.value || !cloneRoomName.value.trim()) return
+    try {
+        const res = await store.cloneRoom(cloneSourceRoomId.value, {
+            name: cloneRoomName.value.trim(),
+            inviteCode: cloneInviteCode.value.trim() || undefined,
+        })
+        showCloneModal.value = false
+        cloneSourceRoomId.value = null
+        cloneRoomName.value = ''
+        cloneInviteCode.value = ''
+        await store.joinRoom(res.room.id)
+        message.success(t('groupChat.roomCloned'))
+    } catch {
+        message.error(t('common.saveFailed'))
+    }
+}
+
+async function handleClearRoomContext() {
+    if (!store.currentRoomId) return
+    if (store.contextStatuses.size > 0) {
+        message.warning(t('groupChat.compressingInProgress'))
+        return
+    }
+    try {
+        await store.clearCurrentRoomContext()
+        message.success(t('groupChat.contextCleared'))
+    } catch {
+        message.error(t('common.deleteFailed'))
     }
 }
 
@@ -204,9 +257,14 @@ watch(() => store.sortedMessages.length, async () => {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
+                    <button class="room-action-btn" :title="t('groupChat.cloneRoom')" @click.stop="handleOpenCloneRoom(room.id)">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="8" y="8" width="12" height="12" rx="2" /><path d="M4 16V6a2 2 0 0 1 2-2h10" />
+                        </svg>
+                    </button>
                     <NPopconfirm @positive-click="handleDeleteRoom(room.id)">
                         <template #trigger>
-                            <button class="room-delete-btn" @click.stop>
+                            <button class="room-action-btn danger" @click.stop>
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                             </button>
                         </template>
@@ -281,6 +339,14 @@ watch(() => store.sortedMessages.length, async () => {
                     <button class="icon-btn" :title="t('groupChat.compressionConfig')" @click="handleOpenCompressionConfig">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 4.6a1.65 1.65 0 0 0 1.51 1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                     </button>
+                    <NPopconfirm @positive-click="handleClearRoomContext">
+                        <template #trigger>
+                            <button class="icon-btn" :disabled="!store.currentRoomId" :title="t('groupChat.clearContext')" @click.stop>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
+                            </button>
+                        </template>
+                        {{ t('groupChat.clearContextConfirm') }}
+                    </NPopconfirm>
                     <span v-if="store.members.length" class="member-count">
                         {{ store.members.length }} {{ t('groupChat.members') }}
                     </span>
@@ -366,6 +432,25 @@ watch(() => store.sortedMessages.length, async () => {
                         <NSpace justify="end">
                             <NButton @click="showAddAgentModal = false">{{ t('common.cancel') }}</NButton>
                             <NButton type="primary" :disabled="!selectedProfile" @click="confirmAddAgent">{{ t('common.add') }}</NButton>
+                        </NSpace>
+                    </div>
+                </div>
+            </div>
+            <div v-if="showCloneModal" class="modal-backdrop" @click.self="showCloneModal = false">
+                <div class="modal">
+                    <h3>{{ t('groupChat.cloneRoom') }}</h3>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.roomName') }}</label>
+                        <NInput v-model:value="cloneRoomName" :placeholder="t('groupChat.roomNamePlaceholder')" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ t('groupChat.inviteCode') }}</label>
+                        <NInput v-model:value="cloneInviteCode" :placeholder="t('groupChat.inviteCode')" />
+                    </div>
+                    <div class="modal-actions">
+                        <NSpace justify="end">
+                            <NButton @click="showCloneModal = false">{{ t('common.cancel') }}</NButton>
+                            <NButton type="primary" :disabled="!cloneRoomName.trim()" @click="confirmCloneRoom">{{ t('groupChat.cloneRoom') }}</NButton>
                         </NSpace>
                     </div>
                 </div>
@@ -597,7 +682,7 @@ export default defineComponent({ components: { CreateRoomForm } })
         color: $text-muted;
     }
 
-    .room-delete-btn {
+    .room-action-btn {
         flex-shrink: 0;
         display: flex;
         align-items: center;
@@ -613,12 +698,17 @@ export default defineComponent({ components: { CreateRoomForm } })
         transition: opacity $transition-fast, color $transition-fast, background-color $transition-fast;
 
         &:hover {
+            color: $text-primary;
+            background-color: rgba(var(--accent-primary-rgb), 0.08);
+        }
+
+        &.danger:hover {
             color: $error;
             background-color: rgba(var(--error-rgb), 0.1);
         }
     }
 
-    &:hover .room-delete-btn {
+    &:hover .room-action-btn {
         opacity: 1;
     }
 }
@@ -842,6 +932,11 @@ export default defineComponent({ components: { CreateRoomForm } })
     &:hover {
         background-color: rgba(var(--accent-primary-rgb), 0.08);
         color: $text-primary;
+    }
+
+    &:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
     }
 }
 

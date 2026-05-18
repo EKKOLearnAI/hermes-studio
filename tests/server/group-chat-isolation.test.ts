@@ -150,6 +150,11 @@ function createStorage(db: DatabaseSync) {
         'SELECT id, userId, userName as name, description, joinedAt FROM gc_room_members WHERE roomId = ? ORDER BY joinedAt'
       ).all(roomId) as any[]
     },
+    addMessage(message: { id: string; roomId: string; senderId: string; senderName: string; content: string; timestamp: number }) {
+      db.prepare(
+        'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(message.id, message.roomId, message.senderId, message.senderName, message.content, message.timestamp)
+    },
     removeRoomAgent(agentId: string) {
       db.prepare('DELETE FROM gc_room_agents WHERE id = ?').run(agentId)
     },
@@ -182,6 +187,11 @@ function createStorage(db: DatabaseSync) {
       db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
       db.prepare('DELETE FROM gc_rooms WHERE id = ?').run(roomId)
     },
+    clearRoomContext(roomId: string) {
+      db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+      db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+      db.prepare('UPDATE gc_rooms SET totalTokens = 0 WHERE id = ?').run(roomId)
+    },
   }
 }
 
@@ -195,6 +205,7 @@ function createServer(storage: ReturnType<typeof createStorage>) {
       disconnectRoom: vi.fn(() => {}),
     },
     getContextEngine: () => null,
+    clearRoomRuntimeState: vi.fn(() => {}),
   }
 }
 
@@ -403,6 +414,97 @@ describe('group-chat isolation', () => {
     expect(ctx.status).toBe(403)
     expect(ctx.body).toEqual({ error: 'You do not own this agent profile' })
     expect(storage.getRoomsByOwner('ouA')).toHaveLength(0)
+
+    rmSync(join(multitenancyDbPath, '..'), { recursive: true, force: true })
+  })
+
+  it('clones only an owned room and preserves owned agents without copying messages', async () => {
+    const multitenancyDbPath = createRoutingDbWithOwnerColumns()
+    const { groupChatRoutes, setGroupChatServer } = await loadGroupChatRoutes(multitenancyDbPath)
+    const storage = createStorage(getTestDb())
+    setGroupChatServer(createServer(storage) as any)
+    cleanupServer = () => setGroupChatServer(null as any)
+
+    storage.saveRoom('room-a', 'Owner A Room', 'invite-a', { triggerTokens: 12, maxHistoryTokens: 34, tailMessageCount: 5 }, 'ouA')
+    storage.addRoomAgent('room-a', 'agent-a', 'profA', 'Owned Agent', 'owned', 0)
+    storage.addMessage({
+      id: 'msg-a',
+      roomId: 'room-a',
+      senderId: 'ouA',
+      senderName: 'Owner A',
+      content: 'old context should not be copied',
+      timestamp: Date.now(),
+    })
+
+    const cloneRoom = getRouteHandler(groupChatRoutes, 'POST', '/api/hermes/group-chat/rooms/:roomId/clone')
+
+    const deniedCtx = createCtx({
+      openid: 'ouB',
+      params: { roomId: 'room-a' },
+      body: { name: 'Stolen Room' },
+    })
+    await cloneRoom(deniedCtx)
+    expect(deniedCtx.status).toBe(404)
+    expect(deniedCtx.body).toEqual({ error: 'Room not found' })
+
+    const allowedCtx = createCtx({
+      openid: 'ouA',
+      params: { roomId: 'room-a' },
+      body: { name: 'Owner A Room Copy', inviteCode: 'copy-a' },
+    })
+    await cloneRoom(allowedCtx)
+
+    expect(allowedCtx.status).toBe(200)
+    expect(allowedCtx.body.room).toMatchObject({
+      name: 'Owner A Room Copy',
+      inviteCode: 'copy-a',
+      triggerTokens: 12,
+      maxHistoryTokens: 34,
+      tailMessageCount: 5,
+      owner_open_id: 'ouA',
+    })
+    expect(allowedCtx.body.agents).toHaveLength(1)
+    expect(allowedCtx.body.agents[0]).toMatchObject({ profile: 'profA', name: 'Owned Agent' })
+    expect(storage.getMessages(allowedCtx.body.room.id)).toEqual([])
+
+    rmSync(join(multitenancyDbPath, '..'), { recursive: true, force: true })
+  })
+
+  it('clears only an owned room context while keeping the room and agents', async () => {
+    const multitenancyDbPath = createRoutingDbWithOwnerColumns()
+    const { groupChatRoutes, setGroupChatServer } = await loadGroupChatRoutes(multitenancyDbPath)
+    const storage = createStorage(getTestDb())
+    const server = createServer(storage)
+    setGroupChatServer(server as any)
+    cleanupServer = () => setGroupChatServer(null as any)
+
+    storage.saveRoom('room-a', 'Owner A Room', 'invite-a', undefined, 'ouA')
+    storage.addRoomAgent('room-a', 'agent-a', 'profA', 'Owned Agent', 'owned', 0)
+    storage.addMessage({
+      id: 'msg-a',
+      roomId: 'room-a',
+      senderId: 'ouA',
+      senderName: 'Owner A',
+      content: 'context to clear',
+      timestamp: Date.now(),
+    })
+
+    const clearContext = getRouteHandler(groupChatRoutes, 'POST', '/api/hermes/group-chat/rooms/:roomId/clear-context')
+
+    const deniedCtx = createCtx({ openid: 'ouB', params: { roomId: 'room-a' } })
+    await clearContext(deniedCtx)
+    expect(deniedCtx.status).toBe(404)
+    expect(deniedCtx.body).toEqual({ error: 'Room not found' })
+    expect(storage.getMessages('room-a')).toHaveLength(1)
+
+    const allowedCtx = createCtx({ openid: 'ouA', params: { roomId: 'room-a' } })
+    await clearContext(allowedCtx)
+    expect(allowedCtx.status).toBe(200)
+    expect(allowedCtx.body).toMatchObject({ success: true })
+    expect(storage.getRoom('room-a')).toMatchObject({ id: 'room-a', owner_open_id: 'ouA' })
+    expect(storage.getRoomAgents('room-a')).toHaveLength(1)
+    expect(storage.getMessages('room-a')).toEqual([])
+    expect(server.clearRoomRuntimeState).toHaveBeenCalledWith('room-a')
 
     rmSync(join(multitenancyDbPath, '..'), { recursive: true, force: true })
   })

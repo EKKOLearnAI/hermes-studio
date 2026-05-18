@@ -751,6 +751,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const appStore = useAppStore()
+      await appStore.waitForModelsForRun()
       const sessionModel = activeSession.value?.model || appStore.selectedModel
       const sessionProvider = activeSession.value?.provider || appStore.selectedProvider
       const runPayload = {
@@ -803,6 +804,7 @@ export const useChatStore = defineStore('chat', () => {
           switch (evt.event) {
             case 'run.started':
               setAbortState(null)
+              setCompressionState(null)
               runProducedAssistantText = false
               runHadToolActivity = false
               closeStreamingAssistant()
@@ -1253,6 +1255,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'run.started':
           setAbortState(null)
+          setCompressionState(null)
           runProducedAssistantText = false
           runHadToolActivity = false
           closeStreamingAssistant()
