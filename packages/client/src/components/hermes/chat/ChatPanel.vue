@@ -216,6 +216,19 @@ const activeSessionSource = computed(() =>
 const activeApproval = computed(() => chatStore.activePendingApproval);
 const visibleApproval = computed(() => activeApproval.value);
 
+const activeClarify = computed(() => chatStore.activePendingClarify);
+const visibleClarify = computed(() => activeClarify.value);
+const clarifyResponse = ref('');
+
+function handleClarify(response?: string) {
+  // response=undefined → freeform input mode (use clarifyResponse ref)
+  // response='' → dismiss (send empty string to clear the dialog)
+  // response=string → choice button clicked
+  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  chatStore.respondToClarify(finalResponse);
+  clarifyResponse.value = '';
+}
+
 function handleNewChat() {
   chatStore.newChat();
 }
@@ -1099,6 +1112,60 @@ async function handleSessionModelCustomSubmit() {
                 @click="handleApproval('deny')"
               >
                 {{ t("chat.approvalDeny") }}
+              </NButton>
+            </div>
+          </div>
+        </div>
+        <div v-if="visibleClarify" class="clarify-bar">
+          <div class="clarify-icon" aria-hidden="true">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </div>
+          <div class="clarify-content">
+            <div class="clarify-main">
+              <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
+              <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
+              <div class="clarify-desc">{{ visibleClarify.question }}</div>
+            </div>
+            <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-choices">
+              <NButton
+                v-for="choice in visibleClarify.choices"
+                :key="choice"
+                size="small"
+                type="primary"
+                @click="handleClarify(choice)"
+              >
+                {{ choice }}
+              </NButton>
+              <NButton
+                size="small"
+                secondary
+                @click="handleClarify('')"
+              >
+                {{ t('chat.clarifyDismiss') }}
+              </NButton>
+            </div>
+            <div v-else class="clarify-input-row">
+              <NInput
+                v-model:value="clarifyResponse"
+                size="small"
+                :placeholder="t('chat.clarifyPlaceholder')"
+                @keyup.enter="handleClarify()"
+              />
+              <NButton size="small" type="primary" @click="handleClarify()">
+                {{ t('chat.clarifySubmit') }}
               </NButton>
             </div>
           </div>

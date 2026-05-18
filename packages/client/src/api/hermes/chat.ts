@@ -83,6 +83,8 @@ const sessionEventHandlers = new Map<string, {
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
+  onClarifyRequested?: (event: RunEvent) => void
+  onClarifyResolved?: (event: RunEvent) => void
 }>()
 
 /**
@@ -324,6 +326,26 @@ function globalApprovalResolvedHandler(event: RunEvent): void {
   }
 }
 
+function globalClarifyRequestedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyRequested) {
+    handlers.onClarifyRequested(event)
+  }
+}
+
+function globalClarifyResolvedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyResolved) {
+    handlers.onClarifyResolved(event)
+  }
+}
+
 /**
  * Register event handlers for a session
  * @param sessionId - Session ID
@@ -351,6 +373,8 @@ export function registerSessionHandlers(
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
+    onClarifyRequested?: (event: RunEvent) => void
+    onClarifyResolved?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -379,6 +403,19 @@ export function respondToolApproval(
     session_id: sessionId,
     approval_id: approvalId,
     choice,
+  })
+}
+
+export function respondClarify(
+  sessionId: string,
+  clarifyId: string,
+  response: string,
+): void {
+  const socket = connectChatRun()
+  socket.emit('clarify_respond', {
+    session_id: sessionId,
+    clarify_id: clarifyId,
+    response,
   })
 }
 
@@ -441,6 +478,8 @@ export function connectChatRun(): Socket {
     chatRunSocket.on('run.queued', globalRunQueuedHandler)
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
+    chatRunSocket.on('clarify.requested', globalClarifyRequestedHandler)
+    chatRunSocket.on('clarify.resolved', globalClarifyResolvedHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
@@ -597,6 +636,14 @@ export function startRunViaSocket(
       onEvent(evt)
     },
     onApprovalResolved: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyRequested: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyResolved: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },
