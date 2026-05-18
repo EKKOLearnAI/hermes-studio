@@ -55,10 +55,15 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   findLatestExactSessionIdWithProfile: mockFindLatestExactSessionId,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/agent-ownership', () => ({
+  ownerOwnsProfile: () => true,
+}))
+
 import * as ctrl from '../../packages/server/src/controllers/hermes/kanban'
 
 function ctx(overrides: Record<string, any> = {}) {
   return {
+    state: { user: { openid: 'ouX', profile: 'p' } },
     query: {},
     params: {},
     request: { body: {} },
@@ -75,7 +80,7 @@ describe('kanban controller', () => {
 
   it('lists boards and tasks with explicit/default board context', async () => {
     mockListBoards.mockResolvedValue([{ slug: 'default' }])
-    mockListTasks.mockResolvedValue([{ id: 'task-1' }])
+    mockListTasks.mockResolvedValue([{ id: 'task-1', assignee: 'alice', created_by: null }])
 
     const boardsCtx = ctx({ query: { includeArchived: 'true' } })
     await ctrl.listBoards(boardsCtx)
@@ -85,7 +90,7 @@ describe('kanban controller', () => {
     const c = ctx({ query: { board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' } })
     await ctrl.list(c)
     expect(mockListTasks).toHaveBeenCalledWith({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops' })
-    expect(c.body).toEqual({ tasks: [{ id: 'task-1' }] })
+    expect(c.body).toEqual({ tasks: [{ id: 'task-1', assignee: 'alice', created_by: null }] })
 
     mockCreateBoard.mockResolvedValue({ slug: 'project-b' })
     const createBoardCtx = ctx({ request: { body: { slug: 'project-b', name: 'Project B', switchCurrent: false } } })
@@ -111,7 +116,7 @@ describe('kanban controller', () => {
 
   it('enriches completed task details using the latest run profile', async () => {
     mockGetTask.mockResolvedValue({
-      task: { id: 'task-1', status: 'done' },
+      task: { id: 'task-1', status: 'done', assignee: 'fresh', created_by: null },
       runs: [{ profile: 'stale' }, { profile: 'fresh' }],
       comments: [],
       events: [],
@@ -136,7 +141,7 @@ describe('kanban controller', () => {
 
   it('prefers exact kanban-task session matches over later sessions that merely reference the task id', async () => {
     mockGetTask.mockResolvedValue({
-      task: { id: 't_348bfaaf', status: 'done' },
+      task: { id: 't_348bfaaf', status: 'done', assignee: 'default', created_by: null },
       runs: [{ profile: 'default' }],
       comments: [],
       events: [],
@@ -186,6 +191,12 @@ describe('kanban controller', () => {
     mockGetAssignees.mockResolvedValue([{ name: 'alice' }])
     mockSearchSessions.mockResolvedValue([{ id: 'session-2' }])
     mockFindLatestExactSessionId.mockResolvedValue('session-2')
+    mockGetTask.mockResolvedValue({
+      task: { id: 'task-1', status: 'todo', assignee: 'alice', created_by: null, tenant: null },
+      runs: [],
+      comments: [],
+      events: [],
+    })
     mockGetExactSessionDetail.mockResolvedValue({
       id: 'session-2',
       source: 'codex',
@@ -210,16 +221,16 @@ describe('kanban controller', () => {
       thread_session_count: 1,
     })
 
-    const fileCtx = ctx({ query: { path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt' } })
+    const fileCtx = ctx({ query: { path: '/Users/tester/.hermes/kanban/workspaces/task-1/out.txt' } })
     await ctrl.readArtifact(fileCtx)
     expect(fileCtx.body).toEqual({
       content: 'artifact-content',
-      path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt',
+      path: '/Users/tester/.hermes/kanban/workspaces/task-1/out.txt',
     })
 
     const createCtx = ctx({ query: { board: 'project-a' }, request: { body: { title: 'Ship', body: 'x' } } })
     await ctrl.create(createCtx)
-    expect(mockCreateTask).toHaveBeenCalledWith('Ship', { board: 'project-a', body: 'x', assignee: undefined, priority: undefined, tenant: undefined })
+    expect(mockCreateTask).toHaveBeenCalledWith('Ship', { board: 'project-a', body: 'x', assignee: undefined, priority: undefined, tenant: 'ouX' })
     expect(createCtx.body).toEqual({ task: { id: 'task-2' } })
 
     const completeCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'], summary: 'done' } } })

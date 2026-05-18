@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, rm, writeFile } from 'fs/promises'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
-import { ChatRunSocket } from '../../packages/server/src/services/hermes/chat-run-socket'
+import { ChatRunSocket, mapRunBrokerFrameForChat } from '../../packages/server/src/services/hermes/chat-run-socket'
 
 function createSocketServer() {
   const room = { emit: vi.fn() }
@@ -223,6 +223,28 @@ describe('ChatRunSocket gateway lifecycle', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const chatRun = new BrokerChatRunSocket(io as any, gatewayManager)
+    ;(chatRun as any).sessionMap.set('session-broker', {
+      messages: [
+        {
+          id: 1,
+          session_id: 'session-broker',
+          role: 'user',
+          content: '查一下明天北京天气',
+          timestamp: 1,
+        },
+        {
+          id: 2,
+          session_id: 'session-broker',
+          role: 'assistant',
+          content: '北京明天最低温 18°C。',
+          timestamp: 2,
+        },
+      ],
+      isWorking: false,
+      events: [],
+      queue: [],
+      profile: 'sunke',
+    })
     const socket = {
       data: { user: { openid: 'ou_webui_user' } },
       connected: true,
@@ -255,6 +277,11 @@ describe('ChatRunSocket gateway lifecycle', () => {
       credential_subject: 'ou_webui_user',
       requires_host_tools: true,
     }))
+    expect(body.messages).toEqual([
+      { role: 'user', content: '查一下明天北京天气' },
+      { role: 'assistant', content: '北京明天最低温 18°C。' },
+      { role: 'user', content: 'hello broker' },
+    ])
     expect(body.metadata).toEqual(expect.objectContaining({
       model: 'gpt-5.4',
       provider: 'openai',
@@ -268,6 +295,145 @@ describe('ChatRunSocket gateway lifecycle', () => {
       session_id: 'session-broker',
       run_id: 'run_webui_1',
     }))
+  })
+
+  it('maps broker thinking frames to reasoning and preserves tool metadata', () => {
+    expect(mapRunBrokerFrameForChat({
+      kind: 'thinking',
+      run_id: 'run-1',
+      text: 'I should inspect the file first.',
+    })).toEqual(expect.objectContaining({
+      type: 'emit',
+      event: 'reasoning.delta',
+      appendFinalText: false,
+      persistAssistantContent: false,
+      payload: expect.objectContaining({
+        event: 'reasoning.delta',
+        delta: 'I should inspect the file first.',
+      }),
+    }))
+
+    expect(mapRunBrokerFrameForChat({
+      kind: 'thinking',
+      run_id: 'run-1',
+      text: '正在连接模型和工具运行环境...',
+    })).toEqual({ type: 'ignore' })
+
+    expect(mapRunBrokerFrameForChat({
+      kind: 'tool_started',
+      run_id: 'run-1',
+      name: 'lark_cli',
+      payload: {
+        tool_call_id: 'call-1',
+        args: { cmd: 'docx create' },
+        preview: 'docx create',
+      },
+    })).toEqual(expect.objectContaining({
+      type: 'emit',
+      event: 'tool.started',
+      payload: expect.objectContaining({
+        tool_call_id: 'call-1',
+        name: 'lark_cli',
+        arguments: '{"cmd":"docx create"}',
+        preview: 'docx create',
+      }),
+    }))
+
+    expect(mapRunBrokerFrameForChat({
+      kind: 'tool_started',
+      run_id: 'run-1',
+      name: 'terminal',
+      payload: {
+        preview: "/bin/sh -lc 'printf STREAM_FIXED_OK'",
+      },
+    })).toEqual(expect.objectContaining({
+      type: 'emit',
+      event: 'tool.started',
+      payload: expect.objectContaining({
+        arguments: JSON.stringify({ cmd: "/bin/sh -lc 'printf STREAM_FIXED_OK'" }),
+        preview: "/bin/sh -lc 'printf STREAM_FIXED_OK'",
+      }),
+    }))
+
+    expect(mapRunBrokerFrameForChat({
+      kind: 'tool_completed',
+      run_id: 'run-1',
+      name: 'lark_cli',
+      payload: {
+        tool_call_id: 'call-1',
+        output: 'created doc',
+        duration: 1.25,
+        is_error: false,
+      },
+    })).toEqual(expect.objectContaining({
+      type: 'emit',
+      event: 'tool.completed',
+      payload: expect.objectContaining({
+        tool_call_id: 'call-1',
+        name: 'lark_cli',
+        output: 'created doc',
+        duration: 1.25,
+        is_error: false,
+      }),
+    }))
+  })
+
+  it('synthesizes stable broker tool ids when frames omit tool_call_id', async () => {
+    vi.resetModules()
+    vi.stubEnv('HERMES_WEBUI_RUN_BROKER', '1')
+    vi.stubEnv('HERMES_RUN_BROKER_URL', 'http://127.0.0.1:8766')
+    const { ChatRunSocket: BrokerChatRunSocket } = await import('../../packages/server/src/services/hermes/chat-run-socket')
+
+    const { io, room } = createSocketServer()
+    const gatewayManager = {
+      detectStatus: vi.fn(),
+      startApiOnly: vi.fn(),
+      getUpstream: vi.fn(() => {
+        throw new Error('profile apiserver should not be used')
+      }),
+      getApiKey: vi.fn(() => null),
+    }
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"kind":"tool_started","run_id":"run-no-id","name":"terminal","payload":{"preview":"generating arguments"}}\n\n'))
+        controller.enqueue(encoder.encode('data: {"kind":"tool_started","run_id":"run-no-id","name":"terminal","payload":{"arguments":{"cmd":"printf TOOL_PANEL_OK_DONE"},"preview":"printf TOOL_PANEL_OK_DONE"}}\n\n'))
+        controller.enqueue(encoder.encode('data: {"kind":"tool_completed","run_id":"run-no-id","name":"terminal","payload":{"output":"TOOL_PANEL_OK_DONE","is_error":false}}\n\n'))
+        controller.enqueue(encoder.encode('data: {"kind":"content","text":"done","payload":{"run_id":"run-no-id"}}\n\n'))
+        controller.enqueue(encoder.encode('data: {"kind":"done","payload":{"run_id":"run-no-id"}}\n\n'))
+        controller.close()
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const chatRun = new BrokerChatRunSocket(io as any, gatewayManager)
+    const socket = {
+      data: { user: { openid: 'ou_webui_user' } },
+      connected: true,
+      emit: vi.fn(),
+      join: vi.fn(),
+    }
+
+    await (chatRun as any).handleRun(socket, {
+      input: 'run terminal',
+      session_id: 'session-no-id',
+    }, 'sunke')
+
+    const started = room.emit.mock.calls.find(([event]) => event === 'tool.started')?.[1]
+    const completed = room.emit.mock.calls.find(([event]) => event === 'tool.completed')?.[1]
+    expect(started?.tool_call_id).toMatch(/^broker_tool_run-no-id_terminal/)
+    expect(completed?.tool_call_id).toBe(started.tool_call_id)
+
+    const state = (chatRun as any).sessionMap.get('session-no-id')
+    const assistantTool = state.messages.find((m: any) => m.role === 'assistant' && m.tool_calls?.length)
+    const toolResult = state.messages.find((m: any) => m.role === 'tool')
+    expect(assistantTool.tool_calls[0].id).toBe(started.tool_call_id)
+    expect(assistantTool.tool_calls[0].function.arguments).toBe('{"cmd":"printf TOOL_PANEL_OK_DONE"}')
+    expect(toolResult.tool_call_id).toBe(started.tool_call_id)
+    expect(toolResult.tool_name).toBe('terminal')
   })
 
   it('inlines uploaded markdown file content before forwarding a run upstream', async () => {

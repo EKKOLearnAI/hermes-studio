@@ -1,6 +1,6 @@
 ---
 title: hermes-web-ui 架构速查 — EKKO fork (Koa 2 + Vue3 BFF)
-updated: 2026-05-15
+updated: 2026-05-18
 status: living
 scope: ~/code/hermes-web-ui (EKKOLearnAI/hermes-web-ui fork, v0.5.16)
 audience: Claude PAI / 孙可
@@ -34,6 +34,20 @@ related:
 > BFF 代理这些请求时只信任服务端解析出的 `ctx.state.user.profile/openid`，忽略浏览器 body/query 里伪造的 `profile_name/open_id/user_key`；请求再通过 `${HERMES_RUN_BROKER_URL}` 和可选 `HERMES_RUN_BROKER_KEY` 进入 multitenancy Run Broker sidecar。因此 WebUI 与 multitenancy 必须同发。完成授权后，UAT 由 multitenancy 写入 `multitenancy_credentials` 与 profile-local `feishu_uat/<open_id>.json` 兼容位置；WebUI 只看到 `missing/expired/scope_missing/valid` 等 redacted 状态。
 >
 > 生产修正：`1c76058` 显式在 chat plane 放行 `/api/auth/feishu/uat/*`。这些接口仍位于 `authProtectedRoutes` 之后，必须先有 WebUI session；放行只避免 `/api/auth/*` 管理面 denylist 误挡用户自助授权。`91f376a` 把 UAT 授权从 LoginView 移到 AppSidebar：登录页不再展示“授权飞书工具”，也不再用前端路由守卫按 UAT 状态拦截受保护页面。`920c866` 断开授权新窗口的 `window.opener` 后再跳转飞书 device-flow URL，避免外部授权页保留 opener 引用；生产 HEAD 可能包含后续 docs-only commit，代码修复点以 `920c866` 为准。
+>
+> 2026-05-18 本机修正：左下角 Feishu connector 不再只按旧自研 OAPI/UAT `status=valid` 判断连接。multitenancy status 现在会返回 `lark_cli.available/default_identity`；WebUI 认为 `status=valid` 或 `lark_cli.available && default_identity=bot` 都代表飞书能力可用。这样切到官方 `lark-cli` 后，缺个人 UAT 但 bot identity 可用时不会再显示“正在连接飞书 + device code”，也不会点击后误启动旧 device-flow。需要个人私有资源时，仍由后续 user UAT 授权路径处理。
+
+> [!warning] 2026-05-17 Run Broker chat display repair
+> 本机 WebUI 回退后，`mp9kplh12u7iyz` 暴露两类展示/上下文断点：`handleBrokerRun()` 只把当前用户输入发给 Run Broker，没有携带已有 session messages；broker 的 `thinking` frame 被映射成正文 `message.delta`，同时工具事件没有稳定写入 session state，刷新后空 content 的 assistant tool-call envelope 又会被 `mapHermesMessages()` 过滤。修复后，WebUI BFF 会把当前 session 历史转为 `RunRequest.messages`；`thinking` 只进入 `reasoning.delta`；`tool_started/tool_completed` 合成稳定 `tool_call_id`，落入 assistant `tool_calls` envelope 和 `role=tool` result；前端历史映射保留带 `tool_calls` 或 reasoning 的空 assistant；`MessageList.vue` 继续隐藏无正文的 streaming assistant，避免空泡泡。
+>
+> 2026-05-17 18:44 继续按 `mp9mvt4kkxcr2v` 复查：该会话从 user 到 flush 约 170 秒，最终已落 16 条 WebUI 消息，但工具参数为空，因为 multitenancy Run Broker 发的是 `payload.args`，WebUI adapter 只读取 `payload.arguments`。已修正 `chat-run-socket.ts` 同时兼容 `args/arguments`，并在 broker 缺 `tool_call_id` 时按 `run_id + tool name + optional index` 合成 `broker_tool_*` 稳定 id；`MessageList.vue` 对齐 upstream：active run 期间当前工具只在 thinking gif 旁的 live panel 展示，`run.completed` 后再通过 `MessageItem` 渲染成历史里的 `.message.tool .tool-line`。回归：`pnpm vitest run tests/client/message-list-streaming.test.ts tests/client/chat-store-user-mode.test.ts tests/server/chat-run-socket.test.ts` 为 27 passed，`pnpm run build` 成功，`localhost:8648` 返回 200。旧会话中已经空落库的 tool args 不能凭空恢复；新会话会保留 broker `args`。
+>
+> 2026-05-17 夜间继续对齐 upstream 展示语义：正常工具流应是“一个 pre-tool thinking assistant -> tool card/panel -> 一个 post-tool result assistant”。根因在上游之外：multitenancy 把等待心跳文案和 Hermes core 的 `reasoning.available` 可见答案预览都当成 `thinking` 发给 WebUI，导致前端按原生 `reasoning.delta` 展示出多个“思考过程”。已在 multitenancy 停止把等待心跳/`reasoning.available` 下发为 thinking；WebUI adapter 也防御性忽略历史 heartbeat thinking 文案。新增回归覆盖“工具调用后多个 `message.delta` 只合并成一个结果 assistant”，当前 `pnpm vitest run tests/client/message-list-streaming.test.ts tests/client/chat-store-user-mode.test.ts tests/server/chat-run-socket.test.ts` 为 26 passed，`pnpm run build` 成功。
+>
+> 同轮还修复 thinking 视频资产：原 `thinking-light/dark.mp4` 是 H.264 High 4:4:4 / `yuv444p`，Chrome 在运行中显示“无法播放媒体”。现在源资产重编码为 H.264 High / `yuv420p`，build 输出从约 10.9MB/8.0MB 降到约 4.2MB/1.9MB，浏览器兼容性更稳。验证命令：`pnpm vitest run tests/server/chat-run-socket.test.ts tests/client/chat-store-user-mode.test.ts tests/client/message-list-streaming.test.ts` 为 20 passed，`pnpm run build` 成功；本机 launchd 重启后 `localhost:8648` 200，新 mp4 资产 200 且 `ffprobe` 显示 `pix_fmt=yuv420p`。
+>
+> 同轮第三刀后按用户要求重新启动 upstream 原版进程对照，修正为完全匹配 upstream 的生命周期：Run Broker 会先发 `tool_started preview="generating arguments"`，随后用同一个 `tool_call_id` 发真实 `args`；WebUI 会用后续真实参数更新已有 assistant `tool_calls` envelope，避免落库仍是 `{}`。前端 `MessageList.vue` 不再自绘 `.tool-trace-message`，而是 active run 期间把当前工具保留在 thinking gif 旁的 `.streaming-indicator .tool-calls-panel`，包括已 done/error 但 run 尚未 completed 的工具；`run.completed` 后工具进入原生历史 `.message.tool .tool-line`，底部 active panel 与 thinking video 清空。回归：WebUI focused `27 passed`，`pnpm run build` 成功；Chrome 启动 upstream Vite `9659` 与本地 Vite `9660` 对照，`active-started/active-completed/final` 三段 DOM 结构完全一致并输出 `UPSTREAM_LOCAL_TOOL_UI_MATCH`。真实 `localhost:8648` canary `UPSTREAM_REAL_UI_MATCH_2` 运行中抓到 `terminal generating arguments` live panel，结束后重新打开页面确认 `terminal 完成` 位于 `.message.tool .tool-line`，`streamingIndicators=0/thinkingVideos=0/customTraceMessages=0`，DB 保留真实 command 参数。
+> 23:50 review 追加：active run 隐藏主消息流工具行时必须按当前轮次的 message id 隐藏，而不是按 `tool_call_id` key 隐藏；Run Broker 合成的 `broker_tool_*` 可能跨轮复用，同 key 只用于同轮去重，不能让新 run 临时隐藏上一轮历史 tool-line。新增回归 `keeps prior-turn tool traces visible while hiding only current live tools with reused broker ids`，focused 回归更新为 `28 passed`。
 
 ---
 
@@ -834,6 +848,10 @@ CLAUDE.md 写过：dev 模式下"`hermes` CLI 必须在 `$PATH`"——确实，s
 
 ## Changelog
 
+- 2026-05-18：本机补齐 Kanban owner isolation：`create` 不再允许当前 WebUI 用户伪造其他 `tenant` 或分配给未归属 profile；`complete/block/unblock` 在调用 CLI 前逐 task 校验归属并 fail-closed；`readArtifact` 不再只做字符串前缀检查，改为 `relative()` 目录边界 + task ownership 校验，防止 `workspaces-evil` 这类兄弟目录和未归属 task artifact 被读出。回归：`tests/server/kanban-isolation.test.ts` 新增 create/artifact 红绿用例；Kanban/GroupChat focused `27 passed`，工具流/前端 focused `28 passed`，`pnpm run build` 成功。
+- 2026-05-18：本机补齐 WebUI 交付门禁：在继续验证 tool panel / upstream 语义时，`pnpm run build` 暴露 group-chat owner-boundary 待提交改动的 TypeScript 错误。已做最小类型修正：`group-chat.ts` 使用 `RouterContext` 类型导入，`group-chat/index.ts` 将 SQLite `all()` 结果经 `unknown` 收窄为 `RoomRow[]`。验证：`pnpm vitest run tests/server/chat-run-socket.test.ts tests/client/message-list-streaming.test.ts` 17 passed，`pnpm run build` 成功，本机 `com.hermes.ekko-webui` 重启后 `localhost:8648` 返回 200。
+- 2026-05-17：本机继续修复 WebUI 工具流拆碎成多条“思考过程”的问题。对齐 upstream：工具流为 thinking assistant、tool panel、result assistant；`chat-run-socket.ts` 忽略等待心跳类 broker thinking，`chat.ts` 回归确保 tool 后的多个 `message.delta` 合并成一个结果消息。验证：WebUI focused 回归 26 passed，build 成功。
+- 2026-05-17：本机继续修复 WebUI tool panel 位置和重复渲染，并按 upstream 原版进程重测后收敛。前端 `MessageList.vue` 将当前 run 的 tool calls 限定在最近用户轮次，active run 期间工具留在 thinking gif 旁 `.streaming-indicator .tool-calls-panel`，`run.completed` 后才通过原生 `MessageItem` 进入历史 `.message.tool .tool-line`；不再使用自绘 `.tool-trace-message`。同一 `tool_call_id` 的 live/history 副本只在同一轮次去重，允许 Run Broker 合成 id 跨 run 重复。`chat.ts` 的 `tool.started/tool.completed` 匹配也改为只查当前用户轮次内的 tool message，避免新 terminal 状态更新到旧消息。Chrome upstream/local mock 对照输出 `UPSTREAM_LOCAL_TOOL_UI_MATCH`；真实 8648 canary `UPSTREAM_REAL_UI_MATCH_2` 运行中显示 terminal live panel，完成后历史里只剩 `terminal 完成` tool-line；DB command arguments 不再是 `{}`。
 - 2026-05-15：新增 WebUI Feishu UAT ensure：受保护 BFF 接口 `/api/auth/feishu/uat/{status,start,sessions/:id}` 通过服务器端 session 身份代理到 multitenancy Run Broker sidecar；UAT 作为左侧栏飞书连接状态展示，红点表示未连接，绿点表示已有 UAT，点击红点启动 device-flow 授权；LoginView 只负责飞书 OAuth 登录并直接进入 WebUI，不接触原始 UAT token。`1c76058` 追加修复 chat-plane access control，允许这些已登录用户自助授权接口通过，不开放其他 `/api/auth/*` 管理面；`91f376a` 移除 LoginView/路由守卫 UAT 门禁并把授权入口移到 AppSidebar；`920c866` 在打开飞书授权 URL 前清空新窗口 `opener`。
 - 2026-05-14：新增 WebUI Run Broker client seam：`HERMES_WEBUI_RUN_BROKER=1` 时 `chat-run-socket.ts` 构造 `RunRequest(channel="webui")` 并提交到 `${HERMES_RUN_BROKER_URL}/api/run-broker/runs`；支持 `HERMES_RUN_BROKER_KEY` Bearer shared secret。生产 `hermes-web-ui@dc2f2ab` 已开启该路径，Socket.IO terminal canary 返回 `SANDBOX=1`。
 - 2026-05-14：新增 WebUI jobs broker seam：`hermes-web-ui@700ae53` 后，chat plane 下 `/api/hermes/jobs` 默认跟随 `HERMES_WEBUI_RUN_BROKER` 走 `${HERMES_RUN_BROKER_URL}/api/run-broker/jobs`；`HERMES_WEBUI_JOBS_BROKER` 可单独覆盖。生产 canary 在 profile apiserver 停止期间创建并删除 job 成功。

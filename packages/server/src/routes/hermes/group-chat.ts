@@ -1,4 +1,5 @@
-import Router from '@koa/router'
+import Router, { type RouterContext } from '@koa/router'
+import { ownerOwnsProfile } from '../../services/hermes/agent-ownership'
 import type { GroupChatServer } from '../../services/hermes/group-chat'
 
 export const groupChatRoutes = new Router()
@@ -17,6 +18,29 @@ function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+function getUserOpenId(ctx: RouterContext): string | null {
+    const user = ctx.state.user as { openid?: string } | undefined
+    if (!user?.openid) {
+        ctx.status = 401
+        ctx.body = { error: 'Unauthorized' }
+        return null
+    }
+    return user.openid
+}
+
+function getOwnedRoom(ctx: RouterContext, roomId: string) {
+    const openid = getUserOpenId(ctx)
+    if (!openid || !chatServer) return null
+    const room = chatServer.getStorage().getRoom(roomId)
+    // Return 404 on ownership mismatch so non-owners cannot enumerate room ids.
+    if (!room || room.owner_open_id !== openid) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return null
+    }
+    return room
+}
+
 // Create room
 groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     if (!chatServer) {
@@ -24,6 +48,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         ctx.body = { error: 'Group chat not initialized' }
         return
     }
+
+    const openid = getUserOpenId(ctx)
+    if (!openid) return
 
     const { name, inviteCode, agents, compression } = ctx.request.body as {
         name?: string
@@ -37,9 +64,17 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
+    for (const agent of agents || []) {
+        if (!ownerOwnsProfile(openid, agent.profile)) {
+            ctx.status = 403
+            ctx.body = { error: 'You do not own this agent profile' }
+            return
+        }
+    }
+
     const roomId = generateId()
     const storage = chatServer.getStorage()
-    storage.saveRoom(roomId, name, inviteCode, compression)
+    storage.saveRoom(roomId, name, inviteCode, compression, openid)
 
     // Save agents to DB and auto-connect via Socket.IO
     const addedAgents = []
@@ -73,12 +108,8 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         return
     }
 
-    const room = chatServer.getStorage().getRoom(ctx.params.roomId)
-    if (!room) {
-        ctx.status = 404
-        ctx.body = { error: 'Room not found' }
-        return
-    }
+    const room = getOwnedRoom(ctx, ctx.params.roomId)
+    if (!room) return
 
     const messages = chatServer.getStorage().getMessages(ctx.params.roomId)
     const agents = chatServer.getStorage().getRoomAgents(ctx.params.roomId)
@@ -94,7 +125,10 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const rooms = chatServer.getStorage().getAllRooms()
+    const openid = getUserOpenId(ctx)
+    if (!openid) return
+
+    const rooms = chatServer.getStorage().getRoomsByOwner(openid)
     ctx.body = { rooms }
 })
 
@@ -124,6 +158,8 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/invite-code', async (c
         return
     }
 
+    if (!getOwnedRoom(ctx, ctx.params.roomId)) return
+
     const { inviteCode } = ctx.request.body as { inviteCode?: string }
     if (!inviteCode) {
         ctx.status = 400
@@ -143,10 +179,20 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         return
     }
 
+    const openid = getUserOpenId(ctx)
+    if (!openid) return
+    if (!getOwnedRoom(ctx, ctx.params.roomId)) return
+
     const { profile, name, description, invited } = ctx.request.body as { profile?: string; name?: string; description?: string; invited?: boolean }
     if (!profile) {
         ctx.status = 400
         ctx.body = { error: 'profile is required' }
+        return
+    }
+
+    if (!ownerOwnsProfile(openid, profile)) {
+        ctx.status = 403
+        ctx.body = { error: 'You do not own this agent profile' }
         return
     }
 
@@ -185,6 +231,8 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) =
         return
     }
 
+    if (!getOwnedRoom(ctx, ctx.params.roomId)) return
+
     const agents = chatServer.getStorage().getRoomAgents(ctx.params.roomId)
     ctx.body = { agents }
 })
@@ -196,6 +244,8 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         ctx.body = { error: 'Group chat not initialized' }
         return
     }
+
+    if (!getOwnedRoom(ctx, ctx.params.roomId)) return
 
     chatServer.getStorage().removeRoomAgent(ctx.params.agentId)
     chatServer.agentClients.removeAgentFromRoom(ctx.params.roomId, ctx.params.agentId)
@@ -211,6 +261,7 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     }
 
     const roomId = ctx.params.roomId
+    if (!getOwnedRoom(ctx, roomId)) return
     // Disconnect all agents in room
     chatServer.agentClients.disconnectRoom(roomId)
     // Delete all data
@@ -227,6 +278,7 @@ groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/config', async (ctx) =
     }
 
     const roomId = ctx.params.roomId
+    if (!getOwnedRoom(ctx, roomId)) return
     const { triggerTokens, maxHistoryTokens, tailMessageCount } = ctx.request.body as {
         triggerTokens?: number
         maxHistoryTokens?: number
@@ -247,11 +299,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/compress', async (ctx
     }
 
     const roomId = ctx.params.roomId
-    if (!chatServer.getStorage().getRoom(roomId)) {
-        ctx.status = 404
-        ctx.body = { error: 'Room not found' }
-        return
-    }
+    if (!getOwnedRoom(ctx, roomId)) return
 
     const engine = chatServer.getContextEngine()
     if (!engine) {

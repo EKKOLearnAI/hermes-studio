@@ -1,8 +1,9 @@
 import type { Context } from 'koa'
 import { readFile } from 'fs/promises'
-import { resolve, normalize } from 'path'
+import { isAbsolute, relative, resolve, normalize } from 'path'
 import { homedir } from 'os'
 import * as kanbanCli from '../../services/hermes/hermes-kanban'
+import { ownerOwnsProfile } from '../../services/hermes/agent-ownership'
 import {
   searchSessionSummariesWithProfile,
   getSessionDetailFromDbWithProfile,
@@ -18,6 +19,82 @@ function firstQueryValue(value: string | string[] | undefined): string | undefin
   return Array.isArray(value) ? value[0] : value
 }
 
+function requireOpenId(ctx: Context): string | null {
+  const user = ctx.state.user as { openid?: string } | undefined
+  if (!user?.openid) {
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return null
+  }
+  return user.openid
+}
+
+// Per-request memoized ownership check so a multi-task list opens the
+// multitenancy DB at most once per distinct profile, not once per task.
+function makeOwnershipCache(openid: string): (profile: string | null | undefined) => boolean {
+  const cache = new Map<string, boolean>()
+  return (profile) => {
+    if (!profile || !profile.trim()) return false
+    const key = profile.trim()
+    const cached = cache.get(key)
+    if (cached !== undefined) return cached
+    const owned = ownerOwnsProfile(openid, key)
+    cache.set(key, owned)
+    return owned
+  }
+}
+
+// A task is visible to openid when it owns the agent profile that the task
+// is attributed to. Prefer the stronger created_by signal when the CLI
+// populated it; otherwise fall back to the assignee↔owned-agent mapping.
+function taskOwnedBy(task: { assignee: string | null; created_by?: string | null; tenant?: string | null }, isOwned: (p: string | null | undefined) => boolean, openid: string): boolean {
+  if (task.created_by && task.created_by.trim()) return isOwned(task.created_by)
+  if (task.assignee && task.assignee.trim()) return isOwned(task.assignee)
+  return task.tenant === openid
+}
+
+async function getOwnedTaskDetail(
+  ctx: Context,
+  taskId: string,
+  board: string,
+  openid: string,
+): Promise<kanbanCli.KanbanTaskDetail | null> {
+  const detail = await kanbanCli.getTask(taskId, { board })
+  const isOwned = makeOwnershipCache(openid)
+  if (!detail || !taskOwnedBy(detail.task, isOwned, openid)) {
+    ctx.status = 404
+    ctx.body = { error: 'Task not found' }
+    return null
+  }
+  return detail
+}
+
+async function requireOwnedTasks(ctx: Context, taskIds: string[], board: string, openid: string): Promise<boolean> {
+  const isOwned = makeOwnershipCache(openid)
+  // Fail closed for the whole write batch so a missing or unowned id cannot slip through via partial success semantics.
+  for (const taskId of taskIds) {
+    const detail = await kanbanCli.getTask(taskId, { board })
+    if (!detail || !taskOwnedBy(detail.task, isOwned, openid)) {
+      ctx.status = 403
+      ctx.body = { error: 'You do not own one or more of these tasks' }
+      return false
+    }
+  }
+  return true
+}
+
+function inferTaskIdFromArtifactPath(resolvedPath: string, kanbanDir: string): string | null {
+  const rel = relative(kanbanDir, resolvedPath)
+  if (!rel || rel.startsWith('..') || rel === '.' || isAbsolute(rel)) return null
+  const first = rel.split(/[\\/]/)[0]?.trim()
+  return first || null
+}
+
+function pathInsideDir(resolvedPath: string, dir: string): boolean {
+  const rel = relative(dir, resolvedPath)
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel))
+}
+
 function requestBoard(ctx: Context): string | null {
   try {
     return kanbanCli.normalizeBoardSlug(firstQueryValue(ctx.query.board as string | string[] | undefined))
@@ -29,6 +106,8 @@ function requestBoard(ctx: Context): string | null {
 }
 
 export async function listBoards(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const includeArchived = firstQueryValue(ctx.query.includeArchived as string | string[] | undefined) === 'true'
   try {
     const boards = await kanbanCli.listBoards({ includeArchived })
@@ -40,6 +119,8 @@ export async function listBoards(ctx: Context) {
 }
 
 export async function createBoard(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { slug, name, description, icon, color, switchCurrent } = ctx.request.body as {
     slug?: string
     name?: string
@@ -63,6 +144,8 @@ export async function createBoard(ctx: Context) {
 }
 
 export async function archiveBoard(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const slug = ctx.params.slug
   if (!slug?.trim()) {
     ctx.status = 400
@@ -79,6 +162,8 @@ export async function archiveBoard(ctx: Context) {
 }
 
 export async function capabilities(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   try {
     const capabilities = await kanbanCli.getCapabilities()
     ctx.body = { capabilities }
@@ -89,12 +174,15 @@ export async function capabilities(ctx: Context) {
 }
 
 export async function list(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { status, assignee, tenant } = ctx.query as Record<string, string | undefined>
   const board = requestBoard(ctx)
   if (!board) return
   try {
     const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant })
-    ctx.body = { tasks }
+    const isOwned = makeOwnershipCache(openid)
+    ctx.body = { tasks: tasks.filter(task => taskOwnedBy(task, isOwned, openid)) }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -102,11 +190,19 @@ export async function list(ctx: Context) {
 }
 
 export async function get(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
     const detail = await kanbanCli.getTask(ctx.params.id, { board })
     if (!detail) {
+      ctx.status = 404
+      ctx.body = { error: 'Task not found' }
+      return
+    }
+    const isOwned = makeOwnershipCache(openid)
+    if (!taskOwnedBy(detail.task, isOwned, openid)) {
       ctx.status = 404
       ctx.body = { error: 'Task not found' }
       return
@@ -163,6 +259,8 @@ export async function get(ctx: Context) {
 }
 
 export async function create(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { title, body, assignee, priority, tenant } = ctx.request.body as {
     title?: string
     body?: string
@@ -178,7 +276,18 @@ export async function create(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const task = await kanbanCli.createTask(title, { board, body, assignee, priority, tenant })
+    if (tenant && tenant !== openid) {
+      ctx.status = 403
+      ctx.body = { error: 'You cannot create tasks for another tenant' }
+      return
+    }
+    if (assignee && !ownerOwnsProfile(openid, assignee)) {
+      ctx.status = 403
+      ctx.body = { error: 'You do not own this agent profile' }
+      return
+    }
+    const effectiveTenant = tenant ?? openid
+    const task = await kanbanCli.createTask(title, { board, body, assignee, priority, tenant: effectiveTenant })
     ctx.body = { task }
   } catch (err: any) {
     ctx.status = 500
@@ -187,6 +296,8 @@ export async function create(ctx: Context) {
 }
 
 export async function complete(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { task_ids, summary } = ctx.request.body as {
     task_ids?: string[]
     summary?: string
@@ -199,6 +310,7 @@ export async function complete(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await requireOwnedTasks(ctx, task_ids, board, openid)) return
     await kanbanCli.completeTasks(task_ids, summary, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -208,6 +320,8 @@ export async function complete(ctx: Context) {
 }
 
 export async function block(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { reason } = ctx.request.body as { reason?: string }
   if (!reason) {
     ctx.status = 400
@@ -217,6 +331,7 @@ export async function block(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await requireOwnedTasks(ctx, [ctx.params.id], board, openid)) return
     await kanbanCli.blockTask(ctx.params.id, reason, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -226,6 +341,8 @@ export async function block(ctx: Context) {
 }
 
 export async function unblock(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { task_ids } = ctx.request.body as { task_ids?: string[] }
   if (!task_ids?.length) {
     ctx.status = 400
@@ -235,6 +352,7 @@ export async function unblock(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
+    if (!await requireOwnedTasks(ctx, task_ids, board, openid)) return
     await kanbanCli.unblockTasks(task_ids, { board })
     ctx.body = { ok: true }
   } catch (err: any) {
@@ -244,10 +362,17 @@ export async function unblock(ctx: Context) {
 }
 
 export async function assign(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { profile } = ctx.request.body as { profile?: string }
   if (!profile) {
     ctx.status = 400
     ctx.body = { error: 'profile is required' }
+    return
+  }
+  if (!ownerOwnsProfile(openid, profile)) {
+    ctx.status = 403
+    ctx.body = { error: 'You do not own this agent profile' }
     return
   }
   const board = requestBoard(ctx)
@@ -262,6 +387,8 @@ export async function assign(ctx: Context) {
 }
 
 export async function stats(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
@@ -274,6 +401,8 @@ export async function stats(ctx: Context) {
 }
 
 export async function assignees(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
@@ -286,7 +415,10 @@ export async function assignees(ctx: Context) {
 }
 
 export async function readArtifact(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const filePath = ctx.query.path as string | undefined
+  const taskIdQuery = firstQueryValue(ctx.query.task_id as string | string[] | undefined)
   if (!filePath) {
     ctx.status = 400
     ctx.body = { error: 'path is required' }
@@ -296,13 +428,17 @@ export async function readArtifact(ctx: Context) {
   const kanbanDir = resolve(homedir(), '.hermes', 'kanban', 'workspaces')
   const resolved = resolve(normalize(filePath))
 
-  if (!resolved.startsWith(kanbanDir)) {
+  if (!pathInsideDir(resolved, kanbanDir)) {
     ctx.status = 403
     ctx.body = { error: 'Path must be within kanban workspaces' }
     return
   }
 
   try {
+    const board = requestBoard(ctx)
+    if (!board) return
+    const taskId = taskIdQuery?.trim() || inferTaskIdFromArtifactPath(resolved, kanbanDir)
+    if (!taskId || !await getOwnedTaskDetail(ctx, taskId, board, openid)) return
     const data = await readFile(resolved, 'utf-8')
     ctx.body = { content: data, path: filePath }
   } catch (err: any) {
@@ -317,6 +453,8 @@ export async function readArtifact(ctx: Context) {
 }
 
 export async function searchSessions(ctx: Context) {
+  const openid = requireOpenId(ctx)
+  if (!openid) return
   const { task_id, profile, q } = ctx.query as {
     task_id?: string
     profile?: string
@@ -325,6 +463,11 @@ export async function searchSessions(ctx: Context) {
   if (!task_id || !profile) {
     ctx.status = 400
     ctx.body = { error: 'task_id and profile are required' }
+    return
+  }
+  if (!ownerOwnsProfile(openid, profile)) {
+    ctx.status = 403
+    ctx.body = { error: 'You do not own this agent profile' }
     return
   }
   try {

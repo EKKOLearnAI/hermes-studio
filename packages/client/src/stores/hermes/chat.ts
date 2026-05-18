@@ -64,6 +64,18 @@ function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+function lastUserMessageIndex(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i
+  }
+  return -1
+}
+
+function currentRunToolMessages(messages: Message[]): Message[] {
+  const lastUserIdx = lastUserMessageIndex(messages)
+  return messages.filter((m, index) => m.role === 'tool' && index > lastUserIdx)
+}
+
 async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
   if (attachments.length === 0) return []
   const formData = new FormData()
@@ -123,10 +135,11 @@ async function buildContentBlocks(
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
-  // Filter out assistant messages with empty content
+  // Keep assistant tool-call envelopes. They are stored as
+  // assistant(content="", tool_calls=[...]) and name later tool result rows.
   const filteredMsgs = msgs.filter(m => {
     if (m.role === 'assistant') {
-      return m.content && m.content.trim() !== ''
+      return !!m.content?.trim() || !!m.tool_calls?.length || !!m.reasoning?.trim()
     }
     return true
   })
@@ -866,7 +879,6 @@ export const useChatStore = defineStore('chat', () => {
             case 'thinking.delta': {
               const text = evt.text || evt.delta || ''
               if (!text) break
-              runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -949,8 +961,9 @@ export const useChatStore = defineStore('chat', () => {
                 updateMessage(sid, last.id, { isStreaming: false })
               }
               activeAssistantMessageId = null
+              const currentTools = currentRunToolMessages(msgs)
               const existingTool = toolCallId
-                ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
+                ? currentTools.find(m => m.toolCallId === toolCallId)
                 : null
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
@@ -980,9 +993,10 @@ export const useChatStore = defineStore('chat', () => {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
+              const currentTools = currentRunToolMessages(msgs)
               const toolMsgs = toolCallId
-                ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
-                : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
+                ? currentTools.filter(m => m.toolCallId === toolCallId)
+                : currentTools.filter(m => m.toolStatus === 'running')
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
                 // Check if tool errored
@@ -1309,7 +1323,6 @@ export const useChatStore = defineStore('chat', () => {
         case 'thinking.delta': {
           const text = evt.text || evt.delta || ''
           if (!text) break
-          runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
           const last = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1384,8 +1397,9 @@ export const useChatStore = defineStore('chat', () => {
             updateMessage(sid, last.id, { isStreaming: false })
           }
           activeAssistantMessageId = null
+          const currentTools = currentRunToolMessages(msgs)
           const existingTool = toolCallId
-            ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
+            ? currentTools.find(m => m.toolCallId === toolCallId)
             : null
           if (existingTool) {
             updateMessage(sid, existingTool.id, {
@@ -1415,9 +1429,10 @@ export const useChatStore = defineStore('chat', () => {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
+          const currentTools = currentRunToolMessages(msgs)
           const toolMsgs = toolCallId
-            ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
-            : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
+            ? currentTools.filter(m => m.toolCallId === toolCallId)
+            : currentTools.filter(m => m.toolStatus === 'running')
           if (toolMsgs.length > 0) {
             updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
               toolStatus: isToolCompletedError(evt) ? 'error' : 'done',

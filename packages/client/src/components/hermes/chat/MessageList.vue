@@ -26,9 +26,30 @@ function formatToolDuration(seconds: number): string {
   return `${mins}m ${secs}s`
 }
 
-const displayMessages = computed(() =>
-  chatStore.messages.filter((m) => m.role !== "tool"),
-);
+function toolKey(tool: any): string {
+  return tool.toolCallId ? `call:${tool.toolCallId}` : `message:${tool.id}`;
+}
+
+function chooseToolVersion(current: any, candidate: any): any {
+  if (!current) return candidate;
+  const currentFinished = current.toolStatus && current.toolStatus !== "running";
+  const candidateFinished = candidate.toolStatus && candidate.toolStatus !== "running";
+  if (!currentFinished && candidateFinished) return candidate;
+  if (!current.toolResult && candidate.toolResult) return candidate;
+  if (!current.toolDuration && candidate.toolDuration) return candidate;
+  return current;
+}
+
+function dedupeTools(tools: any[]): any[] {
+  const byKey = new Map<string, any>();
+  const order: string[] = [];
+  for (const tool of tools) {
+    const key = toolKey(tool);
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, chooseToolVersion(byKey.get(key), tool));
+  }
+  return order.map((key) => byKey.get(key)).filter(Boolean);
+}
 
 const currentToolCalls = computed(() => {
   const msgs = chatStore.messages;
@@ -42,7 +63,64 @@ const currentToolCalls = computed(() => {
   }
   // Only tool calls after the last user message, newest on top
   const tools = msgs.filter((m, i) => m.role === "tool" && i > lastUserIdx);
-  return [...tools].reverse();
+  return dedupeTools(tools).reverse();
+});
+
+const visibleToolCalls = computed(() =>
+  currentToolCalls.value.filter((tool) => !!tool.toolName),
+);
+
+const displayMessages = computed(() => {
+  const msgs = chatStore.messages;
+  let lastUserIdx = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  const currentToolIds = new Set(
+    msgs
+      .filter((m, i) => m.role === "tool" && i > lastUserIdx)
+      .map((tool) => tool.id),
+  );
+  const displayedToolIds = new Set<string>();
+  let turnTools: any[] = [];
+
+  function flushTurnTools() {
+    for (const tool of dedupeTools(turnTools)) {
+      displayedToolIds.add(tool.id);
+    }
+    turnTools = [];
+  }
+
+  for (const m of chatStore.messages) {
+    if (m.role === "user") {
+      flushTurnTools();
+    }
+    if (m.role === "tool") {
+      turnTools.push(m);
+    }
+  }
+  flushTurnTools();
+
+  return chatStore.messages.filter((m) => {
+    if (m.role === "tool") {
+      return !!m.toolName &&
+        displayedToolIds.has(m.id) &&
+        !(chatStore.isRunActive && currentToolIds.has(m.id));
+    }
+    if (
+      m.role === "assistant" &&
+      m.isStreaming &&
+      !m.content?.trim() &&
+      !!m.reasoning?.trim() &&
+      currentToolCalls.value.length === 0
+    ) {
+      return false;
+    }
+    return true;
+  });
 });
 
 const queuedMessages = computed(() => {
@@ -159,7 +237,7 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
+        <div v-if="visibleToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
           <!-- Abort indicator -->
           <div v-if="chatStore.abortState" class="tool-call-item compression-item">
             <svg
@@ -242,7 +320,7 @@ watch(currentToolCalls, () => {
           </div>
           <!-- Tool calls -->
           <div
-            v-for="tc in currentToolCalls"
+            v-for="tc in visibleToolCalls"
             :key="tc.id"
             class="tool-call-item"
           >

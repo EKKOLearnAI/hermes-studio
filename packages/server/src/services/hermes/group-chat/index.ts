@@ -65,6 +65,17 @@ interface Member {
     socketId: string
 }
 
+interface RoomRow {
+    id: string
+    name: string
+    inviteCode: string | null
+    triggerTokens: number
+    maxHistoryTokens: number
+    tailMessageCount: number
+    totalTokens: number
+    owner_open_id: string | null
+}
+
 let _tablesEnsured = false
 
 interface PendingSessionDelete {
@@ -94,12 +105,24 @@ export interface PendingSessionDeleteDrainResult {
 class ChatStorage {
     private db() { return getDb() }
 
+    private normalizeOwnerOpenId(ownerOpenId?: string): string | null {
+        if (typeof ownerOpenId !== 'string') return null
+        const normalized = ownerOpenId.trim()
+        return normalized ? normalized : null
+    }
+
     init(): void {
         if (_tablesEnsured) return
         const db = this.db()
         if (!db) return
         // Tables are now created centrally in initAllHermesTables()
         // Only create indexes here
+        const roomColumns = db.prepare('PRAGMA table_info(gc_rooms)').all() as Array<{ name: string }>
+        if (!roomColumns.some(column => column.name === 'owner_open_id')) {
+            try { db.exec('ALTER TABLE gc_rooms ADD COLUMN owner_open_id TEXT') } catch (err) {
+                if (!(err instanceof Error) || !err.message.toLowerCase().includes('duplicate column')) throw err
+            }
+        }
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_messages_room ON gc_messages(roomId, timestamp)') } catch { /* ignore */ }
         try { db.exec('CREATE INDEX IF NOT EXISTS idx_gc_room_agents_room ON gc_room_agents(roomId)') } catch { /* ignore */ }
         try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_gc_room_members_unique ON gc_room_members(roomId, userId)') } catch { /* ignore */ }
@@ -202,22 +225,31 @@ class ChatStorage {
 
     // ─── Rooms ────────────────────────────────────────────────
 
-    getRoom(roomId: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number } | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens FROM gc_rooms WHERE id = ?').get(roomId) as any
+    getRoom(roomId: string): RoomRow | undefined {
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, owner_open_id FROM gc_rooms WHERE id = ?').get(roomId) as RoomRow | undefined
     }
 
-    getRoomByInviteCode(code: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number } | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+    getRoomByInviteCode(code: string): RoomRow | undefined {
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, owner_open_id FROM gc_rooms WHERE inviteCode = ?').get(code) as RoomRow | undefined
     }
 
-    getAllRooms(): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number }[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens FROM gc_rooms ORDER BY id').all() || []) as any[]
+    getAllRooms(): RoomRow[] {
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, owner_open_id FROM gc_rooms ORDER BY id').all() || []) as unknown as RoomRow[]
     }
 
-    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
+    getRoomsByOwner(ownerOpenId: string): RoomRow[] {
+        const normalizedOwnerOpenId = this.normalizeOwnerOpenId(ownerOpenId)
+        if (!normalizedOwnerOpenId) return []
+        return (this.db()?.prepare(
+            'SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, owner_open_id FROM gc_rooms WHERE owner_open_id = ? ORDER BY id'
+        ).all(normalizedOwnerOpenId) || []) as unknown as RoomRow[]
+    }
+
+    saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }, ownerOpenId?: string): void {
+        const normalizedOwnerOpenId = this.normalizeOwnerOpenId(ownerOpenId)
         this.db()?.prepare(
-            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 20)
+            'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, owner_open_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 20, normalizedOwnerOpenId)
     }
 
     updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -568,6 +600,7 @@ export class GroupChatServer {
             const profile = resolveProfileForOpenId(verified.openid)
             if (!profile) return next(new Error('Unauthorized'))
             socket.data.profile = profile
+            socket.data.openid = verified.openid
             return next()
         }
 
@@ -577,6 +610,7 @@ export class GroupChatServer {
             const user = parseFeishuSessionCookie(sessionCookie, { secret: getFeishuSessionSecret() })
             if (!user) return next(new Error('Unauthorized'))
             socket.data.profile = user.profile
+            socket.data.openid = typeof user.openid === 'string' ? user.openid : undefined
             return next()
         }
 
@@ -626,11 +660,23 @@ export class GroupChatServer {
         this.userInfoMap.set(userId, { name: userName, description })
 
         const roomId = data.roomId || 'general'
+        const persistedRoom = this.storage.getRoom(roomId)
+        if (persistedRoom?.owner_open_id && socket.data.openid !== persistedRoom.owner_open_id) {
+            ack?.({ error: 'Room not found' })
+            return
+        }
+
         let room = this.rooms.get(roomId)
         if (!room) {
-            room = new ChatRoom(roomId)
+            room = new ChatRoom(roomId, persistedRoom?.name || roomId)
             this.rooms.set(roomId, room)
-            this.storage.saveRoom(roomId, roomId)
+            if (!persistedRoom) {
+                if (typeof socket.data.openid === 'string' && socket.data.openid.trim()) {
+                    this.storage.saveRoom(roomId, roomId, undefined, undefined, socket.data.openid)
+                } else {
+                    this.storage.saveRoom(roomId, roomId)
+                }
+            }
         }
 
         // Persist member to SQLite

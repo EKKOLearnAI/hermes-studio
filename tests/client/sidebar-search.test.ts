@@ -112,6 +112,7 @@ describe('AppSidebar search entry', () => {
     setRuntimeModeMock.mockClear()
     fetchCurrentUserMock.mockRejectedValue(new Error('not logged in'))
     fetchFeishuUatStatusMock.mockResolvedValue({ status: 'missing' })
+    startFeishuUatAuthMock.mockClear()
     startFeishuUatAuthMock.mockResolvedValue({
       status: 'pending',
       session_id: 'sess-1',
@@ -119,6 +120,7 @@ describe('AppSidebar search entry', () => {
       user_code: 'ABCD-1234',
       interval: 10,
     })
+    pollFeishuUatAuthMock.mockClear()
     pollFeishuUatAuthMock.mockResolvedValue({ status: 'pending' })
     windowOpenMock.mockClear()
     authWindowMock.location.href = ''
@@ -350,5 +352,51 @@ describe('AppSidebar search entry', () => {
     expect(authWindowMock.opener).toBeNull()
     expect(authWindowMock.location.href).toBe('https://accounts.feishu.cn/device?user_code=ABCD-1234')
     expect(wrapper.find('.feishu-connector').classes()).toContain('connecting')
+  })
+
+  it('treats lark-cli bot fallback as connected instead of starting legacy UAT auth', async () => {
+    getAuthModeMock.mockReturnValue('feishu-oauth-dev')
+    getWebPlaneMock.mockReturnValue('chat')
+    isUserModeMock.mockReturnValue(true)
+    fetchCurrentUserMock.mockResolvedValue({
+      openid: 'ou_bound',
+      profile: 'g41a5b5g',
+      role: 'user',
+      name: '陈先生',
+    })
+    fetchFeishuUatStatusMock.mockResolvedValue({
+      status: 'missing',
+      lark_cli: {
+        available: true,
+        default_identity: 'bot',
+      },
+    })
+
+    const wrapper = mount(AppSidebar, {
+      global: {
+        plugins: [createPinia()],
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          NButton: true,
+        },
+      },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.vm.$nextTick()
+
+    const connector = wrapper.find('.feishu-connector')
+    expect(connector.classes()).toContain('connected')
+    expect(connector.attributes('title')).toBe('sidebar.feishuConnected')
+
+    await connector.trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(windowOpenMock).not.toHaveBeenCalled()
+    expect(startFeishuUatAuthMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.feishu-connector').text()).not.toContain('ABCD-1234')
   })
 })

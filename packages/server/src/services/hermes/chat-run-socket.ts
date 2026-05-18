@@ -365,6 +365,189 @@ interface ResponseRunState {
   toolCalls: Map<string, any>
 }
 
+function buildBrokerMessagesForSession(messages: SessionMessage[]): Array<Record<string, any>> {
+  const brokerMessages: Array<Record<string, any>> = []
+  for (const message of messages) {
+    const role = message.role
+    const content = typeof message.content === 'string' ? message.content : String(message.content || '')
+    if (role === 'user') {
+      if (content.trim()) brokerMessages.push({ role: 'user', content })
+      continue
+    }
+    if (role === 'assistant') {
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : []
+      if (content.trim()) {
+        brokerMessages.push({ role: 'assistant', content })
+      } else if (toolCalls.length) {
+        brokerMessages.push({ role: 'assistant', content: '', tool_calls: toolCalls })
+      }
+      continue
+    }
+    if (role === 'tool' && content.trim()) {
+      brokerMessages.push({
+        role: 'user',
+        content: `[Tool result: ${content}]`,
+      })
+    }
+  }
+  return brokerMessages
+}
+
+function brokerToolIdPart(value: unknown, fallback: string): string {
+  const text = String(value ?? fallback).trim()
+  return (text || fallback).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || fallback
+}
+
+function brokerToolCallId(parsed: any, payload: any, runId: unknown, toolName: unknown): string {
+  const explicit = parsed?.tool_call_id || payload.tool_call_id || parsed?.call_id || payload.call_id
+  if (explicit) return String(explicit)
+  const index = parsed?.index ?? payload.index ?? parsed?.tool_index ?? payload.tool_index
+  const suffix = index != null ? `_${brokerToolIdPart(index, '0')}` : ''
+  return `broker_tool_${brokerToolIdPart(runId, 'run')}_${brokerToolIdPart(toolName, 'tool')}${suffix}`
+}
+
+type RunBrokerChatFrameMapping =
+  | {
+      type: 'emit'
+      event: string
+      payload: any
+      appendFinalText: boolean
+      persistAssistantContent: boolean
+    }
+  | { type: 'terminal'; event: 'run.completed' | 'run.failed'; payload: any }
+  | { type: 'ignore' }
+
+export function mapRunBrokerFrameForChat(parsed: any, frameEvent?: string): RunBrokerChatFrameMapping {
+  const payload = parsed?.payload || {}
+  const brokerKind = parsed?.kind || parsed?.event || frameEvent
+  const runId = parsed?.run_id || parsed?.runId || payload.run_id
+  const responseId = runId
+
+  if (brokerKind === 'content' || brokerKind === 'message.delta') {
+    const deltaText = parsed?.text || parsed?.delta || payload.text || payload.delta || ''
+    if (!deltaText) return { type: 'ignore' }
+    return {
+      type: 'emit',
+      event: 'message.delta',
+      appendFinalText: true,
+      persistAssistantContent: true,
+      payload: {
+        event: 'message.delta',
+        run_id: runId,
+        response_id: responseId,
+        delta: deltaText,
+      },
+    }
+  }
+
+  if (brokerKind === 'thinking' || brokerKind === 'reasoning.delta' || brokerKind === 'thinking.delta') {
+    const deltaText = parsed?.text || parsed?.delta || payload.text || payload.delta || ''
+    if (!deltaText) return { type: 'ignore' }
+    if (
+      deltaText === '正在连接模型和工具运行环境...' ||
+      deltaText === '仍在等待模型或工具返回...'
+    ) {
+      return { type: 'ignore' }
+    }
+    return {
+      type: 'emit',
+      event: 'reasoning.delta',
+      appendFinalText: false,
+      persistAssistantContent: false,
+      payload: {
+        event: 'reasoning.delta',
+        run_id: runId,
+        response_id: responseId,
+        delta: deltaText,
+        text: deltaText,
+      },
+    }
+  }
+
+  if (brokerKind === 'tool_started' || brokerKind === 'tool.started') {
+    const toolName = parsed?.name || parsed?.tool || payload.name || payload.tool
+    let args = parsed?.arguments ?? parsed?.args ?? payload.arguments ?? payload.args
+    if (args != null && typeof args !== 'string') args = JSON.stringify(args)
+    const preview = parsed?.preview || payload.preview || summarizeToolArguments(args || '')
+    if (shouldPersistToolPreviewAsArgs(args, preview)) {
+      const key = ['terminal', 'execute_code', 'lark_cli'].includes(String(toolName || '')) ? 'cmd' : 'preview'
+      args = JSON.stringify({ [key]: String(preview).trim() })
+    }
+    const toolCallId = brokerToolCallId(parsed, payload, runId, toolName)
+    return {
+      type: 'emit',
+      event: 'tool.started',
+      appendFinalText: false,
+      persistAssistantContent: false,
+      payload: {
+        event: 'tool.started',
+        run_id: runId,
+        response_id: responseId,
+        tool_call_id: toolCallId,
+        tool: toolName,
+        name: toolName,
+        arguments: args,
+        preview,
+      },
+    }
+  }
+
+  if (brokerKind === 'tool_completed' || brokerKind === 'tool.completed') {
+    const toolName = parsed?.name || parsed?.tool || payload.name || payload.tool
+    const isError = parsed?.is_error ?? payload.is_error ?? (typeof parsed?.error === 'string' || typeof payload.error === 'string')
+    const toolCallId = brokerToolCallId(parsed, payload, runId, toolName)
+    return {
+      type: 'emit',
+      event: 'tool.completed',
+      appendFinalText: false,
+      persistAssistantContent: false,
+      payload: {
+        event: 'tool.completed',
+        run_id: runId,
+        response_id: responseId,
+        tool_call_id: toolCallId,
+        tool: toolName,
+        name: toolName,
+        output: parsed?.output ?? parsed?.text ?? payload.output ?? payload.text,
+        duration: parsed?.duration ?? payload.duration,
+        error: parsed?.error ?? payload.error ?? isError,
+        is_error: isError,
+      },
+    }
+  }
+
+  if (brokerKind === 'done' || brokerKind === 'run.completed') {
+    return {
+      type: 'terminal',
+      event: 'run.completed',
+      payload: {
+        event: 'run.completed',
+        run_id: runId,
+        response_id: responseId,
+        output: parsed?.text || payload.output,
+        usage: payload.usage ?? parsed?.usage,
+      },
+    }
+  }
+
+  if (brokerKind === 'error' || brokerKind === 'run.failed') {
+    return {
+      type: 'terminal',
+      event: 'run.failed',
+      payload: {
+        event: 'run.failed',
+        run_id: runId,
+        response_id: responseId,
+        output: parsed?.text || payload.output,
+        usage: payload.usage ?? parsed?.usage,
+        error: parsed?.error || payload.error,
+      },
+    }
+  }
+
+  return { type: 'ignore' }
+}
+
 // --- ChatRunSocket ---
 
 export class ChatRunSocket {
@@ -1423,6 +1606,9 @@ export class ChatRunSocket {
         tool_calls: msg.tool_calls ?? null,
         tool_name: msg.tool_name ?? null,
         finish_reason: msg.finish_reason ?? null,
+        reasoning: msg.reasoning ?? null,
+        reasoning_details: msg.reasoning_details ?? null,
+        reasoning_content: msg.reasoning_content ?? null,
         timestamp: msg.timestamp,
       })
       flushed++
@@ -1679,6 +1865,10 @@ export class ChatRunSocket {
       metadata.input = builtInput
     }
 
+    const messages = session_id
+      ? buildBrokerMessagesForSession(this.sessionMap.get(session_id)?.messages || [])
+      : []
+
     const request = {
       channel: 'webui',
       profile_name: profile,
@@ -1689,6 +1879,7 @@ export class ChatRunSocket {
       credential_subject: userKey,
       requires_host_tools: true,
       metadata,
+      messages,
     }
 
     const abortController = new AbortController()
@@ -1734,81 +1925,133 @@ export class ChatRunSocket {
         } catch {
           continue
         }
-        const brokerKind = parsed.kind || parsed.event || frame.event
-        const eventRunId = parsed.run_id || parsed.runId || parsed.payload?.run_id
-        if (eventRunId) runId = String(eventRunId)
+        const mapped = mapRunBrokerFrameForChat(parsed, frame.event)
+        if (mapped.type === 'ignore') continue
 
-        if (brokerKind === 'content' || brokerKind === 'thinking') {
-          const deltaText = parsed.text || parsed.delta || parsed.payload?.text || ''
-          if (!deltaText) continue
-          finalText += deltaText
+        if (mapped.type === 'emit') {
+          const eventRunId = mapped.payload.run_id || mapped.payload.response_id
+          if (eventRunId) runId = String(eventRunId)
+          if (mapped.appendFinalText) finalText += mapped.payload.delta || ''
+
           if (session_id) {
             const state = this.sessionMap.get(session_id)
             if (state) {
               const run = this.getResponseRunState(state, runMarker)
               run.responseId = runId || run.responseId
-              const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
-              if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
-                last.content += deltaText
-              } else {
-                state.messages.push({
-                  id: state.messages.length + 1,
-                  session_id,
-                  runMarker,
-                  role: 'assistant',
-                  content: deltaText,
-                  timestamp: Math.floor(Date.now() / 1000),
-                })
+              const now = Math.floor(Date.now() / 1000)
+
+              if (mapped.event === 'message.delta' && mapped.persistAssistantContent) {
+                const deltaText = mapped.payload.delta || ''
+                const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+                if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
+                  last.content += deltaText
+                } else {
+                  state.messages.push({
+                    id: state.messages.length + 1,
+                    session_id,
+                    runMarker,
+                    role: 'assistant',
+                    content: deltaText,
+                    timestamp: now,
+                  })
+                }
+              }
+
+              if (mapped.event === 'reasoning.delta') {
+                const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+                if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
+                  last.reasoning = (last.reasoning || '') + (mapped.payload.delta || '')
+                } else {
+                  state.messages.push({
+                    id: state.messages.length + 1,
+                    session_id,
+                    runMarker,
+                    role: 'assistant',
+                    content: '',
+                    reasoning: mapped.payload.delta || '',
+                    timestamp: now,
+                  })
+                }
+              }
+
+              if (mapped.event === 'tool.started') {
+                const callId = mapped.payload.tool_call_id
+                if (callId) {
+                  const toolCall = {
+                    id: callId,
+                    type: 'function',
+                    function: {
+                      name: mapped.payload.name || mapped.payload.tool || 'tool',
+                      arguments: mapped.payload.arguments || '{}',
+                    },
+                  }
+                  run.toolCalls.set(callId, toolCall)
+                  const key = `assistant:${callId}`
+                  if (!run.insertedKeys.has(key)) {
+                    run.insertedKeys.add(key)
+                    state.messages.push({
+                      id: state.messages.length + 1,
+                      session_id,
+                      runMarker,
+                      role: 'assistant',
+                      content: '',
+                      tool_calls: [toolCall],
+                      finish_reason: 'tool_calls',
+                      timestamp: now,
+                    })
+                  } else {
+                    const existingAssistant = [...state.messages]
+                      .reverse()
+                      .find((message: any) => message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.some((call: any) => call.id === callId))
+                    const existingToolCalls = Array.isArray(existingAssistant?.tool_calls) ? existingAssistant.tool_calls : null
+                    if (existingAssistant && existingToolCalls) {
+                      existingAssistant.tool_calls = existingToolCalls.map((call: any) => {
+                        if (call.id !== callId) return call
+                        const previousArgs = call.function?.arguments || '{}'
+                        const nextArgs = toolCall.function.arguments || '{}'
+                        return hasUsefulToolArguments(nextArgs) && !hasUsefulToolArguments(previousArgs) ? toolCall : call
+                      })
+                    }
+                  }
+                }
+              }
+
+              if (mapped.event === 'tool.completed') {
+                const callId = mapped.payload.tool_call_id
+                const key = callId ? `tool:${callId}` : `tool:${state.messages.length + 1}`
+                const output = typeof mapped.payload.output === 'string'
+                  ? mapped.payload.output
+                  : JSON.stringify(mapped.payload.output ?? '')
+                if (!run.insertedKeys.has(key)) {
+                  run.insertedKeys.add(key)
+                  const toolName = mapped.payload.name || mapped.payload.tool || run.toolCalls.get(callId)?.function?.name || null
+                  state.messages.push({
+                    id: state.messages.length + 1,
+                    session_id,
+                    runMarker,
+                    role: 'tool',
+                    content: output,
+                    tool_call_id: callId || null,
+                    tool_name: toolName,
+                    timestamp: now,
+                  })
+                }
               }
             }
           }
-          emit('message.delta', {
-            event: 'message.delta',
-            run_id: runId,
-            response_id: runId,
-            delta: deltaText,
-          })
+
+          emit(mapped.event, mapped.payload)
           continue
         }
 
-        if (brokerKind === 'tool_started') {
-          emit('tool.started', {
-            event: 'tool.started',
-            run_id: runId,
-            response_id: runId,
-            tool: parsed.name || parsed.payload?.tool || parsed.payload?.name,
-            name: parsed.name || parsed.payload?.name || parsed.payload?.tool,
-            arguments: parsed.payload?.arguments,
-          })
-          continue
-        }
-
-        if (brokerKind === 'tool_completed') {
-          emit('tool.completed', {
-            event: 'tool.completed',
-            run_id: runId,
-            response_id: runId,
-            tool: parsed.name || parsed.payload?.tool || parsed.payload?.name,
-            name: parsed.name || parsed.payload?.name || parsed.payload?.tool,
-            output: parsed.text || parsed.payload?.output,
-          })
-          continue
-        }
-
-        if (brokerKind === 'done' || brokerKind === 'error') {
+        if (mapped.type === 'terminal') {
+          const eventRunId = mapped.payload.run_id || mapped.payload.response_id
+          if (eventRunId) runId = String(eventRunId)
           const queueLen = session_id ? this.sessionMap.get(session_id)?.queue?.length ?? 0 : 0
-          if (session_id) await this.markCompleted(socket, session_id, {
-            event: brokerKind === 'done' ? 'run.completed' : 'run.failed',
-            run_id: runId,
-          })
-          const eventName = brokerKind === 'done' ? 'run.completed' : 'run.failed'
-          emit(eventName, {
-            event: eventName,
-            run_id: runId,
-            response_id: runId,
-            output: parsed.text || parsed.payload?.output || finalText,
-            usage: parsed.payload?.usage,
-            error: parsed.error || parsed.payload?.error,
+          if (session_id) await this.markCompleted(socket, session_id, { event: mapped.event, run_id: runId })
+          emit(mapped.event, {
+            ...mapped.payload,
+            output: mapped.payload.output || finalText,
             queue_remaining: queueLen,
           })
           if (session_id && queueLen > 0) this.dequeueNextQueuedRun(socket, session_id)
@@ -2009,6 +2252,28 @@ function summarizeToolArguments(args: string): string | undefined {
     return JSON.stringify(parsed).slice(0, 160)
   } catch {
     return args.replace(/\s+/g, ' ').slice(0, 160)
+  }
+}
+
+function shouldPersistToolPreviewAsArgs(args: string | undefined, preview: unknown): boolean {
+  if (args && args !== '{}' && args !== '[]') return false
+  if (typeof preview !== 'string') return false
+  const text = preview.trim()
+  if (!text || text === 'generating arguments') return false
+  return true
+}
+
+function hasUsefulToolArguments(args: string): boolean {
+  if (!args || args === '{}' || args === '[]') return false
+  try {
+    const parsed = JSON.parse(args)
+    if (!parsed || typeof parsed !== 'object') return false
+    return Object.values(parsed).some(value => {
+      if (typeof value === 'string') return Boolean(value.trim())
+      return value != null
+    })
+  } catch {
+    return Boolean(args.trim())
   }
 }
 

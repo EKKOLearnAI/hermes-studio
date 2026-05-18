@@ -22,6 +22,10 @@ export interface FeishuUatStatus {
   missing_scopes?: string[]
   scopes?: string[]
   expires_at?: number | null
+  lark_cli?: {
+    available?: boolean
+    default_identity?: 'user' | 'bot' | string
+  }
 }
 
 export interface FeishuUatAuthSession {

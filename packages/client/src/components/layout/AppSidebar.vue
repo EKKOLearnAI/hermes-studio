@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/hermes/app";
 import { getAuthMode, getWebPlane, isUserMode, setRuntimeMode } from "@/api/client";
 import { fetchCurrentUser, fetchFeishuUatStatus, pollFeishuUatAuth, startFeishuUatAuth } from "@/api/auth";
-import type { FeishuUatAuthSession } from "@/api/auth";
+import type { FeishuUatAuthSession, FeishuUatStatus } from "@/api/auth";
 import { useProfilesStore } from "@/stores/hermes/profiles";
 import ProfileSelector from "./ProfileSelector.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
@@ -45,6 +45,12 @@ const feishuConnectorTitle = computed(() => {
   return t('sidebar.feishuNotConnected');
 });
 
+function isFeishuCapabilityConnected(status: FeishuUatStatus) {
+  if (status.status === 'valid') return true;
+  const larkCli = status.lark_cli;
+  return Boolean(larkCli?.available && larkCli.default_identity === 'bot');
+}
+
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
 function toggleGroup(key: string) {
@@ -65,7 +71,7 @@ async function refreshFeishuUatStatus() {
   feishuUatError.value = '';
   try {
     const status = await fetchFeishuUatStatus();
-    feishuUatState.value = status.status === 'valid' ? 'connected' : 'missing';
+    feishuUatState.value = isFeishuCapabilityConnected(status) ? 'connected' : 'missing';
   } catch (err: any) {
     feishuUatState.value = 'error';
     feishuUatError.value = err?.message || t('sidebar.feishuConnectFailed');

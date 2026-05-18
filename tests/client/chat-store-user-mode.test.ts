@@ -132,6 +132,74 @@ describe('chat store user-mode model selection', () => {
     })
   })
 
+  it('does not update an older tool card when broker tool ids repeat across runs', async () => {
+    const store = useChatStore()
+    store.newChat()
+    const sid = store.activeSession!.id
+    store.activeSession!.messages = [
+      {
+        id: 'old-user',
+        role: 'user',
+        content: 'old command',
+        timestamp: Date.now() - 10_000,
+      },
+      {
+        id: 'old-tool',
+        role: 'tool',
+        content: '',
+        timestamp: Date.now() - 9_000,
+        toolCallId: 'broker_tool_reused_terminal',
+        toolName: 'terminal',
+        toolPreview: 'printf OLD',
+        toolStatus: 'done',
+      },
+      {
+        id: 'old-assistant',
+        role: 'assistant',
+        content: 'old done',
+        timestamp: Date.now() - 8_000,
+      },
+    ]
+
+    await store.sendMessage('run a new terminal command')
+
+    const onEvent = startRunViaSocketMock.mock.calls[0][1]
+    onEvent({
+      event: 'tool.started',
+      session_id: sid,
+      tool_call_id: 'broker_tool_reused_terminal',
+      tool: 'terminal',
+      preview: 'printf NEW',
+    })
+    onEvent({
+      event: 'tool.completed',
+      session_id: sid,
+      tool_call_id: 'broker_tool_reused_terminal',
+      output: 'NEW',
+      duration: 1.2,
+    })
+
+    const oldTool = store.activeSession!.messages.find(m => m.id === 'old-tool')
+    const newTool = store.activeSession!.messages.find(m => m.role === 'tool' && m.id !== 'old-tool')
+
+    expect(oldTool).toMatchObject({
+      toolPreview: 'printf OLD',
+    })
+    expect(oldTool?.toolResult).toBeUndefined()
+    expect(newTool).toMatchObject({
+      toolPreview: 'printf NEW',
+      toolResult: 'NEW',
+      toolStatus: 'done',
+    })
+    expect(store.activeSession!.messages.map(m => m.role)).toEqual([
+      'user',
+      'tool',
+      'assistant',
+      'user',
+      'tool',
+    ])
+  })
+
   it('surfaces empty final output after tool activity as an error', async () => {
     const store = useChatStore()
     store.newChat()
@@ -159,6 +227,150 @@ describe('chat store user-mode model selection', () => {
 
     const systemMessage = store.activeSession!.messages.find(m => m.role === 'system')
     expect(systemMessage?.content).toContain('no final output after tool activity')
+  })
+
+  it('restores historical tool calls from empty assistant envelopes after refresh', async () => {
+    const store = useChatStore()
+    store.newChat()
+    const sessionId = store.activeSession!.id
+    fetchSessionMock.mockResolvedValue({
+      id: sessionId,
+      title: 'tool session',
+      messages: [
+        {
+          id: 1,
+          role: 'user',
+          content: 'create a doc',
+          timestamp: 1,
+        },
+        {
+          id: 2,
+          role: 'assistant',
+          content: '',
+          timestamp: 2,
+          tool_calls: [{
+            id: 'call-1',
+            type: 'function',
+            function: {
+              name: 'lark_cli',
+              arguments: '{"cmd":"docx create"}',
+            },
+          }],
+        },
+        {
+          id: 3,
+          role: 'tool',
+          content: 'created doc',
+          timestamp: 3,
+          tool_call_id: 'call-1',
+          tool_name: 'lark_cli',
+        },
+        {
+          id: 4,
+          role: 'assistant',
+          content: 'Done.',
+          timestamp: 4,
+        },
+      ],
+    })
+
+    await store.refreshActiveSession()
+
+    const toolMessage = store.activeSession!.messages.find(m => m.role === 'tool')
+    expect(toolMessage).toMatchObject({
+      toolName: 'lark_cli',
+      toolCallId: 'call-1',
+      toolArgs: '{"cmd":"docx create"}',
+      toolResult: 'created doc',
+      toolStatus: 'done',
+    })
+    expect(store.activeSession!.messages.some(m => m.role === 'assistant' && m.content === 'Done.')).toBe(true)
+  })
+
+  it('does not treat reasoning-only streaming as a final assistant reply', async () => {
+    const store = useChatStore()
+    store.newChat()
+
+    await store.sendMessage('think but do not answer')
+
+    const onEvent = startRunViaSocketMock.mock.calls[0][1]
+    onEvent({
+      event: 'reasoning.delta',
+      session_id: store.activeSession!.id,
+      delta: 'checking context',
+    })
+    onEvent({
+      event: 'run.completed',
+      session_id: store.activeSession!.id,
+      output: '',
+    })
+
+    const systemMessage = store.activeSession!.messages.find(m => m.role === 'system')
+    expect(systemMessage?.content).toContain('Agent returned no output')
+  })
+
+  it('keeps a tool run as one thinking message, tool card, then one streamed result message', async () => {
+    const store = useChatStore()
+    store.newChat()
+
+    await store.sendMessage('run terminal and answer')
+
+    const onEvent = startRunViaSocketMock.mock.calls[0][1]
+    onEvent({
+      event: 'reasoning.delta',
+      session_id: store.activeSession!.id,
+      delta: 'I should call the terminal.',
+    })
+    onEvent({
+      event: 'tool.started',
+      session_id: store.activeSession!.id,
+      tool_call_id: 'call-terminal-1',
+      tool: 'terminal',
+      preview: 'printf STREAM_FIXED_OK',
+    })
+    onEvent({
+      event: 'tool.completed',
+      session_id: store.activeSession!.id,
+      tool_call_id: 'call-terminal-1',
+      output: 'STREAM_FIXED_OK',
+      duration: 0.5,
+    })
+    onEvent({
+      event: 'message.delta',
+      session_id: store.activeSession!.id,
+      delta: 'STREAM_',
+    })
+    onEvent({
+      event: 'message.delta',
+      session_id: store.activeSession!.id,
+      delta: 'FIXED_OK',
+    })
+    onEvent({
+      event: 'run.completed',
+      session_id: store.activeSession!.id,
+      output: 'STREAM_FIXED_OK',
+    })
+
+    const messages = store.activeSession!.messages
+    expect(messages.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '',
+      reasoning: 'I should call the terminal.',
+      isStreaming: false,
+    })
+    expect(messages[2]).toMatchObject({
+      role: 'tool',
+      toolName: 'terminal',
+      toolStatus: 'done',
+      toolResult: 'STREAM_FIXED_OK',
+    })
+    expect(messages[3]).toMatchObject({
+      role: 'assistant',
+      content: 'STREAM_FIXED_OK',
+      isStreaming: false,
+    })
+    expect(messages[3].reasoning).toBeUndefined()
   })
 
   it('keeps streamed run failure errors visible after the socket error callback', async () => {
