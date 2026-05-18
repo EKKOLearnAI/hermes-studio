@@ -26,6 +26,7 @@ export interface AgentBridgeOptions {
 
 export interface AgentBridgeRequestOptions {
   timeoutMs?: number
+  serialize?: boolean
 }
 
 export interface AgentBridgeChatOptions {
@@ -33,6 +34,9 @@ export interface AgentBridgeChatOptions {
   storage_message?: AgentBridgeMessage
   model?: string
   provider?: string
+  source?: string
+  wait?: boolean
+  timeout?: number
 }
 
 export type AgentBridgeMessage =
@@ -298,6 +302,10 @@ export class AgentBridgeClient {
       }
     }
 
+    if (!options.serialize) {
+      return run()
+    }
+
     const next = this.lock.then(run, run)
     this.lock = next.catch(() => undefined)
     return next
@@ -325,6 +333,9 @@ export class AgentBridgeClient {
       ...(profile ? { profile } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.source ? { source: options.source } : {}),
+      ...(options.wait ? { wait: true } : {}),
+      ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),
     })
   }
@@ -407,15 +418,19 @@ export class AgentBridgeClient {
   }
 
   destroyAll(): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'destroy_all' })
+    return this.request({ action: 'destroy_all' }, { serialize: true })
   }
 
   getHistory(sessionId: string): Promise<AgentBridgeResponse> {
     return this.request({ action: 'get_history', session_id: sessionId })
   }
 
-  destroy(sessionId: string): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'destroy', session_id: sessionId })
+  destroy(sessionId: string, profile?: string): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'destroy',
+      session_id: sessionId,
+      ...(profile ? { profile } : {}),
+    })
   }
 
   list(): Promise<AgentBridgeResponse> {
@@ -423,7 +438,7 @@ export class AgentBridgeClient {
   }
 
   shutdown(): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'shutdown' })
+    return this.request({ action: 'shutdown' }, { serialize: true })
   }
 }
 

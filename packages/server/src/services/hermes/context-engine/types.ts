@@ -8,6 +8,11 @@ export interface StoredMessage {
     senderName: string
     content: string
     timestamp: number
+    role?: string
+    tool_call_id?: string | null
+    tool_calls?: Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }> | null
+    tool_name?: string | null
+    finish_reason?: string | null
 }
 
 // ─── Compression Config ────────────────────────────────────

@@ -2,7 +2,7 @@ import { readFile, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath } from './hermes/hermes-profile'
+import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath, getProfileDir } from './hermes/hermes-profile'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
 
@@ -74,6 +74,10 @@ const configPath = () => getActiveConfigPath()
 
 export async function readConfigYaml(): Promise<Record<string, any>> {
   return safeFileStore.readYaml(configPath())
+}
+
+export async function readConfigYamlForProfile(profile: string): Promise<Record<string, any>> {
+  return safeFileStore.readYaml(join(getProfileDir(profile), 'config.yaml'))
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {

@@ -127,7 +127,7 @@ export class ContextEngine {
             // Under threshold — return summary + new messages directly
             if (totalTokens <= config.triggerTokens) {
                 logger.debug(`[ContextEngine] [Path A] UNDER threshold — return summary + ${newMessages.length} verbatim msgs directly`)
-                const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId)
+                const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
                 this.logHistory('Path A (no compress)', history)
                 return { conversationHistory: history, instructions, meta }
             }
@@ -155,7 +155,7 @@ export class ContextEngine {
                 meta.summaryTokenEstimate = this.countTokens(result.summary)
                 logger.debug(`[ContextEngine] [Path A] incremental compression DONE in ${elapsed}ms, newSummaryLen=${result.summary.length}, newLastMsgId=${lastMsg.id}`)
                 logger.debug(`[ContextEngine] [Path A] NEW SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
-                const history = this.buildHistory(result.summary, newMessages, input.agentSocketId)
+                const history = this.buildHistory(result.summary, newMessages, input.agentSocketId, input.agentName)
                 this.logHistory('Path A (after incremental compress)', history)
                 if (result.sessionId) this.sessionCleaner?.(result.sessionId)
                 return { conversationHistory: history, instructions, meta }
@@ -163,7 +163,7 @@ export class ContextEngine {
 
             // Compression failed — degrade
             logger.warn(`[ContextEngine] [Path A] incremental compression FAILED (${elapsed}ms) — degrading to summary + trimmed verbatim`)
-            const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId)
+            const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
             this.trimToBudget(history, summaryTokens, config.maxHistoryTokens)
             return { conversationHistory: history, instructions, meta }
         }
@@ -177,7 +177,7 @@ export class ContextEngine {
         // Under threshold — pass all messages verbatim
         if (totalTokens <= config.triggerTokens) {
             logger.debug(`[ContextEngine] [Path B] UNDER threshold — return all ${total} msgs verbatim`)
-            const history = messages.map(m => this.mapToHistory(m, input.agentSocketId))
+            const history = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
             this.logHistory('Path B (no compress)', history)
             return { conversationHistory: history, instructions, meta }
         }
@@ -209,7 +209,7 @@ export class ContextEngine {
             meta.summaryTokenEstimate = this.countTokens(result.summary)
             logger.debug(`[ContextEngine] [Path B] full compression DONE in ${elapsed}ms, summaryLen=${result.summary.length}, compressed=${toCompress.length} msgs, keptTail=${tail.length} msgs, savedLastMsgId=${lastCompressedMsg.id}`)
             logger.debug(`[ContextEngine] [Path B] COMPRESSED SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
-            const history = this.buildHistory(result.summary, tail, input.agentSocketId)
+            const history = this.buildHistory(result.summary, tail, input.agentSocketId, input.agentName)
             this.logHistory('Path B (after full compress)', history)
             if (result.sessionId) this.sessionCleaner?.(result.sessionId)
             return { conversationHistory: history, instructions, meta }
@@ -217,7 +217,7 @@ export class ContextEngine {
 
         // Compression failed — degrade
         logger.warn(`[ContextEngine] [Path B] full compression FAILED (${elapsed}ms) — degrading to trimmed verbatim`)
-        const history = messages.map(m => this.mapToHistory(m, input.agentSocketId))
+        const history = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
         this.trimToBudget(history, 0, config.maxHistoryTokens)
         meta.verbatimCount = history.length
         return { conversationHistory: history, instructions, meta }
@@ -265,6 +265,7 @@ export class ContextEngine {
         summary: string,
         messages: StoredMessage[],
         agentSocketId: string,
+        agentName: string,
     ): Array<{ role: 'user' | 'assistant'; content: string }> {
         const history: Array<{ role: 'user' | 'assistant'; content: string }> = []
 
@@ -275,7 +276,7 @@ export class ContextEngine {
             )
         }
 
-        history.push(...messages.map(m => this.mapToHistory(m, agentSocketId)))
+        history.push(...messages.map(m => this.mapToHistory(m, agentSocketId, agentName)))
         return history
     }
 
@@ -314,11 +315,51 @@ export class ContextEngine {
     private mapToHistory(
         msg: StoredMessage,
         agentSocketId: string,
+        agentName: string,
     ): { role: 'user' | 'assistant'; content: string } {
-        if (msg.senderId === agentSocketId) {
-            return { role: 'assistant', content: msg.content }
+        const senderName = msg.senderName || 'unknown'
+        const isOwnAgent = msg.senderId === agentSocketId || senderName === agentName
+
+        if (msg.role === 'tool') {
+            const label = msg.tool_name ? `Tool result: ${msg.tool_name}` : 'Tool result'
+            return { role: 'user', content: `[${senderName}] [${label}]\n${msg.content || ''}` }
         }
-        return { role: 'user', content: `[${msg.senderName}]: ${msg.content}` }
+
+        if (msg.role === 'assistant' && msg.tool_calls?.length) {
+            const toolsInfo = msg.tool_calls.map(tc => {
+                const name = tc.function?.name || 'unknown'
+                let args = tc.function?.arguments || '{}'
+                if (args.length > 4000) args = `${args.slice(0, 4000)}...`
+                return `[Calling tool: ${name} with arguments: ${args}]`
+            }).join('\n')
+            const content = msg.content?.trim()
+            return {
+                role: isOwnAgent ? 'assistant' : 'user',
+                content: content
+                    ? `${this.formatAttributedContent(senderName, content)}\n${this.formatAttributionPrefix(senderName, content)}${toolsInfo}`
+                    : `${this.formatAttributionPrefix(senderName, content)}${toolsInfo}`,
+            }
+        }
+
+        return {
+            role: isOwnAgent ? 'assistant' : 'user',
+            content: this.formatAttributedContent(senderName, msg.content || ''),
+        }
+    }
+
+    private formatAttributedContent(senderName: string, content: string): string {
+        return `${this.formatAttributionPrefix(senderName)}${this.stripMentions(content)}`
+    }
+
+    private formatAttributionPrefix(senderName: string, _content?: string): string {
+        return `[${senderName}]: `
+    }
+
+    private stripMentions(content: string): string {
+        return String(content || '')
+            .replace(/@([^\s@]+)/g, '')
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/^\s+/, '')
     }
 
     private trimToBudget(

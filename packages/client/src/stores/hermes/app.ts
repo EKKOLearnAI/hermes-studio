@@ -9,6 +9,7 @@ import {
   updateModelAlias,
   type AvailableModelGroup,
   type AvailableModelsResponse,
+  type ProfileAvailableModels,
   type ModelVisibility,
   type ModelVisibilityRule,
 } from '@/api/hermes/system'
@@ -31,6 +32,7 @@ export const useAppStore = defineStore('app', () => {
   const clientOutdated = ref(false)
   const updating = ref(false)
   const modelGroups = ref<AvailableModelGroup[]>([])
+  const profileModelGroups = ref<ProfileAvailableModels[]>([])
   const selectedModel = ref('')
   const selectedProvider = ref('')
   const customModels = ref<Record<string, string[]>>({})
@@ -80,6 +82,7 @@ export const useAppStore = defineStore('app', () => {
 
   function applyAvailableModelsResponse(res: AvailableModelsResponse) {
     modelGroups.value = res.groups
+    profileModelGroups.value = res.profiles || []
     modelAliases.value = res.model_aliases || {}
     modelVisibility.value = res.model_visibility || {}
 
@@ -300,6 +303,7 @@ export const useAppStore = defineStore('app', () => {
     doUpdate,
     reloadClient,
     modelGroups,
+    profileModelGroups,
     customModels,
     modelAliases,
     modelVisibility,

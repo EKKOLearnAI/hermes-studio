@@ -45,11 +45,19 @@ export interface AvailableModelGroup {
   model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }
 
+export interface ProfileAvailableModels {
+  profile: string
+  default: string
+  default_provider: string
+  groups: AvailableModelGroup[]
+}
+
 export interface AvailableModelsResponse {
   default: string
   default_provider: string
   groups: AvailableModelGroup[]
   allProviders: AvailableModelGroup[]
+  profiles?: ProfileAvailableModels[]
   /** Web UI-only display aliases keyed by provider -> canonical model ID. */
   model_aliases?: Record<string, Record<string, string>>
   model_visibility?: ModelVisibility

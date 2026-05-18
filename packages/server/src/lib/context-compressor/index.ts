@@ -14,7 +14,9 @@
  */
 
 import { encodingForModel, getEncoding } from 'js-tiktoken'
+import { randomUUID } from 'crypto'
 import { logger } from '../../services/logger'
+import { AgentBridgeClient, type AgentBridgeRunResult } from '../../services/hermes/agent-bridge'
 import {
   getCompressionSnapshot,
   saveCompressionSnapshot,
@@ -68,6 +70,12 @@ export interface CompressedResult {
     verbatimCount: number
     compressedStartIndex: number
   }
+}
+
+export interface SummarizerOptions {
+  profile?: string
+  model?: string | null
+  provider?: string | null
 }
 
 // ─── Token counting ─────────────────────────────────────
@@ -372,8 +380,14 @@ export async function callSummarizer(
   history: Array<{ role: string; content: string }>,
   timeoutMs: number,
   previousSummary?: string,
-  profile?: string,
+  summarizer?: string | SummarizerOptions,
 ): Promise<string> {
+  void upstream
+  void apiKey
+  const options: SummarizerOptions = typeof summarizer === 'string'
+    ? { profile: summarizer }
+    : summarizer || {}
+  const profile = options.profile || 'default'
   const convHistory: Array<{ role: string; content: string }> = [...history]
 
   if (previousSummary) {
@@ -383,60 +397,38 @@ export async function callSummarizer(
     )
   }
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+  const bridge = new AgentBridgeClient({ timeoutMs: timeoutMs + 15_000 })
+  const sessionId = `compress_${Date.now().toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 12)}`
 
-  const res = await fetch(`${upstream.replace(/\/$/, '')}/v1/responses`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      input: prompt,
+  try {
+    const result = await bridge.request<AgentBridgeRunResult>({
+      action: 'chat',
+      session_id: sessionId,
+      message: prompt,
       conversation_history: convHistory,
-      stream: true,
-      store: false,
-    }),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
+      profile,
+      source: 'api_server',
+      wait: true,
+      timeout: Math.ceil(timeoutMs / 1000),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.provider ? { provider: options.provider } : {}),
+    }, { timeoutMs: timeoutMs + 15_000 })
 
-  if (!res.ok) {
-    throw new Error(`Summarization response failed: ${res.status}`)
+    if (result.status === 'error') {
+      throw new Error(result.error || 'Summarization bridge run failed')
+    }
+
+    const payload = result.result as any
+    const output = String(
+      payload?.final_response ||
+      result.output ||
+      '',
+    ).trim()
+    if (!output) throw new Error('Empty summarization response')
+    return output
+  } finally {
+    await bridge.destroy(sessionId, profile).catch(() => undefined)
   }
-
-  if (!res.body) {
-    throw new Error('Summarization response stream missing')
-  }
-
-  let output = ''
-  for await (const frame of readSseFrames(res.body)) {
-    let parsed: any
-    try {
-      parsed = JSON.parse(frame.data)
-    } catch {
-      continue
-    }
-    const eventType = parsed.type || frame.event || parsed.event
-
-    if (eventType === 'response.output_text.delta' && parsed.delta) {
-      output += parsed.delta
-      continue
-    }
-
-    if (eventType === 'response.completed') {
-      const response = parsed.response || parsed
-      const finalText = extractResponseText(response)
-      if (!output && finalText) output = finalText
-      if (!output || output.trim() === '') {
-        throw new Error('Empty summarization response')
-      }
-      return output.trim()
-    }
-
-    if (eventType === 'response.failed') {
-      throw new Error(parsed.error?.message || parsed.error || 'Summarization response failed')
-    }
-  }
-
-  throw new Error('Summarization response stream ended without a terminal event')
 }
 
 // ─── Main Compressor ────────────────────────────────────
@@ -465,7 +457,7 @@ export class ChatContextCompressor {
     upstream: string,
     apiKey: string | undefined,
     sessionId?: string,
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const total = messages.length
 
@@ -489,7 +481,7 @@ export class ChatContextCompressor {
         sessionId, snapshot.lastMessageIndex,
       )
       return this.incrementalCompress(
-        messages, snapshot, upstream, apiKey, sessionId!, makeMeta(), profile,
+        messages, snapshot, upstream, apiKey, sessionId!, makeMeta(), summarizer,
       )
     } else {
       // No snapshot → full compress (compress all messages)
@@ -497,7 +489,7 @@ export class ChatContextCompressor {
         '[context-compressor] session=%s: full compress %d messages',
         sessionId, total,
       )
-      return this.fullCompress(messages, upstream, apiKey, sessionId!, makeMeta(), profile)
+      return this.fullCompress(messages, upstream, apiKey, sessionId!, makeMeta(), summarizer)
     }
   }
 
@@ -508,7 +500,7 @@ export class ChatContextCompressor {
     apiKey: string | undefined,
     sessionId: string,
     meta: CompressedResult['meta'],
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const { summary: previousSummary, lastMessageIndex } = snapshot
     const total = messages.length
@@ -550,7 +542,7 @@ export class ChatContextCompressor {
       const history = buildConversationHistory(toCompress)
 
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, profile)
+      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, summarizer)
       logger.info('[context-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
       logger.warn('[context-compressor] incremental-llm failed: %s — keeping new messages verbatim', err.message)
@@ -599,7 +591,7 @@ export class ChatContextCompressor {
     apiKey: string | undefined,
     sessionId: string,
     meta: CompressedResult['meta'],
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const total = messages.length
     const cleaned = pruneOldToolResults(messages, this.config.tailMessageCount)
@@ -625,7 +617,7 @@ export class ChatContextCompressor {
     let summary: string | null = null
     try {
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, undefined, profile)
+      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, undefined, summarizer)
       logger.info('[context-compressor] full-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
       logger.warn('[context-compressor] full-llm failed: %s', err.message)

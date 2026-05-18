@@ -161,9 +161,8 @@ async function saveContextLimit() {
 
   isSavingContextLimit.value = true
   try {
-    const appStore = useAppStore()
-    const provider = appStore.selectedProvider || ''
-    const model = appStore.selectedModel || ''
+    const provider = chatStore.activeSession?.provider || useAppStore().selectedProvider || ''
+    const model = chatStore.activeSession?.model || useAppStore().selectedModel || ''
 
     if (!provider || !model) {
       message.error(t('chat.contextEditFailed'))
@@ -183,8 +182,13 @@ async function saveContextLimit() {
 
 async function loadContextLength() {
   try {
-    const profile = useProfilesStore().activeProfileName || undefined
-    contextLength.value = await fetchContextLength(profile)
+    const activeSession = chatStore.activeSession
+    const profile = activeSession?.profile || useProfilesStore().activeProfileName || undefined
+    contextLength.value = await fetchContextLength(
+      profile,
+      activeSession?.provider || undefined,
+      activeSession?.model || undefined,
+    )
   } catch {
     contextLength.value = FALLBACK_CONTEXT
   }
@@ -192,7 +196,12 @@ async function loadContextLength() {
 
 onMounted(loadContextLength)
 watch(() => useProfilesStore().activeProfileName, loadContextLength)
+watch(() => useAppStore().selectedProvider, loadContextLength)
 watch(() => useAppStore().selectedModel, loadContextLength)
+watch(() => chatStore.activeSession?.id, loadContextLength)
+watch(() => chatStore.activeSession?.profile, loadContextLength)
+watch(() => chatStore.activeSession?.provider, loadContextLength)
+watch(() => chatStore.activeSession?.model, loadContextLength)
 
 const totalTokens = computed(() => {
   const input = chatStore.activeSession?.inputTokens ?? 0

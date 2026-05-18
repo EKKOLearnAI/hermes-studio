@@ -219,9 +219,10 @@ export function renameSession(id: string, title: string): boolean {
   return result.changes > 0
 }
 
-export function listSessions(profile: string, source?: string, limit = 2000): HermesSessionRow[] {
+export function listSessions(profile?: string, source?: string, limit = 2000): HermesSessionRow[] {
   if (!isSqliteAvailable()) return []
   const db = getDb()!
+  const profileFilter = profile?.trim()
 
   // Use a subquery to generate preview from first user message if not set
   const sql = `
@@ -239,13 +240,17 @@ export function listSessions(profile: string, source?: string, limit = 2000): He
         ''
       ) AS preview
     FROM ${SESSIONS_TABLE} s
-    WHERE s.profile = ?
+    WHERE 1 = 1
+      ${profileFilter ? 'AND s.profile = ?' : ''}
       ${source ? 'AND s.source = ?' : ''}
     ORDER BY s.last_active DESC
     LIMIT ?
   `
 
-  const params: any[] = [profile]
+  const params: any[] = []
+  if (profileFilter) {
+    params.push(profileFilter)
+  }
   if (source) {
     params.push(source)
   }

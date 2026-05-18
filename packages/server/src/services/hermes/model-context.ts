@@ -10,6 +10,12 @@ const HERMES_BASE = detectHermesHome()
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
 const DEFAULT_CONTEXT_LENGTH = 200_000
 
+export interface ModelContextLengthOptions {
+  profile?: string
+  model?: string | null
+  provider?: string | null
+}
+
 interface ModelLimit {
   context?: number
   output?: number
@@ -351,15 +357,19 @@ function lookupContextFromDatabase(modelName: string, provider: string | null): 
   }
 }
 
-export function getModelContextLength(profile?: string): number {
+export function getModelContextLength(input?: string | ModelContextLengthOptions): number {
+  const options: ModelContextLengthOptions = typeof input === 'string'
+    ? { profile: input }
+    : input || {}
+  const profile = options.profile
   const profileDir = getProfileDir(profile)
   const config = loadConfig(profileDir)
   if (!config) return DEFAULT_CONTEXT_LENGTH
 
-  const model = getDefaultModel(config)
+  const model = String(options.model || '').trim() || getDefaultModel(config)
   if (!model) return DEFAULT_CONTEXT_LENGTH
 
-  const provider = getDefaultProvider(config)
+  const provider = String(options.provider || '').trim() || getDefaultProvider(config)
 
   // 0. Database model_context table (highest priority)
   const dbCtx = lookupContextFromDatabase(model, provider)

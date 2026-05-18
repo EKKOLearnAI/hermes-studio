@@ -9,7 +9,7 @@ import { getSession, createSession, addMessage, updateSession, updateSessionStat
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
-import { readConfigYaml } from '../../config-helpers'
+import { readConfigYamlForProfile } from '../../config-helpers'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
 import { buildCompressedHistory } from './compression'
 import { pushState, replaceState } from './compression'
@@ -32,9 +32,9 @@ const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
 type RunModelGroup = { provider: string; models: string[] }
 
-async function resolveDefaultModelConfig(): Promise<{ model: string; provider: string }> {
+async function resolveDefaultModelConfig(profile: string): Promise<{ model: string; provider: string }> {
   try {
-    const config = await readConfigYaml()
+    const config = await readConfigYamlForProfile(profile)
     const modelConfig = config?.model
     const model = typeof modelConfig === 'string'
       ? modelConfig.trim()
@@ -82,7 +82,7 @@ export async function handleBridgeRun(
   const sessionModelAvailable = hasGroups && hasModelInGroups(data.model_groups, sessionProvider, sessionModel)
   const shouldUseDefault = !sessionModel || !sessionProvider || !sessionModelAvailable
   const defaultModelConfig = shouldUseDefault
-    ? await resolveDefaultModelConfig()
+    ? await resolveDefaultModelConfig(profile)
     : { model: '', provider: '' }
   const resolvedModel = shouldUseDefault ? defaultModelConfig.model : sessionModel
   const resolvedProvider = shouldUseDefault ? defaultModelConfig.provider : sessionProvider
@@ -158,6 +158,7 @@ export async function handleBridgeRun(
     gatewayManager.getApiKey(profile) || undefined,
     emit,
     sessionMap,
+    { model: resolvedModel, provider: resolvedProvider },
   )
   const bridgeHistory = history.length > 0 ? convertHistoryFormat(history) : history
 

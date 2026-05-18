@@ -301,6 +301,7 @@ async function copySessionId(id?: string) {
             :pinned="true"
             :can-delete="false"
             :streaming="false"
+            :show-profile="false"
             @select="handleSessionClick(s.id)"
           />
         </template>
@@ -320,6 +321,7 @@ async function copySessionId(id?: string) {
               :pinned="false"
               :can-delete="false"
               :streaming="false"
+              :show-profile="false"
               @select="handleSessionClick(s.id)"
             />
           </template>

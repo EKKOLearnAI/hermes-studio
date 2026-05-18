@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, readdirSync } from 'fs'
 import { detectHermesRootHome } from './hermes-path'
 
 export function getHermesBaseDir(): string {
@@ -68,4 +68,22 @@ export function getProfileDir(name: string): string {
   if (!name || name === 'default') return hermesBase
   const dir = join(hermesBase, 'profiles', name)
   return existsSync(dir) ? dir : hermesBase
+}
+
+export function listProfileNamesFromDisk(): string[] {
+  const hermesBase = getHermesBaseDir()
+  const names = new Set<string>(['default'])
+  const profilesDir = join(hermesBase, 'profiles')
+  try {
+    for (const entry of readdirSync(profilesDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.trim()) {
+        names.add(entry.name)
+      }
+    }
+  } catch {}
+  return [...names].sort((a, b) => {
+    if (a === 'default') return -1
+    if (b === 'default') return 1
+    return a.localeCompare(b)
+  })
 }

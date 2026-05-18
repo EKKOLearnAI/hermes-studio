@@ -1,7 +1,8 @@
 import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
-import { getActiveEnvPath, getActiveAuthPath } from '../../services/hermes/hermes-profile'
-import { readConfigYaml, updateConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { join } from 'path'
+import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
+import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
@@ -118,6 +119,73 @@ function resolveVisibleDefault(defaultModel: string, defaultProvider: string, gr
   return { defaultModel: fallback?.models[0] || '', defaultProvider: fallback?.provider || '' }
 }
 
+function profileEnvPath(profile: string): string {
+  return join(getProfileDir(profile), '.env')
+}
+
+function profileAuthPath(profile: string): string {
+  return join(getProfileDir(profile), 'auth.json')
+}
+
+function envReader(envContent: string) {
+  const envHasValue = (key: string): boolean => {
+    if (!key) return false
+    const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
+    return !!match && match[1].trim() !== '' && !match[1].trim().startsWith('#')
+  }
+  const envGetValue = (key: string): string => {
+    if (!key) return ''
+    const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
+    return match?.[1]?.trim() || ''
+  }
+  return { envHasValue, envGetValue }
+}
+
+function providerKeyForCustom(name: string): string {
+  return `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
+}
+
+function mergeAvailableGroups(groups: AvailableGroup[]): AvailableGroup[] {
+  const byProvider = new Map<string, AvailableGroup>()
+  for (const group of groups) {
+    const existing = byProvider.get(group.provider)
+    if (!existing) {
+      byProvider.set(group.provider, {
+        ...group,
+        models: [...new Set(group.models)],
+        available_models: [...new Set(group.available_models || group.models)],
+        model_meta: group.model_meta ? { ...group.model_meta } : undefined,
+      })
+      continue
+    }
+    existing.models = [...new Set([...existing.models, ...group.models])]
+    existing.available_models = [...new Set([...(existing.available_models || existing.models), ...(group.available_models || group.models)])]
+    existing.api_key = existing.api_key || group.api_key
+    existing.base_url = existing.base_url || group.base_url
+    existing.builtin = existing.builtin || group.builtin
+    existing.model_meta = { ...(existing.model_meta || {}), ...(group.model_meta || {}) }
+    if (existing.model_meta && Object.keys(existing.model_meta).length === 0) delete existing.model_meta
+  }
+  return [...byProvider.values()]
+}
+
+type ProviderFetchCache = Map<string, Promise<string[]>>
+
+function cachedProviderModels(
+  cache: ProviderFetchCache,
+  baseUrl: string,
+  apiKey: string,
+  freeOnly = false,
+): Promise<string[]> {
+  const key = `${baseUrl.replace(/\/+$/, '')}\n${apiKey}\n${freeOnly ? 'free' : 'all'}`
+  let pending = cache.get(key)
+  if (!pending) {
+    pending = fetchProviderModels(baseUrl, apiKey, freeOnly)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
 
 // Copilot 授权检测：复用同一套 token 解析逻辑（含 ~/.config/github-copilot/apps.json
 // 与 ghp_ PAT 跳过），与 getCopilotModels 行为一致，避免出现"模型能拉到却被判未授权"。
@@ -125,8 +193,244 @@ async function isCopilotAuthorized(envContent: string): Promise<boolean> {
   return !!(await resolveCopilotOAuthToken(envContent))
 }
 
+async function buildAvailableForProfile(
+  profile: string,
+  fetchCache: ProviderFetchCache,
+  appConfig: Awaited<ReturnType<typeof readAppConfig>>,
+): Promise<{
+  profile: string
+  default: string
+  default_provider: string
+  groups: AvailableGroup[]
+}> {
+  const config = await readConfigYamlForProfile(profile)
+  const modelSection = config.model
+  let currentDefault = ''
+  let currentDefaultProvider = ''
+  if (typeof modelSection === 'object' && modelSection !== null) {
+    currentDefault = String(modelSection.default || '').trim()
+    currentDefaultProvider = String(modelSection.provider || '').trim()
+    if (currentDefaultProvider === 'custom' && currentDefault) {
+      const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+      const match = cps.find(
+        (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
+          && cp.model === currentDefault,
+      )
+      if (match) currentDefaultProvider = providerKeyForCustom(String(match.name || ''))
+    }
+  } else if (typeof modelSection === 'string') {
+    currentDefault = modelSection.trim()
+  }
+
+  let envContent = ''
+  try { envContent = await readFile(profileEnvPath(profile), 'utf-8') } catch {}
+  const { envHasValue, envGetValue } = envReader(envContent)
+
+  const isOAuthAuthorized = (providerKey: string): boolean => {
+    try {
+      const authPath = profileAuthPath(profile)
+      if (!existsSync(authPath)) return false
+      const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
+      const provider = auth.providers?.[providerKey]
+      const pool = auth.credential_pool?.[providerKey]
+      return !!(
+        provider?.tokens?.access_token ||
+        provider?.access_token ||
+        (Array.isArray(pool) && pool.some((entry: any) => entry?.access_token))
+      )
+    } catch { return false }
+  }
+
+  let copilotLiveModels: CopilotModelMeta[] | null = null
+  const getCopilotLive = async (): Promise<CopilotModelMeta[]> => {
+    if (copilotLiveModels !== null) return copilotLiveModels
+    try { copilotLiveModels = await getCopilotModelsDetailed(envContent) }
+    catch { copilotLiveModels = [] }
+    return copilotLiveModels
+  }
+
+  const groups: AvailableGroup[] = []
+  const seenProviders = new Set<string>()
+  const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
+    if (seenProviders.has(provider)) return
+    seenProviders.add(provider)
+    const availableModels = [...new Set(models)]
+    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
+  }
+
+  const copilotEnabled = appConfig.copilotEnabled === true
+  if (!copilotEnabled && currentDefaultProvider.toLowerCase() === 'copilot') {
+    currentDefault = ''
+    currentDefaultProvider = ''
+  }
+
+  for (const [providerKey, envMapping] of Object.entries(PROVIDER_ENV_MAP)) {
+    if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env)) continue
+    if (!envMapping.api_key_env) {
+      if (providerKey === 'copilot') {
+        if (!copilotEnabled) continue
+        if (!(await isCopilotAuthorized(envContent))) continue
+      } else if (!isOAuthAuthorized(providerKey)) {
+        continue
+      }
+    }
+    const preset = PROVIDER_PRESETS.find((p: any) => p.value === providerKey)
+    const label = preset?.label || providerKey.replace(/^custom:/, '')
+    let baseUrl = preset?.base_url || ''
+    if (envMapping.base_url_env && envHasValue(envMapping.base_url_env)) {
+      baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
+    }
+    const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
+    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
+    let modelMeta: Record<string, ModelMeta> | undefined
+    if (providerKey === 'copilot') {
+      const live = await getCopilotLive()
+      if (live.length > 0) {
+        modelsList = live.map((m) => m.id)
+        modelMeta = {}
+        for (const m of live) {
+          if (m.preview || m.disabled) {
+            modelMeta[m.id] = {
+              ...(m.preview ? { preview: true } : {}),
+              ...(m.disabled ? { disabled: true } : {}),
+            }
+          }
+        }
+        if (Object.keys(modelMeta).length === 0) modelMeta = undefined
+      }
+    } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
+      if (envMapping.api_key_env) {
+        const apiKey = envGetValue(envMapping.api_key_env)
+        if (apiKey) {
+          const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey, providerKey === 'openrouter')
+          if (fetched.length > 0) modelsList = fetched
+        }
+      }
+    }
+    if (modelsList.length > 0) {
+      const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
+      addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
+    }
+  }
+
+  const customProviders = Array.isArray(config.custom_providers)
+    ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
+    : []
+  const customFetches = await Promise.allSettled(
+    customProviders.map(async cp => {
+      if (!cp.base_url) return null
+      const providerKey = providerKeyForCustom(cp.name)
+      const baseUrl = cp.base_url.replace(/\/+$/, '')
+      let models = [cp.model].filter(Boolean)
+      if (cp.api_key) {
+        const fetched = await cachedProviderModels(fetchCache, baseUrl, cp.api_key)
+        if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
+      }
+      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '' }
+    }),
+  )
+  for (const result of customFetches) {
+    if (result.status === 'fulfilled' && result.value?.models.length) {
+      const { providerKey, label, base_url, models, api_key } = result.value
+      addGroup(providerKey, label, base_url, models, api_key)
+    }
+  }
+
+  if (groups.length === 0) {
+    const fallback = buildModelGroups(config)
+    for (const group of fallback.groups) {
+      const models = group.models.map(model => model.id)
+      if (models.length) addGroup(group.provider, group.provider, '', models, '')
+    }
+    currentDefault = currentDefault || fallback.default
+  }
+
+  for (const g of groups) {
+    g.models = Array.from(new Set(g.models))
+    g.available_models = Array.from(new Set(g.available_models || g.models))
+  }
+
+  return { profile, default: currentDefault, default_provider: currentDefaultProvider, groups }
+}
+
 export async function getAvailable(ctx: any) {
   try {
+    const requestedProfile = typeof ctx.query.profile === 'string' && ctx.query.profile.trim()
+      ? ctx.query.profile.trim()
+      : ''
+    if (!requestedProfile) {
+      const appConfig = await readAppConfig()
+      const modelAliases = normalizeAliases(appConfig.modelAliases)
+      const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
+      const fetchCache: ProviderFetchCache = new Map()
+      const profileResults = await Promise.all(
+        listProfileNamesFromDisk().map(profile => buildAvailableForProfile(profile, fetchCache, appConfig)),
+      )
+      const mergedGroups = mergeAvailableGroups(profileResults.flatMap(result => result.groups))
+      const groupsWithAliases = applyModelAliases(mergedGroups, modelAliases)
+      const visibleGroups = applyModelVisibility(groupsWithAliases, modelVisibility)
+      const activeProfile = getActiveProfileName()
+      const defaultProfile = profileResults.find(result => result.profile === activeProfile && (result.default || result.default_provider))
+        || profileResults.find(result => result.default && result.default_provider)
+        || profileResults.find(result => result.default)
+      const visibleDefault = resolveVisibleDefault(
+        defaultProfile?.default || '',
+        defaultProfile?.default_provider || '',
+        visibleGroups,
+      )
+      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => ({
+        provider: p.value,
+        label: p.label,
+        base_url: p.base_url,
+        models: p.models,
+        api_key: '',
+      }))
+      ctx.body = {
+        default: visibleDefault.defaultModel,
+        default_provider: visibleDefault.defaultProvider,
+        groups: visibleGroups,
+        allProviders: applyModelAliases(allProvidersBase, modelAliases),
+        model_aliases: modelAliases,
+        model_visibility: modelVisibility,
+        profiles: profileResults.map(result => ({
+          profile: result.profile,
+          default: result.default,
+          default_provider: result.default_provider,
+          groups: applyModelVisibility(applyModelAliases(result.groups, modelAliases), modelVisibility),
+        })),
+      }
+      return
+    }
+
+    const appConfigForProfile = await readAppConfig()
+    const modelAliasesForProfile = normalizeAliases(appConfigForProfile.modelAliases)
+    const modelVisibilityForProfile = normalizeModelVisibility(appConfigForProfile.modelVisibility)
+    const profileResult = await buildAvailableForProfile(requestedProfile, new Map(), appConfigForProfile)
+    const profileGroupsWithAliases = applyModelAliases(profileResult.groups, modelAliasesForProfile)
+    const visibleProfileGroups = applyModelVisibility(profileGroupsWithAliases, modelVisibilityForProfile)
+    const visibleProfileDefault = resolveVisibleDefault(profileResult.default, profileResult.default_provider, visibleProfileGroups)
+    ctx.body = {
+      default: visibleProfileDefault.defaultModel,
+      default_provider: visibleProfileDefault.defaultProvider,
+      groups: visibleProfileGroups,
+      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => ({
+        provider: p.value,
+        label: p.label,
+        base_url: p.base_url,
+        models: p.models,
+        api_key: '',
+      })), modelAliasesForProfile),
+      model_aliases: modelAliasesForProfile,
+      model_visibility: modelVisibilityForProfile,
+      profiles: [{
+        profile: profileResult.profile,
+        default: profileResult.default,
+        default_provider: profileResult.default_provider,
+        groups: visibleProfileGroups,
+      }],
+    }
+    return
+
     const config = await readConfigYaml()
     const modelSection = config.model
     let currentDefault = ''
@@ -239,16 +543,16 @@ export async function getAvailable(ctx: any) {
         const live = await getCopilotLive()
         if (live.length > 0) {
           modelsList = live.map((m) => m.id)
-          modelMeta = {}
+          const nextModelMeta: Record<string, ModelMeta> = {}
           for (const m of live) {
             if (m.preview || m.disabled) {
-              modelMeta[m.id] = {
+              nextModelMeta[m.id] = {
                 ...(m.preview ? { preview: true } : {}),
                 ...(m.disabled ? { disabled: true } : {}),
               }
             }
           }
-          if (Object.keys(modelMeta).length === 0) modelMeta = undefined
+          modelMeta = Object.keys(nextModelMeta).length > 0 ? nextModelMeta : undefined
         }
       } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
         // OpenRouter and local CLIProxyAPI expose dynamic OpenAI-compatible /models catalogs.
@@ -286,8 +590,9 @@ export async function getAvailable(ctx: any) {
     )
 
     for (const result of customFetches) {
-      if (result.status === 'fulfilled' && result.value) {
-        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin } = result.value as any
+      const value = (result as { value?: any }).value
+      if (value) {
+        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin } = value
         addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin)
       }
     }

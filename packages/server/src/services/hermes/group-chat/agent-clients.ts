@@ -3,6 +3,9 @@ import { getToken } from '../../../services/auth'
 import type { GatewayManager } from '../gateway-manager'
 import { logger } from '../../../services/logger'
 import { updateUsage } from '../../../db/hermes/usage-store'
+import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
+import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
+import type { ContentBlock } from '../run-chat/types'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -20,6 +23,14 @@ interface MessageData {
     senderName: string
     content: string
     timestamp: number
+}
+
+type MentionMessage = {
+    content: string
+    senderName: string
+    senderId: string
+    timestamp: number
+    input?: string | ContentBlock[]
 }
 
 interface MemberData {
@@ -58,6 +69,8 @@ class AgentClient {
     private gatewayManager: GatewayManager | null = null
     private contextEngine: any = null
     private storage: any = null
+    private pendingToolCallIds = new Map<string, string[]>()
+    private pendingToolBaseIds = new Map<string, string>()
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -146,10 +159,10 @@ class AgentClient {
         })
     }
 
-    sendMessage(roomId: string, content: string): Promise<string> {
+    sendMessage(roomId: string, content: string, messageId?: string, extra?: Record<string, unknown>): Promise<string> {
         this.ensureConnected()
         return new Promise((resolve, reject) => {
-            this.socket!.emit('message', { roomId, content }, (res: { id?: string; error?: string }) => {
+            this.socket!.emit('message', { roomId, content, id: messageId, ...extra }, (res: { id?: string; error?: string }) => {
                 if (res.error) {
                     reject(new Error(res.error))
                 } else {
@@ -174,6 +187,52 @@ class AgentClient {
         this.socket!.emit('context_status', { roomId, agentName: this.name, status })
     }
 
+    emitApprovalRequested(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        this.socket!.emit('approval.requested', { roomId, agentName: this.name, ...payload })
+    }
+
+    emitApprovalResolved(roomId: string, payload: Record<string, unknown>): void {
+        this.ensureConnected()
+        this.socket!.emit('approval.resolved', { roomId, agentName: this.name, ...payload })
+    }
+
+    async interrupt(roomId: string): Promise<void> {
+        const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+        const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+        await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user')
+        this.stopTyping(roomId)
+        this.emitContextStatus(roomId, 'ready')
+    }
+
+    emitMessageStreamStart(roomId: string, messageId: string): void {
+        this.ensureConnected()
+        this.socket!.emit('message_stream_start', {
+            roomId,
+            id: messageId,
+            senderId: this.socket?.id || this.agentId,
+            senderName: this.name,
+            timestamp: Date.now(),
+        })
+    }
+
+    emitMessageStreamDelta(roomId: string, messageId: string, delta: string): void {
+        if (!delta) return
+        this.ensureConnected()
+        this.socket!.emit('message_stream_delta', { roomId, id: messageId, delta })
+    }
+
+    emitMessageReasoningDelta(roomId: string, messageId: string, delta: string): void {
+        if (!delta) return
+        this.ensureConnected()
+        this.socket!.emit('message_reasoning_delta', { roomId, id: messageId, delta })
+    }
+
+    emitMessageStreamEnd(roomId: string, messageId: string): void {
+        this.ensureConnected()
+        this.socket!.emit('message_stream_end', { roomId, id: messageId })
+    }
+
     getJoinedRooms(): string[] {
         return Array.from(this.joinedRooms)
     }
@@ -193,23 +252,10 @@ class AgentClient {
      */
     async replyToMention(
         roomId: string,
-        msg: { content: string; senderName: string; senderId: string; timestamp: number },
+        msg: MentionMessage,
         onStatus?: (status: 'compressing' | 'replying' | 'ready') => void,
     ): Promise<void> {
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
-        if (!this.gatewayManager) {
-            logger.debug(`[AgentClients] ${this.name}: gatewayManager is null, skipping`)
-            return
-        }
-
-        const upstream = this.gatewayManager.getUpstream(this.profile)
-        const apiKey = this.gatewayManager.getApiKey(this.profile)
-        logger.debug(`[AgentClients] ${this.name}: upstream=${upstream}, profile=${this.profile}`)
-        if (!upstream) {
-            logger.error(`[AgentClients] ${this.name}: no gateway upstream for profile "${this.profile}"`)
-            return
-        }
-
         try {
             // Notify room that agent is typing
             this.startTyping(roomId)
@@ -244,8 +290,8 @@ class AgentClient {
                         roomName: roomId,
                         memberNames,
                         members,
-                        upstream,
-                        apiKey,
+                        upstream: '',
+                        apiKey: null,
                         currentMessage: msg,
                         compression,
                         profile: this.profile,
@@ -261,86 +307,96 @@ class AgentClient {
                 }
             }
 
-            // Strip @mention from input — agent already knows it was mentioned
-            const input = msg.content.replace(new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi'), '').trim() || msg.content
-            const responseRes = await fetch(`${upstream.replace(/\/$/, '')}/v1/responses`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            // Strip @mention from input — agent already knows it was mentioned.
+            // For multimodal input, preserve image/file blocks and only strip text blocks.
+            const mentionPattern = new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi')
+            const rawInput = msg.input || msg.content
+            const input = isContentBlockArray(rawInput)
+                ? rawInput.map((block) => {
+                    if (block.type !== 'text') return block
+                    const text = String(block.text || '').replace(mentionPattern, '').trim()
+                    return { ...block, text: text || block.text || '' }
+                })
+                : msg.content.replace(mentionPattern, '').trim() || msg.content
+            const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
+                ? await convertContentBlocksForAgent(input)
+                : input
+            const bridge = new AgentBridgeClient()
+            const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+            const runMessageId = groupMessageId(roomId, this.profile, this.name)
+            let partIndex = 0
+            let streamMessageId = groupMessagePartId(runMessageId, partIndex)
+            let currentContent = ''
+            let totalContent = ''
+            let reasoningContent = ''
+            const flushedAssistantParts = new Set<string>()
+            let lastChunk: AgentBridgeOutput | null = null
+            const started = await bridge.chat(
+                sessionId,
+                bridgeInput,
+                conversationHistory,
+                instructions,
+                this.profile,
+                {
+                    source: 'api_server',
                 },
-                body: JSON.stringify({
-                    input,
-                    ...(conversationHistory.length > 0 ? { conversation_history: conversationHistory } : {}),
-                    ...(instructions ? { instructions } : {}),
-                    stream: true,
-                    store: false,
-                }),
-                signal: AbortSignal.timeout(120000),
-            })
+            )
 
-            if (!responseRes.ok) {
-                const text = await responseRes.text().catch(() => '')
-                logger.error(`[AgentClients] ${this.name}: gateway response failed (${responseRes.status}): ${text}`)
-                this.stopTyping(roomId)
-                onStatus?.('ready')
-                return
-            }
-
-            if (!responseRes.body) {
-                logger.error(`[AgentClients] ${this.name}: gateway response stream missing`)
-                this.stopTyping(roomId)
-                onStatus?.('ready')
-                return
-            }
-
-            let fullContent = ''
-            for await (const frame of readSseFrames(responseRes.body)) {
-                let parsed: any
-                try {
-                    parsed = JSON.parse(frame.data)
-                } catch {
-                    continue
-                }
-                const eventType = parsed.type || frame.event || parsed.event
-                logger.debug(`[AgentClients] ${this.name}: event=${eventType}`)
-
-                if (eventType === 'response.output_text.delta' && parsed.delta) {
-                    fullContent += parsed.delta
-                    continue
-                }
-
-                if (eventType === 'response.completed') {
-                    const response = parsed.response || parsed
-                    const finalText = extractResponseText(response)
-                    if (!fullContent && finalText) fullContent = finalText
-                    const usage = response.usage || {}
-                    updateUsage(roomId, {
-                        inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
-                        outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
-                        cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
-                        cacheWriteTokens: usage.cache_write_tokens ?? usage.cacheWriteTokens ?? 0,
-                        reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
-                        model: response.model || '',
-                        profile: this.profile,
-                    })
-                    logger.debug(`[AgentClients] ${this.name}: response completed, content length=${fullContent.length}`)
-                    if (fullContent) {
-                        this.stopTyping(roomId)
-                        this.sendMessage(roomId, fullContent)
+            this.emitMessageStreamStart(roomId, streamMessageId)
+            for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
+                lastChunk = chunk
+                reasoningContent += await this.recordBridgeEvents(roomId, chunk, () => streamMessageId, async () => {
+                    const toolBaseId = streamMessageId
+                    if (currentContent.trim()) {
+                        await this.sendMessage(roomId, currentContent, streamMessageId, {
+                            role: 'assistant',
+                            reasoning: reasoningContent || null,
+                            reasoning_content: reasoningContent || null,
+                        })
+                        flushedAssistantParts.add(streamMessageId)
+                        currentContent = ''
                     }
-                    onStatus?.('ready')
-                    return
-                }
-
-                if (eventType === 'response.failed') {
-                    logger.error(`[AgentClients] ${this.name}: response failed`)
-                    this.stopTyping(roomId)
-                    onStatus?.('ready')
-                    return
+                    this.emitMessageStreamEnd(roomId, toolBaseId)
+                    partIndex += 1
+                    streamMessageId = groupMessagePartId(runMessageId, partIndex)
+                    this.emitMessageStreamStart(roomId, streamMessageId)
+                    return toolBaseId
+                })
+                if (chunk.delta) {
+                    currentContent += chunk.delta
+                    totalContent += chunk.delta
+                    this.emitMessageStreamDelta(roomId, streamMessageId, chunk.delta)
                 }
             }
-            logger.warn(`[AgentClients] ${this.name}: response stream ended without terminal event`)
+
+            if (lastChunk?.status === 'error') {
+                logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
+                this.emitMessageStreamEnd(roomId, streamMessageId)
+                this.stopTyping(roomId)
+                onStatus?.('ready')
+                return
+            }
+
+            if (!totalContent) {
+                currentContent = extractBridgeFinalText(lastChunk)
+                totalContent = currentContent
+            }
+            recordBridgeUsage(roomId, this.profile, lastChunk?.result)
+            logger.debug(`[AgentClients] ${this.name}: bridge response completed, content length=${totalContent.length}`)
+            if (currentContent) {
+                this.stopTyping(roomId)
+                await this.sendMessage(roomId, currentContent, streamMessageId, {
+                    role: 'assistant',
+                    reasoning: reasoningContent || null,
+                    reasoning_content: reasoningContent || null,
+                })
+                this.emitMessageStreamEnd(roomId, streamMessageId)
+                onStatus?.('ready')
+                return
+            }
+            logger.warn(`[AgentClients] ${this.name}: bridge response completed without content`)
+            this.emitMessageStreamEnd(roomId, streamMessageId)
             this.stopTyping(roomId)
             onStatus?.('ready')
         } catch (err: any) {
@@ -348,6 +404,132 @@ class AgentClient {
             this.stopTyping(roomId)
             onStatus?.('ready')
         }
+    }
+
+    private async recordBridgeEvents(
+        roomId: string,
+        chunk: AgentBridgeOutput,
+        getCurrentMessageId: () => string,
+        beforeToolStarted: () => Promise<string>,
+    ): Promise<string> {
+        let reasoning = ''
+        for (const ev of chunk.events || []) {
+            const eventType = String((ev as any)?.event || '')
+            if (eventType === 'tool.started') {
+                const toolBaseId = await beforeToolStarted()
+                this.recordToolStarted(roomId, ev as Record<string, unknown>, toolBaseId)
+            } else if (eventType === 'tool.completed') {
+                this.recordToolCompleted(roomId, ev as Record<string, unknown>)
+            } else if (eventType === 'approval.requested') {
+                this.emitApprovalRequested(roomId, {
+                    event: 'approval.requested',
+                    approval_id: (ev as any).approval_id,
+                    command: (ev as any).command,
+                    description: (ev as any).description,
+                    choices: Array.isArray((ev as any).choices) ? (ev as any).choices : undefined,
+                    allow_permanent: (ev as any).allow_permanent,
+                })
+            } else if (eventType === 'approval.resolved') {
+                this.emitApprovalResolved(roomId, {
+                    event: 'approval.resolved',
+                    approval_id: (ev as any).approval_id,
+                    choice: (ev as any).choice,
+                })
+            } else if (eventType === 'reasoning.delta' || eventType === 'thinking.delta') {
+                const text = String((ev as any)?.text || '')
+                reasoning += text
+                this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text)
+            }
+        }
+        return reasoning
+    }
+
+    private recordToolStarted(roomId: string, ev: Record<string, unknown>, runMessageId: string): void {
+        const toolName = String(ev.tool_name || ev.tool || ev.name || '')
+        const toolCallId = groupToolCallId(ev.tool_call_id, toolName, this.nextToolIndex(roomId, toolName))
+        this.trackPendingToolCall(roomId, toolName, toolCallId)
+        this.pendingToolBaseIds.set(toolCallId, runMessageId)
+        const timestamp = Date.now()
+        const rawArgs = ev.args ?? ev.arguments ?? ev.input ?? {}
+        const args = normalizeToolArgs(rawArgs)
+        const toolCall = {
+            id: toolCallId,
+            type: 'function',
+            function: {
+                name: toolName,
+                arguments: JSON.stringify(args),
+            },
+        }
+        const msg: MessageData & Record<string, any> = {
+            id: `${runMessageId}_toolcall_${safeId(toolCallId)}`,
+            roomId,
+            senderId: this.socket?.id || this.agentId,
+            senderName: this.name,
+            content: '',
+            timestamp,
+            role: 'assistant',
+            tool_calls: [toolCall],
+            finish_reason: 'tool_calls',
+        }
+        this.sendMessage(roomId, '', msg.id, {
+            role: 'assistant',
+            tool_calls: msg.tool_calls,
+            finish_reason: 'tool_calls',
+            timestamp,
+        }).catch((err: any) => logger.warn(`[AgentClients] failed to record tool call: ${err.message}`))
+    }
+
+    private recordToolCompleted(roomId: string, ev: Record<string, unknown>): void {
+        const toolName = String(ev.tool_name || ev.tool || ev.name || '')
+        const rawId = String(ev.tool_call_id || '').trim()
+        const toolCallId = rawId || this.takePendingToolCall(roomId, toolName) || groupToolCallId(null, toolName, this.nextToolIndex(roomId, toolName))
+        const runMessageId = this.pendingToolBaseIds.get(toolCallId) || groupMessagePartId(groupMessageId(roomId, this.profile, this.name), 0)
+        this.pendingToolBaseIds.delete(toolCallId)
+        const output = bridgeToolOutput(ev)
+        const timestamp = Date.now()
+        const msg: MessageData & Record<string, any> = {
+            id: `${runMessageId}_toolresult_${safeId(toolCallId)}_${Date.now()}`,
+            roomId,
+            senderId: this.socket?.id || this.agentId,
+            senderName: this.name,
+            content: output,
+            timestamp,
+            role: 'tool',
+            tool_call_id: toolCallId,
+            tool_name: toolName || null,
+        }
+        this.sendMessage(roomId, output, msg.id, {
+            role: 'tool',
+            tool_call_id: toolCallId,
+            tool_name: toolName || null,
+            timestamp,
+        }).catch((err: any) => logger.warn(`[AgentClients] failed to record tool result: ${err.message}`))
+    }
+
+    private pendingToolKey(roomId: string, toolName: string): string {
+        return `${roomId}::${toolName || 'tool'}`
+    }
+
+    private trackPendingToolCall(roomId: string, toolName: string, toolCallId: string): void {
+        const key = this.pendingToolKey(roomId, toolName)
+        const list = this.pendingToolCallIds.get(key) || []
+        list.push(toolCallId)
+        this.pendingToolCallIds.set(key, list)
+    }
+
+    private takePendingToolCall(roomId: string, toolName: string): string | undefined {
+        const key = this.pendingToolKey(roomId, toolName)
+        const list = this.pendingToolCallIds.get(key)
+        if (!list?.length) return undefined
+        const id = list.shift()
+        if (list.length) this.pendingToolCallIds.set(key, list)
+        else this.pendingToolCallIds.delete(key)
+        return id
+    }
+
+    private nextToolIndex(roomId: string, toolName: string): number {
+        const key = this.pendingToolKey(roomId, toolName)
+        return (this.pendingToolCallIds.get(key)?.length || 0) + 1
     }
 
     private bindEvents(): void {
@@ -387,64 +569,67 @@ class AgentClient {
     }
 }
 
-async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: string }> {
-    const decoder = new TextDecoder()
-    const reader = stream.getReader()
-    let buffer = ''
-
-    try {
-        while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-
-            let boundary = buffer.indexOf('\n\n')
-            while (boundary >= 0) {
-                const raw = buffer.slice(0, boundary)
-                buffer = buffer.slice(boundary + 2)
-                const frame = parseSseFrame(raw)
-                if (frame?.data) yield frame
-                boundary = buffer.indexOf('\n\n')
-            }
-        }
-
-        buffer += decoder.decode()
-        const frame = parseSseFrame(buffer)
-        if (frame?.data) yield frame
-    } finally {
-        reader.releaseLock()
-    }
+function groupBridgeSessionId(roomId: string, profile: string, name: string, sessionSeed: string): string {
+    const raw = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}`
+    return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)
 }
 
-function parseSseFrame(raw: string): { event?: string; data: string } | null {
-    let event: string | undefined
-    const data: string[] = []
-    for (const line of raw.split(/\r?\n/)) {
-        if (!line || line.startsWith(':')) continue
-        if (line.startsWith('event:')) {
-            event = line.slice(6).trim()
-        } else if (line.startsWith('data:')) {
-            data.push(line.slice(5).trimStart())
-        }
-    }
-    if (data.length === 0) return null
-    return { event, data: data.join('\n') }
+function groupMessageId(roomId: string, profile: string, name: string): string {
+    const raw = `gcmsg_${safeId(roomId)}_${safeId(profile)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160)
 }
 
-function extractResponseText(response: any): string {
-    const output = Array.isArray(response?.output) ? response.output : []
-    const parts: string[] = []
-    for (const item of output) {
-        if (item.type !== 'message') continue
-        const content = Array.isArray(item.content) ? item.content : []
-        for (const part of content) {
-            if (part.type === 'output_text' || part.type === 'text') {
-                parts.push(part.text || '')
-            }
+function groupMessagePartId(runMessageId: string, partIndex: number): string {
+    return `${safeId(runMessageId)}_part_${partIndex}`
+}
+
+function groupToolCallId(rawToolCallId: unknown, toolName: string, index: number): string {
+    const raw = String(rawToolCallId || '').trim()
+    if (raw) return raw
+    return `cli_${safeId(toolName || 'tool')}_${Date.now()}_${index}`
+}
+
+function safeId(value: string): string {
+    return String(value || 'item').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80)
+}
+
+function bridgeToolOutput(ev: Record<string, unknown>): string {
+    const value = ev.result ?? ev.output ?? ev.result_preview ?? ev.preview ?? ''
+    return typeof value === 'string' ? value : JSON.stringify(value ?? '')
+}
+
+function normalizeToolArgs(value: unknown): Record<string, unknown> {
+    if (!value) return {}
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value)
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { value }
+        } catch {
+            return { value }
         }
     }
-    if (parts.length > 0) return parts.join('')
-    return typeof response?.output_text === 'string' ? response.output_text : ''
+    return typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : { value }
+}
+
+function extractBridgeFinalText(chunk: AgentBridgeOutput | null): string {
+    const result = chunk?.result as any
+    const output = result?.final_response || chunk?.output || ''
+    return typeof output === 'string' ? output.trim() : ''
+}
+
+function recordBridgeUsage(roomId: string, profile: string, result: unknown): void {
+    const payload = result as any
+    const usage = payload?.usage || payload?.response?.usage
+    if (!usage) return
+    updateUsage(roomId, {
+        inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
+        outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
+        cacheReadTokens: usage.cache_read_tokens ?? usage.cacheReadTokens ?? 0,
+        cacheWriteTokens: usage.cache_write_tokens ?? usage.cacheWriteTokens ?? 0,
+        reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
+        model: payload?.model || payload?.response?.model || '',
+        profile,
+    })
 }
 
 // ─── AgentClients (roomId -> agents) ──────────────────────────
@@ -557,6 +742,13 @@ export class AgentClients {
         return Promise.all(agents.map((agent) => agent.sendMessage(roomId, content)))
     }
 
+    async interruptAgent(roomId: string, agentName: string): Promise<void> {
+        const agent = this.getAgents(roomId).find(a => a.name === agentName)
+        if (!agent) throw new Error(`Agent "${agentName}" not found in room "${roomId}"`)
+        this._mentionQueue.delete(`${roomId}:${agent.name}`)
+        await agent.interrupt(roomId)
+    }
+
     /**
      * Disconnect all agents in a room.
      */
@@ -628,9 +820,7 @@ export class AgentClients {
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
      */
-    async processMentions(roomId: string, msg: { content: string; senderName: string; senderId: string; timestamp: number }): Promise<void> {
-        if (!this._gatewayManager) return
-
+    async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
         const content = msg.content.toLowerCase()
         const agents = this.getAgents(roomId)
 
@@ -652,7 +842,7 @@ export class AgentClients {
     private async _processAgentMention(
         roomId: string,
         agent: AgentClient,
-        msg: { content: string; senderName: string; senderId: string; timestamp: number },
+        msg: MentionMessage,
     ): Promise<void> {
         const agentKey = `${roomId}:${agent.name}`
         if (this._processingRooms.has(agentKey)) {

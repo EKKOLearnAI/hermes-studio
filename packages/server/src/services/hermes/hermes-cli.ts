@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
 import { logger } from '../logger'
+import { getProfileDir } from './hermes-profile'
 
 const execFileAsync = promisify(execFile)
 
@@ -206,6 +207,26 @@ export async function deleteSession(id: string): Promise<boolean> {
     return true
   } catch (err: any) {
     logger.error(err, 'Hermes CLI: session delete failed')
+    return false
+  }
+}
+
+/**
+ * Delete a session from a specific Hermes profile.
+ */
+export async function deleteSessionForProfile(id: string, profile: string): Promise<boolean> {
+  try {
+    await execFileAsync(HERMES_BIN, ['sessions', 'delete', id, '--yes'], {
+      timeout: 10000,
+      ...execOpts,
+      env: {
+        ...process.env,
+        HERMES_HOME: getProfileDir(profile),
+      },
+    })
+    return true
+  } catch (err: any) {
+    logger.error({ err, sessionId: id, profile }, 'Hermes CLI: profile session delete failed')
     return false
   }
 }

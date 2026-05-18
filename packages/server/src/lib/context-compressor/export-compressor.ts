@@ -13,6 +13,7 @@ import {
   type ChatMessage,
   type CompressionConfig,
   type CompressedResult,
+  type SummarizerOptions,
   DEFAULT_COMPRESSION_CONFIG,
   countTokens,
   serializeForSummary,
@@ -35,7 +36,7 @@ export class ExportCompressor {
     upstream: string,
     apiKey: string | undefined,
     sessionId?: string,
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const total = messages.length
 
@@ -57,7 +58,7 @@ export class ExportCompressor {
         sessionId, snapshot.lastMessageIndex,
       )
       return this.incrementalCompress(
-        messages, snapshot, upstream, apiKey, meta, profile,
+        messages, snapshot, upstream, apiKey, meta, summarizer,
       )
     }
 
@@ -65,7 +66,7 @@ export class ExportCompressor {
       '[export-compressor] session=%s: full compress %d messages',
       sessionId, total,
     )
-    return this.fullCompress(messages, upstream, apiKey, meta, profile)
+    return this.fullCompress(messages, upstream, apiKey, meta, summarizer)
   }
 
   private async incrementalCompress(
@@ -74,7 +75,7 @@ export class ExportCompressor {
     upstream: string,
     apiKey: string | undefined,
     meta: CompressedResult['meta'],
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     const { summary: previousSummary, lastMessageIndex } = snapshot
     const newMessages = messages.slice(lastMessageIndex + 1)
@@ -86,7 +87,7 @@ export class ExportCompressor {
       const history = buildConversationHistory(newMessages)
 
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, profile)
+      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, summarizer)
       logger.info('[export-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary!.length)
     } catch (err: any) {
       logger.warn('[export-compressor] incremental-llm failed: %s — reusing previous summary', err.message)
@@ -112,7 +113,7 @@ export class ExportCompressor {
     upstream: string,
     apiKey: string | undefined,
     meta: CompressedResult['meta'],
-    profile?: string,
+    summarizer?: string | SummarizerOptions,
   ): Promise<CompressedResult> {
     if (messages.length === 0) {
       return { messages: [], meta }
@@ -125,7 +126,7 @@ export class ExportCompressor {
       const history = buildConversationHistory(messages)
 
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, undefined, profile)
+      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, undefined, summarizer)
       logger.info('[export-compressor] full-llm done in %dms, %d chars', Date.now() - t0, summary!.length)
     } catch (err: any) {
       logger.warn('[export-compressor] full-llm failed: %s', err.message)

@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
 
 const store = useGroupChatStore()
 const { t } = useI18n()
+const { toolTraceVisible } = useToolTraceVisibility()
 const listRef = ref<HTMLDivElement>()
 const isNearBottom = ref(true)
+const displayMessages = computed(() => store.sortedMessages.filter(msg => msg.role !== 'tool' || toolTraceVisible.value || msg.toolStatus === 'running'))
 
 function checkNearBottom(): void {
     if (!listRef.value) return
@@ -36,12 +39,12 @@ defineExpose({ scrollToBottom })
 
 <template>
     <div ref="listRef" class="message-list" @scroll="handleScroll">
-        <div v-if="store.sortedMessages.length === 0" class="empty-state">
+        <div v-if="displayMessages.length === 0" class="empty-state">
             <img src="/logo.png" alt="Hermes" class="empty-logo" />
             <p>{{ t("chat.emptyState") }}</p>
         </div>
         <GroupMessageItem
-            v-for="msg in store.sortedMessages"
+            v-for="msg in displayMessages"
             :key="msg.id"
             :message="msg"
             :agents="store.agents"
