@@ -220,10 +220,6 @@ const activeClarify = computed(() => chatStore.activePendingClarify);
 const visibleClarify = computed(() => activeClarify.value);
 const clarifyResponse = ref('');
 
-function handleApproval(choice: "once" | "session" | "always" | "deny") {
-  chatStore.respondApproval(choice);
-}
-
 function handleClarify(response?: string) {
   // response=undefined → freeform input mode (use clarifyResponse ref)
   // response='' → dismiss (send empty string to clear the dialog)
