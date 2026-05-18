@@ -387,6 +387,8 @@ def _refresh_terminal_env() -> None:
                     os.environ[env_var] = json.dumps(val)
                 else:
                     os.environ[env_var] = str(val)
+            else:
+                os.environ.pop(env_var, None)
     except Exception:
         logger.debug("Failed to refresh terminal env from %s", config_path, exc_info=True)
 
