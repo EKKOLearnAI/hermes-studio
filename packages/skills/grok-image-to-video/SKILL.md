@@ -31,7 +31,7 @@ Required JSON fields:
 Optional JSON fields:
 
 - `duration`: seconds, 1 to 15. Defaults to 8.
-- `output_path`: local path where the server should save the mp4.
+- `output_path`: local path where the server should save the mp4. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/<request_id>.mp4` and creates the `media` directory if needed.
 - `timeout_ms`: maximum wait time. Defaults to 600000.
 
 Example:
@@ -65,4 +65,4 @@ curl -sS -X POST http://localhost:8648/api/hermes/media/grok-image-to-video \
 
 If the response has `code: "missing_xai_token"`, tell the user to set `XAI_API_KEY` or complete xAI OAuth login in Hermes Web UI before retrying.
 
-Return the generated `output_path` if present. Otherwise return the `video_url`.
+Return the generated `output_path`.

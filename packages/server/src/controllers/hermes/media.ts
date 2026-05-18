@@ -1,7 +1,8 @@
 import type { Context } from 'koa'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, extname, isAbsolute, resolve } from 'path'
+import { dirname, extname, isAbsolute, join, resolve } from 'path'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
+import { config } from '../../config'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -112,6 +113,11 @@ function normalizeDuration(value: unknown): number {
   return duration
 }
 
+export function defaultMediaOutputPath(requestId: string, now = new Date()): string {
+  const safeRequestId = requestId.replace(/[^A-Za-z0-9_-]/g, '_') || `video_${now.getTime()}`
+  return join(config.appHome, 'media', `${safeRequestId}.mp4`)
+}
+
 async function requestXaiJson(url: string, token: string, init: RequestInit = {}): Promise<any> {
   const res = await fetch(url, {
     ...init,
@@ -168,7 +174,7 @@ export async function grokImageToVideo(ctx: Context) {
     const timeoutMs = Number.isFinite(rawTimeoutMs)
       ? Math.max(10000, Math.min(rawTimeoutMs, 30 * 60 * 1000))
       : DEFAULT_TIMEOUT_MS
-    const outputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
+    const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
 
     const started = await requestXaiJson(XAI_VIDEO_GENERATIONS_URL, tokenInfo.token, {
       method: 'POST',
@@ -190,12 +196,13 @@ export async function grokImageToVideo(ctx: Context) {
       latest = await requestXaiJson(`${XAI_VIDEO_STATUS_URL}/${encodeURIComponent(requestId)}`, tokenInfo.token)
       if (latest?.status === 'done') {
         const videoUrl = String(latest?.video?.url || '').trim()
-        if (outputPath && videoUrl) await downloadVideo(videoUrl, outputPath)
+        const outputPath = requestedOutputPath || defaultMediaOutputPath(requestId)
+        if (videoUrl) await downloadVideo(videoUrl, outputPath)
         ctx.body = {
           request_id: requestId,
           status: latest.status,
           video_url: videoUrl,
-          output_path: outputPath || undefined,
+          output_path: outputPath,
           token_source: tokenInfo.source,
         }
         return
