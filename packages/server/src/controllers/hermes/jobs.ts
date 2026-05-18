@@ -101,6 +101,10 @@ function getRepeatValue(repeat: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function hasRepeatField(body: Record<string, any>): boolean {
+  return Object.prototype.hasOwnProperty.call(body, 'repeat')
+}
+
 function getSkills(body: Record<string, any>): string[] | null {
   if (Array.isArray(body.skills)) {
     return body.skills.map((skill) => String(skill || '').trim()).filter(Boolean)
@@ -182,7 +186,12 @@ export async function create(ctx: Context) {
   if (body.deliver != null && String(body.deliver).trim()) args.push('--deliver', String(body.deliver).trim())
 
   const repeat = getRepeatValue(body.repeat)
-  if (repeat != null) args.push('--repeat', String(repeat))
+  if (repeat != null) {
+    args.push('--repeat', String(repeat))
+  } else if (hasRepeatField(body)) {
+    // Hermes CLI normalizes repeat <= 0 to an unbounded/null repeat.
+    args.push('--repeat', '0')
+  }
 
   const skills = getSkills(body)
   for (const skill of skills || []) args.push('--skill', skill)
@@ -217,7 +226,12 @@ export async function update(ctx: Context) {
   if (body.deliver != null) args.push('--deliver', String(body.deliver))
 
   const repeat = getRepeatValue(body.repeat)
-  if (repeat != null) args.push('--repeat', String(repeat))
+  if (repeat != null) {
+    args.push('--repeat', String(repeat))
+  } else if (hasRepeatField(body)) {
+    // Hermes CLI normalizes repeat <= 0 to an unbounded/null repeat.
+    args.push('--repeat', '0')
+  }
 
   const skills = getSkills(body)
   if (skills) {

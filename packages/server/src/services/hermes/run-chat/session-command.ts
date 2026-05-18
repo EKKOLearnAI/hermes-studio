@@ -312,11 +312,11 @@ export async function handleSessionCommand(
       try {
         if (wasWorking) {
           flushBridgePendingToDb(state, sessionId)
-          await ctx.bridge.interrupt(sessionId, 'Destroyed by user').catch((err) => {
+          await ctx.bridge.interrupt(sessionId, 'Destroyed by user', state.profile).catch((err) => {
             logger.warn(err, '[chat-run-socket] /destroy interrupt failed for session %s', sessionId)
           })
         }
-        await ctx.bridge.destroy(sessionId).catch((err) => {
+        await ctx.bridge.destroy(sessionId, state.profile).catch((err) => {
           bridgeReachable = false
           bridgeError = err instanceof Error ? err.message : String(err)
           logger.warn(err, '[chat-run-socket] /destroy bridge unavailable for session %s', sessionId)

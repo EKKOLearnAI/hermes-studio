@@ -195,7 +195,7 @@ class AgentClient {
     async interrupt(roomId: string): Promise<void> {
         const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
         const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
-        await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user')
+        await new AgentBridgeClient().interrupt(sessionId, 'Interrupted by group chat user', this.profile)
         this.stopTyping(roomId)
         this.emitContextStatus(roomId, 'ready')
     }

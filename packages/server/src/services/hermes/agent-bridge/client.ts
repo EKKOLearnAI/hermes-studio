@@ -404,12 +404,22 @@ export class AgentBridgeClient {
     return this.request<AgentBridgeRunResult>({ action: 'get_result', run_id: runId }, options)
   }
 
-  interrupt(sessionId: string, message?: string): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'interrupt', session_id: sessionId, message })
+  interrupt(sessionId: string, message?: string, profile?: string): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'interrupt',
+      session_id: sessionId,
+      message,
+      ...(profile ? { profile } : {}),
+    })
   }
 
-  steer(sessionId: string, text: string): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'steer', session_id: sessionId, text })
+  steer(sessionId: string, text: string, profile?: string): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'steer',
+      session_id: sessionId,
+      text,
+      ...(profile ? { profile } : {}),
+    })
   }
 
   approvalRespond(approvalId: string, choice: string): Promise<AgentBridgeResponse> {
@@ -435,8 +445,12 @@ export class AgentBridgeClient {
     return this.request({ action: 'destroy_profile', profile }, { serialize: true })
   }
 
-  getHistory(sessionId: string): Promise<AgentBridgeResponse> {
-    return this.request({ action: 'get_history', session_id: sessionId })
+  getHistory(sessionId: string, profile?: string): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'get_history',
+      session_id: sessionId,
+      ...(profile ? { profile } : {}),
+    })
   }
 
   destroy(sessionId: string, profile?: string): Promise<AgentBridgeResponse> {

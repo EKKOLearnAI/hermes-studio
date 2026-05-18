@@ -1723,10 +1723,13 @@ class BridgeBroker:
             raise KeyError(f"unknown run: {run_id}")
         return profile
 
-    def _profile_for_session(self, session_id: str) -> str:
+    def _profile_for_session(self, session_id: str, fallback_profile: Any = None) -> str:
         with self._lock:
             profile = self._session_profile.get(session_id)
         if not profile:
+            fallback = self._normalize_profile(fallback_profile)
+            if fallback_profile is not None and fallback:
+                return fallback
             raise KeyError(f"unknown session: {session_id}")
         return profile
 
@@ -1784,7 +1787,7 @@ class BridgeBroker:
 
         if action in {"interrupt", "steer", "get_history", "destroy"}:
             session_id = str(req.get("session_id") or "")
-            profile = self._profile_for_session(session_id)
+            profile = self._profile_for_session(session_id, req.get("profile"))
             resp = self._forward(profile, req)
             if action == "destroy":
                 with self._lock:

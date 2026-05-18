@@ -60,7 +60,7 @@ export async function handleAbort(
 
   if (state.source === 'cli') {
     try {
-      await bridge.interrupt(sessionId, 'Aborted by user')
+      await bridge.interrupt(sessionId, 'Aborted by user', state.profile)
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
     }
