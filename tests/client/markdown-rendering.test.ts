@@ -264,6 +264,21 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.find('.markdown-video-footer .att-name').text()).toBe('录屏2026-05-08 15.19.46.mov')
   })
 
+  it('renders MSYS-style Windows image paths through the download endpoint', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '![桌面截图](/c/Users/Administrator/Desktop/screenshot.png)',
+      },
+    })
+
+    const img = wrapper.find('img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toContain('/api/hermes/download?path=')
+    const src = new URL(img.attributes('src'))
+    expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/c/Users/Administrator/Desktop/screenshot.png')
+    expect(img.attributes('alt')).toBe('桌面截图')
+  })
+
   it('keeps tilde-fenced markdown examples with nested tilde fences intact', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {

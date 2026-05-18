@@ -74,9 +74,17 @@ export interface TerminalConfig {
  *   substring check is intentionally dropped because `resolve` already
  *   consumes traversal segments, making it both ineffective and misleading.
  */
+export function normalizePlatformPath(filePath: string, platform = process.platform): string {
+  if (platform !== 'win32') return filePath
+  const msysDrivePath = filePath.match(/^\/([a-zA-Z])(?:\/(.*))?$/)
+  if (!msysDrivePath) return filePath
+  const [, drive, rest = ''] = msysDrivePath
+  return `${drive.toUpperCase()}:\\${rest.replace(/\//g, '\\')}`
+}
+
 export function validatePath(filePath: string, allowedRoots?: string[]): string {
   if (!filePath) throw Object.assign(new Error('Missing file path'), { code: 'missing_path' })
-  const resolved = resolve(filePath)
+  const resolved = resolve(normalizePlatformPath(filePath))
   const normalized = normalize(resolved)
   if (!isAbsolute(normalized)) {
     throw Object.assign(new Error('Path must be absolute'), { code: 'invalid_path' })
