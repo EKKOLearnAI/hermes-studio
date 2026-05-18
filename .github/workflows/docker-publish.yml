@@ -8,7 +8,7 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    
+
     steps:
       # 1. 检出当前仓库代码
       - name: Checkout repository
