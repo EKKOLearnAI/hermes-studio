@@ -729,6 +729,7 @@ export class GroupChatServer {
                         name: agent.name,
                         description: agent.description,
                         invited: agent.invited,
+                        dbId: agent.id,
                     })
                     await this.agentClients.addAgentToRoom(room.id, client)
                     total++
@@ -898,7 +899,7 @@ export class GroupChatServer {
                 return pattern.test(contentText)
             })
 
-            if (mentionedAgents.length > 0) {
+            if (mentionedAgents.length > 0 && savedMsg.role === 'user') {
                 this.agentClients.updateAgentShouldAnswerOnMention(roomId, mentionedAgents[0].name)
             }
 

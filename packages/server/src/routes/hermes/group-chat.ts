@@ -68,6 +68,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
                 name: agent.name,
                 description: agent.description,
                 invited: agent.invited,
+                dbId: agentId,
             })
             await chatServer.agentClients.addAgentToRoom(roomId, client)
         } catch (err: any) {
@@ -77,6 +78,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
     if (lastDefaultAgentId) {
         storage.setDefaultAgent(roomId, lastDefaultAgentId)
+        chatServer.agentClients.setAgentShouldAnswer(roomId, lastDefaultAgentId)
     }
 
     const room = storage.getRoom(roomId)
@@ -129,6 +131,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
                 name: agent.name,
                 description: agent.description,
                 invited: agent.invited,
+                dbId: agentId,
             })
             await chatServer.agentClients.addAgentToRoom(roomId, client)
         } catch (err: any) {
@@ -137,7 +140,9 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     }
 
     if (sourceRoom.defaultAgentId && agentIdMap.has(sourceRoom.defaultAgentId)) {
-        storage.setDefaultAgent(roomId, agentIdMap.get(sourceRoom.defaultAgentId)!)
+        const newAgentId = agentIdMap.get(sourceRoom.defaultAgentId)!
+        storage.setDefaultAgent(roomId, newAgentId)
+        chatServer.agentClients.setAgentShouldAnswer(roomId, newAgentId)
     }
 
     const room = storage.getRoom(roomId)
@@ -242,6 +247,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
 
     if (setDefaultAgent) {
         chatServer.getStorage().setDefaultAgent(ctx.params.roomId, agentId)
+        chatServer.agentClients.setAgentShouldAnswer(ctx.params.roomId, agentId)
     }
 
     // Auto-connect agent via Socket.IO
@@ -251,6 +257,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
             name: agent.name,
             description: agent.description,
             invited: agent.invited,
+            dbId: agentId,
         })
         await chatServer.agentClients.addAgentToRoom(ctx.params.roomId, client)
     } catch (err: any) {

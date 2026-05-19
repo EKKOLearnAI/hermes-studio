@@ -13,6 +13,7 @@ interface AgentConfig {
     name: string
     description: string
     invited: number
+    dbId?: string
 }
 
 interface MessageData {
@@ -59,6 +60,7 @@ export interface AgentEventHandler {
 
 class AgentClient {
     readonly agentId: string
+    readonly dbId: string
     readonly profile: string
     readonly name: string
     readonly description: string
@@ -73,6 +75,7 @@ class AgentClient {
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+        this.dbId = config.dbId || this.agentId
         this.profile = config.profile
         this.name = config.name
         this.description = config.description
@@ -860,7 +863,7 @@ export class AgentClients {
         const room = this.rooms.get(roomId)
         if (!room) return null
         for (const client of room.values()) {
-            if (client.agentId === agentId || client.id === agentId) return client
+            if (client.dbId === agentId || client.agentId === agentId) return client
         }
         return null
     }
