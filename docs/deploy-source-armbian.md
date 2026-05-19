@@ -95,7 +95,7 @@ sudo systemctl restart hermes-web-ui.service
 7. 自动执行官方 `Hermes Agent` 安装脚本
    - 默认附带 `--skip-setup --skip-browser`
 8. 为运行用户写入 `~/.npmrc` 国内镜像配置
-9. 执行 `npm ci`
+9. 执行 `npm install`
 10. 执行 `npm run build`
 11. 生成 `/etc/default/hermes-web-ui`
 12. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
@@ -293,9 +293,9 @@ sudo NODE_MIRROR_URL=https://your-node-mirror.example.com ./scripts/deploy-sourc
 sudo HERMES_INSTALLER_MIRROR=https://your-mirror/install.sh ./scripts/deploy-source-armbian.sh
 ```
 
-### 4. `npm ci` 很慢或失败
+### 4. `npm install` 很慢或失败
 
-脚本会为运行用户写入 `~/.npmrc`，默认使用：
+当前仓库未提交 `package-lock.json`，因此源码部署脚本使用 `npm install` 而不是 `npm ci`。脚本会为运行用户写入 `~/.npmrc`，默认使用：
 
 - `https://registry.npmmirror.com`
 - `https://cdn.npmmirror.com/binaries`

@@ -1,0 +1,21 @@
+[Unit]
+Description=Hermes Web UI (source deployment)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{APP_USER}}
+Group={{APP_USER}}
+WorkingDirectory={{DEPLOY_DIR}}
+Environment=HOME={{APP_USER_HOME}}
+EnvironmentFile={{SERVICE_ENV_FILE}}
+ExecStart={{NODE_BIN}} {{DEPLOY_DIR}}/dist/server/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
