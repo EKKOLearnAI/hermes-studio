@@ -564,8 +564,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const res = await addAgent(roomId, data)
             agents.value.push(res.agent)
             if (data.setDefaultAgent) {
-                const room = rooms.value.find(r => r.id === roomId)
-                if (room) room.defaultAgentId = res.agent.id
+                const idx = rooms.value.findIndex(r => r.id === roomId)
+                if (idx >= 0) {
+                    rooms.value[idx] = { ...rooms.value[idx], defaultAgentId: res.agent.id }
+                }
             }
             return res.agent
         } catch (err: any) {
