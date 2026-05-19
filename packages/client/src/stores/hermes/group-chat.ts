@@ -23,6 +23,7 @@ import {
     cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
     clearRoomContext,
+    setDefaultAgent as setDefaultAgentApi,
 } from '@/api/hermes/group-chat'
 
 async function uploadGroupFiles(attachments: Attachment[]): Promise<{ name: string; path: string }[]> {
@@ -547,7 +548,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         } catch { /* ignore */ }
     }
 
-    async function addAgentToRoom(roomId: string, data: { profile: string; name?: string; description?: string; invited?: boolean }) {
+    async function addAgentToRoom(roomId: string, data: { profile: string; name?: string; description?: string; invited?: boolean; setDefaultAgent?: boolean }) {
         try {
             const res = await addAgent(roomId, data)
             agents.value.push(res.agent)
@@ -562,6 +563,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         try {
             await removeAgent(roomId, agentId)
             agents.value = agents.value.filter(a => a.id !== agentId)
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function setDefaultAgent(roomId: string, agentId: string) {
+        try {
+            await setDefaultAgentApi(roomId, agentId)
+            const room = rooms.value.find(r => r.id === roomId)
+            if (room) room.defaultAgentId = agentId
         } catch (err: any) {
             error.value = err.message
             throw err
@@ -658,6 +670,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         loadAgents,
         addAgentToRoom,
         removeAgentFromRoom,
+        setDefaultAgent,
     }
 })
 

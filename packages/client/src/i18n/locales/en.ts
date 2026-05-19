@@ -1058,6 +1058,9 @@ export default {
     compressionSaved: 'Compression config saved',
     compressNow: 'Compress Now',
     compressingInProgress: 'Compression in progress, please wait',
+    setAsDefaultAgent: 'Set as default agent',
+    defaultAgentSet: 'Default agent updated',
+    default: 'Default',
   },
 
   // Usage

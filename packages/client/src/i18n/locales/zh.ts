@@ -1060,6 +1060,9 @@ export default {
     compressionSaved: '压缩配置已保存',
     compressNow: '立即压缩',
     compressingInProgress: '正在压缩中，请稍后',
+    setAsDefaultAgent: '设为默认智能体',
+    defaultAgentSet: '默认智能体已更新',
+    default: '默认',
   },
 
   // 用量统计

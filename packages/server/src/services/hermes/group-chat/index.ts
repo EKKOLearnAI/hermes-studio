@@ -272,16 +272,16 @@ class ChatStorage {
 
     // ─── Rooms ────────────────────────────────────────────────
 
-    getRoom(roomId: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string } | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE id = ?').get(roomId) as any
+    getRoom(roomId: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null } | undefined {
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
-    getRoomByInviteCode(code: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string } | undefined {
-        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE inviteCode = ?').get(code) as any
+    getRoomByInviteCode(code: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null } | undefined {
+        return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
-    getAllRooms(): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string }[] {
-        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms ORDER BY id').all() || []) as any[]
+    getAllRooms(): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null }[] {
+        return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms ORDER BY id').all() || []) as any[]
     }
 
     saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -307,6 +307,10 @@ class ChatStorage {
 
     updateRoomTotalTokens(roomId: string, tokens: number): void {
         this.db()?.prepare('UPDATE gc_rooms SET totalTokens = ? WHERE id = ?').run(tokens, roomId)
+    }
+
+    setDefaultAgent(roomId: string, agentId: string | null): void {
+        this.db()?.prepare('UPDATE gc_rooms SET defaultAgentId = ? WHERE id = ?').run(agentId, roomId)
     }
 
     rotateRoomSessionSeed(roomId: string): string {
@@ -732,6 +736,7 @@ export class GroupChatServer {
                     logger.error(`[GroupChat] Failed to restore agent ${agent.name} in room ${room.id}: ${err.message}`)
                 }
             }
+            this.agentClients.initAgentShouldAnswer(room.id)
         }
 
         if (total > 0) {
@@ -882,17 +887,44 @@ export class GroupChatServer {
             (savedMsg.role === 'assistant' && mentionDepth < 2)
 
         if (shouldRouteMentions) {
-            // Server-side @mention routing — parse user mentions and invoke agents directly.
-            this.agentClients.processMentions(roomId, {
-                content: contentToText(savedMsg.content),
-                input: Array.isArray(data.content) ? data.content : undefined,
-                senderName: savedMsg.senderName,
-                senderId: savedMsg.senderId,
-                timestamp: savedMsg.timestamp,
-                mentionDepth,
-            }).catch((err) => {
-                logger.error(`[GroupChat] processMentions error: ${err.message}`)
+            const contentText = contentToText(savedMsg.content)
+            const agents = this.storage.getRoomAgents(roomId)
+            const senderNameLower = savedMsg.senderName.toLowerCase()
+
+            const mentionedAgents = agents.filter(a => {
+                if (a.name.toLowerCase() === senderNameLower) return false
+                const escaped = a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                const pattern = new RegExp(`@${escaped}(?=$|\\s|[.,!?;:，。！？；：])`, 'i')
+                return pattern.test(contentText)
             })
+
+            if (mentionedAgents.length > 0) {
+                this.agentClients.updateAgentShouldAnswerOnMention(roomId, mentionedAgents[0].name)
+            }
+
+            if (mentionedAgents.length === 0 && savedMsg.role === 'user') {
+                this.agentClients.routeToAgentShouldAnswer(roomId, {
+                    content: contentText,
+                    input: Array.isArray(data.content) ? data.content : undefined,
+                    senderName: savedMsg.senderName,
+                    senderId: savedMsg.senderId,
+                    timestamp: savedMsg.timestamp,
+                    mentionDepth,
+                }).catch((err) => {
+                    logger.error(`[GroupChat] routeToAgentShouldAnswer error: ${err.message}`)
+                })
+            } else if (mentionedAgents.length > 0) {
+                this.agentClients.processMentions(roomId, {
+                    content: contentText,
+                    input: Array.isArray(data.content) ? data.content : undefined,
+                    senderName: savedMsg.senderName,
+                    senderId: savedMsg.senderId,
+                    timestamp: savedMsg.timestamp,
+                    mentionDepth,
+                }).catch((err) => {
+                    logger.error(`[GroupChat] processMentions error: ${err.message}`)
+                })
+            }
         }
     }
 

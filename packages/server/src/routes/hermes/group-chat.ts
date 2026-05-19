@@ -37,7 +37,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     const { name, inviteCode, agents, compression } = ctx.request.body as {
         name?: string
         inviteCode?: string
-        agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
+        agents?: { profile: string; name?: string; description?: string; invited?: boolean; setDefaultAgent?: boolean }[]
         compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
     }
     if (!name || !inviteCode) {
@@ -52,10 +52,15 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
     // Save agents to DB and auto-connect via Socket.IO
     const addedAgents = []
+    let lastDefaultAgentId: string | null = null
     for (const a of agents || []) {
         const agentId = generateId()
         const agent = storage.addRoomAgent(roomId, agentId, a.profile, a.name || a.profile, a.description || '', a.invited ? 1 : 0)
         addedAgents.push(agent)
+
+        if (a.setDefaultAgent) {
+            lastDefaultAgentId = agentId
+        }
 
         try {
             const client = await chatServer.agentClients.createAgent({
@@ -68,6 +73,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
         } catch (err: any) {
             console.error(`[GroupChat] Failed to connect agent ${a.profile} to room ${roomId}: ${err.message}`)
         }
+    }
+
+    if (lastDefaultAgentId) {
+        storage.setDefaultAgent(roomId, lastDefaultAgentId)
     }
 
     const room = storage.getRoom(roomId)
@@ -100,8 +109,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     })
 
     const addedAgents = []
+    const agentIdMap = new Map<string, string>()
     for (const sourceAgent of storage.getRoomAgents(sourceRoom.id)) {
         const agentId = generateId()
+        agentIdMap.set(sourceAgent.id, agentId)
         const agent = storage.addRoomAgent(
             roomId,
             agentId,
@@ -123,6 +134,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
         } catch (err: any) {
             console.error(`[GroupChat] Failed to connect cloned agent ${agent.profile} to room ${roomId}: ${err.message}`)
         }
+    }
+
+    if (sourceRoom.defaultAgentId && agentIdMap.has(sourceRoom.defaultAgentId)) {
+        storage.setDefaultAgent(roomId, agentIdMap.get(sourceRoom.defaultAgentId)!)
     }
 
     const room = storage.getRoom(roomId)
@@ -207,7 +222,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         return
     }
 
-    const { profile, name, description, invited } = ctx.request.body as { profile?: string; name?: string; description?: string; invited?: boolean }
+    const { profile, name, description, invited, setDefaultAgent } = ctx.request.body as { profile?: string; name?: string; description?: string; invited?: boolean; setDefaultAgent?: boolean }
     if (!profile) {
         ctx.status = 400
         ctx.body = { error: 'profile is required' }
@@ -224,6 +239,10 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
 
     const agentId = generateId()
     const agent = chatServer.getStorage().addRoomAgent(ctx.params.roomId, agentId, profile, name || profile, description || '', invited ? 1 : 0)
+
+    if (setDefaultAgent) {
+        chatServer.getStorage().setDefaultAgent(ctx.params.roomId, agentId)
+    }
 
     // Auto-connect agent via Socket.IO
     try {
@@ -261,8 +280,47 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         return
     }
 
+    const room = chatServer.getStorage().getRoom(ctx.params.roomId)
+    if (room?.defaultAgentId === ctx.params.agentId) {
+        chatServer.getStorage().setDefaultAgent(ctx.params.roomId, null)
+    }
+
     chatServer.getStorage().removeRoomAgent(ctx.params.agentId)
     chatServer.agentClients.removeAgentFromRoom(ctx.params.roomId, ctx.params.agentId)
+    ctx.body = { success: true }
+})
+
+// Set default agent for room
+groupChatRoutes.put('/api/hermes/group-chat/rooms/:roomId/default-agent', async (ctx) => {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const { agentId } = ctx.request.body as { agentId?: string }
+    if (!agentId) {
+        ctx.status = 400
+        ctx.body = { error: 'agentId is required' }
+        return
+    }
+
+    const room = chatServer.getStorage().getRoom(ctx.params.roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+
+    const agents = chatServer.getStorage().getRoomAgents(ctx.params.roomId)
+    if (!agents.find(a => a.id === agentId)) {
+        ctx.status = 400
+        ctx.body = { error: 'Agent not in room' }
+        return
+    }
+
+    chatServer.getStorage().setDefaultAgent(ctx.params.roomId, agentId)
+    chatServer.agentClients.setAgentShouldAnswer(ctx.params.roomId, agentId)
     ctx.body = { success: true }
 })
 

@@ -643,6 +643,13 @@ export class AgentClients {
     private _processingRooms = new Set<string>()
     private _mentionQueue = new Map<string, Array<{ agent: AgentClient; msg: MentionMessage }>>()
 
+    // agent_should_answer tracking: roomId -> agentId
+    private _agentShouldAnswer = new Map<string, string>()
+    // Timeout handles for auto-reset: roomId -> timer
+    private _answerTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+    // Default timeout: 5 minutes
+    private _answerTimeoutMs = 5 * 60 * 1000
+
     /**
      * Create an agent client and connect it to the server.
      * The agent will NOT auto-join any room — call addAgentToRoom separately.
@@ -747,23 +754,6 @@ export class AgentClients {
         await agent.interrupt(roomId)
     }
 
-    /**
-     * Disconnect all agents in a room.
-     */
-    disconnectRoom(roomId: string): void {
-        const room = this.rooms.get(roomId)
-        if (!room) return
-
-        room.forEach((client) => client.disconnect())
-        this.rooms.delete(roomId)
-        logger.info(`[AgentClients] All agents disconnected from room: ${roomId}`)
-
-        // Invalidate context engine cache for this room
-        if (this._contextEngine) {
-            try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
-        }
-    }
-
     resetRoomContext(roomId: string): void {
         this._mentionQueue.delete(roomId)
         for (const key of Array.from(this._mentionQueue.keys())) {
@@ -808,12 +798,127 @@ export class AgentClients {
         })
     }
 
+    /**
+     * Set the agent that should answer for a room.
+     * Clears any existing timeout and sets a new one to reset to default.
+     */
+    setAgentShouldAnswer(roomId: string, agentId: string): void {
+        this._agentShouldAnswer.set(roomId, agentId)
+        this._resetAnswerTimeout(roomId)
+    }
+
+    /**
+     * Get the agent that should answer for a room.
+     * Returns the tracked agent, or falls back to the room's default agent.
+     */
+    getAgentShouldAnswer(roomId: string): AgentClient | null {
+        const agentId = this._agentShouldAnswer.get(roomId)
+        if (agentId) {
+            const agent = this._findAgentById(roomId, agentId)
+            if (agent) return agent
+        }
+
+        const defaultAgentId = this._storage?.getRoom?.(roomId)?.defaultAgentId
+        if (defaultAgentId) {
+            const agent = this._findAgentById(roomId, defaultAgentId)
+            if (agent) {
+                this._agentShouldAnswer.set(roomId, defaultAgentId)
+                this._resetAnswerTimeout(roomId)
+                return agent
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Initialize agent_should_answer from the room's default agent (call after agents are restored).
+     */
+    initAgentShouldAnswer(roomId: string): void {
+        const defaultAgentId = this._storage?.getRoom?.(roomId)?.defaultAgentId
+        if (defaultAgentId && !this._agentShouldAnswer.has(roomId)) {
+            this._agentShouldAnswer.set(roomId, defaultAgentId)
+            this._resetAnswerTimeout(roomId)
+        }
+    }
+
+    /**
+     * Update a room's default agent and reset agent_should_answer to it.
+     */
+    setDefaultAgent(roomId: string, agentId: string | null): void {
+        this._storage?.setDefaultAgent?.(roomId, agentId)
+        if (agentId) {
+            this._agentShouldAnswer.set(roomId, agentId)
+            this._resetAnswerTimeout(roomId)
+        } else {
+            this._agentShouldAnswer.delete(roomId)
+            this._clearAnswerTimeout(roomId)
+        }
+    }
+
+    private _findAgentById(roomId: string, agentId: string): AgentClient | null {
+        const room = this.rooms.get(roomId)
+        if (!room) return null
+        for (const client of room.values()) {
+            if (client.agentId === agentId || client.id === agentId) return client
+        }
+        return null
+    }
+
+    private _resetAnswerTimeout(roomId: string): void {
+        this._clearAnswerTimeout(roomId)
+        const timer = setTimeout(() => {
+            this._resetToDefaultAgent(roomId)
+        }, this._answerTimeoutMs)
+        this._answerTimeouts.set(roomId, timer)
+    }
+
+    private _clearAnswerTimeout(roomId: string): void {
+        const existing = this._answerTimeouts.get(roomId)
+        if (existing) {
+            clearTimeout(existing)
+            this._answerTimeouts.delete(roomId)
+        }
+    }
+
+    private _resetToDefaultAgent(roomId: string): void {
+        const defaultAgentId = this._storage?.getRoom?.(roomId)?.defaultAgentId
+        if (defaultAgentId) {
+            this._agentShouldAnswer.set(roomId, defaultAgentId)
+            logger.debug(`[AgentClients] agent_should_answer for room ${roomId} reset to default: ${defaultAgentId}`)
+        } else {
+            this._agentShouldAnswer.delete(roomId)
+        }
+        this._answerTimeouts.delete(roomId)
+    }
+
+    /**
+     * Clean up timeouts when a room is disconnected or cleared.
+     */
+    disconnectRoom(roomId: string): void {
+        this._clearAnswerTimeout(roomId)
+        this._agentShouldAnswer.delete(roomId)
+
+        const room = this.rooms.get(roomId)
+        if (!room) return
+
+        room.forEach((client) => client.disconnect())
+        this.rooms.delete(roomId)
+        logger.info(`[AgentClients] All agents disconnected from room: ${roomId}`)
+
+        // Invalidate context engine cache for this room
+        if (this._contextEngine) {
+            try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
+        }
+    }
+
 
     /**
      * Server-side: parse @mentions and forward to matching agents directly.
      * If the room is already processing (compressing/replying), queue the mention.
+     * Returns the list of mentioned agent names.
      */
-    async processMentions(roomId: string, msg: MentionMessage): Promise<void> {
+    async processMentions(roomId: string, msg: MentionMessage): Promise<string[]> {
         const agents = this.getAgents(roomId)
         const senderName = msg.senderName.toLowerCase()
 
@@ -821,7 +926,7 @@ export class AgentClients {
             a.name.toLowerCase() !== senderName &&
             isAgentMentioned(msg.content, a.name)
         ))
-        if (mentioned.length === 0) return
+        if (mentioned.length === 0) return []
 
         logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
 
@@ -829,6 +934,39 @@ export class AgentClients {
             this._processAgentMention(roomId, agent, msg).catch((err) => {
                 logger.error(`[AgentClients] error processing mention for ${agent.name}: ${err.message}`)
             })
+        }
+
+        return mentioned.map(a => a.name)
+    }
+
+    /**
+     * Route a message to the agent that should answer (no @mention case).
+     * Updates agent_should_answer timeout.
+     */
+    async routeToAgentShouldAnswer(roomId: string, msg: MentionMessage): Promise<void> {
+        const agent = this.getAgentShouldAnswer(roomId)
+        if (!agent) {
+            logger.debug(`[AgentClients] no agent_should_answer for room ${roomId}, skipping`)
+            return
+        }
+
+        logger.debug(`[AgentClients] routing to agent_should_answer ${agent.name} in room ${roomId}`)
+        this._resetAnswerTimeout(roomId)
+
+        this._processAgentMention(roomId, agent, msg).catch((err) => {
+            logger.error(`[AgentClients] error processing agent_should_answer for ${agent.name}: ${err.message}`)
+        })
+    }
+
+    /**
+     * Update agent_should_answer when user @mentions an agent.
+     */
+    updateAgentShouldAnswerOnMention(roomId: string, mentionedAgentName: string): void {
+        const agent = this.getAgents(roomId).find(a => a.name === mentionedAgentName)
+        if (agent) {
+            this._agentShouldAnswer.set(roomId, agent.agentId)
+            this._resetAnswerTimeout(roomId)
+            logger.debug(`[AgentClients] agent_should_answer for room ${roomId} set to ${agent.name}`)
         }
     }
 

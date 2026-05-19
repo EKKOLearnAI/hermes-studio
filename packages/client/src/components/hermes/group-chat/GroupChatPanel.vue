@@ -25,6 +25,7 @@ const isCompressing = ref(false)
 const selectedProfile = ref<string | null>(null)
 const agentName = ref('')
 const agentDescription = ref('')
+const setAsDefaultAgent = ref(false)
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
@@ -153,11 +154,13 @@ async function confirmAddAgent() {
             profile: selectedProfile.value,
             name: agentName.value.trim() || undefined,
             description: agentDescription.value.trim() || undefined,
+            setDefaultAgent: setAsDefaultAgent.value,
         })
         showAddAgentModal.value = false
         selectedProfile.value = null
         agentName.value = ''
         agentDescription.value = ''
+        setAsDefaultAgent.value = false
         message.success(t('groupChat.agentAdded'))
     } catch (err: any) {
         if (err.message?.includes('already')) {
@@ -216,6 +219,16 @@ async function handleRemoveAgent(agentId: string) {
         await store.removeAgentFromRoom(store.currentRoomId, agentId)
     } catch {
         message.error(t('common.deleteFailed'))
+    }
+}
+
+async function handleSetDefaultAgent(agentId: string) {
+    if (!store.currentRoomId) return
+    try {
+        await store.setDefaultAgent(store.currentRoomId, agentId)
+        message.success(t('groupChat.defaultAgentSet'))
+    } catch {
+        message.error(t('common.saveFailed'))
     }
 }
 
@@ -333,13 +346,16 @@ watch(() => store.sortedMessages.length, async () => {
                                 </div>
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
+                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item" @click="handleSetDefaultAgent(agent.id)">
                                 <span class="agent-avatar" v-html="agentAvatarUrl(agent.name)" />
                                 <div class="agent-popover-info">
-                                    <span class="agent-popover-name">{{ agent.name }}</span>
+                                    <span class="agent-popover-name">
+                                        {{ agent.name }}
+                                        <span v-if="store.rooms.find(r => r.id === store.currentRoomId)?.defaultAgentId === agent.id" class="default-badge">{{ t('groupChat.default') }}</span>
+                                    </span>
                                     <span class="agent-popover-profile">{{ agent.profile }}</span>
                                 </div>
-                                <button class="agent-popover-remove" @click="handleRemoveAgent(agent.id)">
+                                <button class="agent-popover-remove" @click.stop="handleRemoveAgent(agent.id)">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                 </button>
                             </div>
@@ -485,6 +501,12 @@ watch(() => store.sortedMessages.length, async () => {
                             :rows="2"
                             :placeholder="t('groupChat.agentDescPlaceholder')"
                         />
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" v-model="setAsDefaultAgent" />
+                            {{ t('groupChat.setAsDefaultAgent') }}
+                        </label>
                     </div>
                     <div class="modal-actions">
                         <NSpace justify="end">
@@ -1200,6 +1222,32 @@ export default defineComponent({ components: { CreateRoomForm } })
     font-size: 11px;
     color: $text-muted;
     margin: 4px 0 0;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: $text-secondary;
+    cursor: pointer;
+
+    input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+}
+
+.default-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.1);
+    border-radius: 4px;
 }
 
 // ─── Connection Dot ──────────────────────────────────────

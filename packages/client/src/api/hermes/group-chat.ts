@@ -11,6 +11,7 @@ export interface RoomInfo {
     maxHistoryTokens?: number
     tailMessageCount?: number
     totalTokens?: number
+    defaultAgentId?: string | null
 }
 
 export interface RoomAgent {
@@ -215,5 +216,13 @@ export async function updateRoomConfig(roomId: string, config: { triggerTokens?:
 export async function forceCompress(roomId: string): Promise<{ success: boolean; summary: string }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/compress`, {
         method: 'POST',
+    })
+}
+
+export async function setDefaultAgent(roomId: string, agentId: string): Promise<{ success: boolean }> {
+    return request(`/api/hermes/group-chat/rooms/${roomId}/default-agent`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
     })
 }
