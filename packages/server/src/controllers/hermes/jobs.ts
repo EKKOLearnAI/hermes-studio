@@ -124,6 +124,7 @@ async function runHermesCron(profile: string, args: string[]): Promise<void> {
       env: { ...process.env, HERMES_HOME: profileDir },
       timeout: TIMEOUT_MS,
       maxBuffer: 1024 * 1024,
+      windowsHide: true,
     })
   } catch (error: any) {
     const stderr = String(error?.stderr || '').trim()

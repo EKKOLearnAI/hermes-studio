@@ -117,7 +117,10 @@ describe('Hermes jobs controller', () => {
     expect(testState.execFile).toHaveBeenCalledWith(
       '/fake/bin/hermes',
       ['cron', 'edit', 'abc123abc123', '--repeat', '0'],
-      expect.objectContaining({ env: expect.objectContaining({ HERMES_HOME: tempDir }) }),
+      expect.objectContaining({
+        env: expect.objectContaining({ HERMES_HOME: tempDir }),
+        windowsHide: true,
+      }),
       expect.any(Function),
     )
   })

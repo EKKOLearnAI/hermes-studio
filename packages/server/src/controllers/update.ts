@@ -65,6 +65,7 @@ function runNpm(args: string[], options: { timeout?: number } = {}) {
     timeout: options.timeout,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: getCurrentNodeEnv(),
+    windowsHide: true,
   }).trim()
 }
 

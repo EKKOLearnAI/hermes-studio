@@ -99,6 +99,7 @@ describe('update controller', () => {
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
         env: expect.objectContaining({
           npm_node_execpath: process.execPath,
           PATH: expect.stringContaining(`${nodeBinDir}${delimiter}`),
@@ -115,6 +116,7 @@ describe('update controller', () => {
       expect.objectContaining({
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
         env: expect.objectContaining({ npm_node_execpath: process.execPath }),
       }),
     )
