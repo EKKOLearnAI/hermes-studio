@@ -133,6 +133,9 @@ export default {
     contextEditFailed: '更新失败',
     emptyState: '开始与 Hermes Agent 对话',
     cliEmptyState: '开始 CLI 对话',
+    outlineTitle: '会话大纲',
+    outlineEmpty: '暂无会话内容',
+    outlineUserQuestion: '用户问题',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     slashCommandArgs: {
       message: '<消息>',

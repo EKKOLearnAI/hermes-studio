@@ -120,6 +120,9 @@ export default {
     contextEditSuccess: 'コンテキスト長を更新しました',
     contextEditFailed: '更新に失敗しました',
     emptyState: 'Hermes Agent と会話を開始しましょう',
+    outlineTitle: '会話アウトライン',
+    outlineEmpty: '会話内容はありません',
+    outlineUserQuestion: 'ユーザーの質問',
     inputPlaceholder: 'メッセージを入力... (Enter で送信、Shift+Enter で改行)',
     slashCommandArgs: {
       message: '<メッセージ>',

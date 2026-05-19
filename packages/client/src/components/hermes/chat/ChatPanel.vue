@@ -34,7 +34,7 @@ const { t } = useI18n();
 
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
-const showOutline = ref(true);
+const showOutline = ref(false);
 
 const currentMode = ref<"chat" | "live">("chat");
 
@@ -1012,7 +1012,7 @@ async function handleSessionModelCustomSubmit() {
                   </template>
                 </NButton>
               </template>
-              会话大纲
+              {{ t("chat.outlineTitle") }}
             </NTooltip>
             <NTooltip trigger="hover">
               <template #trigger>
@@ -1672,6 +1672,7 @@ async function handleSessionModelCustomSubmit() {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .chat-main-content {
@@ -1679,6 +1680,7 @@ async function handleSessionModelCustomSubmit() {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .chat-header {

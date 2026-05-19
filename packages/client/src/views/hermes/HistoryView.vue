@@ -27,7 +27,7 @@ const hermesSessionsLoaded = ref(false)
 // History page's own selected session (independent from chatStore)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
-const showOutline = ref(true)
+const showOutline = ref(false)
 
 async function loadHermesSessions() {
   if (hermesSessionsLoading.value) return
@@ -344,6 +344,16 @@ async function copySessionId(id?: string) {
         <div class="header-actions">
           <NTooltip trigger="hover">
             <template #trigger>
+              <NButton quaternary size="small" @click="showOutline = !showOutline" circle>
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.outlineTitle') }}
+          </NTooltip>
+          <NTooltip trigger="hover">
+            <template #trigger>
               <NButton quaternary size="small" @click="copySessionId()" circle>
                 <template #icon>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -351,16 +361,6 @@ async function copySessionId(id?: string) {
               </NButton>
             </template>
             {{ t('chat.copySessionId') }}
-          </NTooltip>
-          <NTooltip trigger="hover">
-            <template #trigger>
-              <NButton quaternary size="small" @click="showOutline = !showOutline" circle>
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-                </template>
-              </NButton>
-            </template>
-            会话大纲
           </NTooltip>
         </div>
       </header>
@@ -388,6 +388,7 @@ async function copySessionId(id?: string) {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .history-main-content {
@@ -395,6 +396,7 @@ async function copySessionId(id?: string) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .session-list {

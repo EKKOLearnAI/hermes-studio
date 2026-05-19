@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { Message } from '@/stores/hermes/chat'
 
 interface OutlineItem {
@@ -14,6 +15,8 @@ interface OutlineItem {
 const props = defineProps<{
   messages: Message[]
 }>()
+
+const { t } = useI18n()
 
 function extractAllHeadings(text: string, messageId: string): OutlineItem[] {
   const items: OutlineItem[] = []
@@ -69,7 +72,7 @@ function extractUserQuestion(text: string): string {
   if (firstLine.length > 50) {
     return firstLine.slice(0, 50) + '...'
   }
-  return firstLine || '用户问题'
+  return firstLine || t('chat.outlineUserQuestion')
 }
 
 const outlineItems = computed<OutlineItem[]>(() => {
@@ -124,7 +127,7 @@ function scrollToTarget(anchorId: string) {
 <template>
   <div class="outline-panel">
     <div class="outline-header">
-      <span class="outline-title">会话大纲</span>
+      <span class="outline-title">{{ t('chat.outlineTitle') }}</span>
     </div>
     <div class="outline-content">
       <template v-if="outlineItems.length > 0">
@@ -151,7 +154,7 @@ function scrollToTarget(anchorId: string) {
           </div>
         </template>
       </template>
-      <div v-else class="outline-empty">暂无会话内容</div>
+      <div v-else class="outline-empty">{{ t('chat.outlineEmpty') }}</div>
     </div>
   </div>
 </template>
@@ -167,6 +170,16 @@ function scrollToTarget(anchorId: string) {
   border-left: 1px solid $border-color;
   width: 280px;
   flex-shrink: 0;
+
+  @media (max-width: $breakpoint-mobile) {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(280px, 86vw);
+    z-index: 8;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  }
 }
 
 .outline-header {
@@ -202,17 +215,23 @@ function scrollToTarget(anchorId: string) {
 }
 
 .user-question {
-  background-color: #1a1a1a;
-  color: #ffffff;
+  background-color: $bg-secondary;
+  color: $text-primary;
   padding: 8px 12px;
   border-radius: 8px;
   display: flex;
   align-items: flex-start;
   gap: 6px;
 
+  .dark & {
+    background-color: $bg-input;
+  }
+
   .q-label {
     font-weight: 600;
     flex-shrink: 0;
+    font-size: 13px;
+    line-height: 1.4;
   }
 
   .q-text {

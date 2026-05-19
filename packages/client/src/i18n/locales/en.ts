@@ -133,6 +133,9 @@ export default {
     contextEditFailed: 'Update failed',
     emptyState: 'Start a conversation with Hermes Agent',
     cliEmptyState: 'Start a CLI chat session',
+    outlineTitle: 'Conversation Outline',
+    outlineEmpty: 'No conversation content',
+    outlineUserQuestion: 'User question',
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     slashCommandArgs: {
       message: '<message>',

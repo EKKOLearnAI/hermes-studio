@@ -120,6 +120,9 @@ export default {
     contextEditSuccess: 'Longueur du contexte mise à jour',
     contextEditFailed: 'Échec de la mise à jour',
     emptyState: 'Demarrer une conversation avec Hermes Agent',
+    outlineTitle: 'Plan de la conversation',
+    outlineEmpty: 'Aucun contenu de conversation',
+    outlineUserQuestion: 'Question utilisateur',
     inputPlaceholder: 'Tapez un message... (Entree pour envoyer, Shift+Entree pour un saut de ligne)',
     slashCommandArgs: {
       message: '<message>',

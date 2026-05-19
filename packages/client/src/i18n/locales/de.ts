@@ -120,6 +120,9 @@ export default {
     contextEditSuccess: 'Kontextlänge aktualisiert',
     contextEditFailed: 'Aktualisierung fehlgeschlagen',
     emptyState: 'Starten Sie eine Konversation mit Hermes Agent',
+    outlineTitle: 'Konversationsübersicht',
+    outlineEmpty: 'Kein Konversationsinhalt',
+    outlineUserQuestion: 'Benutzerfrage',
     inputPlaceholder: 'Nachricht eingeben... (Enter zum Senden, Shift+Enter fur neue Zeile)',
     slashCommandArgs: {
       message: '<Nachricht>',
