@@ -53,6 +53,12 @@ function isFeishuCapabilityConnected(status: FeishuUatStatus) {
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
+type SidebarGroupKey = "Conversation" | "Agent" | "Monitoring" | "System";
+
+function groupLabel(key: SidebarGroupKey) {
+  return t(`sidebar.group${key}${appStore.sidebarCollapsed ? "Short" : ""}`);
+}
+
 function toggleGroup(key: string) {
   collapsedGroups[key] = !collapsedGroups[key];
 }
@@ -186,12 +192,12 @@ onBeforeUnmount(() => {
       <!-- Conversation -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('conversation')">
-          <span>{{ t("sidebar.groupConversation") }}</span>
+          <span>{{ groupLabel("Conversation") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('conversation') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('conversation')">
+        <div v-show="!isGroupCollapsed('conversation')" class="nav-group-items">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -227,12 +233,12 @@ onBeforeUnmount(() => {
       <!-- Agent -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('agent')">
-          <span>{{ t("sidebar.groupAgent") }}</span>
+          <span>{{ groupLabel("Agent") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('agent') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('agent')">
+        <div v-show="!isGroupCollapsed('agent')" class="nav-group-items">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.jobs' }" @click="handleNav('hermes.jobs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -298,12 +304,12 @@ onBeforeUnmount(() => {
       <!-- Monitoring -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('monitoring')">
-          <span>{{ t("sidebar.groupMonitoring") }}</span>
+          <span>{{ groupLabel("Monitoring") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('monitoring') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('monitoring')">
+        <div v-show="!isGroupCollapsed('monitoring')" class="nav-group-items">
           <button v-if="showAdminSurfaces" class="nav-item" :class="{ active: selectedKey === 'hermes.logs' }" @click="handleNav('hermes.logs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -328,12 +334,12 @@ onBeforeUnmount(() => {
       <!-- System -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('system')">
-          <span>{{ t("sidebar.groupSystem") }}</span>
+          <span>{{ groupLabel("System") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('system')">
+        <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
           <button v-if="showAdminSurfaces" class="nav-item" :class="{ active: selectedKey === 'hermes.gateways' }" @click="handleNav('hermes.gateways')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
@@ -617,6 +623,12 @@ onBeforeUnmount(() => {
     padding-top: 8px;
     border-top: 1px solid $border-color;
   }
+}
+
+.nav-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .nav-group-label {
@@ -969,7 +981,18 @@ onBeforeUnmount(() => {
   }
 
   .nav-group-label {
-    display: none;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 0 4px;
+    letter-spacing: 0;
+
+    span {
+      max-width: 36px;
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   .nav-item {
@@ -986,13 +1009,6 @@ onBeforeUnmount(() => {
     }
   }
 
-  // Keep group children visible — user can still see icons
-  .nav-group > div {
-    display: flex !important;
-    flex-direction: column;
-    gap: 2px;
-  }
-
   // Hide selectors and footer text, keep theme switch
   :deep(.profile-selector),
   :deep(.model-selector) {
@@ -1000,6 +1016,12 @@ onBeforeUnmount(() => {
   }
 
   .sidebar-footer {
+    .logout-item {
+      margin: 0;
+      padding: 10px 4px;
+      border-radius: $radius-sm;
+    }
+
     .logout-item span {
       display: none;
     }

@@ -22,6 +22,7 @@ const authWindowMock = vi.hoisted(() => ({
 const windowOpenMock = vi.hoisted(() => vi.fn(() => authWindowMock))
 const appStoreMock = vi.hoisted(() => ({
   sidebarOpen: true,
+  sidebarCollapsed: false,
   connected: true,
   serverVersion: 'test',
   toggleSidebar: vi.fn(),
@@ -107,6 +108,7 @@ describe('AppSidebar search entry', () => {
     getAuthModeMock.mockReturnValue('token')
     getWebPlaneMock.mockReturnValue('both')
     isUserModeMock.mockReturnValue(false)
+    appStoreMock.sidebarCollapsed = false
     appStoreMock.connected = true
     appStoreMock.checkConnection.mockClear()
     setRuntimeModeMock.mockClear()
@@ -398,5 +400,34 @@ describe('AppSidebar search entry', () => {
     expect(windowOpenMock).not.toHaveBeenCalled()
     expect(startFeishuUatAuthMock).not.toHaveBeenCalled()
     expect(wrapper.find('.feishu-connector').text()).not.toContain('ABCD-1234')
+  })
+
+  it('uses short group labels and keeps group folding active when collapsed', async () => {
+    mockAppStore.sidebarCollapsed = true
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          NButton: true,
+        },
+      },
+    })
+
+    expect(wrapper.classes()).toContain('collapsed')
+    expect(wrapper.findAll('.nav-group-label span').map(node => node.text())).toEqual([
+      'sidebar.groupConversationShort',
+      'sidebar.groupAgentShort',
+      'sidebar.groupMonitoringShort',
+      'sidebar.groupSystemShort',
+    ])
+
+    const agentGroup = wrapper.findAll('.nav-group')[1]
+    expect(agentGroup.find('.nav-group-items').attributes('style')).toBeUndefined()
+
+    await agentGroup.find('.nav-group-label').trigger('click')
+    expect(agentGroup.find('.nav-group-items').attributes('style')).toContain('display: none')
   })
 })
