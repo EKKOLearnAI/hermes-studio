@@ -111,6 +111,54 @@ export function countTokensForModel(text: string, model: string): number {
   }
 }
 
+function messageTokenEstimate(message: ChatMessage): number {
+  if (typeof message.content === 'string') return countTokens(message.content)
+  if (Array.isArray(message.content)) {
+    return countTokens(message.content.map(block => {
+      if (block.type === 'text') return block.text || ''
+      if (block.type === 'image') return `[Image: ${block.path || ''}]`
+      if (block.type === 'file') return `[File: ${block.path || ''}]`
+      return ''
+    }).join(''))
+  }
+  return 0
+}
+
+function messagesTokenEstimate(messages: ChatMessage[]): number {
+  return messages.reduce((sum, message) => sum + messageTokenEstimate(message), 0)
+}
+
+function truncateTextToTokenBudget(text: string, tokenBudget: number): string {
+  if (tokenBudget <= 0 || countTokens(text) <= tokenBudget) return text
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (countTokens(text.slice(0, mid)) <= tokenBudget) lo = mid
+    else hi = mid - 1
+  }
+  return text.slice(0, lo).trimEnd() + '\n\n[Summary truncated to fit context budget]'
+}
+
+function enforceCompressedBudget(
+  messages: ChatMessage[],
+  triggerTokens: number,
+  summaryIndex: number,
+): ChatMessage[] {
+  if (triggerTokens <= 0 || messagesTokenEstimate(messages) <= triggerTokens) return messages
+
+  const summaryMessage = messages[summaryIndex]
+  if (!summaryMessage || typeof summaryMessage.content !== 'string') return messages
+
+  const summaryOnly = [{ ...summaryMessage }]
+  if (messagesTokenEstimate(summaryOnly) <= triggerTokens) return summaryOnly
+
+  return [{
+    ...summaryMessage,
+    content: truncateTextToTokenBudget(summaryMessage.content, triggerTokens),
+  }]
+}
+
 // ─── Prompts ────────────────────────────────────────────
 
 export const SUMMARY_PREFIX = `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted
@@ -512,19 +560,26 @@ export class ChatContextCompressor {
     const head = cleaned.slice(0, headCount)
     const newMessages = cleaned.slice(lastMessageIndex + 1)
     const tailCount = this.config.tailMessageCount
+    const previousSummaryMessage: ChatMessage = { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary }
+    const assembledWithPrevious = [
+      ...head,
+      previousSummaryMessage,
+      ...newMessages,
+    ]
+    const assembledOverBudget = messagesTokenEstimate(assembledWithPrevious) > this.config.triggerTokens
+    const canKeepTailWindow = newMessages.length > tailCount
 
-    // Keep last N of new messages, compress the rest
-    const tailStart = Math.max(0, newMessages.length - tailCount)
+    // If the new segment itself is too small to split but already over budget,
+    // fold all new messages into the existing summary instead of preserving them verbatim.
+    const tailStart = assembledOverBudget && !canKeepTailWindow
+      ? newMessages.length
+      : Math.max(0, newMessages.length - tailCount)
     const toCompress = newMessages.slice(0, tailStart)
     const tail = newMessages.slice(tailStart)
 
     if (toCompress.length === 0) {
       return {
-        messages: [
-          ...head,
-          { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary },
-          ...newMessages,
-        ],
+        messages: assembledWithPrevious,
         meta: {
           ...meta,
           compressed: true,
@@ -552,28 +607,31 @@ export class ChatContextCompressor {
       logger.info('[context-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
       logger.warn('[context-compressor] incremental-llm failed: %s — keeping new messages verbatim', err.message)
+      const fallback = [
+        ...head,
+        previousSummaryMessage,
+        ...newMessages,
+      ]
+      const budgetedFallback = enforceCompressedBudget(fallback, this.config.triggerTokens, head.length)
       return {
-        messages: [
-          ...head,
-          { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary },
-          ...newMessages,
-        ],
+        messages: budgetedFallback,
         meta: {
           ...meta,
           compressed: true,
           llmCompressed: false,
           summaryTokenEstimate: countTokens(SUMMARY_PREFIX + previousSummary),
-          verbatimCount: head.length + newMessages.length,
+          verbatimCount: budgetedFallback.length === fallback.length ? head.length + newMessages.length : 0,
           compressedStartIndex: lastMessageIndex,
         },
       }
     }
 
-    const result: ChatMessage[] = [
+    let result: ChatMessage[] = [
       ...head,
       { role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary },
       ...tail,
     ]
+    result = enforceCompressedBudget(result, this.config.triggerTokens, head.length)
 
     const newLastIndex = lastMessageIndex + tailStart
     if (sessionId) {
@@ -587,7 +645,7 @@ export class ChatContextCompressor {
         compressed: true,
         llmCompressed: true,
         summaryTokenEstimate: countTokens(SUMMARY_PREFIX + summary),
-        verbatimCount: head.length + tail.length,
+        verbatimCount: result.length === head.length + 1 + tail.length ? head.length + tail.length : 0,
         compressedStartIndex: newLastIndex,
       },
     }
@@ -603,12 +661,11 @@ export class ChatContextCompressor {
   ): Promise<CompressedResult> {
     const total = messages.length
     const cleaned = pruneOldToolResults(messages, this.config.tailMessageCount)
-    const headCount = Math.min(this.config.headMessageCount, total)
-    const tailCount = this.config.tailMessageCount
-
-    if (total <= headCount + tailCount) {
-      return { messages: cleaned, meta }
-    }
+    const requestedHeadCount = Math.min(this.config.headMessageCount, total)
+    const requestedTailCount = this.config.tailMessageCount
+    const canKeepProtectedWindows = total > requestedHeadCount + requestedTailCount
+    const headCount = canKeepProtectedWindows ? requestedHeadCount : 0
+    const tailCount = canKeepProtectedWindows ? requestedTailCount : 0
 
     const tailStart = total - tailCount
     const head = cleaned.slice(0, headCount)
@@ -646,15 +703,16 @@ export class ChatContextCompressor {
     }
 
     result.push(...tail)
+    const budgetedResult = enforceCompressedBudget(result, this.config.triggerTokens, head.length)
 
     return {
-      messages: result,
+      messages: budgetedResult,
       meta: {
         ...meta,
         compressed: true,
         llmCompressed: !!summary,
         summaryTokenEstimate: summary ? countTokens(SUMMARY_PREFIX + summary) : 0,
-        verbatimCount: head.length + tail.length,
+        verbatimCount: budgetedResult.length === result.length ? head.length + tail.length : 0,
         compressedStartIndex: tailStart - 1,
       },
     }
