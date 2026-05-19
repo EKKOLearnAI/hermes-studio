@@ -30,7 +30,7 @@ RUN ARCH=$(dpkg --print-architecture) \
     && echo "Downloading RTK for ${RTK_ARCH}-${RTK_LIBC}" \
     && curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/rtk-${RTK_ARCH}-unknown-linux-${RTK_LIBC}.tar.gz" -o /tmp/rtk.tar.gz \
     && mkdir -p /opt/rtk \
-    && tar -xzf /tmp/rtk.tar.gz -C /opt/rtk --strip-components=1 \
+    && tar -xzf /tmp/rtk.tar.gz -C /opt/rtk \
     && rm -f /tmp/rtk.tar.gz \
     && chmod +x /opt/rtk/rtk \
     && ln -sf /opt/rtk/rtk /usr/local/bin/rtk \
