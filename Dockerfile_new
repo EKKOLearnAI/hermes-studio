@@ -20,6 +20,27 @@ RUN ARCH=$(dpkg --print-architecture) \
     && rm -f /tmp/node.tar.gz \
     && node --version
 
+# 3. 安装 RTK (使用准确的链接)
+ENV RTK_VERSION=v0.40.0
+ENV RTK_DEB_VERSION=0.40.0-1
+RUN curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/rtk_${RTK_DEB_VERSION}_amd64.deb" -o /tmp/rtk.deb \
+    && dpkg -i /tmp/rtk.deb \
+    && rm -f /tmp/rtk.deb \
+    # 验证安装
+    && rtk --version
+
+# 5. 安装 Bun (Docker 适配方案)
+# 自动检测架构并下载最新版本的二进制包
+RUN ARCH=$(uname -m) \
+    && if [ "$ARCH" = "x86_64" ]; then BUN_ARCH="x64"; elif [ "$ARCH" = "aarch64" ]; then BUN_ARCH="aarch64"; else BUN_ARCH="$ARCH"; fi \
+    && mkdir -p /opt/bun \
+    && curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-${BUN_ARCH}.zip" -o /tmp/bun.zip \
+    && unzip /tmp/bun.zip -d /opt/bun \
+    && rm -f /tmp/bun.zip \
+    && chmod +x /opt/bun/bun-linux-${BUN_ARCH}/bun \
+    && ln -s /opt/bun/bun-linux-${BUN_ARCH}/bun /usr/local/bin/bun \
+    && bun --version
+
 WORKDIR /app
 
 COPY package*.json ./
