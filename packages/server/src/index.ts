@@ -127,7 +127,16 @@ export async function bootstrap() {
 
   // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')
-  app.use(serve(distDir))
+  app.use(serve(distDir), {
+    setHeaders: (res, filePath, stats) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else {
+        // 如果是非HTML的JS、CSS或其他文件，设置强缓存 30 天，并加上 immutable(文件打包带有hash，不影响版本更新)
+        res.setHeader('Cache-Control', 'max-age=2592000, immutable');
+      }
+    }
+  })
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
