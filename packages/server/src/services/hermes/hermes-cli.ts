@@ -54,8 +54,42 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
+  } catch (err: any) {
+    return err?.code === 'EPERM'
+  }
+}
+
+function readJsonPid(path: string): number | null {
+  if (!existsSync(path)) return null
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf-8'))
+    const pid = typeof data?.pid === 'number' ? data.pid : parseInt(String(data?.pid || ''), 10)
+    return Number.isFinite(pid) && pid > 0 ? pid : null
   } catch {
-    return false
+    return null
+  }
+}
+
+function readGatewayLockPid(profileDir: string): number | null {
+  return readJsonPid(join(profileDir, 'gateway.lock'))
+}
+
+function readGatewayStatePid(profileDir: string): number | null {
+  const pid = readJsonPid(join(profileDir, 'gateway.pid'))
+  if (pid) return pid
+  return readJsonPid(join(profileDir, 'gateway_state.json'))
+}
+
+async function killWindowsPid(pid: number): Promise<void> {
+  if (!pid || process.platform !== 'win32') return
+  try {
+    await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      timeout: 5000,
+      windowsHide: true,
+    })
+  } catch (err) {
+    logger.warn(err, 'Failed to taskkill gateway PID %d; falling back to process.kill', pid)
+    try { process.kill(pid) } catch {}
   }
 }
 
@@ -85,6 +119,28 @@ async function waitForGatewayLockReleased(profileDir: string, timeoutMs = 15000)
     await sleep(500)
   }
   return cleanupStaleGatewayLock(profileDir)
+}
+
+async function forceReleaseWindowsGatewayLock(profileDir: string): Promise<void> {
+  if (process.platform !== 'win32') return
+  const pids = new Set<number>()
+  const lockPid = readGatewayLockPid(profileDir)
+  const statePid = readGatewayStatePid(profileDir)
+  if (lockPid) pids.add(lockPid)
+  if (statePid) pids.add(statePid)
+
+  for (const pid of pids) {
+    if (isProcessAlive(pid)) {
+      logger.warn('Gateway lock is still held by PID %d; force killing Windows process tree', pid)
+      await killWindowsPid(pid)
+    }
+  }
+}
+
+async function waitForGatewayLockReleasedAfterStop(profileDir: string, timeoutMs = 15000): Promise<boolean> {
+  if (await waitForGatewayLockReleased(profileDir, timeoutMs)) return true
+  await forceReleaseWindowsGatewayLock(profileDir)
+  return waitForGatewayLockReleased(profileDir, 5000)
 }
 
 function activeGatewayExecOpts() {
@@ -397,7 +453,7 @@ export async function restartGateway(): Promise<string> {
   const profileDir = getActiveProfileDir()
   if (isDocker || isTermux || process.platform === 'win32') {
     await stopGatewayForActiveProfile()
-    const lockReleased = await waitForGatewayLockReleased(profileDir)
+    const lockReleased = await waitForGatewayLockReleasedAfterStop(profileDir)
     if (!lockReleased) throw new Error('Gateway stopped but runtime lock is still held by another process')
     const result = startGatewayRunManaged(HERMES_BIN, { profileDir })
     const ready = await waitForGatewayRunning(profileDir)
@@ -415,7 +471,7 @@ export async function restartGateway(): Promise<string> {
   } catch (err: any) {
     logger.warn(err, 'hermes gateway restart failed; falling back to gateway run')
     await stopGatewayForActiveProfile()
-    const lockReleased = await waitForGatewayLockReleased(profileDir)
+    const lockReleased = await waitForGatewayLockReleasedAfterStop(profileDir)
     if (!lockReleased) throw new Error('Gateway restart failed and runtime lock is still held by another process')
     const result = startGatewayRunManaged(HERMES_BIN, { profileDir })
     const ready = await waitForGatewayRunning(profileDir)
