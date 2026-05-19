@@ -966,6 +966,7 @@ export default {
     new_0_5_30_6: 'Harden Windows compatibility for path detection, file downloads, and job/update subprocesses so they no longer flash terminal windows',
     new_0_5_30_7: 'Fix config writes and provider presets: validate .env keys, route FUN-Codex through the Responses API, and refresh Z.AI/GLM model lists',
     new_0_5_30_8: 'Polish frontend details including collapsed sidebar layout, short group labels, sidebar divider, and conversation outline styling',
+    new_0_5_30_9: 'Context compression now follows Profile compression settings and hardens stale snapshots by reusing previous summaries with a safe tail instead of recompressing full history',
     new_0_5_5_1: '🎉 労働者の日！今日はお休みです、何卒ご理解ください',
     new_0_5_5_2: 'Hermesセッション履歴ページを追加',
     new_0_5_5_3: '履歴ページはアクティブチャットに干渉せずにセッション管理',

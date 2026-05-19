@@ -1264,6 +1264,7 @@ export default {
     new_0_5_30_6: 'Harden Windows compatibility for path detection, file downloads, and job/update subprocesses so they no longer flash terminal windows',
     new_0_5_30_7: 'Fix config writes and provider presets: validate .env keys, route FUN-Codex through the Responses API, and refresh Z.AI/GLM model lists',
     new_0_5_30_8: 'Polish frontend details including collapsed sidebar layout, short group labels, sidebar divider, and conversation outline styling',
+    new_0_5_30_9: 'Context compression now follows Profile compression settings and hardens stale snapshots by reusing previous summaries with a safe tail instead of recompressing full history',
 
     new_0_5_6_1: 'Add voice playback feature with Web Speech API: manual button, auto-play toggle, rainbow border animation, and mobile optimization',
     new_0_5_6_2: 'Add robust LLM JSON parser with tolerance for Python format and extract text from streaming events',
