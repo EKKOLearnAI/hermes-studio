@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const getCompressionSnapshotMock = vi.fn()
 const saveCompressionSnapshotMock = vi.fn()
 const deleteCompressionSnapshotMock = vi.fn()
+const bridgeRequestMock = vi.fn()
+const bridgeDestroyMock = vi.fn()
 
 vi.mock('../../packages/server/src/services/logger', () => ({
   logger: {
@@ -19,6 +21,13 @@ vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: class {
+    request = bridgeRequestMock
+    destroy = bridgeDestroyMock
+  },
+}))
+
 describe('ChatContextCompressor', () => {
   let originalFetch: typeof global.fetch
 
@@ -27,6 +36,10 @@ describe('ChatContextCompressor', () => {
     getCompressionSnapshotMock.mockReset()
     saveCompressionSnapshotMock.mockReset()
     deleteCompressionSnapshotMock.mockReset()
+    bridgeRequestMock.mockReset()
+    bridgeDestroyMock.mockReset()
+    bridgeRequestMock.mockRejectedValue(new Error('summarizer failed'))
+    bridgeDestroyMock.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -42,7 +55,6 @@ describe('ChatContextCompressor', () => {
     }))
 
     getCompressionSnapshotMock.mockReturnValue(null)
-    global.fetch = vi.fn(async () => ({ ok: false, status: 500 })) as any
 
     const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
 
@@ -66,7 +78,6 @@ describe('ChatContextCompressor', () => {
       lastMessageIndex: 1,
       messageCountAtTime: 2,
     })
-    global.fetch = vi.fn(async () => ({ ok: false, status: 500 })) as any
 
     const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
 
@@ -107,6 +118,68 @@ describe('ChatContextCompressor', () => {
     expect(result.messages.slice(1).map(m => m.content)).toEqual(['message 4', 'message 5'])
     expect(result.meta.llmCompressed).toBe(false)
     expect(result.meta.compressedStartIndex).toBe(3)
+    expect(saveCompressionSnapshotMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps configured first and last messages during full compression', async () => {
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { headMessageCount: 2, tailMessageCount: 3, summaryBudget: 1000 },
+    })
+    const messages = Array.from({ length: 10 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${i}`,
+    }))
+
+    getCompressionSnapshotMock.mockReturnValue(null)
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'compressed summary' },
+    })
+
+    const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
+
+    expect(result.messages.map(m => m.content)).toEqual([
+      'message 0',
+      'message 1',
+      `${SUMMARY_PREFIX}\n\ncompressed summary`,
+      'message 7',
+      'message 8',
+      'message 9',
+    ])
+    expect(result.meta.compressed).toBe(true)
+    expect(result.meta.llmCompressed).toBe(true)
+    expect(result.meta.verbatimCount).toBe(5)
+    expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', 'compressed summary', 6, 10)
+  })
+
+  it('keeps configured first messages when incremental compression reuses an existing snapshot', async () => {
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { headMessageCount: 2, tailMessageCount: 10 },
+    })
+    const messages = Array.from({ length: 6 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${i}`,
+    }))
+
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'previous summary',
+      lastMessageIndex: 3,
+      messageCountAtTime: 4,
+    })
+
+    const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
+
+    expect(bridgeRequestMock).not.toHaveBeenCalled()
+    expect(result.messages.map(m => m.content)).toEqual([
+      'message 0',
+      'message 1',
+      `${SUMMARY_PREFIX}\n\nprevious summary`,
+      'message 4',
+      'message 5',
+    ])
+    expect(result.meta.verbatimCount).toBe(4)
     expect(saveCompressionSnapshotMock).not.toHaveBeenCalled()
   })
 })
