@@ -1,6 +1,7 @@
 import type { Context } from 'koa'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
+import { isLocalGatewayUrl, isTransientGatewayError, requestViaWsl, waitForGatewayReady } from '../../services/hermes/wsl-proxy'
 import { updateUsage } from '../../db/hermes/usage-store'
+import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 
 function getGatewayManager() { return getGatewayManagerInstance() }
 
@@ -19,32 +20,6 @@ export function getSessionForRun(runId: string): string | undefined {
 }
 
 // --- Helpers ---
-
-function isTransientGatewayError(err: any): boolean {
-  const msg = String(err?.message || '')
-  const causeCode = String(err?.cause?.code || '')
-  return (
-    causeCode === 'ECONNREFUSED' ||
-    causeCode === 'ECONNRESET' ||
-    /ECONNREFUSED|ECONNRESET|fetch failed|socket hang up/i.test(msg)
-  )
-}
-
-async function waitForGatewayReady(upstream: string, timeoutMs: number = 5000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  const healthUrl = `${upstream}/health`
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(healthUrl, {
-        method: 'GET',
-        signal: AbortSignal.timeout(1200),
-      })
-      if (res.ok) return true
-    } catch { }
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  return false
-}
 
 /** Resolve profile name from request */
 function resolveProfile(ctx: Context): string {
@@ -222,7 +197,15 @@ export async function proxy(ctx: Context) {
       if (isTransientGatewayError(err) && await waitForGatewayReady(upstream)) {
         res = await fetch(url, requestInit)
       } else {
-        throw err
+        if (process.platform === 'win32' && isLocalGatewayUrl(upstream)) {
+          const fallback = await requestViaWsl(url, requestInit, headers)
+          res = new Response(fallback.body, {
+            status: fallback.status,
+            headers: fallback.headers,
+          })
+        } else {
+          throw err
+        }
       }
     }
 

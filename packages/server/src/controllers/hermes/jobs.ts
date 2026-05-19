@@ -1,4 +1,5 @@
 import type { Context } from 'koa'
+import { isLocalGatewayUrl, isTransientGatewayError, requestViaWsl, waitForGatewayReady } from '../../services/hermes/wsl-proxy'
 import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 
 function getUpstream(profile: string): string {
@@ -83,11 +84,39 @@ async function proxyRequest(ctx: Context, upstreamPath: string, method?: string)
       body,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
-  } catch (e: any) {
-    ctx.status = 502
-    ctx.set('Content-Type', 'application/json')
-    ctx.body = { error: { message: `Proxy error: ${e.message}` } }
-    return
+  } catch (err: any) {
+    if (process.platform === 'win32' && isLocalGatewayUrl(upstream)) {
+      try {
+        const fallback = await requestViaWsl(url, {
+          method: method || ctx.req.method,
+          headers,
+          body,
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        }, headers)
+        res = new Response(fallback.body, {
+          status: fallback.status,
+          headers: fallback.headers,
+        })
+      } catch (fallbackErr: any) {
+        console.error('[jobs] proxy fallback error:', fallbackErr.message, fallbackErr.stack)
+        ctx.status = 502
+        ctx.set('Content-Type', 'application/json')
+        ctx.body = { error: { message: `Proxy error: ${fallbackErr.message}` } }
+        return
+      }
+    } else if (isTransientGatewayError(err) && await waitForGatewayReady(upstream)) {
+      res = await fetch(url, {
+        method: method || ctx.req.method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+    } else {
+      ctx.status = 502
+      ctx.set('Content-Type', 'application/json')
+      ctx.body = { error: { message: `Proxy error: ${err.message}` } }
+      return
+    }
   }
 
   if (!res.ok) {

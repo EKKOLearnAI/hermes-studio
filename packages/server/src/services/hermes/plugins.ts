@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { getActiveProfileDir } from './hermes-profile'
 import { resolveAgentBridgeCommand } from './agent-bridge/manager'
+import { getActiveProfileDir } from './hermes-profile'
 
 const execFileAsync = promisify(execFile)
 
@@ -219,8 +219,35 @@ function extractError(err: any): string {
   return [err?.message, stdout, stderr].filter(Boolean).join('\n')
 }
 
+/**
+ * 过滤 WSL 启动时产生的 localhost 代理警告（NAT 模式 / mirrored 模式下的编码乱码 stderr）
+ */
+export function filterWslProxyWarnings(stderr: string): string {
+  const wslProxyPattern = /localhost|NAT|代理|networkingMode|mirrored|wsl:|无法访问|无法连接|无法解析/i
+  const garbagePattern = /[\x00-\x1F\x7F-\x9F]{3,}/
+
+  function normalizeWarningLine(line: string): string {
+    return line.replace(/\u0000/g, '').replace(/\s+/g, ' ').trim()
+  }
+
+  return stderr
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim()
+      if (!trimmed) return false
+      const normalized = normalizeWarningLine(trimmed)
+      if (!normalized) return false
+
+      // WSL 在 Windows 上输出的网络提示常常是 UTF-16LE / NUL 间隔形式，
+      // 先归一化再判断，避免关键字无法命中。
+      if (wslProxyPattern.test(normalized) || garbagePattern.test(normalized)) return false
+      return true
+    })
+    .join('\n')
+}
+
 export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
-  const command = resolveAgentBridgeCommand()
+  let command = resolveAgentBridgeCommand()
   const agentRoot = command.agentRoot || ''
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -231,6 +258,14 @@ export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
     delete env.PYTHONHOME
     delete env.PYTHONPATH
   }
+
+  const isWslPath = (p?: string): boolean => !!p && p.startsWith('/')
+  // Windows + WSL2: 如果 agentRoot 是 WSL 路径或使用了 WSL wrapper，使用 hermes-agent venv 中的 Python
+  if (process.platform === 'win32' && (command.command.includes('hermes-wsl-python') || isWslPath(command.agentRoot))) {
+    const wslPython = agentRoot ? `${agentRoot}/venv/bin/python3` : '/usr/local/lib/hermes-agent/venv/bin/python3'
+    command = { command: 'wsl', argsPrefix: ['-d', 'Ubuntu', '--', wslPython], agentRoot, hermesHome: command.hermesHome }
+  }
+
   const pythonArgs = [
     ...command.argsPrefix,
     ...(agentRoot ? ['-I'] : []),
@@ -248,17 +283,23 @@ export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
   try {
     const { stdout, stderr } = await execFileAsync(command.command, pythonArgs, {
       cwd: process.cwd(),
-      env,
+      env: {
+        ...env,
+        // 设置 Python 输出编码为 UTF-8，防止 WSL 环境下的编码问题
+        PYTHONIOENCODING: 'utf-8',
+      },
       windowsHide: true,
       timeout: 15000,
       maxBuffer: 10 * 1024 * 1024,
+      encoding: 'utf8',
     })
     const parsed = JSON.parse(stdout) as HermesPluginsResponse & { error?: string; detail?: string }
     if ((parsed as any).error) {
       throw new Error(`${(parsed as any).error}: ${(parsed as any).detail || 'unknown error'}`)
     }
-    if (stderr?.trim()) {
-      parsed.warnings = [...(parsed.warnings || []), stderr.trim()]
+    const filteredStderr = filterWslProxyWarnings(stderr).trim()
+    if (filteredStderr) {
+      parsed.warnings = [...(parsed.warnings || []), filteredStderr]
     }
     return parsed
   } catch (err: any) {
