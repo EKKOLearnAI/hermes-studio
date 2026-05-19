@@ -250,7 +250,14 @@ export async function readRun(ctx: Context) {
   }
 
   // Prevent path traversal
-  if (jobId.includes('..') || fileName.includes('..') || jobId.includes('/') || fileName.includes('/')) {
+  if (
+    jobId.includes('..')
+    || fileName.includes('..')
+    || jobId.includes('/')
+    || fileName.includes('/')
+    || jobId.includes('\\')
+    || fileName.includes('\\')
+  ) {
     ctx.status = 400
     ctx.body = { error: 'Invalid path' }
     return

@@ -1,4 +1,5 @@
 import { getActiveProfileDir, getProfileDir } from '../../services/hermes/hermes-profile'
+import { join } from 'path'
 import type { LocalUsageStats } from './usage-store'
 
 const SQLITE_AVAILABLE = (() => {
@@ -66,7 +67,7 @@ interface HermesSessionInternalRow extends HermesSessionRow {
 }
 
 function sessionDbPath(): string {
-  return `${getActiveProfileDir()}/state.db`
+  return join(getActiveProfileDir(), 'state.db')
 }
 
 function normalizeNumber(value: unknown, fallback = 0): number {
@@ -643,7 +644,7 @@ export async function getSessionDetailFromDb(sessionId: string): Promise<HermesS
 
 export async function getSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = `${getProfileDir(profile)}/state.db`
+  const dbPath = join(getProfileDir(profile), 'state.db')
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   try {
     const idx = loadAllSessions(db)
@@ -670,7 +671,7 @@ export async function getSessionDetailFromDbWithProfile(sessionId: string, profi
 
 export async function getExactSessionDetailFromDbWithProfile(sessionId: string, profile: string): Promise<HermesSessionDetailRow | null> {
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = `${getProfileDir(profile)}/state.db`
+  const dbPath = join(getProfileDir(profile), 'state.db')
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   try {
     const idx = loadAllSessions(db)
@@ -702,7 +703,7 @@ export async function findLatestExactSessionIdWithProfile(
   if (!trimmed) return null
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = `${getProfileDir(profile)}/state.db`
+  const dbPath = join(getProfileDir(profile), 'state.db')
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   const loweredQuery = trimmed.toLowerCase()
   const likePattern = buildLikePattern(loweredQuery)
@@ -1212,7 +1213,7 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
   }
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = profile ? `${getProfileDir(profile)}/state.db` : sessionDbPath()
+  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
 
   try {
@@ -1259,7 +1260,7 @@ export async function searchSessionSummariesWithProfile(
   if (!trimmed) return []
 
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = `${getProfileDir(profile)}/state.db`
+  const dbPath = join(getProfileDir(profile), 'state.db')
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   const normalized = sanitizeFtsQuery(trimmed)
   const prefixQuery = toPrefixQuery(normalized)

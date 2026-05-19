@@ -1,11 +1,12 @@
 import { readFile, stat as fsStat, readdir, mkdir, rm, rename, copyFile as fsCopyFile, writeFile as fsWriteFile } from 'fs/promises'
-import { resolve, normalize, isAbsolute, basename } from 'path'
+import { resolve, normalize, isAbsolute, basename, join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { existsSync, readFileSync } from 'fs'
 import YAML from 'js-yaml'
 import { config } from '../../config'
 import { getActiveProfileDir, getActiveEnvPath } from './hermes-profile'
+import { isPathWithin, relativePathFromBase } from './hermes-path'
 
 const execFileAsync = promisify(execFile)
 const execOpts = { windowsHide: true }
@@ -90,11 +91,7 @@ export function validatePath(filePath: string): string {
  * Check if a path is inside the upload directory.
  */
 export function isInUploadDir(filePath: string): boolean {
-  const normalized = normalize(resolve(filePath))
-  const uploadNormalized = normalize(resolve(config.uploadDir))
-  return normalized.startsWith(uploadNormalized + '/')
-    || normalized.startsWith(uploadNormalized + '\\')
-    || normalized === uploadNormalized
+  return isPathWithin(filePath, config.uploadDir)
 }
 
 /**
@@ -120,7 +117,7 @@ export function resolveHermesPath(relativePath: string): string {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
   const resolved = resolve(homeDir, normalized)
-  if (!resolved.startsWith(homeDir)) {
+  if (!isPathWithin(resolved, homeDir)) {
     throw Object.assign(new Error('Path traversal detected'), { code: 'invalid_path' })
   }
   return resolved
@@ -160,9 +157,7 @@ export class LocalFileProvider implements FileProvider {
       try {
         const fullPath = resolve(p, entry.name)
         const s = await fsStat(fullPath)
-        const relPath = fullPath.startsWith(homeDir)
-          ? fullPath.slice(homeDir.length + 1)
-          : entry.name
+        const relPath = relativePathFromBase(fullPath, homeDir) ?? entry.name
         results.push({
           name: entry.name,
           path: relPath,
@@ -181,9 +176,7 @@ export class LocalFileProvider implements FileProvider {
     const p = validatePath(filePath)
     const homeDir = getActiveProfileDir()
     const s = await fsStat(p)
-    const relPath = p.startsWith(homeDir)
-      ? p.slice(homeDir.length + 1)
-      : basename(p)
+    const relPath = relativePathFromBase(p, homeDir) ?? basename(p)
     return {
       name: basename(p),
       path: relPath || basename(p),
@@ -323,7 +316,7 @@ export class DockerFileProvider implements FileProvider {
         'exec', this.containerName, 'ls', '-la', '--time-style=+%Y-%m-%dT%H:%M:%S', p,
       ], { maxBuffer: 10 * 1024 * 1024, timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relParent = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : ''
+      const relParent = relativePathFromBase(p, homeDir) ?? ''
       return parseLsOutput(stdout, relParent)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -340,7 +333,7 @@ export class DockerFileProvider implements FileProvider {
         'exec', this.containerName, 'stat', '-c', '%n|%F|%s|%Y', p,
       ], { timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relPath = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : basename(p)
+      const relPath = relativePathFromBase(p, homeDir) ?? basename(p)
       return parseStatOutput(stdout, relPath)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -483,7 +476,7 @@ export class SSHFileProvider implements FileProvider {
         ...this.sshArgs(), `ls -la --time-style=+%Y-%m-%dT%H:%M:%S ${this.shellEscape(p)}`,
       ], { maxBuffer: 10 * 1024 * 1024, timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relParent = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : ''
+      const relParent = relativePathFromBase(p, homeDir) ?? ''
       return parseLsOutput(stdout, relParent)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -500,7 +493,7 @@ export class SSHFileProvider implements FileProvider {
         ...this.sshArgs(), `stat -c '%n|%F|%s|%Y' ${this.shellEscape(p)}`,
       ], { timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relPath = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : basename(p)
+      const relPath = relativePathFromBase(p, homeDir) ?? basename(p)
       return parseStatOutput(stdout, relPath)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -622,7 +615,7 @@ export class SingularityFileProvider implements FileProvider {
         'exec', this.imagePath, 'ls', '-la', '--time-style=+%Y-%m-%dT%H:%M:%S', p,
       ], { maxBuffer: 10 * 1024 * 1024, timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relParent = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : ''
+      const relParent = relativePathFromBase(p, homeDir) ?? ''
       return parseLsOutput(stdout, relParent)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -639,7 +632,7 @@ export class SingularityFileProvider implements FileProvider {
         'exec', this.imagePath, 'stat', '-c', '%n|%F|%s|%Y', p,
       ], { timeout: BACKEND_TIMEOUT })
       const homeDir = getActiveProfileDir()
-      const relPath = p.startsWith(homeDir) ? p.slice(homeDir.length + 1).replace(/\\/g, '/') : basename(p)
+      const relPath = relativePathFromBase(p, homeDir) ?? basename(p)
       return parseStatOutput(stdout, relPath)
     } catch (err: any) {
       if (err.code === 'ETIMEDOUT' || err.killed) throw Object.assign(new Error('Backend timeout'), { code: 'backend_timeout' })
@@ -720,7 +713,7 @@ export class SingularityFileProvider implements FileProvider {
  */
 export function getTerminalConfig(): TerminalConfig {
   try {
-    const configPath = `${getActiveProfileDir()}/config.yaml`
+    const configPath = join(getActiveProfileDir(), 'config.yaml')
     if (!existsSync(configPath)) return { backend: 'local' }
     const raw = readFileSync(configPath, 'utf-8')
     const doc = YAML.load(raw, { json: true }) as any

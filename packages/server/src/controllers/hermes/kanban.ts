@@ -3,6 +3,7 @@ import { readFile } from 'fs/promises'
 import { resolve, normalize } from 'path'
 import { homedir } from 'os'
 import * as kanbanCli from '../../services/hermes/hermes-kanban'
+import { isPathWithin } from '../../services/hermes/hermes-path'
 import {
   searchSessionSummariesWithProfile,
   getSessionDetailFromDbWithProfile,
@@ -596,7 +597,7 @@ export async function readArtifact(ctx: Context) {
   const kanbanDir = resolve(homedir(), '.hermes', 'kanban', 'workspaces')
   const resolved = resolve(normalize(filePath))
 
-  if (!resolved.startsWith(kanbanDir)) {
+  if (!isPathWithin(resolved, kanbanDir)) {
     ctx.status = 403
     ctx.body = { error: 'Path must be within kanban workspaces' }
     return

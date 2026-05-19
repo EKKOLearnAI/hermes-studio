@@ -57,9 +57,10 @@ async function viewFile(filePath: string) {
     // filePath might be absolute or relative; normalize to relative under category/skill/
     const base = `${props.category}/${props.skill}/`
     let relPath = filePath
-    if (filePath.startsWith('/')) {
+    if (filePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(filePath)) {
       // Strip absolute prefix to get relative path
-      const segments = filePath.split('/.hermes/skills/')[1]
+      const normalizedPath = filePath.replace(/\\/g, '/')
+      const segments = normalizedPath.split(/(?:^|\/)(?:\.hermes|hermes)\/skills\//)[1]
       if (segments) {
         const afterSkillDir = segments.split('/').slice(2).join('/')
         relPath = afterSkillDir

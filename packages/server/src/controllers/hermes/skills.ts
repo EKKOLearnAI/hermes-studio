@@ -6,6 +6,7 @@ import {
   safeReadFile, extractDescription, listFilesRecursive, getHermesDir,
 } from '../../services/config-helpers'
 import { pinSkill } from '../../services/hermes/hermes-cli'
+import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
 
 /** Read bundled manifest as a name→hash map from ~/.hermes/skills/.bundled_manifest */
@@ -301,7 +302,7 @@ export async function readFile_(ctx: any) {
     realPath = filePath.slice(5)
   }
   const fullPath = resolve(join(hd, 'skills', realPath))
-  if (!fullPath.startsWith(join(hd, 'skills'))) {
+  if (!isPathWithin(fullPath, join(hd, 'skills'))) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
     return

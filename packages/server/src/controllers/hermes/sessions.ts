@@ -13,6 +13,7 @@ import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-stor
 import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
 import { getActiveProfileName, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
+import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
@@ -427,7 +428,7 @@ export async function listWorkspaceFolders(ctx: any) {
 
   // Security: prevent path traversal
   const fullPath = resolve(join(WORKSPACE_BASE, subPath))
-  if (!fullPath.startsWith(resolve(WORKSPACE_BASE))) {
+  if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
     return

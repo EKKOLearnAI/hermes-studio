@@ -1,3 +1,4 @@
+import { join } from 'path'
 import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
 import type {
   ConversationDetail,
@@ -62,7 +63,7 @@ interface ConversationSessionRow {
 }
 
 function conversationDbPath(): string {
-  return `${getActiveProfileDir()}/state.db`
+  return join(getActiveProfileDir(), 'state.db')
 }
 
 function normalizeNumber(value: unknown, fallback = 0): number {
