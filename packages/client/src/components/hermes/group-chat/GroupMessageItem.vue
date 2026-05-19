@@ -56,7 +56,7 @@ const avatarSvg = computed(() => {
     return multiavatar(props.message.senderName || props.message.senderId)
 })
 
-const mentionNames = computed(() => props.agents.map(a => a.name).filter(Boolean))
+const mentionNames = computed(() => ['all', ...props.agents.map(a => a.name).filter(Boolean)])
 const parsedThinking = computed(() => parseThinking(props.message.content || '', { streaming: !!props.message.isStreaming }))
 const hasReasoningField = computed(() => !!(props.message.reasoning && props.message.reasoning.length > 0))
 const hasThinking = computed(() => hasReasoningField.value || parsedThinking.value.hasThinking)
