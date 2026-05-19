@@ -381,6 +381,13 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             messages.value = res.messages
             agents.value = res.agents
             members.value = res.members || []
+
+            const roomIdx = rooms.value.findIndex(r => r.id === res.room.id)
+            if (roomIdx >= 0) {
+                rooms.value[roomIdx] = { ...rooms.value[roomIdx], ...res.room }
+            } else {
+                rooms.value.push(res.room)
+            }
         } catch (err: any) {
             error.value = err.message
             throw err
@@ -400,6 +407,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     if (!res?.error) {
                         members.value = res.members || []
                         if (res.agents) agents.value = res.agents
+                        if (res.defaultAgentId !== undefined) {
+                            const roomIdx = rooms.value.findIndex(r => r.id === roomId)
+                            if (roomIdx >= 0) rooms.value[roomIdx].defaultAgentId = res.defaultAgentId
+                        }
 
                         // Restore typing state from server
                         if (res.typingUsers) {
@@ -469,7 +480,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
-    async function createNewRoom(name: string, inviteCode: string, agentList?: { profile: string; name?: string; description?: string; invited?: boolean }[], compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
+    async function createNewRoom(name: string, inviteCode: string, agentList?: { profile: string; name?: string; description?: string; invited?: boolean; setDefaultAgent?: boolean }[], compression?: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
         try {
             const res = await createRoom({
                 name,

@@ -828,6 +828,7 @@ export class GroupChatServer {
         // Load history from SQLite
         const messages = this.storage.getMessages(roomId)
         const agents = this.storage.getRoomAgents(roomId)
+        const roomInfo = this.storage.getRoom(roomId)
 
         ack?.({
             roomId,
@@ -838,6 +839,7 @@ export class GroupChatServer {
             rooms: this.getRoomIds(),
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            defaultAgentId: roomInfo?.defaultAgentId || null,
         })
 
         logger.debug(`[GroupChat] ${userName} (user=${userId}) joined room: ${roomId}`)
