@@ -27,11 +27,13 @@ const JSON_MAX_KEYS_PER_OBJECT = 50;
 const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
-const props = defineProps<{ message: Message; highlight?: boolean }>();
+const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
 const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+
+const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
 const isCommandError = computed(() => props.message.role === "command" && props.message.systemType === "error");
 const isStatusCommand = computed(() => isCommandMessage.value && props.message.commandAction === "status");
@@ -868,6 +870,7 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render user message content -->
@@ -915,6 +918,7 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
               :content="message.content"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render system message content -->

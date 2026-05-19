@@ -19,8 +19,10 @@ import { downloadFile, getDownloadUrl } from '@/api/hermes/download'
 const props = withDefaults(defineProps<{
     content: string
     mentionNames?: string[]
+    headingIdPrefix?: string
 }>(), {
     mentionNames: () => [],
+    headingIdPrefix: '',
 })
 
 const { t } = useI18n()
@@ -67,6 +69,27 @@ function normalizeLocalFilePath(path: string): string {
 
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
+
+  // Add IDs to headings for anchor links
+  const prefix = props.headingIdPrefix ? `${props.headingIdPrefix}-` : ''
+  let headingCounter = 0
+  // Match any h1-h6 tags, with or without attributes
+  html = html.replace(/<(h[1-6])([^>]*)>/g, (match, tag, attrs) => {
+    headingCounter++
+    const id = `${prefix}heading-${headingCounter}`
+    
+    // Check if id attribute already exists
+    if (attrs.includes('id=')) {
+      // Replace existing id
+      return match.replace(/id="[^"]*"/, `id="${id}"`).replace(/id='[^']*'/, `id="${id}"`)
+    }
+    
+    // Add new id
+    if (attrs.trim() === '') {
+      return `<${tag} id="${id}">`
+    }
+    return `<${tag} ${attrs.trim()} id="${id}">`
+  })
 
   // Replace image src paths with download URLs
   html = html.replace(/\bsrc=(["'])([^"']+)\1/g, (match, quote, path) => {

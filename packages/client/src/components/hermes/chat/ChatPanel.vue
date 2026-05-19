@@ -24,6 +24,7 @@ import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
+import OutlinePanel from "./OutlinePanel.vue";
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
@@ -34,6 +35,7 @@ const { t } = useI18n();
 
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
+const showOutline = ref(false);
 
 const currentMode = ref<"chat" | "live">("chat");
 
@@ -1030,6 +1032,30 @@ async function handleSessionModelCustomSubmit() {
                 <NButton
                   quaternary
                   size="small"
+                  @click="showOutline = !showOutline"
+                  circle
+                >
+                  <template #icon>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <path d="M3 12h18M3 6h18M3 18h18" />
+                    </svg>
+                  </template>
+                </NButton>
+              </template>
+              {{ t("chat.outlineTitle") }}
+            </NTooltip>
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton
+                  quaternary
+                  size="small"
                   @click="copySessionId()"
                   circle
                 >
@@ -1073,7 +1099,12 @@ async function handleSessionModelCustomSubmit() {
       </header>
 
       <template v-if="currentMode === 'chat'">
-        <MessageList />
+        <div class="chat-content-wrapper">
+          <div class="chat-main-content">
+            <MessageList />
+          </div>
+          <OutlinePanel v-if="showOutline" :messages="chatStore.messages" />
+        </div>
         <div v-if="visibleApproval" class="approval-bar">
           <div class="approval-icon" aria-hidden="true">
             <svg
@@ -1670,6 +1701,21 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-width: 0;
+}
+
+.chat-content-wrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-main-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
