@@ -31,6 +31,13 @@ export function gatewayStatusLooksRunning(output: string): boolean {
   return text.includes('gateway is running') || text.includes('running')
 }
 
+export function gatewayStatusLooksRuntimeLocked(output: string): boolean {
+  const text = output.toLowerCase()
+  return text.includes('runtime lock is already held')
+    || text.includes('gateway runtime lock is already held')
+    || text.includes('already held by another instance')
+}
+
 export async function isGatewayRunningForProfile(hermesBin: string, profileDir: string): Promise<boolean> {
   try {
     const { stdout, stderr } = await execFileAsync(hermesBin, ['gateway', 'status'], {
@@ -44,6 +51,10 @@ export async function isGatewayRunningForProfile(hermesBin: string, profileDir: 
     return gatewayStatusLooksRunning(`${stdout}\n${stderr}`)
   } catch (err: any) {
     const output = `${err?.stdout || ''}\n${err?.stderr || ''}\n${err?.message || ''}`
+    if (gatewayStatusLooksRuntimeLocked(output)) {
+      logger.info({ profileDir }, 'Hermes gateway status reported runtime lock held; treating gateway as already running')
+      return true
+    }
     if (output.trim()) {
       logger.warn({ err, profileDir }, 'Hermes gateway status failed; treating as not running')
     }
