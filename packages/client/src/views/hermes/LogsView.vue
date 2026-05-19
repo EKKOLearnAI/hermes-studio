@@ -120,7 +120,7 @@ onMounted(async () => {
     </header>
 
     <div class="logs-body">
-      <NSpin :show="loading">
+      <NSpin :show="loading" class="logs-spin">
         <div v-if="filteredEntries.length === 0 && !loading" class="logs-empty">
           {{ t('logs.noEntries') }}
         </div>
@@ -191,6 +191,16 @@ onMounted(async () => {
   min-height: 0;
 }
 
+.logs-spin {
+  min-height: 100%;
+  display: block;
+
+  :deep(.n-spin-container),
+  :deep(.n-spin-content) {
+    min-height: 100%;
+  }
+}
+
 .logs-empty {
   display: flex;
   align-items: center;
@@ -202,6 +212,7 @@ onMounted(async () => {
 
 .log-list {
   padding: 4px 0;
+  min-height: 100%;
 }
 
 .log-entry {

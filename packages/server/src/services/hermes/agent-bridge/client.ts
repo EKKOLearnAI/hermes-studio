@@ -1,6 +1,9 @@
 import { setTimeout as delay } from 'timers/promises'
 import { createConnection, type Socket } from 'net'
 import { URL } from 'url'
+import { join } from 'path'
+import { bridgeLogger } from '../../logger'
+import { getActiveProfileName, getProfileDir } from '../hermes-profile'
 
 export const DEFAULT_AGENT_BRIDGE_ENDPOINT = process.platform === 'win32'
   ? 'tcp://127.0.0.1:18765'
@@ -23,6 +26,13 @@ export interface AgentBridgeOptions {
 
 export interface AgentBridgeRequestOptions {
   timeoutMs?: number
+}
+
+export interface AgentBridgeChatOptions {
+  force_compress?: boolean
+  storage_message?: AgentBridgeMessage
+  model?: string
+  provider?: string
 }
 
 export type AgentBridgeMessage =
@@ -89,6 +99,55 @@ export class AgentBridgeClient {
   constructor(options: AgentBridgeOptions = {}) {
     this.endpoint = options.endpoint || process.env.HERMES_AGENT_BRIDGE_ENDPOINT || DEFAULT_AGENT_BRIDGE_ENDPOINT
     this.timeoutMs = options.timeoutMs ?? envPositiveInt('HERMES_AGENT_BRIDGE_TIMEOUT_MS') ?? DEFAULT_AGENT_BRIDGE_TIMEOUT_MS
+  }
+
+  private summarizePayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const action = String(payload.action || '')
+    const summary: Record<string, unknown> = { action }
+    for (const key of ['session_id', 'run_id', 'request_id', 'approval_id', 'profile']) {
+      if (payload[key] != null) summary[key] = payload[key]
+    }
+    if (Array.isArray(payload.conversation_history)) summary.conversation_history_count = payload.conversation_history.length
+    if (Array.isArray(payload.messages)) summary.messages_count = payload.messages.length
+    if (typeof payload.message === 'string') summary.message_chars = payload.message.length
+    else if (Array.isArray(payload.message)) summary.message_parts = payload.message.length
+    if (typeof payload.command === 'string') summary.command = payload.command
+    if (typeof payload.text === 'string') summary.text_chars = payload.text.length
+    if (typeof payload.error === 'string') summary.error = payload.error
+    if (payload.force_compress === true) summary.force_compress = true
+    return summary
+  }
+
+  private summarizeResponse(response: Record<string, unknown>): Record<string, unknown> {
+    const summary: Record<string, unknown> = { ok: response.ok === true }
+    for (const key of ['session_id', 'run_id', 'request_id', 'status', 'cursor', 'event_cursor']) {
+      if (response[key] != null) summary[key] = response[key]
+    }
+    if (typeof response.delta === 'string') summary.delta_chars = response.delta.length
+    if (typeof response.output === 'string') summary.output_chars = response.output.length
+    if (Array.isArray(response.events)) summary.events_count = response.events.length
+    if (typeof response.error === 'string') summary.error = response.error
+    if (Array.isArray(response.history)) summary.history_count = response.history.length
+    return summary
+  }
+
+  private runtimeContext(payload: Record<string, unknown>): Record<string, unknown> {
+    const requestedProfile = typeof payload.profile === 'string' ? payload.profile.trim() : ''
+    let profile = requestedProfile || 'default'
+    try {
+      if (!requestedProfile) profile = getActiveProfileName()
+    } catch {}
+
+    const context: Record<string, unknown> = {
+      profile,
+      cwd: process.cwd(),
+    }
+    try {
+      const profileDir = getProfileDir(profile)
+      context.profile_dir = profileDir
+      context.config_path = join(profileDir, 'config.yaml')
+    } catch {}
+    return context
   }
 
   async connect(): Promise<this> {
@@ -191,16 +250,52 @@ export class AgentBridgeClient {
   ): Promise<T> {
     const run = async (): Promise<T> => {
       const timeoutMs = options.timeoutMs || this.timeoutMs
-      const socket = await this.connectSocket()
-      socket.write(`${JSON.stringify(payload)}\n`)
-      const raw = await this.readResponse(socket, timeoutMs)
-      const response = JSON.parse(raw) as { ok?: boolean; error?: string }
-      if (!response.ok) {
-        const error = new AgentBridgeError(response.error || 'Agent bridge request failed')
-        error.response = response
-        throw error
+      const startedAt = Date.now()
+      const action = String(payload.action || '')
+      const shouldLogRequest = action !== 'get_output'
+      const runtimeContext = shouldLogRequest ? this.runtimeContext(payload) : undefined
+      if (shouldLogRequest) {
+        bridgeLogger.info({
+          endpoint: this.endpoint,
+          timeoutMs,
+          runtime: runtimeContext,
+          request: this.summarizePayload(payload),
+        }, '[agent-bridge-client] request')
       }
-      return response as T
+      try {
+        const socket = await this.connectSocket()
+        socket.write(`${JSON.stringify(payload)}\n`)
+        const raw = await this.readResponse(socket, timeoutMs)
+        const response = JSON.parse(raw) as { ok?: boolean; error?: string }
+        if (!response.ok) {
+          const error = new AgentBridgeError(response.error || 'Agent bridge request failed')
+          error.response = response
+          bridgeLogger.warn({
+            durationMs: Date.now() - startedAt,
+            runtime: runtimeContext,
+            response: this.summarizeResponse(response as Record<string, unknown>),
+          }, '[agent-bridge-client] request rejected')
+          throw error
+        }
+        if (shouldLogRequest) {
+          bridgeLogger.info({
+            durationMs: Date.now() - startedAt,
+            runtime: runtimeContext,
+            response: this.summarizeResponse(response as Record<string, unknown>),
+          }, '[agent-bridge-client] response')
+        }
+        return response as T
+      } catch (err: any) {
+        if (!(err instanceof AgentBridgeError)) {
+          bridgeLogger.error({
+            durationMs: Date.now() - startedAt,
+            err: { message: err?.message, name: err?.name },
+            runtime: runtimeContext,
+            request: this.summarizePayload(payload),
+          }, '[agent-bridge-client] request failed')
+        }
+        throw err
+      }
     }
 
     const next = this.lock.then(run, run)
@@ -218,14 +313,19 @@ export class AgentBridgeClient {
     conversationHistory?: unknown[],
     instructions?: string,
     profile?: string,
+    options: AgentBridgeChatOptions = {},
   ): Promise<AgentBridgeChatStarted> {
     return this.request<AgentBridgeChatStarted>({
       action: 'chat',
       session_id: sessionId,
       message,
+      ...(options.storage_message !== undefined ? { storage_message: options.storage_message } : {}),
       ...(conversationHistory ? { conversation_history: conversationHistory } : {}),
       ...(instructions ? { instructions } : {}),
       ...(profile ? { profile } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.force_compress ? { force_compress: true } : {}),
     })
   }
 

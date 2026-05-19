@@ -7,6 +7,16 @@ export interface GatewayStatus {
   url: string
   running: boolean
   pid?: number
+  diagnostics?: {
+    pid_path: string
+    config_path: string
+    pid_file_exists: boolean
+    config_exists: boolean
+    health_url: string
+    health_checked_at: string
+    health_ok?: boolean
+    reason: string
+  }
 }
 
 export async function fetchGateways(): Promise<GatewayStatus[]> {

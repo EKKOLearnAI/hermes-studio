@@ -82,6 +82,7 @@ describe('AppSidebar search entry', () => {
     mockAppStore.updateAvailable = false
     mockAppStore.clientOutdated = false
     mockAppStore.updating = false
+    mockAppStore.sidebarCollapsed = false
     mockAppStore.reloadClient.mockClear()
   })
 
@@ -126,5 +127,34 @@ describe('AppSidebar search entry', () => {
 
     await reloadButton!.trigger('click')
     expect(mockAppStore.reloadClient).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses short group labels and keeps group folding active when collapsed', async () => {
+    mockAppStore.sidebarCollapsed = true
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          NButton: true,
+        },
+      },
+    })
+
+    expect(wrapper.classes()).toContain('collapsed')
+    expect(wrapper.findAll('.nav-group-label span').map(node => node.text())).toEqual([
+      'sidebar.groupConversationShort',
+      'sidebar.groupAgentShort',
+      'sidebar.groupMonitoringShort',
+      'sidebar.groupSystemShort',
+    ])
+
+    const agentGroup = wrapper.findAll('.nav-group')[1]
+    expect(agentGroup.find('.nav-group-items').attributes('style')).toBeUndefined()
+
+    await agentGroup.find('.nav-group-label').trigger('click')
+    expect(agentGroup.find('.nav-group-items').attributes('style')).toContain('display: none')
   })
 })

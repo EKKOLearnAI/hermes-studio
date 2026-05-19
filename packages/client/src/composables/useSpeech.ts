@@ -15,6 +15,15 @@ export interface OpenaiTtsOptions {
   pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
 }
 
+export interface MimoTtsOptions {
+  baseUrl: string
+  apiKey: string
+  model: string
+  voice: string               // preset voice ID (preset mode) or data URI (clone mode)
+  voiceDesignDesc?: string    // voice design description text (voice design mode)
+  stylePrompt?: string        // natural language style instruction
+}
+
 export interface SpeechState {
   isPlaying: boolean
   isPaused: boolean
@@ -333,26 +342,165 @@ export function useSpeech() {
   function openaiToggle(messageId: string, content: string, opts: OpenaiTtsOptions) {
     if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
       if (isCustomPaused.value) {
-        // Resume
         if (customAudio) {
           customAudio.play()
         }
         isCustomPaused.value = false
       } else {
-        // Pause
         if (customAudio) {
           customAudio.pause()
         }
         isCustomPaused.value = true
       }
     } else {
-      // Stop other speech and start new
       stop(false)
       if (customAudio) {
         customAudio.pause()
         customAudio = null
       }
       openaiPlay(messageId, content, opts)
+    }
+  }
+
+  // ─── MiMo TTS Engine ──────────────────────────────────────────
+
+  async function mimoPlay(
+    messageId: string,
+    content: string,
+    opts: MimoTtsOptions,
+  ) {
+    const text = extractReadableText(content)
+    if (!text) return
+
+    const token = ++playbackToken
+
+    isCustomPlaying.value = true
+    isCustomPaused.value = false
+    currentCustomMessageId.value = messageId
+
+    // Build messages based on model type
+    const messages: Array<{ role: string; content: string }> = []
+
+    if (opts.model === 'mimo-v2.5-tts-voicedesign') {
+      // Voice design: user message = voice description (+ appended style prompt)
+      const desc = opts.voiceDesignDesc || ''
+      const userContent = opts.stylePrompt
+        ? `${desc}\n风格指令：${opts.stylePrompt}`
+        : desc
+      messages.push({ role: 'user', content: userContent || '默认音色' })
+    } else {
+      // Preset voices: user message = style prompt or empty
+      messages.push({ role: 'user', content: opts.stylePrompt || '' })
+    }
+
+    // assistant message = synthesis text
+    messages.push({ role: 'assistant', content: text })
+
+    const audio: Record<string, any> = { format: 'wav' }
+    // Voice design model does not accept audio.voice
+    if (opts.model !== 'mimo-v2.5-tts-voicedesign') {
+      audio.voice = opts.voice
+    }
+
+    const body: Record<string, any> = {
+      model: opts.model,
+      messages,
+      audio,
+    }
+
+    const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'api-key': opts.apiKey,
+    }
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
+
+      if (token !== playbackToken) return
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`MiMo TTS 返回 ${res.status}: ${errText || res.statusText}`)
+      }
+
+      const json = await res.json()
+      if (token !== playbackToken) return
+
+      const audioBase64 = json?.choices?.[0]?.message?.audio?.data
+      if (!audioBase64) {
+        throw new Error('MiMo TTS 响应中未找到音频数据')
+      }
+
+      // base64 → binary → Blob
+      const binaryStr = atob(audioBase64)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i)
+      }
+      const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+
+      if (token !== playbackToken) return
+
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      customAudio = audio
+
+      audio.onended = () => {
+        if (token !== playbackToken) return
+        URL.revokeObjectURL(audioUrl)
+        isCustomPlaying.value = false
+        isCustomPaused.value = false
+        currentCustomMessageId.value = null
+        customAudio = null
+      }
+
+      audio.onerror = () => {
+        if (token !== playbackToken) return
+        URL.revokeObjectURL(audioUrl)
+        console.warn('[useSpeech] MiMo TTS audio playback error')
+        isCustomPlaying.value = false
+        isCustomPaused.value = false
+        currentCustomMessageId.value = null
+        customAudio = null
+      }
+
+      await audio.play()
+    } catch (err) {
+      if (token !== playbackToken) return
+      console.error('[useSpeech] MiMo TTS 请求失败:', err)
+      isCustomPlaying.value = false
+      isCustomPaused.value = false
+      currentCustomMessageId.value = null
+      throw err
+    }
+  }
+
+  function mimoToggle(messageId: string, content: string, opts: MimoTtsOptions) {
+    if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
+      if (isCustomPaused.value) {
+        if (customAudio) {
+          customAudio.play()
+        }
+        isCustomPaused.value = false
+      } else {
+        if (customAudio) {
+          customAudio.pause()
+        }
+        isCustomPaused.value = true
+      }
+    } else {
+      stop(false)
+      if (customAudio) {
+        customAudio.pause()
+        customAudio = null
+      }
+      mimoPlay(messageId, content, opts)
     }
   }
 
@@ -472,6 +620,10 @@ export function useSpeech() {
     // OpenAI-compatible TTS
     openaiPlay,
     openaiToggle,
+
+    // MiMo TTS
+    mimoPlay,
+    mimoToggle,
 
     // Browser WebSpeech (直接调用避免 Rolldown 树摇)
     speakViaBrowser,

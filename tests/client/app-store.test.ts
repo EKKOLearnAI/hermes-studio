@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const mockSystemApi = vi.hoisted(() => ({
@@ -21,6 +21,10 @@ describe('App Store', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     window.localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('persists desktop sidebar collapsed state to localStorage', () => {
@@ -222,6 +226,40 @@ describe('App Store', () => {
     expect(store.getModelAlias('deepseek-v4-flash', 'deepseek')).toBe('Flash Alias')
     expect(store.displayModelName('deepseek-v4-flash', 'deepseek')).toBe('Flash Alias')
     expect(store.displayModelName('unknown', 'deepseek')).toBe('unknown')
+  })
+
+  it('does not refetch available models within the cache window after an empty response', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: '',
+      default_provider: '',
+      groups: [],
+      allProviders: [],
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+    await store.loadModels()
+
+    expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits only up to the run timeout for the first available models request', async () => {
+    vi.useFakeTimers()
+    mockSystemApi.fetchAvailableModels.mockReturnValue(new Promise(() => {}))
+    const store = useAppStore()
+    let resolved = false
+
+    const waitPromise = store.waitForModelsForRun(15000).then(() => {
+      resolved = true
+    })
+
+    expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(14999)
+    expect(resolved).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await waitPromise
+    expect(resolved).toBe(true)
+    expect(store.modelGroups).toEqual([])
   })
 
   it('keeps aliases scoped to their provider when model IDs overlap', async () => {

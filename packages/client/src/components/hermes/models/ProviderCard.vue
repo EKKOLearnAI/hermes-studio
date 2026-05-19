@@ -98,6 +98,10 @@ function resetVisibility() {
   selectedVisibleModels.value = [...allModels.value]
 }
 
+function clearVisibility() {
+  selectedVisibleModels.value = []
+}
+
 async function handleDelete() {
   let copilotMsg = ''
   if (isCopilot.value) {
@@ -126,7 +130,7 @@ async function handleDelete() {
           // 服务端会在默认模型属于 copilot 时清掉 model.default，这里再清理本地
           // 会话级 model/provider，避免 Chat 页继续显示已下架的 copilot 模型。
           chatStore.clearProviderFromSessions('copilot')
-          await Promise.all([modelsStore.fetchProviders(), appStore.loadModels()])
+          await modelsStore.fetchProviders()
         } else {
           await modelsStore.removeProvider(props.provider.provider)
         }
@@ -272,6 +276,9 @@ async function handleDelete() {
       <div class="visibility-actions">
         <NButton size="small" quaternary :disabled="visibilitySaving" @click="resetVisibility">
           {{ t('models.showAllModels') }}
+        </NButton>
+        <NButton size="small" quaternary :disabled="visibilitySaving" @click="clearVisibility">
+          {{ t('models.clearVisibleModels') }}
         </NButton>
         <div class="visibility-action-spacer" />
         <NButton size="small" :disabled="visibilitySaving" @click="showVisibilityModal = false">

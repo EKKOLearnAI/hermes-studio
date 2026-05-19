@@ -17,7 +17,9 @@ import {
     addAgent,
     listAgents,
     removeAgent,
+    cloneRoom as cloneRoomApi,
     deleteRoom as deleteRoomApi,
+    clearRoomContext,
 } from '@/api/hermes/group-chat'
 
 export const useGroupChatStore = defineStore('groupChat', () => {
@@ -139,6 +141,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             const room = rooms.value.find(r => r.id === data.roomId)
             if (room) room.totalTokens = data.totalTokens
         })
+
+        socket.on('room_cleared', (data: { roomId: string; totalTokens: number }) => {
+            const room = rooms.value.find(r => r.id === data.roomId)
+            if (room) room.totalTokens = data.totalTokens
+            if (data.roomId === currentRoomId.value) {
+                messages.value = []
+                typingUsers.value.clear()
+                contextStatuses.value.clear()
+            }
+        })
     }
 
     function disconnect() {
@@ -241,7 +253,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 name,
                 inviteCode,
                 agents: agentList,
-                compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 20 },
+                compression: compression || { triggerTokens: 100000, maxHistoryTokens: 32000, tailMessageCount: 10 },
             })
             rooms.value.push(res.room)
             return res
@@ -273,6 +285,33 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 agents.value = []
                 roomName.value = ''
             }
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }) {
+        try {
+            const res = await cloneRoomApi(roomId, data)
+            rooms.value.push(res.room)
+            return res
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
+    async function clearCurrentRoomContext() {
+        if (!currentRoomId.value) return
+        try {
+            const res = await clearRoomContext(currentRoomId.value)
+            messages.value = []
+            typingUsers.value.clear()
+            contextStatuses.value.clear()
+            const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
+            if (idx >= 0 && res.room) rooms.value[idx] = res.room
+            return res
         } catch (err: any) {
             error.value = err.message
             throw err
@@ -358,6 +397,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         createNewRoom,
         joinByCode,
         deleteRoom,
+        cloneRoom,
+        clearCurrentRoomContext,
         loadAgents,
         addAgentToRoom,
         removeAgentFromRoom,

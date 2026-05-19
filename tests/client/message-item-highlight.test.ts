@@ -120,9 +120,11 @@ describe('MessageItem tool details', () => {
 
     const expected = JSON.stringify(message, null, 2)
     const code = wrapper.find('.tool-details code.hljs')
+    const displayed = JSON.parse(code.text())
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('json')
     expect(wrapper.html()).toContain('chat.truncated')
-    expect(code.findAll('span')).toHaveLength(0)
+    expect(displayed.content).toContain('chat.truncated')
+    expect(code.findAll('span').length).toBeGreaterThan(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(expected)
@@ -150,12 +152,43 @@ describe('MessageItem tool details', () => {
 
     await wrapper.find('.tool-line').trigger('click')
 
+    const code = wrapper.find('.tool-details code.hljs')
+    const displayed = JSON.parse(code.text())
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('json')
     expect(wrapper.html()).toContain('chat.truncated')
-    expect(wrapper.find('.tool-details code.hljs').findAll('span')).toHaveLength(0)
+    expect(displayed.content).toContain('chat.truncated')
+    expect(code.findAll('span').length).toBeGreaterThan(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(fullResult, null, 2))
+  })
+
+  it('truncates large JSON arrays at item boundaries so display remains parseable JSON', async () => {
+    const fullResult = Array.from({ length: 100 }, (_, index) => ({
+      index,
+      value: `item-${index}-${'x'.repeat(80)}`,
+    }))
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-array',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'browser_snapshot',
+          toolResult: JSON.stringify(fullResult),
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const code = wrapper.find('.tool-details code.hljs')
+    const displayed = JSON.parse(code.text())
+    expect(Array.isArray(displayed)).toBe(true)
+    expect(displayed.at(-1)).toContain('chat.truncated')
+    expect(code.text().length).toBeLessThanOrEqual(1000)
   })
 
   it('copies the full large raw tool result even when the display is truncated', async () => {
@@ -177,9 +210,11 @@ describe('MessageItem tool details', () => {
 
     await wrapper.find('.tool-line').trigger('click')
 
+    const displayedResult = fullResult.slice(0, 1000) + '\nchat.truncated'
+    const code = wrapper.find('.tool-details code.hljs')
     expect(wrapper.find('.tool-details .code-lang').text()).toBe('text')
-    expect(wrapper.html()).toContain('chat.truncated')
-    expect(wrapper.find('.tool-details code.hljs').findAll('span')).toHaveLength(0)
+    expect(code.text()).toBe(displayedResult)
+    expect(code.findAll('span')).toHaveLength(0)
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(fullResult)

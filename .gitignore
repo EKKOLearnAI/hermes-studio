@@ -9,7 +9,10 @@ lerna-debug.log*
 package-lock.json
 node_modules
 dist
+playwright-report
+test-results
 dist-ssr
+coverage
 __pycache__/
 *.py[cod]
 server/dist

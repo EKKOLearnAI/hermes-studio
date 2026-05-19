@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'fs'
 import { join, relative } from 'path'
 
 import { changelog } from '@/data/changelog'
-import { loadLocale, supportedLocales } from '@/i18n/messages'
+import { messages, supportedLocales } from '@/i18n/messages'
 import en from '@/i18n/locales/en'
 import { createI18n } from 'vue-i18n'
 
@@ -102,13 +102,12 @@ describe('i18n locale coverage', () => {
     'chat.sessionNotFound',
   ])
 
-  beforeAll(async () => {
-    const results = await Promise.all(
-      supportedLocales.filter(l => l !== 'en').map(async l => {
-        const msgs = await loadLocale(l)
-        if (msgs) allMessages[l] = msgs
-      }),
-    )
+  beforeAll(() => {
+    for (const l of supportedLocales) {
+      if (l !== 'en' && messages[l]) {
+        allMessages[l] = messages[l]
+      }
+    }
   })
 
   it('defines every statically referenced translation key in the English source locale', () => {
@@ -132,8 +131,8 @@ describe('i18n locale coverage', () => {
   })
 
   it('localizes Skills Usage page copy in every non-English locale instead of falling back to English', () => {
-    const englishMessages = rawMessages.en
-    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+    const englishMessages = messages.en
+    const untranslated = Object.entries(messages).flatMap(([locale, localeMessages]) => {
       if (locale === 'en') return []
 
       return SKILLS_USAGE_LOCALIZED_KEYS.flatMap((key) => {
@@ -148,7 +147,7 @@ describe('i18n locale coverage', () => {
 
 
   it('keeps Skills Usage summary and table labels compact across locales', () => {
-    const oversized = Object.entries(rawMessages).flatMap(([locale, localeMessages]) =>
+    const oversized = Object.entries(messages).flatMap(([locale, localeMessages]) =>
       Object.entries(SKILLS_USAGE_COMPACT_LABEL_LIMITS).flatMap(([key, maxLength]) => {
         const localeValue = getPath(localeMessages, key)
         return labelLength(localeValue) > maxLength

@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.5.22",
+  "version": "0.5.28",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -43,6 +43,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
@@ -67,6 +69,7 @@
     "@koa/router": "^15.4.0",
     "@multiavatar/multiavatar": "^1.0.7",
     "@pinia/testing": "^1.0.3",
+    "@playwright/test": "^1.60.0",
     "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",
     "@types/koa": "^2.15.0",
@@ -79,6 +82,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.5",
+    "@vitest/coverage-v8": "^3.2.4",
     "@vue/test-utils": "^2.4.6",
     "@vue/tsconfig": "^0.9.1",
     "@xterm/addon-fit": "^0.11.0",

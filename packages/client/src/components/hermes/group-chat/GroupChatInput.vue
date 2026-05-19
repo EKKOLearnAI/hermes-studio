@@ -13,6 +13,35 @@ const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const isComposing = ref(false)
 
+// 自定义高度拖拽
+const textareaHeight = ref<number | null>(null)
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const el = textareaRef.value
+  if (!el) return
+  const startHeight = el.clientHeight
+  const startY = e.clientY
+
+  function onMouseMove(e: MouseEvent) {
+    const deltaY = e.clientY - startY
+    const newHeight = startHeight - deltaY
+    textareaHeight.value = Math.max(20, Math.min(400, Math.round(newHeight)))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
 // ─── Mention State ───────────────────────────────────────
 
 const mentionActive = ref(false)
@@ -125,8 +154,10 @@ function selectMention(name: string) {
             const newPos = before.length + name.length + 2
             el.setSelectionRange(newPos, newPos)
             el.focus()
-            el.style.height = 'auto'
-            el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+            if (textareaHeight.value === null) {
+                el.style.height = 'auto'
+                el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+            }
         }
     })
 }
@@ -173,15 +204,12 @@ function handleSend() {
     emit('send', content)
     inputText.value = ''
     mentionActive.value = false
-
-    nextTick(() => {
-        if (textareaRef.value) {
-            textareaRef.value.style.height = 'auto'
-        }
-    })
+    // 发送后重置到自定义高度（不清除拖拽状态）
 }
 
 function handleInput(e: Event) {
+    // 用户手动拖拽自定义高度时，不覆盖
+    if (textareaHeight.value !== null) return
     store.emitTyping()
     const el = e.target as HTMLTextAreaElement
     el.style.height = 'auto'
@@ -233,10 +261,12 @@ function handleCompositionEnd() {
 <template>
     <div class="chat-input-area">
         <div class="input-wrapper">
+            <div class="resize-handle" @mousedown="startResize"></div>
             <textarea
                 ref="textareaRef"
                 v-model="inputText"
                 class="input-textarea"
+                :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
                 :placeholder="t('groupChat.inputPlaceholder')"
                 rows="1"
                 @keydown="handleKeydown"
@@ -326,6 +356,7 @@ function handleCompositionEnd() {
     border: 1px solid $border-color;
     border-radius: $radius-md;
     padding: 10px 12px;
+    position: relative;
     transition: border-color $transition-fast, background-color $transition-fast;
 
     &:focus-within {
@@ -334,6 +365,21 @@ function handleCompositionEnd() {
 
     .dark & {
         background-color: #333333;
+    }
+}
+
+.resize-handle {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: row-resize;
+    z-index: 2;
+
+    &:hover {
+        background: rgba($accent-primary, 0.15);
+        border-radius: 4px;
     }
 }
 
@@ -347,7 +393,7 @@ function handleCompositionEnd() {
     font-size: 14px;
     line-height: 1.5;
     resize: none;
-    max-height: 100px;
+    max-height: 400px;
     min-height: 20px;
     overflow-y: auto;
 

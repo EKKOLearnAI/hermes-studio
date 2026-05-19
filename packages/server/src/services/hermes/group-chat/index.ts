@@ -190,7 +190,7 @@ class ChatStorage {
     saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
         this.db()?.prepare(
             'INSERT OR IGNORE INTO gc_rooms (id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 20)
+        ).run(id, name, inviteCode || null, config?.triggerTokens ?? 100000, config?.maxHistoryTokens ?? 32000, config?.tailMessageCount ?? 10)
     }
 
     updateRoomConfig(roomId: string, config: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -231,6 +231,14 @@ class ChatStorage {
         this.db()?.prepare(
             'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)'
         ).run(msg.id, msg.roomId, msg.senderId, msg.senderName, msg.content, msg.timestamp)
+    }
+
+    clearRoomContext(roomId: string): void {
+        const db = this.db()
+        if (!db) return
+        db.prepare('DELETE FROM gc_messages WHERE roomId = ?').run(roomId)
+        db.prepare('DELETE FROM gc_context_snapshots WHERE roomId = ?').run(roomId)
+        db.prepare('UPDATE gc_rooms SET totalTokens = 0 WHERE id = ?').run(roomId)
     }
 
     pruneMessages(roomId: string, keep = 500): void {
@@ -481,6 +489,18 @@ export class GroupChatServer {
 
     getRoomIds(): string[] {
         return Array.from(this.rooms.keys())
+    }
+
+    clearRoomRuntimeState(roomId: string): void {
+        const roomTyping = this.typingState.get(roomId)
+        if (roomTyping) {
+            for (const entry of roomTyping.values()) clearTimeout(entry.timer)
+            this.typingState.delete(roomId)
+        }
+        this.contextStatusState.delete(roomId)
+        this.agentClients.resetRoomContext(roomId)
+        this.nsp.to(roomId).emit('room_cleared', { roomId, totalTokens: 0 })
+        this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens: 0 })
     }
 
     // ─── Restore Agents ─────────────────────────────────────────

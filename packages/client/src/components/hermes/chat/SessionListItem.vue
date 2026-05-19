@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { NPopconfirm, NCheckbox } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { Session } from '@/stores/hermes/chat'
+import { useAppStore } from '@/stores/hermes/app'
 import { formatTimestampMs } from '@/shared/session-display'
 
 const props = defineProps<{
@@ -23,6 +24,12 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const appStore = useAppStore()
+const sessionModelName = computed(() =>
+  props.session.model
+    ? appStore.displayModelName(props.session.model, props.session.provider)
+    : '',
+)
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -97,7 +104,7 @@ onUnmounted(() => {
         </span>
       </span>
       <span class="session-item-meta">
-        <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+        <span v-if="sessionModelName" class="session-item-model" :title="session.model">{{ sessionModelName }}</span>
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
       </span>
     </div>

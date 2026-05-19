@@ -1,9 +1,10 @@
-import { resolve, join } from 'path'
-import { homedir } from 'os'
+import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
-import { detectHermesHome } from './hermes-path'
+import { detectHermesRootHome } from './hermes-path'
 
-const HERMES_BASE = detectHermesHome()
+export function getHermesBaseDir(): string {
+  return detectHermesRootHome()
+}
 
 /**
  * Get the active profile's home directory.
@@ -11,15 +12,16 @@ const HERMES_BASE = detectHermesHome()
  * other   → ~/.hermes/profiles/{name}/
  */
 export function getActiveProfileDir(): string {
-  const activeFile = join(HERMES_BASE, 'active_profile')
+  const hermesBase = getHermesBaseDir()
+  const activeFile = join(hermesBase, 'active_profile')
   try {
     const name = readFileSync(activeFile, 'utf-8').trim()
     if (name && name !== 'default') {
-      const dir = join(HERMES_BASE, 'profiles', name)
+      const dir = join(hermesBase, 'profiles', name)
       if (existsSync(dir)) return dir
     }
   } catch { }
-  return HERMES_BASE
+  return hermesBase
 }
 
 /**
@@ -47,7 +49,7 @@ export function getActiveEnvPath(): string {
  * Get the active profile name.
  */
 export function getActiveProfileName(): string {
-  const activeFile = join(HERMES_BASE, 'active_profile')
+  const activeFile = join(getHermesBaseDir(), 'active_profile')
   try {
     const name = readFileSync(activeFile, 'utf-8').trim()
     return name || 'default'
@@ -62,7 +64,8 @@ export function getActiveProfileName(): string {
  * other   → ~/.hermes/profiles/{name}/
  */
 export function getProfileDir(name: string): string {
-  if (!name || name === 'default') return HERMES_BASE
-  const dir = join(HERMES_BASE, 'profiles', name)
-  return existsSync(dir) ? dir : HERMES_BASE
+  const hermesBase = getHermesBaseDir()
+  if (!name || name === 'default') return hermesBase
+  const dir = join(hermesBase, 'profiles', name)
+  return existsSync(dir) ? dir : hermesBase
 }

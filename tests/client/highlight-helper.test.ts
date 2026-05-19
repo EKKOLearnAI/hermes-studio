@@ -8,7 +8,7 @@ const highlightJsMock = vi.hoisted(() => ({
   registerLanguage: vi.fn(),
 }))
 
-vi.mock('highlight.js/lib/core', () => ({
+vi.mock('highlight.js', () => ({
   default: highlightJsMock,
 }))
 

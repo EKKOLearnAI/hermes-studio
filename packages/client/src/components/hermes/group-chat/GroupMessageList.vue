@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import GroupMessageItem from './GroupMessageItem.vue'
 
 const store = useGroupChatStore()
+const { t } = useI18n()
 const listRef = ref<HTMLDivElement>()
 const isNearBottom = ref(true)
 
@@ -35,10 +37,8 @@ defineExpose({ scrollToBottom })
 <template>
     <div ref="listRef" class="message-list" @scroll="handleScroll">
         <div v-if="store.sortedMessages.length === 0" class="empty-state">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-            <p>No messages yet</p>
+            <img src="/logo.png" alt="Hermes" class="empty-logo" />
+            <p>{{ t("chat.emptyState") }}</p>
         </div>
         <GroupMessageItem
             v-for="msg in store.sortedMessages"
@@ -61,6 +61,11 @@ defineExpose({ scrollToBottom })
     flex-direction: column;
     gap: 12px;
     background-color: $bg-card;
+    position: relative;
+
+    .dark & {
+        background-color: #333333;
+    }
 }
 
 .empty-state {
@@ -71,7 +76,12 @@ defineExpose({ scrollToBottom })
     justify-content: center;
     gap: 12px;
     color: $text-muted;
-    opacity: 0.4;
+
+    .empty-logo {
+        width: 48px;
+        height: 48px;
+        opacity: 0.25;
+    }
 
     p {
         font-size: 14px;

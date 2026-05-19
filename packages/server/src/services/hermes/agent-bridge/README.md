@@ -1,7 +1,7 @@
 # Agent Bridge
 
-Optional backend-side bridge for talking to `~/.hermes/hermes-agent` by
-instantiating `run_agent.AIAgent` directly in a Python process.
+Optional backend-side bridge for talking to Hermes Agent by instantiating
+`run_agent.AIAgent` directly in a Python process.
 
 This is intentionally separate from the current Web UI chat path.
 
@@ -37,6 +37,7 @@ The service discovers Hermes Agent in this order:
 3. the installed `hermes` command path
 4. current working directory and parent directories
 5. common locations such as `~/.hermes/hermes-agent`, `~/hermes-agent`, and `/opt/hermes-agent`
+6. the `hermes-agent` package installed in the selected Python environment
 
 Hermes home is resolved from `--hermes-home`, `HERMES_HOME`, then `~/.hermes`.
 
@@ -53,6 +54,12 @@ python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py \
   --agent-root ~/.hermes/hermes-agent \
   --hermes-home ~/.hermes
 ```
+
+If no source checkout containing `run_agent.py` is found, the bridge falls back
+to importing `run_agent` from the Python environment. This supports package
+installs such as `pip install hermes-agent`. The Node manager prefers the source
+checkout's virtualenv when a checkout exists, then the Python interpreter from
+the installed `hermes` command, then the system Python.
 
 The socket transport uses Python and Node standard libraries. No ZMQ dependency
 is required.

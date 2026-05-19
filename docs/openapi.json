@@ -1432,6 +1432,58 @@
         }
       }
     },
+    "/api/hermes/group-chat/rooms/{roomId}/clear-context": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create clear-context",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/clear-context",
+        "operationId": "createClear-context",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/group-chat/rooms/{roomId}/clone": {
+      "post": {
+        "tags": [
+          "Group Chat"
+        ],
+        "summary": "Create clone",
+        "description": "POST /api/hermes/group-chat/rooms/:roomId/clone",
+        "operationId": "createClone",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/group-chat/rooms/{roomId}/compress": {
       "post": {
         "tags": [
@@ -1811,6 +1863,32 @@
         }
       }
     },
+    "/api/hermes/model-alias": {
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Update model-alias",
+        "description": "PUT /api/hermes/model-alias",
+        "operationId": "setModelAlias",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/model-context": {
       "get": {
         "tags": [
@@ -1893,6 +1971,32 @@
         "summary": "Update :model",
         "description": "PUT /api/hermes/model-context/:provider/:model",
         "operationId": "updateModelContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/model-visibility": {
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Update model-visibility",
+        "description": "PUT /api/hermes/model-visibility",
+        "operationId": "setModelVisibility",
         "security": [
           {
             "BearerAuth": []
@@ -2623,6 +2727,32 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/skills/usage/stats": {
+      "get": {
+        "tags": [
+          "Skills"
+        ],
+        "summary": "Get stats",
+        "description": "GET /api/hermes/skills/usage/stats",
+        "operationId": "usageStats",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }

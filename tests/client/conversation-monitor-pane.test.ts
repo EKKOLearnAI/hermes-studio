@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const mockConversationsApi = vi.hoisted(() => ({
   fetchConversationSummaries: vi.fn(),
@@ -38,6 +39,7 @@ function deferred<T>() {
 describe('ConversationMonitorPane', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setActivePinia(createPinia())
     vi.useFakeTimers()
     mockConversationsApi.fetchConversationSummaries.mockResolvedValue([
       {
