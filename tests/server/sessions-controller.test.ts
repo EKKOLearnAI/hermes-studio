@@ -206,6 +206,81 @@ describe('session conversations controller', () => {
     expect(ctx.body).toEqual({ error: 'Conversation not found' })
   })
 
+  it('prefers local session detail for Hermes history detail when available', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'cli-1',
+      source: 'cli',
+      title: 'Local complete',
+      messages: [
+        { id: 1, session_id: 'cli-1', role: 'user', content: 'local full message', timestamp: 1 },
+      ],
+    })
+    getSessionDetailFromDbMock.mockResolvedValue({
+      id: 'cli-1',
+      source: 'cli',
+      title: 'Hermes incomplete',
+      messages: [],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'cli-1' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('cli-1')
+    expect(getSessionDetailFromDbMock).not.toHaveBeenCalled()
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body.session).toMatchObject({
+      id: 'cli-1',
+      title: 'Local complete',
+      messages: [{ content: 'local full message' }],
+    })
+  })
+
+  it('falls back to Hermes state.db when local history detail is missing', async () => {
+    localGetSessionDetailMock.mockReturnValue(null)
+    getSessionDetailFromDbMock.mockResolvedValue({
+      id: 'hermes-1',
+      source: 'cli',
+      title: 'Hermes detail',
+      messages: [
+        { id: 1, session_id: 'hermes-1', role: 'user', content: 'from hermes', timestamp: 1 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'hermes-1' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('hermes-1')
+    expect(getSessionDetailFromDbMock).toHaveBeenCalledWith('hermes-1')
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body.session).toMatchObject({
+      id: 'hermes-1',
+      title: 'Hermes detail',
+      messages: [{ content: 'from hermes' }],
+    })
+  })
+
+  it('does not return api_server sessions from the Hermes history detail endpoint', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'api-1',
+      source: 'api_server',
+      title: 'API Server',
+      messages: [{ id: 1, session_id: 'api-1', role: 'user', content: 'local api', timestamp: 1 }],
+    })
+    getSessionDetailFromDbMock.mockResolvedValue(null)
+    getSessionMock.mockResolvedValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'api-1' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('api-1')
+    expect(getSessionDetailFromDbMock).toHaveBeenCalledWith('api-1')
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
+  })
+
   it('returns native state.db usage analytics for the requested period', async () => {
     const today = new Date().toISOString().slice(0, 10)
     getLocalUsageStatsMock.mockReturnValue({

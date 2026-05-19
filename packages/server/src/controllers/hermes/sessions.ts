@@ -188,7 +188,16 @@ export async function get(ctx: any) {
  * GET /api/hermes/sessions/hermes/:id
  */
 export async function getHermesSession(ctx: any) {
-  // Try database first (consistent with listHermesSessions)
+  // Prefer the Web UI local session store. Hermes state.db can lag behind or
+  // miss messages for Bridge-backed runs, while the local store is the source
+  // used by chat rendering and compression.
+  const localSession = localGetSessionDetail(ctx.params.id)
+  if (localSession && localSession.source !== 'api_server') {
+    ctx.body = { session: localSession }
+    return
+  }
+
+  // Try Hermes state.db next (consistent with listHermesSessions)
   try {
     const session = await getSessionDetailFromDb(ctx.params.id)
     if (session && session.source !== 'api_server') {
