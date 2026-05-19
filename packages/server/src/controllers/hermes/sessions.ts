@@ -41,6 +41,7 @@ export async function listConversations(ctx: any) {
     id: s.id,
     source: s.source,
     model: s.model,
+    provider: s.provider,
     title: s.title,
     started_at: s.started_at,
     ended_at: s.ended_at,
@@ -264,6 +265,28 @@ export async function setWorkspace(ctx: any) {
     createSession({ id, profile: getActiveProfileName(), title: '' })
   }
   updateSession(id, { workspace: workspace || null } as any)
+  ctx.body = { ok: true }
+}
+
+export async function setModel(ctx: any) {
+  const { model, provider } = ctx.request.body as { model?: string; provider?: string }
+  if (!model || typeof model !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'model is required' }
+    return
+  }
+  if (provider !== undefined && provider !== null && typeof provider !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'provider must be a string' }
+    return
+  }
+  const { updateSession, getSession, createSession } = await import('../../db/hermes/session-store')
+  const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
+  const id = ctx.params.id
+  if (!getSession(id)) {
+    createSession({ id, profile: getActiveProfileName(), title: '' })
+  }
+  updateSession(id, { model: model.trim(), provider: (provider || '').trim() } as any)
   ctx.body = { ok: true }
 }
 

@@ -574,6 +574,14 @@ export class AgentClients {
         }
     }
 
+    resetRoomContext(roomId: string): void {
+        this._mentionQueue.delete(roomId)
+        this._processingRooms.delete(roomId)
+        if (this._contextEngine) {
+            try { this._contextEngine.invalidateRoom(roomId) } catch { /* ignore */ }
+        }
+    }
+
     /**
      * Disconnect all agents in all rooms.
      */

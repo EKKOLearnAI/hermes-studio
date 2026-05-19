@@ -8,7 +8,7 @@
  * 1. If total tokens < trigger threshold → return as-is
  * 2. Pre-clean: truncate old tool results (no LLM call)
  * 3. Load snapshot from SQLite for incremental update
- * 4. Keep last 20 messages verbatim (tail protection by message count)
+ * 4. Keep last 10 messages verbatim (tail protection by message count)
  * 5. Summarize everything before the tail
  * 6. Save snapshot: last_message_index = index where compression ends
  */
@@ -44,7 +44,7 @@ export interface CompressionConfig {
   triggerTokens: number
   /** Summary token target (default: 8000) */
   summaryBudget: number
-  /** Number of recent messages to keep verbatim (default: 20) */
+  /** Number of recent messages to keep verbatim (default: 10) */
   tailMessageCount: number
   /** Timeout for LLM summarization call (default: 60_000ms) */
   summarizationTimeoutMs: number
@@ -53,7 +53,7 @@ export interface CompressionConfig {
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   triggerTokens: 100_000,
   summaryBudget: 8_000,
-  tailMessageCount: 20,
+  tailMessageCount: 10,
   summarizationTimeoutMs: 120_000,
 }
 
@@ -521,6 +521,23 @@ export class ChatContextCompressor {
     const toCompress = newMessages.slice(0, tailStart)
     const tail = newMessages.slice(tailStart)
 
+    if (toCompress.length === 0) {
+      return {
+        messages: [
+          { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary },
+          ...newMessages,
+        ],
+        meta: {
+          ...meta,
+          compressed: true,
+          llmCompressed: false,
+          summaryTokenEstimate: countTokens(SUMMARY_PREFIX + previousSummary),
+          verbatimCount: newMessages.length,
+          compressedStartIndex: lastMessageIndex,
+        },
+      }
+    }
+
     logger.info(
       '[context-compressor] [incremental-llm] compressing %d of %d new messages, keeping %d tail',
       toCompress.length, newMessages.length, tail.length,
@@ -536,8 +553,21 @@ export class ChatContextCompressor {
       summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, profile)
       logger.info('[context-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
-      logger.warn('[context-compressor] incremental-llm failed: %s — reusing previous summary', err.message)
-      summary = previousSummary
+      logger.warn('[context-compressor] incremental-llm failed: %s — keeping new messages verbatim', err.message)
+      return {
+        messages: [
+          { role: 'user', content: SUMMARY_PREFIX + '\n\n' + previousSummary },
+          ...newMessages,
+        ],
+        meta: {
+          ...meta,
+          compressed: true,
+          llmCompressed: false,
+          summaryTokenEstimate: countTokens(SUMMARY_PREFIX + previousSummary),
+          verbatimCount: newMessages.length,
+          compressedStartIndex: lastMessageIndex,
+        },
+      }
     }
 
     const result: ChatMessage[] = [
@@ -601,13 +631,15 @@ export class ChatContextCompressor {
       logger.warn('[context-compressor] full-llm failed: %s', err.message)
     }
 
+    if (!summary) {
+      return { messages: cleaned, meta }
+    }
+
     const result: ChatMessage[] = []
 
-    if (summary) {
-      result.push({ role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary })
-      if (sessionId) {
-        saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
-      }
+    result.push({ role: 'user', content: SUMMARY_PREFIX + '\n\n' + summary })
+    if (sessionId) {
+      saveCompressionSnapshot(sessionId, summary, tailStart - 1, total)
     }
 
     result.push(...tail)

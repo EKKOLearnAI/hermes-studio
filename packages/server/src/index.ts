@@ -19,7 +19,7 @@ import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
-import { ChatRunSocket } from './services/hermes/chat-run-socket'
+import { ChatRunSocket } from './services/hermes/run-chat'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { logger } from './services/logger'
 
@@ -178,7 +178,7 @@ export async function bootstrap() {
   const interfaces = safeNetworkInterfaces()
   const localIp = Object.values(interfaces).flat().find(i => i?.family === 'IPv4' && !i?.internal)?.address || 'localhost'
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
-  console.log(`Log: ~/.hermes-web-ui/logs/server.log`)
+  console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
 
   // Restore group chat agents after server is ready.

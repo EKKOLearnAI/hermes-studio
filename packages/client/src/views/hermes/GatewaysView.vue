@@ -47,6 +47,11 @@ async function handleToggle(name: string, running: boolean) {
                 <span class="meta-item">{{ gw.host }}:{{ gw.port }}</span>
                 <span v-if="gw.pid" class="meta-item">PID: {{ gw.pid }}</span>
               </div>
+              <div v-if="gw.diagnostics" class="gateway-diagnostics">
+                <span class="diag-item">{{ gw.diagnostics.reason }}</span>
+                <span class="diag-item">PID: {{ gw.diagnostics.pid_path }}</span>
+                <span class="diag-item">Config: {{ gw.diagnostics.config_path }}</span>
+              </div>
             </div>
             <div class="gateway-actions">
               <NTag :type="gw.running ? 'success' : 'default'" size="small" round>
@@ -99,6 +104,7 @@ async function handleToggle(name: string, running: boolean) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 16px 20px;
   background-color: $bg-card;
   border: 1px solid $border-color;
@@ -110,6 +116,11 @@ async function handleToggle(name: string, running: boolean) {
   }
 }
 
+.gateway-info {
+  min-width: 0;
+  flex: 1;
+}
+
 .gateway-name {
   font-size: 14px;
   font-weight: 600;
@@ -119,7 +130,15 @@ async function handleToggle(name: string, running: boolean) {
 
 .gateway-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+.gateway-diagnostics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .meta-item {
@@ -127,9 +146,46 @@ async function handleToggle(name: string, running: boolean) {
   color: $text-muted;
 }
 
+.diag-item {
+  max-width: 100%;
+  font-size: 12px;
+  color: $text-muted;
+  background: rgba(127, 127, 127, 0.08);
+  padding: 2px 8px;
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
 .gateway-actions {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .gateways-content {
+    padding: 16px;
+  }
+
+  .gateway-card {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .gateway-diagnostics {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .diag-item {
+    border-radius: $radius-sm;
+  }
+
+  .gateway-actions {
+    justify-content: flex-start;
+  }
 }
 </style>

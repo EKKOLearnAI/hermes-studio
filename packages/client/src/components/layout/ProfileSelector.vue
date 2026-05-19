@@ -41,6 +41,7 @@ onMounted(() => {
   <div class="profile-selector">
     <div class="selector-label">{{ t('sidebar.profiles') }}</div>
     <NSelect
+      data-testid="profile-selector-select"
       :value="activeName"
       :options="options"
       :loading="profilesStore.switching"

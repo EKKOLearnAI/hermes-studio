@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NButton, NSelect, NInputNumber, useMessage } from 'naive-ui'
 import { useJobsStore } from '@/stores/hermes/jobs'
+import { useSettingsStore } from '@/stores/hermes/settings'
 import {
   buildJobUpdateRequest,
   getJob,
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 
 const jobsStore = useJobsStore()
+const settingsStore = useSettingsStore()
 const message = useMessage()
 
 const showModal = ref(true)
@@ -50,10 +52,30 @@ const schedulePresets = computed(() => [
   { label: t('jobs.presetEveryMonth'), value: '0 9 1 * *' },
 ])
 
-const targetOptions = computed(() => [
-  { label: t('jobs.origin'), value: 'origin' },
-  { label: t('jobs.local'), value: 'local' },
-])
+const targetOptions = computed(() => {
+  const options: Array<{ label: string; value: string }> = [
+    { label: t('jobs.origin'), value: 'origin' },
+    { label: t('jobs.local'), value: 'local' },
+  ]
+  const channels = [
+    { key: 'telegram', label: 'Telegram' },
+    { key: 'discord', label: 'Discord' },
+    { key: 'slack', label: 'Slack' },
+    { key: 'whatsapp', label: 'WhatsApp' },
+    { key: 'matrix', label: 'Matrix' },
+    { key: 'weixin', label: 'WeChat' },
+    { key: 'wecom', label: 'WeCom' },
+    { key: 'feishu', label: 'Feishu' },
+    { key: 'dingtalk', label: 'DingTalk' },
+  ]
+  for (const ch of channels) {
+    const config = settingsStore.platforms[ch.key] || {}
+    if (Object.keys(config).length > 0) {
+      options.push({ label: ch.label, value: ch.key })
+    }
+  }
+  return options
+})
 
 const originalJob = ref<Job | null>(null)
 

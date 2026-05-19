@@ -6,19 +6,77 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
 import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
 const message = useMessage()
+const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
+const commandDropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+
+const bridgeCommands = computed(() => [
+  { name: 'usage', args: '', description: t('chat.slashCommands.usage') },
+  { name: 'status', args: '', description: t('chat.slashCommands.status') },
+  { name: 'abort', args: '', description: t('chat.slashCommands.abort') },
+  { name: 'queue', args: t('chat.slashCommandArgs.message'), description: t('chat.slashCommands.queue') },
+  { name: 'clear', args: '', description: t('chat.slashCommands.clear') },
+  { name: 'clear', args: '--history', insertText: 'clear --history', description: t('chat.slashCommands.clearHistory') },
+  { name: 'title', args: t('chat.slashCommandArgs.title'), description: t('chat.slashCommands.title') },
+  { name: 'compress', args: '', description: t('chat.slashCommands.compress') },
+  { name: 'steer', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.steer') },
+  { name: 'destroy', args: '', description: t('chat.slashCommands.destroy') },
+])
+
+const slashActive = ref(false)
+const slashQuery = ref('')
+const slashActiveIndex = ref(0)
+const isBridgeSession = computed(() => chatStore.activeSession?.source === 'cli')
+const filteredBridgeCommands = computed(() => {
+  const query = slashQuery.value.toLowerCase()
+  return bridgeCommands.value.filter(command =>
+    command.name.includes(query) || command.insertText?.includes(query),
+  )
+})
+
+// 自定义高度拖拽
+const textareaHeight = ref<number | null>(null) // null = auto
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const el = textareaRef.value
+  if (!el) return
+  // 如果当前是 auto，用实际 clientHeight 作为起始值
+  const startHeight = el.clientHeight
+  const startY = e.clientY
+
+  function onMouseMove(e: MouseEvent) {
+    const deltaY = e.clientY - startY
+    // 往上拖 (deltaY < 0) → 高度增加
+    const newHeight = startHeight - deltaY
+    textareaHeight.value = Math.max(20, Math.min(400, Math.round(newHeight)))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
 
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
@@ -41,6 +99,44 @@ watch(autoPlaySpeech, (value) => {
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+
+function scrollCommandIntoView() {
+  nextTick(() => {
+    if (!commandDropdownRef.value) return
+    const active = commandDropdownRef.value.querySelector('.active') as HTMLElement | null
+    active?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  })
+}
+
+function updateSlashState() {
+  if (!isBridgeSession.value) {
+    slashActive.value = false
+    return
+  }
+  const el = textareaRef.value
+  if (!el) return
+  const cursorPos = el.selectionStart
+  const beforeCursor = inputText.value.slice(0, cursorPos)
+  if (!beforeCursor.startsWith('/') || beforeCursor.includes(' ') || beforeCursor.includes('\n')) {
+    slashActive.value = false
+    return
+  }
+  slashQuery.value = beforeCursor.slice(1)
+  slashActiveIndex.value = 0
+  slashActive.value = filteredBridgeCommands.value.length > 0
+}
+
+function selectBridgeCommand(command: { name: string; args: string; insertText?: string }) {
+  inputText.value = `/${command.insertText || command.name} `
+  slashActive.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    const pos = inputText.value.length
+    el.setSelectionRange(pos, pos)
+    el.focus()
+  })
+}
 
 // --- Context info ---
 
@@ -200,6 +296,7 @@ function handleSend() {
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
   attachments.value = []
+  slashActive.value = false
 
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
@@ -213,6 +310,7 @@ function handleCompositionStart() {
 function handleCompositionEnd() {
   requestAnimationFrame(() => {
     isComposing.value = false
+    updateSlashState()
   })
 }
 
@@ -221,6 +319,31 @@ function isImeEnter(e: KeyboardEvent): boolean {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (slashActive.value && filteredBridgeCommands.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      slashActiveIndex.value = (slashActiveIndex.value + 1) % filteredBridgeCommands.value.length
+      scrollCommandIntoView()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      slashActiveIndex.value = (slashActiveIndex.value - 1 + filteredBridgeCommands.value.length) % filteredBridgeCommands.value.length
+      scrollCommandIntoView()
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      selectBridgeCommand(filteredBridgeCommands.value[slashActiveIndex.value])
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      slashActive.value = false
+      return
+    }
+  }
+
   if (e.key !== 'Enter' || e.shiftKey) return
   if (isImeEnter(e)) return
 
@@ -230,9 +353,32 @@ function handleKeydown(e: KeyboardEvent) {
 
 function handleInput(e: Event) {
   const el = e.target as HTMLTextAreaElement
+  if (!isComposing.value) updateSlashState()
+  // 用户手动拖拽自定义高度时，不覆盖
+  if (textareaHeight.value !== null) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 100) + 'px'
 }
+
+function handleCommandHover(index: number) {
+  slashActiveIndex.value = index
+}
+
+function onDocumentMousedown(e: MouseEvent) {
+  if (!slashActive.value) return
+  const target = e.target as HTMLElement
+  if (!target.closest('.slash-command-dropdown') && !target.closest('.input-wrapper')) {
+    slashActive.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', onDocumentMousedown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocumentMousedown)
+})
 
 function removeAttachment(id: string) {
   const idx = attachments.value.findIndex(a => a.id === id)
@@ -285,6 +431,24 @@ function isImage(type: string): boolean {
           :round="false"
         />
       </div>
+
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <NButton
+            quaternary
+            size="tiny"
+            class="tool-trace-toggle"
+            :class="{ active: toolTraceVisible }"
+            :aria-label="toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls')"
+            @click="toggleToolTraceVisible"
+          >
+            <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
+            </svg>
+          </NButton>
+        </template>
+        {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
+      </NTooltip>
 
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
@@ -349,10 +513,12 @@ function isImage(type: string): boolean {
         class="file-input-hidden"
         @change="handleFileChange"
       />
+      <div class="resize-handle" @mousedown="startResize"></div>
       <textarea
         ref="textareaRef"
         v-model="inputText"
         class="input-textarea"
+        :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
         :placeholder="t('chat.inputPlaceholder')"
         rows="1"
         @keydown="handleKeydown"
@@ -361,6 +527,26 @@ function isImage(type: string): boolean {
         @input="handleInput"
         @paste="handlePaste"
       ></textarea>
+      <Transition name="dropdown-fade">
+        <div
+          v-if="slashActive && filteredBridgeCommands.length > 0"
+          ref="commandDropdownRef"
+          class="slash-command-dropdown"
+        >
+          <div
+            v-for="(command, i) in filteredBridgeCommands"
+            :key="command.name"
+            class="slash-command-item"
+            :class="{ active: i === slashActiveIndex }"
+            @mousedown.prevent="selectBridgeCommand(command)"
+            @mouseenter="handleCommandHover(i)"
+          >
+            <span class="slash-command-name">/{{ command.name }}</span>
+            <span v-if="command.args" class="slash-command-args">{{ command.args }}</span>
+            <span class="slash-command-desc">{{ command.description }}</span>
+          </div>
+        </div>
+      </Transition>
       <div class="input-actions">
         <NButton
           v-if="chatStore.isStreaming"
@@ -448,19 +634,64 @@ function isImage(type: string): boolean {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 0 0 8px;
   border-left: 1px solid $border-light;
   margin-left: 4px;
 
   .switch-label {
     display: flex;
     align-items: center;
-    color: $text-muted;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #999999;
     font-size: 12px;
 
     svg {
-      opacity: 0.7;
+      opacity: 1;
     }
+  }
+
+  :deep(.n-switch),
+  :deep(.n-switch__rail) {
+    margin-right: 0;
+  }
+}
+
+.tool-trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #999999;
+  width: 24px;
+  min-width: 24px;
+  height: 22px;
+  margin-left: -4px;
+  padding: 0;
+  background: transparent !important;
+  opacity: 1;
+
+  :deep(.n-button__state-border),
+  :deep(.n-button__border),
+  :deep(.n-button__ripple) {
+    display: none;
+  }
+
+  .tool-trace-icon {
+    display: block;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+  }
+
+  &.active {
+    color: #999999;
+    opacity: 1;
+  }
+
+  &:hover {
+    color: #999999;
+    opacity: 1;
   }
 }
 
@@ -594,6 +825,7 @@ function isImage(type: string): boolean {
   border: 1px solid $border-color;
   border-radius: $radius-md;
   padding: 10px 12px;
+  position: relative;
   transition: border-color $transition-fast, background-color $transition-fast;
 
   &:focus-within {
@@ -602,6 +834,21 @@ function isImage(type: string): boolean {
 
   .dark & {
     background-color: #333333;
+  }
+}
+
+.resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+  z-index: 2;
+
+  &:hover {
+    background: rgba($accent-primary, 0.15);
+    border-radius: 4px;
   }
 }
 
@@ -615,7 +862,7 @@ function isImage(type: string): boolean {
   font-size: 14px;
   line-height: 1.5;
   resize: none;
-  max-height: 100px;
+  max-height: 400px;
   min-height: 20px;
   overflow-y: auto;
 
@@ -632,6 +879,75 @@ function isImage(type: string): boolean {
   gap: 6px;
   flex-shrink: 0;
   align-items: center;
+}
+
+.slash-command-dropdown {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  max-height: 240px;
+  overflow-y: auto;
+  background: $bg-primary;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  z-index: 20;
+  padding: 4px;
+
+  .dark & {
+    background: #2a2a2a;
+  }
+}
+
+.slash-command-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: $radius-sm;
+  cursor: pointer;
+  min-height: 36px;
+
+  &.active,
+  &:hover {
+    background: rgba(var(--accent-primary-rgb), 0.1);
+  }
+}
+
+.slash-command-name {
+  font-family: $font-code;
+  font-size: 13px;
+  color: $accent-primary;
+  white-space: nowrap;
+}
+
+.slash-command-args {
+  font-family: $font-code;
+  font-size: 12px;
+  color: $text-muted;
+  white-space: nowrap;
+}
+
+.slash-command-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-secondary;
+  font-size: 12px;
+}
+
+.dropdown-fade-enter-active,
+.dropdown-fade-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.dropdown-fade-enter-from,
+.dropdown-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 // Drag-over state

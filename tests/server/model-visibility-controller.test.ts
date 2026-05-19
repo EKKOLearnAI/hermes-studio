@@ -32,6 +32,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   buildModelGroups: mockBuildModelGroups,
   PROVIDER_ENV_MAP: {
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY' },
+    'xai-oauth': { api_key_env: '', base_url_env: 'XAI_BASE_URL' },
     openrouter: {},
   },
 }))
@@ -39,6 +40,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
 vi.mock('../../packages/server/src/shared/providers', () => ({
   buildProviderModelMap: () => ({
     deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    'xai-oauth': ['grok-4.3', 'grok-4.20-0309-reasoning'],
     openrouter: ['openrouter/auto'],
   }),
   PROVIDER_PRESETS: [
@@ -53,6 +55,12 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       label: 'OpenRouter',
       base_url: 'https://openrouter.ai/api/v1',
       models: ['openrouter/auto'],
+    },
+    {
+      value: 'xai-oauth',
+      label: 'xAI Grok OAuth (SuperGrok Subscription)',
+      base_url: 'https://api.x.ai/v1',
+      models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
     },
   ],
 }))
@@ -134,6 +142,30 @@ describe('models controller — model visibility', () => {
         label: 'OpenRouter',
         models: ['openrouter/auto'],
         available_models: ['openrouter/auto'],
+      }),
+    ]))
+  })
+
+  it('shows xAI Grok OAuth when SuperGrok credentials exist in auth.json', async () => {
+    mockExistsSync.mockReturnValue(true)
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      providers: {
+        'xai-oauth': {
+          tokens: { access_token: 'xai-token' },
+        },
+      },
+    }))
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'xai-oauth',
+        label: 'xAI Grok OAuth (SuperGrok Subscription)',
+        base_url: 'https://api.x.ai/v1',
+        models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
       }),
     ]))
   })

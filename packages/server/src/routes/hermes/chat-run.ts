@@ -1,4 +1,4 @@
-import type { ChatRunSocket } from '../../services/hermes/chat-run-socket'
+import type { ChatRunSocket } from '../../services/hermes/run-chat'
 
 let chatRunServer: ChatRunSocket | null = null
 

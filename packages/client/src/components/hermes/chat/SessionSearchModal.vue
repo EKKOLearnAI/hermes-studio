@@ -231,6 +231,7 @@ onUnmounted(() => {
         <div class="search-title">{{ t('chat.searchSubtitle') }}</div>
         <div class="search-hint">{{ t('chat.searchHint') }}</div>
       </div>
+      <div class="search-scope">{{ t('chat.searchScope') }}</div>
 
       <NInput
         ref="inputRef"
@@ -307,6 +308,12 @@ onUnmounted(() => {
 .search-hint {
   font-size: 12px;
   color: $text-muted;
+}
+
+.search-scope {
+  font-size: 12px;
+  color: $text-muted;
+  line-height: 1.5;
 }
 
 .search-body {

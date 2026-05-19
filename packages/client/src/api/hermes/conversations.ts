@@ -4,6 +4,7 @@ export interface ConversationSummary {
   id: string
   source: string
   model: string
+  provider?: string
   title: string | null
   started_at: number
   ended_at: number | null

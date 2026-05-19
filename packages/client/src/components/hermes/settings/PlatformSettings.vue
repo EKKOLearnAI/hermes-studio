@@ -52,6 +52,10 @@ function getCreds(key: string) {
   return (settingsStore.platforms[key] || {}) as Record<string, any>
 }
 
+function boolValue(value: unknown) {
+  return value === true || value === 'true'
+}
+
 // Weixin QR code login state
 const wxQrUrl = ref('')
 const wxQrId = ref('')
@@ -151,6 +155,18 @@ const platforms = [
     name: 'Feishu',
     exclusive: true,
     icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.59 3.41a2.25 2.25 0 0 1 3.182 0L13.5 7.14l-3.182 3.182L6.59 7.59a2.25 2.25 0 0 1 0-3.182zm5.303 5.303L15.075 5.53a2.25 2.25 0 0 1 3.182 3.182L15.075 11.894 11.893 8.713zM3.41 6.59a2.25 2.25 0 0 1 3.182 0l3.182 3.182-3.182 3.182a2.25 2.25 0 0 1-3.182-3.182L3.41 6.59zm5.303 5.303L11.894 15.075a2.25 2.25 0 0 1-3.182 3.182L5.53 15.075 8.713 11.893zm5.303-5.303L17.478 9.778a2.25 2.25 0 0 1-3.182 3.182L10.53 10.075l3.182-3.182 0 .023z"/></svg>',
+  },
+  {
+    key: 'dingtalk',
+    name: 'DingTalk',
+    exclusive: true,
+    icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.76 7.05c-.23-.52-.7-.9-1.26-1.02L5.35 3.2c-.77-.16-1.51.38-1.58 1.16-.22 2.55.17 5.4 1.13 7.66.97 2.29 2.52 4.11 4.45 4.82l-1.28 3.03c-.17.4.24.79.63.59l9.47-4.83c.34-.17.55-.52.55-.9v-3.12c.73-.4 1.22-1.17 1.22-2.06 0-.87-.08-1.73-.18-2.5zm-3.66 5.95-5.19 2.65.76-1.8c.12-.29-.03-.62-.33-.72-2.1-.73-3.56-3.54-3.95-6.73l9.27 2c.04.38.07.76.07 1.15 0 .45-.36.81-.81.81h-2.79c-.35 0-.63.28-.63.63s.28.63.63.63h2.97V13z"/></svg>',
+  },
+  {
+    key: 'qqbot',
+    name: 'QQBot',
+    exclusive: true,
+    icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C7.58 2 4 5.27 4 9.31c0 2.3 1.15 4.34 2.95 5.68-.13.58-.48 1.62-1.26 2.53-.24.28-.05.72.32.73 1.72.05 3.02-.68 3.69-1.15.72.16 1.49.25 2.3.25 4.42 0 8-3.27 8-7.31S16.42 2 12 2zm-3.2 7.63c-.63 0-1.14-.55-1.14-1.23s.51-1.23 1.14-1.23 1.14.55 1.14 1.23-.51 1.23-1.14 1.23zm6.4 0c-.63 0-1.14-.55-1.14-1.23s.51-1.23 1.14-1.23 1.14.55 1.14 1.23-.51 1.23-1.14 1.23zM5.5 20.5a.5.5 0 0 1 .5-.5h12a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5z"/></svg>',
   },
   {
     key: 'weixin',
@@ -302,11 +318,36 @@ const platforms = [
         <SettingRow :label="t('platform.clientSecret')" :hint="t('platform.clientSecretHint')">
           <NInput :default-value="getCreds('dingtalk').extra?.client_secret || ''" :loading="isSaving('dingtalk', 'client_secret')" clearable size="small" class="input-lg" placeholder="Client Secret" @change="v => saveCredentials('dingtalk', 'client_secret', { extra: { ...getCreds('dingtalk').extra, client_secret: v } })" />
         </SettingRow>
+        <SettingRow :label="t('platform.allowAllUsers')" :hint="t('platform.allowAllUsersHint')">
+          <NSwitch :value="boolValue(getCreds('dingtalk').allow_all_users)" :loading="isSaving('dingtalk', 'allow_all_users')" @update:value="v => saveCredentials('dingtalk', 'allow_all_users', { allow_all_users: v })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.allowedUsers')" :hint="t('platform.allowedUsersHint')">
+          <NInput :default-value="getCreds('dingtalk').allowed_users || ''" :loading="isSaving('dingtalk', 'allowed_users')" clearable size="small" class="input-lg" placeholder="user_id1,user_id2" @change="v => saveCredentials('dingtalk', 'allowed_users', { allowed_users: v })" />
+        </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
           <NSwitch :value="settingsStore.dingtalk.require_mention" :loading="isSaving('dingtalk', 'require_mention')" @update:value="v => saveChannel('dingtalk', 'require_mention', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChats')" :hint="t('platform.freeResponseChatsHint')">
           <NInput :default-value="settingsStore.dingtalk.free_response_chats || ''" :loading="isSaving('dingtalk', 'free_response_chats')" size="small" placeholder="chat_id1,chat_id2" @change="v => saveChannel('dingtalk', 'free_response_chats', { free_response_chats: v })" />
+        </SettingRow>
+      </template>
+
+      <!-- QQBot -->
+      <template v-if="p.key === 'qqbot'">
+        <SettingRow :label="t('platform.qqAppId')" :hint="t('platform.qqAppIdHint')">
+          <NInput :default-value="getCreds('qqbot').extra?.app_id || ''" :loading="isSaving('qqbot', 'app_id')" clearable size="small" class="input-lg" placeholder="App ID" @change="v => saveCredentials('qqbot', 'app_id', { extra: { ...getCreds('qqbot').extra, app_id: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.qqAppSecret')" :hint="t('platform.qqAppSecretHint')">
+          <NInput :default-value="getCreds('qqbot').extra?.client_secret || ''" :loading="isSaving('qqbot', 'client_secret')" clearable size="small" class="input-lg" placeholder="App Secret" @change="v => saveCredentials('qqbot', 'client_secret', { extra: { ...getCreds('qqbot').extra, client_secret: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.allowedUsers')" :hint="t('platform.allowedUsersHint')">
+          <NInput :default-value="getCreds('qqbot').allowed_users || ''" :loading="isSaving('qqbot', 'allowed_users')" clearable size="small" class="input-lg" placeholder="openid1,openid2" @change="v => saveCredentials('qqbot', 'allowed_users', { allowed_users: v })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.allowAllUsers')" :hint="t('platform.allowAllUsersHint')">
+          <NSwitch :value="boolValue(getCreds('qqbot').allow_all_users)" :loading="isSaving('qqbot', 'allow_all_users')" @update:value="v => saveCredentials('qqbot', 'allow_all_users', { allow_all_users: v })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.qqMarkdown')" :hint="t('platform.qqMarkdownHint')">
+          <NSwitch :value="settingsStore.qqbot.extra?.markdown_support ?? true" :loading="isSaving('qqbot', 'markdown_support')" @update:value="v => saveChannel('qqbot', 'markdown_support', { extra: { ...settingsStore.qqbot.extra, markdown_support: v } })" />
         </SettingRow>
       </template>
 

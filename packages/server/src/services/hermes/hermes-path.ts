@@ -7,7 +7,7 @@
  * - 用户自定义: HERMES_HOME 环境变量
  */
 
-import { resolve, join } from 'path'
+import { basename, dirname, resolve, join } from 'path'
 import { homedir } from 'os'
 
 /**
@@ -36,6 +36,20 @@ export function detectHermesHome(): string {
 
   // 3. Linux/macOS：~/.hermes
   return resolve(homedir(), '.hermes')
+}
+
+/**
+ * Detect the Hermes root data directory.
+ *
+ * `HERMES_HOME` may intentionally point at a profile directory when launching a
+ * specific gateway (`<root>/profiles/<name>`). Web UI profile management needs
+ * the root directory so it can read `active_profile` and enumerate profiles.
+ */
+export function detectHermesRootHome(): string {
+  const home = detectHermesHome()
+  const parent = dirname(home)
+  if (basename(parent) === 'profiles') return dirname(parent)
+  return home
 }
 
 /**

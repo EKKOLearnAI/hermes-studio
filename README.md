@@ -33,9 +33,9 @@
 
 ### AI Chat
 
-- Real-time streaming via SSE with async run support
+- Real-time chat streaming over Socket.IO `/chat-run`; API Server runs consume Hermes Gateway streaming responses
 - Multi-session management — create, rename, delete, switch between sessions
-- **Self-built session database** — local SQLite storage with automatic sync from Hermes state.db on first startup
+- **Self-built session database** — local SQLite storage for Web UI sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
 - Active session indicator — live sessions pin to top with spinner icon
 - Sessions sorted by latest message time
@@ -43,7 +43,7 @@
 - Tool call detail expansion (arguments / result)
 - File upload support
 - File download support — download user-uploaded files and agent-generated files across local, Docker, SSH, and Singularity backends
-- Session search — Ctrl+K global search across all conversations
+- Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
 - Global model selector — discovers models from `~/.hermes/auth.json` credential pool
 - Per-session model display badge and context token usage
 
@@ -219,6 +219,35 @@ sudo ./scripts/deploy-source-armbian.sh
 This path installs Hermes Agent, downloads Node.js 23 from a mirror, builds `hermes-web-ui` from source, and registers a `systemd` service.
 
 See [`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md) for the full workflow, custom env vars, and troubleshooting steps.
+### Hermes Agent Runtime Discovery
+
+When Web UI starts backend chat features, it prefers a source checkout that
+contains `run_agent.py` such as `~/.hermes/hermes-agent`. If no source checkout
+is found, it falls back to the Python environment used by the installed
+`hermes` command, then the system Python. This supports both source installs
+and package installs such as `pip install hermes-agent`.
+
+## Web UI Environment Variables
+
+These variables configure Hermes Web UI itself. Provider API keys and Hermes Agent settings are managed separately through Hermes profiles.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8648` | Web UI listen port. |
+| `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
+| `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload directory override. |
+| `CORS_ORIGINS` | `*` | Koa CORS origin setting. |
+| `AUTH_DISABLED` | unset | Set to `1` or `true` to disable Web UI auth. |
+| `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
+| `PROFILE` | `default` | Initial Hermes profile name. |
+| `LOG_LEVEL` | `info` | Server log level. |
+| `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
+| `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
+| `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
+| `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
+| `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config. |
+| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | environment-dependent | Whether Web UI shutdown also stops managed gateways. |
 
 ### CLI Commands
 
@@ -230,6 +259,7 @@ See [`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md) for the f
 | `hermes-web-ui restart`           | Restart background process         |
 | `hermes-web-ui status`            | Check if running                   |
 | `hermes-web-ui update`            | Update to latest version & restart |
+| `hermes-web-ui upgrade`           | Alias for `update`                 |
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
 
@@ -253,6 +283,7 @@ WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
 WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
 WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
 ```
+`update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
 
 ### Auto Configuration
 
@@ -281,6 +312,8 @@ npm run dev
 ```bash
 npm run build   # outputs to dist/
 ```
+
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for project development guidelines.
 
 ## Architecture
 

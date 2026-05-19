@@ -9,15 +9,16 @@ export interface ProviderPreset {
   base_url: string
   models: string[]
   builtin: boolean
-  api_mode?: 'openai' | 'anthropic' | 'anthropic_messages'
+  api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
-    label: 'FUN-Codex',
+    label: 'Codex-apikey.fun',
     value: 'fun-codex',
     builtin: true,
     base_url: 'https://api.apikey.fun/v1',
+    api_mode: 'codex_responses',
     models: [
       'gpt-5.5',
       'gpt-5.4',
@@ -27,7 +28,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
-    label: 'FUN-Claude',
+    label: 'Claude-apikey.fun',
     value: 'fun-claude',
     builtin: true,
     base_url: 'https://api.apikey.fun',
@@ -79,14 +80,34 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'zai',
     builtin: true,
     base_url: 'https://api.z.ai/api/paas/v4',
-    models: ['glm-5.1', 'glm-5', 'glm-5v-turbo', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
+    models: [
+      'glm-5.1',
+      'glm-5v-turbo',
+      'glm-4.7-flashx',
+      'glm-4.5-air',
+      'glm-4.5v',
+      'glm-4.7-flash',
+      'glm-4.6',
+      'glm-4.5',
+      'glm-4.5-flash',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-5',
+      'glm-4.6v',
+    ],
   },
   {
     label: 'GLM-Coding-Plan',
     value: 'glm-coding-plan',
     builtin: true,
     base_url: 'https://api.z.ai/api/anthropic',
-    models: ['glm-5.1', 'glm-5', 'glm-5-turbo', 'glm-4.7', 'glm-4.5', 'glm-4.5-flash'],
+    models: [
+      'glm-5.1',
+      'glm-4.5-air',
+      'glm-5-turbo',
+      'glm-4.7',
+      'glm-5v-turbo',
+    ],
   },
   {
     label: 'Kimi for Coding',
@@ -120,15 +141,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     builtin: true,
     base_url: 'https://api.x.ai/v1',
     models: [
+      'grok-4.3',
       'grok-4.20-0309-reasoning',
       'grok-4.20-0309-non-reasoning',
       'grok-4.20-multi-agent-0309',
-      'grok-4-1-fast',
-      'grok-4-1-fast-non-reasoning',
-      'grok-4-fast',
-      'grok-4-fast-non-reasoning',
-      'grok-4',
-      'grok-code-fast-1',
+    ],
+  },
+  {
+    label: 'xAI Grok OAuth (SuperGrok Subscription)',
+    value: 'xai-oauth',
+    builtin: true,
+    base_url: 'https://api.x.ai/v1',
+    models: [
+      'grok-4.3',
+      'grok-4.20-0309-reasoning',
+      'grok-4.20-0309-non-reasoning',
+      'grok-4.20-multi-agent-0309',
     ],
   },
   {

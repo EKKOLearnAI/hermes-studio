@@ -1,5 +1,4 @@
 import { resolve, join } from 'path'
-import { homedir } from 'os'
 import { readFileSync, existsSync, statSync } from 'fs'
 import yaml from 'js-yaml'
 import { PROVIDER_PRESETS } from '../../shared/providers'
@@ -44,6 +43,7 @@ const MODEL_CACHE_PROVIDER_ALIASES: Record<string, string[]> = {
   'glm-coding-plan': ['zai-coding-plan'],
   'kimi-coding': ['kimi-for-coding'],
   'kimi-coding-cn': ['kimi-for-coding'],
+  'xai-oauth': ['xai'],
 }
 
 // --- Config YAML helpers (js-yaml) ---

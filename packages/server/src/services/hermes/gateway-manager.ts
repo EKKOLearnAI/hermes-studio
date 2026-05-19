@@ -7,39 +7,36 @@
  *   3. 启动/停止网关进程
  *
  * 启动检测流程（detectStatus）：
- *   ① 读取 gateway.pid → 获取 PID
+ *   ① 读取 gateway.pid，缺失时回退读取 gateway_state.json → 获取 PID
  *   ② 读取 config.yaml (platforms.api_server.extra.port/host) → 获取配置端口
- *   ③ PID 存活？
+ *   ③ PID 存活且配置端口 health check 通过？
+ *      - 是 → 配置与运行状态匹配，注册网关
  *      - 否 → 标记为 stopped
- *      - 是 → 继续
- *   ④ 对配置端口做 health check？
- *      - 通过 → 配置与运行状态匹配，注册网关
- *      - 失败 → 用 lsof 查 PID 实际监听端口
- *   ⑤ 实际端口 ≠ 配置端口？
- *      - 是 → 更新 config.yaml 到实际端口，重新 health check，通过则注册
- *      - 否 → 标记为 stopped
+ *
+ * detectStatus 只做只读检测：不会认领未知端口上的进程，也不会探测实际监听端口后回写
+ * config.yaml。端口修正发生在启动前的 resolvePort 阶段。
  *
  * 端口分配流程（resolvePort，启动前调用）：
  *   ① 读取配置端口
- *   ② 检查是否被已管理的网关占用
- *   ③ 检查是否被外部系统进程占用（TCP bind 测试）
- *   ④ 冲突则从 base+1 递增找空闲端口，并写入 config.yaml
+ *   ② 如果内存记录或 PID 文件对应的配置端口仍健康运行，复用该端口
+ *   ③ 收集本轮已分配端口、其他已管理网关端口、Web UI 端口
+ *   ④ 从 8642 起递增查找空闲端口，并写入 config.yaml
  *
  * 启动模式：
- *   - 正常系统（macOS/Linux）：hermes gateway start/stop（系统服务管理）
- *   - WSL / Docker：hermes gateway run（detached 子进程，手动 kill）
+ *   - 所有平台统一使用 `hermes gateway run --replace`
+ *   - 停止时先尝试 `hermes gateway stop`，再根据 PID / 监听端口清理进程
  */
 
-import { spawn, execSync, type ChildProcess } from 'child_process'
-import { resolve, join } from 'path'
-import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'fs'
+import { spawn, type ChildProcess } from 'child_process'
+import { join } from 'path'
+import { readFileSync, existsSync, readdirSync, unlinkSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createServer } from 'net'
 import yaml from 'js-yaml'
 import { logger } from '../logger'
 import { detectHermesHome, getHermesBin } from './hermes-path'
+import { safeFileStore } from '../safe-file-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -49,63 +46,79 @@ const execFileAsync = promisify(execFile)
 
 const HERMES_BASE = detectHermesHome()
 const HERMES_BIN = getHermesBin()
+const DEFAULT_WEB_UI_PORT = 8648
 
-/**
- * 检测系统的 init 系统（服务管理器）
- * - macOS → launchd
- * - Windows → windows-service
- * - Linux → systemd / sysvinit / other
- *
- * 没有 systemd/launchd/windows-service 的环境需要用 "gateway run" 代替 "gateway start"
- * （适用于 WSL/Docker/Termux/proot 等无服务管理器的环境）
- */
-function detectInitSystem(): string {
-  const platform = process.platform
+const GATEWAY_RUNTIME_ENV_KEYS = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'USERNAME',
+  'SHELL',
+  'LANG',
+  'TZ',
+  'TMP',
+  'TEMP',
+  'TMPDIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'HERMES_BIN',
+  'HERMES_ALLOW_ROOT_GATEWAY',
+  'SYSTEMROOT',
+  'COMSPEC',
+  'APPDATA',
+  'LOCALAPPDATA',
+])
 
-  // macOS → launchd
-  if (platform === 'darwin') {
-    return 'launchd'
+function parseEnvKeys(raw: string): Set<string> {
+  const keys = new Set<string>()
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/)
+    if (match) keys.add(match[1])
   }
+  return keys
+}
 
-  // Windows → Service Manager
-  if (platform === 'win32') {
-    return 'windows-service'
-  }
+function readProfileEnvKeys(): Set<string> {
+  const keys = new Set<string>()
+  const envPaths = [join(HERMES_BASE, '.env')]
+  const profilesDir = join(HERMES_BASE, 'profiles')
 
-  // Linux 才检查 /proc
-  if (platform === 'linux') {
-    try {
-      if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) {
-        return 'container'
-      }
-
-      const comm = readFileSync('/proc/1/comm', 'utf-8').trim()
-
-      if (comm === 'systemd') {
-        return existsSync('/run/systemd/system') ? 'systemd' : 'other'
-      }
-      if (comm === 'init') return 'sysvinit'
-
-      return 'other'
-    } catch {
-      return 'unknown'
+  if (existsSync(profilesDir)) {
+    for (const entry of readdirSync(profilesDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) envPaths.push(join(profilesDir, entry.name, '.env'))
     }
   }
 
-  return 'unknown'
+  for (const envPath of envPaths) {
+    try {
+      for (const key of parseEnvKeys(readFileSync(envPath, 'utf-8'))) keys.add(key)
+    } catch {}
+  }
+
+  return keys
 }
 
-// 注意：虽然此函数仍然存在，但当前所有平台都统一使用 run 模式
-// 保留此函数是为了将来如果需要切换回 start/stop 模式时可以参考
-const initSystem = detectInitSystem()
-/**
- * 所有平台统一使用 run 模式
- * run 模式会自动处理锁定文件冲突（--replace 标志），更可靠
- * 子进程跟随父进程生命周期，父进程关闭时子进程自动关闭
- */
-const needsRunMode = true
-// 启动时输出 init 系统检测结果（方便调试）
-logger.debug('Detected init system: %s (needsRunMode: %s, platform: %s)', initSystem, needsRunMode, process.platform)
+export function buildGatewayProcessEnv(profileName: string, hermesHome: string): NodeJS.ProcessEnv {
+  const base = { ...process.env }
+
+  if (profileName !== 'default') {
+    for (const key of readProfileEnvKeys()) {
+      if (!GATEWAY_RUNTIME_ENV_KEYS.has(key.toUpperCase())) delete base[key]
+    }
+  }
+
+  return {
+    ...base,
+    HERMES_HOME: hermesHome,
+  }
+}
+
+function getWebUiPort(): number | null {
+  const port = parseInt(process.env.PORT || String(DEFAULT_WEB_UI_PORT), 10)
+  return port > 0 && port <= 65535 ? port : null
+}
 
 // ============================
 // 类型定义
@@ -118,6 +131,18 @@ export interface GatewayStatus {
   url: string
   running: boolean
   pid?: number
+  diagnostics?: GatewayDiagnostics
+}
+
+export interface GatewayDiagnostics {
+  pid_path: string
+  config_path: string
+  pid_file_exists: boolean
+  config_exists: boolean
+  health_url: string
+  health_checked_at: string
+  health_ok?: boolean
+  reason: string
 }
 
 interface ManagedGateway {
@@ -326,32 +351,30 @@ export class GatewayManager {
    *         host: <host>
    * 同时清理旧的顶层 port/host（避免 Hermes 读取错误）
    */
-  private writeProfilePort(name: string, port: number, host: string): void {
+  private async writeProfilePort(name: string, port: number, host: string): Promise<void> {
     const configPath = join(this.profileDir(name), 'config.yaml')
     try {
-      const content = existsSync(configPath) ? readFileSync(configPath, 'utf-8') : ''
-      const cfg = (yaml.load(content, { json: true }) as any) || {}
+      await safeFileStore.updateYaml(configPath, (cfg) => {
+        // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
+        if (!cfg.platforms) cfg.platforms = {}
+        if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
+        if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}
 
-      // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
-      if (!cfg.platforms) cfg.platforms = {}
-      if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
-      if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}
+        cfg.platforms.api_server.enabled = true
+        cfg.platforms.api_server.key = ''
+        cfg.platforms.api_server.cors_origins = '*'
+        cfg.platforms.api_server.extra.port = port
+        cfg.platforms.api_server.extra.host = host
 
-      cfg.platforms.api_server.enabled = true
-      cfg.platforms.api_server.key = ''
-      cfg.platforms.api_server.cors_origins = '*'
-      cfg.platforms.api_server.extra.port = port
-      cfg.platforms.api_server.extra.host = host
-
-      // 清理旧的顶层 port/host，Hermes 只从 extra 读取
-      if (cfg.platforms.api_server.port !== undefined) {
-        delete cfg.platforms.api_server.port
-      }
-      if (cfg.platforms.api_server.host !== undefined) {
-        delete cfg.platforms.api_server.host
-      }
-
-      writeFileSync(configPath, yaml.dump(cfg, { lineWidth: -1 }), 'utf-8')
+        // 清理旧的顶层 port/host，Hermes 只从 extra 读取
+        if (cfg.platforms.api_server.port !== undefined) {
+          delete cfg.platforms.api_server.port
+        }
+        if (cfg.platforms.api_server.host !== undefined) {
+          delete cfg.platforms.api_server.host
+        }
+        return cfg
+      })
       logger.debug('Updated %s: api_server.extra.port = %d', configPath, port)
     } catch (err) {
       logger.error(err, 'Failed to write config for profile "%s"', name)
@@ -405,6 +428,8 @@ export class GatewayManager {
         usedPorts.add(gw.port)
       }
     }
+    const webUiPort = getWebUiPort()
+    if (webUiPort !== null) usedPorts.add(webUiPort)
 
     const port = await this.findFreePort(8642, host, usedPorts)
     if (configuredPort !== port) {
@@ -412,7 +437,7 @@ export class GatewayManager {
     } else {
       logger.debug('Assigning port %d for profile "%s"', port, name)
     }
-    this.writeProfilePort(name, port, host)
+    await this.writeProfilePort(name, port, host)
 
     this.allocatedPorts.add(port)
     return { port, host }
@@ -495,16 +520,36 @@ export class GatewayManager {
     const pid = this.readPidFile(name)
     const { port, host } = this.readProfilePort(name)
     const url = buildHttpUrl(host, port)
+    const pidPath = join(this.profileDir(name), 'gateway.pid')
+    const configPath = join(this.profileDir(name), 'config.yaml')
+    const diagnostics: GatewayDiagnostics = {
+      pid_path: pidPath,
+      config_path: configPath,
+      pid_file_exists: existsSync(pidPath),
+      config_exists: existsSync(configPath),
+      health_url: `${url.replace(/\/$/, '')}/health`,
+      health_checked_at: new Date().toISOString(),
+      reason: 'stopped',
+    }
 
     // 首先检查 PID 文件：如果存在且进程存活且健康，则标记为运行
     if (pid && this.isProcessAlive(pid) && await this.checkHealth(url)) {
+      diagnostics.health_ok = true
+      diagnostics.reason = 'pid alive and health check passed'
       this.gateways.set(name, { pid, port, host, url, owned: false })
-      return { profile: name, port, host, url, running: true, pid }
+      return { profile: name, port, host, url, running: true, pid, diagnostics }
+    }
+
+    if (pid) {
+      diagnostics.health_ok = false
+      diagnostics.reason = this.isProcessAlive(pid) ? 'pid alive but health check failed' : 'stale pid file'
+    } else if (!diagnostics.pid_file_exists) {
+      diagnostics.reason = 'missing pid file'
     }
 
     // 没有 PID 文件时不认领端口上的未知网关，避免误判其他 profile 的网关
     this.gateways.delete(name)
-    return { profile: name, port, host, url, running: false }
+    return { profile: name, port, host, url, running: false, diagnostics }
   }
 
   /** 检测所有 profile 的网关状态 */
@@ -577,7 +622,7 @@ export class GatewayManager {
 
     // 所有平台统一使用 run 模式；dev/nodemon 可通过 env 保留 gateway 进程。
     return new Promise((resolve, reject) => {
-      const env = { ...process.env, HERMES_HOME: hermesHome }
+      const env = buildGatewayProcessEnv(name, hermesHome)
       const detachGateway = shouldDetachGatewayProcess()
       const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
         stdio: 'ignore',
@@ -689,7 +734,7 @@ export class GatewayManager {
       const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
         timeout: 15000,
         windowsHide: true,
-        env: { ...process.env, HERMES_HOME: hermesHome },
+        env: buildGatewayProcessEnv(name, hermesHome),
       })
       const output = `${stdout}${stderr}`.trim()
       if (output) logger.debug('%s: hermes gateway stop: %s', name, output)
@@ -839,6 +884,25 @@ export class GatewayManager {
    *   Phase 2 — 并行启动网关进程
    */
   async startAll(): Promise<void> {
+    // 确保使用 default profile 启动网关
+    const currentProfile = this.getActiveProfile()
+    if (currentProfile !== 'default') {
+      logger.info('Current profile is "%s", switching to "default" for gateway startup', currentProfile)
+      try {
+        await execFileAsync(HERMES_BIN, ['profile', 'use', 'default'], {
+          timeout: 10000,
+          windowsHide: true,
+        })
+        this.setActiveProfile('default')
+        logger.info('Waiting for profile switch to take effect...')
+        // 等待一下让 profile 切换完全生效，确保配置文件更新完成
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        logger.info('Successfully switched to default profile')
+      } catch (err) {
+        logger.error(err, 'Failed to switch to default profile, continuing with current profile')
+      }
+    }
+
     // 清空已分配端口集合，确保每次启动都从干净状态开始
     this.allocatedPorts.clear()
 

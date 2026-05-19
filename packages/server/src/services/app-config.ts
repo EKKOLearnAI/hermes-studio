@@ -1,8 +1,8 @@
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
+import { config } from '../config'
 
-const APP_HOME = join(homedir(), '.hermes-web-ui')
+const APP_HOME = config.appHome
 const APP_CONFIG_FILE = join(APP_HOME, 'config.json')
 
 export interface ModelVisibilityRule {
