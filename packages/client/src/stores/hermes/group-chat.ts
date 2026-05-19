@@ -391,7 +391,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         const socket = getSocket()
         if (socket) {
             await new Promise<void>((resolve) => {
-                socket.emit('join', { roomId, name: userName.value || undefined }, (res: any) => {
+                socket.emit('join', {
+                    roomId,
+                    name: userName.value || undefined,
+                    description: localStorage.getItem('gc_user_description') || undefined,
+                }, (res: any) => {
                     if (!res?.error) {
                         members.value = res.members || []
                         if (res.agents) agents.value = res.agents

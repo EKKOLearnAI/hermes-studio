@@ -40,7 +40,7 @@ export default {
     },
     profiles: {
       title: 'Multi-Profile',
-      desc: 'Isolated profiles with independent configs. Clone, import/export profiles, run multiple gateways.',
+      desc: 'Isolated profiles with independent configs. Clone, import/export profiles, and run chats through the agent bridge.',
     },
     files: {
       title: 'File Browser',
@@ -52,7 +52,7 @@ export default {
     },
     quickInstall: {
       title: 'One Command',
-      desc: 'Install and start with a single command. Auto-detects config, resolves ports, opens the browser.',
+      desc: 'Install and start with a single command. Initializes Web UI data, starts the bridge, and opens the browser.',
     },
     i18n: {
       title: '8 Languages',
@@ -120,7 +120,7 @@ export default {
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Hermes Web UI will automatically generate an auth token, validate configuration files, start the Hermes gateway, and open the dashboard in your browser.',
+        content: 'On first start, Hermes Web UI will automatically generate an auth token, initialize local data, start the Hermes agent bridge, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
@@ -143,12 +143,12 @@ export default {
         ],
       },
       gateway: {
-        title: 'Gateway Management',
-        content: 'The gateway is the Hermes Agent process that handles AI conversations. Hermes Web UI manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles, and each profile resolves its own gateway host/port from its Hermes config.',
+        title: 'Agent Bridge Runtime',
+        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. The Web UI no longer starts or manages separate gateway processes.',
       },
       profiles: {
         title: 'Profiles',
-        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own Hermes config, cache, and gateway. Create, clone, import, or export profiles from the Profiles page.',
+        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own Hermes config and cache. Create, clone, import, or export profiles from the Profiles page.',
       },
     },
     features: {
@@ -229,14 +229,14 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Hermes Web UI provides both a local BFF API and proxies requests to the upstream Hermes gateway.',
+      intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
-        content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, and memory operations. These endpoints call the Hermes CLI directly.',
+        content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, memory operations, and static assets.',
       },
       proxy: {
-        title: 'Gateway Proxy',
-        content: 'Requests to /api/hermes/v1/* are forwarded to the Hermes gateway. This includes AI model interactions, run management, and streaming events.',
+        title: 'Chat Streaming',
+        content: 'Chat runs use the /chat-run Socket.IO namespace and the Hermes agent bridge. Legacy gateway proxy routes are kept only for compatibility where applicable.',
       },
       auth: {
         title: 'Authentication',

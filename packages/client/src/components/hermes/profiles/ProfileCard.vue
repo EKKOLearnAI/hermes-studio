@@ -97,10 +97,6 @@ async function handleExport() {
         <span class="info-label">{{ t('profiles.model') }}</span>
         <code class="info-value mono">{{ profile.model }}</code>
       </div>
-      <div class="info-row">
-        <span class="info-label">{{ t('profiles.gateway') }}</span>
-        <code class="info-value mono">{{ profile.gateway }}</code>
-      </div>
     </div>
 
     <div class="card-detail-toggle" @click="toggleDetail">

@@ -13,9 +13,11 @@ const XAI_OAUTH_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828'
 const XAI_OAUTH_SCOPE = 'openid profile email offline_access grok-cli:access api:access'
 const XAI_DEFAULT_BASE_URL = 'https://api.x.ai/v1'
 const XAI_REDIRECT_HOST = '127.0.0.1'
+const XAI_CALLBACK_BIND_HOST = process.env.HERMES_WEB_UI_XAI_CALLBACK_BIND_HOST?.trim() || XAI_REDIRECT_HOST
 const XAI_REDIRECT_PORT = 56121
 const XAI_REDIRECT_PATH = '/callback'
 const POLL_MAX_DURATION = 15 * 60 * 1000
+const XAI_DEFAULT_MODEL = 'grok-4.3'
 
 interface XaiSession {
   id: string
@@ -40,6 +42,18 @@ interface AuthJson {
 }
 
 const sessions = new Map<string, XaiSession>()
+
+export function applyXaiOAuthDefaultModel(config: Record<string, any>): Record<string, any> {
+  if (typeof config.model !== 'object' || config.model === null) config.model = {}
+  const currentDefault = String(config.model.default || '').trim()
+  config.model.provider = 'xai-oauth'
+  config.model.default = currentDefault.toLowerCase().startsWith('grok-')
+    ? currentDefault
+    : XAI_DEFAULT_MODEL
+  delete config.model.base_url
+  delete config.model.api_key
+  return config
+}
 
 function cleanupExpiredSessions() {
   const now = Date.now()
@@ -181,14 +195,7 @@ async function saveTokens(session: XaiSession, tokenData: any) {
   }]
   saveAuthJson(authPath, auth)
 
-  await updateConfigYaml((config) => {
-    if (typeof config.model !== 'object' || config.model === null) config.model = {}
-    config.model.provider = 'xai-oauth'
-    config.model.default = config.model.default || 'grok-4.3'
-    delete config.model.base_url
-    delete config.model.api_key
-    return config
-  })
+  await updateConfigYaml(applyXaiOAuthDefaultModel)
 }
 
 async function exchangeCode(session: XaiSession, code: string) {
@@ -257,7 +264,7 @@ function startCallbackServer(sessionId: string, preferredPort = XAI_REDIRECT_POR
         reject(err)
       }
     })
-    server.listen(preferredPort, XAI_REDIRECT_HOST, () => {
+    server.listen(preferredPort, XAI_CALLBACK_BIND_HOST, () => {
       const address = server.address()
       const port = typeof address === 'object' && address ? address.port : preferredPort
       resolve({ server, redirectUri: `http://${XAI_REDIRECT_HOST}:${port}${XAI_REDIRECT_PATH}` })

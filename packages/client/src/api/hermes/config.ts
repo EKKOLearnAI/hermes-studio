@@ -72,10 +72,11 @@ export async function fetchConfig(sections?: string[]): Promise<AppConfig> {
 export async function updateConfigSection(
   section: string,
   values: Record<string, any>,
+  options?: { restart?: boolean },
 ): Promise<void> {
   await request('/api/hermes/config', {
     method: 'PUT',
-    body: JSON.stringify({ section, values }),
+    body: JSON.stringify({ section, values, ...options }),
   })
 }
 

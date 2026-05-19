@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, stat } from 'fs/promises'
+import { copyFile, mkdir, readdir, rm, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { getActiveProfileDir } from './hermes-profile'
@@ -8,6 +8,7 @@ export interface SkillInjectionResult {
   sourceDir: string
   targetDir: string
   injected: string[]
+  updated: string[]
   skipped: string[]
 }
 
@@ -38,6 +39,7 @@ export class HermesSkillInjector {
       sourceDir: this.sourceDir,
       targetDir: this.targetDir,
       injected: [],
+      updated: [],
       skipped: [],
     }
 
@@ -52,16 +54,21 @@ export class HermesSkillInjector {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const sourceSkillDir = join(this.sourceDir, entry.name)
       const targetSkillDir = join(this.targetDir, entry.name)
+      const existed = existsSync(targetSkillDir)
       if (existsSync(targetSkillDir)) {
-        result.skipped.push(entry.name)
-        continue
+        await rm(targetSkillDir, { recursive: true, force: true })
       }
-      await this.copyDirMissingOnly(sourceSkillDir, targetSkillDir)
-      result.injected.push(entry.name)
+      await this.copyDir(sourceSkillDir, targetSkillDir)
+      if (existed) result.updated.push(entry.name)
+      else result.injected.push(entry.name)
     }
 
-    if (result.injected.length > 0) {
-      logger.info({ injected: result.injected, targetDir: this.targetDir }, '[skill-injector] injected bundled skills')
+    if (result.injected.length > 0 || result.updated.length > 0) {
+      logger.info({
+        injected: result.injected,
+        updated: result.updated,
+        targetDir: this.targetDir,
+      }, '[skill-injector] synced bundled skills')
     }
     return result
   }
@@ -74,15 +81,14 @@ export class HermesSkillInjector {
     }
   }
 
-  private async copyDirMissingOnly(sourceDir: string, targetDir: string): Promise<void> {
+  private async copyDir(sourceDir: string, targetDir: string): Promise<void> {
     await mkdir(targetDir, { recursive: true })
     const entries = await readdir(sourceDir, { withFileTypes: true })
     for (const entry of entries) {
       const sourcePath = join(sourceDir, entry.name)
       const targetPath = join(targetDir, entry.name)
-      if (existsSync(targetPath)) continue
       if (entry.isDirectory()) {
-        await this.copyDirMissingOnly(sourcePath, targetPath)
+        await this.copyDir(sourcePath, targetPath)
       } else if (entry.isFile()) {
         await copyFile(sourcePath, targetPath)
       }

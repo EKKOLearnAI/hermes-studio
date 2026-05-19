@@ -17,12 +17,6 @@ async function loadHealthControllerWithoutInjectedVersion() {
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
   }))
 
-  vi.doMock('../../packages/server/src/services/gateway-bootstrap', () => ({
-    getGatewayManagerInstance: vi.fn(() => ({
-      getUpstream: () => 'http://127.0.0.1:9999',
-    })),
-  }))
-
   return import('../../packages/server/src/controllers/health')
 }
 
@@ -32,12 +26,6 @@ async function loadHealthControllerWithInjectedVersion(version: string) {
 
   vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
-  }))
-
-  vi.doMock('../../packages/server/src/services/gateway-bootstrap', () => ({
-    getGatewayManagerInstance: vi.fn(() => ({
-      getUpstream: () => 'http://127.0.0.1:9999',
-    })),
   }))
 
   return import('../../packages/server/src/controllers/health')

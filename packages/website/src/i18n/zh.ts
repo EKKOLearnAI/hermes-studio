@@ -40,7 +40,7 @@ export default {
     },
     profiles: {
       title: '多配置',
-      desc: '隔离的多配置文件，独立配置。支持克隆、导入/导出、多网关运行。',
+      desc: '隔离的多配置文件，独立配置。支持克隆、导入/导出，并通过 agent bridge 运行聊天。',
     },
     files: {
       title: '文件管理',
@@ -52,7 +52,7 @@ export default {
     },
     quickInstall: {
       title: '一键安装',
-      desc: '一条命令安装启动。自动检测配置、解析端口、打开浏览器。',
+      desc: '一条命令安装启动。初始化 Web UI 数据、启动 bridge 并打开浏览器。',
     },
     i18n: {
       title: '8 种语言',
@@ -120,7 +120,7 @@ export default {
       },
       firstRun: {
         title: '首次运行',
-        content: '首次启动时，Hermes Web UI 会自动生成认证令牌、验证配置文件、启动 Hermes 网关并在浏览器中打开仪表板。',
+        content: '首次启动时，Hermes Web UI 会自动生成认证令牌、初始化本地数据、启动 Hermes agent bridge 并在浏览器中打开仪表板。',
       },
       login: {
         title: '登录',
@@ -143,12 +143,12 @@ export default {
         ],
       },
       gateway: {
-        title: '网关管理',
-        content: '网关是处理 AI 对话的 Hermes Agent 进程。Hermes Web UI 管理网关生命周期——在网关页面启动、停止和监控。不同配置可运行多个网关，且每个 profile 都会从各自的 Hermes 配置中解析网关 host/port。',
+        title: 'Agent Bridge 运行时',
+        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。Web UI 不再启动或管理独立的 gateway 进程。',
       },
       profiles: {
         title: '配置文件',
-        content: '配置文件为不同场景提供隔离的配置。每个配置文件拥有独立的 Hermes 配置、缓存和网关。可在配置页面创建、克隆、导入或导出配置文件。',
+        content: '配置文件为不同场景提供隔离的配置。每个配置文件拥有独立的 Hermes 配置和缓存。可在配置页面创建、克隆、导入或导出配置文件。',
       },
     },
     features: {
@@ -229,14 +229,14 @@ export default {
     },
     api: {
       title: 'API 参考',
-      intro: 'Hermes Web UI 提供本地 BFF API 并代理请求到上游 Hermes 网关。',
+      intro: 'Hermes Web UI 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
       local: {
         title: '本地 BFF 端点',
-        content: 'Koa 服务器处理会话管理、配置文件 CRUD、配置读写、日志访问、技能列表和记忆操作。这些端点直接调用 Hermes CLI。',
+        content: 'Koa 服务器处理会话管理、配置文件 CRUD、配置读写、日志访问、技能列表、记忆操作和静态资源。',
       },
       proxy: {
-        title: '网关代理',
-        content: '对 /api/hermes/v1/* 的请求会转发到 Hermes 网关。包括 AI 模型交互、运行管理和流式事件。',
+        title: '聊天流式通信',
+        content: '聊天运行使用 /chat-run Socket.IO 命名空间和 Hermes agent bridge。旧 gateway proxy 路由仅在兼容场景下保留。',
       },
       auth: {
         title: '认证',

@@ -2,10 +2,12 @@
 import { ref, computed } from 'vue'
 import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 
 const showModal = ref(false)
 const searchQuery = ref('')
@@ -14,15 +16,20 @@ const customInput = ref('')
 const customProvider = ref('')
 
 const selectedDisplayName = computed(() => appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider))
+const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
+const activeModelGroups = computed(() => {
+  const profileModels = appStore.profileModelGroups.find(entry => entry.profile === activeProfileName.value)
+  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups
+})
 
 const providerOptions = computed(() => {
   const current = appStore.selectedProvider
   customProvider.value = current
-  return appStore.modelGroups.map(g => ({ label: g.label, value: g.provider }))
+  return activeModelGroups.value.map(g => ({ label: g.label, value: g.provider }))
 })
 
 const modelGroupsWithCustom = computed(() =>
-  appStore.modelGroups.map(g => ({
+  activeModelGroups.value.map(g => ({
     ...g,
     models: [
       ...g.models,
@@ -66,7 +73,7 @@ function isGroupCollapsed(provider: string) {
 }
 
 function handleSelect(model: string, provider: string) {
-  const meta = appStore.modelGroups.find(g => g.provider === provider)?.model_meta?.[model]
+  const meta = activeModelGroups.value.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, provider)
   showModal.value = false
@@ -85,7 +92,7 @@ function handleCustomSubmit() {
   const model = customInput.value.trim()
   if (!model || !customProvider.value) return
   // 拦截 disabled 模型，避免 custom input 绕过列表里的灰显限制
-  const meta = appStore.modelGroups.find(g => g.provider === customProvider.value)?.model_meta?.[model]
+  const meta = activeModelGroups.value.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, customProvider.value)
   showModal.value = false

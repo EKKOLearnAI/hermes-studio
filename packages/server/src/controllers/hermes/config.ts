@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
-import { getActiveConfigPath, getActiveEnvPath } from '../../services/hermes/hermes-profile'
+import { getActiveConfigPath, getActiveEnvPath, getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
+import { restartGateway } from '../../services/hermes/hermes-cli'
 import { saveEnvValue } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
@@ -137,7 +137,7 @@ export async function getConfig(ctx: any) {
 }
 
 export async function updateConfig(ctx: any) {
-  const { section, values } = ctx.request.body as { section: string; values: Record<string, any> }
+  const { section, values, restart } = ctx.request.body as { section: string; values: Record<string, any>; restart?: boolean }
   if (!section || !values) {
     ctx.status = 400; ctx.body = { error: 'Missing section or values' }; return
   }
@@ -152,18 +152,19 @@ export async function updateConfig(ctx: any) {
       },
     })
 
-    // 使用 GatewayManager 重启平台网关
-    if (PLATFORM_SECTIONS.has(section)) {
-      const mgr = getGatewayManagerInstance()
-      if (mgr) {
-        try {
-          const activeProfile = mgr.getActiveProfile()
-          await mgr.stop(activeProfile)
-          await mgr.start(activeProfile)
-          await destroyBridgeProfile(activeProfile)
-        } catch (err) {
-          logger.error(err, 'GatewayManager restart failed')
-        }
+    // Platform adapters still run through Hermes gateway; restart it so channel
+    // config changes (Feishu/Weixin/etc.) are applied, then refresh bridge sessions.
+    if (restart !== false && PLATFORM_SECTIONS.has(section)) {
+      const activeProfile = getActiveProfileName()
+      try {
+        const restartResult = await restartGateway()
+        logger.info('[config] gateway restarted after config update section=%s profile=%s result=%s', section, activeProfile, restartResult)
+        await destroyBridgeProfile(activeProfile)
+      } catch (err) {
+        logger.error(err, 'Gateway restart failed')
+        ctx.status = 500
+        ctx.body = { error: err instanceof Error ? err.message : 'Gateway restart failed' }
+        return
       }
     }
 
@@ -219,17 +220,18 @@ export async function updateCredentials(ctx: any) {
       },
     })
 
-    // 使用 GatewayManager 重启平台网关
-    const mgr = getGatewayManagerInstance()
-    if (mgr) {
-      try {
-        const activeProfile = mgr.getActiveProfile()
-        await mgr.stop(activeProfile)
-        await mgr.start(activeProfile)
-        await destroyBridgeProfile(activeProfile)
-      } catch (err) {
-        logger.error(err, 'GatewayManager restart failed')
-      }
+    // Platform adapters still run through Hermes gateway; restart it so channel
+    // credentials are applied, then refresh bridge sessions.
+    const activeProfile = getActiveProfileName()
+    try {
+      const restartResult = await restartGateway()
+      logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%s', platform, activeProfile, restartResult)
+      await destroyBridgeProfile(activeProfile)
+    } catch (err) {
+      logger.error(err, 'Gateway restart failed')
+      ctx.status = 500
+      ctx.body = { error: err instanceof Error ? err.message : 'Gateway restart failed' }
+      return
     }
 
     ctx.body = { success: true }

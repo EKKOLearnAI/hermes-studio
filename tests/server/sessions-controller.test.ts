@@ -101,10 +101,6 @@ vi.mock('../../packages/server/src/lib/context-compressor/export-compressor', ()
   },
 }))
 
-vi.mock('../../packages/server/src/services/gateway-bootstrap', () => ({
-  getGatewayManagerInstance: () => null,
-}))
-
 describe('session conversations controller', () => {
   beforeEach(() => {
     vi.resetModules()

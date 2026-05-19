@@ -786,14 +786,18 @@ export class GroupChatServer {
     private handleJoin(socket: Socket, data: { roomId?: string; name?: string; description?: string }, ack?: (res: any) => void): void {
         const socketId = socket.id
         const userId = this.socketUserMap.get(socketId) || socketId
-        const userInfo = this.userInfoMap.get(userId) || { name: `User-${userId.slice(0, 6)}`, description: '' }
-        const userName = data.name || userInfo.name
-        const description = data.description || userInfo.description
+        const roomId = data.roomId || 'general'
+        const existingMember = this.storage.getMemberByUserId(roomId, userId)
+        const userInfo = this.userInfoMap.get(userId) || {
+            name: existingMember?.name || `User-${userId.slice(0, 6)}`,
+            description: existingMember?.description || '',
+        }
+        const userName = data.name || existingMember?.name || userInfo.name
+        const description = data.description || existingMember?.description || userInfo.description
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })
 
-        const roomId = data.roomId || 'general'
         let room = this.rooms.get(roomId)
         if (!room) {
             room = new ChatRoom(roomId)

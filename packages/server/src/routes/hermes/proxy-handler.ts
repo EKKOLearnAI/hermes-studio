@@ -1,8 +1,13 @@
 import type { Context } from 'koa'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { updateUsage } from '../../db/hermes/usage-store'
 
-function getGatewayManager() { return getGatewayManagerInstance() }
+let gatewayManager: any = null
+
+export function setGatewayManagerForTest(manager: any): void {
+  gatewayManager = manager
+}
+
+function getGatewayManager() { return gatewayManager }
 
 // --- run_id → session_id mapping (in-memory, ephemeral) ---
 

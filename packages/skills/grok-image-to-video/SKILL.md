@@ -1,3 +1,17 @@
+---
+name: grok-image-to-video
+description: "Animate a local image into a short mp4 video through Hermes Web UI using xAI Grok Imagine."
+version: 1.0.0
+author: Ekko
+license: MIT
+platforms: [linux, macos, windows]
+metadata:
+  hermes:
+    tags: [xAI, Grok, image-to-video, video-generation, media]
+prerequisites:
+  commands: [curl]
+---
+
 # Grok Image To Video
 
 Use this skill when the user wants to animate a local image into a short video with xAI Grok Imagine.
@@ -9,8 +23,16 @@ Call the local Hermes Web UI media endpoint. Pass a local image path; the server
 Endpoint:
 
 ```bash
-POST http://localhost:8648/api/hermes/media/grok-image-to-video
+POST <Hermes Web UI base URL>/api/hermes/media/grok-image-to-video
 ```
+
+Resolve the Hermes Web UI base URL in this order:
+
+1. `HERMES_WEB_UI_URL` environment variable, if set.
+2. `http://127.0.0.1:${PORT}`, if `PORT` is set.
+3. `http://127.0.0.1:8648` for local development.
+
+When Hermes Web UI is running from the provided Docker Compose setup, the default external URL is `http://127.0.0.1:6060`.
 
 Authentication:
 
@@ -52,7 +74,13 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-curl -sS -X POST http://localhost:8648/api/hermes/media/grok-image-to-video \
+BASE_URL="${HERMES_WEB_UI_URL:-}"
+if [ -z "$BASE_URL" ]; then
+  BASE_URL="http://127.0.0.1:${PORT:-8648}"
+fi
+BASE_URL="${BASE_URL%/}"
+
+curl -sS -X POST "$BASE_URL/api/hermes/media/grok-image-to-video" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{

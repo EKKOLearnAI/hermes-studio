@@ -2,12 +2,18 @@ import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
 import { logger } from '../logger'
-import { getProfileDir } from './hermes-profile'
+import { stripLegacyApiServerGatewayConfig, updateConfigYaml } from '../config-helpers'
+import { getActiveProfileDir, getProfileDir } from './hermes-profile'
+import { startGatewayRunManaged } from './gateway-runner'
+import { isGatewayRunningForProfile } from './gateway-autostart'
 
 const execFileAsync = promisify(execFile)
 
 const execOpts = { windowsHide: true }
 const isDocker = existsSync('/.dockerenv')
+const isTermux = !!process.env.TERMUX_VERSION ||
+  (process.env.PREFIX || '').includes('/com.termux/') ||
+  existsSync('/data/data/com.termux/files/usr')
 
 /**
  * 解析 Hermes CLI 二进制路径
@@ -18,6 +24,47 @@ function resolveHermesBin(): string {
 }
 
 const HERMES_BIN = resolveHermesBin()
+
+async function waitForGatewayRunning(profileDir: string, timeoutMs = 15000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await isGatewayRunningForProfile(HERMES_BIN, profileDir)) return true
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return false
+}
+
+async function stopGatewayForActiveProfile(): Promise<void> {
+  try {
+    await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
+      timeout: 30000,
+      ...activeGatewayExecOpts(),
+    })
+  } catch (err) {
+    logger.warn(err, 'hermes gateway stop before restart failed; continuing with run --replace')
+  }
+}
+
+function activeGatewayExecOpts() {
+  return {
+    ...execOpts,
+    env: {
+      ...process.env,
+      HERMES_HOME: getActiveProfileDir(),
+    },
+  }
+}
+
+async function clearLegacyApiServerGatewayConfig(): Promise<void> {
+  try {
+    await updateConfigYaml((config) => {
+      const result = stripLegacyApiServerGatewayConfig(config)
+      return { data: result.config, result: undefined, write: result.changed }
+    })
+  } catch (err) {
+    logger.warn(err, 'Failed to clear legacy api_server gateway config before restart')
+  }
+}
 
 export interface HermesSession {
   id: string
@@ -276,7 +323,7 @@ export async function startGateway(): Promise<string> {
 
   const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'start'], {
     timeout: 30000,
-    ...execOpts,
+    ...activeGatewayExecOpts(),
   })
   return stdout || stderr
 }
@@ -290,22 +337,44 @@ export async function startGatewayBackground(): Promise<number | null> {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    env: {
+      ...process.env,
+      HERMES_HOME: getActiveProfileDir(),
+    },
   })
   child.unref()
   return child.pid ?? null
 }
 
 /**
- * Restart Hermes gateway (stop then start)
+ * Restart Hermes gateway through Hermes CLI, falling back to detached
+ * `gateway run` when the environment does not support `gateway restart`.
  */
 export async function restartGateway(): Promise<string> {
-  try {
-    await stopGateway()
-  } catch (err) {
-    // Ignore stop errors, gateway might not be running
+  await clearLegacyApiServerGatewayConfig()
+  const profileDir = getActiveProfileDir()
+  if (isDocker || isTermux) {
+    await stopGatewayForActiveProfile()
+    const result = startGatewayRunManaged(HERMES_BIN)
+    const ready = await waitForGatewayRunning(profileDir)
+    if (!ready) throw new Error(`Gateway run replace triggered but gateway did not report running within timeout${result.pid ? ` (PID: ${result.pid})` : ''}`)
+    return result.pid ? `Gateway run replaced (PID: ${result.pid})` : 'Gateway run replaced'
   }
-  const result = await startGateway()
-  return result
+  try {
+    const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'restart'], {
+      timeout: 30000,
+      ...activeGatewayExecOpts(),
+    })
+    const ready = await waitForGatewayRunning(profileDir)
+    if (!ready) throw new Error('Hermes gateway restart completed but gateway did not report running within timeout')
+    return stdout || stderr
+  } catch (err: any) {
+    logger.warn(err, 'hermes gateway restart failed; falling back to gateway run')
+    const result = startGatewayRunManaged(HERMES_BIN)
+    const ready = await waitForGatewayRunning(profileDir)
+    if (!ready) throw new Error(`Gateway run fallback triggered but gateway did not report running within timeout${result.pid ? ` (PID: ${result.pid})` : ''}`)
+    return result.pid ? `Gateway run started (PID: ${result.pid})` : 'Gateway run started'
+  }
 }
 
 /**
@@ -314,7 +383,7 @@ export async function restartGateway(): Promise<string> {
 export async function stopGateway(): Promise<string> {
   const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
     timeout: 30000,
-    ...execOpts,
+    ...activeGatewayExecOpts(),
   })
   return stdout || stderr
 }
@@ -384,7 +453,6 @@ export interface HermesProfile {
   name: string
   active: boolean
   model: string
-  gateway: string
   alias: string
 }
 
@@ -393,7 +461,6 @@ export interface HermesProfileDetail {
   path: string
   model: string
   provider: string
-  gateway: string
   skills: number
   hasEnv: boolean
   hasSoulMd: boolean
@@ -424,7 +491,6 @@ export async function listProfiles(): Promise<HermesProfile[]> {
           name: match[2],
           active: !!match[1],
           model: match[3],
-          gateway: match[4],
           alias: match[5].trim() === '—' ? '' : match[5].trim(),
         })
       }
@@ -464,7 +530,6 @@ export async function getProfile(name: string): Promise<HermesProfileDetail> {
       path: result.path || '',
       model,
       provider: providerMatch ? providerMatch[1] : '',
-      gateway: result.gateway || '',
       skills: parseInt(result.skills || '0', 10),
       hasEnv: result['.env'] === 'exists',
       hasSoulMd: result['soul.md'] === 'exists',

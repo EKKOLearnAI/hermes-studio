@@ -223,8 +223,6 @@ export async function forceCompressBridgeHistory(
   sessionId: string,
   profile: string,
   _messages: ChatMessage[],
-  getUpstream: (profile: string) => string,
-  getApiKey: (profile: string) => string | undefined,
 ): Promise<BridgeCompressionResult> {
   const history = await buildDbHistory(sessionId, { excludeLastUser: true })
 
@@ -243,8 +241,8 @@ export async function forceCompressBridgeHistory(
     }
   }
 
-  const upstream = getUpstream(profile).replace(/\/$/, '')
-  const apiKey = getApiKey(profile) || undefined
+  const upstream = ''
+  const apiKey = undefined
   const session = getSession(sessionId)
   const beforeUsage = estimateSnapshotAwareHistoryUsage(sessionId, history)
   const totalTokens = beforeUsage.tokenCount

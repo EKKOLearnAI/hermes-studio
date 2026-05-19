@@ -3,6 +3,7 @@ import { ref, onUnmounted } from 'vue'
 import { NModal, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { startXaiLogin, pollXaiLogin } from '@/api/hermes/xai-auth'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const { t } = useI18n()
 const emit = defineEmits<{ close: []; success: [] }>()
@@ -73,6 +74,12 @@ function openLink() {
   window.open(authorizationUrl.value, '_blank')
 }
 
+async function copyLink() {
+  const ok = await copyToClipboard(authorizationUrl.value)
+  if (ok) message.success(t('common.copied'))
+  else message.error(t('chat.copyFailed'))
+}
+
 function retry() {
   status.value = 'idle'
   authorizationUrl.value = ''
@@ -103,6 +110,9 @@ startLogin()
         <p class="xai-login__hint">{{ t('models.xaiWaiting') }}</p>
         <NButton type="primary" block @click="openLink">
           {{ t('models.xaiOpenLink') }}
+        </NButton>
+        <NButton block @click="copyLink">
+          {{ t('models.xaiCopyLink') }}
         </NButton>
       </div>
 

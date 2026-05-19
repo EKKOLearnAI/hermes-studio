@@ -71,7 +71,6 @@ export async function handleApiRun(
   data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
-  gatewayManager: any,
   skipUserMessage = false,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
@@ -89,8 +88,8 @@ export async function handleApiRun(
     }
   }
 
-  const upstream = gatewayManager.getUpstream(profile).replace(/\/$/, '')
-  const apiKey = gatewayManager.getApiKey(profile) || undefined
+  const upstream = ''
+  const apiKey = undefined
 
   const runMarker = session_id
     ? `resp_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`

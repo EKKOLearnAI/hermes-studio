@@ -4,7 +4,6 @@ export interface HermesProfile {
   name: string
   active: boolean
   model: string
-  gateway: string
   alias: string
 }
 
@@ -13,7 +12,6 @@ export interface HermesProfileDetail {
   path: string
   model: string
   provider: string
-  gateway: string
   skills: number
   hasEnv: boolean
   hasSoulMd: boolean

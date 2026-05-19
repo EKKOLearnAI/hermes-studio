@@ -417,7 +417,7 @@ bridge 启动失败不会阻止 Web UI 启动，但 Bridge(beta) 会话后续运
 随后创建统一的 chat socket：
 
 ```ts
-chatRunServer = new ChatRunSocket(groupChatServer.getIO(), getGatewayManagerInstance())
+chatRunServer = new ChatRunSocket(groupChatServer.getIO())
 chatRunServer.init()
 ```
 

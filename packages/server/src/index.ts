@@ -10,7 +10,6 @@ import { readFileSync } from 'fs'
 import { config } from './config'
 import { getToken, requireAuth } from './services/auth'
 import { initLoginLimiter } from './services/login-limiter'
-import { initGatewayManager, getGatewayManagerInstance } from './services/gateway-bootstrap'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
 import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
@@ -22,6 +21,7 @@ import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
+import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -95,18 +95,24 @@ export async function bootstrap() {
     if (injectionResult.injected.length > 0) {
       console.log('[bootstrap] bundled skills injected:', injectionResult.injected.join(', '))
     }
+    if (injectionResult.updated.length > 0) {
+      console.log('[bootstrap] bundled skills updated:', injectionResult.updated.join(', '))
+    }
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to inject bundled skills')
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
   }
 
-  // Debug: log environment variable
-  console.log('[bootstrap] HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN =', process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN)
+  try {
+    await ensureProfileGatewaysRunning()
+    console.log('[bootstrap] profile gateways checked')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+  }
 
   const app = new Koa()
 
-  await initGatewayManager()
-  console.log('[bootstrap] gateway manager initialized')
   try {
     agentBridgeManager = await startAgentBridgeManager()
     console.log('[bootstrap] agent bridge started')
@@ -164,7 +170,7 @@ export async function bootstrap() {
   setGroupChatServer(groupChatServer)
 
   // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
-  chatRunServer = new ChatRunSocket(groupChatServer.getIO(), getGatewayManagerInstance())
+  chatRunServer = new ChatRunSocket(groupChatServer.getIO())
   setChatRunServer(chatRunServer)
   chatRunServer.init()
 

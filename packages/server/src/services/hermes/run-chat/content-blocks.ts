@@ -1,5 +1,8 @@
 import type { ContentBlock } from './types'
 
+type ResponseContentPart = { type: string; text?: string; image_url?: string }
+type AgentContentPart = { type: string; text?: string; image_url?: { url: string } }
+
 /**
  * Convert ContentBlock[] to string for display/storage
  */
@@ -29,22 +32,16 @@ export function isContentBlockArray(input: any): input is ContentBlock[] {
 /**
  * Convert ContentBlock[] to multimodal format for /v1/responses API.
  */
-export async function convertContentBlocks(blocks: ContentBlock[]): Promise<Array<{ type: string; text?: string; image_url?: string }>> {
-  const parts: Array<{ type: string; text?: string; image_url?: string }> = []
-  const fs = await import('fs/promises')
-  const path = await import('path')
-
+export async function convertContentBlocks(blocks: ContentBlock[]): Promise<ResponseContentPart[]> {
+  const parts: ResponseContentPart[] = []
   for (const block of blocks) {
     if (block.type === 'text') {
       parts.push({ type: 'input_text', text: block.text })
     } else if (block.type === 'image') {
-      try {
-        const buf = await fs.readFile(block.path)
-        const ext = path.extname(block.path).toLowerCase().replace('.', '')
-        const mime = ext === 'jpg' ? 'jpeg' : ext || 'png'
-        const base64 = buf.toString('base64')
-        parts.push({ type: 'input_image', image_url: `data:image/${mime};base64,${base64}` })
-      } catch {
+      const dataUri = await imageBlockToDataUri(block)
+      if (dataUri) {
+        parts.push({ type: 'input_image', image_url: dataUri })
+      } else {
         parts.push({ type: 'input_text', text: `[Image: ${block.path}]` })
       }
     } else if (block.type === 'file') {
@@ -59,15 +56,42 @@ export async function convertContentBlocks(blocks: ContentBlock[]): Promise<Arra
  * Convert ContentBlock[] to the normalized multimodal shape Hermes agent
  * receives after /v1/responses input normalization.
  */
-export async function convertContentBlocksForAgent(blocks: ContentBlock[]): Promise<Array<{ type: string; text?: string; image_url?: { url: string } }>> {
-  const responseParts = await convertContentBlocks(blocks)
-  return responseParts.map((part) => {
-    if (part.type === 'input_text') {
-      return { type: 'text', text: part.text || '' }
+export async function convertContentBlocksForAgent(blocks: ContentBlock[]): Promise<AgentContentPart[]> {
+  const parts: AgentContentPart[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      parts.push({ type: 'text', text: block.text || '' })
+    } else if (block.type === 'image') {
+      parts.push({
+        type: 'text',
+        text: `[Attached image: ${block.name || block.path}]\nLocal image path for tools: ${block.path}`,
+      })
+      const dataUri = await imageBlockToDataUri(block)
+      if (dataUri) {
+        parts.push({ type: 'image_url', image_url: { url: dataUri } })
+      }
+    } else if (block.type === 'file') {
+      parts.push({
+        type: 'text',
+        text: `[Attached file: ${block.name || block.path}]\nLocal file path for tools: ${block.path}`,
+      })
     }
-    if (part.type === 'input_image') {
-      return { type: 'image_url', image_url: { url: part.image_url || '' } }
-    }
-    return { type: 'text', text: part.text || '' }
-  })
+  }
+  return parts
+}
+
+async function imageBlockToDataUri(block: Extract<ContentBlock, { type: 'image' }>): Promise<string | null> {
+  try {
+    const fs = await import('fs/promises')
+    const path = await import('path')
+    const buf = await fs.readFile(block.path)
+    const ext = path.extname(block.path).toLowerCase().replace('.', '')
+    const mimeFromExt = ext === 'jpg' ? 'jpeg' : ext || 'png'
+    const mime = block.media_type?.startsWith('image/')
+      ? block.media_type.slice('image/'.length)
+      : mimeFromExt
+    return `data:image/${mime};base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
 }

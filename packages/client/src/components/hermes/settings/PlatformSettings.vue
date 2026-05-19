@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, reactive, onUnmounted } from 'vue'
-import { NSwitch, NInput, NButton, useMessage } from 'naive-ui'
+import { ref, reactive, onUnmounted, watch } from 'vue'
+import { NSwitch, NInput, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { saveCredentials as saveCredsApi, fetchWeixinQrCode, pollWeixinQrStatus, saveWeixinCredentials } from '@/api/hermes/config'
@@ -11,41 +11,91 @@ const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
 
-// Track saving state per platform.field
 const saving = reactive<Record<string, boolean>>({})
+const configDrafts = reactive<Record<string, Record<string, any>>>({})
+const credentialDrafts = reactive<Record<string, Record<string, any>>>({})
+const touchedConfig = reactive<Record<string, boolean>>({})
+const touchedCredentials = reactive<Record<string, boolean>>({})
 
-function savingKey(platform: string, field: string) {
-  return `${platform}.${field}`
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value || {}))
 }
 
-function isSaving(platform: string, field: string) {
-  return !!saving[savingKey(platform, field)]
+function mergeDeep(target: Record<string, any>, values: Record<string, any>) {
+  for (const [key, value] of Object.entries(values)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      target[key] = mergeDeep({ ...(target[key] || {}) }, value as Record<string, any>)
+    } else {
+      target[key] = value
+    }
+  }
+  return target
 }
 
-// Immediate save for switches
-async function immediateSave(platform: string, field: string, saveFn: () => Promise<void>) {
-  const key = savingKey(platform, field)
-  saving[key] = true
+function configDraft(platform: string) {
+  if (!configDrafts[platform]) {
+    configDrafts[platform] = cloneValue(settingsStore[platform as keyof typeof settingsStore] as Record<string, any>)
+  }
+  return configDrafts[platform]
+}
+
+function credentialDraft(platform: string) {
+  if (!credentialDrafts[platform]) credentialDrafts[platform] = cloneValue(getCreds(platform))
+  return credentialDrafts[platform]
+}
+
+function setConfigDraft(platform: string, values: Record<string, any>) {
+  configDrafts[platform] = mergeDeep({ ...configDraft(platform) }, values)
+  touchedConfig[platform] = true
+}
+
+function setCredentialDraft(platform: string, values: Record<string, any>) {
+  credentialDrafts[platform] = mergeDeep({ ...credentialDraft(platform) }, values)
+  touchedCredentials[platform] = true
+}
+
+function sameJson(a: unknown, b: unknown) {
+  return JSON.stringify(a || {}) === JSON.stringify(b || {})
+}
+
+function hasConfigChanges(platform: string) {
+  return !!touchedConfig[platform] && !!configDrafts[platform] && !sameJson(configDrafts[platform], settingsStore[platform as keyof typeof settingsStore])
+}
+
+function hasCredentialChanges(platform: string) {
+  return !!touchedCredentials[platform] && !!credentialDrafts[platform] && !sameJson(credentialDrafts[platform], getCreds(platform))
+}
+
+function hasUnsavedChanges(platform: string) {
+  return hasConfigChanges(platform) || hasCredentialChanges(platform)
+}
+
+function isSavingPlatform(platform: string) {
+  return !!saving[platform]
+}
+
+async function savePlatform(platform: string) {
+  saving[platform] = true
   try {
-    await saveFn()
+    const configChanged = hasConfigChanges(platform)
+    const credentialsChanged = hasCredentialChanges(platform)
+    if (configChanged) {
+      await settingsStore.saveSection(platform, configDraft(platform), { restart: !credentialsChanged })
+    }
+    if (credentialsChanged) {
+      await saveCredsApi(platform, credentialDraft(platform))
+      await settingsStore.fetchSettings()
+    }
+    configDrafts[platform] = cloneValue(settingsStore[platform as keyof typeof settingsStore] as Record<string, any>)
+    credentialDrafts[platform] = cloneValue(getCreds(platform))
+    touchedConfig[platform] = false
+    touchedCredentials[platform] = false
     message.success(t('settings.saved'))
   } catch (err: any) {
-    message.error(t('settings.saveFailed'))
+    message.error(err?.message || t('settings.saveFailed'))
   } finally {
-    saving[key] = false
+    saving[platform] = false
   }
-}
-
-async function saveChannel(platform: string, field: string, values: Record<string, any>) {
-  immediateSave(platform, field, () => settingsStore.saveSection(platform, values))
-}
-
-// Save credentials to .env (matching hermes gateway setup behavior)
-async function saveCredentials(platform: string, field: string, values: Record<string, any>) {
-  immediateSave(platform, field, async () => {
-    await saveCredsApi(platform, values)
-    await settingsStore.fetchSettings()
-  })
 }
 
 function getCreds(key: string) {
@@ -180,6 +230,25 @@ const platforms = [
     icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.68 4.025c-3.694 0-6.69 2.462-6.69 5.496 0 3.034 2.996 5.496 6.69 5.496.753 0 1.477-.1 2.158-.28a.66.66 0 01.548.074l1.46.854a.25.25 0 00.127.041.224.224 0 00.221-.225c0-.055-.022-.109-.037-.162l-.298-1.131a.453.453 0 01.163-.509C21.81 18.613 22.77 16.973 22.77 15.512c0-3.034-2.996-5.496-6.69-5.496h.198zm-2.454 3.347c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902zm4.912 0c.491 0 .889.404.889.902a.896.896 0 01-.889.903.896.896 0 01-.889-.903c0-.498.398-.902.889-.902z"/></svg>',
   },
 ]
+
+watch(
+  () => platforms.map((platform) => ({
+    key: platform.key,
+    config: settingsStore[platform.key as keyof typeof settingsStore],
+    credentials: getCreds(platform.key),
+  })),
+  (items) => {
+    for (const item of items) {
+      if (!touchedConfig[item.key]) {
+        configDrafts[item.key] = cloneValue(item.config as Record<string, any>)
+      }
+      if (!touchedCredentials[item.key]) {
+        credentialDrafts[item.key] = cloneValue(item.credentials)
+      }
+    }
+  },
+  { deep: true, immediate: true },
+)
 </script>
 
 <template>
@@ -196,158 +265,158 @@ const platforms = [
       <!-- Telegram -->
       <template v-if="p.key === 'telegram'">
         <SettingRow :label="t('platform.botToken')" :hint="t('platform.botTokenHint')">
-          <NInput :default-value="getCreds('telegram').token || ''" :loading="isSaving('telegram', 'token')" clearable size="small" class="input-lg" placeholder="123456:ABC-DEF..." @change="v => saveCredentials('telegram', 'token', { token: v })" />
+          <NInput :value="credentialDraft('telegram').token || ''" :loading="isSavingPlatform('telegram')" clearable size="small" class="input-lg" placeholder="123456:ABC-DEF..." @update:value="v => setCredentialDraft('telegram', { token: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
-          <NSwitch :value="settingsStore.telegram.require_mention" :loading="isSaving('telegram', 'require_mention')" @update:value="v => saveChannel('telegram', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('telegram').require_mention" :loading="isSavingPlatform('telegram')" @update:value="v => setConfigDraft('telegram', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.reactions')" :hint="t('platform.reactionsHint')">
-          <NSwitch :value="settingsStore.telegram.reactions" :loading="isSaving('telegram', 'reactions')" @update:value="v => saveChannel('telegram', 'reactions', { reactions: v })" />
+          <NSwitch :value="configDraft('telegram').reactions" :loading="isSavingPlatform('telegram')" @update:value="v => setConfigDraft('telegram', { reactions: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChats')" :hint="t('platform.freeResponseChatsHint')">
-          <NInput :default-value="settingsStore.telegram.free_response_chats || ''" :loading="isSaving('telegram', 'free_response_chats')" size="small" placeholder="chat_id1,chat_id2" @change="v => saveChannel('telegram', 'free_response_chats', { free_response_chats: v })" />
+          <NInput :value="configDraft('telegram').free_response_chats || ''" :loading="isSavingPlatform('telegram')" size="small" placeholder="chat_id1,chat_id2" @update:value="v => setConfigDraft('telegram', { free_response_chats: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.mentionPatterns')" :hint="t('platform.mentionPatternsHint')">
-          <NInput :default-value="(settingsStore.telegram.mention_patterns || []).join(', ')" :loading="isSaving('telegram', 'mention_patterns')" size="small" placeholder="pattern1, pattern2" @change="v => saveChannel('telegram', 'mention_patterns', { mention_patterns: v ? v.split(',').map(s => s.trim()) : [] })" />
+          <NInput :value="(configDraft('telegram').mention_patterns || []).join(', ')" :loading="isSavingPlatform('telegram')" size="small" placeholder="pattern1, pattern2" @update:value="v => setConfigDraft('telegram', { mention_patterns: v ? v.split(',').map(s => s.trim()) : [] })" />
         </SettingRow>
       </template>
 
       <!-- Discord -->
       <template v-if="p.key === 'discord'">
         <SettingRow :label="t('platform.botToken')" :hint="t('platform.botTokenHint')">
-          <NInput :default-value="getCreds('discord').token || ''" :loading="isSaving('discord', 'token')" clearable size="small" class="input-lg" placeholder="Bot token..." @change="v => saveCredentials('discord', 'token', { token: v })" />
+          <NInput :value="credentialDraft('discord').token || ''" :loading="isSavingPlatform('discord')" clearable size="small" class="input-lg" placeholder="Bot token..." @update:value="v => setCredentialDraft('discord', { token: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionChannel')">
-          <NSwitch :value="settingsStore.discord.require_mention" :loading="isSaving('discord', 'require_mention')" @update:value="v => saveChannel('discord', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('discord').require_mention" :loading="isSavingPlatform('discord')" @update:value="v => setConfigDraft('discord', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.autoThread')" :hint="t('platform.autoThreadHint')">
-          <NSwitch :value="settingsStore.discord.auto_thread" :loading="isSaving('discord', 'auto_thread')" @update:value="v => saveChannel('discord', 'auto_thread', { auto_thread: v })" />
+          <NSwitch :value="configDraft('discord').auto_thread" :loading="isSavingPlatform('discord')" @update:value="v => setConfigDraft('discord', { auto_thread: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.reactions')" :hint="t('platform.reactionsHint')">
-          <NSwitch :value="settingsStore.discord.reactions" :loading="isSaving('discord', 'reactions')" @update:value="v => saveChannel('discord', 'reactions', { reactions: v })" />
+          <NSwitch :value="configDraft('discord').reactions" :loading="isSavingPlatform('discord')" @update:value="v => setConfigDraft('discord', { reactions: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChannels')" :hint="t('platform.freeResponseChannelsHint')">
-          <NInput :default-value="settingsStore.discord.free_response_channels || ''" :loading="isSaving('discord', 'free_response_channels')" size="small" placeholder="channel_id1,channel_id2" @change="v => saveChannel('discord', 'free_response_channels', { free_response_channels: v })" />
+          <NInput :value="configDraft('discord').free_response_channels || ''" :loading="isSavingPlatform('discord')" size="small" placeholder="channel_id1,channel_id2" @update:value="v => setConfigDraft('discord', { free_response_channels: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowedChannels')" :hint="t('platform.allowedChannelsHint')">
-          <NInput :default-value="settingsStore.discord.allowed_channels || ''" :loading="isSaving('discord', 'allowed_channels')" size="small" placeholder="channel_id1,channel_id2" @change="v => saveChannel('discord', 'allowed_channels', { allowed_channels: v })" />
+          <NInput :value="configDraft('discord').allowed_channels || ''" :loading="isSavingPlatform('discord')" size="small" placeholder="channel_id1,channel_id2" @update:value="v => setConfigDraft('discord', { allowed_channels: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.ignoredChannels')" :hint="t('platform.ignoredChannelsHint')">
-          <NInput :default-value="settingsStore.discord.ignored_channels || ''" :loading="isSaving('discord', 'ignored_channels')" size="small" placeholder="channel_id1,channel_id2" @change="v => saveChannel('discord', 'ignored_channels', { ignored_channels: v })" />
+          <NInput :value="configDraft('discord').ignored_channels || ''" :loading="isSavingPlatform('discord')" size="small" placeholder="channel_id1,channel_id2" @update:value="v => setConfigDraft('discord', { ignored_channels: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.noThreadChannels')" :hint="t('platform.noThreadChannelsHint')">
-          <NInput :default-value="settingsStore.discord.no_thread_channels || ''" :loading="isSaving('discord', 'no_thread_channels')" size="small" placeholder="channel_id1,channel_id2" @change="v => saveChannel('discord', 'no_thread_channels', { no_thread_channels: v })" />
+          <NInput :value="configDraft('discord').no_thread_channels || ''" :loading="isSavingPlatform('discord')" size="small" placeholder="channel_id1,channel_id2" @update:value="v => setConfigDraft('discord', { no_thread_channels: v })" />
         </SettingRow>
       </template>
 
       <!-- Slack -->
       <template v-if="p.key === 'slack'">
         <SettingRow :label="t('platform.botToken')" :hint="t('platform.botTokenHint')">
-          <NInput :default-value="getCreds('slack').token || ''" :loading="isSaving('slack', 'token')" clearable size="small" class="input-lg" placeholder="xoxb-..." @change="v => saveCredentials('slack', 'token', { token: v })" />
+          <NInput :value="credentialDraft('slack').token || ''" :loading="isSavingPlatform('slack')" clearable size="small" class="input-lg" placeholder="xoxb-..." @update:value="v => setCredentialDraft('slack', { token: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionChannel')">
-          <NSwitch :value="settingsStore.slack.require_mention" :loading="isSaving('slack', 'require_mention')" @update:value="v => saveChannel('slack', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('slack').require_mention" :loading="isSavingPlatform('slack')" @update:value="v => setConfigDraft('slack', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowBots')" :hint="t('platform.allowBotsHint')">
-          <NSwitch :value="settingsStore.slack.allow_bots" :loading="isSaving('slack', 'allow_bots')" @update:value="v => saveChannel('slack', 'allow_bots', { allow_bots: v })" />
+          <NSwitch :value="configDraft('slack').allow_bots" :loading="isSavingPlatform('slack')" @update:value="v => setConfigDraft('slack', { allow_bots: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChannels')" :hint="t('platform.freeResponseChannelsHint')">
-          <NInput :default-value="settingsStore.slack.free_response_channels || ''" :loading="isSaving('slack', 'free_response_channels')" size="small" placeholder="channel_id1,channel_id2" @change="v => saveChannel('slack', 'free_response_channels', { free_response_channels: v })" />
+          <NInput :value="configDraft('slack').free_response_channels || ''" :loading="isSavingPlatform('slack')" size="small" placeholder="channel_id1,channel_id2" @update:value="v => setConfigDraft('slack', { free_response_channels: v })" />
         </SettingRow>
       </template>
 
       <!-- WhatsApp -->
       <template v-if="p.key === 'whatsapp'">
         <SettingRow :label="t('platform.waEnabled')" :hint="t('platform.waEnabledHint')">
-          <NSwitch :value="getCreds('whatsapp').enabled" :loading="isSaving('whatsapp', 'enabled')" @update:value="v => saveCredentials('whatsapp', 'enabled', { enabled: v })" />
+          <NSwitch :value="credentialDraft('whatsapp').enabled" :loading="isSavingPlatform('whatsapp')" @update:value="v => setCredentialDraft('whatsapp', { enabled: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
-          <NSwitch :value="settingsStore.whatsapp.require_mention" :loading="isSaving('whatsapp', 'require_mention')" @update:value="v => saveChannel('whatsapp', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('whatsapp').require_mention" :loading="isSavingPlatform('whatsapp')" @update:value="v => setConfigDraft('whatsapp', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChats')" :hint="t('platform.freeResponseChatsHint')">
-          <NInput :default-value="settingsStore.whatsapp.free_response_chats || ''" :loading="isSaving('whatsapp', 'free_response_chats')" size="small" placeholder="chat_id1,chat_id2" @change="v => saveChannel('whatsapp', 'free_response_chats', { free_response_chats: v })" />
+          <NInput :value="configDraft('whatsapp').free_response_chats || ''" :loading="isSavingPlatform('whatsapp')" size="small" placeholder="chat_id1,chat_id2" @update:value="v => setConfigDraft('whatsapp', { free_response_chats: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.mentionPatterns')" :hint="t('platform.mentionPatternsHint')">
-          <NInput :default-value="(settingsStore.whatsapp.mention_patterns || []).join(', ')" :loading="isSaving('whatsapp', 'mention_patterns')" size="small" placeholder="pattern1, pattern2" @change="v => saveChannel('whatsapp', 'mention_patterns', { mention_patterns: v ? v.split(',').map(s => s.trim()) : [] })" />
+          <NInput :value="(configDraft('whatsapp').mention_patterns || []).join(', ')" :loading="isSavingPlatform('whatsapp')" size="small" placeholder="pattern1, pattern2" @update:value="v => setConfigDraft('whatsapp', { mention_patterns: v ? v.split(',').map(s => s.trim()) : [] })" />
         </SettingRow>
       </template>
 
       <!-- Matrix -->
       <template v-if="p.key === 'matrix'">
         <SettingRow :label="t('platform.accessToken')" :hint="t('platform.accessTokenHint')">
-          <NInput :default-value="getCreds('matrix').token || ''" :loading="isSaving('matrix', 'token')" clearable size="small" class="input-lg" placeholder="syt_..." @change="v => saveCredentials('matrix', 'token', { token: v })" />
+          <NInput :value="credentialDraft('matrix').token || ''" :loading="isSavingPlatform('matrix')" clearable size="small" class="input-lg" placeholder="syt_..." @update:value="v => setCredentialDraft('matrix', { token: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.homeserver')" :hint="t('platform.homeserverHint')">
-          <NInput :default-value="getCreds('matrix').extra?.homeserver || ''" :loading="isSaving('matrix', 'homeserver')" clearable size="small" class="input-lg" placeholder="https://matrix.org" @change="v => saveCredentials('matrix', 'homeserver', { extra: { ...getCreds('matrix').extra, homeserver: v } })" />
+          <NInput :value="credentialDraft('matrix').extra?.homeserver || ''" :loading="isSavingPlatform('matrix')" clearable size="small" class="input-lg" placeholder="https://matrix.org" @update:value="v => setCredentialDraft('matrix', { extra: { ...credentialDraft('matrix').extra, homeserver: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionRoom')">
-          <NSwitch :value="settingsStore.matrix.require_mention" :loading="isSaving('matrix', 'require_mention')" @update:value="v => saveChannel('matrix', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('matrix').require_mention" :loading="isSavingPlatform('matrix')" @update:value="v => setConfigDraft('matrix', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.autoThread')" :hint="t('platform.autoThreadHintRoom')">
-          <NSwitch :value="settingsStore.matrix.auto_thread" :loading="isSaving('matrix', 'auto_thread')" @update:value="v => saveChannel('matrix', 'auto_thread', { auto_thread: v })" />
+          <NSwitch :value="configDraft('matrix').auto_thread" :loading="isSavingPlatform('matrix')" @update:value="v => setConfigDraft('matrix', { auto_thread: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.dmMentionThreads')" :hint="t('platform.dmMentionThreadsHint')">
-          <NSwitch :value="settingsStore.matrix.dm_mention_threads" :loading="isSaving('matrix', 'dm_mention_threads')" @update:value="v => saveChannel('matrix', 'dm_mention_threads', { dm_mention_threads: v })" />
+          <NSwitch :value="configDraft('matrix').dm_mention_threads" :loading="isSavingPlatform('matrix')" @update:value="v => setConfigDraft('matrix', { dm_mention_threads: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseRooms')" :hint="t('platform.freeResponseRoomsHint')">
-          <NInput :default-value="settingsStore.matrix.free_response_rooms || ''" :loading="isSaving('matrix', 'free_response_rooms')" size="small" placeholder="room_id1,room_id2" @change="v => saveChannel('matrix', 'free_response_rooms', { free_response_rooms: v })" />
+          <NInput :value="configDraft('matrix').free_response_rooms || ''" :loading="isSavingPlatform('matrix')" size="small" placeholder="room_id1,room_id2" @update:value="v => setConfigDraft('matrix', { free_response_rooms: v })" />
         </SettingRow>
       </template>
 
       <!-- Feishu -->
       <template v-if="p.key === 'feishu'">
         <SettingRow :label="t('platform.appId')" :hint="t('platform.appIdHint')">
-          <NInput :default-value="getCreds('feishu').extra?.app_id || ''" :loading="isSaving('feishu', 'app_id')" clearable size="small" class="input-lg" placeholder="cli_..." @change="v => saveCredentials('feishu', 'app_id', { extra: { ...getCreds('feishu').extra, app_id: v } })" />
+          <NInput :value="credentialDraft('feishu').extra?.app_id || ''" :loading="isSavingPlatform('feishu')" clearable size="small" class="input-lg" placeholder="cli_..." @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, app_id: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.appSecret')" :hint="t('platform.appSecretHint')">
-          <NInput :default-value="getCreds('feishu').extra?.app_secret || ''" :loading="isSaving('feishu', 'app_secret')" clearable size="small" class="input-lg" placeholder="App Secret" @change="v => saveCredentials('feishu', 'app_secret', { extra: { ...getCreds('feishu').extra, app_secret: v } })" />
+          <NInput :value="credentialDraft('feishu').extra?.app_secret || ''" :loading="isSavingPlatform('feishu')" clearable size="small" class="input-lg" placeholder="App Secret" @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, app_secret: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
-          <NSwitch :value="settingsStore.feishu.require_mention" :loading="isSaving('feishu', 'require_mention')" @update:value="v => saveChannel('feishu', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('feishu').require_mention" :loading="isSavingPlatform('feishu')" @update:value="v => setConfigDraft('feishu', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChats')" :hint="t('platform.freeResponseChatsHint')">
-          <NInput :default-value="settingsStore.feishu.free_response_chats || ''" :loading="isSaving('feishu', 'free_response_chats')" size="small" placeholder="chat_id1,chat_id2" @change="v => saveChannel('feishu', 'free_response_chats', { free_response_chats: v })" />
+          <NInput :value="configDraft('feishu').free_response_chats || ''" :loading="isSavingPlatform('feishu')" size="small" placeholder="chat_id1,chat_id2" @update:value="v => setConfigDraft('feishu', { free_response_chats: v })" />
         </SettingRow>
       </template>
 
       <!-- DingTalk -->
       <template v-if="p.key === 'dingtalk'">
         <SettingRow :label="t('platform.clientId')" :hint="t('platform.clientIdHint')">
-          <NInput :default-value="getCreds('dingtalk').extra?.client_id || ''" :loading="isSaving('dingtalk', 'client_id')" clearable size="small" class="input-lg" placeholder="Client ID" @change="v => saveCredentials('dingtalk', 'client_id', { extra: { ...getCreds('dingtalk').extra, client_id: v } })" />
+          <NInput :value="credentialDraft('dingtalk').extra?.client_id || ''" :loading="isSavingPlatform('dingtalk')" clearable size="small" class="input-lg" placeholder="Client ID" @update:value="v => setCredentialDraft('dingtalk', { extra: { ...credentialDraft('dingtalk').extra, client_id: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.clientSecret')" :hint="t('platform.clientSecretHint')">
-          <NInput :default-value="getCreds('dingtalk').extra?.client_secret || ''" :loading="isSaving('dingtalk', 'client_secret')" clearable size="small" class="input-lg" placeholder="Client Secret" @change="v => saveCredentials('dingtalk', 'client_secret', { extra: { ...getCreds('dingtalk').extra, client_secret: v } })" />
+          <NInput :value="credentialDraft('dingtalk').extra?.client_secret || ''" :loading="isSavingPlatform('dingtalk')" clearable size="small" class="input-lg" placeholder="Client Secret" @update:value="v => setCredentialDraft('dingtalk', { extra: { ...credentialDraft('dingtalk').extra, client_secret: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowAllUsers')" :hint="t('platform.allowAllUsersHint')">
-          <NSwitch :value="boolValue(getCreds('dingtalk').allow_all_users)" :loading="isSaving('dingtalk', 'allow_all_users')" @update:value="v => saveCredentials('dingtalk', 'allow_all_users', { allow_all_users: v })" />
+          <NSwitch :value="boolValue(credentialDraft('dingtalk').allow_all_users)" :loading="isSavingPlatform('dingtalk')" @update:value="v => setCredentialDraft('dingtalk', { allow_all_users: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowedUsers')" :hint="t('platform.allowedUsersHint')">
-          <NInput :default-value="getCreds('dingtalk').allowed_users || ''" :loading="isSaving('dingtalk', 'allowed_users')" clearable size="small" class="input-lg" placeholder="user_id1,user_id2" @change="v => saveCredentials('dingtalk', 'allowed_users', { allowed_users: v })" />
+          <NInput :value="credentialDraft('dingtalk').allowed_users || ''" :loading="isSavingPlatform('dingtalk')" clearable size="small" class="input-lg" placeholder="user_id1,user_id2" @update:value="v => setCredentialDraft('dingtalk', { allowed_users: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
-          <NSwitch :value="settingsStore.dingtalk.require_mention" :loading="isSaving('dingtalk', 'require_mention')" @update:value="v => saveChannel('dingtalk', 'require_mention', { require_mention: v })" />
+          <NSwitch :value="configDraft('dingtalk').require_mention" :loading="isSavingPlatform('dingtalk')" @update:value="v => setConfigDraft('dingtalk', { require_mention: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.freeResponseChats')" :hint="t('platform.freeResponseChatsHint')">
-          <NInput :default-value="settingsStore.dingtalk.free_response_chats || ''" :loading="isSaving('dingtalk', 'free_response_chats')" size="small" placeholder="chat_id1,chat_id2" @change="v => saveChannel('dingtalk', 'free_response_chats', { free_response_chats: v })" />
+          <NInput :value="configDraft('dingtalk').free_response_chats || ''" :loading="isSavingPlatform('dingtalk')" size="small" placeholder="chat_id1,chat_id2" @update:value="v => setConfigDraft('dingtalk', { free_response_chats: v })" />
         </SettingRow>
       </template>
 
       <!-- QQBot -->
       <template v-if="p.key === 'qqbot'">
         <SettingRow :label="t('platform.qqAppId')" :hint="t('platform.qqAppIdHint')">
-          <NInput :default-value="getCreds('qqbot').extra?.app_id || ''" :loading="isSaving('qqbot', 'app_id')" clearable size="small" class="input-lg" placeholder="App ID" @change="v => saveCredentials('qqbot', 'app_id', { extra: { ...getCreds('qqbot').extra, app_id: v } })" />
+          <NInput :value="credentialDraft('qqbot').extra?.app_id || ''" :loading="isSavingPlatform('qqbot')" clearable size="small" class="input-lg" placeholder="App ID" @update:value="v => setCredentialDraft('qqbot', { extra: { ...credentialDraft('qqbot').extra, app_id: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.qqAppSecret')" :hint="t('platform.qqAppSecretHint')">
-          <NInput :default-value="getCreds('qqbot').extra?.client_secret || ''" :loading="isSaving('qqbot', 'client_secret')" clearable size="small" class="input-lg" placeholder="App Secret" @change="v => saveCredentials('qqbot', 'client_secret', { extra: { ...getCreds('qqbot').extra, client_secret: v } })" />
+          <NInput :value="credentialDraft('qqbot').extra?.client_secret || ''" :loading="isSavingPlatform('qqbot')" clearable size="small" class="input-lg" placeholder="App Secret" @update:value="v => setCredentialDraft('qqbot', { extra: { ...credentialDraft('qqbot').extra, client_secret: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowedUsers')" :hint="t('platform.allowedUsersHint')">
-          <NInput :default-value="getCreds('qqbot').allowed_users || ''" :loading="isSaving('qqbot', 'allowed_users')" clearable size="small" class="input-lg" placeholder="openid1,openid2" @change="v => saveCredentials('qqbot', 'allowed_users', { allowed_users: v })" />
+          <NInput :value="credentialDraft('qqbot').allowed_users || ''" :loading="isSavingPlatform('qqbot')" clearable size="small" class="input-lg" placeholder="openid1,openid2" @update:value="v => setCredentialDraft('qqbot', { allowed_users: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.allowAllUsers')" :hint="t('platform.allowAllUsersHint')">
-          <NSwitch :value="boolValue(getCreds('qqbot').allow_all_users)" :loading="isSaving('qqbot', 'allow_all_users')" @update:value="v => saveCredentials('qqbot', 'allow_all_users', { allow_all_users: v })" />
+          <NSwitch :value="boolValue(credentialDraft('qqbot').allow_all_users)" :loading="isSavingPlatform('qqbot')" @update:value="v => setCredentialDraft('qqbot', { allow_all_users: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.qqMarkdown')" :hint="t('platform.qqMarkdownHint')">
-          <NSwitch :value="settingsStore.qqbot.extra?.markdown_support ?? true" :loading="isSaving('qqbot', 'markdown_support')" @update:value="v => saveChannel('qqbot', 'markdown_support', { extra: { ...settingsStore.qqbot.extra, markdown_support: v } })" />
+          <NSwitch :value="configDraft('qqbot').extra?.markdown_support ?? true" :loading="isSavingPlatform('qqbot')" @update:value="v => setConfigDraft('qqbot', { extra: { ...configDraft('qqbot').extra, markdown_support: v } })" />
         </SettingRow>
       </template>
 
@@ -371,22 +440,34 @@ const platforms = [
           </div>
         </div>
         <SettingRow :label="t('platform.weixinToken')" :hint="t('platform.weixinTokenHint')">
-          <NInput :default-value="getCreds('weixin').token || ''" :loading="isSaving('weixin', 'token')" clearable size="small" class="input-lg" placeholder="Token" @change="v => saveCredentials('weixin', 'token', { token: v })" />
+          <NInput :value="credentialDraft('weixin').token || ''" :loading="isSavingPlatform('weixin')" clearable size="small" class="input-lg" placeholder="Token" @update:value="v => setCredentialDraft('weixin', { token: v })" />
         </SettingRow>
         <SettingRow :label="t('platform.accountId')" :hint="t('platform.accountIdHint')">
-          <NInput :default-value="getCreds('weixin').extra?.account_id || ''" :loading="isSaving('weixin', 'account_id')" clearable size="small" class="input-lg" placeholder="Account ID" @change="v => saveCredentials('weixin', 'account_id', { extra: { ...getCreds('weixin').extra, account_id: v } })" />
+          <NInput :value="credentialDraft('weixin').extra?.account_id || ''" :loading="isSavingPlatform('weixin')" clearable size="small" class="input-lg" placeholder="Account ID" @update:value="v => setCredentialDraft('weixin', { extra: { ...credentialDraft('weixin').extra, account_id: v } })" />
         </SettingRow>
       </template>
 
       <!-- WeCom -->
       <template v-if="p.key === 'wecom'">
         <SettingRow :label="t('platform.botId')" :hint="t('platform.botIdHint')">
-          <NInput :default-value="getCreds('wecom').extra?.bot_id || ''" :loading="isSaving('wecom', 'bot_id')" clearable size="small" class="input-lg" placeholder="Bot ID" @change="v => saveCredentials('wecom', 'bot_id', { extra: { ...getCreds('wecom').extra, bot_id: v } })" />
+          <NInput :value="credentialDraft('wecom').extra?.bot_id || ''" :loading="isSavingPlatform('wecom')" clearable size="small" class="input-lg" placeholder="Bot ID" @update:value="v => setCredentialDraft('wecom', { extra: { ...credentialDraft('wecom').extra, bot_id: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.appSecret')" :hint="t('platform.wecomSecretHint')">
-          <NInput :default-value="getCreds('wecom').extra?.secret || ''" :loading="isSaving('wecom', 'secret')" clearable size="small" class="input-lg" placeholder="Secret" @change="v => saveCredentials('wecom', 'secret', { extra: { ...getCreds('wecom').extra, secret: v } })" />
+          <NInput :value="credentialDraft('wecom').extra?.secret || ''" :loading="isSavingPlatform('wecom')" clearable size="small" class="input-lg" placeholder="Secret" @update:value="v => setCredentialDraft('wecom', { extra: { ...credentialDraft('wecom').extra, secret: v } })" />
         </SettingRow>
       </template>
+
+      <div class="platform-actions">
+        <NButton
+          type="primary"
+          size="small"
+          :loading="isSavingPlatform(p.key)"
+          :disabled="!hasUnsavedChanges(p.key)"
+          @click="savePlatform(p.key)"
+        >
+          {{ t('common.save') }}
+        </NButton>
+      </div>
     </PlatformCard>
   </section>
 </template>
@@ -414,5 +495,13 @@ const platforms = [
 .weixin-qr-hint {
   font-size: 13px;
   color: $text-secondary;
+}
+
+.platform-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid $border-light;
 }
 </style>

@@ -30,7 +30,6 @@ interface SessionCommandContext {
   socket: Socket
   sessionMap: Map<string, SessionState>
   bridge: AgentBridgeClient
-  gatewayManager: any
   profile: string
   model?: string
   instructions?: string
@@ -243,8 +242,6 @@ export async function handleSessionCommand(
           sessionId,
           ctx.profile,
           [],
-          (profile: string) => ctx.gatewayManager.getUpstream(profile),
-          (profile: string) => ctx.gatewayManager.getApiKey(profile),
         )
         state.bridgeCompressionResults = state.bridgeCompressionResults || {}
         await calcAndUpdateUsage(sessionId, state, emit)

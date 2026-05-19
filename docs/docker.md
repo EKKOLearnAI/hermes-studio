@@ -26,7 +26,7 @@ This compose file runs a single service:
 
 - `hermes-webui` — Web UI dashboard with integrated Hermes Agent runtime (pre-built image or built from source)
 
-The Web UI container is built on the `nousresearch/hermes-agent` base image and internally manages the Hermes Agent gateway lifecycle via `GatewayManager`.
+The Web UI container is built on the `nousresearch/hermes-agent` base image and uses the Hermes CLI / agent bridge runtime for chat execution. It does not start or manage a separate Hermes gateway process.
 
 ## Environment Variables
 
@@ -76,14 +76,14 @@ AUTH_DISABLED=false
 |---|---|
 | `${PORT}` (6060) | Web UI dashboard |
 
-Hermes Agent gateway ports (8642-8670) are used internally within the container and are not exposed to the host.
+No Hermes gateway ports are exposed by this compose setup.
 
 ## Code Runtime Behavior
 
 - Hermes CLI binary comes from `HERMES_BIN` env (`packages/server/src/services/hermes-cli.ts`).
 - If `HERMES_BIN` is not provided, code falls back to `hermes` in `PATH`.
-- Profile switching dynamically resolves upstream URLs via `GatewayManager`.
-- The Web UI automatically starts and manages the Hermes Agent gateway process on startup.
+- Profile-specific chat runs are handled through the Hermes agent bridge.
+- The Web UI does not automatically start or manage a Hermes Agent gateway process on startup.
 
 ## Common Operations
 

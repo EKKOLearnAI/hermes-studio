@@ -391,6 +391,15 @@ export const useChatStore = defineStore('chat', () => {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
 
+  function clearActiveSession() {
+    activeSessionId.value = null
+    activeSession.value = null
+    focusMessageId.value = null
+    setAbortState(null)
+    setCompressionState(null)
+    removeItem(storageKey())
+  }
+
   async function loadSessions(profile?: string | null) {
     isLoadingSessions.value = true
     try {
@@ -412,6 +421,8 @@ export const useChatStore = defineStore('chat', () => {
         : sessions.value[0]?.id
       if (targetId) {
         await switchSession(targetId)
+      } else {
+        clearActiveSession()
       }
     } catch (err) {
       console.error('Failed to load sessions:', err)

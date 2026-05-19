@@ -153,6 +153,32 @@ const newChatProvider = ref<string>("");
 const newChatModel = ref<string>("");
 const newChatLoading = ref(false);
 
+function getModelGroupsForProfile(profile: string) {
+  const profileModels = appStore.profileModelGroups.find(
+    (entry) => entry.profile === profile,
+  );
+  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups;
+}
+
+function getDefaultModelForProfile(profile: string) {
+  const groups = getModelGroupsForProfile(profile);
+  const profileModels = appStore.profileModelGroups.find(
+    (entry) => entry.profile === profile,
+  );
+  const defaultProvider = profileModels?.default_provider || "";
+  const defaultModel = profileModels?.default || "";
+  const providerGroup = defaultProvider
+    ? groups.find((group) => group.provider === defaultProvider)
+    : undefined;
+  const fallbackGroup = providerGroup || groups.find((group) => group.models.length > 0);
+  return {
+    provider: fallbackGroup?.provider || "",
+    model: fallbackGroup?.models.includes(defaultModel)
+      ? defaultModel
+      : fallbackGroup?.models[0] || "",
+  };
+}
+
 const newChatProfileOptions = computed(() =>
   (profilesStore.profiles.length > 0 ? profilesStore.profiles : [{ name: "default" }]).map((profile) => ({
     label: profile.name,
@@ -161,10 +187,7 @@ const newChatProfileOptions = computed(() =>
 );
 
 const newChatModelGroups = computed(() => {
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === newChatProfile.value,
-  );
-  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups;
+  return getModelGroupsForProfile(newChatProfile.value);
 });
 
 const newChatProviderOptions = computed(() =>
@@ -185,19 +208,9 @@ const newChatModelOptions = computed(() => {
 });
 
 function syncNewChatModelSelection() {
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === newChatProfile.value,
-  );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
-  const providerGroup = defaultProvider
-    ? newChatModelGroups.value.find((group) => group.provider === defaultProvider)
-    : undefined;
-  const fallbackGroup = providerGroup || newChatModelGroups.value.find((group) => group.models.length > 0);
-  newChatProvider.value = fallbackGroup?.provider || "";
-  newChatModel.value = fallbackGroup?.models.includes(defaultModel)
-    ? defaultModel
-    : fallbackGroup?.models[0] || "";
+  const defaults = getDefaultModelForProfile(newChatProfile.value);
+  newChatProvider.value = defaults.provider;
+  newChatModel.value = defaults.model;
 }
 
 async function openNewChatModal() {
@@ -509,12 +522,21 @@ const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
 const sessionModelCustomProvider = ref("");
 
+const sessionModelProfile = computed(() => {
+  const session = chatStore.sessions.find((s) => s.id === sessionModelSessionId.value);
+  return session?.profile || profilesStore.activeProfileName || "default";
+});
+
+const sessionModelBaseGroups = computed(() =>
+  getModelGroupsForProfile(sessionModelProfile.value),
+);
+
 const sessionModelProviderOptions = computed(() =>
-  appStore.modelGroups.map((group) => ({ label: group.label, value: group.provider })),
+  sessionModelBaseGroups.value.map((group) => ({ label: group.label, value: group.provider })),
 );
 
 const sessionModelGroupsWithCustom = computed(() =>
-  appStore.modelGroups.map((group) => ({
+  sessionModelBaseGroups.value.map((group) => ({
     ...group,
     models: [
       ...group.models,
@@ -541,9 +563,10 @@ const filteredSessionModelGroups = computed(() => {
 
 function openSessionModelModal(sessionId: string) {
   const session = chatStore.sessions.find((s) => s.id === sessionId);
+  const defaults = getDefaultModelForProfile(session?.profile || profilesStore.activeProfileName || "default");
   sessionModelSessionId.value = sessionId;
-  sessionModelValue.value = session?.model || appStore.selectedModel || "";
-  sessionModelProvider.value = session?.provider || appStore.selectedProvider || "";
+  sessionModelValue.value = session?.model || defaults.model || "";
+  sessionModelProvider.value = session?.provider || defaults.provider || "";
   sessionModelCustomProvider.value = sessionModelProvider.value;
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
@@ -572,7 +595,7 @@ function sessionModelAlias(model: string, provider: string) {
 }
 
 async function selectSessionModel(model: string, provider: string) {
-  const meta = appStore.modelGroups.find((group) => group.provider === provider)?.model_meta?.[model];
+  const meta = sessionModelBaseGroups.value.find((group) => group.provider === provider)?.model_meta?.[model];
   if (meta?.disabled || !sessionModelSessionId.value) return;
   const ok = await chatStore.switchSessionModel(model, provider, sessionModelSessionId.value);
   if (ok) {

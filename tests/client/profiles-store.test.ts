@@ -25,8 +25,8 @@ describe('Profiles Store', () => {
 
   it('fetchProfiles loads profiles and sets active', async () => {
     const profiles = [
-      { name: 'default', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
-      { name: 'dev', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+      { name: 'dev', active: false, model: 'gpt-4', alias: '' },
     ]
     mockProfilesApi.fetchProfiles.mockResolvedValue(profiles)
 
@@ -54,8 +54,8 @@ describe('Profiles Store', () => {
   it('createProfile calls API and refreshes list', async () => {
     mockProfilesApi.createProfile.mockResolvedValue({ success: true })
     mockProfilesApi.fetchProfiles.mockResolvedValue([
-      { name: 'default', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
-      { name: 'new-profile', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+      { name: 'new-profile', active: false, model: 'gpt-4', alias: '' },
     ])
 
     const store = useProfilesStore()
@@ -69,11 +69,11 @@ describe('Profiles Store', () => {
   it('deleteProfile clears detail cache', async () => {
     mockProfilesApi.deleteProfile.mockResolvedValue(true)
     mockProfilesApi.fetchProfiles.mockResolvedValue([
-      { name: 'default', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
     ])
 
     const store = useProfilesStore()
-    store.detailMap['test'] = { name: 'test', path: '/tmp/test', model: '', provider: '', gateway: '', skills: 0, hasEnv: false, hasSoulMd: false }
+    store.detailMap['test'] = { name: 'test', path: '/tmp/test', model: '', provider: '', skills: 0, hasEnv: false, hasSoulMd: false }
 
     await store.deleteProfile('test')
 
@@ -82,7 +82,7 @@ describe('Profiles Store', () => {
   })
 
   it('fetchProfileDetail uses cache', async () => {
-    const detail = { name: 'cached', path: '/tmp/cached', model: 'gpt-4', provider: 'openai', gateway: 'running', skills: 5, hasEnv: true, hasSoulMd: false }
+    const detail = { name: 'cached', path: '/tmp/cached', model: 'gpt-4', provider: 'openai', skills: 5, hasEnv: true, hasSoulMd: false }
     const store = useProfilesStore()
     store.detailMap['cached'] = detail
 
@@ -107,8 +107,8 @@ describe('Profiles Store', () => {
   it('switchProfile updates activeProfileName immediately', async () => {
     mockProfilesApi.switchProfile.mockResolvedValue(true)
     mockProfilesApi.fetchProfiles.mockResolvedValue([
-      { name: 'default', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
-      { name: 'dev', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
+      { name: 'default', active: false, model: 'gpt-4', alias: '' },
+      { name: 'dev', active: true, model: 'gpt-4', alias: '' },
     ])
 
     const store = useProfilesStore()
@@ -164,8 +164,8 @@ describe('Profiles Store', () => {
     mockProfilesApi.switchProfile.mockResolvedValue(true)
     // Backend returns success, but active profile is still default (not the one we switched to)
     mockProfilesApi.fetchProfiles.mockResolvedValue([
-      { name: 'default', active: true, model: 'gpt-4', gateway: 'running', alias: '' },
-      { name: 'dev', active: false, model: 'gpt-4', gateway: 'stopped', alias: '' },
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+      { name: 'dev', active: false, model: 'gpt-4', alias: '' },
     ])
 
     const store = useProfilesStore()

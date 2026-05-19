@@ -33,7 +33,7 @@
 
 ### AI Chat
 
-- Real-time chat streaming over Socket.IO `/chat-run`; API Server runs consume Hermes Gateway streaming responses
+- Real-time chat streaming over Socket.IO `/chat-run`; chat runs execute through the Hermes agent bridge
 - Multi-session management — create, rename, delete, switch between sessions
 - **Self-built session database** — local SQLite storage for Web UI sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
@@ -64,7 +64,6 @@ Unified configuration for **8 platforms** in one page:
 
 - Credential management writes to `~/.hermes/.env`
 - Channel behavior settings write to `~/.hermes/config.yaml`
-- Auto gateway restart on config change
 - Per-platform configured/unconfigured status detection
 
 ### Usage Analytics
@@ -90,13 +89,11 @@ Unified configuration for **8 platforms** in one page:
 - Provider URL auto-detection for non-v1 API versions (e.g. `/v4`)
 - Provider-level model grouping with default model switching
 
-### Multi-Profile & Gateway
+### Multi-Profile
 
 - Create, rename, delete, and switch between Hermes profiles
 - Clone existing profile or import from archive (`.tar.gz`)
 - Export profile for backup or sharing
-- Multi-gateway management — start, stop, and monitor gateway per profile
-- Auto port conflict resolution
 - Profile-scoped configuration and cache isolation
 
 ### File Browser
@@ -125,7 +122,7 @@ Unified configuration for **8 platforms** in one page:
 
 ### Logs
 
-- View agent / gateway / error logs
+- View agent / server / error logs
 - Filter by log level, log file, and keyword
 - Structured log parsing with HTTP access log highlighting
 
@@ -143,7 +140,7 @@ Unified configuration for **8 platforms** in one page:
 - Session reset (idle timeout, scheduled reset)
 - Privacy (PII redaction)
 - Model settings (default model & provider)
-- API server configuration
+- Profile and provider configuration
 
 ### Web Terminal
 
@@ -180,7 +177,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/ma
 hermes-web-ui start
 ```
 
-> WSL auto-detects and uses `hermes gateway run` for background startup (no launchd/systemd).
+> WSL uses the same Web UI daemon startup flow as other local installs; no separate gateway service is started by Web UI.
 
 ### Docker Compose
 
@@ -232,8 +229,6 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
 | `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
 | `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
-| `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config. |
-| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | environment-dependent | Whether Web UI shutdown also stops managed gateways. |
 
 ### CLI Commands
 
@@ -255,10 +250,8 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 
 On startup the BFF server automatically:
 
-- Validates `~/.hermes/config.yaml` and fills missing `api_server` fields
-- Backs up original config to `config.yaml.bak` if modified
-- Detects and starts the gateway if needed
-- Resolves port conflicts (kills stale processes)
+- Initializes Web UI data directories, local databases, and bundled skills
+- Starts the Hermes agent bridge used by `/chat-run`
 - Opens browser on successful startup
 
 ---
@@ -273,7 +266,7 @@ npm run dev
 ```
 
 - Frontend: http://localhost:5173
-- BFF Server: http://localhost:8648 (proxies to Hermes on 8642)
+- BFF Server: http://localhost:8648
 
 ```bash
 npm run build   # outputs to dist/
@@ -284,10 +277,11 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for project development guidelines.
 ## Architecture
 
 ```
-Browser → BFF (Koa, :8648) → Hermes Gateway (:8642)
+Browser → BFF (Koa, :8648) → Socket.IO /chat-run
                 ↓
-           Hermes CLI (sessions, logs, version)
+        Hermes agent bridge → Hermes Agent runtime
                 ↓
+           Hermes CLI / profiles
            ~/.hermes/config.yaml  (channel behavior)
            ~/.hermes/auth.json    (credential pool)
            Tencent iLink API      (WeChat QR login)
@@ -295,7 +289,7 @@ Browser → BFF (Koa, :8648) → Hermes Gateway (:8642)
 
 The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
 
-The BFF layer handles API proxy (with path rewriting), SSE streaming, file upload and download (multi-backend: local/Docker/SSH/Singularity), session CRUD via CLI, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
+The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, file upload and download (multi-backend: local/Docker/SSH/Singularity), session CRUD, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
 
 ## Tech Stack
 

@@ -302,17 +302,20 @@ class AgentClient {
                 }
             }
 
-            // Strip @mention from input — agent already knows it was mentioned.
-            // For multimodal input, preserve image/file blocks and only strip text blocks.
-            const mentionPattern = new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi')
+            // Keep the original mentions visible and add an explicit routing note.
+            // When a user mentions multiple agents, stripping only this agent's
+            // name can make the remaining input look like it was meant for
+            // someone else.
+            const routedPrefix = `群聊系统：这条消息已经提及你（${this.name}），请直接回复；即使消息同时提及其他成员，也不要因此输出空回复。`
+            const ownMentionPattern = new RegExp(`@${this.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'gi')
             const rawInput = msg.input || msg.content
             const input = isContentBlockArray(rawInput)
                 ? rawInput.map((block) => {
                     if (block.type !== 'text') return block
-                    const text = String(block.text || '').replace(mentionPattern, '').trim()
-                    return { ...block, text: text || block.text || '' }
+                    const text = String(block.text || msg.content).replace(ownMentionPattern, '').trim()
+                    return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
                 })
-                : msg.content.replace(mentionPattern, '').trim() || msg.content
+                : `${routedPrefix}\n\n原始消息：${msg.content.replace(ownMentionPattern, '').trim() || msg.content}`
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input

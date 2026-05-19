@@ -588,6 +588,7 @@ export default {
     xaiLoginTitle: 'xAI Grok OAuth 登录',
     xaiWaiting: '请在打开的 xAI 页面完成授权。授权完成后窗口会自动关闭。',
     xaiOpenLink: '打开 xAI 授权页',
+    xaiCopyLink: '复制授权链接',
     xaiApproved: '登录成功！',
     xaiExpired: '授权链接已过期，请重试。',
     customBadge: '自定义',

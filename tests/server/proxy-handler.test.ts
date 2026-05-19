@@ -1,12 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('../../packages/server/src/services/gateway-bootstrap', () => ({
-  getGatewayManagerInstance: () => ({
-    getUpstream: () => 'http://127.0.0.1:8642',
-    getApiKey: () => null,
-  }),
-}))
-
 // Mock updateUsage so we can assert calls without real DB
 const { mockUpdateUsage } = vi.hoisted(() => ({
   mockUpdateUsage: vi.fn(),
@@ -18,7 +11,7 @@ vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
-import { proxy, setRunSession } from '../../packages/server/src/routes/hermes/proxy-handler'
+import { proxy, setGatewayManagerForTest, setRunSession } from '../../packages/server/src/routes/hermes/proxy-handler'
 
 function createMockCtx(overrides: Record<string, any> = {}) {
   const ctx: any = {
@@ -70,6 +63,10 @@ function createSSEBody(events: string[]): ReadableStream<Uint8Array> {
 describe('Proxy Handler', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setGatewayManagerForTest({
+      getUpstream: () => 'http://127.0.0.1:8642',
+      getApiKey: () => null,
+    })
   })
 
   it('rewrites /api/hermes/v1/* to /v1/*', async () => {

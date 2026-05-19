@@ -52,8 +52,8 @@ export function buildAgentInstructions(params: AgentInstructionsParams): string 
 ${memberSection}
 
 规则：
-- 有人用 @${params.agentName} 提及你时才需要回复，重点回应提及你的人。
-- 禁止@自己。
+- 当你收到群聊任务时，说明系统已经判断你需要回复；请直接回应当前消息，不要因为消息里同时提及其他成员而拒绝回复或输出空回复。
+- 重点回应提及你的人。
 - 回答简洁、对群聊有帮助。
 	- 不要假装是人类，需要时明确表明自己是 AI。
 	- 对话历史中包含多个人的消息，每条消息前标有发送者名字。

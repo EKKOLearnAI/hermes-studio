@@ -25,14 +25,12 @@ export type { ContentBlock } from './types'
 
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
-  private gatewayManager: any
   private bridge = new AgentBridgeClient()
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
 
-  constructor(io: Server, gatewayManager: any) {
+  constructor(io: Server) {
     this.nsp = io.of('/chat-run')
-    this.gatewayManager = gatewayManager
   }
 
   init() {
@@ -95,7 +93,6 @@ export class ChatRunSocket {
               socket,
               sessionMap: this.sessionMap,
               bridge: this.bridge,
-              gatewayManager: this.gatewayManager,
               profile: runProfile,
               model: data.model,
               instructions: data.instructions,
@@ -237,7 +234,7 @@ export class ChatRunSocket {
 
       await handleBridgeRun(
         this.nsp, socket, { ...data, instructions: fullInstructions }, profile,
-        this.sessionMap, this.gatewayManager, this.bridge,
+        this.sessionMap, this.bridge,
         skipUserMessage,
         loadSessionStateFromDb,
         this.dequeueNextQueuedRun.bind(this),
@@ -247,7 +244,7 @@ export class ChatRunSocket {
 
     await handleApiRun(
       this.nsp, socket, data, profile,
-      this.sessionMap, this.gatewayManager,
+      this.sessionMap,
       skipUserMessage,
       this.dequeueNextQueuedRun.bind(this),
     )

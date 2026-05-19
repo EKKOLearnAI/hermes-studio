@@ -4,7 +4,6 @@ import { basename, join } from 'path'
 import { tmpdir } from 'os'
 import * as hermesCli from '../../services/hermes/hermes-cli'
 import { SessionDeleter } from '../../services/hermes/session-deleter'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
 import { logger } from '../../services/logger'
 import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
@@ -43,7 +42,6 @@ function listProfilesFromDisk(activeProfileName: string): HermesProfile[] {
     name: 'default',
     active: activeProfileName === 'default',
     model: '—',
-    gateway: 'stopped',
     alias: '',
   }]
   const profilesDir = join(base, 'profiles')
@@ -57,7 +55,6 @@ function listProfilesFromDisk(activeProfileName: string): HermesProfile[] {
       name,
       active: name === activeProfileName,
       model: '—',
-      gateway: 'stopped',
       alias: '',
     })
   }
@@ -187,12 +184,6 @@ export async function create(ctx: any) {
       }
     }
 
-    const mgr = getGatewayManagerInstance()
-    if (mgr) {
-      try { await mgr.start(name) } catch (err: any) {
-        logger.error(err, 'Failed to start gateway for profile "%s"', name)
-      }
-    }
     ctx.body = {
       success: true,
       message: output.trim(),
@@ -224,8 +215,6 @@ export async function remove(ctx: any) {
     return
   }
   try {
-    const mgr = getGatewayManagerInstance()
-    if (mgr) { try { await mgr.stop(name) } catch { } }
     try {
       const result = await new AgentBridgeClient().destroyProfile(name)
       logger.info('[profiles] destroyed bridge sessions for deleted profile "%s" destroyed=%s', name, result.destroyed)
@@ -302,10 +291,6 @@ export async function switchProfile(ctx: any) {
       ctx.body = { error: `Profile switch verification failed - active profile is ${actualActive}` }
       return
     }
-
-    // Update GatewayManager to match the authoritative source
-    const mgr = getGatewayManagerInstance()
-    if (mgr) { mgr.setActiveProfile(name) }
 
     // Destroy all bridge sessions so they get recreated with the new profile config
     try {

@@ -4,16 +4,23 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import YAML from 'js-yaml'
 
-const { mockGatewayManager } = vi.hoisted(() => ({
-  mockGatewayManager: {
-    getActiveProfile: vi.fn(() => 'default'),
-    stop: vi.fn().mockResolvedValue(undefined),
-    start: vi.fn().mockResolvedValue(undefined),
-  },
+const { mockRestartGateway, mockDestroyProfile } = vi.hoisted(() => ({
+  mockRestartGateway: vi.fn().mockResolvedValue('restarted'),
+  mockDestroyProfile: vi.fn().mockResolvedValue({ destroyed: true }),
 }))
 
-vi.mock('../../packages/server/src/services/gateway-bootstrap', () => ({
-  getGatewayManagerInstance: () => mockGatewayManager,
+vi.mock('../../packages/server/src/services/hermes/hermes-cli', async (importOriginal) => {
+  const original = await importOriginal<any>()
+  return {
+    ...original,
+    restartGateway: mockRestartGateway,
+  }
+})
+
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: class {
+    destroyProfile = mockDestroyProfile
+  },
 }))
 
 const originalHermesHome = process.env.HERMES_HOME
@@ -46,7 +53,7 @@ afterEach(async () => {
 })
 
 describe('config controller locked file updates', () => {
-  it('deep merges a config section and restarts platform gateways', async () => {
+  it('deep merges a config section and restarts the gateway through hermes-cli', async () => {
     await writeFile(join(hermesHome, 'config.yaml'), [
       'telegram:',
       '  enabled: false',
@@ -62,8 +69,8 @@ describe('config controller locked file updates', () => {
     await updateConfig(ctx)
 
     expect(ctx.body).toEqual({ success: true })
-    expect(mockGatewayManager.stop).toHaveBeenCalledWith('default')
-    expect(mockGatewayManager.start).toHaveBeenCalledWith('default')
+    expect(mockRestartGateway).toHaveBeenCalledTimes(1)
+    expect(mockDestroyProfile).toHaveBeenCalledWith('default')
     const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     expect(config.telegram.enabled).toBe(true)
     expect(config.telegram.extra).toEqual({ mode: 'old', token_mode: 'env' })

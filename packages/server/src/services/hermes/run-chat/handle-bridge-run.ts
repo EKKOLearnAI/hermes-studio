@@ -9,7 +9,6 @@ import { getSession, createSession, addMessage, updateSession, updateSessionStat
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
-import { readConfigYamlForProfile } from '../../config-helpers'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
 import { buildCompressedHistory } from './compression'
 import { pushState, replaceState } from './compression'
@@ -27,32 +26,9 @@ import { buildDbHistory } from './compression'
 import { convertHistoryFormat } from './message-format'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
+import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
-
-type RunModelGroup = { provider: string; models: string[] }
-
-async function resolveDefaultModelConfig(profile: string): Promise<{ model: string; provider: string }> {
-  try {
-    const config = await readConfigYamlForProfile(profile)
-    const modelConfig = config?.model
-    const model = typeof modelConfig === 'string'
-      ? modelConfig.trim()
-      : String(modelConfig?.default || '').trim()
-    const provider = typeof modelConfig === 'object'
-      ? String(modelConfig?.provider || '').trim()
-      : ''
-    return { model, provider }
-  } catch {
-    return { model: '', provider: '' }
-  }
-}
-
-function hasModelInGroups(groups: RunModelGroup[] | undefined, provider: string, model: string): boolean {
-  if (!groups?.length || !provider || !model) return false
-  const group = groups.find(item => item.provider === provider)
-  return Array.isArray(group?.models) && group.models.includes(model)
-}
 
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
@@ -60,7 +36,6 @@ export async function handleBridgeRun(
   data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
-  gatewayManager: any,
   bridge: AgentBridgeClient,
   _skipUserMessage = false,
   loadSessionStateFromDbFn: (sid: string, sessionMap: Map<string, SessionState>) => Promise<SessionState>,
@@ -78,14 +53,14 @@ export async function handleBridgeRun(
   const sessionRow = getSession(session_id)
   const sessionModel = sessionRow?.model || ''
   const sessionProvider = sessionRow?.provider || ''
-  const hasGroups = Array.isArray(data.model_groups) && data.model_groups.length > 0
-  const sessionModelAvailable = hasGroups && hasModelInGroups(data.model_groups, sessionProvider, sessionModel)
-  const shouldUseDefault = !sessionModel || !sessionProvider || !sessionModelAvailable
-  const defaultModelConfig = shouldUseDefault
-    ? await resolveDefaultModelConfig(profile)
-    : { model: '', provider: '' }
-  const resolvedModel = shouldUseDefault ? defaultModelConfig.model : sessionModel
-  const resolvedProvider = shouldUseDefault ? defaultModelConfig.provider : sessionProvider
+  const { model: resolvedModel, provider: resolvedProvider } = await resolveBridgeRunModelConfig({
+    profile,
+    sessionModel,
+    sessionProvider,
+    requestedModel: data.model,
+    requestedProvider: data.provider,
+    modelGroups: data.model_groups,
+  })
   if (sessionRow) {
     const updates: { model?: string; provider?: string } = {}
     if (resolvedModel && sessionRow.model !== resolvedModel) updates.model = resolvedModel
@@ -154,8 +129,8 @@ export async function handleBridgeRun(
 
   const history = await buildCompressedHistory(
     session_id, profile,
-    gatewayManager.getUpstream(profile).replace(/\/$/, ''),
-    gatewayManager.getApiKey(profile) || undefined,
+    '',
+    undefined,
     emit,
     sessionMap,
     { model: resolvedModel, provider: resolvedProvider },
@@ -208,7 +183,7 @@ export async function handleBridgeRun(
     })
 
     for await (const chunk of bridge.streamOutput(started.run_id)) {
-      await applyBridgeChunkAsync(nsp, socket, state, session_id, runMarker, chunk, emit, profile, sessionMap, gatewayManager, bridge, dequeueNextQueuedRun)
+      await applyBridgeChunkAsync(nsp, socket, state, session_id, runMarker, chunk, emit, profile, sessionMap, bridge, dequeueNextQueuedRun)
       if (chunk.done) break
     }
   } catch (err: any) {
@@ -245,7 +220,6 @@ async function applyBridgeChunkAsync(
   emit: (event: string, payload: any) => void,
   profile: string,
   sessionMap: Map<string, SessionState>,
-  gatewayManager: any,
   bridge: AgentBridgeClient,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ): Promise<void> {
@@ -358,8 +332,6 @@ async function applyBridgeChunkAsync(
             sessionId,
             profile,
             ev.messages as ChatMessage[],
-            (p: string) => gatewayManager.getUpstream(p),
-            (p: string) => gatewayManager.getApiKey(p),
           )
           state.bridgeCompressionResults = state.bridgeCompressionResults || {}
           state.bridgeCompressionResults[String(ev.request_id)] = compressed

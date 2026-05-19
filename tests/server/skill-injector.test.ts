@@ -39,7 +39,7 @@ describe('HermesSkillInjector', () => {
     expect(HermesSkillInjector.resolveSourceDir({} as any, join(root, 'packages', 'server', 'src', 'services', 'hermes'))).toBe(devSkills)
   })
 
-  it('injects missing bundled skills without overwriting existing skills', async () => {
+  it('syncs bundled skills and replaces existing bundled copies', async () => {
     const source = await tempDir('hermes-skill-source-')
     const hermesHome = await tempDir('hermes-skill-home-')
     process.env.HERMES_HOME = hermesHome
@@ -56,8 +56,9 @@ describe('HermesSkillInjector', () => {
     const result = await new HermesSkillInjector(source).injectMissingSkills()
 
     expect(result.injected).toEqual(['new-skill'])
-    expect(result.skipped).toEqual(['existing-skill'])
+    expect(result.updated).toEqual(['existing-skill'])
+    expect(result.skipped).toEqual([])
     await expect(readFile(join(hermesHome, 'skills', 'new-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# New Skill\n')
-    await expect(readFile(join(hermesHome, 'skills', 'existing-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# User Existing\n')
+    await expect(readFile(join(hermesHome, 'skills', 'existing-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Bundled Existing\n')
   })
 })

@@ -14,13 +14,13 @@
  *      - 否 → 标记为 stopped
  *
  * detectStatus 只做只读检测：不会认领未知端口上的进程，也不会探测实际监听端口后回写
- * config.yaml。端口修正发生在启动前的 resolvePort 阶段。
+ * config.yaml。
  *
  * 端口分配流程（resolvePort，启动前调用）：
  *   ① 读取配置端口
  *   ② 如果内存记录或 PID 文件对应的配置端口仍健康运行，复用该端口
  *   ③ 收集本轮已分配端口、其他已管理网关端口、Web UI 端口
- *   ④ 从 8642 起递增查找空闲端口，并写入 config.yaml
+ *   ④ 从 8642 起递增查找空闲端口，仅返回本次运行使用的端口，不再回写 config.yaml
  *
  * 启动模式：
  *   - 所有平台统一使用 `hermes gateway run --replace`
@@ -36,7 +36,6 @@ import { createServer } from 'net'
 import yaml from 'js-yaml'
 import { logger } from '../logger'
 import { detectHermesHome, getHermesBin } from './hermes-path'
-import { safeFileStore } from '../safe-file-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -335,53 +334,6 @@ export class GatewayManager {
   }
 
   // ============================
-  // 配置写入
-  // ============================
-
-  /**
-   * 将端口和主机写入 profile 的 config.yaml
-   * 写入完整结构：
-   *   platforms:
-   *     api_server:
-   *       enabled: true
-   *       key: ''
-   *       cors_origins: '*'
-   *       extra:
-   *         port: <port>
-   *         host: <host>
-   * 同时清理旧的顶层 port/host（避免 Hermes 读取错误）
-   */
-  private async writeProfilePort(name: string, port: number, host: string): Promise<void> {
-    const configPath = join(this.profileDir(name), 'config.yaml')
-    try {
-      await safeFileStore.updateYaml(configPath, (cfg) => {
-        // 确保 platforms.api_server 结构存在（不会影响其他位置的 platforms）
-        if (!cfg.platforms) cfg.platforms = {}
-        if (!cfg.platforms.api_server) cfg.platforms.api_server = {}
-        if (!cfg.platforms.api_server.extra) cfg.platforms.api_server.extra = {}
-
-        cfg.platforms.api_server.enabled = true
-        cfg.platforms.api_server.key = ''
-        cfg.platforms.api_server.cors_origins = '*'
-        cfg.platforms.api_server.extra.port = port
-        cfg.platforms.api_server.extra.host = host
-
-        // 清理旧的顶层 port/host，Hermes 只从 extra 读取
-        if (cfg.platforms.api_server.port !== undefined) {
-          delete cfg.platforms.api_server.port
-        }
-        if (cfg.platforms.api_server.host !== undefined) {
-          delete cfg.platforms.api_server.host
-        }
-        return cfg
-      })
-      logger.debug('Updated %s: api_server.extra.port = %d', configPath, port)
-    } catch (err) {
-      logger.error(err, 'Failed to write config for profile "%s"', name)
-    }
-  }
-
-  // ============================
   // 端口分配
   // ============================
 
@@ -392,7 +344,6 @@ export class GatewayManager {
    *   1. 当前 profile 已经健康运行 → 直接使用运行端口
    *   2. 未运行 → 从 8642 开始找空闲端口
    *   3. 检查已管理 profile / 本轮已分配端口 / 系统 TCP 占用
-   *   4. 先写入 config.yaml，再启动 gateway
    */
   private async resolvePort(name: string): Promise<{ port: number; host: string }> {
     const { port: configuredPort, host } = this.readProfilePort(name)
@@ -437,8 +388,6 @@ export class GatewayManager {
     } else {
       logger.debug('Assigning port %d for profile "%s"', port, name)
     }
-    await this.writeProfilePort(name, port, host)
-
     this.allocatedPorts.add(port)
     return { port, host }
   }

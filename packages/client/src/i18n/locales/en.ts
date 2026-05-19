@@ -588,6 +588,7 @@ export default {
     xaiLoginTitle: 'xAI Grok OAuth Login',
     xaiWaiting: 'Complete authorization in the opened xAI page. This window will close automatically once approved.',
     xaiOpenLink: 'Open xAI authorization page',
+    xaiCopyLink: 'Copy authorization link',
     xaiApproved: 'Sign-in succeeded!',
     xaiExpired: 'The authorization link has expired. Please retry.',
     customBadge: 'CUSTOM',

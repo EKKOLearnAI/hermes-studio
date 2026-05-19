@@ -9,7 +9,6 @@ import {
   renameSession as localRenameSession,
 } from '../../db/hermes/session-store'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
-import { getGatewayManagerInstance } from '../../services/gateway-bootstrap'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
 import { getModelContextLength } from '../../services/hermes/model-context'
@@ -500,10 +499,9 @@ export async function exportSession(ctx: any) {
 }
 
 async function compressSession(session: any) {
-  const mgr = getGatewayManagerInstance()
   const profile = session.profile || getActiveProfileName()
-  const upstream = mgr ? mgr.getUpstream(profile).replace(/\/$/, '') : ''
-  const apiKey = mgr ? mgr.getApiKey(profile) || undefined : undefined
+  const upstream = ''
+  const apiKey = undefined
   const messages = (session.messages || []).map((m: any) => ({
     role: m.role,
     content: m.content || '',
