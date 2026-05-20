@@ -33,7 +33,12 @@ function resolveLocale(saved: string | null): SupportedLocale {
   return 'en'
 }
 
+function setHtmlLang(locale: SupportedLocale) {
+  document.documentElement.lang = locale
+}
+
 const locale = resolveLocale(saved)
+setHtmlLang(locale)
 
 export const i18n = createI18n({
   legacy: false,
@@ -44,4 +49,5 @@ export const i18n = createI18n({
 
 export function switchLocale(newLocale: string): void {
   ;(i18n.global.locale as any).value = newLocale
+  setHtmlLang(newLocale as SupportedLocale)
 }

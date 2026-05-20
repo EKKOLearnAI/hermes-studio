@@ -19,6 +19,8 @@ server/dist
 packages/server/dist
 *.local
 ROADMAP.md
+pnpm-lock.yaml
+pnpm-workspace.yaml
 # Server data
 packages/server/data/
 packages/server/node_modules/
