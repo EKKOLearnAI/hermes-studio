@@ -11,6 +11,8 @@ import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import type { HermesProfile } from '../../services/hermes/hermes-cli'
 
+const bridgeCleanupClient = () => new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 })
+
 const RESERVED_PROFILE_NAMES = new Set([
   'hermes', 'default', 'test', 'tmp', 'root', 'sudo',
 ])
@@ -216,7 +218,7 @@ export async function remove(ctx: any) {
   }
   try {
     try {
-      const result = await new AgentBridgeClient().destroyProfile(name)
+      const result = await bridgeCleanupClient().destroyProfile(name)
       logger.info('[profiles] destroyed bridge sessions for deleted profile "%s" destroyed=%s', name, result.destroyed)
     } catch (err) {
       logger.warn(err, '[profiles] failed to destroy bridge sessions for deleted profile "%s"', name)
@@ -294,9 +296,7 @@ export async function switchProfile(ctx: any) {
 
     // Destroy all bridge sessions so they get recreated with the new profile config
     try {
-      const { AgentBridgeClient } = await import('../../services/hermes/agent-bridge')
-      const bridge = new AgentBridgeClient()
-      await bridge.destroyAll()
+      await bridgeCleanupClient().destroyAll()
       logger.info('[switchProfile] destroyed all bridge sessions for profile "%s"', name)
     } catch (err: any) {
       logger.warn(err, '[switchProfile] failed to destroy bridge sessions')

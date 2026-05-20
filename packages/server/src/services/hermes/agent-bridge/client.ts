@@ -32,6 +32,7 @@ export type AgentBridgeStatus = 'running' | 'complete' | 'interrupted' | 'error'
 export interface AgentBridgeOptions {
   endpoint?: string
   timeoutMs?: number
+  connectRetryMs?: number
 }
 
 export interface AgentBridgeRequestOptions {
@@ -108,11 +109,13 @@ export class AgentBridgeError extends Error {
 export class AgentBridgeClient {
   readonly endpoint: string
   readonly timeoutMs: number
+  readonly connectRetryMs: number
   private lock: Promise<unknown> = Promise.resolve()
 
   constructor(options: AgentBridgeOptions = {}) {
     this.endpoint = options.endpoint || process.env.HERMES_AGENT_BRIDGE_ENDPOINT || DEFAULT_AGENT_BRIDGE_ENDPOINT
     this.timeoutMs = options.timeoutMs ?? envPositiveInt('HERMES_AGENT_BRIDGE_TIMEOUT_MS') ?? DEFAULT_AGENT_BRIDGE_TIMEOUT_MS
+    this.connectRetryMs = options.connectRetryMs ?? envPositiveInt('HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS') ?? 5000
   }
 
   private summarizePayload(payload: Record<string, unknown>): Record<string, unknown> {
@@ -172,7 +175,7 @@ export class AgentBridgeClient {
     return undefined
   }
 
-  private connectSocket(): Promise<Socket> {
+  private connectSocketOnce(): Promise<Socket> {
     return new Promise((resolveConnect, rejectConnect) => {
       const endpoint = this.endpoint
       let socket: Socket
@@ -205,6 +208,25 @@ export class AgentBridgeClient {
       socket.once('connect', onConnect)
       socket.once('error', onError)
     })
+  }
+
+  private isRetryableConnectError(err: any): boolean {
+    const code = String(err?.code || '')
+    return ['ECONNREFUSED', 'ENOENT', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(code)
+  }
+
+  private async connectSocket(): Promise<Socket> {
+    const deadline = Date.now() + Math.max(0, this.connectRetryMs)
+    for (;;) {
+      try {
+        return await this.connectSocketOnce()
+      } catch (err) {
+        if (!this.isRetryableConnectError(err) || Date.now() >= deadline) {
+          throw err
+        }
+        await delay(100)
+      }
+    }
   }
 
   private readResponse(socket: Socket, timeoutMs: number): Promise<string> {

@@ -437,7 +437,10 @@ chatRunServer.init()
 |------|------|
 | `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge endpoint；Windows 默认 `tcp://127.0.0.1:18765`，macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock` |
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 `120000` ms |
+| `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | Node 连接 bridge socket 失败时的短重试窗口，默认 `5000` ms |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Node 等待 Python bridge ready 的超时，默认 `120000` ms |
+| `HERMES_AGENT_BRIDGE_AUTO_RESTART` | bridge broker 意外退出后是否自动重启；设为 `0`/`false`/`no`/`off` 可关闭，默认开启 |
+| `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | bridge broker 自动重启基础延迟，默认 `1000` ms，连续失败时最多退避到 `30000` ms |
 | `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器路径 |
 | `HERMES_AGENT_ROOT` | hermes-agent 安装目录 |
 | `HERMES_AGENT_BRIDGE_UV` | 指定 uv 可执行文件路径 |
@@ -445,6 +448,8 @@ chatRunServer.init()
 | `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge 使用的 provider |
 | `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数 |
 | `UV` | uv 可执行文件路径 fallback |
+
+正常使用不需要配置这些变量。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
 
 Windows 首次启动慢时可以临时放大：
 

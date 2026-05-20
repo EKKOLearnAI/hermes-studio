@@ -1637,7 +1637,84 @@ def _send_bridge_request(endpoint: str, req: dict[str, Any], timeout: float) -> 
             pass
 
 
+def _tcp_endpoint_port(endpoint: str) -> int | None:
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "tcp":
+        return None
+    try:
+        port = int(parsed.port or 0)
+        return port if port > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _windows_listening_pids_on_port(port: int) -> list[int]:
+    if os.name != "nt":
+        return []
+    try:
+        result = subprocess.run(
+            ["netstat.exe", "-ano", "-p", "tcp"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return []
+    pids: set[int] = set()
+    for line in result.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) < 5:
+            continue
+        proto, local_address, _remote_address, state, pid_raw = parts[:5]
+        if proto.upper() != "TCP" or state.upper() != "LISTENING":
+            continue
+        if not local_address.endswith(f":{port}"):
+            continue
+        try:
+            pid = int(pid_raw)
+        except ValueError:
+            continue
+        if pid > 0 and pid != os.getpid():
+            pids.add(pid)
+    return sorted(pids)
+
+
+def _kill_windows_endpoint_occupants(endpoint: str) -> None:
+    if os.name != "nt":
+        return
+    port = _tcp_endpoint_port(endpoint)
+    if not port:
+        return
+    for pid in _windows_listening_pids_on_port(port):
+        try:
+            print(
+                f"[hermes-bridge] killing stale process tree pid={pid} port={port}",
+                file=sys.stderr,
+                flush=True,
+            )
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception as exc:
+            print(
+                f"[hermes-bridge] failed to kill stale process pid={pid}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if not _windows_listening_pids_on_port(port):
+            return
+        time.sleep(0.1)
+
+
 def _make_listen_socket(endpoint: str) -> socket.socket:
+    _kill_windows_endpoint_occupants(endpoint)
     if endpoint.startswith("ipc://"):
         if not hasattr(socket, "AF_UNIX"):
             raise RuntimeError("ipc:// endpoints require Unix domain socket support; use tcp://host:port on this platform")
