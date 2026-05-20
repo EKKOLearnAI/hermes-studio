@@ -103,6 +103,7 @@ export default {
     collapse: '收起',
     start: '啟動',
     stop: '停止',
+    refresh: '重新整理',
   },
 
   // 側邊欄
@@ -196,6 +197,7 @@ export default {
     performance: '效能監控',
     skillsUsage: '技能用量',
     channels: '頻道',
+    codeIntelligence: '程式碼理解',
     gateways: '閘道',
     terminal: '終端機',
     groupChat: '群聊',
@@ -258,6 +260,28 @@ export default {
     noWorkers: '暫無 Worker',
     sessionsByProfile: '按 Profile 統計會話',
     noActiveSessions: '暫無活躍會話',
+  },
+
+  // 程式碼理解
+  codeIntelligence: {
+    title: '程式碼理解',
+    subtitle: '以唯讀方式掃描 repo，整理語言支援、manifest 與安全的 agent 工作流建議。',
+    repository: '儲存庫',
+    root: '根目錄',
+    generatedAt: '產生時間',
+    files: '個檔案',
+    lines: '行',
+    capabilities: '能力狀態',
+    recommendedSkills: '建議技能',
+    manifests: 'Manifests',
+    noManifests: '未偵測到 manifest',
+    suggestedActions: '建議下一步',
+    actionAnalyze: '先分析 repo 結構，再分派給 agent。',
+    actionTests: '修改 production code 前，先產生或補強測試。',
+    actionPr: 'commit/push 前先準備 PR 計畫。',
+    actionCpp: '只有偵測到 C/C++ 檔或 build manifest 時才啟用 C++ 工作流。',
+    otherLanguages: '其他偵測到的語言',
+
   },
 
   // 抽屜

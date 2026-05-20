@@ -103,6 +103,7 @@ export default {
     collapse: 'Collapse',
     start: 'Start',
     stop: 'Stop',
+    refresh: 'Refresh',
   },
 
   // MCP Management
@@ -196,6 +197,7 @@ export default {
     performance: 'Performance',
     skillsUsage: 'Skills Usage',
     channels: 'Channels',
+    codeIntelligence: 'Code Intelligence',
     gateways: 'Gateways',
     terminal: 'Terminal',
     groupChat: 'Group Chat',
@@ -258,6 +260,28 @@ export default {
     noWorkers: 'No workers',
     sessionsByProfile: 'Sessions by Profile',
     noActiveSessions: 'No active sessions',
+  },
+
+  // Code Intelligence
+  codeIntelligence: {
+    title: 'Code Intelligence',
+    subtitle: 'Read-only repository scan for language support, manifests, and safe agent workflow suggestions.',
+    repository: 'Repository',
+    root: 'Root',
+    generatedAt: 'Generated at',
+    files: 'files',
+    lines: 'lines',
+    capabilities: 'Capabilities',
+    recommendedSkills: 'Recommended skills',
+    manifests: 'Manifests',
+    noManifests: 'No manifests detected',
+    suggestedActions: 'Suggested next actions',
+    actionAnalyze: 'Analyze the repository structure before assigning an agent.',
+    actionTests: 'Generate or extend tests before changing production code.',
+    actionPr: 'Prepare a PR plan before committing and pushing changes.',
+    actionCpp: 'Enable C++ workflow only when C/C++ files or build manifests are detected.',
+    otherLanguages: 'Other detected languages',
+
   },
 
   // Drawer
