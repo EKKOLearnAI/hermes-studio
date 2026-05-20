@@ -17,9 +17,9 @@ afterEach(() => {
 })
 
 describe('terminal cwd resolution', () => {
-  it('defaults terminal sessions to the active Hermes profile directory', () => {
+  it('defaults terminal sessions to the Hermes profile terminal sandbox', () => {
     const profileDir = makeTmpRoot()
-    expect(resolveTerminalCwd({}, profileDir)).toBe(profileDir)
+    expect(resolveTerminalCwd({}, profileDir)).toBe(join(profileDir, 'terminal'))
   })
 
   it('resolves relative configured cwd from the Hermes profile directory', () => {
@@ -34,8 +34,8 @@ describe('terminal cwd resolution', () => {
     expect(resolveTerminalCwd({ cwd }, profileDir)).toBe(cwd)
   })
 
-  it('falls back to the profile directory when configured cwd is missing', () => {
+  it('falls back to the terminal sandbox when configured cwd is missing', () => {
     const profileDir = makeTmpRoot()
-    expect(resolveTerminalCwd({ cwd: 'missing' }, profileDir)).toBe(profileDir)
+    expect(resolveTerminalCwd({ cwd: 'missing' }, profileDir)).toBe(join(profileDir, 'terminal'))
   })
 })

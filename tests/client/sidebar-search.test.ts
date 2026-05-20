@@ -403,7 +403,7 @@ describe('AppSidebar search entry', () => {
   })
 
   it('uses short group labels and keeps group folding active when collapsed', async () => {
-    mockAppStore.sidebarCollapsed = true
+    appStoreMock.sidebarCollapsed = true
     const wrapper = mount(AppSidebar, {
       global: {
         stubs: {

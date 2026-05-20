@@ -1,8 +1,7 @@
 import { WebSocketServer } from 'ws'
 import type { Server as HttpServer, IncomingMessage } from 'http'
-import { accessSync, chmodSync, constants as fsConstants, existsSync } from 'fs'
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync } from 'fs'
 import { dirname, join, isAbsolute, resolve as resolvePath } from 'path'
-import { homedir } from 'os'
 import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
 import { getTerminalConfig, type TerminalConfig } from '../../services/hermes/file-provider'
 import { getToken } from '../../services/auth'
@@ -165,12 +164,12 @@ export function resolveTerminalCwd(
   profileDir = getActiveProfileDir(),
 ): string {
   const configured = cfg.cwd?.trim()
-  const fallback = existsSync(profileDir) ? profileDir : homedir()
+  const fallback = join(profileDir, 'terminal')
   if (!configured) return fallback
 
   const cwd = isAbsolute(configured) ? configured : resolvePath(profileDir, configured)
   if (!existsSync(cwd)) {
-    logger.warn({ cwd }, 'Configured terminal cwd does not exist; falling back to Hermes profile directory')
+    logger.warn({ cwd }, 'Configured terminal cwd does not exist; falling back to Hermes terminal sandbox')
     return fallback
   }
   return cwd
@@ -202,6 +201,7 @@ function createSession(shell: string, cwd: string): PtySession {
   const id = generateId()
   let ptyProcess: PtySession['pty']
   try {
+    mkdirSync(cwd, { recursive: true })
     ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-color',
       cols: 80,
