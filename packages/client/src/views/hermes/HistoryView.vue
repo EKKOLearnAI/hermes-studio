@@ -446,7 +446,7 @@ async function handleDeleteSession(id: string) {
     left: 0;
     top: 0;
     height: 100%;
-    z-index: 10;
+    z-index: 120;
     background: $bg-card;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     width: 280px;
@@ -467,7 +467,7 @@ async function handleDeleteSession(id: string) {
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.4);
-    z-index: 9;
+    z-index: 110;
     opacity: 0;
     pointer-events: none;
     transition: opacity $transition-fast;
