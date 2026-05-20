@@ -353,7 +353,7 @@ watch(() => store.sortedMessages.length, async () => {
                                 </div>
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
+                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item" @click="handleSetDefaultAgent(agent.id)">
                                 <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">
