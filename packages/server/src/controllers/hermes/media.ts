@@ -3,10 +3,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'path'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import { config } from '../../config'
+import { readConfigYaml } from '../../services/config-helpers'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
 const XAI_VIDEO_MODEL = 'grok-imagine-video'
+const APIKEY_IMAGE_PROVIDER = 'fun-codex'
+const APIKEY_IMAGE_MODEL = 'gpt-image-2'
+const APIKEY_IMAGE_TO_IMAGE_MODEL = 'gpt-5.4-mini'
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
@@ -16,11 +20,42 @@ type AuthJson = {
   credential_pool?: Record<string, any[]>
 }
 
+type ApiKeyImageMode = 'text' | 'image' | 'edit'
+
+type FunCodexProvider = {
+  apiKey: string
+  baseUrl: string
+  model: string
+}
+
 function readJsonFile(path: string): any {
   try {
     return JSON.parse(readFileSync(path, 'utf-8'))
   } catch {
     return null
+  }
+}
+
+function buildApiUrl(baseUrl: string, pathWithV1: string): string {
+  const base = (baseUrl || 'https://api.apikey.fun/v1').replace(/\/+$/, '')
+  const apiPath = pathWithV1.startsWith('/') ? pathWithV1 : `/${pathWithV1}`
+  if (base.endsWith('/v1') && apiPath.startsWith('/v1/')) return `${base}${apiPath.slice(3)}`
+  return `${base}${apiPath}`
+}
+
+async function resolveFunCodexProvider(): Promise<FunCodexProvider | null> {
+  const hermesConfig = await readConfigYaml()
+  const customProviders = Array.isArray(hermesConfig.custom_providers)
+    ? hermesConfig.custom_providers as any[]
+    : []
+  const provider = customProviders.find(entry => String(entry?.name || '').trim() === APIKEY_IMAGE_PROVIDER)
+  const apiKey = String(provider?.api_key || '').trim()
+  const baseUrl = String(provider?.base_url || '').trim()
+  if (!provider || !apiKey || !baseUrl) return null
+  return {
+    apiKey,
+    baseUrl,
+    model: String(provider?.model || '').trim(),
   }
 }
 
@@ -103,6 +138,88 @@ function normalizeImageInput(body: any): string {
   return imagePathToDataUri(imagePath)
 }
 
+function imageDataUriToBytes(dataUri: string): { buffer: Buffer; mime: string; name: string } {
+  const match = dataUri.match(/^data:([^;,]+);base64,(.+)$/)
+  if (!match) {
+    const err: any = new Error('image_base64 must be a valid image data URI for edit mode')
+    err.status = 400
+    throw err
+  }
+  const mime = match[1]
+  if (!mime.startsWith('image/')) {
+    const err: any = new Error('image data URI must use an image mime type')
+    err.status = 400
+    throw err
+  }
+  return {
+    buffer: Buffer.from(match[2], 'base64'),
+    mime,
+    name: `source.${mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1] || 'png'}`,
+  }
+}
+
+async function fetchImageBytes(url: string): Promise<{ buffer: Buffer; mime: string; name: string }> {
+  const res = await fetch(url)
+  if (!res.ok) {
+    const err: any = new Error(`image_url fetch failed: ${res.status} ${res.statusText}`)
+    err.status = 400
+    throw err
+  }
+  const mime = String(res.headers.get('content-type') || '').split(';')[0] || 'image/png'
+  if (!mime.startsWith('image/')) {
+    const err: any = new Error('image_url did not return an image')
+    err.status = 400
+    throw err
+  }
+  const buffer = Buffer.from(await res.arrayBuffer())
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    const err: any = new Error(`image is too large (max ${MAX_IMAGE_BYTES} bytes)`)
+    err.status = 413
+    throw err
+  }
+  const name = new URL(url).pathname.split('/').pop() || 'source.png'
+  return { buffer, mime, name }
+}
+
+async function normalizeImageFile(body: any): Promise<{ buffer: Buffer; mime: string; name: string }> {
+  const imageUrl = typeof body.image_url === 'string' ? body.image_url.trim() : ''
+  if (imageUrl) return fetchImageBytes(imageUrl)
+
+  const imageBase64 = typeof body.image_base64 === 'string' ? body.image_base64.trim() : ''
+  if (imageBase64) {
+    const dataUri = imageBase64.startsWith('data:image/')
+      ? imageBase64
+      : `data:${String(body.mime_type || '').trim()};base64,${imageBase64}`
+    return imageDataUriToBytes(dataUri)
+  }
+
+  const imagePath = typeof body.image_path === 'string' ? body.image_path.trim() : ''
+  if (!imagePath) {
+    const err: any = new Error('image_path, image_url, or image_base64 is required')
+    err.status = 400
+    throw err
+  }
+  const resolvedPath = isAbsolute(imagePath) ? imagePath : resolve(process.cwd(), imagePath)
+  if (!existsSync(resolvedPath)) {
+    const err: any = new Error('image_path does not exist')
+    err.status = 404
+    throw err
+  }
+  const buffer = readFileSync(resolvedPath)
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    const err: any = new Error(`image is too large (max ${MAX_IMAGE_BYTES} bytes)`)
+    err.status = 413
+    throw err
+  }
+  const mime = mimeFromMagic(buffer) || mimeFromPath(resolvedPath)
+  if (!mime) {
+    const err: any = new Error('unsupported image type; use png, jpeg, or webp')
+    err.status = 400
+    throw err
+  }
+  return { buffer, mime, name: resolvedPath.split(/[\\/]/).pop() || 'source.png' }
+}
+
 function normalizeDuration(value: unknown): number {
   const duration = Number(value || 8)
   if (!Number.isFinite(duration) || duration < 1 || duration > 15) {
@@ -116,6 +233,224 @@ function normalizeDuration(value: unknown): number {
 export function defaultMediaOutputPath(requestId: string, now = new Date()): string {
   const safeRequestId = requestId.replace(/[^A-Za-z0-9_-]/g, '_') || `video_${now.getTime()}`
   return join(config.appHome, 'media', `${safeRequestId}.mp4`)
+}
+
+export function defaultImageOutputPath(requestId: string, index = 0): string {
+  const safeRequestId = requestId.replace(/[^A-Za-z0-9_-]/g, '_') || `image_${Date.now()}`
+  const suffix = index > 0 ? `-${index + 1}` : ''
+  return join(config.appHome, 'media', `${safeRequestId}${suffix}.png`)
+}
+
+function normalizeImageMode(value: unknown): ApiKeyImageMode {
+  const mode = String(value || 'text').trim().toLowerCase()
+  if (mode === 'text' || mode === 'image' || mode === 'edit') return mode
+  const err: any = new Error('mode must be one of text, image, or edit')
+  err.status = 400
+  throw err
+}
+
+function normalizePositiveInt(value: unknown, fallback: number, key: string): number {
+  const parsed = Number(value || fallback)
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    const err: any = new Error(`${key} must be a positive number`)
+    err.status = 400
+    throw err
+  }
+  return Math.floor(parsed)
+}
+
+function collectImageBase64(event: any, images: string[] = []): string[] {
+  if (!event || typeof event !== 'object') return images
+  for (const key of ['b64_json', 'base64', 'image_base64', 'partial_image_b64']) {
+    if (typeof event[key] === 'string' && event[key]) images.push(event[key])
+  }
+  for (const item of event.data || []) collectImageBase64(item, images)
+  for (const item of event.response?.output || []) {
+    if (typeof item?.result === 'string' && item.result) images.push(item.result)
+    collectImageBase64(item, images)
+  }
+  if (typeof event.item?.result === 'string' && event.item.result) images.push(event.item.result)
+  return images
+}
+
+function isPartialImageEvent(event: any): boolean {
+  return event?.type === 'image_generation.partial_image' ||
+    event?.type === 'response.image_generation_call.partial_image'
+}
+
+function throwIfImageStreamError(event: any): void {
+  if (event?.type !== 'error' && event?.type !== 'response.failed') return
+  const err: any = new Error(event?.response?.error?.message || event?.error?.message || 'image generation failed')
+  err.status = 502
+  throw err
+}
+
+async function readSseImageResults(res: Response, limit: number): Promise<string[]> {
+  if (!res.body) throw new Error('image generation response is not readable')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const images: string[] = []
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split(/\r?\n\r?\n/)
+    buffer = frames.pop() || ''
+    for (const frame of frames) {
+      const data = frame
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n')
+        .trim()
+      if (!data || data === '[DONE]') continue
+      const event = JSON.parse(data)
+      throwIfImageStreamError(event)
+      if (isPartialImageEvent(event)) continue
+      collectImageBase64(event, images)
+      if (images.length >= limit) return images.slice(0, limit)
+    }
+  }
+  return images.slice(0, limit)
+}
+
+async function requestApiKeyImage(provider: FunCodexProvider, mode: ApiKeyImageMode, body: any): Promise<string[]> {
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+  if (!prompt) {
+    const err: any = new Error('prompt is required')
+    err.status = 400
+    throw err
+  }
+
+  const n = normalizePositiveInt(body.n, 1, 'n')
+  const timeoutMs = normalizePositiveInt(body.timeout_ms, DEFAULT_TIMEOUT_MS, 'timeout_ms')
+  const headers = {
+    Accept: 'text/event-stream',
+    Authorization: `Bearer ${provider.apiKey}`,
+  }
+
+  let res: Response
+  if (mode === 'text') {
+    res = await fetch(buildApiUrl(provider.baseUrl, '/v1/images/generations'), {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        model: body.model || APIKEY_IMAGE_MODEL,
+        prompt,
+        n,
+        size: body.size || '1024x1024',
+        quality: body.quality || 'auto',
+        stream: true,
+        response_format: 'b64_json',
+      }),
+    })
+  } else if (mode === 'image') {
+    res = await fetch(buildApiUrl(provider.baseUrl, '/v1/responses'), {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        model: body.model || provider.model || APIKEY_IMAGE_TO_IMAGE_MODEL,
+        stream: true,
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: prompt },
+            { type: 'input_image', image_url: normalizeImageInput(body) },
+          ],
+        }],
+        tools: [{
+          type: 'image_generation',
+          model: body.image_model || APIKEY_IMAGE_MODEL,
+          size: body.size || '1024x1024',
+          quality: body.quality || 'auto',
+          output_format: body.output_format || 'png',
+        }],
+        tool_choice: { type: 'image_generation' },
+      }),
+    })
+  } else {
+    const image = await normalizeImageFile(body)
+    const imageBytes = new Uint8Array(image.buffer.byteLength)
+    imageBytes.set(image.buffer)
+    const form = new FormData()
+    form.append('image', new Blob([imageBytes.buffer], { type: image.mime }), image.name)
+    form.append('prompt', prompt)
+    form.append('model', body.model || APIKEY_IMAGE_MODEL)
+    form.append('n', String(n))
+    form.append('quality', body.quality || 'auto')
+    form.append('size', body.size || '1024x1024')
+    form.append('stream', 'true')
+    form.append('response_format', 'b64_json')
+    res = await fetch(buildApiUrl(provider.baseUrl, '/v1/images/edits'), {
+      method: 'POST',
+      headers,
+      signal: AbortSignal.timeout(timeoutMs),
+      body: form,
+    })
+  }
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    const err: any = new Error(`image generation request failed: ${res.status} ${detail || res.statusText}`)
+    err.status = res.status === 401 || res.status === 403 ? 502 : 502
+    throw err
+  }
+  const images = await readSseImageResults(res, n)
+  if (images.length === 0) {
+    const err: any = new Error('image generation stream ended without image data')
+    err.status = 502
+    throw err
+  }
+  return images
+}
+
+function saveGeneratedImages(images: string[], requestedOutputPath?: string): string[] {
+  return images.map((image, index) => {
+    const outputPath = requestedOutputPath && images.length === 1
+      ? requestedOutputPath
+      : requestedOutputPath
+        ? requestedOutputPath.replace(/(\.[^.\\/]+)?$/, `${index > 0 ? `-${index + 1}` : ''}$1`)
+        : defaultImageOutputPath(`image_${Date.now()}`, index)
+    mkdirSync(dirname(outputPath), { recursive: true })
+    writeFileSync(outputPath, Buffer.from(image, 'base64'))
+    return outputPath
+  })
+}
+
+export async function apiKeyImageGenerate(ctx: Context) {
+  const provider = await resolveFunCodexProvider()
+  if (!provider) {
+    ctx.status = 401
+    ctx.body = {
+      error: 'Missing fun-codex provider in active profile config.yaml.',
+      code: 'missing_fun_codex_provider',
+    }
+    return
+  }
+
+  const body = ctx.request.body as any
+  try {
+    const mode = normalizeImageMode(body.mode)
+    const images = await requestApiKeyImage(provider, mode, body)
+    const requestedOutputPath = typeof body.output_path === 'string' ? body.output_path.trim() : ''
+    const outputPaths = saveGeneratedImages(images, requestedOutputPath || undefined)
+    ctx.body = {
+      ok: true,
+      mode,
+      output_paths: outputPaths,
+      provider: APIKEY_IMAGE_PROVIDER,
+      base_url: provider.baseUrl,
+    }
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = {
+      error: err.message || String(err),
+      code: err.code || 'image_generation_failed',
+    }
+  }
 }
 
 async function requestXaiJson(url: string, token: string, init: RequestInit = {}): Promise<any> {
