@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const mockSystemApi = vi.hoisted(() => ({
   fetchAvailableModels: vi.fn(),
+  fetchAvailableModelsForProfile: vi.fn(),
   updateDefaultModel: vi.fn(),
   addCustomProvider: vi.fn(),
   removeCustomProvider: vi.fn(),
@@ -36,7 +37,7 @@ describe('Models Store', () => {
         },
       },
     ]
-    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+    const availableModelsResponse = {
       default: 'deepseek-v4-flash',
       default_provider: 'deepseek',
       groups: visibleGroups,
@@ -44,7 +45,18 @@ describe('Models Store', () => {
       model_visibility: {
         deepseek: { mode: 'include', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
       },
-    })
+      profiles: [
+        {
+          profile: 'default',
+          default: 'deepseek-v4-flash',
+          default_provider: 'deepseek',
+          groups: visibleGroups,
+        },
+      ],
+    }
+    mockSystemApi.fetchAvailableModelsForProfile.mockResolvedValue(availableModelsResponse)
+    mockSystemApi.fetchAvailableModels.mockResolvedValue(availableModelsResponse)
+    mockSystemApi.addCustomProvider.mockResolvedValue(undefined)
 
     const appStore = useAppStore()
     appStore.modelGroups = [
@@ -59,8 +71,15 @@ describe('Models Store', () => {
     ]
 
     const modelsStore = useModelsStore()
-    await modelsStore.fetchProviders()
+    await modelsStore.addProvider({
+      name: 'deepseek',
+      base_url: 'https://api.deepseek.com/v1',
+      api_key: 'sk-test',
+      model: 'deepseek-v4-flash',
+    })
 
+    expect(mockSystemApi.fetchAvailableModelsForProfile).toHaveBeenCalledWith('default')
+    expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalled()
     expect(modelsStore.providers[0].models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
     expect(appStore.modelGroups[0].models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
     expect(appStore.modelGroups[0].available_models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
