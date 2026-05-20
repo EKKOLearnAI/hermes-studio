@@ -428,7 +428,6 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       'openai/gpt-5.5-pro',
       'openai/gpt-5.4-nano',
       'deepseek/deepseek-v4-pro',
-      'deepseek/deepseek-v4-flash',
     ],
   },
   {
