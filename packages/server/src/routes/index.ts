@@ -32,6 +32,7 @@ import { cronHistoryRoutes } from './hermes/cron-history'
 import { kanbanRoutes } from './hermes/kanban'
 import { ttsRoutes } from './hermes/tts'
 import { mediaRoutes } from './hermes/media'
+import { codeIntelligenceRoutes } from './hermes/code-intelligence'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
@@ -82,6 +83,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(mediaRoutes.routes())              // Must be before proxy
   app.use(performanceMonitorRoutes.routes())  // Must be before proxy
   app.use(mcpRoutes.routes())                   // MCP management
+  app.use(codeIntelligenceRoutes.routes())    // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)
