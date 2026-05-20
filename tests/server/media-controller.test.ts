@@ -15,9 +15,11 @@ afterEach(() => {
 describe('media controller', () => {
   it('uses Hermes Web UI media directory as the default generated video output path', async () => {
     process.env.HERMES_WEB_UI_HOME = '/tmp/hermes-web-ui-test-home'
-    const { defaultMediaOutputPath } = await import('../../packages/server/src/controllers/hermes/media')
+    const { defaultImageOutputPath, defaultMediaOutputPath } = await import('../../packages/server/src/controllers/hermes/media')
 
     expect(defaultMediaOutputPath('req_123')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'req_123.mp4'))
     expect(defaultMediaOutputPath('bad/request:id')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'bad_request_id.mp4'))
+    expect(defaultImageOutputPath('img_123')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'img_123.png'))
+    expect(defaultImageOutputPath('bad/request:id', 1)).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'bad_request_id-2.png'))
   })
 })

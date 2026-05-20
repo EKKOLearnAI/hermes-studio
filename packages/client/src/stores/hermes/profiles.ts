@@ -44,6 +44,33 @@ export const useProfilesStore = defineStore('profiles', () => {
     }
   }
 
+  async function updateAvatar(name: string, avatar: profilesApi.ProfileAvatar) {
+    const saved = await profilesApi.updateProfileAvatar(name, avatar)
+    profiles.value = profiles.value.map(profile => (
+      profile.name === name ? { ...profile, avatar: saved } : profile
+    ))
+    if (detailMap.value[name]) {
+      detailMap.value[name] = { ...detailMap.value[name], avatar: saved }
+    }
+    if (activeProfile.value?.name === name) {
+      activeProfile.value = { ...activeProfile.value, avatar: saved }
+    }
+    return saved
+  }
+
+  async function deleteAvatar(name: string) {
+    await profilesApi.deleteProfileAvatar(name)
+    profiles.value = profiles.value.map(profile => (
+      profile.name === name ? { ...profile, avatar: null } : profile
+    ))
+    if (detailMap.value[name]) {
+      detailMap.value[name] = { ...detailMap.value[name], avatar: null }
+    }
+    if (activeProfile.value?.name === name) {
+      activeProfile.value = { ...activeProfile.value, avatar: null }
+    }
+  }
+
   async function createProfile(name: string, clone?: boolean) {
     const res = await profilesApi.createProfile(name, clone)
     if (res.success) await fetchProfiles()
@@ -146,6 +173,8 @@ export const useProfilesStore = defineStore('profiles', () => {
     switchProfile,
     exportProfile,
     importProfile,
+    updateAvatar,
+    deleteAvatar,
     clearAllSessionCaches,
   }
 })

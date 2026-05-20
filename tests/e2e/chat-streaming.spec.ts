@@ -98,9 +98,10 @@ test('uses the newly selected profile for the next chat-run socket after profile
   }, defaultRun.run.session_id)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
 
-  await page.locator('[data-testid="profile-selector-select"] .n-base-selection').click()
+  await page.getByTestId('profile-selector-select').click()
+  await expect(page.getByRole('dialog').filter({ hasText: 'research' })).toBeVisible()
   const reloadPromise = page.waitForEvent('framenavigated', frame => frame === page.mainFrame())
-  await page.locator('.n-base-select-option', { hasText: /^research$/ }).click()
+  await page.locator('.profile-runtime-item').filter({ hasText: /^research/ }).getByRole('button', { name: 'Switch Profile' }).click()
   await reloadPromise
   await page.waitForLoadState('domcontentloaded')
   await expect(page.getByTestId('profile-selector-select').filter({ hasText: 'research' })).toBeVisible()

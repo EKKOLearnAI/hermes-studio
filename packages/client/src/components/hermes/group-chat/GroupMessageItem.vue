@@ -2,8 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
-import multiavatar from '@multiavatar/multiavatar'
 import MarkdownRenderer from '../chat/MarkdownRenderer.vue'
+import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
     copyTextToClipboard,
     handleCodeBlockCopyClick,
@@ -32,6 +33,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const toast = useMessage()
+const profilesStore = useProfilesStore()
 const speech = useGlobalSpeech()
 const voiceSettings = useVoiceSettings()
 const previewUrl = ref<string | null>(null)
@@ -52,11 +54,10 @@ const timeStr = computed(() => {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 })
 
-const avatarSvg = computed(() => {
-    return multiavatar(props.message.senderName || props.message.senderId)
-})
+const avatarProfileName = computed(() => agentInfo.value?.profile || props.message.senderName || props.message.senderId)
+const avatarProfile = computed(() => profilesStore.profiles.find(profile => profile.name === agentInfo.value?.profile))
 
-const mentionNames = computed(() => props.agents.map(a => a.name).filter(Boolean))
+const mentionNames = computed(() => ['all', ...props.agents.map(a => a.name).filter(Boolean)])
 const parsedThinking = computed(() => parseThinking(props.message.content || '', { streaming: !!props.message.isStreaming }))
 const hasReasoningField = computed(() => !!(props.message.reasoning && props.message.reasoning.length > 0))
 const hasThinking = computed(() => hasReasoningField.value || parsedThinking.value.hasThinking)
@@ -384,7 +385,7 @@ onBeforeUnmount(() => {
 <template>
     <div v-if="isToolMessage" class="group-message tool-message">
         <div class="avatar">
-            <span v-html="avatarSvg" />
+            <ProfileAvatar :name="avatarProfileName" :avatar="avatarProfile?.avatar" :size="36" />
         </div>
 
         <div class="msg-body">
@@ -430,7 +431,7 @@ onBeforeUnmount(() => {
     <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf }">
         <!-- Avatar -->
         <div class="avatar">
-            <span v-html="avatarSvg" />
+            <ProfileAvatar :name="avatarProfileName" :avatar="avatarProfile?.avatar" :size="36" />
         </div>
 
         <div class="msg-body">
@@ -674,11 +675,6 @@ onBeforeUnmount(() => {
     margin-top: 2px;
     overflow: hidden;
     border-radius: 8px;
-
-    :deep(svg) {
-        width: 36px;
-        height: 36px;
-    }
 }
 
 .msg-body {

@@ -700,10 +700,44 @@ function openChangelog() {
     }
   }
 
-  // Hide selectors and footer text, keep theme switch
-  :deep(.profile-selector),
+  // Hide model selector in icon-rail mode, but keep the active profile avatar
+  // visible as the profile manager entry point.
   :deep(.model-selector) {
     display: none;
+  }
+
+  :deep(.profile-selector) {
+    display: flex;
+    justify-content: center;
+    padding: 8px 0;
+    margin: 0 0 6px;
+    border-top: 1px solid $border-color;
+  }
+
+  :deep(.profile-selector .selector-label),
+  :deep(.profile-selector .profile-name) {
+    display: none;
+  }
+
+  :deep(.profile-selector .profile-display) {
+    width: 36px;
+    height: 36px;
+    justify-content: center;
+    padding: 0;
+    gap: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :deep(.profile-selector .profile-display:hover) {
+    background: transparent;
+  }
+
+  :deep(.profile-selector .profile-avatar) {
+    width: 28px !important;
+    height: 28px !important;
+    flex-basis: 28px !important;
   }
 
   .sidebar-footer {

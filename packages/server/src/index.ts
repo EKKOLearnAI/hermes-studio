@@ -39,10 +39,9 @@ process.on('uncaughtException', (err) => {
 })
 
 process.on('unhandledRejection', (reason) => {
-  console.error('FATAL: Unhandled rejection')
+  console.error('Unhandled rejection')
   console.error(reason)
   logger.error(reason, 'Unhandled rejection')
-  process.exit(1)
 })
 
 let server: any = null

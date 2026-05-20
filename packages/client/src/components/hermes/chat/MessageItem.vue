@@ -9,7 +9,9 @@ import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
+import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSettingsStore } from "@/stores/hermes/settings";
+import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
   handleCodeBlockCopyClick,
@@ -180,9 +182,12 @@ const toolExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
 const chatStore = useChatStore();
+const profilesStore = useProfilesStore();
 const settingsStore = useSettingsStore();
 const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
+const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
+const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -773,11 +778,12 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <img
+        <ProfileAvatar
           v-if="message.role === 'assistant'"
-          src="/logo.png"
-          alt="Hermes"
           class="msg-avatar"
+          :name="assistantProfileName"
+          :avatar="assistantProfileAvatar"
+          :size="40"
         />
         <div class="msg-content" :class="message.role">
           <div

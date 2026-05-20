@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber } from 'naive-ui'
-import multiavatar from '@multiavatar/multiavatar'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
+import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import type { Attachment } from '@/stores/hermes/chat'
+import type { RoomAgent } from '@/api/hermes/group-chat'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -34,13 +35,13 @@ const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
 
-const avatarCache = new Map<string, string>()
+function profileAvatarFor(profileName?: string) {
+    if (!profileName) return null
+    return profilesStore.profiles.find(profile => profile.name === profileName)?.avatar || null
+}
 
-function agentAvatarUrl(name: string): string {
-    if (avatarCache.has(name)) return avatarCache.get(name)!
-    const uri = multiavatar(name)
-    avatarCache.set(name, uri)
-    return uri
+function agentAvatarName(agent: RoomAgent): string {
+    return agent.profile || agent.name || agent.agentId
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
@@ -146,6 +147,12 @@ async function handleAddAgent() {
     await profilesStore.fetchProfiles()
     showAddAgentModal.value = true
 }
+
+onMounted(() => {
+    if (profilesStore.profiles.length === 0) {
+        void profilesStore.fetchProfiles()
+    }
+})
 
 async function confirmAddAgent() {
     if (!selectedProfile.value || !store.currentRoomId) return
@@ -324,7 +331,7 @@ watch(() => store.sortedMessages.length, async () => {
                             <div class="avatar-stack-inner">
                                 <!-- User avatar first -->
                                 <span class="avatar-stack-item" :style="{ zIndex: store.agents.length + 1 }">
-                                    <span class="agent-avatar" v-html="agentAvatarUrl(store.userName || store.userId)" />
+                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
                                 </span>
                                 <span
                                     v-for="(agent, index) in store.agents.slice(-4)"
@@ -332,22 +339,22 @@ watch(() => store.sortedMessages.length, async () => {
                                     class="avatar-stack-item"
                                     :style="{ zIndex: store.agents.length - index }"
                                 >
-                                    <span class="agent-avatar" v-html="agentAvatarUrl(agent.name)" />
+                                    <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
                                 </span>
                                 <span v-if="store.agents.length > 4" class="avatar-stack-more">+{{ store.agents.length - 4 }}</span>
                             </div>
                         </template>
                         <div class="agent-popover">
                             <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
-                                <span class="agent-avatar" v-html="agentAvatarUrl(store.userName || store.userId)" />
+                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ store.userName || 'You' }}</span>
                                     <span class="agent-popover-profile">{{ t('groupChat.you') }}</span>
                                 </div>
                             </div>
                             <div class="agent-popover-title">{{ t('groupChat.agents') }} ({{ store.agents.length }})</div>
-                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item" @click="handleSetDefaultAgent(agent.id)">
-                                <span class="agent-avatar" v-html="agentAvatarUrl(agent.name)" />
+                            <div v-for="agent in store.agents" :key="agent.id" class="agent-popover-item">
+                                <ProfileAvatar class="agent-avatar" :name="agentAvatarName(agent)" :avatar="profileAvatarFor(agent.profile)" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">
                                         {{ agent.name }}
@@ -364,7 +371,7 @@ watch(() => store.sortedMessages.length, async () => {
                     <!-- Only user avatar, no agents -->
                     <div v-else-if="store.userName" class="avatar-stack-inner">
                         <span class="avatar-stack-item">
-                            <span class="agent-avatar" v-html="agentAvatarUrl(store.userName || store.userId)" />
+                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
                         </span>
                     </div>
                     <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">

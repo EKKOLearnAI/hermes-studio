@@ -159,6 +159,24 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/profiles/runtime-statuses') {
+      await route.fulfill(jsonResponse({
+        profiles: [
+          {
+            profile: 'default',
+            bridge: { running: activeProfileName === 'default', profile: 'default', reachable: true },
+            gateway: { running: true, profile: 'default' },
+          },
+          {
+            profile: 'research',
+            bridge: { running: activeProfileName === 'research', profile: 'research', reachable: true },
+            gateway: { running: true, profile: 'research' },
+          },
+        ],
+      }))
+      return
+    }
+
     if (pathname === '/api/hermes/profiles/active') {
       if (request.method() !== 'PUT') {
         await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))

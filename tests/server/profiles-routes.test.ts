@@ -24,6 +24,7 @@ import * as hermesCli from '../../packages/server/src/services/hermes/hermes-cli
 
 describe('Profile Routes', () => {
   const originalHermesHome = process.env.HERMES_HOME
+  const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
   const tempHomes: string[] = []
 
   beforeEach(() => {
@@ -33,6 +34,8 @@ describe('Profile Routes', () => {
   afterEach(async () => {
     if (originalHermesHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHermesHome
+    if (originalWebUiHome === undefined) delete process.env.HERMES_WEB_UI_HOME
+    else process.env.HERMES_WEB_UI_HOME = originalWebUiHome
     await Promise.all(tempHomes.splice(0).map(dir => rm(dir, { recursive: true, force: true })))
   })
 
@@ -115,6 +118,71 @@ describe('Profile Routes', () => {
       expect(ctx.status).toBe(500)
       expect(ctx.body).toEqual({ error: 'Failed to delete profile' })
       expect(existsSync(profileDir)).toBe(true)
+    })
+  })
+
+  describe('profile avatars', () => {
+    it('stores generated avatar metadata under the Web UI home', async () => {
+      const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-avatar-'))
+      tempHomes.push(webUiHome)
+      process.env.HERMES_WEB_UI_HOME = webUiHome
+      const { updateAvatar } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        params: { name: 'work' },
+        request: { body: { type: 'generated', seed: 'custom-seed' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await updateAvatar(ctx)
+
+      const metaPath = join(webUiHome, 'profile-metadata', Buffer.from('work', 'utf-8').toString('base64url'), 'avatar.json')
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.avatar).toMatchObject({ type: 'generated', seed: 'custom-seed' })
+      expect(JSON.parse(readFileSync(metaPath, 'utf-8'))).toMatchObject({
+        type: 'generated',
+        seed: 'custom-seed',
+      })
+    })
+
+    it('stores uploaded image avatars and returns a data URL', async () => {
+      const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-avatar-'))
+      tempHomes.push(webUiHome)
+      process.env.HERMES_WEB_UI_HOME = webUiHome
+      const dataUrl = `data:image/png;base64,${Buffer.from('avatar-png').toString('base64')}`
+      const { updateAvatar } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        params: { name: 'work' },
+        request: { body: { type: 'image', dataUrl } },
+        status: 200,
+        body: undefined,
+      }
+
+      await updateAvatar(ctx)
+
+      const dir = join(webUiHome, 'profile-metadata', Buffer.from('work', 'utf-8').toString('base64url'))
+      const meta = JSON.parse(readFileSync(join(dir, 'avatar.json'), 'utf-8'))
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.avatar).toMatchObject({ type: 'image', dataUrl })
+      expect(meta).toMatchObject({ type: 'image', file: 'avatar.bin', mime: 'image/png' })
+      expect(readFileSync(join(dir, 'avatar.bin')).toString()).toBe('avatar-png')
+    })
+
+    it('deletes profile avatar metadata', async () => {
+      const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-avatar-'))
+      tempHomes.push(webUiHome)
+      process.env.HERMES_WEB_UI_HOME = webUiHome
+      const metadataDir = join(webUiHome, 'profile-metadata', Buffer.from('work', 'utf-8').toString('base64url'))
+      await mkdir(metadataDir, { recursive: true })
+      await writeFile(join(metadataDir, 'avatar.json'), '{"type":"generated"}\n', 'utf-8')
+      const { deleteAvatar } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = { params: { name: 'work' }, status: 200, body: undefined }
+
+      await deleteAvatar(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toEqual({ success: true })
+      expect(existsSync(metadataDir)).toBe(false)
     })
   })
 })

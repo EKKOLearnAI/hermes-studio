@@ -568,6 +568,7 @@ export interface HermesProfile {
   name: string
   active: boolean
   model: string
+  gatewayStatus?: string
   alias: string
 }
 
@@ -598,15 +599,19 @@ export async function listProfiles(): Promise<HermesProfile[]> {
 
     // Skip header lines (starts with " Profile" or " ─")
     for (const line of lines) {
-      if (line.startsWith(' Profile') || line.match(/^ ─/)) continue
+      const trimmed = line.trim()
+      if (trimmed.startsWith('Profile') || trimmed.match(/^─/)) continue
 
-      const match = line.match(/^\s+(◆)?(.+?)\s+(\S+)\s{2,}(\S+)\s{2,}(.*)$/)
-      if (match) {
+      const active = trimmed.startsWith('◆')
+      const body = active ? trimmed.slice(1).trim() : trimmed
+      const columns = body.split(/\s{2,}/).map(part => part.trim())
+      if (columns.length >= 2) {
         profiles.push({
-          name: match[2],
-          active: !!match[1],
-          model: match[3],
-          alias: match[5].trim() === '—' ? '' : match[5].trim(),
+          name: columns[0],
+          active,
+          model: columns[1] || '—',
+          gatewayStatus: columns[2] && columns[2] !== '—' ? columns[2] : undefined,
+          alias: columns[3] && columns[3] !== '—' ? columns[3] : '',
         })
       }
     }

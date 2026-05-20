@@ -11,6 +11,8 @@ const mockProfilesApi = vi.hoisted(() => ({
   switchProfile: vi.fn(),
   exportProfile: vi.fn(),
   importProfile: vi.fn(),
+  updateProfileAvatar: vi.fn(),
+  deleteProfileAvatar: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/profiles', () => mockProfilesApi)
@@ -90,6 +92,54 @@ describe('Profiles Store', () => {
 
     expect(result).toEqual(detail)
     expect(mockProfilesApi.fetchProfileDetail).not.toHaveBeenCalled()
+  })
+
+  it('updateAvatar updates profile, detail cache, and active profile', async () => {
+    const savedAvatar = { type: 'image', dataUrl: 'data:image/png;base64,YQ==' }
+    mockProfilesApi.updateProfileAvatar.mockResolvedValue(savedAvatar)
+
+    const store = useProfilesStore()
+    store.profiles = [
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+      { name: 'dev', active: false, model: 'gpt-4', alias: '' },
+    ]
+    store.activeProfile = store.profiles[0]
+    store.detailMap.default = { name: 'default', path: '/tmp/default', model: '', provider: '', skills: 0, hasEnv: false, hasSoulMd: false }
+
+    const result = await store.updateAvatar('default', { type: 'image', dataUrl: savedAvatar.dataUrl })
+
+    expect(result).toEqual(savedAvatar)
+    expect(mockProfilesApi.updateProfileAvatar).toHaveBeenCalledWith('default', { type: 'image', dataUrl: savedAvatar.dataUrl })
+    expect(store.profiles[0].avatar).toEqual(savedAvatar)
+    expect(store.activeProfile?.avatar).toEqual(savedAvatar)
+    expect(store.detailMap.default.avatar).toEqual(savedAvatar)
+  })
+
+  it('deleteAvatar clears avatar state', async () => {
+    mockProfilesApi.deleteProfileAvatar.mockResolvedValue(undefined)
+
+    const store = useProfilesStore()
+    store.profiles = [
+      { name: 'default', active: true, model: 'gpt-4', alias: '', avatar: { type: 'generated', seed: 'old' } },
+    ]
+    store.activeProfile = store.profiles[0]
+    store.detailMap.default = {
+      name: 'default',
+      path: '/tmp/default',
+      model: '',
+      provider: '',
+      skills: 0,
+      hasEnv: false,
+      hasSoulMd: false,
+      avatar: { type: 'generated', seed: 'old' },
+    }
+
+    await store.deleteAvatar('default')
+
+    expect(mockProfilesApi.deleteProfileAvatar).toHaveBeenCalledWith('default')
+    expect(store.profiles[0].avatar).toBeNull()
+    expect(store.activeProfile?.avatar).toBeNull()
+    expect(store.detailMap.default.avatar).toBeNull()
   })
 
   it('switchProfile sets switching state', async () => {

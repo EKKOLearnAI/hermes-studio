@@ -528,6 +528,20 @@ export default {
     hasEnv: '.env 있음',
     hasSoulMd: 'soul.md 있음',
     noProfiles: '프로필이 없습니다. 새로 만들어 시작하세요.',
+    avatar: {
+      title: 'Custom Avatar',
+      customize: 'Avatar',
+      upload: 'Upload Image',
+      random: 'Randomize',
+      reset: 'Use Default',
+      hint: 'PNG, JPEG, or WebP. Max 1MB.',
+      invalidType: 'Please choose a PNG, JPEG, or WebP image',
+      tooLarge: 'Avatar image must be 1MB or smaller',
+      saveSuccess: 'Avatar saved',
+      saveFailed: 'Failed to save avatar',
+      resetSuccess: 'Default avatar restored',
+      resetFailed: 'Failed to restore default avatar',
+    },
   },
 
   // 로그

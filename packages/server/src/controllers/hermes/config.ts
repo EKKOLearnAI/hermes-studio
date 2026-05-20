@@ -81,7 +81,7 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
 
 async function destroyBridgeProfile(profile: string): Promise<void> {
   try {
-    const result = await new AgentBridgeClient().destroyProfile(profile)
+    const result = await new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 }).destroyProfile(profile)
     logger.info('[config] destroyed bridge sessions after gateway restart profile=%s destroyed=%s', profile, result.destroyed)
   } catch (err) {
     logger.warn(err, '[config] failed to destroy bridge sessions after gateway restart profile=%s', profile)

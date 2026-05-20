@@ -2,9 +2,10 @@
 import { computed, ref, onUnmounted } from 'vue'
 import { NPopconfirm, NCheckbox } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import multiavatar from '@multiavatar/multiavatar'
 import type { Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
+import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatTimestampMs } from '@/shared/session-display'
 
 const props = withDefaults(defineProps<{
@@ -29,13 +30,14 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 const sessionModelName = computed(() =>
   props.session.model
     ? appStore.displayModelName(props.session.model, props.session.provider)
     : '',
 )
 const profileName = computed(() => props.session.profile || 'default')
-const profileAvatar = computed(() => multiavatar(profileName.value))
+const profileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === profileName.value)?.avatar)
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -114,7 +116,7 @@ onUnmounted(() => {
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
       </span>
       <span v-if="props.showProfile" class="session-item-profile">
-        <span class="session-item-profile-avatar" v-html="profileAvatar" />
+        <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
         <span class="session-item-profile-name">{{ profileName }}</span>
       </span>
     </div>
@@ -139,18 +141,7 @@ onUnmounted(() => {
 }
 
 .session-item-profile-avatar {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  border-radius: 50%;
-  overflow: hidden;
-}
-
-.session-item-profile-avatar :deep(svg) {
-  width: 16px;
-  height: 16px;
-  display: block;
+  background: var(--bg-secondary);
 }
 
 .session-item-profile-name {

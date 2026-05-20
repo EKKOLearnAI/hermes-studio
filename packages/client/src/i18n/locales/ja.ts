@@ -528,6 +528,20 @@ export default {
     hasEnv: '.env あり',
     hasSoulMd: 'soul.md あり',
     noProfiles: 'プロファイルがありません。作成して始めましょう。',
+    avatar: {
+      title: 'Custom Avatar',
+      customize: 'Avatar',
+      upload: 'Upload Image',
+      random: 'Randomize',
+      reset: 'Use Default',
+      hint: 'PNG, JPEG, or WebP. Max 1MB.',
+      invalidType: 'Please choose a PNG, JPEG, or WebP image',
+      tooLarge: 'Avatar image must be 1MB or smaller',
+      saveSuccess: 'Avatar saved',
+      saveFailed: 'Failed to save avatar',
+      resetSuccess: 'Default avatar restored',
+      resetFailed: 'Failed to restore default avatar',
+    },
   },
 
   // ログ

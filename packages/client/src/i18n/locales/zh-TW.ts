@@ -675,6 +675,20 @@ export default {
     hasEnv: '有 .env',
     hasSoulMd: '有 soul.md',
     noProfiles: '目前無設定檔，建立一個開始吧。',
+    avatar: {
+      title: '自訂頭像',
+      customize: '頭像',
+      upload: '上傳圖片',
+      random: '隨機產生',
+      reset: '恢復預設',
+      hint: '支援 PNG、JPEG、WebP，最大 1MB',
+      invalidType: '請選擇 PNG、JPEG 或 WebP 圖片',
+      tooLarge: '頭像圖片不能超過 1MB',
+      saveSuccess: '頭像已儲存',
+      saveFailed: '儲存頭像失敗',
+      resetSuccess: '已恢復預設頭像',
+      resetFailed: '恢復預設頭像失敗',
+    },
   },
 
   // 日誌
