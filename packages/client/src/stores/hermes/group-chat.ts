@@ -70,8 +70,33 @@ function uid(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+const STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS = 300
+
 function normalizeLocalFilePath(path: string): string {
     return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
+}
+
+function hasText(value?: string | null): boolean {
+    return !!value?.trim()
+}
+
+function hasToolCalls(message: ChatMessage): boolean {
+    return !!message.tool_calls?.length
+}
+
+function needsFinalContentRecovery(message: ChatMessage): boolean {
+    return message.role === 'assistant' && !hasText(message.content) && hasText(message.reasoning) && !hasToolCalls(message)
+}
+
+function mergeFinalMessage(existing: ChatMessage | null, msg: ChatMessage): ChatMessage {
+    return {
+        ...msg,
+        content: hasText(msg.content) ? msg.content : existing?.content || msg.content || '',
+        reasoning: hasText(msg.reasoning) ? msg.reasoning : existing?.reasoning ?? msg.reasoning ?? null,
+        reasoning_content: hasText(msg.reasoning_content) ? msg.reasoning_content : existing?.reasoning_content ?? msg.reasoning_content ?? null,
+        isStreaming: false,
+        attachments: existing?.attachments || msg.attachments,
+    }
 }
 
 export interface GroupPendingApproval {
@@ -109,6 +134,31 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         window.dispatchEvent(new CustomEvent('auto-play-speech', {
             detail: { messageId, content },
         }))
+    }
+
+    async function recoverMissingFinalContent(roomId: string, messageId: string) {
+        if (currentRoomId.value !== roomId) return
+        const idx = messages.value.findIndex(m => m.id === messageId)
+        if (idx < 0 || !needsFinalContentRecovery(messages.value[idx])) return
+
+        try {
+            const res = await getRoomDetail(roomId)
+            const recovered = res.messages.find(m => m.id === messageId)
+            if (!recovered || !hasText(recovered.content)) return
+
+            const currentIdx = messages.value.findIndex(m => m.id === messageId)
+            if (currentIdx < 0 || !needsFinalContentRecovery(messages.value[currentIdx])) return
+            messages.value[currentIdx] = mergeFinalMessage(messages.value[currentIdx], recovered)
+            messages.value = [...messages.value]
+        } catch {
+            // Keep the reasoning-only bubble visible; a later final message event can still merge it.
+        }
+    }
+
+    function scheduleMissingFinalContentRecovery(roomId: string, messageId: string) {
+        setTimeout(() => {
+            void recoverMissingFinalContent(roomId, messageId)
+        }, STREAM_FINAL_CONTENT_RECOVERY_DELAY_MS)
     }
 
     // Computed: returns first active status for backward compat
@@ -176,11 +226,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (msg.roomId === currentRoomId.value) {
                 const idx = messages.value.findIndex(m => m.id === msg.id)
                 const existing = idx >= 0 ? messages.value[idx] : null
-                const resolvedMsg = {
-                    ...msg,
-                    isStreaming: false,
-                    attachments: existing?.attachments,
-                }
+                const resolvedMsg = mergeFinalMessage(existing, msg)
                 if (idx >= 0) {
                     messages.value[idx] = resolvedMsg
                     messages.value = [...messages.value]
@@ -207,7 +253,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             msg.isStreaming = true
             const idx = messages.value.findIndex(m => m.id === msg.id)
             if (idx >= 0) {
-                messages.value[idx] = { ...messages.value[idx], ...msg, isStreaming: true }
+                const existing = messages.value[idx]
+                if (!existing.isStreaming) return
+                messages.value[idx] = {
+                    ...existing,
+                    ...msg,
+                    content: hasText(msg.content) ? msg.content : existing.content || '',
+                    reasoning: hasText(msg.reasoning) ? msg.reasoning : existing.reasoning,
+                    reasoning_content: hasText(msg.reasoning_content) ? msg.reasoning_content : existing.reasoning_content,
+                    isStreaming: true,
+                }
                 messages.value = [...messages.value]
             } else {
                 messages.value.push(msg)
@@ -217,7 +272,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('message_stream_delta', (data: { roomId: string; id: string; delta: string }) => {
             if (data.roomId !== currentRoomId.value) return
             const idx = messages.value.findIndex(m => m.id === data.id)
-            if (idx < 0) return
+            if (idx < 0 || !messages.value[idx].isStreaming) return
             messages.value[idx] = {
                 ...messages.value[idx],
                 content: messages.value[idx].content + data.delta,
@@ -228,7 +283,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         socket.on('message_reasoning_delta', (data: { roomId: string; id: string; delta: string }) => {
             if (data.roomId !== currentRoomId.value) return
             const idx = messages.value.findIndex(m => m.id === data.id)
-            if (idx < 0) return
+            if (idx < 0 || !messages.value[idx].isStreaming) return
             messages.value[idx] = {
                 ...messages.value[idx],
                 reasoning: (messages.value[idx].reasoning || '') + data.delta,
@@ -254,6 +309,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     isStreaming: false,
                 }
                 messages.value = [...messages.value]
+                if (needsFinalContentRecovery(messages.value[idx])) {
+                    scheduleMissingFinalContentRecovery(data.roomId, data.id)
+                }
             }
         })
 
