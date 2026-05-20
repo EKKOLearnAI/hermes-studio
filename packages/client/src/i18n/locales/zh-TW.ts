@@ -171,6 +171,7 @@ export default {
     sessions: '工作階段',
     webUiSessions: '工作階段',
     allProfiles: '全部設定',
+    profileMissingModelsTip: '此工作階段所屬設定「{profile}」沒有可用的 provider 或模型',
     sessionScopeHint: '這裡只顯示目前工作階段；CLI、Telegram、Discord、Cron 等頻道工作階段在歷史中以唯讀方式查看。',
     openHistory: '開啟歷史',
     hermesHistory: 'Hermes 歷史',

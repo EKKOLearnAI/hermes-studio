@@ -168,6 +168,7 @@ export default {
     sessions: '세션',
     webUiSessions: '세션',
     allProfiles: '모든 프로필',
+    profileMissingModelsTip: '이 세션의 프로필 "{profile}"에는 사용 가능한 공급자 또는 모델이 없습니다',
     sessionScopeHint: '채팅에는 Web UI/API Server 세션만 표시됩니다. CLI, Telegram, Discord, Cron 등 채널 세션은 기록에서 읽기 전용으로 볼 수 있습니다.',
     openHistory: '기록 열기',
     hermesHistory: 'Hermes 기록',

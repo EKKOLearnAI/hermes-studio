@@ -168,6 +168,7 @@ export default {
     sessions: 'セッション',
     webUiSessions: 'セッション',
     allProfiles: 'すべてのプロファイル',
+    profileMissingModelsTip: 'このセッションのプロファイル「{profile}」には利用可能なプロバイダーまたはモデルがありません',
     sessionScopeHint: 'チャットには Web UI/API Server セッションのみ表示されます。CLI、Telegram、Discord、Cron などのチャンネルセッションは履歴で読み取り専用として表示されます。',
     openHistory: '履歴を開く',
     hermesHistory: 'Hermes 履歴',

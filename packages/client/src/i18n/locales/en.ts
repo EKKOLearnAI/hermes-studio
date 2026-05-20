@@ -172,6 +172,7 @@ export default {
     sessions: 'Sessions',
     webUiSessions: 'Sessions',
     allProfiles: 'All profiles',
+    profileMissingModelsTip: 'Profile "{profile}" has no available provider or model for this session',
     sessionScopeHint: 'Chat shows Web UI/API Server sessions only. CLI, Telegram, Discord, Cron, and other channel sessions are read-only in History.',
     openHistory: 'Open History',
     hermesHistory: 'Hermes History',

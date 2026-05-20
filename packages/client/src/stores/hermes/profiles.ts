@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as profilesApi from '@/api/hermes/profiles'
 import type { HermesProfile, HermesProfileDetail } from '@/api/hermes/profiles'
+import { useAppStore } from './app'
 
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
 
@@ -141,6 +142,7 @@ export const useProfilesStore = defineStore('profiles', () => {
           // 假设切换成功（API 返回了 200），保持已设置的状态
           console.warn('Failed to refresh profiles list after switch, assuming switch succeeded:', err)
         }
+        await useAppStore().reloadModels()
       }
       return ok
     } finally {

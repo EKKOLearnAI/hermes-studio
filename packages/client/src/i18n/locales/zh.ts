@@ -172,6 +172,7 @@ export default {
     sessions: '会话',
     webUiSessions: '会话',
     allProfiles: '全部配置',
+    profileMissingModelsTip: '该会话所属配置「{profile}」没有可用的 provider 或模型',
     sessionScopeHint: '这里只显示当前会话；CLI、Telegram、Discord、Cron 等通道会话在历史中只读查看。',
     openHistory: '打开历史',
     hermesHistory: 'Hermes 历史',

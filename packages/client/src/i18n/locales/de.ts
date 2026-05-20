@@ -168,6 +168,7 @@ export default {
     sessions: 'Sitzungen',
     webUiSessions: 'Sitzungen',
     allProfiles: 'Alle Profile',
+    profileMissingModelsTip: 'Profil "{profile}" hat keinen verfuegbaren Provider oder kein Modell fuer diese Sitzung',
     sessionScopeHint: 'Chat zeigt nur Web-UI/API-Server-Sitzungen. CLI-, Telegram-, Discord-, Cron- und andere Kanal-Sitzungen sind schreibgeschützt im Verlauf.',
     openHistory: 'Verlauf öffnen',
     hermesHistory: 'Hermes-Verlauf',
