@@ -84,6 +84,32 @@ function readUsageStats(usageContent: string | null): Map<string, UsageStats> {
   return map
 }
 
+async function findSkillDirByName(rootDir: string, skillName: string): Promise<string | null> {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = await readdir(rootDir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+
+    const entryPath = join(rootDir, entry.name)
+    const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
+    if (skillMd !== null) {
+      if (entry.name === skillName) return entryPath
+      // This is another skill root. Do not search inside its references/scripts.
+      continue
+    }
+
+    const found = await findSkillDirByName(entryPath, skillName)
+    if (found) return found
+  }
+
+  return null
+}
+
 /**
  * Scan for skills at different directory depths.
  *
@@ -136,33 +162,45 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
     const catDir = join(skillsDir, cat.name)
     const subEntries = await readdir(catDir, { withFileTypes: true })
     const skills: any[] = []
-    for (const se of subEntries) {
-      if (!se.isDirectory()) continue
-      const skillMd = await safeReadFile(join(catDir, se.name, 'SKILL.md'))
-      if (skillMd) {
-        const source = getSkillSource(se.name, bundledManifest, hubNames)
-        let modified = false
-        if (source === 'builtin') {
-          const manifestHash = bundledManifest.get(se.name)
-          if (manifestHash) {
-            const currentHash = await dirHash(join(catDir, se.name))
-            modified = currentHash !== manifestHash
+    // Recursively collect skills from subdirectories (supports nested sub-categories)
+    async function collectSkills(dir: string): Promise<any[]> {
+      const entries = await readdir(dir, { withFileTypes: true })
+      const results: any[] = []
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+        const entryPath = join(dir, entry.name)
+        const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
+        if (skillMd) {
+          const source = getSkillSource(entry.name, bundledManifest, hubNames)
+          let modified = false
+          if (source === 'builtin') {
+            const manifestHash = bundledManifest.get(entry.name)
+            if (manifestHash) {
+              const currentHash = await dirHash(entryPath)
+              modified = currentHash !== manifestHash
+            }
           }
+          const usage = usageStats.get(entry.name)
+          results.push({
+            name: entry.name,
+            description: extractDescription(skillMd),
+            enabled: !disabledList.includes(entry.name),
+            source,
+            modified: modified || undefined,
+            patchCount: usage?.patch_count,
+            useCount: usage?.use_count,
+            viewCount: usage?.view_count,
+            pinned: usage?.pinned || undefined,
+          })
+        } else {
+          // No SKILL.md — might be a sub-category container, recurse deeper
+          const subResults = await collectSkills(entryPath)
+          results.push(...subResults)
         }
-        const usage = usageStats.get(se.name)
-        skills.push({
-          name: se.name,
-          description: extractDescription(skillMd),
-          enabled: !disabledList.includes(se.name),
-          source,
-          modified: modified || undefined,
-          patchCount: usage?.patch_count,
-          useCount: usage?.use_count,
-          viewCount: usage?.view_count,
-          pinned: usage?.pinned || undefined,
-        })
       }
+      return results
     }
+    skills.push(...await collectSkills(catDir))
     if (skills.length > 0) {
       categories.push({ name: cat.name, description: cat.description, skills })
     }
@@ -280,12 +318,29 @@ export async function toggle(ctx: any) {
 export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
   const hd = getHermesDir()
-  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
-  const realDir = category === 'misc' ? skill : join(category, skill)
-  const skillDir = join(hd, 'skills', realDir)
+  const skillsDir = join(hd, 'skills', category)
+  if (category === 'misc') {
+    const skillDir = join(hd, 'skills', skill)
+    try {
+      const allFiles = await listFilesRecursive(skillDir, '')
+      const files = allFiles.filter((f: any) => f.path !== 'SKILL.md')
+      ctx.body = { files }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { error: err.message }
+    }
+    return
+  }
+  // Recursively find the actual skill directory (supports nested sub-categories like mlops/evaluation/lm-evaluation-harness)
   try {
+    const skillDir = await findSkillDirByName(skillsDir, skill)
+    if (!skillDir) {
+      ctx.status = 404
+      ctx.body = { error: 'Skill not found' }
+      return
+    }
     const allFiles = await listFilesRecursive(skillDir, '')
-    const files = allFiles.filter(f => f.path !== 'SKILL.md')
+    const files = allFiles.filter((f: any) => f.path !== 'SKILL.md')
     ctx.body = { files }
   } catch (err: any) {
     ctx.status = 500
@@ -296,7 +351,7 @@ export async function listFiles(ctx: any) {
 export async function readFile_(ctx: any) {
   const filePath = (ctx.params as any).path
   const hd = getHermesDir()
-  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
+  // Handle 'misc' category: real skill dir is skills/<skill>, not skills/misc/<skill>
   let realPath = filePath
   if (filePath.startsWith('misc/')) {
     realPath = filePath.slice(5)
@@ -307,8 +362,28 @@ export async function readFile_(ctx: any) {
     ctx.body = { error: 'Access denied' }
     return
   }
-  const content = await safeReadFile(fullPath)
+  let content = await safeReadFile(fullPath)
   if (content === null) {
+    // Fallback: recursive search for nested skills (e.g., mlops/lm-evaluation-harness/SKILL.md
+    // where actual path is mlops/evaluation/lm-evaluation-harness/SKILL.md)
+    const parts = filePath.split('/')
+    if (parts.length >= 2) {
+      const category = parts[0]
+      const skillName = parts[1]
+      const restPath = parts.slice(2).join('/')
+      const catDir = join(hd, 'skills', category)
+      const skillDir = await findSkillDirByName(catDir, skillName)
+      if (skillDir) {
+        const resolvedPath = resolve(join(skillDir, restPath))
+        if (isPathWithin(resolvedPath, skillDir)) {
+          const nestedContent = await safeReadFile(resolvedPath)
+          if (nestedContent !== null) {
+            ctx.body = { content: nestedContent }
+            return
+          }
+        }
+      }
+    }
     ctx.status = 404
     ctx.body = { error: 'File not found' }
     return

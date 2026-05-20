@@ -157,7 +157,7 @@ function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
-  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups;
+  return profileModels?.groups || [];
 }
 
 function getDefaultModelForProfile(profile: string) {
@@ -449,7 +449,7 @@ async function handleContextMenuSelect(key: string) {
     workspaceValue.value = session?.workspace || "";
     showWorkspaceModal.value = true;
   } else if (key === "model") {
-    openSessionModelModal(contextSessionId.value);
+    await openSessionModelModal(contextSessionId.value);
   } else if (key === "rename") {
     const session = chatStore.sessions.find(
       (s) => s.id === contextSessionId.value,
@@ -522,13 +522,13 @@ const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
 const sessionModelCustomProvider = ref("");
 
-const sessionModelProfile = computed(() => {
+const sessionModelProfile = computed<string | null>(() => {
   const session = chatStore.sessions.find((s) => s.id === sessionModelSessionId.value);
-  return session?.profile || profilesStore.activeProfileName || "default";
+  return session?.profile || null;
 });
 
 const sessionModelBaseGroups = computed(() =>
-  getModelGroupsForProfile(sessionModelProfile.value),
+  sessionModelProfile.value ? getModelGroupsForProfile(sessionModelProfile.value) : [],
 );
 
 const sessionModelProviderOptions = computed(() =>
@@ -561,9 +561,14 @@ const filteredSessionModelGroups = computed(() => {
     .filter((group) => group.models.length > 0 || group.label.toLowerCase().includes(query));
 });
 
-function openSessionModelModal(sessionId: string) {
+async function openSessionModelModal(sessionId: string) {
+  if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
+    await appStore.loadModels();
+  }
   const session = chatStore.sessions.find((s) => s.id === sessionId);
-  const defaults = getDefaultModelForProfile(session?.profile || profilesStore.activeProfileName || "default");
+  const defaults = session?.profile
+    ? getDefaultModelForProfile(session.profile)
+    : { provider: "", model: "" };
   sessionModelSessionId.value = sessionId;
   sessionModelValue.value = session?.model || defaults.model || "";
   sessionModelProvider.value = session?.provider || defaults.provider || "";
@@ -1625,6 +1630,26 @@ async function handleSessionModelCustomSubmit() {
 
   &.active .session-item-title {
     color: $accent-primary;
+  }
+
+  &.missing-models {
+    color: #b42318;
+    background: rgba(220, 38, 38, 0.08);
+
+    .session-item-title,
+    .session-item-profile-name,
+    .session-item-time {
+      color: #b42318;
+    }
+
+    .session-item-model {
+      color: #b42318;
+      background: rgba(220, 38, 38, 0.12);
+    }
+
+    &:hover {
+      background: rgba(220, 38, 38, 0.12);
+    }
   }
 }
 

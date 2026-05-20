@@ -84,15 +84,11 @@ export async function fetchConfigModels(): Promise<ConfigModelsResponse> {
   return request<ConfigModelsResponse>('/api/hermes/config/models')
 }
 
-function currentProfileName(): string {
-  try {
-    return localStorage.getItem('hermes_active_profile_name') || 'default'
-  } catch {
-    return 'default'
-  }
+export async function fetchAvailableModels(): Promise<AvailableModelsResponse> {
+  return request<AvailableModelsResponse>('/api/hermes/available-models')
 }
 
-export async function fetchAvailableModels(profile = currentProfileName()): Promise<AvailableModelsResponse> {
+export async function fetchAvailableModelsForProfile(profile: string): Promise<AvailableModelsResponse> {
   const params = new URLSearchParams()
   params.set('profile', profile || 'default')
   return request<AvailableModelsResponse>(`/api/hermes/available-models?${params.toString()}`)

@@ -15,11 +15,10 @@ const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
 
-const selectedDisplayName = computed(() => appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider))
 const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
 const activeModelGroups = computed(() => {
   const profileModels = appStore.profileModelGroups.find(entry => entry.profile === activeProfileName.value)
-  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups
+  return profileModels?.groups || []
 })
 
 const providerOptions = computed(() => {
@@ -36,6 +35,18 @@ const modelGroupsWithCustom = computed(() =>
       ...(appStore.customModels[g.provider] || []).filter(m => !g.models.includes(m)),
     ],
   }))
+)
+
+const selectedModelInActiveProfile = computed(() =>
+  modelGroupsWithCustom.value.some(group =>
+    group.provider === appStore.selectedProvider && group.models.includes(appStore.selectedModel),
+  ),
+)
+
+const selectedDisplayName = computed(() =>
+  selectedModelInActiveProfile.value
+    ? appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider)
+    : '',
 )
 
 function isCustomModel(model: string, provider: string) {

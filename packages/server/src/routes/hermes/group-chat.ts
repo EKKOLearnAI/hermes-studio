@@ -71,6 +71,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
 
         try {
             const client = await chatServer.agentClients.createAgent({
+                agentId: agent.agentId,
                 profile: agent.profile,
                 name: agent.name,
                 description: agent.description,
@@ -134,6 +135,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
 
         try {
             const client = await chatServer.agentClients.createAgent({
+                agentId: agent.agentId,
                 profile: agent.profile,
                 name: agent.name,
                 description: agent.description,
@@ -265,6 +267,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
     // Auto-connect agent via Socket.IO
     try {
         const client = await chatServer.agentClients.createAgent({
+            agentId: agent.agentId,
             profile: agent.profile,
             name: agent.name,
             description: agent.description,
@@ -299,14 +302,29 @@ groupChatRoutes.delete('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', a
         return
     }
 
-    const room = chatServer.getStorage().getRoom(ctx.params.roomId)
-    if (room?.defaultAgentId === ctx.params.agentId) {
-        chatServer.getStorage().setDefaultAgent(ctx.params.roomId, null)
+    const roomId = ctx.params.roomId
+    const requestedAgentId = ctx.params.agentId
+    const storage = chatServer.getStorage()
+    const agent = storage.getRoomAgent(roomId, requestedAgentId)
+    if (!agent) {
+        ctx.status = 404
+        ctx.body = { error: 'Agent not found' }
+        return
     }
 
-    chatServer.getStorage().removeRoomAgent(ctx.params.agentId)
-    chatServer.agentClients.removeAgentFromRoom(ctx.params.roomId, ctx.params.agentId)
-    ctx.body = { success: true }
+    const room = storage.getRoom(roomId)
+    if (room?.defaultAgentId === requestedAgentId) {
+        storage.setDefaultAgent(roomId, null)
+    }
+
+    storage.removeRoomMembersForAgent(roomId, agent)
+    storage.removeRoomAgent(roomId, requestedAgentId)
+    chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+    ctx.body = {
+        success: true,
+        agents: storage.getRoomAgents(roomId),
+        members: storage.getRoomMembers(roomId),
+    }
 })
 
 // Set default agent for room
