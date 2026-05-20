@@ -618,8 +618,9 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
     async function removeAgentFromRoom(roomId: string, agentId: string) {
         try {
-            await removeAgent(roomId, agentId)
-            agents.value = agents.value.filter(a => a.id !== agentId)
+            const res = await removeAgent(roomId, agentId)
+            agents.value = res.agents ?? agents.value.filter(a => a.id !== agentId && a.agentId !== agentId)
+            if (res.members) members.value = res.members
         } catch (err: any) {
             error.value = err.message
             throw err

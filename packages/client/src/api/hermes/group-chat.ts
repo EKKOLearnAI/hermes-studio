@@ -186,7 +186,7 @@ export async function listAgents(roomId: string): Promise<{ agents: RoomAgent[] 
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents`)
 }
 
-export async function removeAgent(roomId: string, agentId: string): Promise<void> {
+export async function removeAgent(roomId: string, agentId: string): Promise<{ success: boolean; agents: RoomAgent[]; members: MemberInfo[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/agents/${agentId}`, {
         method: 'DELETE',
     })

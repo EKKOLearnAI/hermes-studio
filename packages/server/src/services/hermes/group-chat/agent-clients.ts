@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client'
+import { randomBytes } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { updateUsage } from '../../../db/hermes/usage-store'
@@ -11,9 +12,12 @@ import {
     stripMentionRoutingTokens,
 } from './mention-routing'
 
+export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
+
 // ─── Types ────────────────────────────────────────────────────
 
 interface AgentConfig {
+    agentId?: string
     profile: string
     name: string
     description: string
@@ -77,7 +81,7 @@ class AgentClient {
     private pendingToolBaseIds = new Map<string, string>()
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
-        this.agentId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+        this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.profile = config.profile
         this.name = config.name
         this.description = config.description
@@ -107,7 +111,11 @@ class AgentClient {
         this.socket = io(`http://127.0.0.1:${actualPort}/group-chat`, {
             auth: {
                 token: token || undefined,
+                userId: this.agentId,
                 name: this.name,
+                description: this.description,
+                source: 'agent',
+                agentSocketSecret: GROUP_CHAT_AGENT_SOCKET_SECRET,
             },
             transports: ['websocket'],
             reconnection: true,
@@ -243,7 +251,7 @@ class AgentClient {
         }
     }
 
-    // ─── Hermes Gateway Integration ────────────────────────────
+    // ─── Hermes Agent Bridge Integration ───────────────────────
 
     /**
      * Handle an @mention from the server side.
