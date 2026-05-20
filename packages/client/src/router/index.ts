@@ -76,6 +76,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/SettingsView.vue'),
     },
     {
+      path: '/hermes/code-intelligence',
+      name: 'hermes.codeIntelligence',
+      component: () => import('@/views/hermes/CodeIntelligenceView.vue'),
+    },
+    {
       path: '/hermes/channels',
       name: 'hermes.channels',
       component: () => import('@/views/hermes/ChannelsView.vue'),

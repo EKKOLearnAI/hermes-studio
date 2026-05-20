@@ -66,6 +66,7 @@ export default {
     collapse: 'Collapse',
     start: 'Start',
     stop: 'Stop',
+    refresh: 'Refresh',
   },
 
   // Sidebar
@@ -85,6 +86,7 @@ export default {
     usage: 'Usage',
     skillsUsage: 'Skills Usage',
     channels: 'Channels',
+    codeIntelligence: 'Code Intelligence',
     gateways: 'Gateways',
     terminal: 'Terminal',
     groupChat: 'Group Chat',
@@ -114,6 +116,27 @@ export default {
     nodeVersionWarning: 'Detected Node.js v{version}. Please upgrade to version 23 or later.',
     changelog: 'Changelog',
     noChangelog: 'No changelog available',
+  },
+
+  // Code Intelligence
+  codeIntelligence: {
+    title: 'Code Intelligence',
+    subtitle: 'Read-only repository scan for language support, manifests, and safe agent workflow suggestions.',
+    repository: 'Repository',
+    root: 'Root',
+    generatedAt: 'Generated at',
+    files: 'files',
+    lines: 'lines',
+    capabilities: 'Capabilities',
+    recommendedSkills: 'Recommended skills',
+    manifests: 'Manifests',
+    noManifests: 'No manifests detected',
+    suggestedActions: 'Suggested next actions',
+    actionAnalyze: 'Analyze the repository structure before assigning an agent.',
+    actionTests: 'Generate or extend tests before changing production code.',
+    actionPr: 'Prepare a PR plan before committing and pushing changes.',
+    actionCpp: 'Enable C++ workflow only when C/C++ files or build manifests are detected.',
+    otherLanguages: 'Other detected languages',
   },
 
   // Drawer
