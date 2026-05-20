@@ -84,6 +84,32 @@ function readUsageStats(usageContent: string | null): Map<string, UsageStats> {
   return map
 }
 
+async function findSkillDirByName(rootDir: string, skillName: string): Promise<string | null> {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = await readdir(rootDir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+
+    const entryPath = join(rootDir, entry.name)
+    const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
+    if (skillMd !== null) {
+      if (entry.name === skillName) return entryPath
+      // This is another skill root. Do not search inside its references/scripts.
+      continue
+    }
+
+    const found = await findSkillDirByName(entryPath, skillName)
+    if (found) return found
+  }
+
+  return null
+}
+
 /**
  * Scan for skills at different directory depths.
  *
@@ -141,7 +167,7 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
       const entries = await readdir(dir, { withFileTypes: true })
       const results: any[] = []
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
         const entryPath = join(dir, entry.name)
         const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
         if (skillMd) {
@@ -306,19 +332,8 @@ export async function listFiles(ctx: any) {
     return
   }
   // Recursively find the actual skill directory (supports nested sub-categories like mlops/evaluation/lm-evaluation-harness)
-  async function findSkillDir(dir: string): Promise<string | null> {
-    const entries = await readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const fullPath = join(dir, entry.name)
-      if (entry.name === skill && await safeReadFile(join(fullPath, 'SKILL.md'))) return fullPath
-      const found = await findSkillDir(fullPath)
-      if (found) return found
-    }
-    return null
-  }
   try {
-    const skillDir = await findSkillDir(skillsDir)
+    const skillDir = await findSkillDirByName(skillsDir, skill)
     if (!skillDir) {
       ctx.status = 404
       ctx.body = { error: 'Skill not found' }
@@ -357,21 +372,10 @@ export async function readFile_(ctx: any) {
       const skillName = parts[1]
       const restPath = parts.slice(2).join('/')
       const catDir = join(hd, 'skills', category)
-      async function findSkillDir(dir: string): Promise<string | null> {
-        const entries = await readdir(dir, { withFileTypes: true })
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue
-          const fullDir = join(dir, entry.name)
-          if (entry.name === skillName && await safeReadFile(join(fullDir, 'SKILL.md'))) return fullDir
-          const found = await findSkillDir(fullDir)
-          if (found) return found
-        }
-        return null
-      }
-      const skillDir = await findSkillDir(catDir)
+      const skillDir = await findSkillDirByName(catDir, skillName)
       if (skillDir) {
         const resolvedPath = resolve(join(skillDir, restPath))
-        if (isPathWithin(resolvedPath, catDir)) {
+        if (isPathWithin(resolvedPath, skillDir)) {
           const nestedContent = await safeReadFile(resolvedPath)
           if (nestedContent !== null) {
             ctx.body = { content: nestedContent }
