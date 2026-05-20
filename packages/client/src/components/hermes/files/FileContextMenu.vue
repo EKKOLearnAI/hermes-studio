@@ -6,6 +6,7 @@ import { useFilesStore, isTextFile, isImageFile, isMarkdownFile } from '@/stores
 import { downloadFile } from '@/api/hermes/download'
 import type { FileEntry } from '@/api/hermes/files'
 import { copyToClipboard } from '@/utils/clipboard'
+import { getClipboardPathForEntry } from '@/utils/file-path'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -74,7 +75,7 @@ async function handleSelect(key: string) {
       try { await downloadFile(entry.path, entry.name) } catch (err: any) { message.error(err.message) }
       break
     case 'copyPath': {
-      const ok = await copyToClipboard(entry.path)
+      const ok = await copyToClipboard(getClipboardPathForEntry(entry))
       if (ok) {
         message.success(t('files.pathCopied'))
       } else {
