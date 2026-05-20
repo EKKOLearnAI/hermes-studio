@@ -292,12 +292,12 @@ export async function toggle(ctx: any) {
 export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
   const hd = getHermesDir()
-  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
+  const skillsDir = join(hd, 'skills', category)
   if (category === 'misc') {
     const skillDir = join(hd, 'skills', skill)
     try {
       const allFiles = await listFilesRecursive(skillDir, '')
-      const files = allFiles.filter(f => f.path !== 'SKILL.md')
+      const files = allFiles.filter((f: any) => f.path !== 'SKILL.md')
       ctx.body = { files }
     } catch (err: any) {
       ctx.status = 500
@@ -305,32 +305,27 @@ export async function listFiles(ctx: any) {
     }
     return
   }
-  // For named categories, recursively search for the skill directory
-  // (supports nested sub-categories like mlops/evaluation/lm-evaluation-harness)
-  try {
-    async function findSkillDir(dir: string): Promise<string | null> {
-      const entries = await readdir(dir, { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const fullPath = join(dir, entry.name)
-        if (entry.name === skill) {
-          const skillMd = await safeReadFile(join(fullPath, 'SKILL.md'))
-          if (skillMd) return fullPath
-        }
-        const found = await findSkillDir(fullPath)
-        if (found) return found
-      }
-      return null
+  // Recursively find the actual skill directory (supports nested sub-categories like mlops/evaluation/lm-evaluation-harness)
+  async function findSkillDir(dir: string): Promise<string | null> {
+    const entries = await readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const fullPath = join(dir, entry.name)
+      if (entry.name === skill && await safeReadFile(join(fullPath, 'SKILL.md'))) return fullPath
+      const found = await findSkillDir(fullPath)
+      if (found) return found
     }
-    const catDir = join(hd, 'skills', category)
-    const skillDir = await findSkillDir(catDir)
+    return null
+  }
+  try {
+    const skillDir = await findSkillDir(skillsDir)
     if (!skillDir) {
       ctx.status = 404
       ctx.body = { error: 'Skill not found' }
       return
     }
     const allFiles = await listFilesRecursive(skillDir, '')
-    const files = allFiles.filter(f => f.path !== 'SKILL.md')
+    const files = allFiles.filter((f: any) => f.path !== 'SKILL.md')
     ctx.body = { files }
   } catch (err: any) {
     ctx.status = 500
@@ -341,7 +336,7 @@ export async function listFiles(ctx: any) {
 export async function readFile_(ctx: any) {
   const filePath = (ctx.params as any).path
   const hd = getHermesDir()
-  // Handle "misc" category: real skill dir is skills/<skill>, not skills/misc/<skill>
+  // Handle 'misc' category: real skill dir is skills/<skill>, not skills/misc/<skill>
   let realPath = filePath
   if (filePath.startsWith('misc/')) {
     realPath = filePath.slice(5)
@@ -352,8 +347,39 @@ export async function readFile_(ctx: any) {
     ctx.body = { error: 'Access denied' }
     return
   }
-  const content = await safeReadFile(fullPath)
+  let content = await safeReadFile(fullPath)
   if (content === null) {
+    // Fallback: recursive search for nested skills (e.g., mlops/lm-evaluation-harness/SKILL.md
+    // where actual path is mlops/evaluation/lm-evaluation-harness/SKILL.md)
+    const parts = filePath.split('/')
+    if (parts.length >= 2) {
+      const category = parts[0]
+      const skillName = parts[1]
+      const restPath = parts.slice(2).join('/')
+      const catDir = join(hd, 'skills', category)
+      async function findSkillDir(dir: string): Promise<string | null> {
+        const entries = await readdir(dir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue
+          const fullDir = join(dir, entry.name)
+          if (entry.name === skillName && await safeReadFile(join(fullDir, 'SKILL.md'))) return fullDir
+          const found = await findSkillDir(fullDir)
+          if (found) return found
+        }
+        return null
+      }
+      const skillDir = await findSkillDir(catDir)
+      if (skillDir) {
+        const resolvedPath = resolve(join(skillDir, restPath))
+        if (isPathWithin(resolvedPath, catDir)) {
+          const nestedContent = await safeReadFile(resolvedPath)
+          if (nestedContent !== null) {
+            ctx.body = { content: nestedContent }
+            return
+          }
+        }
+      }
+    }
     ctx.status = 404
     ctx.body = { error: 'File not found' }
     return
