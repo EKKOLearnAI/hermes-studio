@@ -18,7 +18,7 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 
 - 新生成的图片、视频、文件优先保存到当前工作区并使用相对路径，例如 \`screenshot.png\`
 - 引用已经存在的本地文件时可以使用绝对路径
-- Unix/macOS/WSL 绝对路径使用 \`/path/to/file\`，例如 \`/tmp/screenshot.png\`
+- Unix/macOS/WSL 绝对路径使用 \`/path/to/file\`，例如 \`/Users/me/Desktop/reference.png\`
 - Windows：使用盘符绝对路径，并把反斜杠 \`\\\` 转成正斜杠 \`/\`，例如 \`C:/Users/Administrator/Desktop/screenshot.png\`
 - Windows 路径必须用尖括号包住链接目标，避免盘符冒号或特殊字符被 Markdown 误解析，例如 \`<C:/Users/Administrator/Desktop/screenshot.png>\`
 - 路径包含空格、中文或特殊字符时，必须使用尖括号包住链接目标，或对路径做 URL 编码
@@ -29,7 +29,6 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 
 \`\`\`
 ![图片描述](screenshot.png)
-![图片描述](/tmp/screenshot.png)
 ![Sub2API Dashboard](/tmp/sub2api-dashboard.png)
 ![桌面截图](<C:/Users/Administrator/Desktop/screenshot.png>)
 \`\`\`

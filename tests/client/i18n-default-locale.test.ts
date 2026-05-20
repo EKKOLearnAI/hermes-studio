@@ -7,16 +7,35 @@ describe('i18n default locale', () => {
     localStorage.clear()
   })
 
-  it('forces Chinese on startup even when the browser or saved locale is English', async () => {
+  it('keeps an explicitly saved English locale', async () => {
     localStorage.setItem('hermes_locale', 'en')
+    Object.defineProperty(window.navigator, 'languages', {
+      value: ['zh-CN'],
+      configurable: true,
+    })
     Object.defineProperty(window.navigator, 'language', {
-      value: 'en-US',
+      value: 'zh-CN',
+      configurable: true,
+    })
+
+    const { i18n } = await import('@/i18n')
+
+    expect(i18n.global.locale.value).toBe('en')
+    expect(localStorage.getItem('hermes_locale')).toBe('en')
+  })
+
+  it('uses Chinese when the browser language is Chinese and no locale is saved', async () => {
+    Object.defineProperty(window.navigator, 'languages', {
+      value: ['zh-CN', 'en-US'],
+      configurable: true,
+    })
+    Object.defineProperty(window.navigator, 'language', {
+      value: 'zh-CN',
       configurable: true,
     })
 
     const { i18n } = await import('@/i18n')
 
     expect(i18n.global.locale.value).toBe('zh')
-    expect(localStorage.getItem('hermes_locale')).toBe('zh')
   })
 })
