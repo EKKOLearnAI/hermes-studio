@@ -5,12 +5,14 @@ import { NButton, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { fetchSessions, searchSessions, type SessionSearchResult, type SessionSummary } from '@/api/hermes/sessions'
 import { useChatStore } from '@/stores/hermes/chat'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 
 const { t } = useI18n()
 const message = useMessage()
 const router = useRouter()
 const chatStore = useChatStore()
+const profilesStore = useProfilesStore()
 const { sessionSearchOpen } = useSessionSearch()
 
 const query = ref('')
@@ -79,7 +81,7 @@ async function loadRecentSessions() {
   const seq = ++requestSeq
   loading.value = true
   try {
-    const sessions = await fetchSessions(undefined, 8)
+    const sessions = await fetchSessions(undefined, 8, profilesStore.activeProfileName || undefined)
     if (seq !== requestSeq) return
     recentSessions.value = sessions
     searchResults.value = []

@@ -19,7 +19,7 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
-  chatStore.loadSessions()
+  chatStore.loadSessions(profilesStore.activeProfileName)
 })
 </script>
 

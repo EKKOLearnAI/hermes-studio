@@ -311,7 +311,7 @@ async function handleBatchDelete() {
 
       // Remove deleted sessions from local store (without calling API again)
       // Use loadSessions to refresh from server instead of manual filtering
-      await chatStore.loadSessions();
+      await chatStore.loadSessions(sessionProfileFilter.value || profilesStore.activeProfileName);
 
       message.success(t("chat.batchDeleteSuccess", { count: result.deleted }));
       if (result.failed > 0) {
