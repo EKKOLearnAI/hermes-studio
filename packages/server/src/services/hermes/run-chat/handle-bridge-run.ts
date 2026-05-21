@@ -30,6 +30,41 @@ import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function looksLikeAgentFailure(value: string): boolean {
+  return /\bAPI call failed after\b/i.test(value)
+    || /\bHTTP\s+(?:4\d\d|5\d\d)\b/i.test(value)
+    || /\b(?:401|403|429|500|502|503|504)\b/.test(value) && /\b(?:unauthorized|forbidden|rate limit|unavailable|failed|error)\b/i.test(value)
+}
+
+export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'error' | 'result'>): string | null {
+  const result = chunk.result && typeof chunk.result === 'object' && !Array.isArray(chunk.result)
+    ? chunk.result as Record<string, unknown>
+    : null
+  const resultError = result
+    ? stringValue(result.error)
+      || stringValue(result.exception)
+      || stringValue(result.message)
+    : ''
+  const finalResponse = result ? stringValue(result.final_response) : ''
+
+  if (chunk.status === 'error') {
+    return stringValue(chunk.error) || resultError || finalResponse || 'Agent run failed'
+  }
+
+  if (result?.failed === true || result?.completed === false) {
+    return resultError || finalResponse || 'Agent reported failure'
+  }
+
+  if (resultError) return resultError
+  if (finalResponse && looksLikeAgentFailure(finalResponse)) return finalResponse
+
+  return null
+}
+
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
@@ -491,13 +526,14 @@ async function applyBridgeChunkAsync(
   state.runId = undefined
   state.activeRunMarker = undefined
   state.events = []
-  const eventName = chunk.status === 'error' ? 'run.failed' : 'run.completed'
+  const terminalError = bridgeTerminalError(chunk)
+  const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
     output: chunk.output || state.bridgeOutput || '',
     result: chunk.result,
-    error: chunk.error,
+    error: terminalError || chunk.error,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     queue_remaining: state.queue.length,

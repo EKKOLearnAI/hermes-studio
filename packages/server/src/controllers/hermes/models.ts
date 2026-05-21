@@ -14,6 +14,7 @@ const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
 type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[] }
 type ModelVisibility = Record<string, ModelVisibilityRule>
+type CustomModels = Record<string, string[]>
 
 const RESERVED_ALIAS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
@@ -65,6 +66,28 @@ function applyModelAliases<T extends { provider: string; models: string[]; model
 function uniqueStrings(values: unknown): string[] {
   if (!Array.isArray(values)) return []
   return Array.from(new Set(values.map(v => String(v || '').trim()).filter(Boolean)))
+}
+
+function normalizeCustomModels(input: unknown): CustomModels {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const out: CustomModels = {}
+  for (const [provider, rawModels] of Object.entries(input as Record<string, unknown>)) {
+    const providerKey = String(provider || '').trim()
+    if (!providerKey) continue
+    const models = uniqueStrings(rawModels)
+    if (models.length > 0) out[providerKey] = models
+  }
+  return out
+}
+
+function applyCustomModels(groups: AvailableGroup[], customModels: CustomModels): AvailableGroup[] {
+  return groups.map(group => {
+    const extra = customModels[group.provider] || []
+    if (!extra.length) return group
+    const models = [...new Set([...group.models, ...extra])]
+    const availableModels = [...new Set([...(group.available_models || group.models), ...extra])]
+    return { ...group, models, available_models: availableModels }
+  })
 }
 
 function normalizeModelVisibility(input: unknown): ModelVisibility {
@@ -349,8 +372,9 @@ async function buildAvailableForProfile(
     g.models = Array.from(new Set(g.models))
     g.available_models = Array.from(new Set(g.available_models || g.models))
   }
+  const groupsWithCustomModels = applyCustomModels(groups, normalizeCustomModels(appConfig.customModels))
 
-  return { profile, default: currentDefault, default_provider: currentDefaultProvider, groups }
+  return { profile, default: currentDefault, default_provider: currentDefaultProvider, groups: groupsWithCustomModels }
 }
 
 export async function getAvailable(ctx: any) {
@@ -362,6 +386,7 @@ export async function getAvailable(ctx: any) {
       const appConfig = await readAppConfig()
       const modelAliases = normalizeAliases(appConfig.modelAliases)
       const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
+      const customModels = normalizeCustomModels(appConfig.customModels)
       const fetchCache: ProviderFetchCache = new Map()
       const profileResults = await Promise.all(
         listProfileNamesFromDisk().map(profile => buildAvailableForProfile(profile, fetchCache, appConfig)),
@@ -392,6 +417,7 @@ export async function getAvailable(ctx: any) {
         allProviders: applyModelAliases(allProvidersBase, modelAliases),
         model_aliases: modelAliases,
         model_visibility: modelVisibility,
+        custom_models: customModels,
         profiles: profileResults.map(result => ({
           profile: result.profile,
           default: result.default,
@@ -405,6 +431,7 @@ export async function getAvailable(ctx: any) {
     const appConfigForProfile = await readAppConfig()
     const modelAliasesForProfile = normalizeAliases(appConfigForProfile.modelAliases)
     const modelVisibilityForProfile = normalizeModelVisibility(appConfigForProfile.modelVisibility)
+    const customModelsForProfile = normalizeCustomModels(appConfigForProfile.customModels)
     const profileResult = await buildAvailableForProfile(requestedProfile, new Map(), appConfigForProfile)
     const profileGroupsWithAliases = applyModelAliases(profileResult.groups, modelAliasesForProfile)
     const visibleProfileGroups = applyModelVisibility(profileGroupsWithAliases, modelVisibilityForProfile)
@@ -422,6 +449,7 @@ export async function getAvailable(ctx: any) {
       })), modelAliasesForProfile),
       model_aliases: modelAliasesForProfile,
       model_visibility: modelVisibilityForProfile,
+      custom_models: customModelsForProfile,
       profiles: [{
         profile: profileResult.profile,
         default: profileResult.default,
@@ -511,6 +539,7 @@ export async function getAvailable(ctx: any) {
     const copilotEnabled = appConfig.copilotEnabled === true
     const modelAliases = normalizeAliases(appConfig.modelAliases)
     const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
+    const customModels = normalizeCustomModels(appConfig.customModels)
 
     // 兼容老用户：上一版本会"自动 fallback discovery"出 Copilot；升级后这些用户的
     // config.yaml 可能仍把 model.default 指向某个 copilot 模型。若此时 copilot 已不
@@ -598,7 +627,7 @@ export async function getAvailable(ctx: any) {
     }
 
     for (const g of groups) { g.models = Array.from(new Set(g.models)) }
-    const groupsWithAliases = applyModelAliases(groups, modelAliases)
+    const groupsWithAliases = applyModelAliases(applyCustomModels(groups, customModels), modelAliases)
     const visibleGroups = applyModelVisibility(groupsWithAliases, modelVisibility)
     const visibleDefault = resolveVisibleDefault(currentDefault, currentDefaultProvider, visibleGroups)
 
@@ -638,6 +667,7 @@ export async function getAvailable(ctx: any) {
         allProviders,
         model_aliases: modelAliases,
         model_visibility: modelVisibility,
+        custom_models: customModels,
       }
       return
     }
@@ -649,7 +679,56 @@ export async function getAvailable(ctx: any) {
       allProviders,
       model_aliases: modelAliases,
       model_visibility: modelVisibility,
+      custom_models: customModels,
     }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function addCustomModel(ctx: any) {
+  const { provider, model } = (ctx.request.body || {}) as { provider?: string; model?: string }
+  const providerKey = String(provider || '').trim()
+  const modelId = String(model || '').trim()
+  if (!providerKey || !modelId) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing provider or model' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const customModels = normalizeCustomModels(appConfig.customModels)
+    customModels[providerKey] = Array.from(new Set([...(customModels[providerKey] || []), modelId]))
+    const saved = await writeAppConfig({ customModels })
+    ctx.body = { success: true, custom_models: normalizeCustomModels(saved.customModels) }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function removeCustomModel(ctx: any) {
+  const body = (ctx.request.body || {}) as { provider?: string; model?: string }
+  const provider = body.provider ?? ctx.query?.provider
+  const model = body.model ?? ctx.query?.model
+  const providerKey = String(provider || '').trim()
+  const modelId = String(model || '').trim()
+  if (!providerKey || !modelId) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing provider or model' }
+    return
+  }
+
+  try {
+    const appConfig = await readAppConfig()
+    const customModels = normalizeCustomModels(appConfig.customModels)
+    const remaining = (customModels[providerKey] || []).filter(item => item !== modelId)
+    if (remaining.length > 0) customModels[providerKey] = remaining
+    else delete customModels[providerKey]
+    const saved = await writeAppConfig({ customModels })
+    ctx.body = { success: true, custom_models: normalizeCustomModels(saved.customModels) }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
