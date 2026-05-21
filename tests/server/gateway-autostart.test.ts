@@ -30,10 +30,22 @@ describe('gateway autostart status parsing', () => {
   akri            glm-5-turbo                  running      akri         —
   tester          gpt-5.5                      stopped      tester       —
 `
-    const statuses = parseGatewayStatusesFromProfileListOutput(output)
+    const statuses = parseGatewayStatusesFromProfileListOutput(output, ['default', 'akri', 'tester'])
     expect(statuses.get('default')).toBe('running')
     expect(statuses.get('akri')).toBe('running')
     expect(statuses.get('tester')).toBe('stopped')
+  })
+
+  it('parses gateway status when profile or model fills the table column', () => {
+    const output = `
+ Profile          Model                        Gateway      Alias        Distribution
+ ───────────────    ───────────────────────────    ───────────    ───────────    ────────────────────
+  daily_assistant deepseek-v4-flash            running      —            —
+  long_model      provider/model-name-that-fills-column stopped      —            —
+`
+    const statuses = parseGatewayStatusesFromProfileListOutput(output, ['daily_assistant', 'long_model'])
+    expect(statuses.get('daily_assistant')).toBe('running')
+    expect(statuses.get('long_model')).toBe('stopped')
   })
 
   it('uses profile-list gateway status text for running checks', () => {
