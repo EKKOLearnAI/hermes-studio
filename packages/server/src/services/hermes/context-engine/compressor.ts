@@ -100,6 +100,37 @@ export class ContextEngine {
         const snapshot = this.messageFetcher.getContextSnapshot(input.roomId)
         logger.debug(`[ContextEngine] snapshot=${snapshot ? `EXISTS (lastMsgId=${snapshot.lastMessageId}, summaryLen=${snapshot.summary.length})` : 'NONE'}`)
 
+        const estimateFullContextTokens = async (
+            history: Array<{ role: 'user' | 'assistant'; content: string }>,
+            messageTokenEstimate: number,
+        ): Promise<number> => {
+            try {
+                const estimate = await input.contextTokenEstimator?.(history, instructions)
+                if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate > 0) {
+                    return Math.floor(estimate)
+                }
+            } catch (err: any) {
+                logger.warn(`[ContextEngine] full context estimate failed room=${input.roomId}, agent=${input.agentName}: ${err.message}`)
+            }
+            return messageTokenEstimate
+        }
+
+        const logThresholdCheck = (path: string, messageTokens: number, fullTokens: number): void => {
+            meta.messageTokenEstimate = messageTokens
+            meta.contextTokenEstimate = fullTokens
+            logger.info({
+                roomId: input.roomId,
+                agentName: input.agentName,
+                profile: input.profile || 'default',
+                path,
+                messages: total,
+                messageOnlyTokens: messageTokens,
+                fullContextTokens: fullTokens,
+                triggerTokens: config.triggerTokens,
+                decision: fullTokens > config.triggerTokens ? 'compress' : 'skip',
+            }, '[ContextEngine] threshold check')
+        }
+
         // ── Path A: Snapshot exists — incremental ────────────
         if (snapshot) {
             meta.hadSnapshot = true
@@ -113,10 +144,14 @@ export class ContextEngine {
 
             const summaryTokens = this.countTokens(snapshot.summary)
             const newTokens = this.estimateTokensFromMessages(newMessages)
-            const totalTokens = summaryTokens + newTokens
+            const messageOnlyTokens = summaryTokens + newTokens
 
             meta.verbatimCount = newMessages.length
             meta.summaryTokenEstimate = summaryTokens
+
+            const snapshotHistory = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
+            const totalTokens = await estimateFullContextTokens(snapshotHistory, messageOnlyTokens)
+            logThresholdCheck('snapshot', messageOnlyTokens, totalTokens)
 
             logger.debug(`[ContextEngine] [Path A] snapshotIdx=${snapshotIdx}, newMessages=${newMessages.length}, summaryTokens=~${summaryTokens}, newTokens=~${newTokens}, totalTokens=~${totalTokens}, threshold=${config.triggerTokens}`)
             logger.debug(`[ContextEngine] [Path A] EXISTING SUMMARY (${snapshot.summary.length} chars): ${snapshot.summary.slice(0, 300)}`)
@@ -127,12 +162,16 @@ export class ContextEngine {
             // Under threshold — return summary + new messages directly
             if (totalTokens <= config.triggerTokens) {
                 logger.debug(`[ContextEngine] [Path A] UNDER threshold — return summary + ${newMessages.length} verbatim msgs directly`)
-                const history = this.buildHistory(snapshot.summary, newMessages, input.agentSocketId, input.agentName)
-                this.logHistory('Path A (no compress)', history)
-                return { conversationHistory: history, instructions, meta }
+                this.logHistory('Path A (no compress)', snapshotHistory)
+                return { conversationHistory: snapshotHistory, instructions, meta }
             }
 
             // Over threshold — incremental compress
+            if (totalTokens > messageOnlyTokens && newMessages.length <= config.tailMessageCount) {
+                throw new Error(
+                    `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${newMessages.length} new messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
+                )
+            }
             logger.debug(`[ContextEngine] [Path A] OVER threshold — starting INCREMENTAL compression of ${newMessages.length} msgs...`)
             logger.debug(`[ContextEngine] [Path A] CONTEXT BEFORE COMPRESSION: summary(${snapshot.summary.length} chars) + ${newMessages.length} new msgs`)
             meta.compressed = true
@@ -156,6 +195,7 @@ export class ContextEngine {
                 logger.debug(`[ContextEngine] [Path A] incremental compression DONE in ${elapsed}ms, newSummaryLen=${result.summary.length}, newLastMsgId=${lastMsg.id}`)
                 logger.debug(`[ContextEngine] [Path A] NEW SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
                 const history = this.buildHistory(result.summary, newMessages, input.agentSocketId, input.agentName)
+                meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
                 this.logHistory('Path A (after incremental compress)', history)
                 if (result.sessionId) this.sessionCleaner?.(result.sessionId)
                 return { conversationHistory: history, instructions, meta }
@@ -169,20 +209,27 @@ export class ContextEngine {
         }
 
         // ── Path B: No snapshot — full context ───────────────
-        const totalTokens = this.estimateTokensFromMessages(messages)
+        const messageOnlyTokens = this.estimateTokensFromMessages(messages)
         meta.verbatimCount = total
+        const fullHistory = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
+        const totalTokens = await estimateFullContextTokens(fullHistory, messageOnlyTokens)
+        logThresholdCheck('full', messageOnlyTokens, totalTokens)
 
         logger.debug(`[ContextEngine] [Path B] no snapshot, totalMessages=${total}, totalTokens=~${totalTokens}, threshold=${config.triggerTokens}`)
 
         // Under threshold — pass all messages verbatim
         if (totalTokens <= config.triggerTokens) {
             logger.debug(`[ContextEngine] [Path B] UNDER threshold — return all ${total} msgs verbatim`)
-            const history = messages.map(m => this.mapToHistory(m, input.agentSocketId, input.agentName))
-            this.logHistory('Path B (no compress)', history)
-            return { conversationHistory: history, instructions, meta }
+            this.logHistory('Path B (no compress)', fullHistory)
+            return { conversationHistory: fullHistory, instructions, meta }
         }
 
         // Over threshold — full compress
+        if (totalTokens > messageOnlyTokens && messages.length <= config.tailMessageCount) {
+            throw new Error(
+                `Context window is too small for group chat agent ${input.agentName}: fixed prompt/tool overhead plus ${messages.length} messages uses ~${totalTokens} tokens, exceeding trigger ${config.triggerTokens}, and there is not enough history to compress.`,
+            )
+        }
         logger.debug(`[ContextEngine] [Path B] OVER threshold — starting FULL compression of ${total} msgs...`)
         logger.debug(`[ContextEngine] [Path B] CONTEXT BEFORE COMPRESSION: ${total} msgs, ~${totalTokens} tokens`)
         meta.compressed = true
@@ -210,6 +257,7 @@ export class ContextEngine {
             logger.debug(`[ContextEngine] [Path B] full compression DONE in ${elapsed}ms, summaryLen=${result.summary.length}, compressed=${toCompress.length} msgs, keptTail=${tail.length} msgs, savedLastMsgId=${lastCompressedMsg.id}`)
             logger.debug(`[ContextEngine] [Path B] COMPRESSED SUMMARY (${result.summary.length} chars): ${result.summary.slice(0, 300)}`)
             const history = this.buildHistory(result.summary, tail, input.agentSocketId, input.agentName)
+            meta.contextTokenEstimate = await estimateFullContextTokens(history, this.estimateTokens(history))
             this.logHistory('Path B (after full compress)', history)
             if (result.sessionId) this.sessionCleaner?.(result.sessionId)
             return { conversationHistory: history, instructions, meta }

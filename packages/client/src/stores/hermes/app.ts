@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import {
   checkHealth,
   fetchAvailableModels,
+  addCustomModel as persistCustomModel,
+  removeCustomModel as deletePersistedCustomModel,
   updateDefaultModel,
   updateModelVisibility,
   triggerUpdate,
@@ -85,6 +87,7 @@ export const useAppStore = defineStore('app', () => {
     profileModelGroups.value = res.profiles || []
     modelAliases.value = res.model_aliases || {}
     modelVisibility.value = res.model_visibility || {}
+    customModels.value = res.custom_models || {}
 
     const defaultModel = res.default || ''
     const defaultProvider = res.default_provider || ''
@@ -118,19 +121,19 @@ export const useAppStore = defineStore('app', () => {
       const selectedGroup = explicitGroup || inferredGroup!
       selectedModel.value = defaultModel
       selectedProvider.value = selectedGroup.provider
-      customModels.value = {}
     } else if (unlistedDefault) {
       selectedModel.value = defaultModel
       selectedProvider.value = defaultProvider
-      customModels.value = { [defaultProvider]: [defaultModel] }
+      customModels.value = {
+        ...customModels.value,
+        [defaultProvider]: Array.from(new Set([...(customModels.value[defaultProvider] || []), defaultModel])),
+      }
     } else if (fallbackGroup) {
       selectedModel.value = fallbackGroup.models[0]
       selectedProvider.value = fallbackGroup.provider
-      customModels.value = {}
     } else {
       selectedModel.value = ''
       selectedProvider.value = ''
-      customModels.value = {}
     }
   }
 
@@ -178,6 +181,25 @@ export const useAppStore = defineStore('app', () => {
     return getModelAlias(modelId, provider) || modelId
   }
 
+  function removeModelFromGroupList(groups: AvailableModelGroup[], provider: string, modelId: string): AvailableModelGroup[] {
+    return groups.map(group => {
+      if (group.provider !== provider) return group
+      return {
+        ...group,
+        models: group.models.filter(model => model !== modelId),
+        available_models: group.available_models?.filter(model => model !== modelId),
+      }
+    })
+  }
+
+  function removeModelFromLoadedGroups(provider: string, modelId: string) {
+    modelGroups.value = removeModelFromGroupList(modelGroups.value, provider, modelId)
+    profileModelGroups.value = profileModelGroups.value.map(profileEntry => ({
+      ...profileEntry,
+      groups: removeModelFromGroupList(profileEntry.groups, provider, modelId),
+    }))
+  }
+
   async function setModelAlias(modelId: string, provider: string, alias: string) {
     const cleanAlias = alias.trim()
     await updateModelAlias({ provider, model: modelId, alias: cleanAlias })
@@ -204,10 +226,8 @@ export const useAppStore = defineStore('app', () => {
       selectedProvider.value = provider || ''
       // Track as custom if not already in the server-fetched list
       if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
-        if (!customModels.value[provider]) customModels.value[provider] = []
-        if (!customModels.value[provider].includes(modelId)) {
-          customModels.value[provider] = [...customModels.value[provider], modelId]
-        }
+        const res = await persistCustomModel({ provider, model: modelId })
+        customModels.value = res.custom_models || {}
       }
     } catch (err: any) {
       console.error('Failed to switch model:', err)
@@ -222,7 +242,14 @@ export const useAppStore = defineStore('app', () => {
     const remaining = providerModels.filter(m => m !== modelId)
     if (remaining.length > 0) nextCustomModels[provider] = remaining
     else delete nextCustomModels[provider]
-    customModels.value = nextCustomModels
+    try {
+      const res = await deletePersistedCustomModel({ provider, model: modelId })
+      customModels.value = res.custom_models || nextCustomModels
+    } catch (err) {
+      console.error('Failed to remove custom model:', err)
+      customModels.value = nextCustomModels
+    }
+    removeModelFromLoadedGroups(provider, modelId)
 
     if (selectedModel.value === modelId && selectedProvider.value === provider) {
       const providerGroup = modelGroups.value.find(g => g.provider === provider && g.models.length > 0)

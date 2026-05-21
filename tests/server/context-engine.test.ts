@@ -203,6 +203,114 @@ describe('ContextEngine.buildContext', () => {
         expect(mockSummarize).not.toHaveBeenCalled()
     })
 
+    it('records full context token estimates without compressing when under threshold', async () => {
+        const messages = makeMessages(3)
+        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        const contextTokenEstimator = vi.fn().mockResolvedValue(19_379)
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: ['Alice'],
+            members: [{ userId: 'u1', name: 'Alice', description: '' }],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[messages.length - 1],
+            contextTokenEstimator,
+        })
+
+        expect(result.meta.compressed).toBe(false)
+        expect(result.meta.contextTokenEstimate).toBe(19_379)
+        expect(result.meta.messageTokenEstimate).toBeGreaterThan(0)
+        expect(contextTokenEstimator).toHaveBeenCalledWith(
+            expect.arrayContaining([{ role: 'assistant', content: expect.stringContaining('[Claude]') }]),
+            expect.stringContaining('"Claude"'),
+        )
+        expect(mockSummarize).not.toHaveBeenCalled()
+    })
+
+    it('uses full context token estimates to trigger group compression', async () => {
+        const messages = makeMessages(20)
+        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+
+        const result = await engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: [],
+            members: [],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[messages.length - 1],
+            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+        })
+
+        expect(result.meta.compressed).toBe(true)
+        expect(result.meta.contextTokenEstimate).toBe(120_000)
+        expect(mockSummarize).toHaveBeenCalledTimes(1)
+        expect(mockFetcher.saveContextSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    it('throws when group prompt and tools exceed threshold with too little history to compress', async () => {
+        const messages = makeMessages(4)
+        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+
+        await expect(engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: [],
+            members: [],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[messages.length - 1],
+            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+        })).rejects.toThrow('Context window is too small')
+
+        expect(mockSummarize).not.toHaveBeenCalled()
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
+    it('throws on snapshot path when overhead plus new messages exceed threshold without compressible history', async () => {
+        const messages = makeMessages(12)
+        mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        mockFetcher.getContextSnapshot = vi.fn().mockReturnValue({
+            roomId: 'room-1',
+            summary: 'Existing summary',
+            lastMessageId: 'msg-9',
+            lastMessageTimestamp: messages[9].timestamp,
+            updatedAt: Date.now(),
+        })
+
+        await expect(engine.buildContext({
+            roomId: 'room-1',
+            agentId: 'agent-1',
+            agentName: 'Claude',
+            agentDescription: 'Helper',
+            agentSocketId: 'agent-socket',
+            roomName: 'general',
+            memberNames: [],
+            members: [],
+            upstream: 'http://localhost:8642',
+            apiKey: null,
+            currentMessage: messages[messages.length - 1],
+            contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+        })).rejects.toThrow('Context window is too small')
+
+        expect(mockSummarize).not.toHaveBeenCalled()
+        expect(mockFetcher.saveContextSnapshot).not.toHaveBeenCalled()
+    })
+
     it('splits into head/tail and compresses middle when over threshold', async () => {
         const messages = makeMessages(20)
         mockFetcher.getMessages = vi.fn().mockReturnValue(messages)

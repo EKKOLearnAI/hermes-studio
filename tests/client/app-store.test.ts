@@ -5,6 +5,8 @@ import { createPinia, setActivePinia } from 'pinia'
 const mockSystemApi = vi.hoisted(() => ({
   checkHealth: vi.fn(),
   fetchAvailableModels: vi.fn(),
+  addCustomModel: vi.fn(),
+  removeCustomModel: vi.fn(),
   updateDefaultModel: vi.fn(),
   updateModelAlias: vi.fn(),
   updateModelVisibility: vi.fn(),
@@ -20,6 +22,8 @@ describe('App Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockSystemApi.addCustomModel.mockResolvedValue({ success: true, custom_models: {} })
+    mockSystemApi.removeCustomModel.mockResolvedValue({ success: true, custom_models: {} })
     window.localStorage.clear()
   })
 
@@ -318,6 +322,32 @@ describe('App Store', () => {
     expect(store.customModels).toEqual({ deepseek: ['manually-supported-id'] })
   })
 
+  it('loads persisted custom models from the server response', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'gemma-4-26b-a4b-it',
+      default_provider: 'google-ai-studio',
+      groups: [{
+        provider: 'google-ai-studio',
+        label: 'Google AI Studio',
+        base_url: 'https://generativelanguage.googleapis.com/v1beta',
+        models: ['gemma-4-26b-a4b-it'],
+        api_key: '',
+      }],
+      allProviders: [],
+      custom_models: {
+        'google-ai-studio': ['gemma-4-26b-a4b-it'],
+      },
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.selectedModel).toBe('gemma-4-26b-a4b-it')
+    expect(store.customModels).toEqual({
+      'google-ai-studio': ['gemma-4-26b-a4b-it'],
+    })
+  })
+
   it('saves and clears model aliases via the Web UI-only alias API', async () => {
     mockSystemApi.updateModelAlias.mockResolvedValue(undefined)
     const store = useAppStore()
@@ -345,17 +375,70 @@ describe('App Store', () => {
       models: ['deepseek-v4-flash'],
       api_key: '',
     }]
+    mockSystemApi.addCustomModel.mockResolvedValue({
+      success: true,
+      custom_models: { deepseek: ['test'] },
+    })
+    mockSystemApi.removeCustomModel.mockResolvedValue({
+      success: true,
+      custom_models: {},
+    })
 
     await store.switchModel('test', 'deepseek')
     expect(store.selectedModel).toBe('test')
     expect(store.customModels).toEqual({ deepseek: ['test'] })
+    expect(mockSystemApi.addCustomModel).toHaveBeenCalledWith({
+      provider: 'deepseek',
+      model: 'test',
+    })
 
     await store.removeCustomModel('test', 'deepseek')
     expect(store.customModels).toEqual({})
+    expect(mockSystemApi.removeCustomModel).toHaveBeenCalledWith({
+      provider: 'deepseek',
+      model: 'test',
+    })
     expect(store.selectedModel).toBe('deepseek-v4-flash')
     expect(mockSystemApi.updateDefaultModel).toHaveBeenLastCalledWith({
       default: 'deepseek-v4-flash',
       provider: 'deepseek',
     })
+  })
+
+  it('removes deleted custom models from loaded model groups immediately', async () => {
+    mockSystemApi.removeCustomModel.mockResolvedValue({
+      success: true,
+      custom_models: {},
+    })
+    const store = useAppStore()
+    store.customModels = { deepseek: ['manual-model'] }
+    store.modelGroups = [{
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      models: ['deepseek-v4-flash', 'manual-model'],
+      available_models: ['deepseek-v4-flash', 'manual-model'],
+      api_key: '',
+    }]
+    store.profileModelGroups = [{
+      profile: 'default',
+      default: 'deepseek-v4-flash',
+      default_provider: 'deepseek',
+      groups: [{
+        provider: 'deepseek',
+        label: 'DeepSeek',
+        base_url: 'https://api.deepseek.com/v1',
+        models: ['deepseek-v4-flash', 'manual-model'],
+        available_models: ['deepseek-v4-flash', 'manual-model'],
+        api_key: '',
+      }],
+    }]
+
+    await store.removeCustomModel('manual-model', 'deepseek')
+
+    expect(store.modelGroups[0].models).toEqual(['deepseek-v4-flash'])
+    expect(store.modelGroups[0].available_models).toEqual(['deepseek-v4-flash'])
+    expect(store.profileModelGroups[0].groups[0].models).toEqual(['deepseek-v4-flash'])
+    expect(store.profileModelGroups[0].groups[0].available_models).toEqual(['deepseek-v4-flash'])
   })
 })

@@ -90,6 +90,14 @@ export interface AgentBridgeRunResult extends AgentBridgeResponse {
   error?: string | null
 }
 
+export interface AgentBridgeContextEstimate extends AgentBridgeResponse {
+  session_id: string
+  token_count?: number | null
+  message_count: number
+  tool_count: number
+  system_prompt_chars: number
+}
+
 export interface AgentBridgeCommandResult extends AgentBridgeResponse {
   session_id: string
   command: string
@@ -369,6 +377,24 @@ export class AgentBridgeClient {
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),
+    })
+  }
+
+  contextEstimate(
+    sessionId: string,
+    messages: unknown[],
+    instructions?: string,
+    profile?: string,
+    options: Pick<AgentBridgeChatOptions, 'model' | 'provider'> = {},
+  ): Promise<AgentBridgeContextEstimate> {
+    return this.request<AgentBridgeContextEstimate>({
+      action: 'context_estimate',
+      session_id: sessionId,
+      messages,
+      ...(instructions ? { instructions } : {}),
+      ...(profile ? { profile } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.provider ? { provider: options.provider } : {}),
     })
   }
 

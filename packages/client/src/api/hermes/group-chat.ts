@@ -24,6 +24,15 @@ export interface RoomAgent {
     invited: number
 }
 
+export interface AgentAddResult {
+    profile: string
+    ok: boolean
+    agent?: RoomAgent
+    code?: string
+    error?: string
+    reason?: string
+}
+
 export interface ChatMessage {
     id: string
     roomId: string
@@ -35,7 +44,7 @@ export interface ChatMessage {
     tool_call_id?: string | null
     tool_calls?: any[] | null
     tool_name?: string | null
-    finish_reason?: string | null
+    finish_reason?: 'streaming' | 'tool_calls' | 'error' | string | null
     reasoning?: string | null
     reasoning_details?: string | null
     reasoning_content?: string | null
@@ -134,7 +143,7 @@ export async function createRoom(data: {
     inviteCode: string
     agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
     compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
-}): Promise<{ room: RoomInfo; agents: RoomAgent[] }> {
+}): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request('/api/hermes/group-chat/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -142,7 +151,7 @@ export async function createRoom(data: {
     })
 }
 
-export async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }): Promise<{ room: RoomInfo; agents: RoomAgent[] }> {
+export async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

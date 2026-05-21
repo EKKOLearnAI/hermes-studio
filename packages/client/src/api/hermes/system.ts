@@ -31,6 +31,7 @@ export interface ModelVisibilityRule {
 }
 
 export type ModelVisibility = Record<string, ModelVisibilityRule>
+export type CustomModels = Record<string, string[]>
 
 export interface AvailableModelGroup {
   provider: string   // credential pool key (e.g. "zai", "custom:subrouter.ai")
@@ -61,6 +62,7 @@ export interface AvailableModelsResponse {
   /** Web UI-only display aliases keyed by provider -> canonical model ID. */
   model_aliases?: Record<string, Record<string, string>>
   model_visibility?: ModelVisibility
+  custom_models?: CustomModels
 }
 
 export interface CustomProvider {
@@ -161,5 +163,27 @@ export async function updateModelVisibility(data: {
   return request<{ success: boolean; model_visibility: ModelVisibility }>('/api/hermes/model-visibility', {
     method: 'PUT',
     body: JSON.stringify(data),
+  })
+}
+
+export async function addCustomModel(data: {
+  provider: string
+  model: string
+}): Promise<{ success: boolean; custom_models: CustomModels }> {
+  return request<{ success: boolean; custom_models: CustomModels }>('/api/hermes/custom-model', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function removeCustomModel(data: {
+  provider: string
+  model: string
+}): Promise<{ success: boolean; custom_models: CustomModels }> {
+  const params = new URLSearchParams()
+  params.set('provider', data.provider)
+  params.set('model', data.model)
+  return request<{ success: boolean; custom_models: CustomModels }>(`/api/hermes/custom-model?${params.toString()}`, {
+    method: 'DELETE',
   })
 }

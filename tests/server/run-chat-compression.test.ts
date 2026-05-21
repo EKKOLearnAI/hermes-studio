@@ -162,6 +162,144 @@ describe('run chat compression trigger', () => {
     )
   })
 
+  it('uses full context estimates for compression threshold decisions', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed by full context estimate' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 9,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+      {},
+      vi.fn(async () => 120_000),
+    )
+
+    expect(history).toEqual([{ role: 'user', content: 'compressed by full context estimate' }])
+    expect(compressorCompressMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits full context token usage when the full estimate is under threshold', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 900 })
+    const emit = vi.fn()
+    const contextTokenEstimator = vi.fn(async () => 19_379)
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      emit,
+      new Map(),
+      {},
+      contextTokenEstimator,
+    )
+
+    expect(history).toHaveLength(9)
+    expect(contextTokenEstimator).toHaveBeenCalledWith(expect.arrayContaining([{ role: 'user', content: 'message 0' }]))
+    expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
+      event: 'usage.updated',
+      session_id: 'session-1',
+      inputTokens: 1_000,
+      outputTokens: 900,
+      contextTokens: 19_379,
+    }))
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when fixed prompt and tool schemas exceed threshold before any history exists', async () => {
+    getSessionDetailMock.mockReturnValue({ messages: [] })
+    const emit = vi.fn()
+
+    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+
+    await expect(buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      emit,
+      new Map(),
+      {},
+      vi.fn(async () => 120_000),
+    )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
+
+    expect(emit).not.toHaveBeenCalledWith('usage.updated', expect.anything())
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
+  it('throws instead of compressing when full context is over threshold but history is too short', async () => {
+    const messages = Array.from({ length: 5 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 4 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
+
+    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+
+    await expect(buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+      {},
+      vi.fn(async () => 120_000),
+    )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
+
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
   it('merges partial compression config with defaults', async () => {
     const messages = Array.from({ length: 10 }, (_, index) => ({
       id: index + 1,

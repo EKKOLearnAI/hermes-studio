@@ -34,6 +34,7 @@ const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+const isAgentError = computed(() => props.message.role === "assistant" && props.message.systemType === "error");
 
 const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
@@ -790,6 +791,7 @@ onBeforeUnmount(() => {
             class="message-bubble"
             :class="{
               system: isSystem,
+              'agent-error': isAgentError,
               command: isCommandMessage,
               'command-error': isCommandError,
               'speech-playing': isPlayingThisMessage && !isPausedThisMessage,
@@ -1043,6 +1045,12 @@ onBeforeUnmount(() => {
       background-color: $msg-assistant-bg;
       border-radius: 10px;
     }
+
+    .message-bubble.agent-error {
+      color: $error;
+      background-color: rgba(var(--error-rgb), 0.06);
+      border: 1px solid rgba(var(--error-rgb), 0.2);
+    }
   }
 
   &.tool {
@@ -1118,6 +1126,20 @@ onBeforeUnmount(() => {
   &.command-error {
     border-color: rgba(var(--warning-rgb), 0.28);
     background-color: rgba(var(--warning-rgb), 0.06);
+  }
+
+  &.agent-error {
+    color: $error;
+    background-color: rgba(var(--error-rgb), 0.06);
+    border: 1px solid rgba(var(--error-rgb), 0.2);
+
+    :deep(.markdown-body),
+    :deep(.markdown-body p),
+    :deep(.markdown-body li),
+    :deep(.markdown-body strong),
+    :deep(.markdown-body code) {
+      color: $error;
+    }
   }
 
   &.speech-playing {

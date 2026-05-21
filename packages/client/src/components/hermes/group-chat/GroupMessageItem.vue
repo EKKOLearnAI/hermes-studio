@@ -41,6 +41,12 @@ const isAgent = computed(() => {
     return props.agents.some(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
 })
 
+const isAgentError = computed(() => {
+    if (props.message.role !== 'assistant') return false
+    if (props.message.finish_reason === 'error') return true
+    return /^Error:\s*/i.test(props.message.content || '')
+})
+
 const isSelf = computed(() => {
     return !!props.currentUserId && props.message.senderId === props.currentUserId
 })
@@ -443,6 +449,7 @@ onBeforeUnmount(() => {
                 class="msg-content"
                 :class="{
                     'agent-content': isAgent,
+                    'agent-error': isAgentError,
                     'speech-playing': isPlayingThisMessage && !isPausedThisMessage,
                 }"
             >
@@ -546,6 +553,20 @@ onBeforeUnmount(() => {
 
     &.agent .msg-content.agent-content {
         background-color: rgba(var(--accent-primary-rgb), 0.06);
+    }
+
+    &.agent .msg-content.agent-error {
+        color: $error;
+        background-color: rgba(var(--error-rgb), 0.06);
+        border: 1px solid rgba(var(--error-rgb), 0.2);
+
+        :deep(.markdown-body),
+        :deep(.markdown-body p),
+        :deep(.markdown-body li),
+        :deep(.markdown-body strong),
+        :deep(.markdown-body code) {
+            color: $error;
+        }
     }
 
     &.self .msg-content {
@@ -832,6 +853,20 @@ onBeforeUnmount(() => {
             0 0 10px rgba(255, 107, 107, 0.4),
             0 0 20px rgba(255, 107, 107, 0.2);
         animation: rainbow-glow 4s linear infinite;
+    }
+
+    &.agent-error {
+        color: $error;
+        background-color: rgba(var(--error-rgb), 0.06);
+        border: 1px solid rgba(var(--error-rgb), 0.2);
+
+        :deep(.markdown-body),
+        :deep(.markdown-body p),
+        :deep(.markdown-body li),
+        :deep(.markdown-body strong),
+        :deep(.markdown-body code) {
+            color: $error;
+        }
     }
 
     :deep(.mention-highlight) {

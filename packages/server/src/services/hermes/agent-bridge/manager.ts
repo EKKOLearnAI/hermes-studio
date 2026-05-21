@@ -245,7 +245,7 @@ function tcpEndpointPort(endpoint: string): number | undefined {
 
 function windowsListeningPidsOnPort(port: number): number[] {
   try {
-    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], { encoding: 'utf-8', windowsHide: true })
+    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], { windowsHide: true }).toString('utf8')
     const pids = new Set<number>()
     for (const line of output.split(/\r?\n/)) {
       const parts = line.trim().split(/\s+/)

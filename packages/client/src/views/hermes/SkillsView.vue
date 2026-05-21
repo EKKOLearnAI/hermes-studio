@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
+import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
 
 type SourceFilter = SkillSource | 'modified'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
 const loading = ref(false)
@@ -17,7 +18,15 @@ const selectedSkill = ref('')
 const searchQuery = ref('')
 const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
+const recommendations = ref('')
 let mobileQuery: MediaQueryList | null = null
+let recommendationsRequestSeq = 0
+
+const recommendationsPath = computed(() => {
+  return String(locale.value).startsWith('zh')
+    ? '/skill-recommendations.zh.md'
+    : '/skill-recommendations.en.md'
+})
 
 const selectedSkillData = computed(() => {
   if (!selectedCategory.value || !selectedSkill.value) return null
@@ -37,6 +46,7 @@ onMounted(() => {
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
   loadSkills()
+  loadRecommendations()
 })
 
 onUnmounted(() => {
@@ -56,11 +66,35 @@ async function loadSkills() {
   }
 }
 
+async function loadRecommendations() {
+  const requestSeq = ++recommendationsRequestSeq
+  try {
+    const response = await fetch(recommendationsPath.value)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const text = await response.text()
+    if (requestSeq === recommendationsRequestSeq) {
+      recommendations.value = text
+    }
+  } catch (err) {
+    if (requestSeq === recommendationsRequestSeq) {
+      recommendations.value = ''
+    }
+    console.error('Failed to load skill recommendations:', err)
+  }
+}
+
+watch(recommendationsPath, loadRecommendations)
+
 function toggleFilter(filter: SourceFilter) {
   sourceFilter.value = sourceFilter.value === filter ? null : filter
 }
 
 function handleSelect(category: string, skill: string) {
+  if (selectedCategory.value === category && selectedSkill.value === skill) {
+    selectedCategory.value = ''
+    selectedSkill.value = ''
+    return
+  }
   selectedCategory.value = category
   selectedSkill.value = skill
   if (window.innerWidth <= 768) {
@@ -139,13 +173,16 @@ function handlePinToggled(name: string, pinned: boolean) {
               :pinned="selectedSkillData?.pinned"
               @pin-toggled="handlePinToggled"
             />
-            <div v-else class="empty-detail">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
-                <polygon points="12 2 2 7 12 12 22 7 12 2" />
-                <polyline points="2 17 12 22 22 17" />
-                <polyline points="2 12 12 17 22 12" />
-              </svg>
-              <span>{{ t('skills.noMatch') }}</span>
+            <div v-else class="recommendations-panel">
+              <MarkdownRenderer v-if="recommendations" :content="recommendations" />
+              <div v-else class="empty-detail">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
+                  <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                  <polyline points="2 17 12 22 22 17" />
+                  <polyline points="2 12 12 17 22 12" />
+                </svg>
+                <span>{{ t('skills.noMatch') }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -324,5 +361,16 @@ function handlePinToggled(name: string, pinned: boolean) {
   gap: 12px;
   color: $text-muted;
   font-size: 13px;
+}
+
+.recommendations-panel {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 4px 0 40px;
+
+  :deep(.markdown-body) {
+    font-size: 14px;
+    line-height: 1.7;
+  }
 }
 </style>

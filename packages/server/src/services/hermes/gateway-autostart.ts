@@ -7,6 +7,7 @@ import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
+import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
 
 const execFileAsync = promisify(execFile)
 
@@ -109,21 +110,8 @@ export function gatewayStateLooksRunningForProfile(profileDir: string): boolean 
   return pid !== null && isProcessAlive(pid)
 }
 
-export function parseGatewayStatusesFromProfileListOutput(stdout: string): Map<string, string> {
-  const statuses = new Map<string, string>()
-  const normalized = stdout.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  const lines = normalized.trim().split('\n').filter(Boolean)
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('Profile') || trimmed.match(/^─/)) continue
-
-    const body = trimmed.startsWith('◆') ? trimmed.slice(1).trim() : trimmed
-    const columns = body.split(/\s{2,}/).map(part => part.trim())
-    if (columns.length >= 3 && columns[0]) {
-      statuses.set(columns[0], columns[2])
-    }
-  }
-  return statuses
+export function parseGatewayStatusesFromProfileListOutput(stdout: string, profileNames = listProfileNamesFromDisk()): Map<string, string> {
+  return parseGatewayStatusesFromProfileList(stdout, profileNames)
 }
 
 async function listGatewayStatusesFromProfileList(hermesBin: string): Promise<Map<string, string>> {

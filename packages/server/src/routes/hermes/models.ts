@@ -9,6 +9,8 @@ modelRoutes.get('/api/hermes/config/models', ctrl.getConfigModels)
 modelRoutes.put('/api/hermes/config/model', ctrl.setConfigModel)
 modelRoutes.put('/api/hermes/model-alias', ctrl.setModelAlias)
 modelRoutes.put('/api/hermes/model-visibility', ctrl.setModelVisibility)
+modelRoutes.put('/api/hermes/custom-model', ctrl.addCustomModel)
+modelRoutes.delete('/api/hermes/custom-model', ctrl.removeCustomModel)
 
 // Model context routes
 modelRoutes.get('/api/hermes/model-context', ctrl.getModelContext)

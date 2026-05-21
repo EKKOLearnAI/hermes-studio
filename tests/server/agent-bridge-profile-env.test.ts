@@ -234,4 +234,55 @@ print(json.dumps({
       restored_glm: 'shell-glm',
     })
   })
+
+  it('handles Windows netstat output decode failures without crashing', async () => {
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+class EmptyStdoutResult:
+    stdout = None
+
+def fake_run_empty(*args, **kwargs):
+    return EmptyStdoutResult()
+
+class NetstatResult:
+    stdout = "  TCP    127.0.0.1:18765    0.0.0.0:0    LISTENING    4321\\r\\n"
+
+def fake_run_listener(*args, **kwargs):
+    return NetstatResult()
+
+original_name = bridge.os.name
+original_pid = bridge.os.getpid
+original_run = bridge.subprocess.run
+try:
+    bridge.os.name = "nt"
+    bridge.os.getpid = lambda: 1234
+    bridge.subprocess.run = fake_run_empty
+    empty = bridge._windows_listening_pids_on_port(18765)
+    bridge.subprocess.run = fake_run_listener
+    listener = bridge._windows_listening_pids_on_port(18765)
+finally:
+    bridge.os.name = original_name
+    bridge.os.getpid = original_pid
+    bridge.subprocess.run = original_run
+
+print(json.dumps({
+    "empty": empty,
+    "listener": listener,
+}))
+`)
+
+    expect(result).toEqual({
+      empty: [],
+      listener: [4321],
+    })
+  })
 })

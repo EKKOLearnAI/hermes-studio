@@ -2,11 +2,13 @@ import { execFile, spawn } from 'child_process'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { promisify } from 'util'
+import YAML from 'js-yaml'
 import { logger } from '../logger'
 import { stripLegacyApiServerGatewayConfig, updateConfigYaml } from '../config-helpers'
-import { getActiveProfileDir, getProfileDir } from './hermes-profile'
+import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
 import { isGatewayRunningForProfile } from './gateway-autostart'
+import { parseProfileListRuntimeInfo, type ProfileListRuntimeInfo } from './profile-list-parser'
 
 const execFileAsync = promisify(execFile)
 
@@ -582,45 +584,50 @@ export interface HermesProfileDetail {
   hasSoulMd: boolean
 }
 
+function readProfileDefaultModel(name: string): string {
+  const configPath = join(getProfileDir(name), 'config.yaml')
+  if (!existsSync(configPath)) return '—'
+  try {
+    const config = YAML.load(readFileSync(configPath, 'utf-8'), { json: true }) as Record<string, any> | null
+    const model = config?.model
+    if (typeof model === 'string') return model.trim() || '—'
+    if (model && typeof model === 'object') {
+      return String(model.default || '').trim() || '—'
+    }
+  } catch (err) {
+    logger.warn(err, 'Hermes CLI: failed to read profile config model for %s', name)
+  }
+  return '—'
+}
+
 /**
  * List all profiles
  */
 export async function listProfiles(): Promise<HermesProfile[]> {
+  const profileNames = listProfileNamesFromDisk()
+  const activeProfileName = getActiveProfileName()
+  let runtimeInfo = new Map<string, ProfileListRuntimeInfo>()
   try {
     const { stdout } = await execFileAsync(HERMES_BIN, ['profile', 'list'], {
       timeout: 10000,
       ...execOpts,
     })
-
-    // Windows 可能使用 \r\n 换行符，统一处理
-    const normalized = stdout.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    const lines = normalized.trim().split('\n').filter(Boolean)
-    const profiles: HermesProfile[] = []
-
-    // Skip header lines (starts with " Profile" or " ─")
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed.startsWith('Profile') || trimmed.match(/^─/)) continue
-
-      const active = trimmed.startsWith('◆')
-      const body = active ? trimmed.slice(1).trim() : trimmed
-      const columns = body.split(/\s{2,}/).map(part => part.trim())
-      if (columns.length >= 2) {
-        profiles.push({
-          name: columns[0],
-          active,
-          model: columns[1] || '—',
-          gatewayStatus: columns[2] && columns[2] !== '—' ? columns[2] : undefined,
-          alias: columns[3] && columns[3] !== '—' ? columns[3] : '',
-        })
-      }
-    }
-
-    return profiles
+    runtimeInfo = parseProfileListRuntimeInfo(stdout, profileNames)
   } catch (err: any) {
-    logger.error(err, 'Hermes CLI: profile list failed')
-    throw new Error(`Failed to list profiles: ${err.message}`)
+    logger.warn(err, 'Hermes CLI: profile list failed; falling back to disk profile list')
   }
+
+  return profileNames.map(name => {
+    const runtime = runtimeInfo.get(name)
+    const gatewayStatus = runtime?.gatewayStatus
+    return {
+      name,
+      active: runtime?.active ?? name === activeProfileName,
+      model: readProfileDefaultModel(name),
+      gatewayStatus: gatewayStatus && gatewayStatus !== '—' && gatewayStatus !== '-' ? gatewayStatus : undefined,
+      alias: runtime?.alias || '',
+    }
+  })
 }
 
 /**

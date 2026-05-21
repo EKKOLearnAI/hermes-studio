@@ -19,6 +19,7 @@ const recentSessions = ref<SessionSummary[]>([])
 const searchResults = ref<SessionSearchResult[]>([])
 const activeIndex = ref(0)
 const inputRef = ref<InstanceType<typeof NInput> | null>(null)
+const profileFilter = computed(() => chatStore.sessionProfileFilter || undefined)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let requestSeq = 0
@@ -79,7 +80,9 @@ async function loadRecentSessions() {
   const seq = ++requestSeq
   loading.value = true
   try {
-    const sessions = await fetchSessions(undefined, 8)
+    const sessions = profileFilter.value
+      ? await fetchSessions(undefined, 8, profileFilter.value)
+      : await fetchSessions(undefined, 8)
     if (seq !== requestSeq) return
     recentSessions.value = sessions
     searchResults.value = []
@@ -99,7 +102,9 @@ async function runSearch(text: string) {
   loading.value = true
   try {
     const results = text.trim()
-      ? await searchSessions(text.trim(), undefined, 10)
+      ? profileFilter.value
+        ? await searchSessions(text.trim(), undefined, 10, profileFilter.value)
+        : await searchSessions(text.trim(), undefined, 10)
       : []
     if (seq !== requestSeq) return
     searchResults.value = results
@@ -116,7 +121,7 @@ async function runSearch(text: string) {
 
 async function ensureChatSessionsLoaded() {
   if (chatStore.sessions.length === 0) {
-    await chatStore.loadSessions()
+    await chatStore.loadSessions(chatStore.sessionProfileFilter)
   }
 }
 
@@ -125,6 +130,23 @@ async function openItem(item: SearchItem) {
   sessionSearchOpen.value = false
 
   await ensureChatSessionsLoaded()
+  if (!chatStore.sessions.some(session => session.id === item.id) && typeof chatStore.addOrUpdateSession === 'function') {
+    chatStore.addOrUpdateSession({
+      id: item.id,
+      profile: item.profile || 'default',
+      title: item.title || '',
+      source: item.source,
+      messages: [],
+      createdAt: Math.round(item.started_at * 1000),
+      updatedAt: Math.round((item.last_active || item.ended_at || item.started_at) * 1000),
+      model: item.model,
+      provider: item.provider || item.billing_provider || '',
+      messageCount: item.message_count,
+      endedAt: item.ended_at != null ? Math.round(item.ended_at * 1000) : null,
+      lastActiveAt: item.last_active != null ? Math.round(item.last_active * 1000) : undefined,
+      workspace: item.workspace || null,
+    })
+  }
   await chatStore.switchSession(item.id, messageId)
   if (router.currentRoute.value.name !== 'hermes.chat') {
     await router.push({ name: 'hermes.chat' })

@@ -22,6 +22,11 @@ export interface AppConfig {
   // These aliases never replace the canonical model ID sent back to Hermes.
   modelAliases?: Record<string, Record<string, string>>
 
+  // Web UI-only manually entered model IDs. Keys are provider -> model IDs.
+  // This lets users persist provider-supported models that are absent from a
+  // provider catalog response without changing Hermes Agent config.yaml.
+  customModels?: Record<string, string[]>
+
   // Web UI-only model picker visibility. This filters what the WUI exposes in
   // its sidebar/model pages and never renames or rewrites Hermes canonical
   // provider/model IDs. Hermes CLI config remains the upstream source of truth.

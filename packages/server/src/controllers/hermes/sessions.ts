@@ -168,9 +168,16 @@ export async function listHermesSessions(ctx: any) {
 export async function search(ctx: any) {
   const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = getActiveProfileName()
+  const profile = typeof ctx.query.profile === 'string' && ctx.query.profile.trim()
+    ? ctx.query.profile.trim()
+    : undefined
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
-  ctx.body = { results: filterPendingDeletedSessions(results) }
+  const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
+  ctx.body = {
+    results: filterPendingDeletedSessions(results.filter(s =>
+      !knownProfiles || knownProfiles.has(s.profile || 'default'),
+    )),
+  }
 }
 
 export async function get(ctx: any) {

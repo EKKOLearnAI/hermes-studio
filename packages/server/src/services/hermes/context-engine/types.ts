@@ -49,6 +49,8 @@ export interface CompressedContext {
         hadSnapshot: boolean
         compressed: boolean
         summaryTokenEstimate: number
+        contextTokenEstimate?: number
+        messageTokenEstimate?: number
     }
 }
 
@@ -116,4 +118,8 @@ export interface BuildContextInput {
     currentMessage: StoredMessage
     compression?: Partial<CompressionConfig>
     profile?: string
+    contextTokenEstimator?: (
+        history: Array<{ role: 'user' | 'assistant'; content: string }>,
+        instructions: string,
+    ) => Promise<number | null | undefined>
 }

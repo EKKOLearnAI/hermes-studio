@@ -193,9 +193,9 @@ class AgentClient {
         this.socket!.emit('stop_typing', { roomId })
     }
 
-    emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready'): void {
+    emitContextStatus(roomId: string, status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>): void {
         this.ensureConnected()
-        this.socket!.emit('context_status', { roomId, agentName: this.name, status })
+        this.socket!.emit('context_status', { roomId, agentName: this.name, status, ...extra })
     }
 
     emitApprovalRequested(roomId: string, payload: Record<string, unknown>): void {
@@ -264,9 +264,16 @@ class AgentClient {
     async replyToMention(
         roomId: string,
         msg: MentionMessage,
-        onStatus?: (status: 'compressing' | 'replying' | 'ready') => void,
+        onStatus?: (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => void,
     ): Promise<void> {
         logger.debug(`[AgentClients] ${this.name} mentioned by ${msg.senderName}: "${msg.content.slice(0, 50)}"`)
+        const runMessageId = groupMessageId(roomId, this.profile, this.name)
+        let partIndex = 0
+        let streamMessageId = groupMessagePartId(runMessageId, partIndex)
+        let currentContent = ''
+        let totalContent = ''
+        let reasoningContent = ''
+        let streamStarted = false
         try {
             // Notify room that agent is typing
             this.startTyping(roomId)
@@ -274,6 +281,9 @@ class AgentClient {
             // Build compressed context if context engine is available
             let conversationHistory: Array<{ role: string; content: string }> = []
             let instructions: string | undefined
+            const bridge = new AgentBridgeClient()
+            const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -306,9 +316,32 @@ class AgentClient {
                         currentMessage: msg,
                         compression,
                         profile: this.profile,
+                        contextTokenEstimator: async (history: Array<{ role: 'user' | 'assistant'; content: string }>, estimateInstructions: string) => {
+                            const estimate = await bridge.contextEstimate(
+                                sessionId,
+                                history,
+                                estimateInstructions,
+                                this.profile,
+                            )
+                            logger.info({
+                                roomId,
+                                agentName: this.name,
+                                profile: this.profile,
+                                sessionId,
+                                messages: estimate.message_count,
+                                toolCount: estimate.tool_count,
+                                systemPromptChars: estimate.system_prompt_chars,
+                                fullContextTokens: estimate.token_count,
+                            }, '[GroupChat] full context estimate')
+                            return estimate.token_count
+                        },
                     })
                     conversationHistory = ctx.conversationHistory
                     instructions = ctx.instructions
+                    if (typeof ctx.meta.contextTokenEstimate === 'number' && Number.isFinite(ctx.meta.contextTokenEstimate)) {
+                        this.storage.updateRoomTotalTokens?.(roomId, ctx.meta.contextTokenEstimate)
+                        onStatus?.('replying', { totalTokens: ctx.meta.contextTokenEstimate })
+                    }
                     logger.debug(`[AgentClients] ${this.name}: context built — historyLen=${conversationHistory.length}, meta=%j`, ctx.meta)
                     onStatus?.('replying')
                 } catch (err: any) {
@@ -335,15 +368,6 @@ class AgentClient {
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
-            const bridge = new AgentBridgeClient()
-            const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
-            const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
-            const runMessageId = groupMessageId(roomId, this.profile, this.name)
-            let partIndex = 0
-            let streamMessageId = groupMessagePartId(runMessageId, partIndex)
-            let currentContent = ''
-            let totalContent = ''
-            let reasoningContent = ''
             const flushedAssistantParts = new Set<string>()
             let lastChunk: AgentBridgeOutput | null = null
             const started = await bridge.chat(
@@ -358,6 +382,7 @@ class AgentClient {
             )
 
             this.emitMessageStreamStart(roomId, streamMessageId)
+            streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 lastChunk = chunk
                 reasoningContent += await this.recordBridgeEvents(roomId, chunk, () => streamMessageId, async () => {
@@ -376,6 +401,7 @@ class AgentClient {
                     partIndex += 1
                     streamMessageId = groupMessagePartId(runMessageId, partIndex)
                     this.emitMessageStreamStart(roomId, streamMessageId)
+                    streamStarted = true
                     return toolBaseId
                 })
                 if (chunk.delta) {
@@ -387,6 +413,7 @@ class AgentClient {
 
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
+                await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent)
                 this.emitMessageStreamEnd(roomId, streamMessageId)
                 this.stopTyping(roomId)
                 onStatus?.('ready')
@@ -408,6 +435,7 @@ class AgentClient {
                     reasoning_content: reasoningContent || null,
                 })
                 this.emitMessageStreamEnd(roomId, streamMessageId)
+                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions)
                 onStatus?.('ready')
                 return
             }
@@ -417,9 +445,121 @@ class AgentClient {
             onStatus?.('ready')
         } catch (err: any) {
             logger.error(`[AgentClients] ${this.name}: error handling message: ${err.message}`)
+            try {
+                await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent)
+                if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId)
+            } catch (sendErr: any) {
+                logger.warn(`[AgentClients] ${this.name}: failed to send error message: ${sendErr.message}`)
+            }
             this.stopTyping(roomId)
             onStatus?.('ready')
         }
+    }
+
+    private async refreshRoomFullContextEstimate(
+        roomId: string,
+        sessionId: string,
+        bridge: AgentBridgeClient,
+        instructions?: string,
+    ): Promise<void> {
+        if (!this.storage?.getMessages) return
+        try {
+            const history = this.buildRoomEstimateHistory(roomId)
+            const estimate = await bridge.contextEstimate(
+                sessionId,
+                history,
+                instructions,
+                this.profile,
+            )
+            const totalTokens = Number(estimate.token_count || 0)
+            if (!Number.isFinite(totalTokens) || totalTokens <= 0) return
+            const rounded = Math.floor(totalTokens)
+            this.storage.updateRoomTotalTokens?.(roomId, rounded)
+            this.emitContextStatus(roomId, 'replying', { totalTokens: rounded })
+            logger.info({
+                roomId,
+                agentName: this.name,
+                profile: this.profile,
+                sessionId,
+                messages: estimate.message_count,
+                toolCount: estimate.tool_count,
+                systemPromptChars: estimate.system_prompt_chars,
+                fullContextTokens: rounded,
+                phase: 'final',
+            }, '[GroupChat] full context estimate')
+        } catch (err: any) {
+            logger.warn(`[GroupChat] failed to refresh final context estimate room=${roomId} agent=${this.name}: ${err.message}`)
+        }
+    }
+
+    private buildRoomEstimateHistory(roomId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+        const messages = this.storage?.getMessages?.(roomId) || []
+        return messages.map((message: any) => this.mapRoomMessageForEstimate(message))
+    }
+
+    private mapRoomMessageForEstimate(message: any): { role: 'user' | 'assistant'; content: string } {
+        const senderName = String(message?.senderName || 'unknown')
+        const role = String(message?.role || 'user')
+        const isOwnAgent = message?.senderId === this.socket?.id || senderName === this.name
+
+        if (role === 'tool') {
+            const label = message?.tool_name ? `Tool result: ${message.tool_name}` : 'Tool result'
+            return { role: 'user', content: `[${senderName}] [${label}]\n${message?.content || ''}` }
+        }
+
+        if (role === 'assistant' && Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
+            const toolsInfo = message.tool_calls.map((toolCall: any) => {
+                const name = toolCall?.function?.name || 'unknown'
+                let args = String(toolCall?.function?.arguments || '{}')
+                if (args.length > 4000) args = `${args.slice(0, 4000)}...`
+                return `[Calling tool: ${name} with arguments: ${args}]`
+            }).join('\n')
+            const content = String(message?.content || '').trim()
+            return {
+                role: isOwnAgent ? 'assistant' : 'user',
+                content: content
+                    ? `${this.formatAttributedContent(senderName, content)}\n${this.formatAttributionPrefix(senderName)}${toolsInfo}`
+                    : `${this.formatAttributionPrefix(senderName)}${toolsInfo}`,
+            }
+        }
+
+        return {
+            role: isOwnAgent ? 'assistant' : 'user',
+            content: this.formatAttributedContent(senderName, String(message?.content || '')),
+        }
+    }
+
+    private formatAttributedContent(senderName: string, content: string): string {
+        return `${this.formatAttributionPrefix(senderName)}${this.stripMentions(content)}`
+    }
+
+    private formatAttributionPrefix(senderName: string): string {
+        return `[${senderName}]: `
+    }
+
+    private stripMentions(content: string): string {
+        return String(content || '')
+            .replace(/@([^\s@]+)/g, '')
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/^\s+/, '')
+    }
+
+    private async sendAgentErrorMessage(
+        roomId: string,
+        messageId: string,
+        error: unknown,
+        sourceMsg: MentionMessage,
+        reasoningContent = '',
+    ): Promise<void> {
+        const detail = error instanceof Error ? error.message : String(error || 'Run failed')
+        const content = detail.startsWith('Error:') ? detail : `Error: ${detail}`
+        await this.sendMessage(roomId, content, messageId, {
+            role: 'assistant',
+            mentionDepth: nextMentionDepth(sourceMsg),
+            finish_reason: 'error',
+            reasoning: reasoningContent || null,
+            reasoning_content: reasoningContent || null,
+        })
     }
 
     private async recordBridgeEvents(
@@ -693,9 +833,16 @@ export class AgentClients {
         }
 
         room.set(client.agentId, client)
-        const result = await client.joinRoom(roomId)
-        logger.info(`[AgentClients] ${client.name} joined room: ${roomId}`)
-        return result
+        try {
+            const result = await client.joinRoom(roomId)
+            logger.info(`[AgentClients] ${client.name} joined room: ${roomId}`)
+            return result
+        } catch (err) {
+            room.delete(client.agentId)
+            if (room.size === 0) this.rooms.delete(roomId)
+            client.disconnect()
+            throw err
+        }
     }
 
     /**
@@ -1003,8 +1150,8 @@ export class AgentClients {
         }
 
         this._processingRooms.add(agentKey)
-        const onStatus = (status: 'compressing' | 'replying' | 'ready') => {
-            agent.emitContextStatus(roomId, status)
+        const onStatus = (status: 'compressing' | 'replying' | 'ready', extra?: Record<string, unknown>) => {
+            agent.emitContextStatus(roomId, status, extra)
             logger.debug(`[AgentClients] room ${roomId} agent ${agent.name} status: ${status}`)
         }
 

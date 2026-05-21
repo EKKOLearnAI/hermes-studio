@@ -46,6 +46,7 @@ export interface SessionState {
   profile?: string
   inputTokens?: number
   outputTokens?: number
+  contextTokens?: number
   isAborting?: boolean
   queue: QueuedRun[]
   responseRun?: ResponseRunState

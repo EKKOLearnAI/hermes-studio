@@ -266,6 +266,7 @@ export class ChatRunSocket {
       events: state.isWorking ? state.events : [],
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
+      contextTokens: state.contextTokens,
       queueLength: state.queue?.length || 0,
     })
 
