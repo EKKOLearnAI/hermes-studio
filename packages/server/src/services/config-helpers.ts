@@ -235,6 +235,67 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
   }
 }
 
+function normalizeEnvKey(key: unknown): string {
+  const trimmed = String(key || '').trim()
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) ? trimmed : ''
+}
+
+export function extractConfiguredProviderModels(
+  config: Record<string, any>,
+  providerKey: string,
+): { label: string; base_url: string; key_env: string; models: string[] } | null {
+  if (!providerKey || !config.providers || typeof config.providers !== 'object' || Array.isArray(config.providers)) {
+    return null
+  }
+  const entry = config.providers[providerKey]
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+
+  const models: string[] = []
+  if (entry.models && typeof entry.models === 'object' && !Array.isArray(entry.models)) {
+    for (const model of Object.keys(entry.models)) {
+      const trimmed = String(model || '').trim()
+      if (trimmed) models.push(trimmed)
+    }
+  } else if (Array.isArray(entry.models)) {
+    for (const model of entry.models) {
+      const trimmed = String(model || '').trim()
+      if (trimmed) models.push(trimmed)
+    }
+  }
+
+  const defaultModel = String(entry.default_model || '').trim()
+  if (defaultModel) models.push(defaultModel)
+
+  const modelSection = config.model
+  if (typeof modelSection === 'object' && modelSection !== null) {
+    const currentProvider = String(modelSection.provider || '').trim()
+    const currentDefault = String(modelSection.default || modelSection.model || '').trim()
+    if (currentProvider === providerKey && currentDefault) models.push(currentDefault)
+  }
+
+  const uniqueModels = Array.from(new Set(models))
+  if (uniqueModels.length === 0) return null
+
+  return {
+    label: String(entry.name || providerKey).trim() || providerKey,
+    base_url: String(entry.base_url || entry.api || '').trim(),
+    key_env: normalizeEnvKey(entry.key_env),
+    models: uniqueModels,
+  }
+}
+
+export function listConfiguredProviderModels(config: Record<string, any>): Array<{ provider: string; label: string; base_url: string; key_env: string; models: string[] }> {
+  if (!config.providers || typeof config.providers !== 'object' || Array.isArray(config.providers)) return []
+  const result: Array<{ provider: string; label: string; base_url: string; key_env: string; models: string[] }> = []
+  for (const providerKey of Object.keys(config.providers)) {
+    const provider = String(providerKey || '').trim()
+    if (!provider) continue
+    const extracted = extractConfiguredProviderModels(config, provider)
+    if (extracted) result.push({ provider, ...extracted })
+  }
+  return result
+}
+
 export function buildModelGroups(config: Record<string, any>): { default: string; groups: ModelGroup[] } {
   let defaultModel = ''
   const groups: ModelGroup[] = []
@@ -242,12 +303,20 @@ export function buildModelGroups(config: Record<string, any>): { default: string
   // 1. Extract current model
   const modelSection = config.model
   if (typeof modelSection === 'object' && modelSection !== null) {
-    defaultModel = String(modelSection.default || '').trim()
+    defaultModel = String(modelSection.default || modelSection.model || '').trim()
   } else if (typeof modelSection === 'string') {
     defaultModel = modelSection.trim()
   }
 
-  // 2. Extract custom_providers section
+  // 2. Extract providers section written by newer Hermes Agent configs
+  for (const provider of listConfiguredProviderModels(config)) {
+    groups.push({
+      provider: provider.provider,
+      models: provider.models.map(model => ({ id: model, label: `${provider.label}: ${model}` })),
+    })
+  }
+
+  // 3. Extract custom_providers section
   const customProviders = config.custom_providers
   if (Array.isArray(customProviders)) {
     const customModels: ModelInfo[] = []

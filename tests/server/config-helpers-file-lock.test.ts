@@ -143,4 +143,65 @@ describe('config-helpers locked file updates', () => {
     expect(result.changed).toBe(true)
     expect(result.config).toEqual({})
   })
+
+  it('extracts model groups from newer Hermes providers config entries', async () => {
+    const { listConfiguredProviderModels, buildModelGroups } = await loadHelpers()
+    const config = {
+      model: { default: 'custom-model-pro', provider: 'customrelay' },
+      providers: {
+        customrelay: {
+          name: 'Custom Relay',
+          base_url: 'https://relay.example/v1',
+          key_env: 'CUSTOM_RELAY_API_KEY',
+          default_model: 'custom-model-pro',
+          models: {
+            'custom-model-pro': { reasoning_effort: 'xhigh' },
+            'custom-model-lite': {},
+          },
+        },
+      },
+    }
+
+    expect(listConfiguredProviderModels(config)).toEqual([
+      {
+        provider: 'customrelay',
+        label: 'Custom Relay',
+        base_url: 'https://relay.example/v1',
+        key_env: 'CUSTOM_RELAY_API_KEY',
+        models: ['custom-model-pro', 'custom-model-lite'],
+      },
+    ])
+    expect(buildModelGroups(config)).toEqual({
+      default: 'custom-model-pro',
+      groups: [
+        {
+          provider: 'customrelay',
+          models: [
+            { id: 'custom-model-pro', label: 'Custom Relay: custom-model-pro' },
+            { id: 'custom-model-lite', label: 'Custom Relay: custom-model-lite' },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('normalizes configured providers without trusting invalid key_env names', async () => {
+    const { listConfiguredProviderModels } = await loadHelpers()
+    expect(listConfiguredProviderModels({
+      model: { model: 'fallback-model', provider: 'relay' },
+      providers: {
+        relay: {
+          key_env: 'CUSTOM_RELAY_API_KEY|MALICIOUS',
+        },
+      },
+    })).toEqual([
+      {
+        provider: 'relay',
+        label: 'relay',
+        base_url: '',
+        key_env: '',
+        models: ['fallback-model'],
+      },
+    ])
+  })
 })

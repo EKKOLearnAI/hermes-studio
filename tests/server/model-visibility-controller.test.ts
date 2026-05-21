@@ -1,11 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockListConfiguredProviderModels, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
   mockFetchProviderModels: vi.fn(),
   mockBuildModelGroups: vi.fn(() => ({ default: '', groups: [] })),
+  mockListConfiguredProviderModels: vi.fn((config: any) => {
+    if (!config?.providers || typeof config.providers !== 'object' || Array.isArray(config.providers)) return []
+    return Object.entries(config.providers).flatMap(([provider, raw]: [string, any]) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+      const models = new Set<string>()
+      if (raw.models && typeof raw.models === 'object' && !Array.isArray(raw.models)) {
+        Object.keys(raw.models).forEach(model => { if (model) models.add(model) })
+      } else if (Array.isArray(raw.models)) {
+        raw.models.forEach((model: any) => { if (model) models.add(String(model)) })
+      }
+      if (raw.default_model) models.add(String(raw.default_model))
+      if (config.model?.provider === provider && (config.model?.default || config.model?.model)) models.add(String(config.model.default || config.model.model))
+      const keyEnv = String(raw.key_env || '').trim()
+      return models.size > 0 ? [{
+        provider,
+        label: raw.name || provider,
+        base_url: raw.base_url || raw.api || '',
+        key_env: /^[A-Za-z_][A-Za-z0-9_]*$/.test(keyEnv) ? keyEnv : '',
+        models: [...models],
+      }] : []
+    })
+  }),
   mockReadAppConfig: vi.fn(),
   mockWriteAppConfig: vi.fn(),
   mockExistsSync: vi.fn(() => false),
@@ -35,6 +57,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   writeConfigYaml: vi.fn(),
   fetchProviderModels: mockFetchProviderModels,
   buildModelGroups: mockBuildModelGroups,
+  listConfiguredProviderModels: mockListConfiguredProviderModels,
   PROVIDER_ENV_MAP: {
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY' },
     'xai-oauth': { api_key_env: '', base_url_env: 'XAI_BASE_URL' },
@@ -100,6 +123,7 @@ beforeEach(() => {
   mockReadConfigYaml.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
   mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
   mockBuildModelGroups.mockReturnValue({ default: '', groups: [] })
+  mockListConfiguredProviderModels.mockClear()
   mockReadAppConfig.mockResolvedValue({})
   mockWriteAppConfig.mockImplementation(async patch => patch)
   mockExistsSync.mockReturnValue(false)
@@ -176,7 +200,131 @@ describe('models controller — model visibility', () => {
     ]))
   })
 
+  it('discovers available models from Hermes config.providers entries', async () => {
+    mockReadFile.mockResolvedValue('CUSTOM_RELAY_API_KEY=sk-test\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'custom-model-pro', provider: 'customrelay' },
+      providers: {
+        customrelay: {
+          name: 'Custom Relay',
+          base_url: 'https://relay.example/v1',
+          key_env: 'CUSTOM_RELAY_API_KEY',
+          default_model: 'custom-model-pro',
+          models: {
+            'custom-model-pro': { reasoning_effort: 'xhigh' },
+            'custom-model-lite': {},
+          },
+        },
+      },
+    })
 
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.default).toBe('custom-model-pro')
+    expect(ctx.body.default_provider).toBe('customrelay')
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'customrelay',
+        label: 'Custom Relay',
+        base_url: 'https://relay.example/v1',
+        models: ['custom-model-pro', 'custom-model-lite'],
+        available_models: ['custom-model-pro', 'custom-model-lite'],
+        api_key: 'sk-test',
+      }),
+    ]))
+    expect(ctx.body.profiles[0]).toEqual(expect.objectContaining({
+      profile: 'default',
+      default: 'custom-model-pro',
+      default_provider: 'customrelay',
+      groups: expect.arrayContaining([
+        expect.objectContaining({ provider: 'customrelay' }),
+      ]),
+    }))
+  })
+
+  it('merges config.providers models into matching builtin provider groups', async () => {
+    mockReadFile.mockResolvedValue('DEEPSEEK_API_KEY=sk-test\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'deepseek-coder-v3', provider: 'deepseek' },
+      providers: {
+        deepseek: {
+          key_env: 'DEEPSEEK_API_KEY',
+          default_model: 'deepseek-coder-v3',
+          models: {
+            'deepseek-coder-v3': {},
+          },
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    const group = ctx.body.groups.find((g: any) => g.provider === 'deepseek')
+    expect(group).toMatchObject({
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      api_key: 'sk-test',
+      builtin: true,
+    })
+    expect(group.models).toEqual(['deepseek-chat', 'deepseek-reasoner', 'deepseek-coder-v3'])
+    expect(group.available_models).toEqual(['deepseek-chat', 'deepseek-reasoner', 'deepseek-coder-v3'])
+    expect(ctx.body.default).toBe('deepseek-coder-v3')
+    expect(ctx.body.default_provider).toBe('deepseek')
+  })
+
+  it('ignores invalid key_env names from config.providers entries', async () => {
+    mockReadFile.mockResolvedValue('CUSTOM_RELAY_API_KEY=sk-test\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'relay-model', provider: 'relay' },
+      providers: {
+        relay: {
+          key_env: 'CUSTOM_RELAY_API_KEY|MALICIOUS',
+          models: { 'relay-model': {} },
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'relay',
+        models: ['relay-model'],
+        api_key: '',
+      }),
+    ]))
+  })
+
+  it('uses model.model as the visible default for config.providers entries', async () => {
+    mockReadFile.mockResolvedValue('CUSTOM_RELAY_API_KEY=sk-test\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { model: 'relay-model', provider: 'relay' },
+      providers: {
+        relay: {
+          key_env: 'CUSTOM_RELAY_API_KEY',
+        },
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.default).toBe('relay-model')
+    expect(ctx.body.default_provider).toBe('relay')
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'relay',
+        models: ['relay-model'],
+      }),
+    ]))
+  })
 
   it('fails open for stale include rules so a provider can be recovered in the UI', async () => {
     mockReadAppConfig.mockResolvedValue({

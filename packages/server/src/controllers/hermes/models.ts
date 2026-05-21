@@ -2,7 +2,7 @@ import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
-import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, fetchProviderModels, buildModelGroups, listConfiguredProviderModels, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
@@ -208,7 +208,7 @@ async function buildAvailableForProfile(
   let currentDefault = ''
   let currentDefaultProvider = ''
   if (typeof modelSection === 'object' && modelSection !== null) {
-    currentDefault = String(modelSection.default || '').trim()
+    currentDefault = String(modelSection.default || modelSection.model || '').trim()
     currentDefaultProvider = String(modelSection.provider || '').trim()
     if (currentDefaultProvider === 'custom' && currentDefault) {
       const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
@@ -252,9 +252,20 @@ async function buildAvailableForProfile(
   const groups: AvailableGroup[] = []
   const seenProviders = new Set<string>()
   const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
-    if (seenProviders.has(provider)) return
-    seenProviders.add(provider)
     const availableModels = [...new Set(models)]
+    const existing = groups.find(group => group.provider === provider)
+    if (existing) {
+      existing.models = [...new Set([...existing.models, ...availableModels])]
+      existing.available_models = [...new Set([...(existing.available_models || existing.models), ...availableModels])]
+      existing.label = existing.label || label
+      existing.base_url = existing.base_url || base_url
+      existing.api_key = existing.api_key || api_key
+      existing.builtin = existing.builtin || builtin
+      existing.model_meta = { ...(existing.model_meta || {}), ...(model_meta || {}) }
+      if (existing.model_meta && Object.keys(existing.model_meta).length === 0) delete existing.model_meta
+      return
+    }
+    seenProviders.add(provider)
     groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
   }
 
@@ -311,6 +322,12 @@ async function buildAvailableForProfile(
       const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
       addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
     }
+  }
+
+  const configuredProviders = listConfiguredProviderModels(config)
+  for (const provider of configuredProviders) {
+    const apiKey = provider.key_env ? envGetValue(provider.key_env) : ''
+    addGroup(provider.provider, provider.label, provider.base_url, provider.models, apiKey)
   }
 
   const customProviders = Array.isArray(config.custom_providers)
@@ -436,7 +453,7 @@ export async function getAvailable(ctx: any) {
     let currentDefault = ''
     let currentDefaultProvider = ''
     if (typeof modelSection === 'object' && modelSection !== null) {
-      currentDefault = String(modelSection.default || '').trim()
+      currentDefault = String(modelSection.default || modelSection.model || '').trim()
       currentDefaultProvider = String(modelSection.provider || '').trim()
       // When hermes CLI sets provider: custom, resolve to custom:name
       // by matching base_url + model against custom_providers
