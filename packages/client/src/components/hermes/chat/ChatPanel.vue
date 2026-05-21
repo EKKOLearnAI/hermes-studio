@@ -86,7 +86,7 @@ const showRenameModal = ref(false);
 const renameValue = ref("");
 const renameSessionId = ref<string | null>(null);
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null);
-const sessionProfileFilter = ref<string | null>(null);
+const sessionProfileFilter = computed(() => chatStore.sessionProfileFilter);
 const profileFilterOptions = computed(() => [
   { label: t("chat.allProfiles"), value: "__all__" },
   ...profilesStore.profiles.map((profile) => ({
@@ -96,8 +96,8 @@ const profileFilterOptions = computed(() => [
 ]);
 
 async function handleProfileFilterChange(value: string) {
-  sessionProfileFilter.value = value === "__all__" ? null : value;
-  await chatStore.loadSessions(sessionProfileFilter.value);
+  chatStore.sessionProfileFilter = value === "__all__" ? null : value;
+  await chatStore.loadSessions(chatStore.sessionProfileFilter);
 }
 
 function sortSessionsWithActiveFirst(items: Session[]): Session[] {
@@ -311,7 +311,7 @@ async function handleBatchDelete() {
 
       // Remove deleted sessions from local store (without calling API again)
       // Use loadSessions to refresh from server instead of manual filtering
-      await chatStore.loadSessions();
+      await chatStore.loadSessions(chatStore.sessionProfileFilter);
 
       message.success(t("chat.batchDeleteSuccess", { count: result.deleted }));
       if (result.failed > 0) {

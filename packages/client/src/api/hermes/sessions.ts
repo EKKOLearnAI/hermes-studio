@@ -71,11 +71,12 @@ export async function fetchHermesSessions(source?: string, limit?: number): Prom
   return res.sessions
 }
 
-export async function searchSessions(q: string, source?: string, limit?: number): Promise<SessionSearchResult[]> {
+export async function searchSessions(q: string, source?: string, limit?: number, profile?: string): Promise<SessionSearchResult[]> {
   const params = new URLSearchParams()
   params.set('q', q)
   if (source) params.set('source', source)
   if (limit) params.set('limit', String(limit))
+  if (profile) params.set('profile', profile)
   const query = params.toString()
   const res = await request<{ results: SessionSearchResult[] }>(`/api/hermes/search/sessions?${query}`)
   return res.results
