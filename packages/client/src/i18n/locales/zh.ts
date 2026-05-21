@@ -1055,6 +1055,7 @@ export default {
     selectProfile: '选择一个配置',
     agentAdded: '智能体已添加',
     agentAlreadyInRoom: '该智能体已在房间中',
+    agentAddFailedCount: '{count} 个智能体未添加：{details}',
     noAgents: '当前房间暂无智能体',
     members: '成员',
     roomCreated: '房间已创建',

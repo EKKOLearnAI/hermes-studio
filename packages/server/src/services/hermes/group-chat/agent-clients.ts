@@ -711,9 +711,16 @@ export class AgentClients {
         }
 
         room.set(client.agentId, client)
-        const result = await client.joinRoom(roomId)
-        logger.info(`[AgentClients] ${client.name} joined room: ${roomId}`)
-        return result
+        try {
+            const result = await client.joinRoom(roomId)
+            logger.info(`[AgentClients] ${client.name} joined room: ${roomId}`)
+            return result
+        } catch (err) {
+            room.delete(client.agentId)
+            if (room.size === 0) this.rooms.delete(roomId)
+            client.disconnect()
+            throw err
+        }
     }
 
     /**

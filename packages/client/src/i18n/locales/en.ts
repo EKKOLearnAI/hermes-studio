@@ -1053,6 +1053,7 @@ export default {
     selectProfile: 'Select a profile',
     agentAdded: 'Agent added',
     agentAlreadyInRoom: 'Agent already in this room',
+    agentAddFailedCount: '{count} agent(s) were not added: {details}',
     noAgents: 'No agents in this room',
     members: 'members',
     roomCreated: 'Room created',

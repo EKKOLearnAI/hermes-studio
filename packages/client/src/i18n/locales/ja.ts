@@ -1104,6 +1104,7 @@ export default {
     selectProfile: 'プロファイルを選択',
     agentAdded: 'エージェントが追加されました',
     agentAlreadyInRoom: 'このエージェントは既にルームにいます',
+    agentAddFailedCount: '{count} 件のエージェントを追加できませんでした: {details}',
     noAgents: 'このルームにエージェントはいません',
     members: 'メンバー',
     roomCreated: 'ルームが作成されました',

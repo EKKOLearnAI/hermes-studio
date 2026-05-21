@@ -27,6 +27,47 @@ function generateInviteCode(): string {
     return code
 }
 
+type AgentInput = { profile: string; name?: string; description?: string; invited?: boolean | number }
+
+function sanitizeAgentConnectReason(reason?: string): string {
+    return (reason || 'agent runtime connection failed')
+        .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [REDACTED]')
+        .replace(/(api[_-]?key|token|secret|password)=([^\s]+)/gi, '$1=[REDACTED]')
+        .split('\n')[0]
+        .slice(0, 240)
+}
+
+function agentConnectFailureBody(profile: string, err: any) {
+    return {
+        code: 'PROFILE_AGENT_CONNECT_FAILED',
+        error: `Failed to connect agent "${profile}" to room`,
+        profile,
+        reason: sanitizeAgentConnectReason(err?.message),
+    }
+}
+
+async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: string, input: AgentInput, agentId = generateId()) {
+    const profile = input.profile
+    const name = input.name || profile
+    const description = input.description || ''
+    const invited = input.invited ? 1 : 0
+    const client = await server.agentClients.createAgent({
+        agentId,
+        profile,
+        name,
+        description,
+        invited,
+    })
+
+    try {
+        await server.agentClients.addAgentToRoom(roomId, client)
+        return server.getStorage().addRoomAgent(roomId, agentId, profile, name, description, invited)
+    } catch (err) {
+        server.agentClients.removeAgentFromRoom(roomId, client.agentId)
+        throw err
+    }
+}
+
 // Create room
 groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     if (!chatServer) {
@@ -57,29 +98,26 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     const storage = chatServer.getStorage()
     storage.saveRoom(roomId, name, inviteCode, compression)
 
-    // Save agents to DB and auto-connect via Socket.IO
     const addedAgents = []
+    const agentResults = []
     for (const a of agents || []) {
-        const agentId = generateId()
-        const agent = storage.addRoomAgent(roomId, agentId, a.profile, a.name || a.profile, a.description || '', a.invited ? 1 : 0)
-        addedAgents.push(agent)
-
         try {
-            const client = await chatServer.agentClients.createAgent({
-                agentId: agent.agentId,
-                profile: agent.profile,
-                name: agent.name,
-                description: agent.description,
-                invited: agent.invited,
+            const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
+                profile: a.profile,
+                name: a.name || a.profile,
+                description: a.description || '',
+                invited: a.invited,
             })
-            await chatServer.agentClients.addAgentToRoom(roomId, client)
+            addedAgents.push(agent)
+            agentResults.push({ profile: a.profile, ok: true, agent })
         } catch (err: any) {
-            console.error(`[GroupChat] Failed to connect agent ${a.profile} to room ${roomId}: ${err.message}`)
+            console.error(`[GroupChat] Failed to connect agent ${a.profile} to room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
+            agentResults.push({ ok: false, ...agentConnectFailureBody(a.profile, err) })
         }
     }
 
     const room = storage.getRoom(roomId)
-    ctx.body = { room, agents: addedAgents }
+    ctx.body = { room, agents: addedAgents, agentResults }
 })
 
 // Clone room roles/config without copying the conversation context.
@@ -108,34 +146,25 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     })
 
     const addedAgents = []
+    const agentResults = []
     for (const sourceAgent of storage.getRoomAgents(sourceRoom.id)) {
-        const agentId = generateId()
-        const agent = storage.addRoomAgent(
-            roomId,
-            agentId,
-            sourceAgent.profile,
-            sourceAgent.name,
-            sourceAgent.description,
-            sourceAgent.invited,
-        )
-        addedAgents.push(agent)
-
         try {
-            const client = await chatServer.agentClients.createAgent({
-                agentId: agent.agentId,
-                profile: agent.profile,
-                name: agent.name,
-                description: agent.description,
-                invited: agent.invited,
+            const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
+                profile: sourceAgent.profile,
+                name: sourceAgent.name,
+                description: sourceAgent.description,
+                invited: sourceAgent.invited,
             })
-            await chatServer.agentClients.addAgentToRoom(roomId, client)
+            addedAgents.push(agent)
+            agentResults.push({ profile: sourceAgent.profile, ok: true, agent })
         } catch (err: any) {
-            console.error(`[GroupChat] Failed to connect cloned agent ${agent.profile} to room ${roomId}: ${err.message}`)
+            console.error(`[GroupChat] Failed to connect cloned agent ${sourceAgent.profile} to room ${roomId}: ${sanitizeAgentConnectReason(err.message)}`)
+            agentResults.push({ ok: false, ...agentConnectFailureBody(sourceAgent.profile, err) })
         }
     }
 
     const room = storage.getRoom(roomId)
-    ctx.body = { room, agents: addedAgents }
+    ctx.body = { room, agents: addedAgents, agentResults }
 })
 
 // Get room detail and messages
@@ -236,24 +265,19 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/agents', async (ctx) 
         return
     }
 
-    const agentId = generateId()
-    const agent = chatServer.getStorage().addRoomAgent(ctx.params.roomId, agentId, profile, name || profile, description || '', invited ? 1 : 0)
-
-    // Auto-connect agent via Socket.IO
     try {
-        const client = await chatServer.agentClients.createAgent({
-            agentId: agent.agentId,
-            profile: agent.profile,
-            name: agent.name,
-            description: agent.description,
-            invited: agent.invited,
+        const agent = await connectAndPersistRoomAgent(chatServer, ctx.params.roomId, {
+            profile,
+            name: name || profile,
+            description: description || '',
+            invited,
         })
-        await chatServer.agentClients.addAgentToRoom(ctx.params.roomId, client)
+        ctx.body = { agent }
     } catch (err: any) {
-        console.error(`[GroupChat] Failed to connect agent ${profile} to room ${ctx.params.roomId}: ${err.message}`)
+        console.error(`[GroupChat] Failed to connect agent ${profile} to room ${ctx.params.roomId}: ${sanitizeAgentConnectReason(err.message)}`)
+        ctx.status = 502
+        ctx.body = agentConnectFailureBody(profile, err)
     }
-
-    ctx.body = { agent }
 })
 
 // List agents in room

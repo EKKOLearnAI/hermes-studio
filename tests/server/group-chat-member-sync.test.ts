@@ -101,6 +101,95 @@ describe('Group Chat member/agent identity sync', () => {
     }))
   })
 
+  it('does not persist an agent when the runtime client cannot connect', async () => {
+    const addRoomAgent = vi.fn()
+    const chatServer = {
+      getStorage: () => ({
+        getRoomAgents: vi.fn(() => []),
+        addRoomAgent,
+      }),
+      agentClients: {
+        createAgent: vi.fn(async () => {
+          throw new Error('Connection timeout')
+        }),
+        addAgentToRoom: vi.fn(),
+        removeAgentFromRoom: vi.fn(),
+      },
+    }
+    setGroupChatServer(chatServer as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { profile: 'default', name: 'Worker' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(502)
+    expect(ctx.body).toMatchObject({
+      code: 'PROFILE_AGENT_CONNECT_FAILED',
+      profile: 'default',
+      reason: 'Connection timeout',
+    })
+    expect(addRoomAgent).not.toHaveBeenCalled()
+  })
+
+  it('does not persist an agent and disconnects runtime state when room join fails', async () => {
+    const addRoomAgent = vi.fn()
+    const runtimeClient = { agentId: 'agent-stable-1' }
+    const chatServer = {
+      getStorage: () => ({
+        getRoomAgents: vi.fn(() => []),
+        addRoomAgent,
+      }),
+      agentClients: {
+        createAgent: vi.fn(async () => runtimeClient),
+        addAgentToRoom: vi.fn(async () => {
+          throw new Error('join failed')
+        }),
+        removeAgentFromRoom: vi.fn(),
+      },
+    }
+    setGroupChatServer(chatServer as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const ctx: any = {
+      params: { roomId: 'room-1' },
+      request: { body: { profile: 'default', name: 'Worker' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(ctx.status).toBe(502)
+    expect(ctx.body).toMatchObject({
+      code: 'PROFILE_AGENT_CONNECT_FAILED',
+      profile: 'default',
+      reason: 'join failed',
+    })
+    expect(addRoomAgent).not.toHaveBeenCalled()
+    expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
+  })
+
+  it('rolls back AgentClients room state when joining a room fails', async () => {
+    const clients = new AgentClients()
+    const runtimeClient = {
+      agentId: 'agent-stable-1',
+      name: 'Worker',
+      joinRoom: vi.fn(async () => {
+        throw new Error('join failed')
+      }),
+      disconnect: vi.fn(),
+    }
+
+    await expect(clients.addAgentToRoom('room-1', runtimeClient as any)).rejects.toThrow('join failed')
+
+    expect(runtimeClient.disconnect).toHaveBeenCalled()
+    expect(clients.getAgents('room-1')).toEqual([])
+  })
+
   it('removes the runtime agent by persisted agentId and returns synchronized room state', async () => {
     const agentsBefore = [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 }]
     const storage = {

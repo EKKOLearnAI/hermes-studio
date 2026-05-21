@@ -23,6 +23,15 @@ export interface RoomAgent {
     invited: number
 }
 
+export interface AgentAddResult {
+    profile: string
+    ok: boolean
+    agent?: RoomAgent
+    code?: string
+    error?: string
+    reason?: string
+}
+
 export interface ChatMessage {
     id: string
     roomId: string
@@ -133,7 +142,7 @@ export async function createRoom(data: {
     inviteCode: string
     agents?: { profile: string; name?: string; description?: string; invited?: boolean }[]
     compression?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }
-}): Promise<{ room: RoomInfo; agents: RoomAgent[] }> {
+}): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request('/api/hermes/group-chat/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,7 +150,7 @@ export async function createRoom(data: {
     })
 }
 
-export async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }): Promise<{ room: RoomInfo; agents: RoomAgent[] }> {
+export async function cloneRoom(roomId: string, data?: { name?: string; inviteCode?: string }): Promise<{ room: RoomInfo; agents: RoomAgent[]; agentResults?: AgentAddResult[] }> {
     return request(`/api/hermes/group-chat/rooms/${roomId}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

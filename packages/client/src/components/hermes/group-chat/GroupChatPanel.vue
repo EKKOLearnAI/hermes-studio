@@ -64,12 +64,36 @@ function generateCode(): string {
     return code
 }
 
+function formatAgentFailures(results?: Array<{ ok: boolean; profile: string; error?: string; reason?: string }>): string | null {
+    const failed = results?.filter(result => !result.ok) || []
+    if (failed.length === 0) return null
+    const details = failed.map(result => result.reason || result.error || result.profile).join('; ')
+    return t('groupChat.agentAddFailedCount', { count: failed.length, details })
+}
+
+function extractApiErrorMessage(err: any): string {
+    const raw = err?.message || ''
+    const jsonStart = raw.indexOf('{')
+    if (jsonStart >= 0) {
+        try {
+            const parsed = JSON.parse(raw.slice(jsonStart))
+            if (parsed?.code === 'PROFILE_AGENT_CONNECT_FAILED' && parsed?.error) {
+                return parsed.reason ? `${parsed.error}: ${parsed.reason}` : parsed.error
+            }
+            if (parsed?.error) return parsed.error
+        } catch { /* ignore */ }
+    }
+    return raw || t('common.saveFailed')
+}
+
 async function handleCreateRoom(name: string, inviteCode: string, userName: string, description: string, compression: { triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number }) {
     try {
         store.setUserInfo(userName, description)
         const res = await store.createNewRoom(name, inviteCode, undefined, compression)
         showCreateModal.value = false
-        message.success(t('groupChat.roomCreated'))
+        const failureMessage = formatAgentFailures(res.agentResults)
+        if (failureMessage) message.warning(failureMessage)
+        else message.success(t('groupChat.roomCreated'))
         await store.joinRoom(res.room.id)
     } catch {
         message.error(t('common.saveFailed'))
@@ -105,7 +129,9 @@ async function confirmCloneRoom() {
         cloneRoomName.value = ''
         cloneInviteCode.value = ''
         await store.joinRoom(res.room.id)
-        message.success(t('groupChat.roomCloned'))
+        const failureMessage = formatAgentFailures(res.agentResults)
+        if (failureMessage) message.warning(failureMessage)
+        else message.success(t('groupChat.roomCloned'))
     } catch {
         message.error(t('common.saveFailed'))
     }
@@ -170,7 +196,7 @@ async function confirmAddAgent() {
         if (err.message?.includes('already')) {
             message.warning(t('groupChat.agentAlreadyInRoom'))
         } else {
-            message.error(t('common.saveFailed'))
+            message.error(extractApiErrorMessage(err))
         }
     }
 }
