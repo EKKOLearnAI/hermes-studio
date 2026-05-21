@@ -89,6 +89,7 @@ export default {
     terminal: 'Terminal',
     groupChat: 'Group Chat',
     files: 'Files',
+    investment: 'Investment',
     groupConversation: 'Conversation',
     groupConversationShort: 'Conv',
     groupPlatform: 'Platform',

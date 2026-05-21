@@ -196,6 +196,12 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.models") }}</span>
           </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.investment' }" @click="handleNav('hermes.investment')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>{{ t("sidebar.investment") }}</span>
+          </button>
         </div>
       </div>
 

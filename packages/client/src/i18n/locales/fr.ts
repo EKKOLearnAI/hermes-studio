@@ -87,6 +87,7 @@ export default {
     terminal: 'Terminal',
     files: 'Fichiers',
     groupChat: 'Chat de groupe',
+    investment: 'Analyse d\'investissement',
     groupConversation: 'Conversation',
     groupConversationShort: 'Conv.',
     groupAgent: 'Agent',

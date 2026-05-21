@@ -89,6 +89,7 @@ export default {
     terminal: '终端',
     groupChat: '群聊',
     files: '文件',
+    investment: '投资分析',
     groupConversation: '对话',
     groupConversationShort: '对话',
     groupPlatform: '平台',

@@ -87,6 +87,7 @@ export default {
     terminal: '터미널',
     files: '파일',
     groupChat: '그룹 채팅',
+    investment: '투자 분석',
     groupConversation: '대화',
     groupConversationShort: '대화',
     groupAgent: '에이전트',
