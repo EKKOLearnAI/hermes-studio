@@ -27,6 +27,7 @@ vi.mock('../../packages/server/src/services/auth', () => ({
 }))
 
 import { AgentClients } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
 
 function routeHandler(path: string, method: string) {
@@ -221,5 +222,38 @@ describe('Group Chat member/agent identity sync', () => {
       agents: [],
       members: [{ id: 'member-1', userId: 'human-1', name: 'Han', description: '', joinedAt: 1 }],
     })
+  })
+
+  it('routes @mentions only from user messages, not agent replies', () => {
+    const server = Object.create(GroupChatServer.prototype) as any
+    const emit = vi.fn()
+    server.rooms = new Map([
+      ['room-1', {
+        hasOnlineMember: vi.fn(() => true),
+        getOnlineMemberBySocketId: vi.fn((socketId: string) => socketId === 'agent-socket'
+          ? { userId: 'agent-1', name: '丫鬟' }
+          : { userId: 'human-1', name: 'Human' }),
+      }],
+    ])
+    server.socketUserMap = new Map([
+      ['human-socket', 'human-1'],
+      ['agent-socket', 'agent-1'],
+    ])
+    server.userInfoMap = new Map([
+      ['human-1', { name: 'Human', description: '' }],
+      ['agent-1', { name: '丫鬟', description: '' }],
+    ])
+    server.agentClients = { processMentions: vi.fn(async () => undefined) }
+    server.storage = {
+      saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
+    }
+    server.nsp = { to: vi.fn(() => ({ emit })) }
+
+    server.handleMessage({ id: 'human-socket' }, { roomId: 'room-1', content: '@all hi', role: 'user' }, vi.fn())
+    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
+
+    server.agentClients.processMentions.mockClear()
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1 }, vi.fn())
+    expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
 })

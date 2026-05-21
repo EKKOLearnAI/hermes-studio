@@ -925,9 +925,7 @@ export class GroupChatServer {
         ack?.({ id: savedMsg.id })
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
-        const shouldRouteMentions =
-            savedMsg.role === 'user' ||
-            (savedMsg.role === 'assistant' && mentionDepth < 2)
+        const shouldRouteMentions = savedMsg.role === 'user'
 
         if (shouldRouteMentions) {
             // Server-side @mention routing — parse user mentions and invoke agents directly.
