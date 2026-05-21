@@ -1457,7 +1457,8 @@ class WorkerProcess:
     STARTUP_TIMEOUT_SECONDS = 120
     REQUEST_TIMEOUT_SECONDS = 120
 
-    def __init__(self, profile: str, endpoint: str, agent_root: str | None, hermes_home: str | None) -> None:
+    def __init__(self, key: str, endpoint: str, agent_root: str | None, hermes_home: str | None, profile: str | None = None) -> None:
+        self.key = key
         self.profile = profile or "default"
         self.endpoint = endpoint
         self.agent_root = agent_root
@@ -1589,8 +1590,8 @@ class WorkerProcess:
         return _send_bridge_request(self.endpoint, req, self.REQUEST_TIMEOUT_SECONDS)
 
 
-def _worker_endpoint(profile: str) -> str:
-    safe = hashlib.sha256(profile.encode("utf-8")).hexdigest()[:16]
+def _worker_endpoint(key: str) -> str:
+    safe = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     if os.name == "nt":
         port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
         return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
@@ -1783,11 +1784,14 @@ class BridgeBroker:
         self.endpoint = endpoint
         self.agent_root = agent_root
         self.hermes_home = hermes_home
+        # session_id → WorkerProcess (per-session isolation for true concurrency)
         self._workers: dict[str, WorkerProcess] = {}
-        self._run_profile: dict[str, str] = {}
-        self._session_profile: dict[str, str] = {}
-        self._approval_profile: dict[str, str] = {}
-        self._compression_profile: dict[str, str] = {}
+        # run_id → session_id (routing for get_result / get_output)
+        self._run_session: dict[str, str] = {}
+        # approval_id → session_id (routing for approval_respond)
+        self._approval_session: dict[str, str] = {}
+        # compression request_id → session_id (routing for compression_respond)
+        self._compression_session: dict[str, str] = {}
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._last_gc = time.time()
@@ -1796,58 +1800,58 @@ class BridgeBroker:
         profile = str(value or "").strip()
         return profile or "default"
 
-    def _worker_for_profile(self, profile: str) -> WorkerProcess:
-        profile = self._normalize_profile(profile)
+    def _worker_for_session(self, session_id: str, profile: str) -> WorkerProcess:
         with self._lock:
-            worker = self._workers.get(profile)
+            worker = self._workers.get(session_id)
             if worker is None:
-                worker = WorkerProcess(profile, _worker_endpoint(profile), self.agent_root, self.hermes_home)
-                self._workers[profile] = worker
+                worker = WorkerProcess(
+                    key=session_id,
+                    endpoint=_worker_endpoint(session_id),
+                    agent_root=self.agent_root,
+                    hermes_home=self.hermes_home,
+                    profile=profile,
+                )
+                self._workers[session_id] = worker
         return worker
 
-    def _profile_for_run(self, run_id: str) -> str:
+    def _session_for_run(self, run_id: str) -> str:
         with self._lock:
-            profile = self._run_profile.get(run_id)
-        if not profile:
+            session_id = self._run_session.get(run_id)
+        if not session_id:
             raise KeyError(f"unknown run: {run_id}")
-        return profile
+        return session_id
 
-    def _profile_for_session(self, session_id: str, fallback_profile: Any = None) -> str:
+    def _session_for_worker(self, session_id: str) -> str:
         with self._lock:
-            profile = self._session_profile.get(session_id)
-        if not profile:
-            fallback = self._normalize_profile(fallback_profile)
-            if fallback_profile is not None and fallback:
-                return fallback
-            raise KeyError(f"unknown session: {session_id}")
-        return profile
+            exists = session_id in self._workers
+        if not exists:
+            raise KeyError(f"unknown session: {session_id} (no bridge worker)")
+        return session_id  # session_id IS the worker key
 
-    def _record_response_routes(self, profile: str, resp: dict[str, Any]) -> None:
+    def _record_routes(self, session_id: str, resp: dict[str, Any]) -> None:
         run_id = str(resp.get("run_id") or "")
-        session_id = str(resp.get("session_id") or "")
         with self._lock:
             if run_id:
-                self._run_profile[run_id] = profile
-            if session_id:
-                self._session_profile[session_id] = profile
+                self._run_session[run_id] = session_id
             for event in resp.get("events") or []:
                 if not isinstance(event, dict):
                     continue
                 approval_id = str(event.get("approval_id") or "")
                 if approval_id:
-                    self._approval_profile[approval_id] = profile
+                    self._approval_session[approval_id] = session_id
                 request_id = str(event.get("request_id") or "")
                 if event.get("event") == "bridge.compression.requested" and request_id:
-                    self._compression_profile[request_id] = profile
+                    self._compression_session[request_id] = session_id
                 if event.get("event") in {"bridge.compression.completed", "bridge.compression.failed"} and request_id:
-                    self._compression_profile.pop(request_id, None)
+                    self._compression_session.pop(request_id, None)
 
-    def _forward(self, profile: str, req: dict[str, Any]) -> dict[str, Any]:
-        worker = self._worker_for_profile(profile)
+    def _forward(self, session_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        profile = self._normalize_profile(req.get("profile"))
+        worker = self._worker_for_session(session_id, profile)
         forwarded = dict(req)
         forwarded["profile"] = profile
         resp = worker.request(forwarded)
-        self._record_response_routes(profile, resp)
+        self._record_routes(session_id, resp)
         return resp
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
@@ -1857,30 +1861,36 @@ class BridgeBroker:
 
         if action == "ping":
             with self._lock:
-                workers = {profile: worker.running for profile, worker in self._workers.items()}
+                workers = {sid: worker.running for sid, worker in self._workers.items()}
             return {"pong": True, "time": time.time(), "mode": "broker", "workers": workers}
 
         if action == "worker_ping":
-            profile = self._normalize_profile(req.get("profile"))
-            resp = self._forward(profile, {"action": "ping"})
-            resp["worker_profile"] = profile
+            session_id = str(req.get("session_id") or "")
+            resp = self._forward(session_id, {"action": "ping"})
+            resp["worker_profile"] = resp.get("profile", "default")
             return resp
 
         if action == "chat":
-            profile = self._normalize_profile(req.get("profile"))
-            return self._forward(profile, req)
+            session_id = str(req.get("session_id") or "").strip() or uuid.uuid4().hex
+            return self._forward(session_id, req)
 
         if action in {"get_result", "get_output"}:
-            profile = self._profile_for_run(str(req.get("run_id") or ""))
-            return self._forward(profile, req)
+            session_id = self._session_for_run(str(req.get("run_id") or ""))
+            return self._forward(session_id, req)
 
         if action in {"interrupt", "steer", "get_history", "destroy"}:
             session_id = str(req.get("session_id") or "")
-            profile = self._profile_for_session(session_id, req.get("profile"))
-            resp = self._forward(profile, req)
+            self._session_for_worker(session_id)  # validate worker exists
+            resp = self._forward(session_id, req)
             if action == "destroy":
+                # Clean up worker and routing maps on session destroy
                 with self._lock:
-                    self._session_profile.pop(session_id, None)
+                    worker = self._workers.pop(session_id, None)
+                    self._run_session = {k: v for k, v in self._run_session.items() if v != session_id}
+                    self._approval_session = {k: v for k, v in self._approval_session.items() if v != session_id}
+                    self._compression_session = {k: v for k, v in self._compression_session.items() if v != session_id}
+                if worker:
+                    worker.stop()
             return resp
 
         if action == "approval_respond":
@@ -1888,28 +1898,28 @@ class BridgeBroker:
             if not approval_id:
                 raise ValueError("approval_id is required")
             with self._lock:
-                profile = self._approval_profile.get(approval_id)
-            if not profile:
+                session_id = self._approval_session.get(approval_id)
+            if not session_id:
                 raise KeyError(f"unknown approval request: {approval_id}")
-            return self._forward(profile, req)
+            return self._forward(session_id, req)
 
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
             if not request_id:
                 raise ValueError("request_id is required")
             with self._lock:
-                profile = self._compression_profile.get(request_id)
-            if not profile:
+                session_id = self._compression_session.get(request_id)
+            if not session_id:
                 raise KeyError(f"unknown compression request: {request_id}")
-            return self._forward(profile, req)
+            return self._forward(session_id, req)
 
         if action == "destroy_all":
             with self._lock:
                 workers = list(self._workers.values())
-                self._run_profile.clear()
-                self._session_profile.clear()
-                self._approval_profile.clear()
-                self._compression_profile.clear()
+                self._workers.clear()
+                self._run_session.clear()
+                self._approval_session.clear()
+                self._compression_session.clear()
             destroyed = 0
             for worker in workers:
                 if not worker.running:
@@ -1924,36 +1934,45 @@ class BridgeBroker:
 
         if action == "destroy_profile":
             profile = self._normalize_profile(req.get("profile"))
+            # Find all sessions using this profile
             with self._lock:
-                worker = self._workers.get(profile)
-                self._run_profile = {key: value for key, value in self._run_profile.items() if value != profile}
-                self._session_profile = {key: value for key, value in self._session_profile.items() if value != profile}
-                self._approval_profile = {key: value for key, value in self._approval_profile.items() if value != profile}
-                self._compression_profile = {key: value for key, value in self._compression_profile.items() if value != profile}
-
-            if worker is None or not worker.running:
-                if worker is not None:
+                matching = [
+                    (sid, w) for sid, w in self._workers.items()
+                    if w.profile == profile
+                ]
+                destroyed_sids = {sid for sid, _ in matching}
+            destroyed = 0
+            for sid, worker in matching:
+                with self._lock:
+                    if self._workers.pop(sid, None) is None:
+                        continue
+                if not worker.running:
                     worker.stop()
-                return {"profile": profile, "destroyed": 0}
-
-            try:
-                resp = worker.request({"action": "destroy_all"})
-                return {"profile": profile, "destroyed": int(resp.get("destroyed") or 0)}
-            except Exception:
-                return {"profile": profile, "destroyed": 0}
+                    continue
+                try:
+                    resp = worker.request({"action": "destroy_all"})
+                    destroyed += int(resp.get("destroyed") or 0)
+                except Exception:
+                    pass
+            # Clean up routing maps for destroyed sessions
+            with self._lock:
+                self._run_session = {k: v for k, v in self._run_session.items() if v not in destroyed_sids}
+                self._approval_session = {k: v for k, v in self._approval_session.items() if v not in destroyed_sids}
+                self._compression_session = {k: v for k, v in self._compression_session.items() if v not in destroyed_sids}
+            return {"profile": profile, "destroyed": destroyed}
 
         if action == "list":
             sessions: list[Any] = []
             with self._lock:
                 workers = list(self._workers.items())
-            for profile, worker in workers:
+            for sid, worker in workers:
                 if not worker.running:
                     continue
                 try:
                     resp = worker.request({"action": "list"})
                     for session in resp.get("sessions") or []:
                         if isinstance(session, dict):
-                            session.setdefault("profile", profile)
+                            session.setdefault("profile", worker.profile)
                         sessions.append(session)
                 except Exception:
                     pass
@@ -1963,6 +1982,7 @@ class BridgeBroker:
             self._stop.set()
             with self._lock:
                 workers = list(self._workers.values())
+                self._workers.clear()
             for worker in workers:
                 if not worker.running:
                     worker.stop()
@@ -1991,12 +2011,12 @@ class BridgeBroker:
         self._last_gc = now
         with self._lock:
             idle = [
-                profile for profile, worker in self._workers.items()
+                sid for sid, worker in self._workers.items()
                 if worker.running and now - worker.last_used_at > self.IDLE_TIMEOUT_SECONDS
             ]
-        for profile in idle:
+        for sid in idle:
             with self._lock:
-                worker = self._workers.pop(profile, None)
+                worker = self._workers.pop(sid, None)
             if worker:
                 worker.stop()
 
