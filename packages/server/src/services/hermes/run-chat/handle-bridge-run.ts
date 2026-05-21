@@ -10,8 +10,7 @@ import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
-import { buildCompressedHistory } from './compression'
-import { pushState, replaceState } from './compression'
+import { buildCompressedHistory, buildDbHistory, forceCompressBridgeHistory, pushState, replaceState } from './compression'
 import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import {
   flushBridgePendingToDb,
@@ -20,9 +19,7 @@ import {
   recordBridgeToolStarted,
   recordBridgeToolCompleted,
 } from './bridge-message'
-import { forceCompressBridgeHistory } from './compression'
 import { summarizeToolArguments } from './response-utils'
-import { buildDbHistory } from './compression'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
@@ -239,7 +236,21 @@ export async function handleBridgeRun(
     })
 
     for await (const chunk of bridge.streamOutput(started.run_id)) {
-      await applyBridgeChunkAsync(nsp, socket, state, session_id, runMarker, chunk, emit, profile, sessionMap, bridge, dequeueNextQueuedRun)
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        session_id,
+        runMarker,
+        chunk,
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        fullInstructions,
+        { model: resolvedModel, provider: resolvedProvider },
+      )
       if (chunk.done) break
     }
   } catch (err: any) {
@@ -256,14 +267,85 @@ export async function handleBridgeRun(
     flushBridgePendingToDb(state, session_id)
     updateSessionStats(session_id)
     const message = err instanceof Error ? err.message : String(err)
-    emit('run.failed', { event: 'run.failed', error: message, queue_remaining: queueLen })
     const errUsage = await calcAndUpdateUsage(session_id, state, emit)
+    const errContextTokens = await refreshFinalContextUsage({
+      sessionId: session_id,
+      profile,
+      model: resolvedModel,
+      provider: resolvedProvider,
+      instructions: fullInstructions,
+      state,
+      usage: errUsage,
+      emit,
+      bridge,
+    })
     updateUsage(session_id, {
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
-      profile: state.profile,
+      profile,
+    })
+    emit('run.failed', {
+      event: 'run.failed',
+      error: message,
+      inputTokens: errUsage.inputTokens,
+      outputTokens: errUsage.outputTokens,
+      contextTokens: errContextTokens,
+      queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+  }
+}
+
+async function refreshFinalContextUsage(args: {
+  sessionId: string
+  profile: string
+  model?: string | null
+  provider?: string | null
+  instructions: string
+  state: SessionState
+  usage: { inputTokens: number; outputTokens: number }
+  emit: (event: string, payload: any) => void
+  bridge: AgentBridgeClient
+}): Promise<number | undefined> {
+  try {
+    const finalHistory = await buildDbHistory(args.sessionId, { excludeLastUser: false })
+    const estimate = await args.bridge.contextEstimate(
+      args.sessionId,
+      finalHistory,
+      args.instructions,
+      args.profile,
+      { model: args.model ?? undefined, provider: args.provider ?? undefined },
+    )
+    const contextTokens = typeof estimate.token_count === 'number' && Number.isFinite(estimate.token_count) && estimate.token_count > 0
+      ? Math.floor(estimate.token_count)
+      : undefined
+    if (contextTokens == null) return args.state.contextTokens
+
+    args.state.contextTokens = contextTokens
+    args.emit('usage.updated', {
+      event: 'usage.updated',
+      inputTokens: args.usage.inputTokens,
+      outputTokens: args.usage.outputTokens,
+      contextTokens,
+    })
+    bridgeLogger.info({
+      sessionId: args.sessionId,
+      profile: args.profile,
+      model: args.model,
+      provider: args.provider,
+      messages: estimate.message_count,
+      toolCount: estimate.tool_count,
+      systemPromptChars: estimate.system_prompt_chars,
+      fullContextTokens: contextTokens,
+    }, '[chat-run-socket] final full context estimate')
+    return contextTokens
+  } catch (err) {
+    bridgeLogger.warn({
+      err: err instanceof Error ? { message: err.message, name: err.name } : err,
+      sessionId: args.sessionId,
+      profile: args.profile,
+    }, '[chat-run-socket] final full context estimate failed')
+    return args.state.contextTokens
   }
 }
 
@@ -279,6 +361,8 @@ async function applyBridgeChunkAsync(
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
+  instructions: string,
+  modelContext: { model?: string | null; provider?: string | null },
 ): Promise<void> {
   if (state.activeRunMarker !== runMarker) {
     bridgeLogger.info({
@@ -509,6 +593,17 @@ async function applyBridgeChunkAsync(
   updateSessionStats(sessionId)
   await delay(BRIDGE_USAGE_FLUSH_DELAY_MS)
   const usage = await calcAndUpdateUsage(sessionId, state, emit)
+  const contextTokens = await refreshFinalContextUsage({
+    sessionId,
+    profile,
+    model: modelContext.model,
+    provider: modelContext.provider,
+    instructions,
+    state,
+    usage,
+    emit,
+    bridge,
+  })
   updateUsage(sessionId, {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -536,6 +631,7 @@ async function applyBridgeChunkAsync(
     error: terminalError || chunk.error,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    contextTokens,
     queue_remaining: state.queue.length,
   }
   emit(eventName, payload)
