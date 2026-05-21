@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'timers/promises'
 import { createConnection, type Socket } from 'net'
-import { tmpdir } from 'os'
+import { tmpdir, userInfo as osUserInfo } from 'os'
 import { URL } from 'url'
 import { join } from 'path'
 import { bridgeLogger } from '../../logger'
@@ -12,9 +12,18 @@ function resolveDefaultAgentBridgeEndpoint(): string {
       ? `tcp://127.0.0.1:${28000 + (process.pid % 10000)}`
       : `ipc://${join(tmpdir(), `hermes-agent-bridge-test-${process.pid}.sock`)}`
   }
-  return process.platform === 'win32'
-    ? 'tcp://127.0.0.1:18765'
-    : 'ipc:///tmp/hermes-agent-bridge.sock'
+  if (process.platform === 'win32') {
+    return 'tcp://127.0.0.1:18765'
+  }
+  // Per-user socket to avoid conflicts on multi-user systems.
+  // Falls back to USER env var, then USERNAME, then 'unknown'.
+  let username = 'unknown'
+  try { username = osUserInfo().username } catch {}
+  if (!username || username === 'unknown') {
+    username = process.env.USER || process.env.USERNAME || 'unknown'
+  }
+  username = username.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `ipc:///tmp/hermes-agent-bridge-${username}.sock`
 }
 
 export const DEFAULT_AGENT_BRIDGE_ENDPOINT = resolveDefaultAgentBridgeEndpoint()

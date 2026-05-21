@@ -1676,7 +1676,11 @@ def _worker_endpoint(profile: str) -> str:
     if os.name == "nt":
         port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
         return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
-    root = Path(tempfile.gettempdir()) / "hermes-agent-bridge-workers"
+    # Per-user worker directory to avoid conflicts on multi-user systems
+    # where different users share the same profile name (e.g., "default").
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
+    user = re.sub(r"[^a-zA-Z0-9_-]", "_", user)
+    root = Path(tempfile.gettempdir()) / f"hermes-agent-bridge-workers-{user}"
     return f"ipc://{root / f'{safe}.sock'}"
 
 
