@@ -86,4 +86,12 @@ describe('KanbanCreateForm', () => {
     expect(wrapper.emitted('created')).toBeTruthy()
     expect(wrapper.emitted('close')).toBeTruthy()
   })
+
+  it('uses compact profile names for assignee options', () => {
+    const wrapper = mount(KanbanCreateForm)
+
+    expect(wrapper.text()).toContain('default')
+    expect(wrapper.text()).toContain('alice')
+    expect(wrapper.text()).not.toContain('alice · kanban.stats.tasks')
+  })
 })

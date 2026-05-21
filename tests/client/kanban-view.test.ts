@@ -10,7 +10,7 @@ const routeState = vi.hoisted(() => ({
 const routerReplace = vi.hoisted(() => vi.fn())
 
 const storeState = vi.hoisted(() => ({
-  tasks: [] as Array<{ id: string; title: string; status: string; created_at: number }>,
+  tasks: [] as Array<{ id: string; title: string; status: string; created_at: number; assignee?: string | null }>,
   stats: { by_status: { todo: 1, done: 0 }, by_assignee: {}, total: 1 } as Record<string, any>,
   assignees: [] as Array<{ name: string; counts: Record<string, number> | null }>,
   activeBoards: [] as Array<{ slug: string; name: string; icon?: string; total?: number }>,
@@ -34,6 +34,10 @@ const mockCreateBoard = vi.hoisted(() => vi.fn())
 const mockArchiveSelectedBoard = vi.hoisted(() => vi.fn())
 const mockStartEventStream = vi.hoisted(() => vi.fn())
 const mockStopEventStream = vi.hoisted(() => vi.fn())
+const mockFetchProfiles = vi.hoisted(() => vi.fn())
+const profilesState = vi.hoisted(() => ({
+  profiles: [] as Array<{ name: string; avatar?: Record<string, any> | null }>,
+}))
 
 vi.mock('vue-router', () => ({
   useRoute: () => routeState,
@@ -64,11 +68,18 @@ vi.mock('@/stores/hermes/kanban', () => ({
   }),
 }))
 
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => ({
+    profiles: profilesState.profiles,
+    fetchProfiles: mockFetchProfiles,
+  }),
+}))
+
 vi.mock('@/components/hermes/kanban/KanbanTaskCard.vue', () => ({
   default: defineComponent({
     name: 'KanbanTaskCard',
-    props: { task: { type: Object, required: true } },
-    template: '<div class="kanban-task-card-stub">{{ task.title }}</div>',
+    props: { task: { type: Object, required: true }, assigneeAvatar: { type: Object, required: false } },
+    template: '<div class="kanban-task-card-stub" :data-avatar-seed="assigneeAvatar?.seed || null">{{ task.title }}</div>',
   }),
 }))
 
@@ -119,13 +130,14 @@ vi.mock('naive-ui', () => ({
   }),
   NCollapse: defineComponent({
     name: 'NCollapse',
-    props: { defaultExpandedNames: { type: Array, required: false } },
-    template: '<div class="n-collapse-stub" :data-default-expanded="JSON.stringify(defaultExpandedNames ?? null)"><slot /></div>',
+    props: { expandedNames: { type: Array, required: false }, defaultExpandedNames: { type: Array, required: false } },
+    emits: ['update:expandedNames'],
+    template: '<div class="n-collapse-stub" :data-expanded="JSON.stringify(expandedNames ?? null)" :data-default-expanded="JSON.stringify(defaultExpandedNames ?? null)"><slot /></div>',
   }),
   NCollapseItem: defineComponent({
     name: 'NCollapseItem',
     props: { title: { type: String, required: false }, name: { type: String, required: false } },
-    template: '<section class="n-collapse-item-stub"><slot /></section>',
+    template: '<section class="n-collapse-item-stub" :data-name="name"><slot /></section>',
   }),
 }))
 
@@ -158,11 +170,13 @@ describe('KanbanView', () => {
     storeState.capabilities = null
     storeState.filterStatus = null
     storeState.filterAssignee = null
+    profilesState.profiles = []
     mockFetchBoards.mockResolvedValue(undefined)
     mockFetchCapabilities.mockResolvedValue(undefined)
     mockRefreshAll.mockResolvedValue(undefined)
     mockFetchTasks.mockResolvedValue(undefined)
     mockFetchStats.mockResolvedValue(undefined)
+    mockFetchProfiles.mockResolvedValue(undefined)
     mockCreateBoard.mockResolvedValue({ slug: 'new-board' })
     mockArchiveSelectedBoard.mockResolvedValue(undefined)
     mockRecoverSelectedBoard.mockImplementation((candidate: string) => {
@@ -185,10 +199,11 @@ describe('KanbanView', () => {
 
     expect(mockFetchBoards).toHaveBeenCalledOnce()
     expect(mockFetchCapabilities).toHaveBeenCalledOnce()
+    expect(mockFetchProfiles).toHaveBeenCalledOnce()
     expect(mockRecoverSelectedBoard).toHaveBeenCalledWith('project-a')
     expect(mockRefreshAll).toHaveBeenCalledOnce()
     expect(routerReplace).not.toHaveBeenCalled()
-    expect(wrapper.find('.n-collapse-stub').attributes('data-default-expanded')).toBe('null')
+    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["triage","todo","ready","running","blocked","done","archived"]')
 
     await wrapper.find('.drawer-updated').trigger('click')
     expect(mockFetchTasks).toHaveBeenCalledTimes(1)
@@ -202,14 +217,53 @@ describe('KanbanView', () => {
     expect(mockFetchStats).toHaveBeenCalledTimes(2)
   })
 
-  it('renders board and assignee count labels with explicit context', async () => {
+  it('renders board count labels and compact assignee profile labels', async () => {
     storeState.assignees = [{ name: 'alice', counts: { todo: 2, done: 1 } }]
     const wrapper = mount(KanbanView)
     await flushPromises()
 
     expect(wrapper.text()).toContain('kanban.title: Default · kanban.stats.tasks: 0')
     expect(wrapper.text()).toContain('kanban.title: Project A · kanban.stats.tasks: 2')
-    expect(wrapper.text()).toContain('kanban.detail.assignee: alice · kanban.stats.tasks: 3')
+    expect(wrapper.text()).toContain('default')
+    expect(wrapper.text()).toContain('alice')
+    expect(wrapper.text()).not.toContain('kanban.detail.assignee: alice')
+    expect(wrapper.text()).not.toContain('alice · kanban.stats.tasks')
+  })
+
+  it('passes matching profile avatars to task cards', async () => {
+    storeState.tasks = [{ id: 'task-1', title: 'Task one', status: 'todo', created_at: 10, assignee: 'alice' }]
+    profilesState.profiles = [{ name: 'alice', avatar: { type: 'generated', seed: 'alice-seed' } }]
+
+    const wrapper = mount(KanbanView)
+    await flushPromises()
+
+    expect(wrapper.find('.kanban-task-card-stub').attributes('data-avatar-seed')).toBe('alice-seed')
+  })
+
+  it('filters the visible board columns from stats chips', async () => {
+    storeState.filterStatus = 'done'
+
+    const wrapper = mount(KanbanView)
+    await flushPromises()
+
+    const columns = wrapper.findAll('.n-collapse-item-stub')
+    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["done"]')
+    expect(columns).toHaveLength(1)
+    expect(columns[0].attributes('data-name')).toBe('done')
+    expect(wrapper.text()).toContain('Task two')
+    expect(wrapper.text()).not.toContain('Task one')
+
+    await wrapper.find('.stat-chip.todo').trigger('click')
+    await flushPromises()
+
+    expect(mockSetFilter).toHaveBeenCalledWith('status', 'todo')
+    expect(mockFetchTasks).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('.stat-chip.total').trigger('click')
+    await flushPromises()
+
+    expect(mockSetFilter).toHaveBeenCalledWith('status', null)
+    expect(mockFetchTasks).toHaveBeenCalledTimes(2)
   })
 
   it('creates and archives boards from the board toolbar', async () => {

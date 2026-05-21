@@ -26,6 +26,14 @@ vi.mock('naive-ui', () => ({
   }),
 }))
 
+vi.mock('@/components/hermes/profiles/ProfileAvatar.vue', () => ({
+  default: defineComponent({
+    name: 'ProfileAvatar',
+    props: { name: { type: String, required: true }, avatar: { type: Object, required: false }, size: { type: Number, required: false } },
+    template: '<span class="assignee-profile-avatar-stub" :data-name="name" :data-avatar-type="avatar?.type || null" :data-avatar-seed="avatar?.seed || null"></span>',
+  }),
+}))
+
 import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
 
 describe('KanbanTaskCard i18n', () => {
@@ -39,6 +47,7 @@ describe('KanbanTaskCard i18n', () => {
 
     const wrapper = mount(KanbanTaskCard, {
       props: {
+        assigneeAvatar: { type: 'generated', seed: 'alice-seed' },
         task: {
           id: 'task-1',
           title: 'Ship kanban i18n',
@@ -62,5 +71,10 @@ describe('KanbanTaskCard i18n', () => {
     expect(wrapper.text()).toContain('高')
     expect(wrapper.text()).toContain('2分钟前')
     expect(wrapper.text()).toContain('负责人')
+    expect(wrapper.classes()).toContain('status-todo')
+    const avatar = wrapper.find('.assignee-profile-avatar-stub')
+    expect(avatar.attributes('data-name')).toBe('alice')
+    expect(avatar.attributes('data-avatar-type')).toBe('generated')
+    expect(avatar.attributes('data-avatar-seed')).toBe('alice-seed')
   })
 })
