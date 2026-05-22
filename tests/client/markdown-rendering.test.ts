@@ -10,6 +10,12 @@ const mermaidMock = vi.hoisted(() => ({
   })),
 }))
 
+const downloadApiMock = vi.hoisted(() => ({
+  downloadFile: vi.fn(() => Promise.resolve()),
+  fetchFileText: vi.fn(() => Promise.resolve('preview content')),
+  getDownloadUrl: vi.fn((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`),
+}))
+
 vi.mock('mermaid', () => ({
   default: mermaidMock,
 }))
@@ -28,6 +34,22 @@ vi.mock('vue-i18n', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
+  NDrawer: {
+    props: ['show', 'width'],
+    template: '<div v-if="show" class="n-drawer-stub" :data-width="width"><slot /></div>',
+  },
+  NDrawerContent: {
+    props: {
+      title: { type: String, default: '' },
+      closable: { type: Boolean, default: false },
+      bodyContentStyle: { type: [Object, String], default: undefined },
+    },
+    template: '<section class="n-drawer-content-stub" :data-body-padding="bodyContentStyle && bodyContentStyle.padding"><header class="n-drawer-header-stub">{{ title }}<button v-if="closable" class="n-drawer-close-stub" @click="$emit(\'close\')">x</button></header><slot /></section>',
+  },
+  NSpin: {
+    props: ['show'],
+    template: '<div class="n-spin-stub"><slot /></div>',
+  },
   useMessage: () => ({
     error: vi.fn(),
     success: vi.fn(),
@@ -37,8 +59,9 @@ vi.mock('naive-ui', () => ({
 }))
 
 vi.mock('@/api/hermes/download', () => ({
-  downloadFile: vi.fn(),
-  getDownloadUrl: (path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`,
+  downloadFile: downloadApiMock.downloadFile,
+  fetchFileText: downloadApiMock.fetchFileText,
+  getDownloadUrl: downloadApiMock.getDownloadUrl,
 }))
 
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
@@ -51,9 +74,15 @@ describe('MarkdownRenderer', () => {
   beforeEach(() => {
     mermaidMock.initialize.mockClear()
     mermaidMock.render.mockClear()
+    downloadApiMock.downloadFile.mockClear()
+    downloadApiMock.fetchFileText.mockClear()
+    downloadApiMock.getDownloadUrl.mockClear()
     mermaidMock.render.mockImplementation(async (id: string, source: string) => ({
       svg: `<svg id="${id}" data-testid="mermaid-svg"><text>${source}</text></svg>`,
     }))
+    downloadApiMock.downloadFile.mockResolvedValue(undefined)
+    downloadApiMock.fetchFileText.mockResolvedValue('preview content')
+    downloadApiMock.getDownloadUrl.mockImplementation((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`)
 
     Object.defineProperty(window, 'isSecureContext', {
       configurable: true,
@@ -251,6 +280,69 @@ describe('MarkdownRenderer', () => {
     const src = new URL(img.attributes('src'))
     expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/c/Users/Administrator/Desktop/screenshot.png')
     expect(img.attributes('alt')).toBe('桌面截图')
+  })
+
+  it('downloads local text files when the file card download icon is clicked', async () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[notes.txt](/tmp/notes.txt)',
+      },
+    })
+
+    expect(wrapper.find('.markdown-file-card').exists()).toBe(true)
+    expect(wrapper.find('.att-download-btn .att-download-icon').exists()).toBe(true)
+
+    await wrapper.find('.att-download-btn').trigger('click')
+    await Promise.resolve()
+
+    expect(downloadApiMock.downloadFile).toHaveBeenCalledTimes(1)
+    expect(downloadApiMock.downloadFile).toHaveBeenCalledWith('/tmp/notes.txt', 'notes.txt')
+    expect(downloadApiMock.fetchFileText).not.toHaveBeenCalled()
+    expect(wrapper.find('.n-drawer-stub').exists()).toBe(false)
+  })
+
+  it('opens text previews in a responsive drawer with a close control', async () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[notes.txt](/tmp/notes.txt)',
+      },
+    })
+
+    await wrapper.find('.markdown-file-card').trigger('click')
+    await Promise.resolve()
+    await nextTick()
+
+    const drawer = wrapper.find('.n-drawer-stub')
+    expect(drawer.exists()).toBe(true)
+    expect(drawer.attributes('data-width')).toBe('min(800px, 100vw)')
+    expect(drawer.find('.n-drawer-content-stub').attributes('data-body-padding')).toBe('0')
+    expect(drawer.text()).toContain('download.contentDisplay')
+    expect(downloadApiMock.fetchFileText).toHaveBeenCalledWith('/tmp/notes.txt', 'notes.txt')
+
+    await drawer.find('.n-drawer-close-stub').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.n-drawer-stub').exists()).toBe(false)
+  })
+
+  it('renders markdown file previews as markdown content', async () => {
+    downloadApiMock.fetchFileText.mockResolvedValue('# Preview Title\n\n**bold text**')
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[notes.md](/tmp/notes.md)',
+      },
+    })
+
+    await wrapper.find('.markdown-file-card').trigger('click')
+    await Promise.resolve()
+    await nextTick()
+
+    const drawer = wrapper.find('.n-drawer-stub')
+    expect(drawer.exists()).toBe(true)
+    expect(drawer.find('.text-preview-markdown').exists()).toBe(true)
+    expect(drawer.find('.text-preview-body').exists()).toBe(false)
+    expect(drawer.find('.text-preview-markdown h1').text()).toBe('Preview Title')
+    expect(drawer.find('.text-preview-markdown strong').text()).toBe('bold text')
   })
 
   it('keeps tilde-fenced markdown examples with nested tilde fences intact', () => {

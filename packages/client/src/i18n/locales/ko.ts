@@ -1161,6 +1161,7 @@ export default {
     backendTimeout: '파일 읽기 시간 초과',
     unsupportedBackend: '현재 터미널 백엔드는 파일 다운로드를 지원하지 않습니다',
     invalidPath: '잘못된 파일 경로',
+    contentDisplay: '내용 표시',
     download: '다운로드',
     downloadFile: '파일 다운로드',
   },

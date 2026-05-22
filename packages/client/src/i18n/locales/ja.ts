@@ -1161,6 +1161,7 @@ export default {
     backendTimeout: 'ファイルの読み取りがタイムアウトしました',
     unsupportedBackend: '現在のターミナルバックエンドはファイルのダウンロードに対応していません',
     invalidPath: '無効なファイルパス',
+    contentDisplay: '内容表示',
     download: 'ダウンロード',
     downloadFile: 'ファイルをダウンロード',
   },

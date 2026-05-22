@@ -1196,6 +1196,7 @@ export default {
     backendTimeout: 'File read timed out',
     unsupportedBackend: 'Current terminal backend does not support file download',
     invalidPath: 'Invalid file path',
+    contentDisplay: 'Content display',
     download: 'Download',
     downloadFile: 'Download file',
   },
