@@ -1255,6 +1255,13 @@ export default {
     new_0_5_33_5: 'Fix agent bridge startup failures on Chinese Windows systems caused by netstat output encoding',
     new_0_5_33_6: 'Refresh the Nous Portal preset model list from the public catalog and Portal recommendations',
     new_0_5_33_7: 'Profile lists and runtime status now read Profile names from disk and default models from config, avoiding CLI table column-width parsing errors',
+    new_0_5_34_1: 'Normalize multimodal tool results while storing session and group-chat messages, avoiding base64 image payloads in replays',
+    new_0_5_34_2: 'Persist custom Hermes models through backend-managed configuration and expose add/remove model endpoints',
+    new_0_5_34_3: 'Keep Bridge final context usage and tool status updates accurate after runs complete',
+    new_0_5_34_4: 'Improve Kanban board filtering, assignee display, card actions, and task detail handling',
+    new_0_5_34_5: 'Fix compression usage accounting by caching fixed prompt/tool context and reporting full-context token totals',
+    new_0_5_34_6: 'Cache fixed context per group-chat agent and only show compression progress when compression actually starts',
+    new_0_5_34_7: 'Sync Web UI bundled skills into every Profile and log the target Profile for each injection',
 
   },
 }

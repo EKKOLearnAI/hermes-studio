@@ -1035,6 +1035,13 @@ export default {
     new_0_5_33_5: '중국어 Windows 시스템에서 netstat 출력 인코딩 파싱 실패로 agent bridge 시작이 실패하는 문제 수정',
     new_0_5_33_6: 'Nous Portal preset 모델 목록을 공개 catalog와 Portal 추천 모델에 맞춰 갱신',
     new_0_5_33_7: 'Profile 목록과 런타임 상태가 Profile 이름은 디렉터리에서, 기본 모델은 config에서 읽어 CLI 표 열 너비로 인한 파싱 오류를 방지',
+    new_0_5_34_1: '세션/그룹 채팅 저장 시 멀티모달 tool 결과를 정규화해 base64 이미지가 리플레이에 섞이지 않도록 수정',
+    new_0_5_34_2: '사용자 지정 Hermes 모델을 backend 관리 설정에 저장하고 모델 추가/삭제 endpoint 추가',
+    new_0_5_34_3: 'Bridge 실행 완료 후 최종 컨텍스트 사용량과 tool 상태 업데이트 정확도 개선',
+    new_0_5_34_4: 'Kanban 보드 필터링, 담당자 표시, 카드 작업, 작업 상세 처리 개선',
+    new_0_5_34_5: '고정 prompt/tool 컨텍스트를 캐시하고 전체 컨텍스트 token 합계를 표시하도록 압축 사용량 수정',
+    new_0_5_34_6: '그룹 채팅 Agent별 고정 컨텍스트를 캐시하고 실제 압축이 시작될 때만 진행 상태 표시',
+    new_0_5_34_7: 'Web UI 내장 Skills를 모든 Profile에 동기화 주입하고 로그에 대상 Profile 기록',
   },
 
   // 파일

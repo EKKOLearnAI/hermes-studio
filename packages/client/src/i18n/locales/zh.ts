@@ -1257,6 +1257,13 @@ export default {
     new_0_5_33_5: '修复 Windows 中文系统下 agent bridge 解析 netstat 输出编码失败导致启动异常的问题',
     new_0_5_33_6: '更新 Nous Portal 预设模型列表，对齐公开 catalog 和 Portal 推荐模型',
     new_0_5_33_7: 'Profile 列表和运行状态改为从目录读取 Profile 名称、从 config 读取默认模型，避免 CLI 表格列宽导致 name/model/gateway 解析错位',
+    new_0_5_34_1: '存储会话和群聊消息时会规范化多模态工具结果，避免 base64 图片污染回放内容',
+    new_0_5_34_2: '自定义 Hermes 模型改为由后端配置持久化，并新增添加/移除模型接口',
+    new_0_5_34_3: '修复 Bridge 运行结束后的最终上下文用量和工具状态更新',
+    new_0_5_34_4: '优化看板过滤、负责人展示、卡片操作和任务详情处理',
+    new_0_5_34_5: '修复压缩用量统计：缓存固定 prompt/tool 上下文，并展示完整上下文 token 总量',
+    new_0_5_34_6: '群聊 Agent 缓存各自固定上下文，仅在真正开始压缩时显示压缩进度',
+    new_0_5_34_7: 'Web UI 内置 Skills 会同步注入到所有 Profile，并在日志中标明目标 Profile',
 
   },
 }

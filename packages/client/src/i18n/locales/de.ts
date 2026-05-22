@@ -1035,6 +1035,13 @@ jobTriggered: 'Job ausgelost',
     new_0_5_33_5: 'Agent-Bridge-Startfehler auf chinesischem Windows durch netstat-Ausgabecodierung behoben',
     new_0_5_33_6: 'Nous-Portal-Modellpreset anhand des öffentlichen Catalogs und der Portal-Empfehlungen aktualisiert',
     new_0_5_33_7: 'Profillisten und Laufzeitstatus lesen Profilnamen aus Verzeichnissen und Standardmodelle aus config, um CLI-Tabellenspaltenfehler zu vermeiden',
+    new_0_5_34_1: 'Multimodale tool-Ergebnisse werden beim Speichern von Sitzungs-/Gruppenchat-Nachrichten normalisiert, damit keine base64-Bilder in Replays gelangen',
+    new_0_5_34_2: 'Benutzerdefinierte Hermes-Modelle werden über backendverwaltete Konfiguration persistiert, mit neuen Endpunkten zum Hinzufügen und Entfernen',
+    new_0_5_34_3: 'Finale Bridge-Kontextnutzung und Tool-Statusupdates bleiben nach abgeschlossenen Läufen korrekt',
+    new_0_5_34_4: 'Kanban-Filterung, Verantwortlichenanzeige, Kartenaktionen und Aufgabendetails verbessert',
+    new_0_5_34_5: 'Komprimierungs-Nutzungszählung korrigiert, indem fixer prompt/tool-Kontext gecacht und vollständige Kontext-token gemeldet werden',
+    new_0_5_34_6: 'Gruppenchat-Agents cachen ihren eigenen fixen Kontext und zeigen Komprimierungsfortschritt erst an, wenn die Komprimierung wirklich startet',
+    new_0_5_34_7: 'Web-UI-gebündelte Skills werden in jedes Profile synchronisiert und das Ziel-Profile wird pro Injection protokolliert',
   },
 
   // Dateien

@@ -1035,6 +1035,13 @@ jobTriggered: 'Job ejecutado',
     new_0_5_33_5: 'Se corrige el inicio de agent bridge en Windows chino cuando la salida de netstat falla por codificación',
     new_0_5_33_6: 'Lista de modelos Nous Portal actualizada desde el catalog público y recomendaciones Portal',
     new_0_5_33_7: 'Las listas y estados runtime de Profile leen nombres desde directorios y modelos por defecto desde config, evitando errores por ancho de columnas CLI',
+    new_0_5_34_1: 'Normaliza resultados de tools multimodales al guardar mensajes de sesión/grupo para evitar imágenes base64 en los replays',
+    new_0_5_34_2: 'Persiste modelos Hermes personalizados en configuración gestionada por backend y añade endpoints para agregar/eliminar modelos',
+    new_0_5_34_3: 'Mantiene correctos el uso final de contexto Bridge y los estados de tools al completar ejecuciones',
+    new_0_5_34_4: 'Mejora filtros de Kanban, visualización de responsables, acciones de tarjetas y detalles de tareas',
+    new_0_5_34_5: 'Corrige la contabilidad de compresión con caché de contexto fijo de prompt/tools y totales completos de tokens',
+    new_0_5_34_6: 'Cachea contexto fijo por agent de chat grupal y muestra progreso solo cuando la compresión empieza realmente',
+    new_0_5_34_7: 'Sincroniza skills integradas de Web UI en todos los Profiles y registra el Profile destino en logs',
   },
 
   // Archivos
