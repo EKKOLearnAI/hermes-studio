@@ -36,6 +36,8 @@ from typing import Any, Callable
 DEFAULT_ENDPOINT = "tcp://127.0.0.1:18765" if os.name == "nt" else "ipc:///tmp/hermes-agent-bridge.sock"
 DEFAULT_AGENT_ROOT = "~/.hermes/hermes-agent"
 DEFAULT_HERMES_HOME = "~/.hermes"
+APPROVAL_TIMEOUT_SECONDS = 120
+APPROVAL_TIMEOUT_MS = APPROVAL_TIMEOUT_SECONDS * 1000
 
 
 def _bridge_platform() -> str:
@@ -928,10 +930,10 @@ class AgentPool:
                 "description": str(description or ""),
                 "choices": choices,
                 "allow_permanent": bool(allow_permanent),
-                "timeout_ms": 60_000,
+                "timeout_ms": APPROVAL_TIMEOUT_MS,
             })
             try:
-                choice = response_queue.get(timeout=60)
+                choice = response_queue.get(timeout=APPROVAL_TIMEOUT_SECONDS)
             except queue.Empty:
                 choice = "deny"
             finally:

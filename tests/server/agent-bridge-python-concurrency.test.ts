@@ -145,14 +145,20 @@ assert records["session-a"].deltas == ["delta:session-a"]
 assert records["session-b"].deltas == ["delta:session-b"]
 
 commands = {}
+timeouts = {}
 for sid, record in records.items():
     for event in record.events:
         if event.get("event") == "approval.requested":
             commands[sid] = event.get("command")
+            timeouts[sid] = event.get("timeout_ms")
 
 assert commands == {
     "session-a": "cmd:session-a",
     "session-b": "cmd:session-b",
+}
+assert timeouts == {
+    "session-a": 120000,
+    "session-b": 120000,
 }
 
 same_session = bridge.AgentSession(session_id="same-session", agent=FakeAgent("same-session"))
