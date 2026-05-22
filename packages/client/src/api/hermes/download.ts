@@ -53,3 +53,17 @@ export async function downloadFile(filePath: string, fileName?: string): Promise
   document.body.removeChild(a)
   URL.revokeObjectURL(blobUrl)
 }
+
+/**
+ * Get preview file content.
+ * Throws with error message on failure.
+ */
+export async function fetchFileText(filePath: string, fileName?: string): Promise<string> {
+  const url = getDownloadUrl(filePath, fileName)
+  const res = await fetch(url)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(body.error || `Preview failed: ${res.status}`)
+  }
+  return res.text()
+}

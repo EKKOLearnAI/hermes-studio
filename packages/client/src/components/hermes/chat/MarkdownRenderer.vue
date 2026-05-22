@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMessage } from 'naive-ui'
+import { NDrawer, NSpin, useMessage } from 'naive-ui'
 import type MarkdownIt from 'markdown-it'
 import MarkdownItConstructor from 'markdown-it'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
@@ -13,8 +13,11 @@ import {
   decodeMermaidSource,
   isMermaidFence,
   renderMermaidPlaceholder,
+  SUPPORT_PREVIEW_FILE_TYPES,
 } from './mermaidRenderer'
-import { downloadFile, getDownloadUrl } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
+
+const PREVIEW_AREA_WIDTH = 500
 
 const props = withDefaults(defineProps<{
     content: string
@@ -56,6 +59,12 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 const markdownBody = ref<HTMLElement | null>(null)
 const componentId = `hermes-mermaid-${Math.random().toString(36).slice(2)}`
 const previewUrl = ref<string | null>(null)
+
+// Preview config variable
+const textPreviewContent = ref<string | null>(null)
+const textPreviewLoading = ref(false)
+const textPreviewVisible = ref(false)
+
 let renderGeneration = 0
 let unmounted = false
 
@@ -308,11 +317,26 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const path = fileCard.getAttribute('data-path')
     const fileName = fileCard.getAttribute('data-filename')
-    if (path) {
+
+    const isDownloadBtn = target.closest('.att-download-btn')
+
+    if (isDownloadBtn && path) { // Only download file with download icon clicked.
       message.info(t('download.downloading'))
       downloadFile(path, fileName || undefined).catch((err: Error) => {
         message.error(err.message || t('download.downloadFailed'))
       })
+      return
+    }
+
+    if (path) {
+      const ext = fileName.split('.').pop()?.toLowerCase()
+      if (SUPPORT_PREVIEW_FILE_TYPES.includes(ext || '')) {
+        previewTextFile(path, fileName)
+      } else { // Download file immediately
+        downloadFile(path, fileName || undefined).catch((err: Error) => {
+          message.error(err.message || t('download.downloadFailed'))
+        })
+      }
     }
     return
   }
@@ -360,10 +384,38 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     })
   }
 }
+
+// Get file content and show preview area.
+async function previewTextFile(path: string, fileName: string): Promise<void> {
+  textPreviewLoading.value = true
+  textPreviewVisible.value = true
+  try {
+    textPreviewContent.value = await fetchFileText(path, fileName)
+  } catch (err: any) {
+    message.error(err.message || t('download.downloadFailed'))
+  } finally {
+    textPreviewLoading.value = false
+  }
+}
 </script>
 
 <template>
   <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
+  <!-- File preview area -->
+  <NDrawer
+    v-model:show="textPreviewVisible"
+    :width="PREVIEW_AREA_WIDTH"
+    placement="right"
+    :show-mask="false"
+    :trap-focus="false"
+  >
+    <template #header>
+      📄 {{ t('download.preview') }}
+    </template>
+    <NSpin :show="textPreviewLoading">
+      <pre v-if="textPreviewContent !== null" class="text-preview-body">{{ textPreviewContent }}</pre>
+    </NSpin>
+  </NDrawer>
   <Teleport to="body">
     <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
       <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
@@ -589,5 +641,19 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   object-fit: contain;
   border-radius: 4px;
   cursor: pointer;
+}
+
+.text-preview-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  margin: 0;
+  font-family: $font-code;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: $text-primary;
+  background: $code-bg;
 }
 </style>
