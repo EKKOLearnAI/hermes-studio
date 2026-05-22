@@ -509,6 +509,8 @@ class AgentPool:
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._run_context = threading.local()
         self._approval_handlers: dict[str, Callable[..., str]] = {}
+        self._exec_ask_depth = 0
+        self._exec_ask_previous: str | None = None
 
     def get_or_create(
         self,
@@ -964,7 +966,27 @@ class AgentPool:
         # terminal_tool stores callbacks in threading.local(), so each run
         # thread must bind the shared dispatcher for itself.
         set_approval_callback(self._approval_dispatcher)
-        os.environ["HERMES_EXEC_ASK"] = "1"
+
+    def _enter_exec_ask_scope(self) -> None:
+        with self._lock:
+            if self._exec_ask_depth == 0:
+                self._exec_ask_previous = os.environ.get("HERMES_EXEC_ASK")
+                os.environ["HERMES_EXEC_ASK"] = "1"
+            self._exec_ask_depth += 1
+
+    def _exit_exec_ask_scope(self) -> None:
+        with self._lock:
+            if self._exec_ask_depth <= 0:
+                return
+            self._exec_ask_depth -= 1
+            if self._exec_ask_depth > 0:
+                return
+            previous = self._exec_ask_previous
+            self._exec_ask_previous = None
+            if previous is None:
+                os.environ.pop("HERMES_EXEC_ASK", None)
+            else:
+                os.environ["HERMES_EXEC_ASK"] = previous
 
     def _gateway_approval_notify(self, session_id: str):
         def callback(approval_data: dict[str, Any]) -> None:
@@ -1152,8 +1174,11 @@ class AgentPool:
 
             approval_session_token = None
             registered_gateway_approval_session = None
+            exec_ask_scope_entered = False
             try:
                 try:
+                    self._enter_exec_ask_scope()
+                    exec_ask_scope_entered = True
                     self._install_approval_dispatcher_for_current_thread()
                     with self._lock:
                         self._approval_handlers[session.session_id] = self._approval_callback(session.session_id)
@@ -1237,6 +1262,8 @@ class AgentPool:
                         reset_current_session_key(approval_session_token)
                     except Exception:
                         pass
+                if exec_ask_scope_entered:
+                    self._exit_exec_ask_scope()
 
     def interrupt(self, session_id: str, message: str | None = None) -> dict[str, Any]:
         with self._lock:
