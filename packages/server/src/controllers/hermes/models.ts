@@ -359,6 +359,34 @@ async function buildAvailableForProfile(
     }
   }
 
+  // Process providers dict (recommended format): { name: { base_url, api_key, models: { model: {} } } }
+  const providersDict = config.providers
+  if (providersDict && typeof providersDict === 'object' && !Array.isArray(providersDict)) {
+    const resolveEnv = (value: string): string =>
+      value.replace(/\$\{([^}]+)\}/g, (_, key) => envGetValue(key))
+    const providersFetches = await Promise.allSettled(
+      Object.entries(providersDict).map(async ([name, def]: [string, any]) => {
+        if (!def || typeof def !== 'object' || !def.base_url) return null
+        const baseUrl = resolveEnv(String(def.base_url)).replace(/\/+$/, '')
+        const apiKey = def.api_key ? resolveEnv(String(def.api_key)) : ''
+        if (!baseUrl) return null
+        const modelsObj = def.models && typeof def.models === 'object' ? def.models : {}
+        let models = Object.keys(modelsObj)
+        if (apiKey) {
+          const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey)
+          if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
+        }
+        return { providerKey: name, label: name, base_url: baseUrl, models, api_key: apiKey }
+      }),
+    )
+    for (const result of providersFetches) {
+      if (result.status === 'fulfilled' && result.value?.models.length) {
+        const { providerKey, label, base_url, models, api_key } = result.value
+        addGroup(providerKey, label, base_url, models, api_key)
+      }
+    }
+  }
+
   if (groups.length === 0) {
     const fallback = buildModelGroups(config)
     for (const group of fallback.groups) {
