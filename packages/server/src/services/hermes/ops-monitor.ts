@@ -96,6 +96,37 @@ function safeCpus(): ReturnType<typeof cpus> {
   }
 }
 
+function readProcStatCpuTimes(): CpuTimesSample | null {
+  try {
+    const line = readFileSync('/proc/stat', 'utf-8').split(/\r?\n/, 1)[0]
+    const parts = line.trim().split(/\s+/)
+    if (parts[0] !== 'cpu') return null
+    const values = parts.slice(1).map(value => Number(value)).filter(Number.isFinite)
+    if (values.length < 4) return null
+    const idle = (values[3] || 0) + (values[4] || 0)
+    const total = values.reduce((sum, value) => sum + value, 0)
+    return total > 0 ? { idle, total } : null
+  } catch {
+    return null
+  }
+}
+
+function procCpuCount(): number {
+  try {
+    const cpuinfo = readFileSync('/proc/cpuinfo', 'utf-8')
+    const processors = cpuinfo.match(/^processor\s*:/gim)?.length || 0
+    if (processors > 0) return processors
+    const hardwareThreads = cpuinfo.match(/^CPU part\s*:/gim)?.length || 0
+    return hardwareThreads > 0 ? hardwareThreads : 0
+  } catch {
+    return 0
+  }
+}
+
+function safeCpuCount(): number {
+  return safeCpus().length || procCpuCount() || 1
+}
+
 function safeLoadAverage(): number[] {
   try {
     return loadavg()
@@ -141,7 +172,8 @@ function readCpuTimes(): CpuTimesSample {
     idle += cpu.times.idle
     total += Object.values(cpu.times).reduce((sum, value) => sum + value, 0)
   }
-  return { idle, total }
+  if (total > 0) return { idle, total }
+  return readProcStatCpuTimes() || { idle: 0, total: 0 }
 }
 
 function sampleSystemCpuPercent(): number | null {
@@ -173,7 +205,7 @@ function sampleWebCpuPercent(): number | null {
     const elapsedMicros = (current.at - previous.at) * 1000
     const used = (current.usage.user - previous.usage.user) + (current.usage.system - previous.usage.system)
     if (elapsedMicros <= 0 || used < 0) return null
-    return clampPercent((used / elapsedMicros / Math.max(safeCpus().length, 1)) * 100)
+    return clampPercent((used / elapsedMicros / safeCpuCount()) * 100)
   } catch {
     return null
   }
@@ -320,7 +352,7 @@ function sampleWindowsProcessCpuPercent(pid: number, cpuSeconds: number): number
   const elapsedSeconds = (current.at - previous.at) / 1000
   const cpuDelta = current.cpuSeconds - previous.cpuSeconds
   if (elapsedSeconds <= 0 || cpuDelta < 0) return 0
-  return clampPercent((cpuDelta / elapsedSeconds / Math.max(safeCpus().length, 1)) * 100)
+  return clampPercent((cpuDelta / elapsedSeconds / safeCpuCount()) * 100)
 }
 
 function collectWindowsProcessMetrics(pids: number[]): Map<number, Partial<ProcessUsage>> {
@@ -463,7 +495,7 @@ export function createEmptyOpsRuntimeSnapshot(error?: string): OpsRuntimeSnapsho
       platform: process.platform,
       arch: process.arch,
       uptimeSeconds: safeUptime(),
-      cpuCount: safeCpus().length,
+      cpuCount: safeCpuCount(),
       cpuPercent: 0,
       loadAverage: safeLoadAverage(),
       totalMemoryBytes: 0,
@@ -565,7 +597,7 @@ export async function getOpsRuntimeSnapshot(): Promise<OpsRuntimeSnapshot> {
       platform: process.platform,
       arch: process.arch,
       uptimeSeconds: safeUptime(),
-      cpuCount: safeCpus().length,
+      cpuCount: safeCpuCount(),
       cpuPercent: sampleSystemCpuPercent() ?? 0,
       loadAverage: safeLoadAverage(),
       totalMemoryBytes: systemMemory.totalMemoryBytes,
