@@ -68,7 +68,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
 export async function handleApiRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   skipUserMessage = false,
@@ -133,7 +133,7 @@ export async function handleApiRun(
         content: inputStr,
         timestamp: now,
       })
-      peerUserMessage = { id: messageId, role: 'user', content: inputStr, timestamp: now }
+      peerUserMessage = { id: data.queue_id ? undefined : messageId, role: 'user', content: inputStr, timestamp: now }
     } else {
       const inputStr = contentBlocksToString(input)
       state.messages.push({
@@ -155,15 +155,21 @@ export async function handleApiRun(
         content: inputStr,
         timestamp: now,
       })
-      peerUserMessage = { id: messageId, role: 'user', content: inputStr, timestamp: now }
+      peerUserMessage = { id: data.queue_id ? undefined : messageId, role: 'user', content: inputStr, timestamp: now }
     }
 
     socket.join(`session:${session_id}`)
     if (peerUserMessage) {
-      socket.to(`session:${session_id}`).emit('run.peer_user_message', {
+      const target = data.peerExcludeSocketId
+        ? nsp.to(`session:${session_id}`).except(data.peerExcludeSocketId)
+        : socket.to(`session:${session_id}`)
+      target.emit('run.peer_user_message', {
         event: 'run.peer_user_message',
         session_id,
-        message: peerUserMessage,
+        message: {
+          ...peerUserMessage,
+          id: data.queue_id || peerUserMessage.id,
+        },
       })
     }
   }

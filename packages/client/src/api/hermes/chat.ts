@@ -57,6 +57,7 @@ export interface RunEvent {
     role?: string
     content?: string
     timestamp?: number
+    queued?: boolean
   }
 }
 

@@ -94,7 +94,7 @@ function cacheBridgeContext(state: SessionState, data: Record<string, unknown> |
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -181,11 +181,14 @@ export async function handleBridgeRun(
   })
 
   socket.join(`session:${session_id}`)
-  socket.to(`session:${session_id}`).emit('run.peer_user_message', {
+  const peerTarget = data.peerExcludeSocketId
+    ? nsp.to(`session:${session_id}`).except(data.peerExcludeSocketId)
+    : socket.to(`session:${session_id}`)
+  peerTarget.emit('run.peer_user_message', {
     event: 'run.peer_user_message',
     session_id,
     message: {
-      id: messageId,
+      id: data.queue_id || messageId,
       role: 'user',
       content: inputStr,
       timestamp: now,

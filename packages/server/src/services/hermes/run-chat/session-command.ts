@@ -157,6 +157,7 @@ export async function handleSessionCommand(
         instructions: ctx.instructions,
         profile: ctx.profile,
         source: 'cli',
+        originSocketId: ctx.socket.id,
       })
       emitToSession(ctx.nsp, ctx.socket, sessionId, 'run.queued', {
         event: 'run.queued',

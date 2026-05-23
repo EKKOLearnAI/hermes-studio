@@ -1887,18 +1887,29 @@ export const useChatStore = defineStore('chat', () => {
       resumeServerWorkingRun(sid, true)
       return
     }
+    if (messageId && (queuedUserMessages.value.get(sid) || []).some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
 
     const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
       ? Math.round(peer.timestamp * 1000)
       : Date.now()
 
-    addMessage(sid, {
+    const message: Message = {
       id: messageId || uid(),
       role: 'user',
       content,
       timestamp,
-    })
-    updateSessionTitle(sid)
+      queued: !!peer?.queued,
+    }
+    if (peer?.queued) {
+      enqueueUserMessage(sid, message)
+    } else {
+      addMessage(sid, message)
+      updateSessionTitle(sid)
+    }
     serverWorking.value.add(sid)
     resumeServerWorkingRun(sid, true)
   }

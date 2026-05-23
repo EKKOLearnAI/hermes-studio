@@ -19,6 +19,7 @@ import { handleBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
+import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
@@ -146,8 +147,9 @@ export class ChatRunSocket {
           return
         }
         if (state.isWorking) {
+          const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
           state.queue.push({
-            queue_id: data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+            queue_id: queueId,
             input: data.input,
             model: data.model,
             provider: data.provider,
@@ -155,6 +157,18 @@ export class ChatRunSocket {
             instructions: data.instructions,
             profile: runProfile,
             source,
+            originSocketId: socket.id,
+          })
+          socket.to(`session:${data.session_id}`).emit('run.peer_user_message', {
+            event: 'run.peer_user_message',
+            session_id: data.session_id,
+            message: {
+              id: queueId,
+              role: 'user',
+              content: contentBlocksToString(data.input),
+              timestamp: Math.floor(Date.now() / 1000),
+              queued: true,
+            },
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
             event: 'run.queued',
@@ -249,6 +263,8 @@ export class ChatRunSocket {
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
       source?: string
+      queue_id?: string
+      peerExcludeSocketId?: string
     },
     profile: string,
     skipUserMessage = false,
@@ -336,6 +352,8 @@ export class ChatRunSocket {
       model_groups: next.model_groups,
       instructions: next.instructions,
       source: next.source,
+      queue_id: next.queue_id,
+      peerExcludeSocketId: next.originSocketId,
     }, next.profile || fallbackProfile, true)
   }
 
