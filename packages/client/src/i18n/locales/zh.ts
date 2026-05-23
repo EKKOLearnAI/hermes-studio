@@ -1297,6 +1297,14 @@ export default {
     new_0_5_34_6: '群聊 Agent 缓存各自固定上下文，仅在真正开始压缩时显示压缩进度',
     new_0_5_34_7: 'Web UI 内置 Skills 会同步注入到所有 Profile，并在日志中标明目标 Profile',
     new_0_5_34_8: '如果 Windows 下看板功能异常，请升级 Hermes 以获取最新的看板数据库迁移修复',
+    new_0_5_35_1: 'Bridge 会话支持不同 session 并发运行，同一 session 仍保持串行，避免消息顺序错乱',
+    new_0_5_35_2: '新增“性能监控”页面，可查看系统 CPU/内存、Web UI、Bridge Broker、Workers 和活跃会话状态',
+    new_0_5_35_3: '新增 Worker 级资源统计，展示每个 worker 的 CPU、内存、Profile、会话数和运行状态',
+    new_0_5_35_4: '优化 Bridge worker 生命周期清理，Broker 关闭或父进程退出时会回收 worker，减少残留 Python 进程',
+    new_0_5_35_5: '监控接口增强跨平台兼容，支持 macOS、Windows、Linux、Docker 和 Termux 的资源采集降级',
+    new_0_5_35_6: '性能监控不再因为 Agent 初始化中的 worker 请求而阻塞，降低 Windows 上 request timed out 的概率',
+    new_0_5_35_7: '聊天 Markdown 新增文本内容内联预览，下载图标会直接下载文件，避免被预览弹窗拦截',
+    new_0_5_35_8: '优化内容展示抽屉：移动端全宽并提供关闭入口，桌面端加宽到 800px，文本与 Markdown 背景保持一致',
 
   },
 }

@@ -1074,6 +1074,14 @@ export default {
     new_0_5_34_6: '그룹 채팅 Agent별 고정 컨텍스트를 캐시하고 실제 압축이 시작될 때만 진행 상태 표시',
     new_0_5_34_7: 'Web UI 내장 Skills를 모든 Profile에 동기화 주입하고 로그에 대상 Profile 기록',
     new_0_5_34_8: 'Windows에서 Kanban 기능이 비정상이라면 최신 Kanban 데이터베이스 마이그레이션 수정이 포함된 Hermes로 업그레이드하세요',
+    new_0_5_35_1: 'Bridge 세션은 서로 다른 session 간 동시 실행을 지원하며, 같은 session 실행은 메시지 순서를 보존하도록 직렬화됩니다',
+    new_0_5_35_2: 'Performance Monitor 페이지를 추가해 시스템 CPU/메모리, Web UI, Bridge Broker, Workers, 활성 세션 상태를 확인할 수 있습니다',
+    new_0_5_35_3: 'Worker별 CPU, 메모리, Profile, 세션 수, 실행 상태를 보여주는 리소스 지표 추가',
+    new_0_5_35_4: 'Bridge worker 수명 주기 정리를 개선해 Broker 종료나 부모 프로세스 종료 시 worker를 회수하고 남는 Python 프로세스를 줄입니다',
+    new_0_5_35_5: 'macOS, Windows, Linux, Docker, Termux용 fallback으로 모니터링 리소스 수집의 크로스 플랫폼 호환성 강화',
+    new_0_5_35_6: 'Agent 초기화 중 worker request로 Performance Monitor가 막히지 않도록 개선해 Windows의 request timed out 가능성을 낮춤',
+    new_0_5_35_7: 'Chat Markdown에 텍스트 콘텐츠 인라인 미리보기를 추가하고, 다운로드 아이콘은 preview drawer 대신 파일을 직접 다운로드합니다',
+    new_0_5_35_8: '콘텐츠 preview drawer 개선: 모바일 닫기 동작, 모바일 전체 너비, 데스크톱 800px 너비, 텍스트/Markdown 배경 통일',
   },
 
   // 파일

@@ -1295,6 +1295,14 @@ export default {
     new_0_5_34_6: 'Cache fixed context per group-chat agent and only show compression progress when compression actually starts',
     new_0_5_34_7: 'Sync Web UI bundled skills into every Profile and log the target Profile for each injection',
     new_0_5_34_8: 'If Kanban fails on Windows, upgrade Hermes to pick up the latest kanban database migration fixes',
+    new_0_5_35_1: 'Bridge sessions can now run concurrently across different sessions while same-session runs stay serialized to preserve message order',
+    new_0_5_35_2: 'Add the Performance Monitor page for system CPU/memory, Web UI, Bridge Broker, Workers, and active session status',
+    new_0_5_35_3: 'Add per-worker resource metrics showing CPU, memory, Profile, session count, and running state',
+    new_0_5_35_4: 'Improve Bridge worker lifecycle cleanup so broker shutdowns and parent-process exits reclaim workers and reduce orphan Python processes',
+    new_0_5_35_5: 'Harden monitoring compatibility with resource collection fallbacks for macOS, Windows, Linux, Docker, and Termux',
+    new_0_5_35_6: 'Performance monitoring no longer blocks on worker requests while agents are initializing, reducing request timeouts on Windows',
+    new_0_5_35_7: 'Chat Markdown now supports inline text-content previews, and download icons download files directly instead of opening the preview drawer',
+    new_0_5_35_8: 'Polish the content preview drawer with a mobile close action, full-width mobile layout, 800px desktop width, and consistent text/Markdown backgrounds',
 
   },
 }
