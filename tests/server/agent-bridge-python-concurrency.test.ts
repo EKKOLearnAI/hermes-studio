@@ -21,6 +21,7 @@ function runPython(script: string): void {
 const harness = String.raw`
 import contextvars
 import importlib.util
+import json
 import os
 import sys
 import threading
@@ -501,6 +502,57 @@ finally:
     bridge._process_exists = original_process_exists
 
 assert seen_pids == [12345]
+`)
+  })
+
+  it('handles broker ping while another broker request is blocked', () => {
+    runPython(String.raw`
+${harness}
+
+class BlockingBroker(bridge.BridgeBroker):
+    def handle(self, req):
+        if req.get("action") == "block":
+            time.sleep(0.4)
+            return {"blocked": True}
+        return super().handle(req)
+
+class MemoryConn:
+    def __init__(self, req):
+        self.request = (json.dumps(req) + "\n").encode("utf-8")
+        self.response = b""
+        self.closed = False
+
+    def recv(self, size):
+        if not self.request:
+            return b""
+        chunk = self.request[:size]
+        self.request = self.request[size:]
+        return chunk
+
+    def sendall(self, payload):
+        self.response += payload
+
+    def close(self):
+        self.closed = True
+
+broker = BlockingBroker("ipc:///tmp/unused.sock")
+blocking_conn = MemoryConn({"action": "block"})
+thread = threading.Thread(target=broker._handle_connection, args=(blocking_conn,))
+thread.start()
+time.sleep(0.05)
+
+ping_conn = MemoryConn({"action": "ping"})
+broker._handle_connection(ping_conn)
+ping_resp = json.loads(ping_conn.response.decode("utf-8"))
+assert ping_resp["ok"] is True, ping_resp
+assert ping_resp["pong"] is True, ping_resp
+assert ping_conn.closed is True, ping_conn.closed
+
+thread.join(timeout=2)
+assert not thread.is_alive(), blocking_conn.response
+blocked_resp = json.loads(blocking_conn.response.decode("utf-8"))
+assert blocked_resp["ok"] is True, blocked_resp
+assert blocked_resp["blocked"] is True, blocked_resp
 `)
   })
 })

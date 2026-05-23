@@ -69,7 +69,7 @@ function setAutoRefresh(enabled: boolean) {
     timer = undefined
   }
   if (enabled) {
-    timer = setInterval(() => loadRuntime(false), 3000)
+    timer = setInterval(() => loadRuntime(false), 5000)
   }
 }
 

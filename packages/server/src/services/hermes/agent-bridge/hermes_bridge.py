@@ -2320,6 +2320,27 @@ class BridgeBroker:
     def _write_response(self, conn: socket.socket, resp: dict[str, Any]) -> None:
         _write_json_response(conn, resp)
 
+    def _handle_connection(self, conn: socket.socket) -> None:
+        try:
+            try:
+                req = self._read_request(conn)
+                data = self.handle(req)
+                resp = {"ok": True, **_jsonable(data)}
+            except Exception as exc:
+                resp = {
+                    "ok": False,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                }
+            self._write_response(conn, resp)
+        except Exception as exc:
+            print(f"[hermes-bridge-broker] connection error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
     def _gc_idle_workers(self) -> None:
         now = time.time()
         if now - self._last_gc < self.GC_INTERVAL_SECONDS:
@@ -2346,34 +2367,22 @@ class BridgeBroker:
             print(json.dumps({"event": "ready", "endpoint": self.endpoint, "mode": "broker"}), flush=True)
 
             while not self._stop.is_set():
-                conn: socket.socket | None = None
                 try:
                     try:
                         conn, _addr = server.accept()
                     except socket.timeout:
                         self._gc_idle_workers()
                         continue
-                    try:
-                        req = self._read_request(conn)
-                        data = self.handle(req)
-                        resp = {"ok": True, **_jsonable(data)}
-                    except Exception as exc:
-                        resp = {
-                            "ok": False,
-                            "error": str(exc),
-                            "error_type": exc.__class__.__name__,
-                        }
-                    self._write_response(conn, resp)
+                    threading.Thread(
+                        target=self._handle_connection,
+                        args=(conn,),
+                        daemon=True,
+                        name="hermes-bridge-broker-connection",
+                    ).start()
                 except KeyboardInterrupt:
                     break
                 except Exception as exc:
                     print(f"[hermes-bridge-broker] server loop error: {exc}", file=sys.stderr, flush=True)
-                finally:
-                    if conn is not None:
-                        try:
-                            conn.close()
-                        except OSError:
-                            pass
         finally:
             restore_signals()
             try:
