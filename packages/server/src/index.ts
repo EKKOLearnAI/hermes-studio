@@ -150,12 +150,18 @@ export async function bootstrap() {
   // SPA fallback — serve Vite production build
   const distDir = resolve(__dirname, '..', 'client')
 
-  // Serve hashed static assets with long-lived cache (Vite uses content hashes
-  // in filenames so they are safe to cache permanently; index.html is excluded
-  // because it is served by the SPA fallback below with no-cache semantics).
+  // Vite emits content-hashed files under /assets, so those can be cached
+  // aggressively. Keep index.html revalidated so clients pick up new asset URLs
+  // after a deploy.
   app.use(serve(distDir, {
-    maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year in ms (koa-static divides by 1000)
-    immutable: true,
+    setHeaders: (res, servedPath) => {
+      const normalizedPath = servedPath.replace(/\\/g, '/')
+      if (normalizedPath.includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+      } else if (normalizedPath.endsWith('/index.html')) {
+        res.setHeader('Cache-Control', 'no-cache')
+      }
+    },
   }))
 
   // SPA fallback — always revalidate index.html so users get the latest
