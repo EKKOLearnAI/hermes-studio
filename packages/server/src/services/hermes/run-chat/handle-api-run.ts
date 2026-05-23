@@ -109,6 +109,7 @@ export async function handleApiRun(
     state.source = 'api_server'
     state.activeRunMarker = runMarker
 
+    let peerUserMessage: { id?: number; role: 'user'; content: string; timestamp: number } | null = null
     if (!skipUserMessage) {
       const inputStr = contentBlocksToString(input)
       state.messages.push({
@@ -126,12 +127,13 @@ export async function handleApiRun(
         createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
       }
 
-      addMessage({
+      const messageId = addMessage({
         session_id,
         role: 'user',
         content: inputStr,
         timestamp: now,
       })
+      peerUserMessage = { id: messageId, role: 'user', content: inputStr, timestamp: now }
     } else {
       const inputStr = contentBlocksToString(input)
       state.messages.push({
@@ -147,15 +149,23 @@ export async function handleApiRun(
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
         createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
       }
-      addMessage({
+      const messageId = addMessage({
         session_id,
         role: 'user',
         content: inputStr,
         timestamp: now,
       })
+      peerUserMessage = { id: messageId, role: 'user', content: inputStr, timestamp: now }
     }
 
     socket.join(`session:${session_id}`)
+    if (peerUserMessage) {
+      socket.to(`session:${session_id}`).emit('run.peer_user_message', {
+        event: 'run.peer_user_message',
+        session_id,
+        message: peerUserMessage,
+      })
+    }
   }
 
   const emit = (event: string, payload: any) => {

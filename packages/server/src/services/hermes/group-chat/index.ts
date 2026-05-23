@@ -72,6 +72,17 @@ interface RoomAgent {
     invited: number
 }
 
+interface RoomInfo {
+    id: string
+    name: string
+    inviteCode: string | null
+    triggerTokens: number
+    maxHistoryTokens: number
+    tailMessageCount: number
+    totalTokens: number
+    sessionSeed: string
+}
+
 interface Member {
     id: string
     userId: string
@@ -278,16 +289,29 @@ class ChatStorage {
 
     // ─── Rooms ────────────────────────────────────────────────
 
-    getRoom(roomId: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string } | undefined {
+    getRoom(roomId: string): RoomInfo | undefined {
         return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
-    getRoomByInviteCode(code: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string } | undefined {
+    getRoomByInviteCode(code: string): RoomInfo | undefined {
         return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
-    getAllRooms(): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string }[] {
+    getAllRooms(): RoomInfo[] {
         return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed FROM gc_rooms ORDER BY id').all() || []) as any[]
+    }
+
+    getRoomsForProfiles(profiles: string[]): RoomInfo[] {
+        const uniqueProfiles = [...new Set(profiles.map(profile => profile.trim()).filter(Boolean))]
+        if (!uniqueProfiles.length) return []
+        const placeholders = uniqueProfiles.map(() => '?').join(', ')
+        return (this.db()?.prepare(
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed
+             FROM gc_rooms r
+             INNER JOIN gc_room_agents a ON a.roomId = r.id
+             WHERE a.profile IN (${placeholders})
+             ORDER BY r.id`
+        ).all(...uniqueProfiles) || []) as any[]
     }
 
     saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {

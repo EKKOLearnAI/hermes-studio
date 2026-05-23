@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getApiKey } from '@/api/client'
 import { defineStore } from 'pinia'
@@ -1451,11 +1451,11 @@ export const useChatStore = defineStore('chat', () => {
    * Emits 'resume' to join the session room on the server,
    * then sets up event listeners to receive ongoing events.
    */
-  function resumeServerWorkingRun(sid: string) {
+  function resumeServerWorkingRun(sid: string, force = false) {
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
     // Only set up listeners if the server reported an active run during resume.
-    if (!serverWorking.value.has(sid)) return
+    if (!force && !serverWorking.value.has(sid)) return
 
     let closed = false
     let runProducedAssistantText = false
@@ -1871,6 +1871,39 @@ export const useChatStore = defineStore('chat', () => {
       },
     })
   }
+
+  function handlePeerUserMessage(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid || activeSessionId.value !== sid || !activeSession.value) return
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    if (!content.trim()) return
+
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    const msgs = getSessionMsgs(sid)
+    if (messageId && msgs.some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+
+    addMessage(sid, {
+      id: messageId || uid(),
+      role: 'user',
+      content,
+      timestamp,
+    })
+    updateSessionTitle(sid)
+    serverWorking.value.add(sid)
+    resumeServerWorkingRun(sid, true)
+  }
+
+  onPeerUserMessage(handlePeerUserMessage)
 
   function stopStreaming() {
     const sid = activeSessionId.value

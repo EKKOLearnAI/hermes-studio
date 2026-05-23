@@ -51,6 +51,13 @@ export interface RunEvent {
   session_id?: string
   /** Queue length from run.queued event */
   queue_length?: number
+  /** User message broadcast to other windows already watching the same session. */
+  message?: {
+    id?: string | number
+    role?: string
+    content?: string
+    timestamp?: number
+  }
 }
 
 // ============================
@@ -83,7 +90,10 @@ const sessionEventHandlers = new Map<string, {
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
+  onPeerUserMessage?: (event: RunEvent) => void
 }>()
+
+const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -324,6 +334,20 @@ function globalApprovalResolvedHandler(event: RunEvent): void {
   }
 }
 
+function globalPeerUserMessageHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onPeerUserMessage) {
+    handlers.onPeerUserMessage(event)
+  }
+
+  for (const handler of peerUserMessageHandlers) {
+    handler(event)
+  }
+}
+
 /**
  * Register event handlers for a session
  * @param sessionId - Session ID
@@ -351,6 +375,7 @@ export function registerSessionHandlers(
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
+    onPeerUserMessage?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -367,6 +392,13 @@ export function registerSessionHandlers(
  */
 export function unregisterSessionHandlers(sessionId: string): void {
   sessionEventHandlers.delete(sessionId)
+}
+
+export function onPeerUserMessage(handler: (event: RunEvent) => void): () => void {
+  peerUserMessageHandlers.add(handler)
+  return () => {
+    peerUserMessageHandlers.delete(handler)
+  }
 }
 
 export function respondToolApproval(
@@ -441,6 +473,7 @@ export function connectChatRun(): Socket {
     chatRunSocket.on('run.queued', globalRunQueuedHandler)
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
+    chatRunSocket.on('run.peer_user_message', globalPeerUserMessageHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)

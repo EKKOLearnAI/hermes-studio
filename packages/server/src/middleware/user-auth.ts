@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { getToken } from '../services/auth'
 import {
   findUserById,
+  listUserProfiles,
   touchUserLogin,
   userCanAccessProfile,
   type UserRecord,
@@ -13,6 +14,7 @@ export interface AuthenticatedUser {
   id: number
   username: string
   role: UserRole
+  profiles?: string[]
 }
 
 export interface RequestProfile {
@@ -110,11 +112,15 @@ export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'r
 }
 
 export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | 'role'>): AuthenticatedUser {
-  return {
+  const authenticated: AuthenticatedUser = {
     id: user.id,
     username: user.username,
     role: user.role,
   }
+  if (user.role !== 'super_admin') {
+    authenticated.profiles = listUserProfiles(user.id).map(profile => profile.profile_name)
+  }
+  return authenticated
 }
 
 export async function authenticateUserToken(token: string): Promise<AuthenticatedUser | null> {

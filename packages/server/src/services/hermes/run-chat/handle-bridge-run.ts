@@ -173,7 +173,7 @@ export async function handleBridgeRun(
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
     createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
   }
-  addMessage({
+  const messageId = addMessage({
     session_id,
     role: 'user',
     content: inputStr,
@@ -181,6 +181,16 @@ export async function handleBridgeRun(
   })
 
   socket.join(`session:${session_id}`)
+  socket.to(`session:${session_id}`).emit('run.peer_user_message', {
+    event: 'run.peer_user_message',
+    session_id,
+    message: {
+      id: messageId,
+      role: 'user',
+      content: inputStr,
+      timestamp: now,
+    },
+  })
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id }
     nsp.to(`session:${session_id}`).emit(event, tagged)
