@@ -51,6 +51,16 @@ export interface RunEvent {
   session_id?: string
   /** Queue length from run.queued event */
   queue_length?: number
+  /** Queue item that was just removed because it is starting now. */
+  dequeued_queue_id?: string
+  /** Queued user messages from run.queued/resume payloads. */
+  queued_messages?: Array<{
+    id?: string | number
+    role?: string
+    content?: string
+    timestamp?: number
+    queued?: boolean
+  }>
   /** User message broadcast to other windows already watching the same session. */
   message?: {
     id?: string | number
@@ -522,7 +532,7 @@ function removeSocketListener(socket: Socket, event: string, handler: (...args: 
  */
 export function resumeSession(
   sessionId: string,
-  onResumed: (data: { session_id: string; messages: any[]; isWorking: boolean; isAborting?: boolean; events: any[]; inputTokens?: number; outputTokens?: number; contextTokens?: number; queueLength?: number }) => void,
+  onResumed: (data: { session_id: string; messages: any[]; isWorking: boolean; isAborting?: boolean; events: any[]; inputTokens?: number; outputTokens?: number; contextTokens?: number; queueLength?: number; queueMessages?: RunEvent['queued_messages'] }) => void,
 ): Socket {
   const socket = connectChatRun()
 

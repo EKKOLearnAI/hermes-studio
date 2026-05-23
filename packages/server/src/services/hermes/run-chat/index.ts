@@ -19,6 +19,7 @@ import { handleBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
+import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
@@ -162,6 +163,7 @@ export class ChatRunSocket {
             event: 'run.queued',
             session_id: data.session_id,
             queue_length: state.queue.length,
+            queued_messages: this.serializeQueuedMessages(state.queue),
           })
           logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
           return
@@ -199,6 +201,7 @@ export class ChatRunSocket {
         event: 'run.queued',
         session_id: data.session_id,
         queue_length: state.queue.length,
+        queued_messages: this.serializeQueuedMessages(state.queue),
       })
       logger.info('[chat-run-socket] cancelled queued run %s for session %s (queue: %d)',
         data.queue_id, data.session_id, state.queue.length)
@@ -308,6 +311,7 @@ export class ChatRunSocket {
       outputTokens: state.outputTokens,
       contextTokens: state.contextTokens,
       queueLength: state.queue?.length || 0,
+      queueMessages: this.serializeQueuedMessages(state.queue || []),
     })
 
     logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d)',
@@ -326,6 +330,8 @@ export class ChatRunSocket {
       event: 'run.queued',
       session_id: sessionId,
       queue_length: state.queue.length,
+      dequeued_queue_id: next.queue_id,
+      queued_messages: this.serializeQueuedMessages(state.queue),
     })
     this.runQueuedItem(socket, sessionId, next, fallbackProfile)
     return true
@@ -353,6 +359,16 @@ export class ChatRunSocket {
     if (!this.nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
       socket.emit(event, tagged)
     }
+  }
+
+  private serializeQueuedMessages(queue: QueuedRun[]) {
+    return queue.map(item => ({
+      id: item.queue_id,
+      role: 'user',
+      content: contentBlocksToString(item.input),
+      timestamp: Math.floor(Date.now() / 1000),
+      queued: true,
+    }))
   }
 
   private canAccessProfile(user: AuthenticatedUser, profile: string): boolean {

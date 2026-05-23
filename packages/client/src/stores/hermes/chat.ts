@@ -538,6 +538,11 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             queueLengths.value.delete(sessionId)
           }
+          if (Array.isArray((data as any).queueMessages)) {
+            replaceQueuedUserMessages(sessionId, normalizeQueuedUserMessages((data as any).queueMessages))
+          } else if (!data.queueLength) {
+            replaceQueuedUserMessages(sessionId, [])
+          }
           if ((data as any).isAborting) {
             setAbortState({ aborting: true, synced: null })
           } else if (!data.isWorking) {
@@ -807,23 +812,106 @@ export const useChatStore = defineStore('chat', () => {
 
   function enqueueUserMessage(sessionId: string, message: Message) {
     const queue = queuedUserMessages.value.get(sessionId) || []
-    queue.push({ ...message, queued: true })
-    queuedUserMessages.value.set(sessionId, queue)
+    if (queue.some(item => item.id === message.id)) return
+    const nextMap = new Map(queuedUserMessages.value)
+    nextMap.set(sessionId, [...queue, { ...message, queued: true }])
+    queuedUserMessages.value = nextMap
   }
 
   function removeQueuedMessage(sessionId: string, messageId: string) {
     const queue = queuedUserMessages.value.get(sessionId)
     if (!queue?.length) return
     const next = queue.filter(message => message.id !== messageId)
+    const nextMap = new Map(queuedUserMessages.value)
     if (next.length > 0) {
-      queuedUserMessages.value.set(sessionId, next)
+      nextMap.set(sessionId, next)
     } else {
-      queuedUserMessages.value.delete(sessionId)
+      nextMap.delete(sessionId)
     }
+    queuedUserMessages.value = nextMap
     queueLengths.value.set(sessionId, next.length)
     getChatRunSocket()?.emit('cancel_queued_run', {
       session_id: sessionId,
       queue_id: messageId,
+    })
+  }
+
+  function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
+    if (!Array.isArray(rawMessages)) return []
+    return rawMessages.flatMap((raw) => {
+      const peer = raw as NonNullable<RunEvent['queued_messages']>[number]
+      const content = typeof peer?.content === 'string' ? peer.content : ''
+      const messageId = peer?.id != null ? String(peer.id) : ''
+      if (!messageId || !content.trim()) return []
+      const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+        ? Math.round(peer.timestamp * 1000)
+        : Date.now()
+      return [{
+        id: messageId,
+        role: 'user' as const,
+        content,
+        timestamp,
+        queued: true,
+      }]
+    })
+  }
+
+  function replaceQueuedUserMessages(sessionId: string, messages: Message[]) {
+    const existingById = new Map((queuedUserMessages.value.get(sessionId) || []).map(message => [message.id, message]))
+    const merged = messages.map(message => ({
+      ...(existingById.get(message.id) || {}),
+      ...message,
+      attachments: existingById.get(message.id)?.attachments || message.attachments,
+      queued: true,
+    }))
+    const nextMap = new Map(queuedUserMessages.value)
+    if (merged.length > 0) {
+      nextMap.set(sessionId, merged)
+    } else {
+      nextMap.delete(sessionId)
+    }
+    queuedUserMessages.value = nextMap
+  }
+
+  function handleRunQueuedEvent(sessionId: string, evt: RunEvent) {
+    const queueLength = Number((evt as any).queue_length || 0)
+    if (queueLength > 0) {
+      queueLengths.value.set(sessionId, queueLength)
+    } else {
+      queueLengths.value.delete(sessionId)
+    }
+
+    if (Array.isArray((evt as any).queued_messages) && !(evt as any).dequeued_queue_id) {
+      const queued = normalizeQueuedUserMessages((evt as any).queued_messages)
+      replaceQueuedUserMessages(sessionId, queued)
+      return
+    }
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    if (!messageId || !content.trim()) return
+
+    if ((queuedUserMessages.value.get(sessionId) || []).some(msg => msg.id === messageId)) return
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+    const msgs = getSessionMsgs(sessionId)
+    const existingIndex = msgs.findIndex(msg => msg.id === messageId && msg.role === 'user')
+    const existing = existingIndex >= 0 ? msgs[existingIndex] : null
+    if (existingIndex >= 0) {
+      msgs.splice(existingIndex, 1)
+    }
+
+    enqueueUserMessage(sessionId, {
+      ...(existing || {}),
+      id: messageId,
+      role: 'user',
+      content,
+      timestamp: existing?.timestamp || timestamp,
+      attachments: existing?.attachments,
+      queued: true,
     })
   }
 
@@ -869,12 +957,14 @@ export const useChatStore = defineStore('chat', () => {
   function showNextQueuedUserMessage(sessionId: string) {
     const queue = queuedUserMessages.value.get(sessionId)
     if (!queue?.length) return
-    const next = queue.shift()!
-    if (queue.length > 0) {
-      queuedUserMessages.value.set(sessionId, queue)
+    const [next, ...rest] = queue
+    const nextMap = new Map(queuedUserMessages.value)
+    if (rest.length > 0) {
+      nextMap.set(sessionId, rest)
     } else {
-      queuedUserMessages.value.delete(sessionId)
+      nextMap.delete(sessionId)
     }
+    queuedUserMessages.value = nextMap
     addMessage(sessionId, { ...next, queued: false })
     updateSessionTitle(sessionId)
   }
@@ -1054,7 +1144,7 @@ export const useChatStore = defineStore('chat', () => {
               break
 
             case 'run.queued': {
-              queueLengths.value.set(sid, (evt as any).queue_length || 0)
+              handleRunQueuedEvent(sid, evt)
               break
             }
 
@@ -1492,7 +1582,7 @@ export const useChatStore = defineStore('chat', () => {
       if (evt.session_id && evt.session_id !== sid) return
       switch (evt.event) {
         case 'run.queued': {
-          queueLengths.value.set(sid, (evt as any).queue_length || 0)
+          handleRunQueuedEvent(sid, evt)
           break
         }
 
