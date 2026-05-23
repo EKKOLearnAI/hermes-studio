@@ -395,4 +395,78 @@ assert pool._approval_dispatcher("cmd", "desc", allow_permanent=False) == "once"
 assert calls == [("cmd", "desc", False)]
 `)
   })
+
+  it('cleans broker workers and wires worker parent watchdog state', () => {
+    runPython(String.raw`
+${harness}
+
+class FakeWorker:
+    def __init__(self):
+        self.running = True
+        self.stopped = False
+
+    def stop(self):
+        self.running = False
+        self.stopped = True
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+worker = FakeWorker()
+broker._workers["default"] = worker
+broker._run_profile["run-a"] = "default"
+broker._session_profile["session-a"] = "default"
+broker._approval_profile["approval-a"] = "default"
+broker._compression_profile["compression-a"] = "default"
+
+broker.stop()
+assert broker._stop.is_set()
+assert worker.stopped
+assert broker._workers == {}
+assert broker._run_profile == {}
+assert broker._session_profile == {}
+assert broker._approval_profile == {}
+assert broker._compression_profile == {}
+
+created = {}
+
+class FakeProcess:
+    stdout = None
+    stderr = None
+
+    def poll(self):
+        return None
+
+def fake_popen(args, **kwargs):
+    created["args"] = args
+    created["env"] = kwargs["env"]
+    return FakeProcess()
+
+original_popen = bridge.subprocess.Popen
+original_getpid = bridge.os.getpid
+try:
+    bridge.subprocess.Popen = fake_popen
+    bridge.os.getpid = lambda: 4242
+    proc_worker = bridge.WorkerProcess("default", "ipc:///tmp/worker.sock", "/agent", "/home")
+    proc_worker._pipe_stderr = lambda: None
+    proc_worker._wait_ready = lambda: None
+    proc_worker.start()
+finally:
+    bridge.subprocess.Popen = original_popen
+    bridge.os.getpid = original_getpid
+
+assert created["env"]["HERMES_AGENT_BRIDGE_BROKER_PID"] == "4242"
+assert created["env"]["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] == "default"
+
+stop_event = threading.Event()
+seen_pids = []
+original_process_exists = bridge._process_exists
+try:
+    bridge._process_exists = lambda pid: seen_pids.append(pid) and False
+    bridge._start_parent_process_watchdog(12345, stop_event, "test", interval=0.01)
+    assert wait_for(stop_event.is_set, timeout=2)
+finally:
+    bridge._process_exists = original_process_exists
+
+assert seen_pids == [12345]
+`)
+  })
 })

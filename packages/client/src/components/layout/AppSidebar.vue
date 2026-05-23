@@ -226,9 +226,16 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.usage") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.skillsUsage' }" @click="handleNav('hermes.skillsUsage')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.performance' }" @click="handleNav('hermes.performance')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <span>{{ t("sidebar.performance") }}</span>
+          </button>
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.skillsUsage' }" @click="handleNav('hermes.skillsUsage')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.21 15.89A10 10 0 1 1 8.11 2.79" />
+              <path d="M22 12A10 10 0 0 0 12 2v10z" />
             </svg>
             <span>{{ t("sidebar.skillsUsage") }}</span>
           </button>

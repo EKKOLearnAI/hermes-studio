@@ -31,6 +31,7 @@ import { ttsRoutes } from './hermes/tts'
 import { mediaRoutes } from './hermes/media'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
+import { performanceMonitorRoutes } from './hermes/performance-monitor'
 
 /**
  * Register all routes on the Koa app.
@@ -72,6 +73,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(cronHistoryRoutes.routes())        // Must be before proxy
   app.use(kanbanRoutes.routes())             // Must be before proxy
   app.use(mediaRoutes.routes())              // Must be before proxy
+  app.use(performanceMonitorRoutes.routes())  // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)

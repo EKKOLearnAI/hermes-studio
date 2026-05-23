@@ -25,6 +25,17 @@ export interface BridgeCommand {
   hermesHome: string
 }
 
+export interface AgentBridgeManagerRuntimeState {
+  endpoint: string
+  running: boolean
+  ready: boolean
+  pid?: number
+  starting: boolean
+  stopping: boolean
+  restartScheduled: boolean
+  restartAttempts: number
+}
+
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
@@ -306,6 +317,19 @@ export class AgentBridgeManager {
 
   get running(): boolean {
     return !!this.child && !this.child.killed && this.ready
+  }
+
+  getRuntimeState(): AgentBridgeManagerRuntimeState {
+    return {
+      endpoint: this.endpoint,
+      running: this.running,
+      ready: this.ready,
+      pid: this.child?.pid,
+      starting: !!this.starting,
+      stopping: this.stopping,
+      restartScheduled: !!this.restartTimer,
+      restartAttempts: this.restartAttempts,
+    }
   }
 
   async start(): Promise<void> {
