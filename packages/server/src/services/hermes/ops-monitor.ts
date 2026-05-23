@@ -72,6 +72,11 @@ interface WebCpuSample {
   usage: NodeJS.CpuUsage
 }
 
+interface ProcessCpuSample {
+  at: number
+  cpuSeconds: number
+}
+
 interface SystemMemoryUsage {
   totalMemoryBytes: number
   freeMemoryBytes: number
@@ -81,6 +86,7 @@ interface SystemMemoryUsage {
 
 let previousSystemCpu: CpuTimesSample | null = null
 let previousWebCpu: WebCpuSample | null = null
+const previousWindowsProcessCpu = new Map<number, ProcessCpuSample>()
 
 function safeCpus(): ReturnType<typeof cpus> {
   try {
@@ -305,12 +311,61 @@ function parseWindowsJson(output: string): any[] {
   return Array.isArray(parsed) ? parsed : [parsed]
 }
 
+function sampleWindowsProcessCpuPercent(pid: number, cpuSeconds: number): number {
+  const current = { at: Date.now(), cpuSeconds }
+  const previous = previousWindowsProcessCpu.get(pid)
+  previousWindowsProcessCpu.set(pid, current)
+  if (!previous) return 0
+
+  const elapsedSeconds = (current.at - previous.at) / 1000
+  const cpuDelta = current.cpuSeconds - previous.cpuSeconds
+  if (elapsedSeconds <= 0 || cpuDelta < 0) return 0
+  return clampPercent((cpuDelta / elapsedSeconds / Math.max(safeCpus().length, 1)) * 100)
+}
+
 function collectWindowsProcessMetrics(pids: number[]): Map<number, Partial<ProcessUsage>> {
   if (!pids.length) return new Map()
   const idList = pids.join(',')
   try {
     const script = [
-      `$ids=@(${idList})`,
+      `$ids=@(${idList});`,
+      '$all=Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId;',
+      '$byParent=@{};',
+      'foreach($p in $all){$parent=[int]$p.ParentProcessId;if(-not $byParent.ContainsKey($parent)){$byParent[$parent]=@()};$byParent[$parent]+=[int]$p.ProcessId};',
+      '$result=@();',
+      'foreach($root in $ids){',
+      '$seen=@{};$queue=New-Object System.Collections.Queue;$queue.Enqueue([int]$root);$tree=@();',
+      'while($queue.Count -gt 0){$current=[int]$queue.Dequeue();if($seen.ContainsKey($current)){continue};$seen[$current]=$true;$tree+=$current;if($byParent.ContainsKey($current)){foreach($child in $byParent[$current]){$queue.Enqueue([int]$child)}}};',
+      '$procs=Get-Process -Id $tree -ErrorAction SilentlyContinue;',
+      '$mem=0.0;$cpu=0.0;$names=@();',
+      'foreach($proc in $procs){$mem+=[double]$proc.WorkingSet64;if($null -ne $proc.CPU){$cpu+=[double]$proc.CPU};$names+=$proc.ProcessName};',
+      '$result+=[pscustomobject]@{pid=[int]$root;cpuSeconds=[double]$cpu;memoryRssBytes=[double]$mem;command=($names -join "+")}',
+      '};',
+      '$result',
+      '| ConvertTo-Json -Compress',
+    ].join(' ')
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      windowsHide: true,
+    })
+    const metrics = new Map<number, Partial<ProcessUsage>>()
+    for (const item of parseWindowsJson(output)) {
+      const pid = Number(item?.pid)
+      if (!Number.isFinite(pid)) continue
+      const cpuSeconds = numberOrNull(item?.cpuSeconds) ?? 0
+      metrics.set(pid, {
+        cpuPercent: sampleWindowsProcessCpuPercent(pid, cpuSeconds),
+        memoryRssBytes: numberOrNull(item?.memoryRssBytes) ?? 0,
+        command: typeof item?.command === 'string' ? item.command : undefined,
+      })
+    }
+    return metrics
+  } catch {}
+
+  try {
+    const script = [
+      `$ids=@(${idList});`,
       'Get-CimInstance Win32_PerfFormattedData_PerfProc_Process',
       '| Where-Object { $ids -contains [int]$_.IDProcess }',
       '| Select-Object @{Name="pid";Expression={[int]$_.IDProcess}},@{Name="cpuPercent";Expression={[double]$_.PercentProcessorTime}},@{Name="memoryRssBytes";Expression={[double]$_.WorkingSet}},@{Name="command";Expression={$_.Name}}',
@@ -449,16 +504,11 @@ export async function getOpsRuntimeSnapshot(): Promise<OpsRuntimeSnapshot> {
   let bridgeReachable = false
   let bridgeError: string | undefined
   let bridgePing: Record<string, any> = {}
-  let sessions: Array<Record<string, any>> = []
 
   try {
     const client = new AgentBridgeClient({ endpoint: managerState.endpoint, timeoutMs: 2000, connectRetryMs: 0 })
     bridgePing = await client.ping() as Record<string, any>
     bridgeReachable = true
-    try {
-      const list = await client.list()
-      sessions = Array.isArray((list as any).sessions) ? (list as any).sessions : []
-    } catch {}
   } catch (err: any) {
     bridgeError = err?.message || 'Agent bridge is not reachable'
   }
@@ -474,18 +524,20 @@ export async function getOpsRuntimeSnapshot(): Promise<OpsRuntimeSnapshot> {
   const processMetrics = collectProcessMetrics(pids)
 
   const sessionCountsByProfile: Record<string, number> = {}
-  let runningSessions = 0
-  for (const session of sessions) {
-    const profileName = String(session.profile || 'default')
-    sessionCountsByProfile[profileName] = (sessionCountsByProfile[profileName] || 0) + 1
-    if (session.running) runningSessions += 1
-  }
-  if (!sessions.length && bridgePing.sessions_by_profile && typeof bridgePing.sessions_by_profile === 'object') {
+  if (bridgePing.sessions_by_profile && typeof bridgePing.sessions_by_profile === 'object') {
     for (const [profileName, count] of Object.entries(bridgePing.sessions_by_profile)) {
       const value = Number(count)
       if (Number.isFinite(value)) sessionCountsByProfile[profileName] = value
     }
   }
+  const runningSessionCountsByProfile: Record<string, number> = {}
+  if (bridgePing.running_sessions_by_profile && typeof bridgePing.running_sessions_by_profile === 'object') {
+    for (const [profileName, count] of Object.entries(bridgePing.running_sessions_by_profile)) {
+      const value = Number(count)
+      if (Number.isFinite(value)) runningSessionCountsByProfile[profileName] = value
+    }
+  }
+  const runningSessions = Number(bridgePing.running_sessions || 0)
 
   const workers = workerEntries.map(([profileName, worker]) => {
     const usage = processUsage(worker.pid, 'worker', processMetrics, profileName)
@@ -500,7 +552,7 @@ export async function getOpsRuntimeSnapshot(): Promise<OpsRuntimeSnapshot> {
       endpoint: worker.endpoint,
       lastUsedAt: worker.lastUsedAt,
       sessionCount: sessionCountsByProfile[profileName] || 0,
-      runningSessionCount: sessions.filter(session => String(session.profile || 'default') === profileName && session.running).length,
+      runningSessionCount: runningSessionCountsByProfile[profileName] || 0,
     }
   })
 
@@ -543,7 +595,7 @@ export async function getOpsRuntimeSnapshot(): Promise<OpsRuntimeSnapshot> {
       totalWorkerMemoryRssBytes: totalWorkerMemory,
     },
     sessions: {
-      active: sessions.length || Number(bridgePing.active_sessions || 0),
+      active: Number(bridgePing.active_sessions || 0),
       running: runningSessions,
       byProfile: sessionCountsByProfile,
     },
