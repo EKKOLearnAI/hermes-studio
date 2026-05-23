@@ -17,7 +17,9 @@ const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
 const { openSessionSearch } = useSessionSearch();
-const selectedKey = computed(() => route.name as string);
+const selectedKey = computed(() =>
+  route.name === "hermes.session" ? "hermes.chat" : route.name as string,
+);
 const logoPath = '/logo.png';
 
 const collapsedGroups = reactive<Record<string, boolean>>({});

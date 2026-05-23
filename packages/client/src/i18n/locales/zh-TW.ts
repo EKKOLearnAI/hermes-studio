@@ -246,6 +246,7 @@ export default {
     noVisibleMessages: '沒有人類可見訊息。',
     monitorRoleUser: '使用者',
     monitorRoleAssistant: '助手',
+    copySessionLink: '複製工作階段連結',
     copySessionId: '複製工作階段 ID',
     export: '匯出',
     exportFull: '完整匯出 (JSON)',

@@ -232,6 +232,7 @@ export default {
     noVisibleMessages: '人間向けに表示できるメッセージはありません。',
     monitorRoleUser: 'ユーザー',
     monitorRoleAssistant: 'アシスタント',
+    copySessionLink: 'セッションリンクをコピー',
     copySessionId: 'セッション ID をコピー',
     export: 'エクスポート',
     exportFull: 'フルエクスポート (JSON)',

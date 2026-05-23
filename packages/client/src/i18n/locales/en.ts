@@ -248,6 +248,7 @@ export default {
     noVisibleMessages: 'No human-visible messages.',
     monitorRoleUser: 'User',
     monitorRoleAssistant: 'Assistant',
+    copySessionLink: 'Copy Session Link',
     copySessionId: 'Copy Session ID',
     export: 'Export',
     exportFull: 'Full Export (JSON)',

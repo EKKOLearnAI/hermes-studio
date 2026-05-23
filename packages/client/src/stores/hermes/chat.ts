@@ -331,6 +331,14 @@ function setItemBestEffort(key: string, value: string) {
   }
 }
 
+function getItemBestEffort(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 function removeItem(key: string) {
   try {
     localStorage.removeItem(key)
@@ -417,7 +425,7 @@ export const useChatStore = defineStore('chat', () => {
     removeItem(storageKey())
   }
 
-  async function loadSessions(profile?: string | null) {
+  async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
     isLoadingSessions.value = true
     try {
       const list = await fetchSessions(undefined, undefined, profile || undefined)
@@ -431,11 +439,19 @@ export const useChatStore = defineStore('chat', () => {
       }
       sessions.value = fresh
 
-      // Restore last active session, fallback to most recent
-      const savedId = activeSessionId.value
-      const targetId = savedId && sessions.value.some(s => s.id === savedId)
-        ? savedId
-        : sessions.value[0]?.id
+      // Restore route-selected session first (tab-local source of truth),
+      // then current in-memory session, then persisted legacy/default choice,
+      // then fallback to the most recent session.
+      const currentId = activeSessionId.value
+      const legacyActiveKey = legacyStorageKey()
+      const storedId = getItemBestEffort(storageKey()) || (legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
+      const targetId = preferredSessionId && sessions.value.some(s => s.id === preferredSessionId)
+        ? preferredSessionId
+        : currentId && sessions.value.some(s => s.id === currentId)
+          ? currentId
+          : storedId && sessions.value.some(s => s.id === storedId)
+            ? storedId
+            : sessions.value[0]?.id
       if (targetId) {
         await switchSession(targetId)
       } else {
@@ -528,6 +544,15 @@ export const useChatStore = defineStore('chat', () => {
         const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
         resumeSession(sessionId, (data) => {
           clearTimeout(timeout)
+          if (data.session_id !== sessionId || activeSessionId.value !== sessionId) {
+            resolve()
+            return
+          }
+          const target = sessions.value.find(s => s.id === sessionId)
+          if (!target) {
+            resolve()
+            return
+          }
           if (data.isWorking) {
             serverWorking.value.add(sessionId)
           } else {
@@ -543,19 +568,20 @@ export const useChatStore = defineStore('chat', () => {
           } else if (!data.isWorking) {
             setAbortState(null)
           }
-          if (data.inputTokens != null) activeSession.value!.inputTokens = data.inputTokens
-          if (data.outputTokens != null) activeSession.value!.outputTokens = data.outputTokens
-          if ((data as any).contextTokens != null) activeSession.value!.contextTokens = (data as any).contextTokens
+          if (data.inputTokens != null) target.inputTokens = data.inputTokens
+          if (data.outputTokens != null) target.outputTokens = data.outputTokens
+          if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
           if (data.messages?.length) {
-            activeSession.value!.messages = mapHermesMessages(data.messages as any[])
+            target.messages = mapHermesMessages(data.messages as any[])
           }
-          if (!activeSession.value!.title) {
-            const firstUser = activeSession.value!.messages.find(m => m.role === 'user')
+          if (!target.title) {
+            const firstUser = target.messages.find(m => m.role === 'user')
             if (firstUser) {
               const t = firstUser.content.slice(0, 40)
-              activeSession.value!.title = t + (firstUser.content.length > 40 ? '...' : '')
+              target.title = t + (firstUser.content.length > 40 ? '...' : '')
             }
           }
+          activeSession.value = target
           // Process replayed events (compression state etc.)
           if (data.events?.length) {
             for (const evt of data.events) {
@@ -578,7 +604,7 @@ export const useChatStore = defineStore('chat', () => {
                   compressed: e.compressed ?? false,
                   error: e.error,
                 })
-                if (e.contextTokens != null) activeSession.value!.contextTokens = e.contextTokens
+                if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
                 setAbortState({ aborting: true, synced: null })
               } else if (e.event === 'abort.completed') {
@@ -644,17 +670,20 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // Resume in-flight run event listeners if needed
-    resumeServerWorkingRun(sessionId)
+    if (activeSessionId.value === sessionId) {
+      resumeServerWorkingRun(sessionId)
+    }
   }
 
-  function newChat(options: { profile?: string; model?: string; provider?: string } = {}) {
+  function newChat(options: { profile?: string; model?: string; provider?: string } = {}): Session {
     const appStore = useAppStore()
     const session = createSession({
       profile: options.profile,
       model: options.model || appStore.selectedModel || undefined,
       provider: options.provider || appStore.selectedProvider || '',
     })
-    switchSession(session.id)
+    void switchSession(session.id)
+    return session
   }
 
   async function switchSessionModel(modelId: string, provider?: string, sessionId?: string): Promise<boolean> {

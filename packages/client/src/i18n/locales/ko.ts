@@ -232,6 +232,7 @@ export default {
     noVisibleMessages: '사람이 볼 수 있는 메시지가 없습니다.',
     monitorRoleUser: '사용자',
     monitorRoleAssistant: '어시스턴트',
+    copySessionLink: '세션 링크 복사',
     copySessionId: '세션 ID 복사',
     export: '내보내기',
     exportFull: '전체 내보내기 (JSON)',

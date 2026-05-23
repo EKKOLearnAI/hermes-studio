@@ -248,6 +248,7 @@ export default {
     noVisibleMessages: '没有人类可见消息。',
     monitorRoleUser: '用户',
     monitorRoleAssistant: '助手',
+    copySessionLink: '复制会话链接',
     copySessionId: '复制会话 ID',
     export: '导出',
     exportFull: '全量导出 (JSON)',

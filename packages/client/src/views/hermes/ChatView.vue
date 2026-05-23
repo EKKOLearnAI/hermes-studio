@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -10,6 +11,13 @@ const appStore = useAppStore()
 const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
+const route = useRoute()
+const router = useRouter()
+
+const routeSessionId = computed(() => {
+  const value = route.params.sessionId
+  return typeof value === 'string' && value.trim() ? value : null
+})
 
 onMounted(async () => {
   appStore.loadModels()
@@ -19,7 +27,24 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
-  chatStore.loadSessions()
+  await chatStore.loadSessions(undefined, routeSessionId.value)
+  if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
+    await router.replace({ name: 'hermes.chat' })
+  }
+})
+
+watch(routeSessionId, async (sessionId) => {
+  if (!chatStore.sessionsLoaded) return
+  if (!sessionId) return
+  if (chatStore.activeSessionId === sessionId) return
+
+  const exists = chatStore.sessions.some(session => session.id === sessionId)
+  if (!exists) {
+    await router.replace({ name: 'hermes.chat' })
+    return
+  }
+
+  await chatStore.switchSession(sessionId)
 })
 </script>
 

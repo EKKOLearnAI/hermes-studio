@@ -232,6 +232,7 @@ export default {
     noVisibleMessages: 'No hay mensajes visibles para humanos.',
     monitorRoleUser: 'Usuario',
     monitorRoleAssistant: 'Asistente',
+    copySessionLink: 'Copiar enlace de sesión',
     copySessionId: 'Copiar ID de sesión',
     export: 'Exportar',
     exportFull: 'Exportación completa (JSON)',

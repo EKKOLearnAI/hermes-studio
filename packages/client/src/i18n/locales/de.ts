@@ -232,6 +232,7 @@ export default {
     noVisibleMessages: 'Keine für Menschen sichtbaren Nachrichten.',
     monitorRoleUser: 'Benutzer',
     monitorRoleAssistant: 'Assistent',
+    copySessionLink: 'Sitzungslink kopieren',
     copySessionId: 'Sitzungs-ID kopieren',
     export: 'Exportieren',
     exportFull: 'Vollständiger Export (JSON)',
