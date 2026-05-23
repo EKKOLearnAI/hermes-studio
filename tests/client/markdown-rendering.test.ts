@@ -584,6 +584,78 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.find('.markdown-body').text()).toContain('No diagram now.')
   })
 
+  it('renders inline latex math with katex', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: 'Pythagoras: $x^2 + y^2 = z^2$.',
+      },
+    })
+
+    const body = wrapper.find('.markdown-body')
+    expect(body.find('.katex').exists()).toBe(true)
+    expect(body.html()).toContain('x')
+    expect(body.html()).toContain('z')
+    expect(body.text()).not.toContain('$x^2 + y^2 = z^2$')
+  })
+
+  it('renders display latex math with katex', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '$$\n\\int_0^1 x^2 dx = \\frac{1}{3}\n$$',
+      },
+    })
+
+    const body = wrapper.find('.markdown-body')
+    expect(body.find('.katex-display').exists()).toBe(true)
+    expect(body.find('.katex').exists()).toBe(true)
+    expect(body.text()).not.toContain('$$')
+  })
+
+  it('does not render latex inside fenced code blocks', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '```ts\nconst formula = "$x^2 + y^2 = z^2$"\n```',
+      },
+    })
+
+    expect(wrapper.find('.markdown-body').find('.katex').exists()).toBe(false)
+    expect(wrapper.find('code.hljs').text()).toContain('$x^2 + y^2 = z^2$')
+  })
+
+  it('does not treat currency-like dollar text as latex math', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: 'Price is $5 and $6 today.',
+      },
+    })
+
+    const body = wrapper.find('.markdown-body')
+    expect(body.find('.katex').exists()).toBe(false)
+    expect(body.text()).toContain('Price is $5 and $6 today.')
+  })
+
+  it('does not render escaped dollar-delimited text as latex math', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: 'Escaped: \\$x^2$',
+      },
+    })
+
+    const body = wrapper.find('.markdown-body')
+    expect(body.find('.katex').exists()).toBe(false)
+    expect(body.text()).toContain('Escaped: $x^2$')
+  })
+
+  it('keeps rendering when latex syntax is invalid', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: 'Before $\\notacommand{ after',
+      },
+    })
+
+    expect(wrapper.find('.markdown-body').text()).toContain('Before')
+  })
+
   it('copies code through the delegated click handler', async () => {
     const writeText = vi.mocked(navigator.clipboard.writeText)
     const wrapper = mount(MarkdownRenderer, {

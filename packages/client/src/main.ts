@@ -4,6 +4,7 @@ import router from './router'
 import { i18n } from './i18n'
 import App from './App.vue'
 import './styles/global.scss'
+import 'katex/dist/katex.min.css'
 
 // Apply theme classes before mount to prevent FOUC (Flash of Unstyled Content)
 const savedBrightness = localStorage.getItem('hermes_brightness') || 'system'

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { NDrawer, NDrawerContent, NSpin, useMessage } from 'naive-ui'
 import type MarkdownIt from 'markdown-it'
 import MarkdownItConstructor from 'markdown-it'
+import markdownItKatex from '@vscode/markdown-it-katex'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from './highlight'
 import { repairNestedMarkdownFences } from './markdownFenceRepair'
 import {
@@ -39,6 +40,10 @@ const md: MarkdownIt = new MarkdownItConstructor({
   highlight(str: string, lang: string): string {
     return renderHighlightedCodeBlock(str, lang, t('common.copy'))
   },
+})
+
+md.use(markdownItKatex, {
+  throwOnError: false,
 })
 
 const defaultFenceRenderer = md.renderer.rules.fence?.bind(md.renderer.rules)
