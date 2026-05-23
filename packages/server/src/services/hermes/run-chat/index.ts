@@ -19,7 +19,6 @@ import { handleBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
-import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
@@ -158,17 +157,6 @@ export class ChatRunSocket {
             profile: runProfile,
             source,
             originSocketId: socket.id,
-          })
-          socket.to(`session:${data.session_id}`).emit('run.peer_user_message', {
-            event: 'run.peer_user_message',
-            session_id: data.session_id,
-            message: {
-              id: queueId,
-              role: 'user',
-              content: contentBlocksToString(data.input),
-              timestamp: Math.floor(Date.now() / 1000),
-              queued: true,
-            },
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
             event: 'run.queued',
