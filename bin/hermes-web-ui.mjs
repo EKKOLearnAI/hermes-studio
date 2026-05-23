@@ -20,6 +20,7 @@ const PID_FILE = join(PID_DIR, 'server.pid')
 const LOG_FILE = join(PID_DIR, 'server.log')
 const TOKEN_FILE = join(PID_DIR, '.token')
 const DEFAULT_PORT = 8648
+const isWin = process.platform === 'win32'
 
 // ─── Auto-fix node-pty native module ──────────────────────────
 function ensureNativeModules() {
@@ -57,7 +58,7 @@ function getNodeBinDir() {
 }
 
 function getNpmBin() {
-  return join(getNodeBinDir(), process.platform === 'win32' ? 'npm.cmd' : 'npm')
+  return join(getNodeBinDir(), isWin ? 'npm.cmd' : 'npm')
 }
 
 function getCurrentNodeEnv() {
@@ -78,7 +79,7 @@ function getGlobalPrefix() {
 
 function getGlobalCliBin() {
   const prefix = getGlobalPrefix()
-  return process.platform === 'win32'
+  return isWin
     ? join(prefix, 'hermes-web-ui.cmd')
     : join(prefix, 'bin', 'hermes-web-ui')
 }
@@ -102,7 +103,7 @@ function quoteForWindowsCommand(value) {
 }
 
 function spawnCli(command, args, options) {
-  if (process.platform === 'win32') {
+  if (isWin) {
     const lowerCommand = String(command).toLowerCase()
     if (!lowerCommand.endsWith('.cmd') && !lowerCommand.endsWith('.bat')) {
       return spawn(command, args, options)
@@ -126,7 +127,7 @@ function getRunningPort() {
   if (!pid || !isRunning(pid)) return null
 
   try {
-    if (process.platform === 'win32') {
+    if (isWin) {
       const out = execSync(`netstat -aon -p tcp | findstr LISTENING | findstr " ${pid}$"`, { encoding: 'utf-8' }).trim()
       const line = out.split('\n').find(Boolean)
       const address = line?.trim().split(/\s+/)[1]
@@ -163,7 +164,7 @@ function getPort() {
 
 function commandExists(command) {
   try {
-    if (process.platform === 'win32') {
+    if (isWin) {
       execFileSync('where', [command], { stdio: 'ignore', windowsHide: true })
     } else {
       execFileSync('sh', ['-c', `command -v "$1" >/dev/null 2>&1`, 'sh', command], { stdio: 'ignore' })
@@ -199,7 +200,7 @@ function getListeningPids(port) {
   const uniquePids = (pids) => [...new Set(pids.filter(pid => Number.isFinite(pid)))]
 
   try {
-    if (process.platform === 'win32') {
+    if (isWin) {
       const out = execSync('netstat -aon -p tcp', { encoding: 'utf-8' })
       return uniquePids(out.split('\n')
         .map(line => line.trim())
@@ -250,7 +251,7 @@ function killListeningPids(port, pids = getListeningPids(port)) {
 
   console.log(`  ⚠ Port ${port} is in use by PID(s): ${pids.join(' ')}, killing...`)
   try {
-    if (process.platform === 'win32') {
+    if (isWin) {
       execSync(`taskkill /F /PID ${pids.join(' /PID ')}`, { encoding: 'utf-8' })
     } else {
       execSync(`kill -9 ${pids.join(' ')}`, { encoding: 'utf-8' })
@@ -343,7 +344,7 @@ function startDaemon(port) {
   } catch { }
 
   const logStream = openSync(LOG_FILE, 'a')
-  const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
+  const windowsShell = isWin ? getWindowsShell() : null
   const serverEnv = { ...process.env, NODE_ENV: 'production', PORT: String(port), AUTH_TOKEN: token }
   if (windowsShell) {
     serverEnv.SHELL = serverEnv.SHELL?.trim() || windowsShell
@@ -391,7 +392,6 @@ function startDaemon(port) {
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
-        const isWin = process.platform === 'win32'
         const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
         try { execSync(cmd, { stdio: 'ignore' }) } catch {}
       } else if (waited < maxWait) {
@@ -436,7 +436,8 @@ function stopDaemon() {
 
   try {
     try {
-      process.kill(pid, 'SIGTERM')
+      const checkPid = isWin ? pid : -pid
+      process.kill(checkPid, 'SIGTERM')
       // Wait briefly for graceful shutdown
       for (let i = 0; i < 10; i++) {
         if (!isRunning(pid)) break
@@ -518,7 +519,7 @@ Options:
     default:
       ensureNativeModules()
       const port = !isNaN(command) ? parseInt(command) : DEFAULT_PORT
-      const windowsShell = process.platform === 'win32' ? getWindowsShell() : null
+      const windowsShell = isWin ? getWindowsShell() : null
       const serverEnv = {
         ...process.env,
         NODE_ENV: 'production',
