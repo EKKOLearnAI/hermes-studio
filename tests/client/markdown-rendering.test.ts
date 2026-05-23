@@ -611,7 +611,21 @@ describe('MarkdownRenderer', () => {
     expect(body.text()).not.toContain('$$')
   })
 
-  it('does not render latex inside fenced code blocks', () => {
+  it('renders explicit latex fenced blocks with katex', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '```latex\n\\[\\text{Итог} = \\operatorname{Округление}\\!\\left(0.5\\,O_1 + 0.5\\,O_2\\right)\\]\n```',
+      },
+    })
+
+    const body = wrapper.find('.markdown-body')
+    expect(body.find('.katex-display').exists()).toBe(true)
+    expect(body.find('.katex').exists()).toBe(true)
+    expect(body.text()).not.toContain('```latex')
+    expect(body.text()).toContain('Округление')
+  })
+
+  it('does not render latex inside ordinary fenced code blocks', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {
         content: '```ts\nconst formula = "$x^2 + y^2 = z^2$"\n```',

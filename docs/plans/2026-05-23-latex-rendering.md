@@ -2,9 +2,9 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Add reliable LaTeX/math rendering to Hermes Web UI chat Markdown messages so formulas render visually instead of appearing as raw TeX.
+**Goal:** Add reliable LaTeX/math rendering to Hermes Web UI chat Markdown messages so formulas render visually instead of appearing as raw TeX, including explicit fenced math blocks like ```latex.
 
-**Architecture:** Keep the existing `markdown-it` renderer in `MarkdownRenderer.vue` and add a KaTeX-backed math plugin there. Load KaTeX styles globally once, cover inline and block math in component tests, then verify with a production build and a local Web UI smoke test.
+**Architecture:** Keep the existing `markdown-it` renderer in `MarkdownRenderer.vue` and add a KaTeX-backed math plugin there, plus a small fence override for explicit LaTeX code fences. Load KaTeX styles globally once, cover inline, display, and fenced math in component tests, then verify with a production build and a local Web UI smoke test.
 
 **Tech Stack:** Vue 3, TypeScript, Vite, markdown-it, KaTeX, Vitest, @vue/test-utils.
 
@@ -14,8 +14,9 @@
 
 - Chat messages render inline math like `$x^2 + y^2 = z^2$` as KaTeX HTML.
 - Chat messages render block math like `$$\n\\int_0^1 x^2 dx = \\frac{1}{3}\n$$` as display KaTeX HTML.
+- Chat messages render explicit fenced math blocks like <code>```latex</code>, <code>```tex</code>, or <code>```math</code> as display KaTeX HTML.
 - Existing Markdown features still work: code fences, Mermaid fences, headings, local file links, mentions.
-- Math inside fenced code blocks stays literal and is not rendered.
+- Ordinary fenced code blocks stay literal and are not rendered as math.
 - Invalid/unsupported math syntax does not crash the chat renderer.
 - `npm run test -- tests/client/markdown-rendering.test.ts` passes.
 - `npm run build` passes.

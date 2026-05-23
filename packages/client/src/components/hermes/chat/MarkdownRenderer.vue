@@ -19,7 +19,44 @@ import {
 } from './mermaidRenderer'
 import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
 
+const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 const PREVIEW_AREA_WIDTH = 'min(800px, 100vw)'
+
+function getFenceLanguage(info: string): string {
+  return info.trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+}
+
+function isLatexFence(info: string): boolean {
+  return LATEX_FENCE_LANGS.has(getFenceLanguage(info))
+}
+
+function normalizeLatexFenceContent(content: string): string {
+  const trimmed = content.trim()
+
+  if (trimmed.startsWith('\\[') && trimmed.endsWith('\\]')) {
+    return trimmed.slice(2, -2).trim()
+  }
+
+  if (trimmed.startsWith('$$') && trimmed.endsWith('$$')) {
+    return trimmed.slice(2, -2).trim()
+  }
+
+  if (trimmed.startsWith('\\(') && trimmed.endsWith('\\)')) {
+    return trimmed.slice(2, -2).trim()
+  }
+
+  return trimmed
+}
+
+function renderLatexFence(content: string): string {
+  const latex = normalizeLatexFenceContent(content)
+  return `<div class="latex-block">${katex.renderToString(latex, {
+    displayMode: true,
+    output: 'htmlAndMathml',
+    throwOnError: false,
+    strict: 'ignore',
+  })}</div>`
+}
 
 const props = withDefaults(defineProps<{
     content: string
@@ -46,12 +83,17 @@ const md: MarkdownIt = new MarkdownItConstructor({
 md.use(markdownItKatex, {
   katex,
   throwOnError: false,
+  strict: 'ignore',
 })
 
 const defaultFenceRenderer = md.renderer.rules.fence?.bind(md.renderer.rules)
 
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
+  if (isLatexFence(token.info)) {
+    return renderLatexFence(token.content)
+  }
+
   if (isMermaidFence(token.info)) {
     return renderMermaidPlaceholder(token.content)
   }
