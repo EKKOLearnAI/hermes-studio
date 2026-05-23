@@ -20,6 +20,8 @@ import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
+import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
+import { userCanAccessProfile } from '../../../db/hermes/users-store'
 
 export type { ContentBlock } from './types'
 
@@ -43,31 +45,55 @@ export class ChatRunSocket {
 
   private async authMiddleware(socket: Socket, next: (err?: Error) => void) {
     const token = socket.handshake.auth?.token as string | undefined
-    if (!process.env.AUTH_DISABLED && process.env.AUTH_DISABLED !== '1') {
-      const { getToken } = await import('../../auth')
-      const serverToken = await getToken()
-      if (serverToken && token !== serverToken) {
-        return next(new Error('Authentication failed'))
-      }
+    if (!await isAuthEnabled()) {
+      next()
+      return
     }
+
+    const user = await authenticateUserToken(token || '')
+    if (!user) {
+      return next(new Error('Authentication failed'))
+    }
+    const socketProfile = String(socket.handshake.query?.profile || '').trim()
+    if (socketProfile && !this.canAccessProfile(user, socketProfile)) {
+      return next(new Error('Profile access denied'))
+    }
+    socket.data.user = user
     next()
   }
 
   // --- Connection handler ---
 
   private onConnection(socket: Socket) {
+    const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
-    const currentProfile = () => getActiveProfileName() || socketProfile || 'default'
+    const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
     const profileExists = (profile: string) => {
       if (!profile || profile === 'default') return true
       return listProfileNamesFromDisk().includes(profile)
     }
     const resolveRunProfile = (sessionId?: string, requested?: string) => {
       const requestedProfile = typeof requested === 'string' ? requested.trim() : ''
-      if (requestedProfile && profileExists(requestedProfile)) return requestedProfile
-      if (!sessionId) return currentProfile()
+      if (requestedProfile) {
+        if (!profileExists(requestedProfile)) throw new Error(`Profile "${requestedProfile}" does not exist`)
+        if (socketUser && !this.canAccessProfile(socketUser, requestedProfile)) {
+          throw new Error(`Profile "${requestedProfile}" is not available for this user`)
+        }
+        return requestedProfile
+      }
+      if (!sessionId) {
+        const profile = currentProfile()
+        if (socketUser && !this.canAccessProfile(socketUser, profile)) {
+          throw new Error(`Profile "${profile}" is not available for this user`)
+        }
+        return profile
+      }
       const storedProfile = getSession(sessionId)?.profile || ''
-      return storedProfile && profileExists(storedProfile) ? storedProfile : currentProfile()
+      const profile = storedProfile && profileExists(storedProfile) ? storedProfile : currentProfile()
+      if (socketUser && !this.canAccessProfile(socketUser, profile)) {
+        throw new Error(`Profile "${profile}" is not available for this user`)
+      }
+      return profile
     }
 
     socket.on('run', async (data: {
@@ -81,7 +107,17 @@ export class ChatRunSocket {
       source?: string
       profile?: string
     }) => {
-      const runProfile = resolveRunProfile(data.session_id, data.profile)
+      let runProfile: string
+      try {
+        runProfile = resolveRunProfile(data.session_id, data.profile)
+      } catch (err) {
+        socket.emit('run.failed', {
+          event: 'run.failed',
+          session_id: data.session_id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
       if (data.session_id) {
         const state = getOrCreateSession(this.sessionMap, data.session_id)
         const source = resolveRunSource(data.source, data.session_id)
@@ -311,6 +347,10 @@ export class ChatRunSocket {
     if (!this.nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
       socket.emit(event, tagged)
     }
+  }
+
+  private canAccessProfile(user: AuthenticatedUser, profile: string): boolean {
+    return user.role === 'super_admin' || userCanAccessProfile(user.id, profile)
   }
 
   /** Close all active upstream response streams */

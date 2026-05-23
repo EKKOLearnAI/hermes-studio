@@ -5,6 +5,7 @@ const getConversationDetailFromDbMock = vi.fn()
 const listConversationSummariesMock = vi.fn()
 const getConversationDetailMock = vi.fn()
 const getSessionDetailFromDbMock = vi.fn()
+const getSessionDetailFromDbWithProfileMock = vi.fn()
 const getExactSessionDetailFromDbWithProfileMock = vi.fn()
 const getUsageStatsFromDbMock = vi.fn()
 const getSessionMock = vi.fn()
@@ -51,6 +52,7 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   listSessionSummaries: vi.fn(),
   searchSessionSummaries: vi.fn(),
   getSessionDetailFromDb: getSessionDetailFromDbMock,
+  getSessionDetailFromDbWithProfile: getSessionDetailFromDbWithProfileMock,
   getExactSessionDetailFromDbWithProfile: getExactSessionDetailFromDbWithProfileMock,
   getUsageStatsFromDb: getUsageStatsFromDbMock,
 }))
@@ -109,6 +111,7 @@ describe('session conversations controller', () => {
     listConversationSummariesMock.mockReset()
     getConversationDetailMock.mockReset()
     getSessionDetailFromDbMock.mockReset()
+    getSessionDetailFromDbWithProfileMock.mockReset()
     getExactSessionDetailFromDbWithProfileMock.mockReset()
     getUsageStatsFromDbMock.mockReset()
     getSessionMock.mockReset()
@@ -157,7 +160,7 @@ describe('session conversations controller', () => {
     const ctx: any = { query: { humanOnly: 'true', limit: '5' }, body: null }
     await mod.listConversations(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith('default', undefined, 5)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 5)
     expect(listConversationSummariesMock).not.toHaveBeenCalled()
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
   })
@@ -258,6 +261,33 @@ describe('session conversations controller', () => {
       id: 'hermes-1',
       title: 'Hermes detail',
       messages: [{ content: 'from hermes' }],
+    })
+  })
+
+  it('reads Hermes history detail from the requested profile database', async () => {
+    localGetSessionDetailMock.mockReturnValue(null)
+    getSessionDetailFromDbWithProfileMock.mockResolvedValue({
+      id: 'travel-session',
+      source: 'cli',
+      title: 'Travel detail',
+      messages: [
+        { id: 1, session_id: 'travel-session', role: 'user', content: 'from travel', timestamp: 1 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'travel-session' }, query: { profile: 'travel' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('travel-session')
+    expect(getSessionDetailFromDbWithProfileMock).toHaveBeenCalledWith('travel-session', 'travel')
+    expect(getSessionDetailFromDbMock).not.toHaveBeenCalled()
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body.session).toMatchObject({
+      id: 'travel-session',
+      profile: 'travel',
+      title: 'Travel detail',
+      messages: [{ content: 'from travel' }],
     })
   })
 

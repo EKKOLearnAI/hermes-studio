@@ -16,7 +16,7 @@ const showImportModal = ref(false)
 const renamingProfile = ref<string | null>(null)
 
 onMounted(() => {
-  profilesStore.fetchProfiles()
+  profilesStore.fetchHermesProfiles()
 })
 
 function handleCreated() {

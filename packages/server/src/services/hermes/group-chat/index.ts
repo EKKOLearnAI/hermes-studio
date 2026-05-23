@@ -1,6 +1,5 @@
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
-import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
@@ -9,6 +8,7 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
+import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -780,12 +780,16 @@ export class GroupChatServer {
     // ─── Auth ───────────────────────────────────────────────────
 
     private async authMiddleware(socket: Socket, next: (err?: Error) => void): Promise<void> {
-        const authToken = await getToken()
-        const token = socket.handshake.auth.token || socket.handshake.query.token || ''
-        if (authToken) {
-            if (token !== authToken) {
-                return next(new Error('Unauthorized'))
-            }
+        const auth = socket.handshake.auth as { source?: string; agentSocketSecret?: string; token?: string }
+        const isAgentSocket = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET
+        if (isAgentSocket) {
+            next()
+            return
+        }
+
+        const token = auth.token || socket.handshake.query.token || ''
+        if (await isAuthEnabled() && !await authenticateUserToken(String(token))) {
+            return next(new Error('Unauthorized'))
         }
         next()
     }

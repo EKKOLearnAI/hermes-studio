@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { hasApiKey } from '@/api/client'
+import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -39,6 +39,7 @@ const router = createRouter({
       path: '/hermes/profiles',
       name: 'hermes.profiles',
       component: () => import('@/views/hermes/ProfilesView.vue'),
+      meta: { requiresSuperAdmin: true },
     },
     {
       path: '/hermes/logs',
@@ -54,6 +55,7 @@ const router = createRouter({
       path: '/hermes/performance',
       name: 'hermes.performance',
       component: () => import('@/views/hermes/PerformanceView.vue'),
+      meta: { requiresSuperAdmin: true },
     },
     {
       path: '/hermes/skills-usage',
@@ -118,6 +120,11 @@ router.beforeEach((to, _from, next) => {
   // All other pages require token
   if (!hasApiKey()) {
     next({ name: 'login' })
+    return
+  }
+
+  if (to.meta.requiresSuperAdmin && !isStoredSuperAdmin()) {
+    next({ name: 'hermes.chat' })
     return
   }
 

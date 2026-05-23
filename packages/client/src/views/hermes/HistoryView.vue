@@ -49,9 +49,15 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
-async function handleSessionClick(sessionId: string) {
+function findHistorySession(sessionId: string): SessionSummary | undefined {
+  return hermesSessions.value.find(session => session.id === sessionId)
+}
+
+async function handleSessionClick(sessionId: string, profile?: string | null) {
+  const summary = findHistorySession(sessionId)
+  const sessionProfile = profile || summary?.profile || null
   // First, fetch the Hermes session detail
-  const sessionDetail = await fetchHermesSession(sessionId)
+  const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
   if (!sessionDetail) {
     message.error(t('chat.sessionNotFound'))
     return
@@ -60,6 +66,7 @@ async function handleSessionClick(sessionId: string) {
   // Convert SessionDetail to Session format and add to chatStore
   const sessionData: Session = {
     id: sessionDetail.id,
+    profile: sessionDetail.profile || sessionProfile || undefined,
     title: sessionDetail.title || '',
     source: sessionDetail.source,
     createdAt: sessionDetail.started_at * 1000,
@@ -132,7 +139,7 @@ const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem
 function sessionSummaryToSession(summary: SessionSummary): Session {
   return {
     id: summary.id,
-    profile: summary.profile,
+    profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
     createdAt: summary.started_at * 1000,
@@ -212,7 +219,7 @@ function toggleGroup(source: string) {
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
       // Auto-select and load first session when expanding group
-      handleSessionClick(group.sessions[0].id)
+      handleSessionClick(group.sessions[0].id, group.sessions[0].profile)
     }
   }
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -247,7 +254,7 @@ watch(hermesSessionsLoaded, (loaded) => {
           collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
         }
         // Load session details
-        handleSessionClick(firstCliSession.id)
+        handleSessionClick(firstCliSession.id, firstCliSession.profile)
       }
       // If no CLI session exists, don't auto-load any session
     }
@@ -271,8 +278,10 @@ async function copySessionId(id?: string) {
   }
 }
 
-async function handleDeleteSession(id: string) {
-  const ok = await deleteSession(id)
+async function handleDeleteSession(id: string, profile?: string | null) {
+  const summary = findHistorySession(id)
+  const sessionProfile = profile || summary?.profile || null
+  const ok = await deleteSession(id, sessionProfile)
   if (!ok) {
     message.error(t('common.deleteFailed'))
     return
@@ -285,7 +294,7 @@ async function handleDeleteSession(id: string) {
     historySessionId.value = null
     historySession.value = null
     const next = historySessions.value[0]
-    if (next) await handleSessionClick(next.id)
+    if (next) await handleSessionClick(next.id, next.profile)
   }
 
   message.success(t('chat.sessionDeleted'))
@@ -326,8 +335,8 @@ async function handleDeleteSession(id: string) {
             :can-delete="true"
             :streaming="false"
             :show-profile="false"
-            @select="handleSessionClick(s.id)"
-            @delete="handleDeleteSession(s.id)"
+            @select="handleSessionClick(s.id, s.profile)"
+            @delete="handleDeleteSession(s.id, s.profile)"
           />
         </template>
 
@@ -347,8 +356,8 @@ async function handleDeleteSession(id: string) {
               :can-delete="true"
               :streaming="false"
               :show-profile="false"
-              @select="handleSessionClick(s.id)"
-              @delete="handleDeleteSession(s.id)"
+              @select="handleSessionClick(s.id, s.profile)"
+              @delete="handleDeleteSession(s.id, s.profile)"
             />
           </template>
         </template>

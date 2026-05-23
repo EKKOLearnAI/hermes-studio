@@ -49,9 +49,10 @@ describe('Kanban API', () => {
   it('builds board-scoped kanban event websocket URLs with auth token', () => {
     mockGetBaseUrlValue.mockReturnValue('https://wui.example.test')
     mockGetApiKey.mockReturnValue('token value')
+    localStorage.setItem('hermes_active_profile_name', 'research')
 
-    expect(buildKanbanEventsWebSocketUrl({ board: 'project-a' })).toBe('wss://wui.example.test/api/hermes/kanban/events?board=project-a&token=token+value')
-    expect(buildKanbanEventsWebSocketUrl()).toBe('wss://wui.example.test/api/hermes/kanban/events?board=default&token=token+value')
+    expect(buildKanbanEventsWebSocketUrl({ board: 'project-a' })).toBe('wss://wui.example.test/api/hermes/kanban/events?board=project-a&token=token+value&profile=research')
+    expect(buildKanbanEventsWebSocketUrl()).toBe('wss://wui.example.test/api/hermes/kanban/events?board=default&token=token+value&profile=research')
   })
 
   it('serializes board, list filters, and archived inclusion into query params', async () => {

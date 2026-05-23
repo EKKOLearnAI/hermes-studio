@@ -37,4 +37,22 @@ describe('performance monitor controller', () => {
     expect(ctx.status).toBeUndefined()
     expect(ctx.body).toEqual({ timestamp: 0, error: 'boom' })
   })
+
+  it('requires super admin on the runtime route', async () => {
+    const { performanceMonitorRoutes } = await import('../../packages/server/src/routes/hermes/performance-monitor')
+    const layer = performanceMonitorRoutes.stack.find((entry: any) => entry.path === '/api/hermes/performance/runtime')
+    expect(layer).toBeTruthy()
+
+    const deniedCtx: any = { state: { user: { role: 'admin' } }, status: 200, body: null }
+    const deniedNext = vi.fn(async () => {})
+    await layer.stack[0](deniedCtx, deniedNext)
+
+    expect(deniedCtx.status).toBe(403)
+    expect(deniedNext).not.toHaveBeenCalled()
+
+    const allowedCtx: any = { state: { user: { role: 'super_admin' } }, status: 200, body: null }
+    const allowedNext = vi.fn(async () => {})
+    await layer.stack[0](allowedCtx, allowedNext)
+    expect(allowedNext).toHaveBeenCalledOnce()
+  })
 })
