@@ -295,7 +295,7 @@ function makeSocket(url, options) {
       return this
     },
     emit(event, payload) {
-      state.emitted.push({ event, payload })
+      state.emitted.push({ event, payload, socket: this })
       if (event === 'resume') {
         const sessionId = payload && payload.session_id
         const resumes = window.__PW_CHAT_SOCKET_RESUMES__ || {}

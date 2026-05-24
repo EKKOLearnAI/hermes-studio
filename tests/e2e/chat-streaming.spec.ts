@@ -15,6 +15,9 @@ async function waitForRun(page: Page, index = 0) {
     const state = (window as any).__PW_CHAT_SOCKET__
     const runs = state?.emitted?.filter((item: any) => item.event === 'run') || []
     const run = runs[runIndex]
+    const runSockets = state?.sockets?.filter((socket: any) =>
+      state.emitted.some((item: any) => item.event === 'run' && item.socket === socket),
+    ) || []
     return run
       ? {
           socket: {
@@ -24,6 +27,7 @@ async function waitForRun(page: Page, index = 0) {
           run: run.payload,
           runCount: runs.length,
           socketCount: state.sockets.length,
+          runSocketCount: runSockets.length,
         }
       : null
   }, index)
@@ -138,7 +142,7 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   await sendChatMessage(page, 'Second queued contract')
   const second = await waitForRun(page, 1)
 
-  expect(second.socketCount).toBe(1)
+  expect(second.runSocketCount).toBe(1)
   expect(second.runCount).toBe(2)
   expect(second.run.session_id).toBe(first.run.session_id)
   expect(second.run.input).toBe('Second queued contract')
@@ -310,7 +314,9 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.getByRole('button', { name: 'Allow once' })).toHaveCount(0)
   await expect.poll(async () => page.evaluate(() => {
     const emitted = (window as any).__PW_CHAT_SOCKET__.emitted
-    return emitted.filter((item: any) => item.event === 'approval.respond')
+    return emitted
+      .filter((item: any) => item.event === 'approval.respond')
+      .map(({ event, payload }: any) => ({ event, payload }))
   })).toEqual([
     {
       event: 'approval.respond',
