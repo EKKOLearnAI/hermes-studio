@@ -1119,6 +1119,14 @@ export default {
     new_0_5_35_6: 'Agent 初期化中の worker request で Performance Monitor がブロックされにくくなり、Windows の request timed out を軽減',
     new_0_5_35_7: 'Chat Markdown にテキスト内容のインラインプレビューを追加し、download アイコンはプレビュー drawer を開かず直接ダウンロードします',
     new_0_5_35_8: '内容表示 drawer を改善し、モバイルの閉じる操作と全幅表示、デスクトップ 800px 幅、テキスト/Markdown 背景の統一に対応',
+    new_0_6_0_1: 'アカウント別・Profile 別の管理により、セッション、モデル、使用量、Kanban、ジョブ、アップロード、メディア、関連 Hermes API を一貫して保護します',
+    new_0_6_0_2: '内蔵メディア Skills は生成されたサーバートークンをメディア endpoint のみに使用し、要求された Profile から fun-codex/xAI 認証情報を解決します',
+    new_0_6_0_3: '単一チャットとグループチャットは現在の Hermes Profile を run instructions に注入し、Skills が X-Hermes-Profile を送れるようにします',
+    new_0_6_0_4: 'delegate_task の subagent 進行状況をチャット UI に stream 表示し、開始、tool、進行、完了を確認できます',
+    new_0_6_0_5: '停止または中断時に一時イベントをクリアし、古い abort 状態が次のチャットに漏れないようにしました',
+    new_0_6_0_6: 'アカウント管理、既定の認証情報、アカウント/Profile 管理、アップロード/ダウンロード、内蔵メディア Skills のドキュメントとサイト文言を更新',
+    new_0_6_0_7: 'ログイン IP ロックのクリアと既定の admin / 123456 ログインをリセットする CLI メンテナンスコマンドを追加',
+    new_0_6_0_8: '0.6.0 は Web UI の単一ユーザー版とマルチユーザー版の境界です。マルチユーザー機能に問題がある場合は issue を送信し、必要に応じて 0.5.35 の単一ユーザー版へ戻してください',
   },
 
   // ファイル

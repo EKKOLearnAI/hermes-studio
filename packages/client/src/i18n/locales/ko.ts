@@ -1119,6 +1119,14 @@ export default {
     new_0_5_35_6: 'Agent 초기화 중 worker request로 Performance Monitor가 막히지 않도록 개선해 Windows의 request timed out 가능성을 낮춤',
     new_0_5_35_7: 'Chat Markdown에 텍스트 콘텐츠 인라인 미리보기를 추가하고, 다운로드 아이콘은 preview drawer 대신 파일을 직접 다운로드합니다',
     new_0_5_35_8: '콘텐츠 preview drawer 개선: 모바일 닫기 동작, 모바일 전체 너비, 데스크톱 800px 너비, 텍스트/Markdown 배경 통일',
+    new_0_6_0_1: '계정별 및 Profile별 관리가 세션, 모델, 사용량, Kanban, 작업, 업로드, 미디어, 관련 Hermes API를 일관되게 보호합니다',
+    new_0_6_0_2: '내장 미디어 Skills는 생성된 서버 토큰을 미디어 엔드포인트에만 사용하고 요청한 Profile에서 fun-codex/xAI 자격 증명을 확인합니다',
+    new_0_6_0_3: '단일 채팅과 그룹 채팅이 현재 Hermes Profile을 run instructions에 주입해 Skills가 X-Hermes-Profile을 보낼 수 있습니다',
+    new_0_6_0_4: 'delegate_task subagent 진행 상황이 시작, 도구, 진행, 완료 상태로 채팅 UI에 스트리밍됩니다',
+    new_0_6_0_5: '실행 중지 또는 중단 시 임시 이벤트를 정리해 이전 abort 상태가 다음 채팅으로 넘어가지 않게 했습니다',
+    new_0_6_0_6: '계정 관리, 기본 자격 증명, 계정/Profile 관리, 업로드/다운로드, 내장 미디어 Skills 문서와 웹사이트 문구를 업데이트했습니다',
+    new_0_6_0_7: '로그인 IP 잠금을 지우고 기본 admin / 123456 로그인을 재설정하는 CLI 유지보수 명령을 추가했습니다',
+    new_0_6_0_8: '0.6.0은 Web UI의 단일 사용자 버전과 다중 사용자 버전의 경계입니다. 다중 사용자 모드에 문제가 있으면 issue를 제출하고, 필요하면 0.5.35 단일 사용자 버전으로 되돌리세요',
   },
 
   // 파일

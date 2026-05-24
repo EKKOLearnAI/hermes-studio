@@ -144,6 +144,21 @@
 - 超级管理员可以管理用户和 Profile 绑定；普通管理员只能管理自己的账户信息
 - 可通过 `AUTH_DISABLED=1` 禁用认证
 
+CLI 维护命令：
+
+```bash
+# 删除持久化的登录 IP 锁记录
+hermes-web-ui clear-login-locks
+
+# 删除登录锁并重启正在运行的 Web UI 进程
+hermes-web-ui clear-login-locks --restart
+
+# 创建或重置默认超级管理员登录名/密码为 admin / 123456
+hermes-web-ui reset-default-login
+```
+
+`clear-login-locks` 会删除 `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`。如果服务正在运行，需要重启服务才能清理内存中的锁定状态。`reset-default-login` 会更新 Web UI 账户数据库；如果已存在 `admin` 用户，则会把密码重置为 `123456`，并启用为超级管理员账户。
+
 ### 设置
 
 - 显示（流式输出、紧凑模式、推理过程、费用显示）
@@ -300,7 +315,7 @@ npm run build   # 构建输出到 dist/
 
 前端采用 **多 Agent 可扩展架构** — 所有 Hermes 相关代码都按命名空间组织在 `hermes/` 目录下（API、组件、视图、Store），可以方便地并行接入新的 Agent。
 
-BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、账号/Profile 鉴权、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
+BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、分账户分 Profile 管理、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
 
 ## 技术栈
 

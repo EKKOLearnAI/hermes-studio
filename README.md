@@ -136,6 +136,21 @@ Unified configuration for **8 platforms** in one page:
 - Super administrators can manage users and profile bindings; regular administrators can manage their own account details
 - Auth can be disabled with `AUTH_DISABLED=1`
 
+CLI maintenance commands:
+
+```bash
+# Delete persisted login IP lock records
+hermes-web-ui clear-login-locks
+
+# Delete login locks and restart the running Web UI process
+hermes-web-ui clear-login-locks --restart
+
+# Create or reset the default super administrator login to admin / 123456
+hermes-web-ui reset-default-login
+```
+
+`clear-login-locks` removes `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`. If the server is running, restart it to clear in-memory lock state. `reset-default-login` updates the Web UI account database; if an `admin` user already exists, its password is reset to `123456` and the account is enabled as a super administrator.
+
 ### Settings
 
 - Display (streaming, compact mode, reasoning, cost display)
@@ -293,7 +308,7 @@ Browser → BFF (Koa, :8648) → Socket.IO /chat-run
 
 The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
 
-The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account/profile authorization, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
+The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account- and profile-scoped management, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
 
 ## Tech Stack
 

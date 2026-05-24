@@ -1341,6 +1341,14 @@ export default {
     new_0_5_35_6: 'Performance monitoring no longer blocks on worker requests while agents are initializing, reducing request timeouts on Windows',
     new_0_5_35_7: 'Chat Markdown now supports inline text-content previews, and download icons download files directly instead of opening the preview drawer',
     new_0_5_35_8: 'Polish the content preview drawer with a mobile close action, full-width mobile layout, 800px desktop width, and consistent text/Markdown backgrounds',
+    new_0_6_0_1: 'Account- and Profile-scoped management now consistently protects sessions, models, usage, Kanban, jobs, uploads, media, and related Hermes APIs',
+    new_0_6_0_2: 'Bundled media skills use the generated server token only for media endpoints and resolve fun-codex/xAI credentials from the requested Profile',
+    new_0_6_0_3: 'Single chat and group chat now inject the current Hermes Profile into run instructions so skills can send X-Hermes-Profile',
+    new_0_6_0_4: 'delegate_task subagent progress now streams into the chat UI with start, tool, progress, and completion updates',
+    new_0_6_0_5: 'Stopping or aborting a run clears transient events so stale abort state does not leak into the next chat',
+    new_0_6_0_6: 'Update docs and website copy for account management, default credentials, account/Profile management, uploads/downloads, and bundled media skills',
+    new_0_6_0_7: 'Add CLI maintenance commands for clearing login IP locks and resetting the default admin / 123456 login',
+    new_0_6_0_8: 'Version 0.6.0 is the boundary between single-user and multi-user Web UI. If multi-user mode causes issues, please file an issue and roll back to the 0.5.35 single-user release if needed',
 
   },
 }

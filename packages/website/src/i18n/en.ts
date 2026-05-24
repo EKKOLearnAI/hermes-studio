@@ -232,7 +232,7 @@ export default {
       intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
-        content: 'The Koa server handles session management, profile CRUD, account/profile authorization, config read/write, log access, skill listing, memory operations, and static assets.',
+        content: 'The Koa server handles session management, profile CRUD, account- and profile-scoped management, config read/write, log access, skill listing, memory operations, and static assets.',
       },
       proxy: {
         title: 'Chat Streaming',

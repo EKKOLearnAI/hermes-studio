@@ -232,7 +232,7 @@ export default {
       intro: 'Hermes Web UI 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
       local: {
         title: '本地 BFF 端点',
-        content: 'Koa 服务器处理会话管理、Profile CRUD、账号/Profile 鉴权、配置读写、日志访问、技能列表、记忆操作和静态资源。',
+        content: 'Koa 服务器处理会话管理、Profile CRUD、分账户分 Profile 管理、配置读写、日志访问、技能列表、记忆操作和静态资源。',
       },
       proxy: {
         title: '聊天流式通信',
