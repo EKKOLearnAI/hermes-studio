@@ -75,12 +75,12 @@ test('clearing unread in one tab syncs to another tab', async ({ context, page }
   await page.goto('/chat')
   await secondPage.goto('/chat')
 
-  const firstUnreadRow = page.locator('.session-item-shell', { hasText: 'Unread Session' })
-  const secondUnreadRow = secondPage.locator('.session-item-shell', { hasText: 'Unread Session' })
+  const firstUnreadRow = page.locator('.session-item', { hasText: 'Unread Session' })
+  const secondUnreadRow = secondPage.locator('.session-item', { hasText: 'Unread Session' })
   await expect(firstUnreadRow.locator('.session-attention-indicator--unread')).toHaveCount(1)
   await expect(secondUnreadRow.locator('.session-attention-indicator--unread')).toHaveCount(1)
 
-  await firstUnreadRow.locator('.session-item-link').click()
+  await firstUnreadRow.click()
 
   await expect(firstUnreadRow.locator('.session-attention-indicator')).toHaveCount(0)
   await expect(secondUnreadRow.locator('.session-attention-indicator')).toHaveCount(0)
