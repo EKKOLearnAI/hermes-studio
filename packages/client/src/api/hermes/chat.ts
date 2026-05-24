@@ -104,6 +104,8 @@ const sessionEventHandlers = new Map<string, {
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
   onPeerUserMessage?: (event: RunEvent) => void
+  onClarifyRequested?: (event: RunEvent) => void
+  onClarifyResolved?: (event: RunEvent) => void
 }>()
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
@@ -361,6 +363,26 @@ function globalPeerUserMessageHandler(event: RunEvent): void {
   }
 }
 
+function globalClarifyRequestedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyRequested) {
+    handlers.onClarifyRequested(event)
+  }
+}
+
+function globalClarifyResolvedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyResolved) {
+    handlers.onClarifyResolved(event)
+  }
+}
+
 /**
  * Register event handlers for a session
  * @param sessionId - Session ID
@@ -389,6 +411,8 @@ export function registerSessionHandlers(
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
     onPeerUserMessage?: (event: RunEvent) => void
+    onClarifyRequested?: (event: RunEvent) => void
+    onClarifyResolved?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -412,6 +436,19 @@ export function onPeerUserMessage(handler: (event: RunEvent) => void): () => voi
   return () => {
     peerUserMessageHandlers.delete(handler)
   }
+}
+
+export function respondClarify(
+  sessionId: string,
+  clarifyId: string,
+  response: string,
+): void {
+  const socket = connectChatRun()
+  socket.emit('clarify.respond', {
+    session_id: sessionId,
+    clarify_id: clarifyId,
+    response,
+  })
 }
 
 export function respondToolApproval(
@@ -494,6 +531,8 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
     chatRunSocket.on('run.peer_user_message', globalPeerUserMessageHandler)
+    chatRunSocket.on('clarify.requested', globalClarifyRequestedHandler)
+    chatRunSocket.on('clarify.resolved', globalClarifyResolvedHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
@@ -685,6 +724,14 @@ export function startRunViaSocket(
       onEvent(evt)
     },
     onApprovalResolved: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyRequested: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyResolved: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },
