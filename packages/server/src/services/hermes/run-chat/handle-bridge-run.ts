@@ -44,6 +44,22 @@ function looksLikeAgentFailure(value: string): boolean {
     || /\b(?:401|403|429|500|502|503|504)\b/.test(value) && /\b(?:unauthorized|forbidden|rate limit|unavailable|failed|error)\b/i.test(value)
 }
 
+/**
+ * Detect "unknown run" errors raised when the agent bridge worker has been
+ * restarted (e.g. systemd unit restart, OOM, crash recovery). The Python
+ * bridge keeps run state purely in-memory, so any subsequent `get_output` /
+ * `get_result` poll on a run started before the restart returns
+ * `unknown run: <id>`. We translate this to a friendly message and treat
+ * the run as cleanly terminated so the UI can recover.
+ */
+export function isBridgeUnknownRunError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  return /unknown run\b/i.test(message)
+}
+
+const BRIDGE_RESTART_USER_MESSAGE =
+  'A conexão com o agente foi reiniciada (geralmente por um deploy ou reinicialização do serviço). Sua mensagem foi salva — basta enviar de novo para continuar.'
+
 export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'error' | 'result'>): string | null {
   const result = chunk.result && typeof chunk.result === 'object' && !Array.isArray(chunk.result)
     ? chunk.result as Record<string, unknown>
@@ -309,6 +325,7 @@ export async function handleBridgeRun(
     if (state.activeRunMarker !== runMarker) return
     if (!state.isWorking) return
     const queueLen = state.queue?.length ?? 0
+    const bridgeRestarted = isBridgeUnknownRunError(err)
     state.isWorking = false
     state.isAborting = false
     state.profile = undefined
@@ -318,7 +335,15 @@ export async function handleBridgeRun(
     state.bridgePendingToolCallMarkup = undefined
     flushBridgePendingToDb(state, session_id)
     updateSessionStats(session_id)
-    const message = err instanceof Error ? err.message : String(err)
+    const rawMessage = err instanceof Error ? err.message : String(err)
+    const message = bridgeRestarted ? BRIDGE_RESTART_USER_MESSAGE : rawMessage
+    if (bridgeRestarted) {
+      bridgeLogger.warn({
+        sessionId: session_id,
+        runId: state.runId,
+        rawError: rawMessage,
+      }, '[chat-run-socket] bridge worker restarted mid-run; recovering session')
+    }
     const errUsage = await calcAndUpdateUsage(session_id, state, emit)
     const errContextTokens = await refreshFinalContextUsage({
       sessionId: session_id,

@@ -430,7 +430,23 @@ export class AgentBridgeClient {
     let cursor = 0
     let eventCursor = 0
     for (;;) {
-      const chunk = await this.getOutput(runId, cursor, eventCursor, options)
+      let chunk: AgentBridgeOutput
+      try {
+        chunk = await this.getOutput(runId, cursor, eventCursor, options)
+      } catch (err) {
+        // The bridge worker keeps run state in-memory only — if it has been
+        // restarted (deploy, OOM, crash) any in-flight run becomes unknown.
+        // Surface a typed error so callers can handle gracefully instead of
+        // looping or showing the raw KeyError to users.
+        const message = err instanceof Error ? err.message : String(err ?? '')
+        if (/unknown run\b/i.test(message)) {
+          const restartErr: any = new Error(`bridge worker restarted; run ${runId} no longer tracked`)
+          restartErr.code = 'BRIDGE_RUN_LOST'
+          restartErr.runId = runId
+          throw restartErr
+        }
+        throw err
+      }
       cursor = chunk.cursor
       eventCursor = chunk.event_cursor
       if (chunk.delta || chunk.done || (chunk.events && chunk.events.length > 0)) yield chunk
