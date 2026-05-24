@@ -37,7 +37,15 @@ async function loadSkillsController() {
 }
 
 function makeCtx(body: unknown): any {
-  return { request: { body }, status: 200, body: undefined, query: {}, params: {} }
+  return {
+    request: { body },
+    status: 200,
+    body: undefined,
+    query: {},
+    params: {},
+    state: {},
+    get: vi.fn(() => ''),
+  }
 }
 
 beforeEach(async () => {
@@ -73,6 +81,24 @@ describe('config mutating controllers', () => {
     const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     expect(config.model).toEqual({ default: 'glm-5.1', provider: 'custom:glm' })
     expect(config.terminal.backend).toBe('local')
+  })
+
+  it('setConfigModel uses the requested profile header when auth has not populated state.profile', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    await mkdir(researchDir, { recursive: true })
+    await writeFile(join(hermesHome, 'config.yaml'), 'model:\n  default: root-model\n', 'utf-8')
+    await writeFile(join(researchDir, 'config.yaml'), 'model:\n  default: old-research\n', 'utf-8')
+    const { setConfigModel } = await loadModelsController()
+    const ctx = makeCtx({ default: 'research-model', provider: 'deepseek' })
+    ctx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'research' : '')
+
+    await setConfigModel(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const rootConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    const researchConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(rootConfig.model.default).toBe('root-model')
+    expect(researchConfig.model).toEqual({ default: 'research-model', provider: 'deepseek' })
   })
 
   it('skill toggle preserves unrelated config while adding and removing disabled skills', async () => {

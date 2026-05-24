@@ -20,6 +20,7 @@ import { hasApiKey } from '@/api/client'
 const WEB_UI_VERSION = __APP_VERSION__
 
 const SIDEBAR_COLLAPSED_KEY = 'hermes_sidebar_collapsed'
+const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
 const MODELS_CACHE_TTL_MS = 30000
 
 export const useAppStore = defineStore('app', () => {
@@ -89,13 +90,19 @@ export const useAppStore = defineStore('app', () => {
     modelVisibility.value = res.model_visibility || {}
     customModels.value = res.custom_models || {}
 
-    const defaultModel = res.default || ''
-    const defaultProvider = res.default_provider || ''
-    const explicitGroup = res.groups.find(g => g.provider === defaultProvider && g.models.includes(defaultModel))
-    const inferredGroup = res.groups.find(g => g.models.includes(defaultModel))
-    const fallbackGroup = res.groups.find(g => g.models.length > 0)
+    const activeProfileName = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || ''
+    const activeProfileModels = activeProfileName
+      ? profileModelGroups.value.find(entry => entry.profile === activeProfileName)
+      : undefined
+    const defaultSource = activeProfileModels || res
+    const defaultGroups = defaultSource.groups || []
+    const defaultModel = defaultSource.default || ''
+    const defaultProvider = defaultSource.default_provider || ''
+    const explicitGroup = defaultGroups.find(g => g.provider === defaultProvider && g.models.includes(defaultModel))
+    const inferredGroup = defaultGroups.find(g => g.models.includes(defaultModel))
+    const fallbackGroup = defaultGroups.find(g => g.models.length > 0)
 
-    const providerGroup = defaultProvider ? res.groups.find(g => g.provider === defaultProvider) : undefined
+    const providerGroup = defaultProvider ? defaultGroups.find(g => g.provider === defaultProvider) : undefined
     const allProvider = defaultProvider ? res.allProviders.find(g => g.provider === defaultProvider) : undefined
     const providerCatalog = providerGroup?.available_models?.length
       ? providerGroup.available_models

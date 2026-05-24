@@ -56,7 +56,7 @@ export async function currentUser(ctx: Context) {
       created_at: user.created_at,
       updated_at: user.updated_at,
       last_login_at: user.last_login_at,
-      requiresCredentialChange: user.username === DEFAULT_USERNAME || verifyPassword(DEFAULT_PASSWORD, user.password_hash),
+      requiresCredentialChange: user.username === DEFAULT_USERNAME && verifyPassword(DEFAULT_PASSWORD, user.password_hash),
     },
   }
 }

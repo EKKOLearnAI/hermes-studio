@@ -83,6 +83,13 @@ async function allowServerTokenForMedia(ctx: Context, token: string): Promise<bo
   return true
 }
 
+function isProtectedHttpPath(path: string): boolean {
+  const lowerPath = path.toLowerCase()
+  return lowerPath.startsWith('/api') ||
+    lowerPath.startsWith('/v1') ||
+    lowerPath.startsWith('/upload')
+}
+
 export function signUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>, secret: string, now = Date.now()): string {
   const iat = Math.floor(now / 1000)
   const payload: JwtPayload = {
@@ -154,6 +161,11 @@ export async function isAuthEnabled(): Promise<boolean> {
 }
 
 export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
+  if (!isProtectedHttpPath(ctx.path)) {
+    await next()
+    return
+  }
+
   const secret = await getJwtSecret()
   if (!secret) {
     await next()

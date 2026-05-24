@@ -185,6 +185,25 @@ describe('models controller — model visibility', () => {
     ]))
   })
 
+  it('uses the requested profile for aggregate response defaults', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default', 'tester'])
+    mockReadConfigYamlForProfile.mockImplementation(async (profile: string) => ({
+      model: {
+        default: profile === 'tester' ? 'deepseek-reasoner' : 'deepseek-chat',
+        provider: 'deepseek',
+      },
+    }))
+
+    const ctx = makeCtx()
+    ctx.state = { user: { id: 1, username: 'admin', role: 'super_admin' } }
+    ctx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'tester' : '')
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.default).toBe('deepseek-reasoner')
+    expect(ctx.body.default_provider).toBe('deepseek')
+    expect(ctx.body.profiles.map((profile: any) => profile.profile)).toEqual(['default', 'tester'])
+  })
+
   it('uses explicit query profile for single-profile model fetches', async () => {
     mockListProfileNamesFromDisk.mockReturnValue(['default', 'research'])
 

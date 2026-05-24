@@ -168,6 +168,7 @@ describe('user auth tables and middleware', () => {
     const user = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     const token = auth.signUserJwt(user, 'test-secret')
     const ctx = {
+      path: '/api/hermes/download',
       headers: {},
       query: { token },
       state: {},
@@ -181,6 +182,46 @@ describe('user auth tables and middleware', () => {
 
     expect(ctx.state.user).toEqual({ id: user.id, username: 'admin', role: 'super_admin' })
     expect(next).toHaveBeenCalledOnce()
+  })
+
+  it('lets SPA and static asset paths pass through without a JWT', async () => {
+    const { auth } = await initUsers()
+    const ctx = {
+      path: '/',
+      headers: {},
+      query: {},
+      state: {},
+      request: { body: {} },
+      status: 200,
+      body: null,
+    } as any
+    const next = vi.fn(async () => {})
+
+    await auth.requireUserJwt(ctx, next)
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toBeNull()
+  })
+
+  it('still requires a JWT for protected API paths', async () => {
+    const { auth } = await initUsers()
+    const ctx = {
+      path: '/api/hermes/sessions',
+      headers: {},
+      query: {},
+      state: {},
+      request: { body: {} },
+      status: 200,
+      body: null,
+    } as any
+    const next = vi.fn(async () => {})
+
+    await auth.requireUserJwt(ctx, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({ error: 'Unauthorized' })
   })
 
   it('bootstraps the default super admin through password login and returns a user JWT', async () => {
@@ -200,7 +241,7 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body.token).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
   })
 
-  it('marks the default account credentials as requiring a change', async () => {
+  it('marks only admin with password 123456 as requiring a credential change', async () => {
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     const ctrl = await import('../../packages/server/src/controllers/auth')
@@ -213,15 +254,24 @@ describe('user auth tables and middleware', () => {
     await ctrl.currentUser(defaultCtx)
     expect(defaultCtx.body.user.requiresCredentialChange).toBe(true)
 
-    users.updateUsername(admin.id, 'owner')
     users.updateUserPassword(admin.id, 'stronger-password')
-    const changedCtx = {
+    const passwordChangedCtx = {
+      state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
+      status: 200,
+      body: null,
+    } as any
+    await ctrl.currentUser(passwordChangedCtx)
+    expect(passwordChangedCtx.body.user.requiresCredentialChange).toBe(false)
+
+    users.updateUserPassword(admin.id, '123456')
+    users.updateUsername(admin.id, 'owner')
+    const usernameChangedCtx = {
       state: { user: { id: admin.id, username: 'owner', role: 'super_admin' } },
       status: 200,
       body: null,
     } as any
-    await ctrl.currentUser(changedCtx)
-    expect(changedCtx.body.user.requiresCredentialChange).toBe(false)
+    await ctrl.currentUser(usernameChangedCtx)
+    expect(usernameChangedCtx.body.user.requiresCredentialChange).toBe(false)
   })
 
   it('lets super admins create regular admins with profile bindings', async () => {

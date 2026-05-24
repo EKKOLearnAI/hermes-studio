@@ -201,7 +201,15 @@ function requestedProfileName(ctx: any): string {
 }
 
 function requestScopedProfileName(ctx: any): string {
-  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+  const headerProfile = typeof ctx.get === 'function' ? ctx.get('x-hermes-profile') : ''
+  const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
+  const bodyProfile = typeof ctx.request?.body?.profile === 'string' ? ctx.request.body.profile : ''
+  return ctx.state?.profile?.name ||
+    headerProfile.trim() ||
+    queryProfile.trim() ||
+    bodyProfile.trim() ||
+    getActiveProfileName() ||
+    'default'
 }
 
 function visibleProfileNamesForUser(ctx: any): string[] {
@@ -411,7 +419,7 @@ export async function getAvailable(ctx: any) {
       const mergedGroups = mergeAvailableGroups(profileResults.flatMap(result => result.groups))
       const groupsWithAliases = applyModelAliases(mergedGroups, modelAliases)
       const visibleGroups = applyModelVisibility(groupsWithAliases, modelVisibility)
-      const activeProfile = getActiveProfileName()
+      const activeProfile = requestScopedProfileName(ctx)
       const defaultProfile = profileResults.find(result => result.profile === activeProfile && (result.default || result.default_provider))
         || profileResults.find(result => result.default && result.default_provider)
         || profileResults.find(result => result.default)

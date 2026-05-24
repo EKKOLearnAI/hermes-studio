@@ -390,9 +390,7 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
@@ -404,9 +402,7 @@ function startDaemon(port) {
       } else {
         console.log(`  ⚠ Server process is running but health check failed after ${maxWait / 1000}s`)
         console.log(`    Check log: ${LOG_FILE}`)
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`    ${url}`)
       }
     }).catch(() => {
@@ -415,9 +411,7 @@ function startDaemon(port) {
       } else {
         console.log(`  ⚠ Server process is running but health check failed after ${maxWait / 1000}s`)
         console.log(`    Check log: ${LOG_FILE}`)
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`    ${url}`)
       }
     })
