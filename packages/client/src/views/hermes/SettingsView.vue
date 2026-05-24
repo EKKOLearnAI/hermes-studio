@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   NTabs,
   NTabPane,
@@ -15,13 +16,60 @@ import SessionSettings from "@/components/hermes/settings/SessionSettings.vue";
 import PrivacySettings from "@/components/hermes/settings/PrivacySettings.vue";
 import ModelSettings from "@/components/hermes/settings/ModelSettings.vue";
 import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
+import UserManagementSettings from "@/components/hermes/settings/UserManagementSettings.vue";
 import VoiceSettings from "@/components/hermes/settings/VoiceSettings.vue";
+import { isStoredSuperAdmin } from "@/api/client";
+import { useProfilesStore } from "@/stores/hermes/profiles";
 
 const settingsStore = useSettingsStore();
+const profilesStore = useProfilesStore();
 const { t } = useI18n();
+const canManageUsers = isStoredSuperAdmin();
+const route = useRoute();
+const router = useRouter();
+const activeTab = ref("account");
+
+const validTabs = computed(() => new Set([
+  "account",
+  ...(canManageUsers ? ["users"] : []),
+  "display",
+  "agent",
+  "memory",
+  "compression",
+  "session",
+  "privacy",
+  "models",
+  "voice",
+]));
+
+function normalizeTab(value: unknown): string {
+  const tab = typeof value === "string" ? value : "";
+  return validTabs.value.has(tab) ? tab : "account";
+}
+
+function handleTabUpdate(tab: string) {
+  activeTab.value = normalizeTab(tab);
+  router.replace({
+    query: {
+      ...route.query,
+      tab: activeTab.value === "account" ? undefined : activeTab.value,
+    },
+  });
+}
+
+watch(() => route.query.tab, (tab) => {
+  activeTab.value = normalizeTab(tab);
+}, { immediate: true });
+
+async function loadSettingsForProfile() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles();
+  }
+  await settingsStore.fetchSettings();
+}
 
 onMounted(() => {
-  settingsStore.fetchSettings();
+  void loadSettingsForProfile();
 });
 </script>
 
@@ -37,9 +85,12 @@ onMounted(() => {
         size="large"
         :description="t('common.loading')"
       >
-        <NTabs type="line" animated>
+        <NTabs v-model:value="activeTab" type="line" animated @update:value="handleTabUpdate">
           <NTabPane name="account" :tab="t('settings.tabs.account')">
             <AccountSettings />
+          </NTabPane>
+          <NTabPane v-if="canManageUsers" name="users" :tab="t('settings.tabs.users')">
+            <UserManagementSettings />
           </NTabPane>
           <NTabPane name="display" :tab="t('settings.tabs.display')">
             <DisplaySettings />

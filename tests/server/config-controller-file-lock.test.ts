@@ -5,15 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import YAML from 'js-yaml'
 
 const { mockRestartGateway, mockDestroyProfile } = vi.hoisted(() => ({
-  mockRestartGateway: vi.fn().mockResolvedValue('restarted'),
+  mockRestartGateway: vi.fn().mockResolvedValue({ running: true, profile: 'default' }),
   mockDestroyProfile: vi.fn().mockResolvedValue({ destroyed: true }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', async (importOriginal) => {
-  const original = await importOriginal<any>()
+vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => {
   return {
-    ...original,
-    restartGateway: mockRestartGateway,
+    restartGatewayForProfile: mockRestartGateway,
   }
 })
 
@@ -33,8 +31,14 @@ async function loadController() {
   return import('../../packages/server/src/controllers/hermes/config')
 }
 
-function makeCtx(body: unknown): any {
-  return { request: { body }, query: {}, status: 200, body: undefined }
+function makeCtx(body: unknown, profile?: string): any {
+  return {
+    request: { body },
+    query: {},
+    state: profile ? { profile: { name: profile } } : {},
+    status: 200,
+    body: undefined,
+  }
 }
 
 beforeEach(async () => {
@@ -69,7 +73,7 @@ describe('config controller locked file updates', () => {
     await updateConfig(ctx)
 
     expect(ctx.body).toEqual({ success: true })
-    expect(mockRestartGateway).toHaveBeenCalledTimes(1)
+    expect(mockRestartGateway).toHaveBeenCalledWith('default')
     expect(mockDestroyProfile).toHaveBeenCalledWith('default')
     const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     expect(config.telegram.enabled).toBe(true)
@@ -147,5 +151,58 @@ describe('config controller locked file updates', () => {
     expect(ctx.body.platforms.qqbot.extra.markdown_support).toBe(true)
     expect(ctx.body.platforms.qqbot.allowed_users).toBe('user-1,user-2')
     expect(ctx.body.platforms.qqbot.allow_all_users).toBe(false)
+  })
+
+  it('reads and writes channel settings in the request-scoped profile only', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    await mkdir(researchDir, { recursive: true })
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'telegram:',
+      '  require_mention: false',
+      'model:',
+      '  default: keep-default-model',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), [
+      'TELEGRAM_BOT_TOKEN=keep-default-token',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(researchDir, 'config.yaml'), [
+      'telegram:',
+      '  require_mention: false',
+      'model:',
+      '  default: research-model',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(researchDir, '.env'), [
+      'TELEGRAM_BOT_TOKEN=old-research-token',
+      '',
+    ].join('\n'), 'utf-8')
+
+    const { updateConfig, updateCredentials, getConfig } = await loadController()
+
+    await updateConfig(makeCtx({
+      section: 'telegram',
+      values: { require_mention: true, free_response_chats: 'chat-1' },
+    }, 'research'))
+    await updateCredentials(makeCtx({
+      platform: 'telegram',
+      values: { token: 'new-research-token' },
+    }, 'research'))
+
+    expect(mockRestartGateway).toHaveBeenCalledWith('research')
+    expect(mockDestroyProfile).toHaveBeenCalledWith('research')
+    const defaultConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    const researchConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(defaultConfig.telegram.require_mention).toBe(false)
+    expect(researchConfig.telegram.require_mention).toBe(true)
+    expect(researchConfig.telegram.free_response_chats).toBe('chat-1')
+    expect(await readFile(join(hermesHome, '.env'), 'utf-8')).toContain('TELEGRAM_BOT_TOKEN=keep-default-token')
+    expect(await readFile(join(researchDir, '.env'), 'utf-8')).toContain('TELEGRAM_BOT_TOKEN=new-research-token')
+
+    const ctx = makeCtx({}, 'research')
+    await getConfig(ctx)
+    expect(ctx.body.platforms.telegram.token).toBe('new-research-token')
+    expect(ctx.body.telegram.require_mention).toBe(true)
   })
 })

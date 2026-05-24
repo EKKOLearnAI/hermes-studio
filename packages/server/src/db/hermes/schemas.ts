@@ -105,6 +105,38 @@ export const MODEL_CONTEXT_SCHEMA: Record<string, string> = {
 export const MODEL_CONTEXT_INDEX = 'CREATE UNIQUE INDEX IF NOT EXISTS idx_model_context_provider_model ON model_context(provider, model)'
 
 // ============================================================================
+// Users and Profile Access
+// ============================================================================
+
+export const USERS_TABLE = 'users'
+
+export const USERS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  username: 'TEXT NOT NULL UNIQUE',
+  password_hash: 'TEXT NOT NULL',
+  role: "TEXT NOT NULL DEFAULT 'admin'",
+  status: "TEXT NOT NULL DEFAULT 'active'",
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  last_login_at: 'INTEGER',
+}
+
+export const USER_PROFILES_TABLE = 'user_profiles'
+
+export const USER_PROFILES_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER NOT NULL',
+  profile_name: "TEXT NOT NULL DEFAULT 'default'",
+  is_default: 'INTEGER NOT NULL DEFAULT 0',
+  created_at: 'INTEGER NOT NULL',
+}
+
+export const USER_PROFILES_INDEXES = {
+  idx_user_profiles_user: 'CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON user_profiles(user_id)',
+  idx_user_profiles_profile: 'CREATE INDEX IF NOT EXISTS idx_user_profiles_profile ON user_profiles(profile_name)',
+  idx_user_profiles_default: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_default ON user_profiles(user_id) WHERE is_default = 1',
+}
+
+// ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
 // ============================================================================
 
@@ -327,6 +359,13 @@ export function initAllHermesTables(): void {
       indexes: {
         idx_model_context_provider_model: MODEL_CONTEXT_INDEX,
       }
+    })
+
+    // Users and profile access
+    syncTable(USERS_TABLE, USERS_SCHEMA)
+    syncTable(USER_PROFILES_TABLE, USER_PROFILES_SCHEMA, {
+      primaryKey: 'user_id, profile_name',
+      indexes: USER_PROFILES_INDEXES,
     })
 
     // Group chat - basic tables

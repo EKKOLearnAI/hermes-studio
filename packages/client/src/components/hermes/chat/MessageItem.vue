@@ -3,8 +3,7 @@ import type { Message, ContentBlock } from "@/stores/hermes/chat";
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
-import { downloadFile } from "@/api/hermes/download";
-	import { getApiKey } from "@/api/client";
+import { downloadFile, getDownloadUrl } from "@/api/hermes/download";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
@@ -166,13 +165,6 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
     return []
   });
 });
-
-// Generate download URL with auth token
-function getDownloadUrl(path: string, name: string): string {
-	const token = getApiKey();
-	const base = `/api/hermes/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
-	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
-}
 
 function getContentFileUrl(file: DisplayContentFile): string {
   if (file.url) return file.url
@@ -1003,6 +995,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 
   &.user {
     align-items: flex-end;
@@ -1457,6 +1451,9 @@ onBeforeUnmount(() => {
   color: $text-muted;
   padding: 2px 4px;
   border-radius: $radius-sm;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 
   &.expandable {
     cursor: pointer;
@@ -1468,14 +1465,21 @@ onBeforeUnmount(() => {
 
   .tool-name {
     font-family: $font-code;
-    flex-shrink: 0;
-  }
-
-  .tool-preview {
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 400px;
+  }
+
+  .tool-preview {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: min(400px, 100%);
   }
 }
 

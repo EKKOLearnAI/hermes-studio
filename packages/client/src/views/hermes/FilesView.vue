@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useFilesStore } from '@/stores/hermes/files'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import FileTree from '@/components/hermes/files/FileTree.vue'
 import FileBreadcrumb from '@/components/hermes/files/FileBreadcrumb.vue'
 import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
@@ -13,6 +14,7 @@ import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
 import type { FileEntry } from '@/api/hermes/files'
 
 const filesStore = useFilesStore()
+const profilesStore = useProfilesStore()
 
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
 const showUpload = ref(false)
@@ -42,8 +44,15 @@ function handleRename(entry: FileEntry) {
   showRenameModal.value = true
 }
 
+async function loadRoot() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles()
+  }
+  await filesStore.fetchEntries('')
+}
+
 onMounted(() => {
-  filesStore.fetchEntries('')
+  void loadRoot()
 })
 </script>
 

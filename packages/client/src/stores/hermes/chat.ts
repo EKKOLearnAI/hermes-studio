@@ -1,6 +1,7 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
-import { getApiKey } from '@/api/client'
+import { getActiveProfileName } from '@/api/client'
+import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
@@ -101,10 +102,14 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
     if (att.file) formData.append('file', att.file, att.name)
   }
   const token = localStorage.getItem('hermes_api_key') || ''
+  const profileName = getActiveProfileName()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (profileName) headers['X-Hermes-Profile'] = profileName
   const res = await fetch('/upload', {
     method: 'POST',
     body: formData,
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers,
   })
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
@@ -563,6 +568,11 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             queueLengths.value.delete(sessionId)
           }
+          if (Array.isArray((data as any).queueMessages)) {
+            replaceQueuedUserMessages(sessionId, normalizeQueuedUserMessages((data as any).queueMessages))
+          } else if (!data.queueLength) {
+            replaceQueuedUserMessages(sessionId, [])
+          }
           if ((data as any).isAborting) {
             setAbortState({ aborting: true, synced: null })
           } else if (!data.isWorking) {
@@ -836,23 +846,106 @@ export const useChatStore = defineStore('chat', () => {
 
   function enqueueUserMessage(sessionId: string, message: Message) {
     const queue = queuedUserMessages.value.get(sessionId) || []
-    queue.push({ ...message, queued: true })
-    queuedUserMessages.value.set(sessionId, queue)
+    if (queue.some(item => item.id === message.id)) return
+    const nextMap = new Map(queuedUserMessages.value)
+    nextMap.set(sessionId, [...queue, { ...message, queued: true }])
+    queuedUserMessages.value = nextMap
   }
 
   function removeQueuedMessage(sessionId: string, messageId: string) {
     const queue = queuedUserMessages.value.get(sessionId)
     if (!queue?.length) return
     const next = queue.filter(message => message.id !== messageId)
+    const nextMap = new Map(queuedUserMessages.value)
     if (next.length > 0) {
-      queuedUserMessages.value.set(sessionId, next)
+      nextMap.set(sessionId, next)
     } else {
-      queuedUserMessages.value.delete(sessionId)
+      nextMap.delete(sessionId)
     }
+    queuedUserMessages.value = nextMap
     queueLengths.value.set(sessionId, next.length)
     getChatRunSocket()?.emit('cancel_queued_run', {
       session_id: sessionId,
       queue_id: messageId,
+    })
+  }
+
+  function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
+    if (!Array.isArray(rawMessages)) return []
+    return rawMessages.flatMap((raw) => {
+      const peer = raw as NonNullable<RunEvent['queued_messages']>[number]
+      const content = typeof peer?.content === 'string' ? peer.content : ''
+      const messageId = peer?.id != null ? String(peer.id) : ''
+      if (!messageId || !content.trim()) return []
+      const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+        ? Math.round(peer.timestamp * 1000)
+        : Date.now()
+      return [{
+        id: messageId,
+        role: 'user' as const,
+        content,
+        timestamp,
+        queued: true,
+      }]
+    })
+  }
+
+  function replaceQueuedUserMessages(sessionId: string, messages: Message[]) {
+    const existingById = new Map((queuedUserMessages.value.get(sessionId) || []).map(message => [message.id, message]))
+    const merged = messages.map(message => ({
+      ...(existingById.get(message.id) || {}),
+      ...message,
+      attachments: existingById.get(message.id)?.attachments || message.attachments,
+      queued: true,
+    }))
+    const nextMap = new Map(queuedUserMessages.value)
+    if (merged.length > 0) {
+      nextMap.set(sessionId, merged)
+    } else {
+      nextMap.delete(sessionId)
+    }
+    queuedUserMessages.value = nextMap
+  }
+
+  function handleRunQueuedEvent(sessionId: string, evt: RunEvent) {
+    const queueLength = Number((evt as any).queue_length || 0)
+    if (queueLength > 0) {
+      queueLengths.value.set(sessionId, queueLength)
+    } else {
+      queueLengths.value.delete(sessionId)
+    }
+
+    if (Array.isArray((evt as any).queued_messages) && !(evt as any).dequeued_queue_id) {
+      const queued = normalizeQueuedUserMessages((evt as any).queued_messages)
+      replaceQueuedUserMessages(sessionId, queued)
+      return
+    }
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    if (!messageId || !content.trim()) return
+
+    if ((queuedUserMessages.value.get(sessionId) || []).some(msg => msg.id === messageId)) return
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+    const msgs = getSessionMsgs(sessionId)
+    const existingIndex = msgs.findIndex(msg => msg.id === messageId && msg.role === 'user')
+    const existing = existingIndex >= 0 ? msgs[existingIndex] : null
+    if (existingIndex >= 0) {
+      msgs.splice(existingIndex, 1)
+    }
+
+    enqueueUserMessage(sessionId, {
+      ...(existing || {}),
+      id: messageId,
+      role: 'user',
+      content,
+      timestamp: existing?.timestamp || timestamp,
+      attachments: existing?.attachments,
+      queued: true,
     })
   }
 
@@ -898,12 +991,14 @@ export const useChatStore = defineStore('chat', () => {
   function showNextQueuedUserMessage(sessionId: string) {
     const queue = queuedUserMessages.value.get(sessionId)
     if (!queue?.length) return
-    const next = queue.shift()!
-    if (queue.length > 0) {
-      queuedUserMessages.value.set(sessionId, queue)
+    const [next, ...rest] = queue
+    const nextMap = new Map(queuedUserMessages.value)
+    if (rest.length > 0) {
+      nextMap.set(sessionId, rest)
     } else {
-      queuedUserMessages.value.delete(sessionId)
+      nextMap.delete(sessionId)
     }
+    queuedUserMessages.value = nextMap
     addMessage(sessionId, { ...next, queued: false })
     updateSessionTitle(sessionId)
   }
@@ -979,10 +1074,8 @@ export const useChatStore = defineStore('chat', () => {
         const uploaded = await uploadFiles(attachments)
 
         // Update attachment URLs on the user message for display
-        const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
-          const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
-          return [f.name, token ? `${base}&token=${encodeURIComponent(token)}` : base]
+          return [f.name, getDownloadUrl(f.path, f.name)]
         }))
         if (shouldQueue && userMsg.attachments) {
           userMsg.attachments = userMsg.attachments.map(a => {
@@ -1083,7 +1176,7 @@ export const useChatStore = defineStore('chat', () => {
               break
 
             case 'run.queued': {
-              queueLengths.value.set(sid, (evt as any).queue_length || 0)
+              handleRunQueuedEvent(sid, evt)
               break
             }
 
@@ -1480,11 +1573,11 @@ export const useChatStore = defineStore('chat', () => {
    * Emits 'resume' to join the session room on the server,
    * then sets up event listeners to receive ongoing events.
    */
-  function resumeServerWorkingRun(sid: string) {
+  function resumeServerWorkingRun(sid: string, force = false) {
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
     // Only set up listeners if the server reported an active run during resume.
-    if (!serverWorking.value.has(sid)) return
+    if (!force && !serverWorking.value.has(sid)) return
 
     let closed = false
     let runProducedAssistantText = false
@@ -1521,7 +1614,7 @@ export const useChatStore = defineStore('chat', () => {
       if (evt.session_id && evt.session_id !== sid) return
       switch (evt.event) {
         case 'run.queued': {
-          queueLengths.value.set(sid, (evt as any).queue_length || 0)
+          handleRunQueuedEvent(sid, evt)
           break
         }
 
@@ -1900,6 +1993,50 @@ export const useChatStore = defineStore('chat', () => {
       },
     })
   }
+
+  function handlePeerUserMessage(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid || activeSessionId.value !== sid || !activeSession.value) return
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    if (!content.trim()) return
+
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    const msgs = getSessionMsgs(sid)
+    if (messageId && msgs.some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
+    if (messageId && (queuedUserMessages.value.get(sid) || []).some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+
+    const message: Message = {
+      id: messageId || uid(),
+      role: 'user',
+      content,
+      timestamp,
+      queued: !!peer?.queued,
+    }
+    if (peer?.queued) {
+      enqueueUserMessage(sid, message)
+    } else {
+      addMessage(sid, message)
+      updateSessionTitle(sid)
+    }
+    serverWorking.value.add(sid)
+    resumeServerWorkingRun(sid, true)
+  }
+
+  onPeerUserMessage(handlePeerUserMessage)
 
   function stopStreaming() {
     const sid = activeSessionId.value

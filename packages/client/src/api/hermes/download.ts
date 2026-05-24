@@ -1,4 +1,4 @@
-import { getApiKey, getBaseUrlValue } from '../client'
+import { getActiveProfileName, getApiKey, getBaseUrlValue } from '../client'
 
 /**
  * Construct a download URL with auth token as query parameter.
@@ -27,6 +27,8 @@ export function getDownloadUrl(filePath: string, fileName?: string): string {
     const decodedName = decodeURIComponent(fileName)
     params.set('name', decodedName)
   }
+  const profileName = getActiveProfileName()
+  if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)
   return `${base}/api/hermes/download?${params.toString()}`

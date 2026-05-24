@@ -92,6 +92,7 @@ function makeSocket() {
     connected: true,
     emit: vi.fn(),
     join: vi.fn(),
+    to: vi.fn(() => ({ emit: vi.fn() })),
   } as any
 }
 

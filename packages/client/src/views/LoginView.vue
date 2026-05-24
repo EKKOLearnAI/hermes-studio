@@ -8,18 +8,10 @@ import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 const { t } = useI18n();
 const router = useRouter();
 
-// Read token saved by main.ts (before router strips URL params)
-const urlToken = (window as any).__LOGIN_TOKEN__ || "";
-
-const token = ref(urlToken);
 const username = ref("");
 const password = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
-
-// Login method: 'token' or 'password'
-const loginMethod = ref<"token" | "password">("token");
-const hasPasswordLogin = ref(false);
 
 // If already has a key, try to go to main page
 if (hasApiKey()) {
@@ -28,58 +20,14 @@ if (hasApiKey()) {
 
 onMounted(async () => {
   try {
-    const status = await fetchAuthStatus();
-    hasPasswordLogin.value = status.hasPasswordLogin;
-    if (status.hasPasswordLogin && !urlToken) {
-      loginMethod.value = "password";
-    }
+    await fetchAuthStatus();
   } catch {
-    // Fallback to token-only
+    // Login remains available; the submit request will surface connection errors.
   }
 });
 
 async function handleLogin() {
-  if (loginMethod.value === "token") {
-    await handleTokenLogin();
-  } else {
-    await handlePasswordLogin();
-  }
-}
-
-async function handleTokenLogin() {
-  const key = token.value.trim();
-  if (!key) {
-    errorMsg.value = t("login.tokenRequired");
-    return;
-  }
-
-  loading.value = true;
-  errorMsg.value = "";
-
-  try {
-    const res = await fetch("/api/hermes/sessions", {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-
-    if (res.status === 401) {
-      errorMsg.value = t("login.invalidToken");
-      loading.value = false;
-      return;
-    }
-
-    if (res.status === 429 || res.status === 503) {
-      errorMsg.value = t("login.tooManyAttempts");
-      loading.value = false;
-      return;
-    }
-
-    setApiKey(key);
-    router.replace("/hermes/chat");
-  } catch {
-    errorMsg.value = t("login.connectionFailed");
-  } finally {
-    loading.value = false;
-  }
+  await handlePasswordLogin();
 }
 
 async function handlePasswordLogin() {
@@ -115,50 +63,23 @@ async function handlePasswordLogin() {
       </div>
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
-
-      <!-- Method toggle -->
-      <div v-if="hasPasswordLogin" class="login-method-toggle">
-        <button
-          class="toggle-btn"
-          :class="{ active: loginMethod === 'password' }"
-          @click="loginMethod = 'password'"
-        >{{ t("login.passwordLogin") }}</button>
-        <button
-          class="toggle-btn"
-          :class="{ active: loginMethod === 'token' }"
-          @click="loginMethod = 'token'"
-        >{{ t("login.tokenLogin") }}</button>
-      </div>
+      <p class="login-default-hint">{{ t("login.defaultCredentialsHint") }}</p>
 
       <form class="login-form" @submit.prevent="handleLogin">
-        <!-- Token login -->
-        <template v-if="loginMethod === 'token'">
-          <input
-            v-model="token"
-            type="password"
-            class="login-input"
-            :placeholder="t('login.placeholder')"
-            autofocus
-          />
-        </template>
-
-        <!-- Password login -->
-        <template v-if="loginMethod === 'password'">
-          <input
-            v-model="username"
-            type="text"
-            class="login-input"
-            :placeholder="t('login.usernamePlaceholder')"
-            autofocus
-          />
-          <input
-            v-model="password"
-            type="password"
-            class="login-input"
-            :placeholder="t('login.passwordPlaceholder')"
-            @keyup.enter="handleLogin"
-          />
-        </template>
+        <input
+          v-model="username"
+          type="text"
+          class="login-input"
+          :placeholder="t('login.usernamePlaceholder')"
+          autofocus
+        />
+        <input
+          v-model="password"
+          type="password"
+          class="login-input"
+          :placeholder="t('login.passwordPlaceholder')"
+          @keyup.enter="handleLogin"
+        />
 
         <div v-if="errorMsg" class="login-error">{{ errorMsg }}</div>
         <button type="submit" class="login-btn" :disabled="loading">
@@ -208,36 +129,15 @@ async function handlePasswordLogin() {
 .login-desc {
   font-size: 14px;
   color: $text-muted;
-  margin: 0 0 32px;
+  margin: 0 0 12px;
   line-height: 1.6;
 }
 
-.login-method-toggle {
-  display: flex;
-  margin-bottom: 24px;
-  border: 1px solid $border-color;
-  border-radius: $radius-sm;
-  overflow: hidden;
-
-  .toggle-btn {
-    flex: 1;
-    padding: 10px;
-    border: none;
-    background: transparent;
-    color: $text-muted;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all $transition-fast;
-
-    &.active {
-      background: $text-primary;
-      color: var(--text-on-accent);
-    }
-
-    &:not(.active):hover {
-      background: rgba(var(--accent-primary-rgb), 0.06);
-    }
-  }
+.login-default-hint {
+  margin: 0 0 28px;
+  font-family: $font-code;
+  font-size: 13px;
+  color: $text-secondary;
 }
 
 .login-form {

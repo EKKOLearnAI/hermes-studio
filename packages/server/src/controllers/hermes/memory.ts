@@ -1,9 +1,18 @@
-import { writeFile } from 'fs/promises'
+import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { safeReadFile, safeStat, getHermesDir } from '../../services/config-helpers'
+import { safeReadFile, safeStat } from '../../services/config-helpers'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function requestProfileDir(ctx: any): string {
+  return getProfileDir(requestedProfile(ctx))
+}
 
 export async function get(ctx: any) {
-  const hd = getHermesDir()
+  const hd = requestProfileDir(ctx)
   const memoryPath = join(hd, 'memories', 'MEMORY.md')
   const userPath = join(hd, 'memories', 'USER.md')
   const soulPath = join(hd, 'SOUL.md')
@@ -30,11 +39,13 @@ export async function save(ctx: any) {
     return
   }
   let filePath: string
+  const hd = requestProfileDir(ctx)
   if (section === 'soul') {
-    filePath = join(getHermesDir(), 'SOUL.md')
+    filePath = join(hd, 'SOUL.md')
   } else {
     const fileName = section === 'memory' ? 'MEMORY.md' : 'USER.md'
-    filePath = join(getHermesDir(), 'memories', fileName)
+    await mkdir(join(hd, 'memories'), { recursive: true })
+    filePath = join(hd, 'memories', fileName)
   }
   try {
     await writeFile(filePath, content, 'utf-8')

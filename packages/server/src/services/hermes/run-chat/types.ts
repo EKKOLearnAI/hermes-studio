@@ -34,6 +34,7 @@ export interface QueuedRun {
   instructions?: string
   profile: string
   source?: ChatRunSource
+  originSocketId?: string
 }
 
 export interface SessionState {

@@ -8,7 +8,6 @@ import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config } from './config'
-import { getToken, requireAuth } from './services/auth'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -23,6 +22,7 @@ import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
+import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -86,7 +86,6 @@ export async function bootstrap() {
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 
-  const authToken = await getToken()
   await initLoginLimiter()
   try {
     const skillInjector = new HermesSkillInjector()
@@ -138,14 +137,9 @@ export async function bootstrap() {
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)
-  const proxyMiddleware = registerRoutes(app, requireAuth(authToken))
+  const proxyMiddleware = registerRoutes(app, [requireUserJwt, resolveUserProfile])
   app.use(proxyMiddleware)
   console.log('[bootstrap] routes registered')
-
-  if (authToken) {
-    console.log(`Auth enabled — token: ${authToken}`)
-    logger.info('Auth enabled — token: %s', authToken)
-  }
 
   // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')

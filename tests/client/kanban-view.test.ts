@@ -224,8 +224,9 @@ describe('KanbanView', () => {
 
     expect(wrapper.text()).toContain('kanban.title: Default · kanban.stats.tasks: 0')
     expect(wrapper.text()).toContain('kanban.title: Project A · kanban.stats.tasks: 2')
-    expect(wrapper.text()).toContain('default')
-    expect(wrapper.text()).toContain('alice')
+    const assigneeSelect = wrapper.findAll('.n-select-stub')[2]
+    expect(assigneeSelect.text()).toContain('alice')
+    expect(assigneeSelect.text()).not.toContain('default')
     expect(wrapper.text()).not.toContain('kanban.detail.assignee: alice')
     expect(wrapper.text()).not.toContain('alice · kanban.stats.tasks')
   })

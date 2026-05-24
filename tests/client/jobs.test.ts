@@ -17,6 +17,7 @@ import {
   scheduleToEditableInput,
   updateJob,
 } from '../../packages/client/src/api/hermes/jobs'
+import { listCronRuns } from '../../packages/client/src/api/hermes/cron-history'
 import type { Job } from '../../packages/client/src/api/hermes/jobs'
 
 function makeJob(overrides: Partial<Job> = {}): Job {
@@ -117,5 +118,21 @@ describe('Hermes jobs edit payloads', () => {
       name: 'artifact cleanup renamed',
       schedule: 'every 14400m',
     })
+  })
+
+  it('sends active profile header when loading job run history', async () => {
+    localStorage.setItem('hermes_active_profile_name', 'research')
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ runs: [] }),
+    })
+
+    await listCronRuns('job-1')
+
+    expect(mockFetch).toHaveBeenCalledOnce()
+    const [url, options] = mockFetch.mock.calls[0]
+    expect(url).toBe('/api/cron-history?jobId=job-1')
+    expect(options.headers['X-Hermes-Profile']).toBe('research')
   })
 })

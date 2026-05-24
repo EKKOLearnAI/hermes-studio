@@ -19,16 +19,41 @@ export const useProfilesStore = defineStore('profiles', () => {
     loading.value = true
     try {
       profiles.value = await profilesApi.fetchProfiles()
-      activeProfile.value = profiles.value.find(p => p.active) ?? null
-      // 同步缓存 profile name，供其他 store 启动时读取
-      if (activeProfile.value) {
-        activeProfileName.value = activeProfile.value.name
-        localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeProfile.value.name)
+      const storedName = activeProfileName.value || localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY)
+      let selected = profiles.value.find(p => p.name === storedName) ?? null
+      if (!selected && profiles.value.length > 0) {
+        selected = profiles.value[0]
+        activeProfileName.value = selected.name
+        localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, selected.name)
+      }
+      profiles.value = profiles.value.map(profile => ({
+        ...profile,
+        active: !!selected && profile.name === selected.name,
+      }))
+      activeProfile.value = selected
+      if (selected) {
+        activeProfileName.value = selected.name
+      } else {
+        activeProfileName.value = null
+        localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
       }
       // 清理所有会话缓存（不再使用 localStorage 缓存）
       clearAllSessionCaches()
     } catch (err) {
       console.error('Failed to fetch profiles:', err)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function fetchHermesProfiles() {
+    loading.value = true
+    try {
+      profiles.value = await profilesApi.fetchProfiles()
+      activeProfile.value = profiles.value.find(profile => profile.active) ?? null
+      clearAllSessionCaches()
+    } catch (err) {
+      console.error('Failed to fetch Hermes profiles:', err)
     } finally {
       loading.value = false
     }
@@ -107,43 +132,26 @@ export const useProfilesStore = defineStore('profiles', () => {
     try {
       const ok = await profilesApi.switchProfile(name)
       if (ok) {
-        // 保存旧值，用于可能的回滚
-        const oldName = activeProfileName.value
-
-        // 立即更新 activeProfileName，确保前端显示正确
-        // 不要完全依赖 fetchProfiles 的返回值，以防后端数据同步延迟
         activeProfileName.value = name
         localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
-
-        // 尝试刷新 profiles 列表并验证
-        try {
-          await fetchProfiles()
-
-          // 验证：检查后端返回的 active profile 是否与我们期望的一致
-          // 如果不一致，说明后端实际上没有切换成功，需要回滚
-          const actualActive = profiles.value.find(p => p.active)
-          if (actualActive && actualActive.name !== name) {
-            console.warn(
-              `[switchProfile] Backend verification failed: expected active profile "${name}", ` +
-              `but backend reports "${actualActive.name}". Rolling back frontend state.`
-            )
-            // 回滚到旧值
-            activeProfileName.value = oldName
-            if (oldName) {
-              localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, oldName)
-            } else {
-              localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
-            }
-            // 返回 false 以触发 UI 错误提示
-            return false
-          }
-        } catch (err) {
-          // fetchProfiles 失败，无法验证
-          // 假设切换成功（API 返回了 200），保持已设置的状态
-          console.warn('Failed to refresh profiles list after switch, assuming switch succeeded:', err)
-        }
+        profiles.value = profiles.value.map(profile => ({
+          ...profile,
+          active: profile.name === name,
+        }))
+        activeProfile.value = profiles.value.find(profile => profile.name === name) ?? null
         await useAppStore().reloadModels()
       }
+      return ok
+    } finally {
+      switching.value = false
+    }
+  }
+
+  async function switchHermesProfile(name: string) {
+    switching.value = true
+    try {
+      const ok = await profilesApi.switchHermesProfile(name)
+      if (ok) await fetchHermesProfiles()
       return ok
     } finally {
       switching.value = false
@@ -168,11 +176,13 @@ export const useProfilesStore = defineStore('profiles', () => {
     loading,
     switching,
     fetchProfiles,
+    fetchHermesProfiles,
     fetchProfileDetail,
     createProfile,
     deleteProfile,
     renameProfile,
     switchProfile,
+    switchHermesProfile,
     exportProfile,
     importProfile,
     updateAvatar,

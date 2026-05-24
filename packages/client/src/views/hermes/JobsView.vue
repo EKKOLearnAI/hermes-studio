@@ -6,12 +6,15 @@ import JobsPanel from '@/components/hermes/jobs/JobsPanel.vue'
 import JobRunHistory from '@/components/hermes/jobs/JobRunHistory.vue'
 import JobFormModal from '@/components/hermes/jobs/JobFormModal.vue'
 import { useJobsStore } from '@/stores/hermes/jobs'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t } = useI18n()
 const jobsStore = useJobsStore()
+const profilesStore = useProfilesStore()
 const showModal = ref(false)
 const editingJob = ref<string | null>(null)
 const selectedJobId = ref<string | null>(null)
+const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
 
 const jobNameMap = computed(() => {
   const map: Record<string, string> = {}
@@ -22,8 +25,21 @@ const jobNameMap = computed(() => {
   return map
 })
 
+async function ensureProfileSelection() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles()
+  }
+}
+
+async function reloadJobsForProfile() {
+  selectedJobId.value = null
+  jobsStore.jobs = []
+  await ensureProfileSelection()
+  await jobsStore.fetchJobs()
+}
+
 onMounted(() => {
-  jobsStore.fetchJobs()
+  void reloadJobsForProfile()
 })
 
 function openCreateModal() {
@@ -80,6 +96,7 @@ function handleSelectJob(jobId: string | null) {
         <JobRunHistory
           :selected-job-id="selectedJobId"
           :job-name-map="jobNameMap"
+          :profile-key="activeProfileName"
         />
       </div>
     </div>

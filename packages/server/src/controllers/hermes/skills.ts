@@ -1,13 +1,25 @@
-import { readdir, readFile } from 'fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'fs/promises'
 import { join, resolve } from 'path'
 import { createHash } from 'crypto'
 import {
-  readConfigYaml, updateConfigYaml,
-  safeReadFile, extractDescription, listFilesRecursive, getHermesDir,
+  readConfigYamlForProfile, updateConfigYamlForProfile,
+  safeReadFile, extractDescription, listFilesRecursive,
 } from '../../services/config-helpers'
-import { pinSkill } from '../../services/hermes/hermes-cli'
 import { isPathWithin } from '../../services/hermes/hermes-path'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
+
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function requestProfileDir(ctx: any): string {
+  return getProfileDir(requestedProfile(ctx))
+}
+
+function requestSkillsDir(ctx: any): string {
+  return join(requestProfileDir(ctx), 'skills')
+}
 
 /** Read bundled manifest as a name→hash map from ~/.hermes/skills/.bundled_manifest */
 function readBundledManifest(manifestContent: string | null): Map<string, string> {
@@ -237,9 +249,9 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
 }
 
 export async function list(ctx: any) {
-  const skillsDir = join(getHermesDir(), 'skills')
+  const skillsDir = requestSkillsDir(ctx)
   try {
-    const config = await readConfigYaml()
+    const config = await readConfigYamlForProfile(requestedProfile(ctx))
     const disabledList: string[] = config.skills?.disabled || []
 
     // Read provenance sources
@@ -284,7 +296,7 @@ export async function usageStats(ctx: any) {
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 7
 
   try {
-    ctx.body = await getSkillUsageStatsFromDb(days)
+    ctx.body = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
@@ -299,7 +311,7 @@ export async function toggle(ctx: any) {
     return
   }
   try {
-    await updateConfigYaml((config) => {
+    await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
       if (!config.skills) config.skills = {}
       if (!Array.isArray(config.skills.disabled)) config.skills.disabled = []
       const disabled = config.skills.disabled as string[]
@@ -317,10 +329,11 @@ export async function toggle(ctx: any) {
 
 export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
-  const hd = getHermesDir()
-  const skillsDir = join(hd, 'skills', category)
+  const profileDir = requestProfileDir(ctx)
+  const profileSkillsDir = join(profileDir, 'skills')
+  const skillsDir = join(profileSkillsDir, category)
   if (category === 'misc') {
-    const skillDir = join(hd, 'skills', skill)
+    const skillDir = join(profileSkillsDir, skill)
     try {
       const allFiles = await listFilesRecursive(skillDir, '')
       const files = allFiles.filter((f: any) => f.path !== 'SKILL.md')
@@ -350,14 +363,14 @@ export async function listFiles(ctx: any) {
 
 export async function readFile_(ctx: any) {
   const filePath = (ctx.params as any).path
-  const hd = getHermesDir()
+  const profileSkillsDir = join(requestProfileDir(ctx), 'skills')
   // Handle 'misc' category: real skill dir is skills/<skill>, not skills/misc/<skill>
   let realPath = filePath
   if (filePath.startsWith('misc/')) {
     realPath = filePath.slice(5)
   }
-  const fullPath = resolve(join(hd, 'skills', realPath))
-  if (!isPathWithin(fullPath, join(hd, 'skills'))) {
+  const fullPath = resolve(join(profileSkillsDir, realPath))
+  if (!isPathWithin(fullPath, profileSkillsDir)) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
     return
@@ -371,7 +384,7 @@ export async function readFile_(ctx: any) {
       const category = parts[0]
       const skillName = parts[1]
       const restPath = parts.slice(2).join('/')
-      const catDir = join(hd, 'skills', category)
+      const catDir = join(profileSkillsDir, category)
       const skillDir = await findSkillDirByName(catDir, skillName)
       if (skillDir) {
         const resolvedPath = resolve(join(skillDir, restPath))
@@ -391,6 +404,24 @@ export async function readFile_(ctx: any) {
   ctx.body = { content }
 }
 
+async function updatePinnedSkill(skillsDir: string, name: string, pinned: boolean): Promise<void> {
+  await mkdir(skillsDir, { recursive: true })
+  const usagePath = join(skillsDir, '.usage.json')
+  let usage: Record<string, any> = {}
+  const raw = await safeReadFile(usagePath)
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) usage = parsed
+    } catch { /* rewrite malformed usage file with the requested pin state */ }
+  }
+  const current = usage[name]
+  usage[name] = current && typeof current === 'object' && !Array.isArray(current)
+    ? { ...current, pinned }
+    : { patch_count: 0, use_count: 0, view_count: 0, pinned }
+  await writeFile(usagePath, `${JSON.stringify(usage, null, 2)}\n`, 'utf-8')
+}
+
 export async function pin_(ctx: any) {
   const { name, pinned } = ctx.request.body as { name?: string; pinned?: boolean }
   if (!name || typeof pinned !== 'boolean') {
@@ -399,7 +430,7 @@ export async function pin_(ctx: any) {
     return
   }
   try {
-    await pinSkill(name, pinned)
+    await updatePinnedSkill(requestSkillsDir(ctx), name, pinned)
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500

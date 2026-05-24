@@ -7,6 +7,7 @@ import {
   validatePath,
   resolveHermesPath,
 } from '../../services/hermes/file-provider'
+import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 
 export const downloadRoutes = new Router()
 
@@ -62,6 +63,10 @@ function getMimeType(fileName: string): string {
   return MIME_MAP[ext] || 'application/octet-stream'
 }
 
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
 downloadRoutes.get('/api/hermes/download', async (ctx) => {
   const filePath = ctx.query.path as string | undefined
   const fileName = ctx.query.name as string | undefined
@@ -73,16 +78,17 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
   }
 
   try {
+    const profile = requestedProfile(ctx)
     // Validate the path first
     // Support both absolute and relative paths
-    const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath)
+    const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath, profile)
 
     // Choose provider: always use local for upload directory files
     let data: Buffer
     if (isInUploadDir(validPath)) {
       data = await localProvider.readFile(validPath)
     } else {
-      const provider = await createFileProvider()
+      const provider = await createFileProvider(profile)
       data = await provider.readFile(validPath)
     }
 

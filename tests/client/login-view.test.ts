@@ -32,43 +32,44 @@ vi.mock('@/api/auth', () => ({
 
 import LoginView from '@/views/LoginView.vue'
 
-const mockFetch = vi.fn()
-vi.stubGlobal('fetch', mockFetch)
-
-describe('LoginView token login', () => {
+describe('LoginView password login', () => {
   beforeEach(() => {
     delete (window as any).__LOGIN_TOKEN__
     vi.clearAllMocks()
     mockHasApiKey.mockReturnValue(false)
-    mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: false })
-    mockFetch.mockResolvedValue({ ok: true, status: 200 })
+    mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
   })
 
-  it('validates token login against the Hermes sessions endpoint', async () => {
+  it('logs in with username and password', async () => {
+    mockLoginWithPassword.mockResolvedValue('jwt-token')
     const wrapper = mount(LoginView)
 
-    await wrapper.find('input.login-input').setValue('secret-token')
+    const inputs = wrapper.findAll('input.login-input')
+    await inputs[0].setValue('admin')
+    await inputs[1].setValue('123456')
     await wrapper.find('form.login-form').trigger('submit')
 
-    expect(mockFetch).toHaveBeenCalledOnce()
-    expect(mockFetch).toHaveBeenCalledWith('/api/hermes/sessions', {
-      headers: { Authorization: 'Bearer secret-token' },
-    })
-    expect(mockSetApiKey).toHaveBeenCalledWith('secret-token')
+    expect(mockLoginWithPassword).toHaveBeenCalledWith('admin', '123456')
+    expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
   })
 
-  it('keeps the existing invalid-token behavior on 401', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 401 })
+  it('shows the default login hint', () => {
     const wrapper = mount(LoginView)
 
-    await wrapper.find('input.login-input').setValue('bad-token')
+    expect(wrapper.text()).toContain('login.defaultCredentialsHint')
+  })
+
+  it('shows an error when password login fails', async () => {
+    mockLoginWithPassword.mockRejectedValue(new Error('Invalid username or password'))
+    const wrapper = mount(LoginView)
+
+    const inputs = wrapper.findAll('input.login-input')
+    await inputs[0].setValue('admin')
+    await inputs[1].setValue('bad-password')
     await wrapper.find('form.login-form').trigger('submit')
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/hermes/sessions', {
-      headers: { Authorization: 'Bearer bad-token' },
-    })
-    expect(wrapper.find('.login-error').text()).toBe('login.invalidToken')
+    expect(wrapper.find('.login-error').text()).toBe('Invalid username or password')
     expect(mockSetApiKey).not.toHaveBeenCalled()
     expect(mockReplace).not.toHaveBeenCalled()
   })

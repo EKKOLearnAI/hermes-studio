@@ -101,7 +101,7 @@ test('uses the newly selected profile for the next chat-run socket after profile
   await page.getByTestId('profile-selector-select').click()
   await expect(page.getByRole('dialog').filter({ hasText: 'research' })).toBeVisible()
   const reloadPromise = page.waitForEvent('framenavigated', frame => frame === page.mainFrame())
-  await page.locator('.profile-runtime-item').filter({ hasText: /^research/ }).getByRole('button', { name: 'Switch Profile' }).click()
+  await page.locator('.profile-runtime-item').filter({ hasText: /^research/ }).getByRole('button', { name: 'Switch Frontend Profile' }).click()
   await reloadPromise
   await page.waitForLoadState('domcontentloaded')
   await expect(page.getByTestId('profile-selector-select').filter({ hasText: 'research' })).toBeVisible()
@@ -115,9 +115,7 @@ test('uses the newly selected profile for the next chat-run socket after profile
   expect(run.input).toBe('Use the active research profile')
   expect(await page.evaluate(() => window.localStorage.getItem('hermes_active_profile_name'))).toBe('research')
 
-  const switchRequest = api.requests.find((request) => request.pathname === '/api/hermes/profiles/active')
-  expect(switchRequest?.method).toBe('PUT')
-  expect(switchRequest?.postData).toBe(JSON.stringify({ name: 'research' }))
+  expect(api.requests.some((request) => request.pathname === '/api/hermes/profiles/active')).toBe(false)
   expect(api.unexpectedRequests).toEqual([])
 })
 

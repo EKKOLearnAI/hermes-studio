@@ -26,21 +26,54 @@ export function hasApiKey(): boolean {
   return !!getApiKey()
 }
 
-/**
- * Get current active profile name.
- * Reads from store first (authoritative source), falls back to localStorage.
- */
-function getActiveProfileName(): string | null {
+export type StoredUserRole = 'super_admin' | 'admin'
+
+export function getStoredUserRole(): StoredUserRole | null {
+  const token = getApiKey()
+  const payload = token.split('.')[1]
+  if (!payload) return null
   try {
-    // Dynamic import to avoid circular dependency
-    const { useProfilesStore } = require('@/stores/hermes/profiles')
-    const store = useProfilesStore()
-    // Store is the source of truth - it's updated from /api/hermes/profiles
-    return store.activeProfileName
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const data = JSON.parse(atob(padded)) as { role?: unknown }
+    return data.role === 'super_admin' || data.role === 'admin' ? data.role : null
   } catch {
-    // Fallback to localStorage if store is not available (e.g., during initialization)
-    return localStorage.getItem('hermes_active_profile_name')
+    return null
   }
+}
+
+export function isStoredSuperAdmin(): boolean {
+  return getStoredUserRole() === 'super_admin'
+}
+
+export function getActiveProfileName(): string | null {
+  return localStorage.getItem('hermes_active_profile_name')
+}
+
+function bodyHasProfileSelector(body: BodyInit | null | undefined): boolean {
+  if (typeof body !== 'string') return false
+  try {
+    const parsed = JSON.parse(body) as { profile?: unknown }
+    return typeof parsed?.profile === 'string' && parsed.profile.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+function shouldAttachProfileHeader(path: string, options: RequestInit): boolean {
+  try {
+    const url = new URL(path, 'http://hermes.local')
+    if (url.searchParams.has('profile')) return false
+    if (url.pathname.startsWith('/api/hermes/profiles')) return false
+  } catch {
+    if (path.startsWith('/api/hermes/profiles')) return false
+  }
+  return !bodyHasProfileSelector(options.body)
+}
+
+function emitAuthNotice(kind: 'expired' | 'forbidden') {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('hermes-auth-notice', { detail: { kind } }))
 }
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -56,9 +89,10 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     headers['Authorization'] = `Bearer ${apiKey}`
   }
 
-  // Inject active profile header for proxied gateway requests
+  // Inject active profile header for request-scoped endpoints. Explicit profile
+  // selectors in the URL/body and profile-name routes are validated directly.
   const profileName = getActiveProfileName()
-  if (profileName && profileName !== 'default') {
+  if (profileName && shouldAttachProfileHeader(path, options)) {
     headers['X-Hermes-Profile'] = profileName
   }
 
@@ -67,11 +101,11 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   // Global 401 handler — only redirect to login for local BFF endpoints
   // Proxied gateway requests should not trigger logout
   const isLocalBff = !path.startsWith('/api/hermes/v1/') &&
-    !path.startsWith('/api/hermes/jobs') &&
-    !path.startsWith('/api/hermes/skills')
+    !path.startsWith('/v1/')
 
   if (res.status === 401 && isLocalBff) {
     clearApiKey()
+    emitAuthNotice('expired')
     if (router.currentRoute.value.name !== 'login') {
       router.replace({ name: 'login' })
     }
@@ -80,6 +114,17 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    if (res.status === 403 && isLocalBff) {
+      if (text.includes('User is disabled or does not exist')) {
+        clearApiKey()
+        emitAuthNotice('expired')
+        if (router.currentRoute.value.name !== 'login') {
+          router.replace({ name: 'login' })
+        }
+      } else {
+        emitAuthNotice('forbidden')
+      }
+    }
     throw new Error(`API Error ${res.status}: ${text || res.statusText}`)
   }
 

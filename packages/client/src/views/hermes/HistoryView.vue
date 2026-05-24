@@ -56,9 +56,15 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
-async function loadHistorySession(sessionId: string) {
+function findHistorySession(sessionId: string): SessionSummary | undefined {
+  return hermesSessions.value.find(session => session.id === sessionId)
+}
+
+async function loadHistorySession(sessionId: string, profile?: string | null) {
+  const summary = findHistorySession(sessionId)
+  const sessionProfile = profile || summary?.profile || null
   // First, fetch the Hermes session detail
-  const sessionDetail = await fetchHermesSession(sessionId)
+  const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
   if (!sessionDetail) {
     message.error(t('chat.sessionNotFound'))
     return
@@ -67,6 +73,7 @@ async function loadHistorySession(sessionId: string) {
   // Convert SessionDetail to Session format and add to chatStore
   const sessionData: Session = {
     id: sessionDetail.id,
+    profile: sessionDetail.profile || sessionProfile || undefined,
     title: sessionDetail.title || '',
     source: sessionDetail.source,
     createdAt: sessionDetail.started_at * 1000,
@@ -112,7 +119,7 @@ async function loadHistorySession(sessionId: string) {
   if (mobileQuery?.matches) showSessions.value = false
 }
 
-async function handleSessionClick(sessionId: string) {
+async function handleSessionClick(sessionId: string, _profile?: string | null) {
   await router.push({ name: 'hermes.historySession', params: { sessionId } })
 }
 
@@ -170,7 +177,7 @@ const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem
 function sessionSummaryToSession(summary: SessionSummary): Session {
   return {
     id: summary.id,
-    profile: summary.profile,
+    profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
     createdAt: summary.started_at * 1000,
@@ -285,7 +292,7 @@ watch(hermesSessionsLoaded, (loaded) => {
           collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
         }
         // Load session details
-        void loadHistorySession(firstCliSession.id)
+        void handleSessionClick(firstCliSession.id)
       }
       // If no CLI session exists, don't auto-load any session
     }
@@ -323,8 +330,10 @@ async function copySessionLink(id?: string) {
   }
 }
 
-async function handleDeleteSession(id: string) {
-  const ok = await deleteSession(id)
+async function handleDeleteSession(id: string, profile?: string | null) {
+  const summary = findHistorySession(id)
+  const sessionProfile = profile || summary?.profile || null
+  const ok = await deleteSession(id, sessionProfile)
   if (!ok) {
     message.error(t('common.deleteFailed'))
     return
@@ -379,8 +388,8 @@ async function handleDeleteSession(id: string) {
             :can-delete="true"
             :streaming="false"
             :show-profile="false"
-            @select="handleSessionClick(s.id)"
-            @delete="handleDeleteSession(s.id)"
+            @select="handleSessionClick(s.id, s.profile)"
+            @delete="handleDeleteSession(s.id, s.profile)"
           />
         </template>
 
@@ -400,8 +409,8 @@ async function handleDeleteSession(id: string) {
               :can-delete="true"
               :streaming="false"
               :show-profile="false"
-              @select="handleSessionClick(s.id)"
-              @delete="handleDeleteSession(s.id)"
+              @select="handleSessionClick(s.id, s.profile)"
+              @delete="handleDeleteSession(s.id, s.profile)"
             />
           </template>
         </template>

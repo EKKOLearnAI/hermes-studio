@@ -38,7 +38,7 @@ import { performanceMonitorRoutes } from './hermes/performance-monitor'
  * Public routes are registered first, then auth middleware,
  * then all protected routes. Returns the proxy middleware (must be mounted last).
  */
-export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next) => Promise<void>) {
+export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, next: Next) => Promise<void>>) {
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
@@ -46,7 +46,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---
-  app.use(requireAuth)
+  authMiddleware.forEach((middleware) => app.use(middleware))
 
   // --- Protected routes (auth required) ---
   app.use(authProtectedRoutes.routes())

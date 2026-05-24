@@ -10,6 +10,7 @@ import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
 import { useSessionSearch } from '@/composables/useSessionSearch'
 import { changelog } from "@/data/changelog";
+import { isStoredSuperAdmin } from "@/api/client";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -23,6 +24,7 @@ const selectedKey = computed(() => {
   if (route.name === "hermes.groupChatRoom") return "hermes.groupChat";
   return route.name as string;
 });
+const isSuperAdmin = computed(() => isStoredSuperAdmin());
 const logoPath = '/logo.png';
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
@@ -231,7 +233,7 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.usage") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.performance' }" @click="handleNav('hermes.performance')">
+          <button v-if="isSuperAdmin" class="nav-item" :class="{ active: selectedKey === 'hermes.performance' }" @click="handleNav('hermes.performance')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
             </svg>
@@ -256,7 +258,7 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.profiles' }" @click="handleNav('hermes.profiles')">
+          <button v-if="isSuperAdmin" class="nav-item" :class="{ active: selectedKey === 'hermes.profiles' }" @click="handleNav('hermes.profiles')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />

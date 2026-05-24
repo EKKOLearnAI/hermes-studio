@@ -155,6 +155,10 @@ export async function renameProfile(name: string, newName: string): Promise<bool
 }
 
 export async function switchProfile(name: string): Promise<boolean> {
+  return !!name
+}
+
+export async function switchHermesProfile(name: string): Promise<boolean> {
   try {
     await request('/api/hermes/profiles/active', {
       method: 'PUT',

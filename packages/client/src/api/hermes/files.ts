@@ -1,4 +1,4 @@
-import { request, getApiKey, getBaseUrlValue } from '../client'
+import { request, getActiveProfileName, getApiKey, getBaseUrlValue } from '../client'
 
 export interface FileEntry {
   name: string
@@ -83,6 +83,8 @@ export async function uploadFiles(targetDir: string, files: File[]): Promise<{ n
   const headers: Record<string, string> = {}
   const token = getApiKey()
   if (token) headers['Authorization'] = `Bearer ${token}`
+  const profileName = getActiveProfileName()
+  if (profileName) headers['X-Hermes-Profile'] = profileName
 
   const res = await fetch(url, { method: 'POST', headers, body: formData })
   if (!res.ok) {
@@ -97,6 +99,8 @@ export function getFileDownloadUrl(relativePath: string, fileName?: string): str
   const base = getBaseUrlValue()
   const params = new URLSearchParams({ path: relativePath })
   if (fileName) params.set('name', fileName)
+  const profileName = getActiveProfileName()
+  if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)
   return `${base}/api/hermes/download?${params.toString()}`
