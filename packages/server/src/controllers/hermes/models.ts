@@ -2,7 +2,7 @@ import { readFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
-import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, updateConfigYamlForProfile, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
@@ -198,6 +198,10 @@ type ProviderFetchCache = Map<string, Promise<string[]>>
 function requestedProfileName(ctx: any): string {
   const queryProfile = ctx.query?.profile
   return typeof queryProfile === 'string' && queryProfile.trim() ? queryProfile.trim() : ''
+}
+
+function requestScopedProfileName(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
 }
 
 function visibleProfileNamesForUser(ctx: any): string[] {
@@ -859,7 +863,7 @@ export async function setModelAlias(ctx: any) {
 
 export async function getConfigModels(ctx: any) {
   try {
-    const config = await readConfigYaml()
+    const config = await readConfigYamlForProfile(requestScopedProfileName(ctx))
     ctx.body = buildModelGroups(config)
   } catch (err: any) {
     ctx.status = 500
@@ -875,7 +879,8 @@ export async function setConfigModel(ctx: any) {
     return
   }
   try {
-    await updateConfigYaml((config) => {
+    const profile = requestScopedProfileName(ctx)
+    await updateConfigYamlForProfile(profile, (config) => {
       config.model = {}
       config.model.default = defaultModel
       if (reqProvider) { config.model.provider = reqProvider }

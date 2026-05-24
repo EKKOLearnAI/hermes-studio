@@ -1,17 +1,25 @@
 import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
-import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
-import * as hermesCli from '../../services/hermes/hermes-cli'
-import { updateConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { join } from 'path'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth'])
 
-async function clearStoredAuthProvider(poolKey: string) {
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function authPathForProfile(profile: string): string {
+  return join(getProfileDir(profile), 'auth.json')
+}
+
+async function clearStoredAuthProvider(profile: string, poolKey: string) {
   try {
-    const authPath = getActiveAuthPath()
+    const authPath = authPathForProfile(profile)
     if (!existsSync(authPath)) return
 
     const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
@@ -49,9 +57,10 @@ export async function create(ctx: any) {
     ctx.status = 400; ctx.body = { error: 'Missing API key' }; return
   }
   try {
+    const profile = requestedProfile(ctx)
     const poolKey = providerKey || `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
     const isBuiltin = poolKey in PROVIDER_ENV_MAP
-    await updateConfigYaml(async (config) => {
+    await updateConfigYamlForProfile(profile, async (config) => {
       if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
       if (!isBuiltin) {
         if (!Array.isArray(config.custom_providers)) { config.custom_providers = [] }
@@ -79,12 +88,12 @@ export async function create(ctx: any) {
         config.model.provider = poolKey
       } else {
         if (PROVIDER_ENV_MAP[poolKey].api_key_env) {
-          await saveEnvValue(PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
-          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValue(PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
+          await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
+          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
           config.model.default = model
           config.model.provider = poolKey
         } else if (DIRECT_CONFIG_PROVIDERS.has(poolKey)) {
-          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValue(PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
+          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
           config.model.default = model
           config.model.provider = poolKey
         } else {
@@ -131,9 +140,10 @@ export async function update(ctx: any) {
     name?: string; base_url?: string; api_key?: string; model?: string
   }
   try {
+    const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
-      const found = await updateConfigYaml((config) => {
+      const found = await updateConfigYamlForProfile(profile, (config) => {
         if (!Array.isArray(config.custom_providers)) return { data: config, result: false, write: false }
         const entry = (config.custom_providers as any[]).find((e: any) => {
           return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
@@ -153,7 +163,7 @@ export async function update(ctx: any) {
       if (!envMapping?.api_key_env) {
         ctx.status = 400; ctx.body = { error: `Cannot update credentials for "${poolKey}"` }; return
       }
-      if (api_key !== undefined) { await saveEnvValue(envMapping.api_key_env, api_key) }
+      if (api_key !== undefined) { await saveEnvValueForProfile(profile, envMapping.api_key_env, api_key) }
     }
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
@@ -166,8 +176,9 @@ export async function update(ctx: any) {
 export async function remove(ctx: any) {
   const poolKey = decodeURIComponent(ctx.params.poolKey)
   try {
+    const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
-    const removed = await updateConfigYaml(async (config) => {
+    const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
         const idx = Array.isArray(config.custom_providers)
           ? (config.custom_providers as any[]).findIndex((e: any) => {
@@ -179,8 +190,8 @@ export async function remove(ctx: any) {
       } else {
         const envMapping = PROVIDER_ENV_MAP[poolKey]
         if (envMapping?.api_key_env) {
-          await saveEnvValue(envMapping.api_key_env, '')
-          if (envMapping.base_url_env) { await saveEnvValue(envMapping.base_url_env, '') }
+          await saveEnvValueForProfile(profile, envMapping.api_key_env, '')
+          if (envMapping.base_url_env) { await saveEnvValueForProfile(profile, envMapping.base_url_env, '') }
         }
       }
       if (config.model?.provider === poolKey) {
@@ -208,7 +219,7 @@ export async function remove(ctx: any) {
         ctx.status = 404; ctx.body = { error: `Provider "${poolKey}" not found` }; return
       }
     }
-    await clearStoredAuthProvider(poolKey)
+    await clearStoredAuthProvider(profile, poolKey)
     // TODO: Test if provider works without gateway restart
     // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
