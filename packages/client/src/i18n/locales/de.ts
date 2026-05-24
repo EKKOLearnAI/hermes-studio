@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Benutzername',
     passwordPlaceholder: 'Passwort',
+    defaultCredentialsHint: 'Standard-Benutzername: admin. Standard-Passwort: 123456.',
     credentialsRequired: 'Bitte Benutzername und Passwort eingeben',
     invalidCredentials: 'Ungultiger Benutzername oder Passwort',
     tooManyAttempts: 'Zu viele fehlgeschlagene Versuche, bitte versuchen Sie es spater erneut',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'Passwort-Login ist fur Benutzerkonten erforderlich.',
     passwordLoginNotConfigured: 'Passwort-Login ist nicht konfiguriert',
     passwordLoginConfigured: 'Aktuelles Konto: {username}',
+    defaultCredentialTitle: 'Standardkonto und Passwort andern',
+    defaultCredentialMessage: 'Das aktuelle Konto verwendet noch den Standard-Benutzernamen oder das Standard-Passwort. Um unbefugten Zugriff zu vermeiden, andern Sie Benutzername und Passwort des aktuellen Kontos so bald wie moglich.',
+    defaultCredentialAction: 'Jetzt andern',
+    defaultCredentialLater: 'Spater erinnern',
   },
 
   users: {

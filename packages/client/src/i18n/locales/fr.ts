@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Jeton',
     usernamePlaceholder: 'Nom d\'utilisateur',
     passwordPlaceholder: 'Mot de passe',
+    defaultCredentialsHint: 'Nom d utilisateur par defaut : admin. Mot de passe par defaut : 123456.',
     credentialsRequired: 'Veuillez entrer le nom d\'utilisateur et le mot de passe',
     invalidCredentials: 'Nom d\'utilisateur ou mot de passe incorrect',
     tooManyAttempts: 'Trop de tentatives echouees, veuillez reessayer plus tard',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'Le login par mot de passe est requis pour les comptes utilisateur.',
     passwordLoginNotConfigured: 'Login par mot de passe non configure',
     passwordLoginConfigured: 'Compte actuel : {username}',
+    defaultCredentialTitle: 'Modifiez le compte et le mot de passe par defaut',
+    defaultCredentialMessage: 'Le compte connecte utilise encore le nom d utilisateur ou le mot de passe par defaut. Pour eviter tout acces non autorise, modifiez rapidement le nom d utilisateur et le mot de passe du compte actuel.',
+    defaultCredentialAction: 'Modifier maintenant',
+    defaultCredentialLater: 'Me le rappeler plus tard',
   },
 
   users: {

@@ -12,6 +12,7 @@ export default {
     tokenLogin: '權杖登入',
     usernamePlaceholder: '使用者名稱',
     passwordPlaceholder: '密碼',
+    defaultCredentialsHint: '預設登入名：admin，預設密碼：123456',
     credentialsRequired: '請輸入使用者名稱和密碼',
     invalidCredentials: '使用者名稱或密碼錯誤',
     tooManyAttempts: '登入失敗次數過多，請稍後再試',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: '使用者帳號必須保留密碼登入。',
     passwordLoginNotConfigured: '密碼登入未設定',
     passwordLoginConfigured: '目前帳號：{username}',
+    defaultCredentialTitle: '請修改預設帳號和密碼',
+    defaultCredentialMessage: '目前登入帳號仍在使用預設使用者名稱或預設密碼。為避免未授權存取，請盡快進入目前帳號修改使用者名稱和密碼。',
+    defaultCredentialAction: '去修改',
+    defaultCredentialLater: '稍後提醒',
   },
 
   users: {

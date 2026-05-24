@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Nombre de usuario',
     passwordPlaceholder: 'Contrasena',
+    defaultCredentialsHint: 'Nombre de usuario predeterminado: admin. Contrasena predeterminada: 123456.',
     credentialsRequired: 'Por favor, introduzca nombre de usuario y contrasena',
     invalidCredentials: 'Nombre de usuario o contrasena incorrectos',
     tooManyAttempts: 'Demasiados intentos fallidos, por favor intente mas tarde',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'El login con contrasena es obligatorio para las cuentas de usuario.',
     passwordLoginNotConfigured: 'Login con contrasena no configurado',
     passwordLoginConfigured: 'Cuenta actual: {username}',
+    defaultCredentialTitle: 'Cambia la cuenta y contrasena predeterminadas',
+    defaultCredentialMessage: 'La cuenta actual aun usa el nombre de usuario o la contrasena predeterminados. Para evitar accesos no autorizados, cambia cuanto antes el nombre de usuario y la contrasena de la cuenta actual.',
+    defaultCredentialAction: 'Cambiar ahora',
+    defaultCredentialLater: 'Recordar mas tarde',
   },
 
   users: {

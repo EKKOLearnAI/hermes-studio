@@ -63,6 +63,7 @@ async function handlePasswordLogin() {
       </div>
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
+      <p class="login-default-hint">{{ t("login.defaultCredentialsHint") }}</p>
 
       <form class="login-form" @submit.prevent="handleLogin">
         <input
@@ -128,8 +129,15 @@ async function handlePasswordLogin() {
 .login-desc {
   font-size: 14px;
   color: $text-muted;
-  margin: 0 0 32px;
+  margin: 0 0 12px;
   line-height: 1.6;
+}
+
+.login-default-hint {
+  margin: 0 0 28px;
+  font-family: $font-code;
+  font-size: 13px;
+  color: $text-secondary;
 }
 
 .login-form {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   NTabs,
   NTabPane,
@@ -22,6 +23,41 @@ import { isStoredSuperAdmin } from "@/api/client";
 const settingsStore = useSettingsStore();
 const { t } = useI18n();
 const canManageUsers = isStoredSuperAdmin();
+const route = useRoute();
+const router = useRouter();
+const activeTab = ref("account");
+
+const validTabs = computed(() => new Set([
+  "account",
+  ...(canManageUsers ? ["users"] : []),
+  "display",
+  "agent",
+  "memory",
+  "compression",
+  "session",
+  "privacy",
+  "models",
+  "voice",
+]));
+
+function normalizeTab(value: unknown): string {
+  const tab = typeof value === "string" ? value : "";
+  return validTabs.value.has(tab) ? tab : "account";
+}
+
+function handleTabUpdate(tab: string) {
+  activeTab.value = normalizeTab(tab);
+  router.replace({
+    query: {
+      ...route.query,
+      tab: activeTab.value === "account" ? undefined : activeTab.value,
+    },
+  });
+}
+
+watch(() => route.query.tab, (tab) => {
+  activeTab.value = normalizeTab(tab);
+}, { immediate: true });
 
 onMounted(() => {
   settingsStore.fetchSettings();
@@ -40,7 +76,7 @@ onMounted(() => {
         size="large"
         :description="t('common.loading')"
       >
-        <NTabs type="line" animated>
+        <NTabs v-model:value="activeTab" type="line" animated @update:value="handleTabUpdate">
           <NTabPane name="account" :tab="t('settings.tabs.account')">
             <AccountSettings />
           </NTabPane>

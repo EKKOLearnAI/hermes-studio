@@ -12,6 +12,7 @@ export default {
     tokenLogin: '令牌登录',
     usernamePlaceholder: '用户名',
     passwordPlaceholder: '密码',
+    defaultCredentialsHint: '默认登录名：admin，默认密码：123456',
     credentialsRequired: '请输入用户名和密码',
     invalidCredentials: '用户名或密码错误',
     tooManyAttempts: '登录失败次数过多，请稍后重试',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: '用户账号必须保留密码登录。',
     passwordLoginNotConfigured: '密码登录未配置',
     passwordLoginConfigured: '当前账户：{username}',
+    defaultCredentialTitle: '请修改默认账户和密码',
+    defaultCredentialMessage: '当前登录账户仍在使用默认用户名或默认密码。为了避免未授权访问，请尽快进入当前账户修改用户名和密码。',
+    defaultCredentialAction: '去修改',
+    defaultCredentialLater: '稍后提醒',
   },
 
   users: {

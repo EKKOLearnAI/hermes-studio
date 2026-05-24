@@ -633,10 +633,10 @@ export async function switchProfile(ctx: any) {
     }
 
     try {
-      const result = await bridgeCleanupClient().destroyAll()
-      logger.info('[switchProfile] destroyed all bridge sessions for Hermes profile "%s" destroyed=%s', name, result.destroyed)
+      const result = await bridgeCleanupClient().destroyProfile(name)
+      logger.info('[switchProfile] destroyed bridge sessions for Hermes profile "%s" destroyed=%s', name, result.destroyed)
     } catch (err: any) {
-      logger.warn(err, '[switchProfile] failed to destroy bridge sessions')
+      logger.warn(err, '[switchProfile] failed to destroy bridge sessions for profile "%s"', name)
     }
 
     try {

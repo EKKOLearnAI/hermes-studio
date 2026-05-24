@@ -36,6 +36,7 @@ export interface CurrentUser {
   created_at: number
   updated_at: number
   last_login_at: number | null
+  requiresCredentialChange?: boolean
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUser> {

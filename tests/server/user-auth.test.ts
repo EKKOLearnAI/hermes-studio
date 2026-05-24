@@ -200,6 +200,30 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body.token).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
   })
 
+  it('marks the default account credentials as requiring a change', async () => {
+    const { users } = await initUsers()
+    const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
+    const ctrl = await import('../../packages/server/src/controllers/auth')
+
+    const defaultCtx = {
+      state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
+      status: 200,
+      body: null,
+    } as any
+    await ctrl.currentUser(defaultCtx)
+    expect(defaultCtx.body.user.requiresCredentialChange).toBe(true)
+
+    users.updateUsername(admin.id, 'owner')
+    users.updateUserPassword(admin.id, 'stronger-password')
+    const changedCtx = {
+      state: { user: { id: admin.id, username: 'owner', role: 'super_admin' } },
+      status: 200,
+      body: null,
+    } as any
+    await ctrl.currentUser(changedCtx)
+    expect(changedCtx.body.user.requiresCredentialChange).toBe(false)
+  })
+
   it('lets super admins create regular admins with profile bindings', async () => {
     const { users } = await initUsers()
     vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({

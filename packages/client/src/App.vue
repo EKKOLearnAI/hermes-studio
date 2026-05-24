@@ -10,6 +10,7 @@ import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
 import AuthEventListener from '@/components/auth/AuthEventListener.vue'
+import DefaultCredentialPrompt from '@/components/auth/DefaultCredentialPrompt.vue'
 
 const { isDark, isComic } = useTheme()
 const { t } = useI18n()
@@ -73,6 +74,7 @@ useKeyboard()
             </main>
           </div>
           <SessionSearchModal />
+          <DefaultCredentialPrompt />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>

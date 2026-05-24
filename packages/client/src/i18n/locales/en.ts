@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Username',
     passwordPlaceholder: 'Password',
+    defaultCredentialsHint: 'Default username: admin. Default password: 123456.',
     credentialsRequired: 'Please enter username and password',
     invalidCredentials: 'Invalid username or password',
     tooManyAttempts: 'Too many failed attempts, please try again later',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'Password login is required for user accounts.',
     passwordLoginNotConfigured: 'Password login is not configured',
     passwordLoginConfigured: 'Current account: {username}',
+    defaultCredentialTitle: 'Change the default account credentials',
+    defaultCredentialMessage: 'This account is still using the default username or password. To prevent unauthorized access, update the username and password as soon as possible.',
+    defaultCredentialAction: 'Update now',
+    defaultCredentialLater: 'Remind me later',
   },
 
   users: {

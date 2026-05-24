@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Nome de usuario',
     passwordPlaceholder: 'Senha',
+    defaultCredentialsHint: 'Nome de usuario padrao: admin. Senha padrao: 123456.',
     credentialsRequired: 'Por favor, insira nome de usuario e senha',
     invalidCredentials: 'Nome de usuario ou senha incorretos',
     tooManyAttempts: 'Muitas tentativas falhadas, por favor tente novamente mais tarde',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'Login por senha e obrigatorio para contas de usuario.',
     passwordLoginNotConfigured: 'Login por senha nao configurado',
     passwordLoginConfigured: 'Conta atual: {username}',
+    defaultCredentialTitle: 'Altere a conta e senha padrao',
+    defaultCredentialMessage: 'A conta atual ainda usa o nome de usuario ou a senha padrao. Para evitar acesso nao autorizado, altere o nome de usuario e a senha da conta atual o quanto antes.',
+    defaultCredentialAction: 'Alterar agora',
+    defaultCredentialLater: 'Lembrar depois',
   },
 
   users: {

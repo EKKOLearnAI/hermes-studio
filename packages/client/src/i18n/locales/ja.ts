@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'トークン',
     usernamePlaceholder: 'ユーザー名',
     passwordPlaceholder: 'パスワード',
+    defaultCredentialsHint: '既定のユーザー名：admin、既定のパスワード：123456',
     credentialsRequired: 'ユーザー名とパスワードを入力してください',
     invalidCredentials: 'ユーザー名またはパスワードが正しくありません',
     tooManyAttempts: 'ログイン試行回数が多すぎます。しばらくしてからお試しください',
@@ -37,6 +38,10 @@ export default {
     removeConfirm: 'ユーザーアカウントにはパスワードログインが必要です。',
     passwordLoginNotConfigured: 'パスワードログイン未設定',
     passwordLoginConfigured: '現在のアカウント：{username}',
+    defaultCredentialTitle: '既定のアカウント情報を変更してください',
+    defaultCredentialMessage: '現在のログインアカウントは、既定のユーザー名または既定のパスワードをまだ使用しています。不正アクセスを防ぐため、できるだけ早く現在のアカウントでユーザー名とパスワードを変更してください。',
+    defaultCredentialAction: '変更する',
+    defaultCredentialLater: '後で通知',
   },
 
   users: {
