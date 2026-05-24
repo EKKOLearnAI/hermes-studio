@@ -33,7 +33,7 @@ test('read session rows do not show an attention indicator', async ({ page }) =>
 
   await page.goto('/chat')
 
-  const row = page.locator('.session-item-shell', { hasText: 'Read Session' })
+  const row = page.locator('.session-item', { hasText: 'Read Session' })
   await expect(row.locator('.session-attention-indicator')).toHaveCount(0)
 })
 
@@ -50,10 +50,10 @@ test('persisted unread session shows and clears its indicator when opened', asyn
 
   await page.goto('/chat')
 
-  const unreadRow = page.locator('.session-item-shell', { hasText: 'Unread Session' })
+  const unreadRow = page.locator('.session-item', { hasText: 'Unread Session' })
   await expect(unreadRow.locator('.session-attention-indicator--unread')).toHaveCount(1)
 
-  await unreadRow.locator('.session-item-link').click()
+  await unreadRow.click()
 
   await expect(unreadRow.locator('.session-attention-indicator')).toHaveCount(0)
 })
