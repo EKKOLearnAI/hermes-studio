@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
 
 function readRootPackage() {
   return JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
@@ -9,9 +10,18 @@ function readRootPackage() {
   }
 }
 
+function readRootGitInfo() {
+  return {
+    sha: execSync('git rev-parse --short=12 HEAD', { cwd: process.cwd(), encoding: 'utf-8' }).trim(),
+    branch: execSync('git branch --show-current', { cwd: process.cwd(), encoding: 'utf-8' }).trim(),
+  }
+}
+
 async function loadHealthControllerWithoutInjectedVersion() {
   vi.resetModules()
   delete (globalThis as any).__APP_VERSION__
+  delete (globalThis as any).__APP_GIT_SHA__
+  delete (globalThis as any).__APP_GIT_BRANCH__
 
   vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
@@ -20,9 +30,11 @@ async function loadHealthControllerWithoutInjectedVersion() {
   return import('../../packages/server/src/controllers/health')
 }
 
-async function loadHealthControllerWithInjectedVersion(version: string) {
+async function loadHealthControllerWithInjectedVersion(version: string, sha = 'abc123def456', branch = 'upstream/main') {
   vi.resetModules()
   ;(globalThis as any).__APP_VERSION__ = version
+  ;(globalThis as any).__APP_GIT_SHA__ = sha
+  ;(globalThis as any).__APP_GIT_BRANCH__ = branch
 
   vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
@@ -41,11 +53,14 @@ describe('health controller version metadata', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.resetModules()
-    ;(globalThis as any).__APP_VERSION__ = 'test'
+    delete (globalThis as any).__APP_VERSION__
+    delete (globalThis as any).__APP_GIT_SHA__
+    delete (globalThis as any).__APP_GIT_BRANCH__
   })
 
-  it('reads the root package version in ts-node/dev mode instead of falling back to 0.0.0', async () => {
+  it('reads the root package version and git metadata in ts-node/dev mode instead of falling back to defaults', async () => {
     const pkg = readRootPackage()
+    const git = readRootGitInfo()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
 
     const { healthCheck } = await loadHealthControllerWithoutInjectedVersion()
@@ -55,17 +70,21 @@ describe('health controller version metadata', () => {
 
     expect(ctx.body.webui_version).toBe(pkg.version)
     expect(ctx.body.webui_version).not.toBe('0.0.0')
+    expect(ctx.body.webui_git_sha).toBe(git.sha)
+    expect(ctx.body.webui_git_branch).toBe(git.branch)
   })
 
-  it('uses the injected build version when available', async () => {
+  it('uses the injected build version and git metadata when available', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
 
-    const { healthCheck } = await loadHealthControllerWithInjectedVersion('9.9.9-test')
+    const { healthCheck } = await loadHealthControllerWithInjectedVersion('9.9.9-test', 'feedbeef1234', 'upstream/main')
     const ctx = createMockCtx()
 
     await healthCheck(ctx)
 
     expect(ctx.body.webui_version).toBe('9.9.9-test')
+    expect(ctx.body.webui_git_sha).toBe('feedbeef1234')
+    expect(ctx.body.webui_git_branch).toBe('upstream/main')
   })
 
   it('checks npm latest using the root package name', async () => {

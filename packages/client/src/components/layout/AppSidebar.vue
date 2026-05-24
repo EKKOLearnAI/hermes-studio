@@ -27,6 +27,14 @@ const selectedKey = computed(() => {
   return route.name as string;
 });
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
+const buildLabel = computed(() => {
+  const sha = appStore.buildGitSha?.trim()
+  const branch = appStore.buildGitBranch?.trim()
+  if (!sha && !branch) return ''
+  const shortSha = sha ? sha.slice(0, 12) : ''
+  if (branch && shortSha) return `${branch}@${shortSha}`
+  return branch || shortSha
+});
 
 function isNavActive(...names: string[]) {
   return names.includes(selectedKey.value);
@@ -318,7 +326,10 @@ function openChangelog() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           </a>
         </div>
-        <span class="version-text" @click="openChangelog">Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
+        <span class="version-text" @click="openChangelog">
+          Web UI v{{ appStore.serverVersion || "0.1.0" }}
+          <span v-if="buildLabel" class="version-meta">· {{ buildLabel }}</span>
+        </span>
         <ThemeSwitch />
       </div>
       <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
@@ -604,15 +615,21 @@ function openChangelog() {
 }
 
 .version-text {
-  flex: 0 0 auto;
-  overflow: visible;
-  white-space: nowrap;
+  font-size: 11px;
+  color: $text-muted;
   cursor: pointer;
-  transition: color 0.2s;
+  user-select: none;
+  line-height: 1.2;
 
   &:hover {
-    color: $accent-primary;
+    color: $text-secondary;
   }
+}
+
+.version-meta {
+  margin-left: 4px;
+  font-size: 10px;
+  opacity: 0.9;
 }
 
 .changelog-list {

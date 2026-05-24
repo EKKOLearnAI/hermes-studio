@@ -4,6 +4,8 @@ export interface HealthResponse {
   status: string
   version?: string
   webui_version?: string
+  webui_git_sha?: string
+  webui_git_branch?: string
   webui_latest?: string
   webui_update_available?: boolean
   node_version?: string

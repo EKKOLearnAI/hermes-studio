@@ -2,10 +2,12 @@ import * as esbuild from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { getGitBuildMetadata } from './git-build-metadata.mjs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
 const version = pkg.version
+const gitMetadata = getGitBuildMetadata(rootDir)
 const serverOutDir = resolve(rootDir, 'dist/server')
 
 rmSync(serverOutDir, { recursive: true, force: true })
@@ -21,6 +23,8 @@ await esbuild.build({
   external: ['node-pty', 'node:sqlite', 'socket.io'],
   define: {
     __APP_VERSION__: JSON.stringify(version),
+    __APP_GIT_SHA__: JSON.stringify(gitMetadata.sha),
+    __APP_GIT_BRANCH__: JSON.stringify(gitMetadata.branch),
   },
   sourcemap: true,
   minify: true,

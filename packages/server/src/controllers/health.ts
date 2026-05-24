@@ -1,12 +1,20 @@
 import { existsSync, readFileSync } from 'fs'
+import { execFileSync } from 'child_process'
 import { resolve } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
 
 declare const __APP_VERSION__: string
+declare const __APP_GIT_SHA__: string
+declare const __APP_GIT_BRANCH__: string
 
 type PackageInfo = {
   name: string
   version: string
+}
+
+type BuildInfo = {
+  sha: string
+  branch: string
 }
 
 function readPackageInfo(): PackageInfo | null {
@@ -38,10 +46,39 @@ function readPackageInfo(): PackageInfo | null {
   return null
 }
 
+function readBuildInfo(): BuildInfo {
+  const injectedSha = typeof __APP_GIT_SHA__ !== 'undefined' ? String(__APP_GIT_SHA__) : ''
+  const injectedBranch = typeof __APP_GIT_BRANCH__ !== 'undefined' ? String(__APP_GIT_BRANCH__) : ''
+
+  const candidateRoots = [
+    resolve(__dirname, '../../../../'),
+    resolve(process.cwd()),
+  ]
+
+  for (const repoRoot of candidateRoots) {
+    try {
+      const sha = injectedSha || execFileSync('git', ['-C', repoRoot, 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf-8' }).trim()
+      const branch = injectedBranch || execFileSync('git', ['-C', repoRoot, 'branch', '--show-current'], { encoding: 'utf-8' }).trim() || execFileSync('git', ['-C', repoRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' }).trim()
+      return {
+        sha: sha || injectedSha || 'unknown',
+        branch: branch === 'HEAD' ? '' : branch,
+      }
+    } catch {
+      // Try the next candidate path.
+    }
+  }
+
+  return {
+    sha: injectedSha || 'unknown',
+    branch: injectedBranch,
+  }
+}
+
 const PACKAGE_INFO = readPackageInfo()
 const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : PACKAGE_INFO?.version || ''
+const BUILD_INFO = readBuildInfo()
 
 let cachedLatestVersion = ''
 
@@ -74,6 +111,8 @@ export async function healthCheck(ctx: any) {
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
+    webui_git_sha: BUILD_INFO.sha,
+    webui_git_branch: BUILD_INFO.branch,
     webui_latest: cachedLatestVersion,
     webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,

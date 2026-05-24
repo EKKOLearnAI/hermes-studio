@@ -178,6 +178,23 @@ describe('App Store', () => {
     expect(store.updateAvailable).toBe(false)
   })
 
+  it('stores build metadata from the health endpoint for preview identification', async () => {
+    mockSystemApi.checkHealth.mockResolvedValue({
+      status: 'ok',
+      webui_version: '0.6.0',
+      webui_git_sha: 'feedbeef1234',
+      webui_git_branch: 'upstream/main',
+      webui_latest: '0.6.0',
+      webui_update_available: false,
+    })
+    const store = useAppStore()
+
+    await store.checkConnection()
+
+    expect(store.buildGitSha).toBe('feedbeef1234')
+    expect(store.buildGitBranch).toBe('upstream/main')
+  })
+
   it('does not mark the client stale when the served Web UI version matches this bundle', async () => {
     mockSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
