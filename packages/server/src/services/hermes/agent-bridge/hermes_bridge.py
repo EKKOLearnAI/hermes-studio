@@ -17,8 +17,10 @@ import hashlib
 import importlib.util
 import json
 import locale
+import logging
 import os
 import queue
+import re
 import signal
 import shutil
 import socket
@@ -33,7 +35,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any, Callable
+from typing import Any, Callable, Optional
+
+
+logger = logging.getLogger("hermes_bridge")
 
 
 DEFAULT_ENDPOINT = "tcp://127.0.0.1:18765" if os.name == "nt" else "ipc:///tmp/hermes-agent-bridge.sock"
@@ -1298,6 +1303,88 @@ class AgentPool:
                     pass
                 self._prepersist_user_message(session, message, storage_message, conversation_history, profile, source)
                 db_count_after_prepersist = self._session_db_message_count(session.session_id, profile)
+
+                # --- Skill / bundle slash command resolution -----------------
+                # When the message is a "/skill-name [args]" string, replace it with
+                # the SKILL.md-derived user message before invoking the agent.
+                # This mirrors what cli.py and gateway/run.py do, so /plan, /spike,
+                # /goal, /tdd etc. work the same way they do in the CLI/gateway.
+                # Pure-additive: any failure (skill not found, import error) silently
+                # falls back to the original message.
+                #
+                # NOTE: this must run AFTER _prepersist_user_message so the literal
+                # "/plan" text is what gets stored in the session DB (matching CLI
+                # behavior where the user's typed command is preserved in history),
+                # while the resolved skill content is what the model sees.
+                try:
+                    if isinstance(message, str) and message.startswith("/"):
+                        _slash_text = message.strip()
+                        if _slash_text.startswith("/") and len(_slash_text) > 1:
+                            _slash_match = re.match(r"^/([a-zA-Z][\w-]*)(?:\s+([\s\S]*))?$", _slash_text)
+                            if _slash_match:
+                                _cmd_raw = _slash_match.group(1)
+                                _cmd_args = (_slash_match.group(2) or "").strip()
+                                _resolved_msg: Optional[str] = None
+
+                                # 1) Skill bundles first (mirrors gateway/run.py order)
+                                try:
+                                    from agent.skill_bundles import (
+                                        build_bundle_invocation_message,
+                                        resolve_bundle_command_key,
+                                    )
+                                    _bundle_key = resolve_bundle_command_key(_cmd_raw)
+                                    if _bundle_key is not None:
+                                        _bundle_result = build_bundle_invocation_message(
+                                            _bundle_key, _cmd_args, task_id=session.session_id
+                                        )
+                                        if _bundle_result:
+                                            _bundle_msg, _loaded_bundle, _missing_bundle = _bundle_result
+                                            if _bundle_msg:
+                                                _resolved_msg = _bundle_msg
+                                                if _missing_bundle:
+                                                    logger.info(
+                                                        "Bundle /%s skipped missing skills: %s",
+                                                        _cmd_raw, ", ".join(_missing_bundle),
+                                                    )
+                                except Exception as _bundle_exc:
+                                    logger.debug(
+                                        "Skill bundle dispatch failed (non-fatal) for /%s: %s",
+                                        _cmd_raw, _bundle_exc,
+                                    )
+
+                                # 2) Individual skill command
+                                if _resolved_msg is None:
+                                    try:
+                                        from agent.skill_commands import (
+                                            build_skill_invocation_message,
+                                            resolve_skill_command_key,
+                                        )
+                                        _cmd_key = resolve_skill_command_key(_cmd_raw)
+                                        if _cmd_key is not None:
+                                            _skill_msg = build_skill_invocation_message(
+                                                _cmd_key, _cmd_args, task_id=session.session_id
+                                            )
+                                            if _skill_msg:
+                                                _resolved_msg = _skill_msg
+                                    except Exception as _skill_exc:
+                                        logger.debug(
+                                            "Skill command dispatch failed (non-fatal) for /%s: %s",
+                                            _cmd_raw, _skill_exc,
+                                        )
+
+                                if _resolved_msg:
+                                    logger.info(
+                                        "Resolved /%s slash command for session %s (%d chars)",
+                                        _cmd_raw, session.session_id, len(_resolved_msg),
+                                    )
+                                    message = _resolved_msg
+                except Exception as _slash_exc:
+                    # Defensive: any unexpected failure must not break the run.
+                    logger.warning(
+                        "Slash command resolution failed (non-fatal): %s", _slash_exc,
+                    )
+                # --- end skill / bundle slash command resolution -------------
+
                 if force_compress:
                     compress = getattr(session.agent, "_compress_context", None)
                     if callable(compress):

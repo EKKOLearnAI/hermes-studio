@@ -58,7 +58,11 @@ export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessi
   if (!match) return null
   const rawName = match[1].toLowerCase()
   const name = COMMAND_ALIASES[rawName]
-  if (!name) return { name: 'status', rawName, args: match[2]?.trim() || '' }
+  // Only return a parsed command for KNOWN bridge-level aliases. Unknown
+  // slash inputs (e.g. /plan, /spike, /goal, /tdd) must fall through to
+  // handleBridgeRun so the Python bridge can resolve them as skill
+  // commands or surface them to the agent as regular user input.
+  if (!name) return null
   return { name, rawName, args: match[2]?.trim() || '' }
 }
 
