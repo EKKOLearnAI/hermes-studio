@@ -98,7 +98,35 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     }
 
     if (pathname === '/api/auth/status') {
-      await route.fulfill(jsonResponse({ hasPasswordLogin: false, username: null }))
+      await route.fulfill(jsonResponse({ hasPasswordLogin: true, username: 'playwright' }))
+      return
+    }
+
+    if (pathname === '/api/auth/login') {
+      if (request.method() !== 'POST') {
+        await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+        return
+      }
+      if (tokenValidationStatus !== 200) {
+        await route.fulfill(jsonResponse({ error: 'Invalid username or password' }, tokenValidationStatus))
+        return
+      }
+      await route.fulfill(jsonResponse({ token: TEST_ACCESS_KEY }))
+      return
+    }
+
+    if (pathname === '/api/auth/me') {
+      await route.fulfill(jsonResponse({
+        user: {
+          id: 1,
+          username: 'playwright',
+          role: 'super_admin',
+          status: 'active',
+          created_at: 0,
+          updated_at: 0,
+          last_login_at: 0,
+        },
+      }))
       return
     }
 
@@ -234,7 +262,7 @@ export async function authenticate(page: Page, accessKey = TEST_ACCESS_KEY, prof
   await page.addInitScript((state: { storedToken: string; storedProfileName?: string }) => {
     const { storedToken, storedProfileName } = state
     window.localStorage.setItem('hermes_api_key', storedToken)
-    if (storedProfileName) {
+    if (storedProfileName && !window.localStorage.getItem('hermes_active_profile_name')) {
       window.localStorage.setItem('hermes_active_profile_name', storedProfileName)
     }
   }, { storedToken: accessKey, storedProfileName: profileName })

@@ -90,8 +90,8 @@ describe('KanbanCreateForm', () => {
   it('uses compact profile names for assignee options', () => {
     const wrapper = mount(KanbanCreateForm)
 
-    expect(wrapper.text()).toContain('default')
     expect(wrapper.text()).toContain('alice')
+    expect(wrapper.text()).not.toContain('default')
     expect(wrapper.text()).not.toContain('alice · kanban.stats.tasks')
   })
 })
