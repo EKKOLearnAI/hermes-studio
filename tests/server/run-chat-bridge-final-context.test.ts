@@ -169,10 +169,12 @@ describe('bridge run final context usage', () => {
         { role: 'user', content: 'hello' },
         { role: 'assistant', content: 'done' },
       ],
-      'system prompt',
+      expect.stringContaining('[Current Hermes profile: default]'),
       'default',
       { model: 'gpt-test', provider: 'openai' },
     )
+    expect(bridge.contextEstimate.mock.calls[0][2]).toContain('system prompt')
+    expect(bridge.contextEstimate.mock.calls[0][2]).toContain('X-Hermes-Profile')
     expect(state.contextTokens).toBe(12345)
     expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
       inputTokens: 11,
