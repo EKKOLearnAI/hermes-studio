@@ -953,11 +953,12 @@ function formatUnixDate(timestamp: number | null): string {
 export async function getSkillUsageStatsFromDb(
   days = 7,
   nowSeconds = Math.floor(Date.now() / 1000),
+  profile?: string,
 ): Promise<HermesSkillUsageStats> {
   const normalizedDays = Number.isFinite(days) ? days : 7
   const safeDays = Math.max(1, Math.floor(normalizedDays))
   const since = nowSeconds - safeDays * 24 * 60 * 60
-  const db = await openSessionDb()
+  const db = await openSessionDb(profile)
 
   try {
     const hasStartedIndex = db.prepare("PRAGMA index_list(sessions)").all()

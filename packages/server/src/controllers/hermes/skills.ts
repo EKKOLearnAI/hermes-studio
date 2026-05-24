@@ -7,7 +7,12 @@ import {
 } from '../../services/config-helpers'
 import { pinSkill } from '../../services/hermes/hermes-cli'
 import { isPathWithin } from '../../services/hermes/hermes-path'
+import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
+
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
 
 /** Read bundled manifest as a name→hash map from ~/.hermes/skills/.bundled_manifest */
 function readBundledManifest(manifestContent: string | null): Map<string, string> {
@@ -284,7 +289,7 @@ export async function usageStats(ctx: any) {
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 7
 
   try {
-    ctx.body = await getSkillUsageStatsFromDb(days)
+    ctx.body = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
