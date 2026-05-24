@@ -423,6 +423,7 @@ jobTriggered: 'Job ejecutado',
       builtin: 'Integrado',
       hub: 'Hub',
       local: 'Local',
+      external: 'Externo',
     },
   },
 
