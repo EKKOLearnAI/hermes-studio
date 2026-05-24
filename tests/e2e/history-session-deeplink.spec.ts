@@ -124,30 +124,30 @@ test.describe('history session deep links', () => {
   })
 
   test('route session id opens selected history session', async ({ page }) => {
-    await page.goto('/#/hermes/history/session/hist-beta')
+    await page.goto('/hermes/history/session/hist-beta')
 
     await expect(page.getByText('Beta History Session').first()).toBeVisible()
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
-    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta$/)
+    await expect(page).toHaveURL(/\/hermes\/history\/session\/hist-beta$/)
   })
 
   test('clicking another history session updates URL and reload preserves it', async ({ page }) => {
-    await page.goto('/#/hermes/history/session/hist-alpha')
+    await page.goto('/hermes/history/session/hist-alpha')
     await expect(page.getByText('Answer from Alpha History Session')).toBeVisible()
 
     await page.getByText('Beta History Session').first().click()
-    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta\?profile=default$/)
+    await expect(page).toHaveURL(/\/hermes\/history\/session\/hist-beta\?profile=default$/)
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
 
     await page.reload()
-    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta\?profile=default$/)
+    await expect(page).toHaveURL(/\/hermes\/history\/session\/hist-beta\?profile=default$/)
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
   })
 
   test('unknown route session id falls back to base history route', async ({ page }) => {
-    await page.goto('/#/hermes/history/session/missing-session')
+    await page.goto('/hermes/history/session/missing-session')
 
-    await expect(page).toHaveURL(/#\/hermes\/history$/)
+    await expect(page).toHaveURL(/\/hermes\/history$/)
     await expect(page.getByText('Alpha History Session').first()).toBeVisible()
   })
 })

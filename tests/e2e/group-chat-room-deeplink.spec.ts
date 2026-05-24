@@ -111,23 +111,23 @@ async function setup(page: Page, path: string) {
 
 test.describe('group chat room deep links', () => {
   test('route room id opens selected room', async ({ page }) => {
-    await setup(page, '/#/hermes/group-chat/room/room-beta')
+    await setup(page, '/hermes/group-chat/room/room-beta')
 
     await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
     await expect(page.getByText('Beta room message')).toBeVisible()
-    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(page).toHaveURL(/\/hermes\/group-chat\/room\/room-beta$/)
   })
 
   test('clicking another room updates URL and reload preserves it', async ({ page }) => {
-    await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await setup(page, '/hermes/group-chat/room/room-alpha')
     await expect(page.getByText('Alpha room message')).toBeVisible()
 
-    await page.getByText('Beta Room').click()
-    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await page.getByText('Beta Room').first().click()
+    await expect(page).toHaveURL(/\/hermes\/group-chat\/room\/room-beta$/)
     await expect(page.getByText('Beta room message')).toBeVisible()
 
     await page.reload()
-    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
+    await expect(page).toHaveURL(/\/hermes\/group-chat\/room\/room-beta$/)
     await expect(page.getByText('Beta room message')).toBeVisible()
   })
 
@@ -135,8 +135,8 @@ test.describe('group chat room deep links', () => {
     const first = await context.newPage()
     const second = await context.newPage()
 
-    await setup(first, '/#/hermes/group-chat/room/room-alpha')
-    await setup(second, '/#/hermes/group-chat/room/room-beta')
+    await setup(first, '/hermes/group-chat/room/room-alpha')
+    await setup(second, '/hermes/group-chat/room/room-beta')
 
     await expect(first.getByText('Alpha room message')).toBeVisible()
     await expect(first.getByText('Beta room message')).toHaveCount(0)
@@ -145,9 +145,9 @@ test.describe('group chat room deep links', () => {
   })
 
   test('unknown route room id falls back to base group chat route', async ({ page }) => {
-    await setup(page, '/#/hermes/group-chat/room/missing-room')
+    await setup(page, '/hermes/group-chat/room/missing-room')
 
-    await expect(page).toHaveURL(/#\/hermes\/group-chat$/)
+    await expect(page).toHaveURL(/\/hermes\/group-chat$/)
     await expect(page.getByText('Alpha Room')).toBeVisible()
   })
 })

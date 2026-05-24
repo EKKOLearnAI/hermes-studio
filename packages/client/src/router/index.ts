@@ -1,8 +1,9 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
-import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import { createRouter, createWebHistory } from 'vue-router'
+import { hasApiKey } from '@/api/client'
+import { isStoredSuperAdmin } from '@/api/client'
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes: [
     {
       path: '/',

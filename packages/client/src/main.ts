@@ -6,6 +6,9 @@ import App from './App.vue'
 import './styles/global.scss'
 import 'katex/dist/katex.min.css'
 
+// URL token bootstrap is intentionally path/query-based only.
+// Legacy hash routes are no longer treated as canonical inputs.
+
 // Apply theme classes before mount to prevent FOUC (Flash of Unstyled Content)
 const savedBrightness = localStorage.getItem('hermes_brightness') || 'system'
 const savedStyle = localStorage.getItem('hermes_style') || 'ink'
@@ -25,10 +28,9 @@ if (isComic) {
   document.documentElement.classList.add('comic')
 }
 
-// Read token from URL BEFORE router initializes (hash router strips params)
+// Read token from URL BEFORE router initializes
 const urlParams = new URLSearchParams(window.location.search)
-const hashQuery = window.location.hash.split('?')[1]
-const urlToken = urlParams.get('token') || (hashQuery ? new URLSearchParams(hashQuery).get('token') : null)
+const urlToken = urlParams.get('token')
 if (urlToken) {
   ;(window as any).__LOGIN_TOKEN__ = urlToken
 }
