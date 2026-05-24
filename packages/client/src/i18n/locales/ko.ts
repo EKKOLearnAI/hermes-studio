@@ -268,6 +268,8 @@ export default {
     monitorRoleUser: '사용자',
     monitorRoleAssistant: '어시스턴트',
     copySessionLink: '세션 링크 복사',
+    openSessionInNewTab: 'Open in new tab',
+    sessionLinkCopied: 'Session link copied',
     copySessionId: '세션 ID 복사',
     export: '내보내기',
     exportFull: '전체 내보내기 (JSON)',

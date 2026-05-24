@@ -268,6 +268,8 @@ export default {
     monitorRoleUser: 'Utilisateur',
     monitorRoleAssistant: 'Assistant',
     copySessionLink: 'Copier le lien de session',
+    openSessionInNewTab: 'Open in new tab',
+    sessionLinkCopied: 'Session link copied',
     copySessionId: "Copier l'ID de session",
     export: 'Exporter',
     exportFull: 'Export complet (JSON)',

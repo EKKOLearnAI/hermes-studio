@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<{
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
+  to?: string
 }>(), {
   showProfile: true,
 })
@@ -77,11 +78,18 @@ function onTouchMove() {
   }
 }
 
-function onClick() {
+function isModifiedNavigation(event?: MouseEvent) {
+  return !!event && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+}
+
+function onClick(event?: MouseEvent) {
   if (longPressTriggered.value) {
     longPressTriggered.value = false
+    event?.preventDefault()
     return
   }
+  if (isModifiedNavigation(event)) return
+  if (props.to && !props.selectable) event?.preventDefault()
   emit('select')
 }
 
@@ -91,10 +99,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <button
+  <component
+    :is="selectable || !to ? 'button' : 'a'"
     class="session-item"
     :class="{ active, 'batch-mode': selectable, 'missing-models': profileModelsMissing }"
     :aria-current="active ? 'page' : undefined"
+    :href="!selectable ? to : undefined"
+    :type="selectable || !to ? 'button' : undefined"
     @click="onClick"
     @contextmenu="emit('contextmenu', $event)"
     @touchstart="onTouchStart"
@@ -119,7 +130,7 @@ onUnmounted(() => {
         </span>
         <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
           <template #trigger>
-            <button class="session-item-warning" type="button" @click.stop>
+            <button class="session-item-warning" type="button" @click.stop.prevent>
               !
             </button>
           </template>
@@ -137,13 +148,13 @@ onUnmounted(() => {
     </div>
     <NPopconfirm v-if="canDelete && !selectable" @positive-click="emit('delete')">
       <template #trigger>
-        <button class="session-item-delete" @click.stop>
+        <button class="session-item-delete" @click.stop.prevent>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </template>
       {{ t('chat.deleteSession') }}
     </NPopconfirm>
-  </button>
+  </component>
 </template>
 
 <style scoped>

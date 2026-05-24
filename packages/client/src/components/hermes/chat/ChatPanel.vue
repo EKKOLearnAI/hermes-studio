@@ -60,6 +60,20 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 
+function sessionHref(sessionId: string) {
+  const profile = sessionProfile(sessionId);
+  return router.resolve({
+    name: "hermes.session",
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  }).href;
+}
+
+function openSessionInNewTab(sessionId: string) {
+  if (typeof window === "undefined") return;
+  window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
+}
+
 async function handleSessionClick(sessionId: string) {
   const session = chatStore.sessions.find((item) => item.id === sessionId);
   await router.push({
@@ -431,6 +445,7 @@ const contextMenuOptions = computed(() => {
       },
     ],
   })
+  options.push({ label: t("chat.openSessionInNewTab"), key: "open-link" })
   options.push({ label: t("chat.copySessionLink"), key: "copy-link" })
   options.push({ label: t("chat.copySessionId"), key: "copy-id" })
   return options
@@ -467,6 +482,8 @@ async function handleContextMenuSelect(key: string) {
     copySessionLink(contextSessionId.value);
   } else if (key === "copy-id") {
     copySessionId(contextSessionId.value);
+  } else if (key === "open-link") {
+    openSessionInNewTab(contextSessionId.value);
   } else if (parseExportKey(key)) {
     const { mode, ext } = parseExportKey(key)!;
     const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
@@ -835,6 +852,7 @@ async function handleSessionModelCustomSubmit() {
             :selectable="isBatchMode"
             :selected="isSessionSelected(s.id)"
             :show-profile="true"
+            :to="sessionHref(s.id)"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
@@ -856,6 +874,7 @@ async function handleSessionModelCustomSubmit() {
           :selectable="isBatchMode"
           :selected="isSessionSelected(s.id)"
           :show-profile="true"
+          :to="sessionHref(s.id)"
           @select="handleSessionClick(s.id)"
           @contextmenu="handleContextMenu($event, s.id)"
           @delete="handleDeleteSession(s.id)"
@@ -1646,6 +1665,7 @@ async function handleSessionModelCustomSubmit() {
   border-radius: $radius-sm;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
   color: $text-secondary;
   transition: all $transition-fast;
   margin-bottom: 2px;

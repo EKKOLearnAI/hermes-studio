@@ -16,12 +16,16 @@ test('renders authenticated shell and navigates between key product routes', asy
   const cronHistoryRequest = api.requests.find((request) => request.pathname === '/api/cron-history')
   expect(cronHistoryRequest?.headers['x-hermes-profile']).toBe('research')
 
-  await page.locator('aside.sidebar').getByRole('button', { name: /^Models$/ }).click()
+  const modelsLink = page.locator('aside.sidebar').getByRole('link', { name: /^Models$/ })
+  await expect(modelsLink).toHaveAttribute('href', '#/hermes/models')
+  await modelsLink.click()
   await expect(page).toHaveURL(/#\/hermes\/models$/)
   await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
   await expect(page.getByText('test-model').first()).toBeVisible()
 
-  await page.locator('aside.sidebar').getByRole('button', { name: /^Settings$/ }).click()
+  const settingsLink = page.locator('aside.sidebar').getByRole('link', { name: /^Settings$/ })
+  await expect(settingsLink).toHaveAttribute('href', '#/hermes/settings')
+  await settingsLink.click()
   await expect(page).toHaveURL(/#\/hermes\/settings$/)
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   expect(api.unexpectedRequests).toEqual([])

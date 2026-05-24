@@ -282,6 +282,8 @@ export default {
     monitorRoleUser: '使用者',
     monitorRoleAssistant: '助手',
     copySessionLink: '複製工作階段連結',
+    openSessionInNewTab: 'Open in new tab',
+    sessionLinkCopied: 'Session link copied',
     copySessionId: '複製工作階段 ID',
     export: '匯出',
     exportFull: '完整匯出 (JSON)',
