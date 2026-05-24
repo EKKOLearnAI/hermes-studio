@@ -643,7 +643,8 @@ export const useChatStore = defineStore('chat', () => {
     if (existing) clearTimeout(existing)
     const timer = setTimeout(() => {
       sessionListRefreshTimers.delete(normalizedProfile)
-      void loadSessions(normalizedProfile, null, { preserveActive: true, switchIfMissing: false })
+      const refreshProfile = sessionProfileFilter.value
+      void loadSessions(refreshProfile, null, { preserveActive: true, switchIfMissing: false })
     }, 150)
     sessionListRefreshTimers.set(normalizedProfile, timer)
   }
@@ -703,6 +704,10 @@ export const useChatStore = defineStore('chat', () => {
         if (prev && prev.length) s.messages = prev
       }
       sessions.value = fresh
+      if (activeSessionId.value) {
+        const refreshedActive = sessions.value.find(s => s.id === activeSessionId.value)
+        if (refreshedActive) activeSession.value = refreshedActive
+      }
       syncSessionStatusSubscriptions()
 
       if (!options.preserveActive) {

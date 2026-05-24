@@ -318,26 +318,67 @@ describe('chat store session attention state', () => {
 
   it('refreshes sessions without changing active session on list invalidation', async () => {
     vi.useFakeTimers()
-    const now = Math.floor(Date.now() / 1000)
-    const store = useChatStore()
-    store.sessions = [makeSession('session-read-1')]
-    store.activeSessionId = 'session-read-1'
-    store.startSessionStatusSync('research')
-    sessionsApiMock.fetchSessions.mockResolvedValueOnce([
-      { id: 'new-session', profile: 'research', title: 'New', started_at: now, last_active: now },
-      { id: 'session-read-1', profile: 'research', title: 'Existing', started_at: now, last_active: now },
-    ])
+    try {
+      const now = Math.floor(Date.now() / 1000)
+      const store = useChatStore()
+      store.sessions = [makeSession('session-read-1')]
+      store.activeSessionId = 'session-read-1'
+      store.startSessionStatusSync('research')
+      sessionsApiMock.fetchSessions.mockResolvedValueOnce([
+        { id: 'new-session', profile: 'research', title: 'New', started_at: now, last_active: now },
+        { id: 'session-read-1', profile: 'research', title: 'Existing', started_at: now, last_active: now },
+      ])
 
-    statusMock.handlersByProfile.research?.onSessionListChanged?.({
-      profile: 'research',
-      reason: 'created',
-      session_id: 'new-session',
-      updatedAt: Date.now(),
-    })
-    await vi.advanceTimersByTimeAsync(151)
+      statusMock.handlersByProfile.research?.onSessionListChanged?.({
+        profile: 'research',
+        reason: 'created',
+        session_id: 'new-session',
+        updatedAt: Date.now(),
+      })
+      await vi.advanceTimersByTimeAsync(151)
 
-    expect(store.activeSessionId).toBe('session-read-1')
-    expect(store.sessions.some((session: Session) => session.id === 'new-session')).toBe(true)
-    vi.useRealTimers()
+      expect(store.activeSessionId).toBe('session-read-1')
+      expect(store.sessions.some((session: Session) => session.id === 'new-session')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves all-profile list scope when one profile invalidates', async () => {
+    vi.useFakeTimers()
+    try {
+      const now = Math.floor(Date.now() / 1000)
+      const store = useChatStore()
+      store.sessionProfileFilter = null
+      store.sessions = [
+        makeSession('session-research', 'research'),
+        makeSession('session-personal', 'personal'),
+      ]
+      store.activeSessionId = 'session-research'
+      store.startSessionStatusSync('research')
+      sessionsApiMock.fetchSessions.mockResolvedValueOnce([
+        { id: 'session-research', profile: 'research', title: 'Research', started_at: now, last_active: now },
+        { id: 'session-personal', profile: 'personal', title: 'Personal', started_at: now, last_active: now },
+        { id: 'session-personal-new', profile: 'personal', title: 'Personal New', started_at: now, last_active: now },
+      ])
+
+      statusMock.handlersByProfile.personal?.onSessionListChanged?.({
+        profile: 'personal',
+        reason: 'created',
+        session_id: 'session-personal-new',
+        updatedAt: Date.now(),
+      })
+      await vi.advanceTimersByTimeAsync(151)
+
+      expect(sessionsApiMock.fetchSessions).toHaveBeenLastCalledWith(undefined, undefined, undefined)
+      expect(store.sessions.map((session: Session) => session.id).sort()).toEqual([
+        'session-personal',
+        'session-personal-new',
+        'session-research',
+      ])
+      expect(store.activeSessionId).toBe('session-research')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

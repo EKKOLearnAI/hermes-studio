@@ -18,6 +18,12 @@ import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import { getChatRunServer } from '../../routes/hermes/chat-run'
+import type { SessionListChangedReason } from '../../services/hermes/run-chat/status-feed'
+
+function notifySessionListChanged(profile: string | null | undefined, reason: SessionListChangedReason, sessionId?: string): void {
+  getChatRunServer()?.emitSessionListChanged(profile || 'default', reason, sessionId)
+}
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -288,6 +294,7 @@ export async function remove(ctx: any) {
     return
   }
   deleteUsage(sessionId)
+  notifySessionListChanged(existing?.profile || hermesProfile, 'deleted', sessionId)
   ctx.body = { ok: true, deleted: Boolean(existing), hermes }
 }
 
@@ -333,6 +340,7 @@ export async function batchRemove(ctx: any) {
     const ok = localDeleteSession(id)
     if (ok) {
       deleteUsage(id)
+      notifySessionListChanged(existing?.profile || hermes.profile || requestedProfile(ctx), 'deleted', id)
       results.deleted++
     } else {
       results.failed++
@@ -379,6 +387,7 @@ export async function rename(ctx: any) {
     ctx.body = { error: 'Failed to rename session' }
     return
   }
+  notifySessionListChanged(existing?.profile || requestedProfile(ctx), 'renamed', ctx.params.id)
   ctx.body = { ok: true }
 }
 
@@ -393,10 +402,13 @@ export async function setWorkspace(ctx: any) {
   const id = ctx.params.id
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
+  const profile = existing?.profile || requestedProfile(ctx) || 'default'
+  const reason: SessionListChangedReason = existing ? 'updated' : 'created'
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile, title: '' })
   }
   updateSession(id, { workspace: workspace || null } as any)
+  notifySessionListChanged(profile, reason, id)
   ctx.body = { ok: true }
 }
 
@@ -416,10 +428,13 @@ export async function setModel(ctx: any) {
   const id = ctx.params.id
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
+  const profile = existing?.profile || requestedProfile(ctx) || 'default'
+  const reason: SessionListChangedReason = existing ? 'updated' : 'created'
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile, title: '' })
   }
   updateSession(id, { model: model.trim(), provider: (provider || '').trim() } as any)
+  notifySessionListChanged(profile, reason, id)
   ctx.body = { ok: true }
 }
 

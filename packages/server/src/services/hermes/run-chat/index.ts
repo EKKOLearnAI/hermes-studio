@@ -21,7 +21,7 @@ import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
-import { emitSessionStatus, sessionRuntimeStatusSnapshot, sessionStatusRoom } from './status-feed'
+import { emitSessionListChanged, emitSessionStatus, sessionRuntimeStatusSnapshot, sessionStatusRoom, type SessionListChangedReason } from './status-feed'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 
@@ -41,6 +41,10 @@ export class ChatRunSocket {
     this.nsp.use(this.authMiddleware.bind(this))
     this.nsp.on('connection', this.onConnection.bind(this))
     logger.info('[chat-run-socket] Socket.IO ready at /chat-run')
+  }
+
+  emitSessionListChanged(profile: string, reason: SessionListChangedReason, sessionId?: string): void {
+    emitSessionListChanged(this.nsp, profile || 'default', reason, sessionId)
   }
 
   // --- Auth middleware ---
