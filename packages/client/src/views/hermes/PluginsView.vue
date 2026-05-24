@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { fetchPlugins, type HermesPluginInfo, type HermesPluginsMetadata } from '@/api/hermes/plugins'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t, te } = useI18n()
 const message = useMessage()
+const profilesStore = useProfilesStore()
 
 const plugins = ref<HermesPluginInfo[]>([])
 const warnings = ref<string[]>([])
@@ -111,7 +113,12 @@ async function copyCommand(plugin: HermesPluginInfo) {
   message.success(t('plugins.commandCopied'))
 }
 
-onMounted(loadPlugins)
+watch(() => profilesStore.activeProfileName || 'default', () => {
+  plugins.value = []
+  warnings.value = []
+  metadata.value = null
+  void loadPlugins()
+}, { immediate: true })
 </script>
 
 <template>

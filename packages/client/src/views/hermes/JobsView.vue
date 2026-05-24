@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { NButton, NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import JobsPanel from '@/components/hermes/jobs/JobsPanel.vue'
 import JobRunHistory from '@/components/hermes/jobs/JobRunHistory.vue'
 import JobFormModal from '@/components/hermes/jobs/JobFormModal.vue'
 import { useJobsStore } from '@/stores/hermes/jobs'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t } = useI18n()
 const jobsStore = useJobsStore()
+const profilesStore = useProfilesStore()
 const showModal = ref(false)
 const editingJob = ref<string | null>(null)
 const selectedJobId = ref<string | null>(null)
+const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
 
 const jobNameMap = computed(() => {
   const map: Record<string, string> = {}
@@ -22,9 +25,11 @@ const jobNameMap = computed(() => {
   return map
 })
 
-onMounted(() => {
-  jobsStore.fetchJobs()
-})
+watch(activeProfileName, () => {
+  selectedJobId.value = null
+  jobsStore.jobs = []
+  void jobsStore.fetchJobs()
+}, { immediate: true })
 
 function openCreateModal() {
   editingJob.value = null
@@ -80,6 +85,7 @@ function handleSelectJob(jobId: string | null) {
         <JobRunHistory
           :selected-job-id="selectedJobId"
           :job-name-map="jobNameMap"
+          :profile-key="activeProfileName"
         />
       </div>
     </div>

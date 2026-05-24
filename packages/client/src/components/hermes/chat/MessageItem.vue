@@ -3,8 +3,7 @@ import type { Message, ContentBlock } from "@/stores/hermes/chat";
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
-import { downloadFile } from "@/api/hermes/download";
-	import { getApiKey } from "@/api/client";
+import { downloadFile, getDownloadUrl } from "@/api/hermes/download";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
@@ -166,13 +165,6 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
     return []
   });
 });
-
-// Generate download URL with auth token
-function getDownloadUrl(path: string, name: string): string {
-	const token = getApiKey();
-	const base = `/api/hermes/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}`;
-	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
-}
 
 function getContentFileUrl(file: DisplayContentFile): string {
   if (file.url) return file.url

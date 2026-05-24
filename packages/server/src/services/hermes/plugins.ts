@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { getActiveProfileDir } from './hermes-profile'
+import { getActiveProfileDir, getProfileDir } from './hermes-profile'
 import { resolveAgentBridgeCommand } from './agent-bridge/manager'
 
 const execFileAsync = promisify(execFile)
@@ -219,13 +219,14 @@ function extractError(err: any): string {
   return [err?.message, stdout, stderr].filter(Boolean).join('\n')
 }
 
-export async function listHermesPlugins(): Promise<HermesPluginsResponse> {
+export async function listHermesPlugins(profile?: string): Promise<HermesPluginsResponse> {
   const command = resolveAgentBridgeCommand()
   const agentRoot = command.agentRoot || ''
+  const hermesHome = profile ? getProfileDir(profile) : getActiveProfileDir()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_AGENT_ROOT_RESOLVED: agentRoot,
-    HERMES_HOME: getActiveProfileDir(),
+    HERMES_HOME: hermesHome,
   }
   if (!agentRoot) {
     delete env.PYTHONHOME

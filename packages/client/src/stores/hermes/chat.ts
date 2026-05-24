@@ -1,6 +1,7 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
-import { getApiKey } from '@/api/client'
+import { getActiveProfileName } from '@/api/client'
+import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
@@ -101,10 +102,14 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
     if (att.file) formData.append('file', att.file, att.name)
   }
   const token = localStorage.getItem('hermes_api_key') || ''
+  const profileName = getActiveProfileName()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (profileName) headers['X-Hermes-Profile'] = profileName
   const res = await fetch('/upload', {
     method: 'POST',
     body: formData,
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers,
   })
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
@@ -1040,10 +1045,8 @@ export const useChatStore = defineStore('chat', () => {
         const uploaded = await uploadFiles(attachments)
 
         // Update attachment URLs on the user message for display
-        const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
-          const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
-          return [f.name, token ? `${base}&token=${encodeURIComponent(token)}` : base]
+          return [f.name, getDownloadUrl(f.path, f.name)]
         }))
         if (shouldQueue && userMsg.attachments) {
           userMsg.attachments = userMsg.attachments.map(a => {

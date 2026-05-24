@@ -3,10 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
-const profileDirState = vi.hoisted(() => ({ value: '' }))
+const profileDirState = vi.hoisted(() => ({
+  value: '',
+  dirs: {} as Record<string, string>,
+}))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
-  getActiveProfileDir: () => profileDirState.value,
+  getActiveProfileName: () => 'default',
+  getProfileDir: (profile: string) => profileDirState.dirs[profile] || profileDirState.value,
 }))
 
 function createCtx(overrides: Record<string, any> = {}) {
@@ -19,8 +23,8 @@ function createCtx(overrides: Record<string, any> = {}) {
   } as any
 }
 
-function writeJobs(jobs: unknown[]) {
-  const cronDir = join(profileDirState.value, 'cron')
+function writeJobs(jobs: unknown[], profileDir = profileDirState.value) {
+  const cronDir = join(profileDir, 'cron')
   mkdirSync(cronDir, { recursive: true })
   writeFileSync(join(cronDir, 'jobs.json'), JSON.stringify({ jobs }))
 }
@@ -29,10 +33,45 @@ describe('Hermes cron history controller', () => {
   beforeEach(() => {
     vi.resetModules()
     profileDirState.value = mkdtempSync(join(tmpdir(), 'hwui-cron-history-'))
+    profileDirState.dirs = { default: profileDirState.value }
   })
 
   afterEach(() => {
     if (profileDirState.value) rmSync(profileDirState.value, { recursive: true, force: true })
+    for (const dir of Object.values(profileDirState.dirs)) {
+      if (dir !== profileDirState.value) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads run history from the request profile directory', async () => {
+    const researchDir = mkdtempSync(join(tmpdir(), 'hwui-cron-history-research-'))
+    profileDirState.dirs.research = researchDir
+    writeJobs([
+      {
+        id: 'default-job',
+        name: 'Default job',
+        last_run_at: '2026-05-05T01:00:00+00:00',
+      },
+    ])
+    writeJobs([
+      {
+        id: 'research-job',
+        name: 'Research job',
+        last_run_at: '2026-05-05T02:00:00+00:00',
+      },
+    ], researchDir)
+
+    const { listRuns } = await import('../../packages/server/src/controllers/hermes/cron-history')
+
+    const ctx = createCtx({ state: { profile: { name: 'research' } } })
+    await listRuns(ctx)
+
+    expect(ctx.body.runs).toEqual([
+      expect.objectContaining({
+        jobId: 'research-job',
+        runTime: '2026-05-05 02:00:00',
+      }),
+    ])
   })
 
   it('surfaces scheduler metadata when a job ran without an output artifact', async () => {

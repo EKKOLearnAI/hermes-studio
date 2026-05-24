@@ -1,9 +1,14 @@
 import { randomBytes } from 'crypto'
-import { writeFile } from 'fs/promises'
+import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { config } from '../config'
+import { getActiveProfileName } from '../services/hermes/hermes-profile'
+import { getProfileUploadDir } from '../services/hermes/upload-paths'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
 
 export async function handleUpload(ctx: any) {
   const contentType = ctx.get('content-type') || ''
@@ -27,6 +32,8 @@ export async function handleUpload(ctx: any) {
   const boundaryBuf = Buffer.from(boundary)
   const parts = splitMultipart(raw, boundaryBuf)
   const results: { name: string; path: string }[] = []
+  const uploadDir = getProfileUploadDir(requestedProfile(ctx))
+  await mkdir(uploadDir, { recursive: true })
   for (const part of parts) {
     const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'))
     if (headerEnd === -1) continue
@@ -43,7 +50,7 @@ export async function handleUpload(ctx: any) {
     }
     const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
     const savedName = randomBytes(8).toString('hex') + ext
-    const savedPath = join(config.uploadDir, savedName)
+    const savedPath = join(uploadDir, savedName)
     await writeFile(savedPath, data)
     results.push({ name: filename, path: savedPath })
   }

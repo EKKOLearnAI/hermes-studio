@@ -13,6 +13,8 @@ vi.mock('@/router', () => ({
 }))
 
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
+import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
+import { uploadFiles } from '../../packages/client/src/api/hermes/files'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -151,6 +153,43 @@ describe('API Client', () => {
 
       const result = await request('/api/hermes/sessions')
       expect(result).toEqual(data)
+    })
+  })
+
+  describe('download URLs', () => {
+    it('adds the active profile selector to direct download URLs', () => {
+      setApiKey('secret-key')
+      localStorage.setItem('hermes_active_profile_name', 'research')
+
+      const url = new URL(getDownloadUrl('/tmp/report.txt', 'report.txt'), 'http://localhost')
+
+      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.searchParams.get('path')).toBe('/tmp/report.txt')
+      expect(url.searchParams.get('name')).toBe('report.txt')
+      expect(url.searchParams.get('profile')).toBe('research')
+      expect(url.searchParams.get('token')).toBe('secret-key')
+    })
+  })
+
+  describe('file upload', () => {
+    it('adds auth and active profile headers to multipart uploads', async () => {
+      setApiKey('secret-key')
+      localStorage.setItem('hermes_active_profile_name', 'research')
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ files: [] }),
+      })
+
+      await uploadFiles('notes', [new File(['hello'], 'hello.txt', { type: 'text/plain' })])
+
+      expect(mockFetch).toHaveBeenCalledOnce()
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe('/api/hermes/files/upload?path=notes')
+      expect(options.method).toBe('POST')
+      expect(options.headers.Authorization).toBe('Bearer secret-key')
+      expect(options.headers['X-Hermes-Profile']).toBe('research')
+      expect(options.body).toBeInstanceOf(FormData)
     })
   })
 })

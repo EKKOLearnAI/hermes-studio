@@ -12,7 +12,7 @@ const TIMEOUT_MS = 60_000
 type JobRecord = Record<string, any>
 
 function resolveProfile(ctx: Context): string {
-  const requestedProfile = ctx.get('x-hermes-profile') || (ctx.query.profile as string)
+  const requestedProfile = ctx.state?.profile?.name
   return requestedProfile || getActiveProfileName()
 }
 

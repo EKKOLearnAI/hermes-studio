@@ -9,6 +9,7 @@ import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 const props = defineProps<{
   selectedJobId: string | null
   jobNameMap: Record<string, string>
+  profileKey: string
 }>()
 
 const { t } = useI18n()
@@ -66,7 +67,7 @@ function getJobName(jobId: string): string {
   return props.jobNameMap[jobId] || jobId
 }
 
-watch(() => props.selectedJobId, () => {
+watch(() => [props.selectedJobId, props.profileKey], () => {
   expandedContent.value = {}
   fetchRuns()
 }, { immediate: true })

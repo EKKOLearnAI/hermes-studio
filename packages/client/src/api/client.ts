@@ -46,7 +46,7 @@ export function isStoredSuperAdmin(): boolean {
   return getStoredUserRole() === 'super_admin'
 }
 
-function getActiveProfileName(): string | null {
+export function getActiveProfileName(): string | null {
   return localStorage.getItem('hermes_active_profile_name')
 }
 
