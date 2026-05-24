@@ -30,7 +30,7 @@ import { summarizeToolArguments } from './response-utils'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
-import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
+import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -464,6 +464,26 @@ async function applyBridgeChunkAsync(
         usage,
       )
     } else if (evType === 'tool.started') {
+      // Flush any partial tool-call-marker prefix that was held back by
+      // the markup filter. Without this, deltas ending in `[`, `[C`,
+      // `[Ca`, etc. are silently dropped because no follow-up delta will
+      // come for this assistant message — the next chunk is the tool call
+      // itself. See bridge-delta.ts for full rationale.
+      const pendingMarkup = flushPendingToolCallMarkup(state)
+      if (pendingMarkup) {
+        state.bridgeOutput = (state.bridgeOutput || '') + pendingMarkup
+        state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + pendingMarkup
+        const last = [...state.messages].reverse().find(m => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
+        if (last) {
+          last.content += pendingMarkup
+        }
+        emit('message.delta', {
+          event: 'message.delta',
+          run_id: chunk.run_id,
+          delta: pendingMarkup,
+          output: state.bridgeOutput,
+        })
+      }
       flushBridgePendingToDb(state, sessionId, runMarker)
       const toolName = (ev.tool_name as string) || ''
       const args = ev.args as Record<string, unknown> | undefined
@@ -715,6 +735,24 @@ async function applyBridgeChunkAsync(
   }
 
   flushBridgePendingToDb(state, sessionId)
+  // If the run terminated while we still had a partial tool-call-marker
+  // prefix buffered, flush it to the user-visible stream now. Discarding
+  // it (which the line below was doing implicitly) silently drops the
+  // final characters of the assistant message.
+  const pendingFinalMarkup = flushPendingToolCallMarkup(state)
+  if (pendingFinalMarkup) {
+    state.bridgeOutput = (state.bridgeOutput || '') + pendingFinalMarkup
+    const last = [...state.messages].reverse().find(m => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
+    if (last) {
+      last.content += pendingFinalMarkup
+    }
+    emit('message.delta', {
+      event: 'message.delta',
+      run_id: chunk.run_id,
+      delta: pendingFinalMarkup,
+      output: state.bridgeOutput,
+    })
+  }
   state.bridgePendingToolCallMarkup = undefined
   updateSessionStats(sessionId)
   await delay(BRIDGE_USAGE_FLUSH_DELAY_MS)

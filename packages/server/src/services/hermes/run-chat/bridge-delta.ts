@@ -5,6 +5,27 @@ export interface BridgeDeltaFilterState {
 const TOOL_CALL_MARKER = '[Calling tool:'
 const MAX_PENDING_TOOL_MARKUP_LENGTH = 100_000
 
+/**
+ * Flush any partial-prefix that was held back waiting to see if it would
+ * become a `[Calling tool: ...]` marker. Call this when the streaming
+ * context guarantees no marker can follow (e.g. on `tool.started`,
+ * `tool.completed`, run completion, run failure, abort).
+ *
+ * Without this, deltas that legitimately end with `[`, `[C`, `[Ca`, ...,
+ * `[Calling tool` are silently dropped from the user-visible stream
+ * because the filter expected the buffered chars to either complete the
+ * marker (and be discarded) or be released by a follow-up delta — but
+ * follow-up deltas don't always come for the SAME assistant message.
+ *
+ * Returns the buffered text so callers can forward it to the client as
+ * a regular `message.delta` payload.
+ */
+export function flushPendingToolCallMarkup(state: BridgeDeltaFilterState): string {
+  const pending = state.bridgePendingToolCallMarkup || ''
+  state.bridgePendingToolCallMarkup = ''
+  return pending
+}
+
 function findToolMarkupEnd(text: string, start: number): number {
   let depth = 0
   let inString = false
