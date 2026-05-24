@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
 const mockUsageStore = vi.hoisted(() => ({
   isLoading: false,
@@ -9,8 +9,18 @@ const mockUsageStore = vi.hoisted(() => ({
   loadSessions: vi.fn(),
 }))
 
+const mockProfilesStore = vi.hoisted(() => ({
+  activeProfileName: 'default',
+  profiles: [{ name: 'default' }],
+  fetchProfiles: vi.fn(),
+}))
+
 vi.mock('@/stores/hermes/usage', () => ({
   useUsageStore: () => mockUsageStore,
+}))
+
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => mockProfilesStore,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -54,10 +64,14 @@ describe('UsageView period selector', () => {
     mockUsageStore.isLoading = false
     mockUsageStore.hasData = true
     mockUsageStore.loadSessions.mockReset()
+    mockProfilesStore.activeProfileName = 'default'
+    mockProfilesStore.profiles = [{ name: 'default' }]
+    mockProfilesStore.fetchProfiles.mockReset()
   })
 
-  it('loads the default 30-day period on mount', () => {
+  it('loads the default 30-day period on mount', async () => {
     mount(UsageView)
+    await flushPromises()
 
     expect(mockUsageStore.loadSessions).toHaveBeenCalledWith(30)
   })
