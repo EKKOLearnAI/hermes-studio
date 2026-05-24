@@ -601,9 +601,19 @@ export function startRunViaSocket(
     'parse error',
   ])
 
+  // Forward declaration so handleSocketError can call it. Defined below
+  // once all three listeners (connect_error, disconnect, connect) exist.
+  let removeTerminalSocketListeners: () => void = () => {}
+
   const handleSocketError = (err: Error) => {
     if (closed) return
     closed = true
+    // Remove our persistent listeners BEFORE surfacing the error. The
+    // chat-run socket is a module-level singleton (see chatRunSocket in
+    // connectChatRun), so without this cleanup every fatal-error path
+    // would leak the disconnect/connect closures onto the shared socket
+    // for the lifetime of the page.
+    removeTerminalSocketListeners()
     sessionEventHandlers.delete(sid)
     onError(err)
   }
@@ -648,7 +658,7 @@ export function startRunViaSocket(
   }
   socket.on('connect', handleSocketReconnect)
 
-  const removeTerminalSocketListeners = () => {
+  removeTerminalSocketListeners = () => {
     removeSocketListener(socket, 'connect_error', handleSocketError)
     removeSocketListener(socket, 'disconnect', handleSocketDisconnect)
     removeSocketListener(socket, 'connect', handleSocketReconnect)
