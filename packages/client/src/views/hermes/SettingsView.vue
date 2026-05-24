@@ -19,8 +19,10 @@ import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
 import UserManagementSettings from "@/components/hermes/settings/UserManagementSettings.vue";
 import VoiceSettings from "@/components/hermes/settings/VoiceSettings.vue";
 import { isStoredSuperAdmin } from "@/api/client";
+import { useProfilesStore } from "@/stores/hermes/profiles";
 
 const settingsStore = useSettingsStore();
+const profilesStore = useProfilesStore();
 const { t } = useI18n();
 const canManageUsers = isStoredSuperAdmin();
 const route = useRoute();
@@ -59,8 +61,15 @@ watch(() => route.query.tab, (tab) => {
   activeTab.value = normalizeTab(tab);
 }, { immediate: true });
 
+async function loadSettingsForProfile() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles();
+  }
+  await settingsStore.fetchSettings();
+}
+
 onMounted(() => {
-  settingsStore.fetchSettings();
+  void loadSettingsForProfile();
 });
 </script>
 

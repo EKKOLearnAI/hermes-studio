@@ -60,6 +60,9 @@ async function loadPlugins() {
   loading.value = true
   error.value = ''
   try {
+    if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+      await profilesStore.fetchProfiles()
+    }
     const data = await fetchPlugins()
     plugins.value = data.plugins ?? []
     warnings.value = data.warnings ?? []

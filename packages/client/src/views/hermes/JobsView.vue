@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { NButton, NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import JobsPanel from '@/components/hermes/jobs/JobsPanel.vue'
@@ -25,11 +25,22 @@ const jobNameMap = computed(() => {
   return map
 })
 
-watch(activeProfileName, () => {
+async function ensureProfileSelection() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles()
+  }
+}
+
+async function reloadJobsForProfile() {
   selectedJobId.value = null
   jobsStore.jobs = []
-  void jobsStore.fetchJobs()
-}, { immediate: true })
+  await ensureProfileSelection()
+  await jobsStore.fetchJobs()
+}
+
+onMounted(() => {
+  void reloadJobsForProfile()
+})
 
 function openCreateModal() {
   editingJob.value = null

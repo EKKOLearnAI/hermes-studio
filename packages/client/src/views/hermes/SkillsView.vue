@@ -6,10 +6,12 @@ import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t, locale } = useI18n()
+const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
 const loading = ref(false)
@@ -56,6 +58,9 @@ onUnmounted(() => {
 async function loadSkills() {
   loading.value = true
   try {
+    if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+      await profilesStore.fetchProfiles()
+    }
     const data = await fetchSkills()
     categories.value = data.categories
     archived.value = data.archived
