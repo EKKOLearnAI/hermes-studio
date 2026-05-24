@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -54,6 +54,15 @@ export interface PendingApproval {
   description: string
   choices: Array<'once' | 'session' | 'always' | 'deny'>
   allowPermanent: boolean
+  requestedAt: number
+}
+
+export interface PendingClarify {
+  sessionId: string
+  clarifyId: string
+  question: string
+  choices: string[] | null
+  timeoutMs: number
   requestedAt: number
 }
 
@@ -373,6 +382,12 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? pendingApprovals.value.get(sid) || null : null
   })
 
+  const pendingClarifies = ref<Map<string, PendingClarify>>(new Map())
+  const activePendingClarify = computed(() => {
+    const sid = activeSessionId.value
+    return sid ? pendingClarifies.value.get(sid) || null : null
+  })
+
   // 自动播放语音开关
   const autoPlaySpeechEnabled = ref(false)
 
@@ -623,6 +638,10 @@ export const useChatStore = defineStore('chat', () => {
                 setPendingApproval({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'approval.resolved') {
                 clearPendingApproval({ ...e, session_id: sessionId } as RunEvent)
+              } else if (e.event === 'clarify.requested') {
+                setPendingClarify({ ...e, session_id: sessionId } as RunEvent)
+              } else if (e.event === 'clarify.resolved') {
+                clearPendingClarify({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'run.failed') {
                 addAgentErrorMessage(sessionId, e.error)
                 serverWorking.value.delete(sessionId)
@@ -1048,6 +1067,41 @@ export const useChatStore = defineStore('chat', () => {
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
+  function setPendingClarify(evt: RunEvent) {
+    const sid = evt.session_id
+    const clarifyId = (evt as any).clarify_id as string | undefined
+    if (!sid || !clarifyId) return
+    pendingClarifies.value.set(sid, {
+      sessionId: sid,
+      clarifyId,
+      question: String((evt as any).question || ''),
+      choices: Array.isArray((evt as any).choices) ? (evt as any).choices : null,
+      timeoutMs: Number((evt as any).timeout_ms) || 300000,
+      requestedAt: Date.now(),
+    })
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+  function clearPendingClarify(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const current = pendingClarifies.value.get(sid)
+    if (!current) return
+    const clarifyId = (evt as any).clarify_id
+    if (clarifyId && current.clarifyId !== clarifyId) return
+    pendingClarifies.value.delete(sid)
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+  function respondToClarify(response: string) {
+    const pending = activePendingClarify.value
+    if (!pending) return
+    respondClarify(pending.sessionId, pending.clarifyId, response)
+    pendingClarifies.value.delete(pending.sessionId)
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+
   function respondApproval(choice: PendingApproval['choices'][number]) {
     const pending = activePendingApproval.value
     if (!pending) return
@@ -1466,6 +1520,16 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'approval.resolved': {
               clearPendingApproval(evt)
+              break
+            }
+
+            case 'clarify.requested': {
+              setPendingClarify(evt)
+              break
+            }
+
+            case 'clarify.resolved': {
+              clearPendingClarify(evt)
               break
             }
 
@@ -1919,6 +1983,16 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'clarify.requested': {
+          setPendingClarify(evt)
+          break
+        }
+
+        case 'clarify.resolved': {
+          clearPendingClarify(evt)
+          break
+        }
+
         case 'run.completed': {
           const hasQueue = (evt as any).queue_remaining > 0
           if (hasQueue) {
@@ -2067,6 +2141,8 @@ export const useChatStore = defineStore('chat', () => {
       onUsageUpdated: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onRunQueued: (evt) => handleEvent(evt),
+      onClarifyRequested: (evt) => handleEvent(evt),
+      onClarifyResolved: (evt) => handleEvent(evt),
     })
 
     // No need to emit resume here — switchSession already did it.
@@ -2259,6 +2335,7 @@ export const useChatStore = defineStore('chat', () => {
     queuedUserMessages,
     pendingApprovals,
     activePendingApproval,
+    activePendingClarify,
     removeQueuedMessage,
     isLoadingSessions,
     sessionsLoaded,
@@ -2274,6 +2351,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     stopStreaming,
     respondApproval,
+    respondToClarify,
     loadSessions,
     refreshActiveSession,
     getThinkingObservation,

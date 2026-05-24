@@ -241,6 +241,25 @@ export class ChatRunSocket {
         })
       }
     })
+
+    socket.on('clarify.respond', async (data: { session_id?: string; clarify_id?: string; response?: string }) => {
+      if (!data.session_id || !data.clarify_id) return
+      try {
+        const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
+        this.emitToSession(socket, data.session_id, 'clarify.resolved', {
+          event: 'clarify.resolved',
+          clarify_id: data.clarify_id,
+          resolved: Boolean((result as any)?.resolved),
+        })
+      } catch (err) {
+        this.emitToSession(socket, data.session_id, 'clarify.resolved', {
+          event: 'clarify.resolved',
+          clarify_id: data.clarify_id,
+          resolved: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
   }
 
   // --- Run dispatcher ---

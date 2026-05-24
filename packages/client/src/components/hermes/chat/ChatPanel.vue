@@ -154,6 +154,17 @@ const headerTitle = computed(() =>
 
 const activeApproval = computed(() => chatStore.activePendingApproval);
 const visibleApproval = computed(() => activeApproval.value);
+
+const activeClarify = computed(() => chatStore.activePendingClarify);
+const visibleClarify = computed(() => activeClarify.value);
+const clarifyResponse = ref('');
+
+function handleClarify(response?: string) {
+  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  chatStore.respondToClarify(finalResponse);
+  clarifyResponse.value = '';
+}
+
 const showNewChatModal = ref(false);
 const newChatProfile = ref<string>("default");
 const newChatProvider = ref<string>("");
@@ -1230,6 +1241,63 @@ async function handleSessionModelCustomSubmit() {
             </div>
           </div>
         </div>
+        <div v-if="visibleClarify" class="clarify-bar">
+          <div class="clarify-icon" aria-hidden="true">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </div>
+          <div class="clarify-content">
+            <div class="clarify-main">
+              <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
+              <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
+              <div class="clarify-desc">{{ visibleClarify.question }}</div>
+            </div>
+            <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
+              <NButton
+                v-for="choice in visibleClarify.choices"
+                :key="choice"
+                size="small"
+                type="primary"
+                @click="handleClarify(choice)"
+              >
+                {{ choice }}
+              </NButton>
+              <NButton
+                size="small"
+                type="error"
+                secondary
+                @click="handleClarify('')"
+              >
+                {{ t('chat.clarifyDismiss') }}
+              </NButton>
+            </div>
+            <div v-else class="clarify-actions">
+              <div class="clarify-input-row">
+                <NInput
+                  v-model:value="clarifyResponse"
+                  size="small"
+                  :placeholder="t('chat.clarifyPlaceholder')"
+                  @keyup.enter="handleClarify()"
+                />
+                <NButton size="small" type="primary" @click="handleClarify()">
+                  {{ t('chat.clarifySubmit') }}
+                </NButton>
+              </div>
+            </div>
+          </div>
+        </div>
         <ChatInput />
       </template>
       <ConversationMonitorPane
@@ -2005,6 +2073,83 @@ async function handleSessionModelCustomSubmit() {
   border-top: 1px solid $border-color;
 }
 
+
+.clarify-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: 8px;
+  background: $bg-card;
+  box-shadow: none;
+}
+
+.clarify-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
+  border-radius: 8px;
+}
+
+.clarify-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.clarify-main {
+  min-width: 0;
+}
+
+.clarify-kicker {
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-primary);
+}
+
+.clarify-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: $text-primary;
+}
+
+.clarify-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: $text-secondary;
+}
+
+.clarify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid $border-color;
+}
+
+.clarify-input-row {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+
+  .n-input {
+    flex: 1;
+  }
+}
 @media (max-width: 768px) {
   .approval-bar {
     margin: 0 10px 10px;
@@ -2025,6 +2170,26 @@ async function handleSessionModelCustomSubmit() {
   .approval-actions :deep(.n-button) {
     width: 100%;
   }
+
+  .clarify-bar {
+    margin: 0 10px 10px;
+    padding: 10px;
+  }
+
+  .clarify-icon {
+    flex-basis: 28px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .clarify-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clarify-actions :deep(.n-button) {
+    width: 100%;
+  }
 }
 
 @media (max-width: 420px) {
@@ -2033,6 +2198,14 @@ async function handleSessionModelCustomSubmit() {
   }
 
   .approval-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .clarify-bar {
+    gap: 8px;
+  }
+
+  .clarify-actions {
     grid-template-columns: 1fr;
   }
 }
