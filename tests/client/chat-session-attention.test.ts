@@ -178,6 +178,19 @@ describe('chat store session attention state', () => {
     expect(store.sessionAttentionState('session-active')).toBe('read')
   })
 
+  it('keeps active visible session activity read without repeated localStorage writes', () => {
+    const store = useChatStore()
+    store.activeSessionId = 'session-active'
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    store.noteAgentActivity('session-active')
+    store.noteAgentActivity('session-active')
+
+    expect(store.sessionAttentionState('session-active')).toBe('read')
+    expect(setItemSpy).not.toHaveBeenCalled()
+    setItemSpy.mockRestore()
+  })
+
   it('marks active hidden-tab session activity unread', () => {
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,

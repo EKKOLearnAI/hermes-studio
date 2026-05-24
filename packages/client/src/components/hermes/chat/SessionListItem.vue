@@ -2,7 +2,7 @@
 import { computed, ref, onUnmounted } from 'vue'
 import { NPopconfirm, NCheckbox, NTooltip } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { Session } from '@/stores/hermes/chat'
+import type { Session, SessionAttentionState } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
@@ -13,13 +13,14 @@ const props = withDefaults(defineProps<{
   active: boolean
   pinned: boolean
   canDelete: boolean
-  streaming?: boolean
+  attentionState?: SessionAttentionState
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
   to?: string
 }>(), {
   showProfile: true,
+  attentionState: 'read',
 })
 
 const emit = defineEmits<{
@@ -46,6 +47,18 @@ const profileHasModels = computed(() => {
 const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
+const attentionTooltip = computed(() => {
+  switch (props.attentionState) {
+    case 'approval':
+      return t('chat.approvalRequired')
+    case 'working':
+      return t('chat.agentWorking')
+    case 'unread':
+      return t('chat.newAgentReply')
+    default:
+      return ''
+  }
+})
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -124,8 +137,14 @@ onUnmounted(() => {
             <path d="M8 3l8 0 0 5 3 5-14 0 3-5z" />
           </svg>
         </span>
+        <span
+          v-if="attentionState !== 'read'"
+          class="session-attention-indicator"
+          :class="`session-attention-indicator--${attentionState}`"
+          :title="attentionTooltip"
+          aria-hidden="true"
+        />
         <span class="session-item-title">
-          <svg v-if="streaming" class="session-item-streaming" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
           {{ session.title }}
         </span>
         <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
@@ -192,5 +211,42 @@ onUnmounted(() => {
   font-weight: 700;
   line-height: 14px;
   cursor: pointer;
+}
+
+.session-attention-indicator {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: 0 2px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.session-attention-indicator--approval {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.16);
+}
+
+.session-attention-indicator--working {
+  background: #38bdf8;
+  box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45);
+  animation: session-attention-pulse 1.5s ease-out infinite;
+}
+
+.session-attention-indicator--unread {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.14);
+}
+
+@keyframes session-attention-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
 }
 </style>

@@ -39,6 +39,7 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
+  chatStore.loadSessionAttentionState()
   await loadRouteSession()
 })
 

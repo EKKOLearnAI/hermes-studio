@@ -73,6 +73,7 @@ function openSessionInNewTab(sessionId: string) {
 }
 
 async function handleSessionClick(sessionId: string) {
+  chatStore.markSessionRead(sessionId);
   await router.push({
     name: "hermes.session",
     params: { sessionId },
@@ -854,7 +855,7 @@ async function handleSessionModelCustomSubmit() {
               s.id !== chatStore.activeSessionId ||
               chatStore.sessions.length > 1
             "
-            :streaming="chatStore.isSessionLive(s.id)"
+            :attention-state="chatStore.sessionAttentionState(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s.id)"
             :show-profile="true"
@@ -876,7 +877,7 @@ async function handleSessionModelCustomSubmit() {
             s.id !== chatStore.activeSessionId ||
             chatStore.sessions.length > 1
           "
-          :streaming="chatStore.isSessionLive(s.id)"
+          :attention-state="chatStore.sessionAttentionState(s.id)"
           :selectable="isBatchMode"
           :selected="isSessionSelected(s.id)"
           :show-profile="true"
@@ -1793,24 +1794,6 @@ async function handleSessionModelCustomSubmit() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-:deep(.session-item-streaming) {
-  display: inline-block;
-  flex-shrink: 0;
-  margin-right: 4px;
-  vertical-align: middle;
-  animation: spin 1.2s linear infinite;
-  color: $accent-primary;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 :deep(.session-item-pin) {

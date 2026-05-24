@@ -488,6 +488,7 @@ export const useChatStore = defineStore('chat', () => {
   function markSessionRead(sessionId: string): void {
     if (!sessionId) return
     const wasUnread = unreadSessionIds.value.delete(sessionId)
+    if (!wasUnread && sessionSeenAt.value[sessionId]) return
     sessionSeenAt.value = { ...sessionSeenAt.value, [sessionId]: Date.now() }
     if (wasUnread) unreadSessionIds.value = new Set(unreadSessionIds.value)
     persistSessionAttentionState()
@@ -511,7 +512,7 @@ export const useChatStore = defineStore('chat', () => {
   function noteAgentActivity(sessionId: string): void {
     if (!sessionId) return
     if (activeSessionId.value === sessionId && isDocumentVisible()) {
-      markSessionRead(sessionId)
+      if (unreadSessionIds.value.has(sessionId)) markSessionRead(sessionId)
     } else {
       markSessionUnread(sessionId)
     }

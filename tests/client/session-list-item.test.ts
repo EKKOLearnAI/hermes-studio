@@ -51,6 +51,69 @@ const session = {
 }
 
 describe('SessionListItem', () => {
+  it('renders approval attention indicator', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        attentionState: 'approval',
+      },
+      global: { stubs: { ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.session-attention-indicator--approval').exists()).toBe(true)
+    expect(wrapper.get('.session-attention-indicator').attributes('title')).toBe('chat.approvalRequired')
+  })
+
+  it('renders working attention indicator', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        attentionState: 'working',
+      },
+      global: { stubs: { ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.session-attention-indicator--working').exists()).toBe(true)
+    expect(wrapper.get('.session-attention-indicator').attributes('title')).toBe('chat.agentWorking')
+  })
+
+  it('renders unread attention indicator', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        attentionState: 'unread',
+      },
+      global: { stubs: { ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.session-attention-indicator--unread').exists()).toBe(true)
+    expect(wrapper.get('.session-attention-indicator').attributes('title')).toBe('chat.newAgentReply')
+  })
+
+  it('does not render an attention indicator for read sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+        attentionState: 'read',
+      },
+      global: { stubs: { ProfileAvatar: true } },
+    })
+
+    expect(wrapper.find('.session-attention-indicator').exists()).toBe(false)
+  })
+
   it('renders normal mode as a link to the session route', () => {
     const wrapper = mount(SessionListItem, {
       props: {
