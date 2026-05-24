@@ -583,6 +583,24 @@ export function startRunViaSocket(
 
   let closed = false
   const socket = connectChatRun(body.profile)
+
+  // Disconnect reasons that are TRANSIENT — the socket.io client will
+  // auto-reconnect (reconnection: true, attempts: Infinity). We must NOT
+  // tear down the session in these cases, otherwise mobile background
+  // suspension (iOS suspends the WebView in ~30s) leaves a sticky
+  // "Socket disconnected" error that survives even after the user
+  // reopens the app, because closed=true is permanent and event handlers
+  // get deleted from sessionEventHandlers.
+  //
+  // The agent run keeps streaming on the server side; once the client
+  // reconnects we re-join the session room via 'resume' (see below).
+  const TRANSIENT_DISCONNECT_REASONS = new Set<string>([
+    'transport close',
+    'transport error',
+    'ping timeout',
+    'parse error',
+  ])
+
   const handleSocketError = (err: Error) => {
     if (closed) return
     closed = true
@@ -592,13 +610,48 @@ export function startRunViaSocket(
   socket.once('connect_error', handleSocketError)
   const handleSocketDisconnect = (reason: string) => {
     if (closed || reason === 'io client disconnect') return
+    if (TRANSIENT_DISCONNECT_REASONS.has(reason)) {
+      // Stay alive — socket.io will reconnect; on 'connect' we re-emit 'resume'.
+      return
+    }
     handleSocketError(new Error(`Socket disconnected: ${reason}`))
   }
-  socket.once('disconnect', handleSocketDisconnect)
+  socket.on('disconnect', handleSocketDisconnect)
+
+  // After a transient disconnect, socket.io reconnects and fires 'connect'
+  // again. Re-join the session room and pull the latest state so the UI
+  // catches up on any messages/tool events that arrived while we were
+  // backgrounded.
+  //
+  // We don't listen for the 'resumed' response here — its main side effect
+  // (server-side socket.join) is what we need; the messages array would
+  // duplicate what the UI already has from initial load + delta stream.
+  // Components that want to refresh from the resumed payload should call
+  // resumeSession() directly.
+  let isFirstConnect = true
+  const handleSocketReconnect = () => {
+    if (closed) return
+    if (isFirstConnect) {
+      // Initial connect happens before this listener is registered most of
+      // the time, but covers the case where startRunViaSocket is called
+      // before the socket is connected. We don't want to send resume on
+      // the FIRST connect — only on RE-connects (after a disconnect).
+      isFirstConnect = false
+      return
+    }
+    socket.emit('resume', { session_id: sid, ...(body.profile ? { profile: body.profile } : {}) })
+  }
+  // Mark first-connect already passed if socket is already connected when
+  // we enter startRunViaSocket (the typical path).
+  if (socket.connected) {
+    isFirstConnect = false
+  }
+  socket.on('connect', handleSocketReconnect)
 
   const removeTerminalSocketListeners = () => {
     removeSocketListener(socket, 'connect_error', handleSocketError)
     removeSocketListener(socket, 'disconnect', handleSocketDisconnect)
+    removeSocketListener(socket, 'connect', handleSocketReconnect)
   }
 
   if (sessionEventHandlers.has(sid)) {
