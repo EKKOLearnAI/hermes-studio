@@ -4,6 +4,7 @@ import { resolve, normalize } from 'path'
 import { homedir } from 'os'
 import * as kanbanCli from '../../services/hermes/hermes-kanban'
 import { isPathWithin } from '../../services/hermes/hermes-path'
+import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import {
   searchSessionSummariesWithProfile,
   getSessionDetailFromDbWithProfile,
@@ -29,8 +30,6 @@ function allowedProfileSet(ctx: Context): Set<string> | null {
 }
 
 function visibleProfileSet(ctx: Context): Set<string> | null {
-  const profile = requestedProfile(ctx)
-  if (profile) return new Set([profile])
   return allowedProfileSet(ctx)
 }
 
@@ -67,10 +66,26 @@ function statsForTasks(tasks: kanbanCli.KanbanTask[]): kanbanCli.KanbanStats {
   return { by_status, by_assignee, total: tasks.length }
 }
 
-function filterAssigneesByVisibleProfiles(ctx: Context, assignees: kanbanCli.KanbanAssignee[]): kanbanCli.KanbanAssignee[] {
-  const visible = visibleProfileSet(ctx)
-  if (!visible) return assignees
-  return assignees.filter(assignee => visible.has(profileName(assignee.name)))
+function assignableProfileNames(ctx: Context): Set<string> | null {
+  const user = ctx.state?.user
+  if (!user) return null
+  if (user.role === 'super_admin') return new Set(listProfileNamesFromDisk())
+  return new Set(listUserProfiles(user.id).map(profile => profile.profile_name))
+}
+
+function assigneesForUser(ctx: Context, assignees: kanbanCli.KanbanAssignee[]): kanbanCli.KanbanAssignee[] {
+  const assignable = assignableProfileNames(ctx)
+  if (!assignable) return assignees
+
+  const byName = new Map<string, kanbanCli.KanbanAssignee>()
+  for (const assignee of assignees) {
+    const name = profileName(assignee.name)
+    if (assignable.has(name)) byName.set(name, { ...assignee, name })
+  }
+  for (const name of [...assignable].sort()) {
+    if (!byName.has(name)) byName.set(name, { name, on_disk: true, counts: null })
+  }
+  return [...byName.values()]
 }
 
 async function getVisibleTasksForBoard(ctx: Context, board: string, opts: {
@@ -671,7 +686,7 @@ export async function assignees(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const assignees = filterAssigneesByVisibleProfiles(ctx, await kanbanCli.getAssignees({ board }))
+    const assignees = assigneesForUser(ctx, await kanbanCli.getAssignees({ board }))
     ctx.body = { assignees }
   } catch (err: any) {
     ctx.status = 500

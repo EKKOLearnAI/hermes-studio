@@ -374,6 +374,39 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('loads usage analytics from the request-scoped profile state database', async () => {
+    getUsageStatsFromDbMock.mockResolvedValue({
+      input_tokens: 12,
+      output_tokens: 6,
+      cache_read_tokens: 3,
+      cache_write_tokens: 1,
+      reasoning_tokens: 2,
+      sessions: 1,
+      cost: 0.01,
+      total_api_calls: 4,
+      by_model: [
+        { model: 'research-model', input_tokens: 12, output_tokens: 6, cache_read_tokens: 3, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
+      ],
+      by_day: [],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { days: '2' }, state: { profile: { name: 'research' } }, body: null }
+    await mod.usageStats(ctx)
+
+    expect(getUsageStatsFromDbMock).toHaveBeenCalledWith(2, undefined, 'research')
+    expect(ctx.body).toMatchObject({
+      total_input_tokens: 12,
+      total_output_tokens: 6,
+      total_sessions: 1,
+      total_cost: 0.01,
+      total_api_calls: 4,
+    })
+    expect(ctx.body.model_usage).toEqual([
+      { model: 'research-model', input_tokens: 12, output_tokens: 6, cache_read_tokens: 3, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
+    ])
+  })
+
   it('keeps blank model usage as returned by state.db analytics', async () => {
     getLocalUsageStatsMock.mockReturnValue({
       input_tokens: 3,

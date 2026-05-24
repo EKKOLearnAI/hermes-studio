@@ -135,7 +135,7 @@ describe('kanban controller', () => {
     expect(mockListTasks).toHaveBeenLastCalledWith({ board: 'default', status: 'ready', assignee: undefined, tenant: undefined, includeArchived: false })
   })
 
-  it('filters kanban tasks, stats, and assignees to the requested profile', async () => {
+  it('filters kanban tasks, stats, and assignees to the user-bound profiles', async () => {
     const tasks = [
       { id: 'task-1', assignee: 'research', status: 'todo' },
       { id: 'task-2', assignee: 'travel', status: 'done' },
@@ -160,6 +160,43 @@ describe('kanban controller', () => {
     const assigneesCtx = ctx({ state, query: { board: 'default' } })
     await ctrl.assignees(assigneesCtx)
     expect(assigneesCtx.body).toEqual({ assignees: [{ name: 'research', on_disk: true, counts: { todo: 1 } }] })
+  })
+
+  it('loads kanban data for every profile bound to the user instead of only the active header profile', async () => {
+    mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }, { profile_name: 'travel' }])
+    const tasks = [
+      { id: 'task-1', assignee: 'research', status: 'todo' },
+      { id: 'task-2', assignee: 'travel', status: 'done' },
+      { id: 'task-3', assignee: 'default', status: 'blocked' },
+    ]
+    mockListTasks.mockResolvedValue(tasks)
+    mockGetAssignees.mockResolvedValue([
+      { name: 'research', on_disk: true, counts: { todo: 1 } },
+    ])
+
+    const state = { user: { id: 7, role: 'admin' }, profile: { name: 'research' } }
+    const listCtx = ctx({ state, query: { board: 'default', includeArchived: 'true' } })
+    await ctrl.list(listCtx)
+    expect(listCtx.body).toEqual({ tasks: [tasks[0], tasks[1]] })
+
+    const statsCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.stats(statsCtx)
+    expect(statsCtx.body).toEqual({
+      stats: {
+        by_status: { todo: 1, done: 1 },
+        by_assignee: { research: 1, travel: 1 },
+        total: 2,
+      },
+    })
+
+    const assigneesCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.assignees(assigneesCtx)
+    expect(assigneesCtx.body).toEqual({
+      assignees: [
+        { name: 'research', on_disk: true, counts: { todo: 1 } },
+        { name: 'travel', on_disk: true, counts: null },
+      ],
+    })
   })
 
   it('defaults created kanban tasks to the requested profile and rejects unauthorized assignees', async () => {

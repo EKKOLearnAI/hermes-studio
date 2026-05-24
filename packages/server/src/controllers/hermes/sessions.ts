@@ -428,6 +428,7 @@ export async function contextLength(ctx: any) {
 export async function usageStats(ctx: any) {
   const rawDays = parseInt(String(ctx.query?.days ?? '30'), 10)
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 30
+  const profile = requestedProfile(ctx)
 
   let hermes = {
     input_tokens: 0,
@@ -443,7 +444,7 @@ export async function usageStats(ctx: any) {
   }
 
   try {
-    hermes = await getUsageStatsFromDb(days)
+    hermes = profile ? await getUsageStatsFromDb(days, undefined, profile) : await getUsageStatsFromDb(days)
   } catch (err) {
     logger.warn(err, 'usageStats: failed to load Hermes usage analytics from state.db')
   }
