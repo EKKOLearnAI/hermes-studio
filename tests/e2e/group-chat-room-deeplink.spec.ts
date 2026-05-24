@@ -113,7 +113,7 @@ test.describe('group chat room deep links', () => {
   test('route room id opens selected room', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-beta')
 
-    await expect(page.getByText('Beta Room')).toBeVisible()
+    await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
     await expect(page.getByText('Beta room message')).toBeVisible()
     await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-beta$/)
   })

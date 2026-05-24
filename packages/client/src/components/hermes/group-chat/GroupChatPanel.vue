@@ -2,7 +2,7 @@
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber } from 'naive-ui'
+import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
@@ -32,6 +32,10 @@ const agentDescription = ref('')
 const cloneSourceRoomId = ref<string | null>(null)
 const cloneRoomName = ref('')
 const cloneInviteCode = ref('')
+const contextRoomId = ref<string | null>(null)
+const showRoomContextMenu = ref(false)
+const roomContextMenuX = ref(0)
+const roomContextMenuY = ref(0)
 
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
@@ -124,6 +128,34 @@ async function copyRoomLink(roomId: string) {
     const ok = await copyToClipboard(buildRoomUrl(roomId))
     if (ok) message.success(t('common.copied'))
     else message.error(t('common.copied') + ' ✗')
+}
+
+const roomContextMenuOptions = computed<DropdownOption[]>(() => [
+    { label: t('groupChat.copyRoomLink'), key: 'copy-link' },
+    { label: t('groupChat.cloneRoom'), key: 'clone-room' },
+])
+
+function handleRoomContextMenu(event: MouseEvent, roomId: string) {
+    event.preventDefault()
+    contextRoomId.value = roomId
+    roomContextMenuX.value = event.clientX
+    roomContextMenuY.value = event.clientY
+    showRoomContextMenu.value = true
+}
+
+function handleRoomContextClickOutside() {
+    showRoomContextMenu.value = false
+}
+
+function handleRoomContextSelect(key: string) {
+    showRoomContextMenu.value = false
+    const roomId = contextRoomId.value
+    if (!roomId) return
+    if (key === 'copy-link') {
+        void copyRoomLink(roomId)
+    } else if (key === 'clone-room') {
+        handleOpenCloneRoom(roomId)
+    }
 }
 
 function handleOpenCloneRoom(roomId: string) {
@@ -316,6 +348,7 @@ watch(() => store.sortedMessages.length, async () => {
                     class="room-item"
                     :class="{ active: store.currentRoomId === room.id }"
                     @click="handleSelectRoom(room.id)"
+                    @contextmenu="handleRoomContextMenu($event, room.id)"
                 >
                     <svg class="room-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -325,16 +358,6 @@ watch(() => store.sortedMessages.length, async () => {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
-                    <button class="room-action-btn" :title="t('groupChat.copyRoomLink')" @click.stop="copyRoomLink(room.id)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                        </svg>
-                    </button>
-                    <button class="room-action-btn" :title="t('groupChat.cloneRoom')" @click.stop="handleOpenCloneRoom(room.id)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="8" y="8" width="12" height="12" rx="2" /><path d="M4 16V6a2 2 0 0 1 2-2h10" />
-                        </svg>
-                    </button>
                     <NPopconfirm @positive-click="handleDeleteRoom(room.id)">
                         <template #trigger>
                             <button class="room-action-btn danger" @click.stop>
@@ -349,6 +372,17 @@ watch(() => store.sortedMessages.length, async () => {
                 </div>
             </div>
         </div>
+
+        <NDropdown
+            placement="bottom-start"
+            trigger="manual"
+            :x="roomContextMenuX"
+            :y="roomContextMenuY"
+            :options="roomContextMenuOptions"
+            :show="showRoomContextMenu"
+            @select="handleRoomContextSelect"
+            @clickoutside="handleRoomContextClickOutside"
+        />
 
         <!-- Main chat area -->
         <div class="chat-main">

@@ -27,6 +27,11 @@ const routeSessionId = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const routeProfile = computed(() => {
+  const value = route.query.profile
+  return typeof value === 'string' && value.trim() ? value : null
+})
+
 // Hermes history sessions (exclude api_server)
 const hermesSessions = ref<SessionSummary[]>([])
 const hermesSessionsLoading = ref(false)
@@ -40,7 +45,7 @@ async function loadHermesSessions() {
   if (hermesSessionsLoading.value) return
   hermesSessionsLoading.value = true
   try {
-    hermesSessions.value = await fetchHermesSessions()
+    hermesSessions.value = await fetchHermesSessions(undefined, undefined, routeProfile.value)
     hermesSessionsLoaded.value = true
   } catch (err) {
     console.error('Failed to load Hermes sessions:', err)
@@ -119,8 +124,12 @@ async function loadHistorySession(sessionId: string, profile?: string | null) {
   if (mobileQuery?.matches) showSessions.value = false
 }
 
-async function handleSessionClick(sessionId: string, _profile?: string | null) {
-  await router.push({ name: 'hermes.historySession', params: { sessionId } })
+async function handleSessionClick(sessionId: string, profile?: string | null) {
+  await router.push({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  })
 }
 
 async function syncRouteSession() {
@@ -135,7 +144,7 @@ async function syncRouteSession() {
   }
 
   if (historySessionId.value !== sessionId) {
-    await loadHistorySession(sessionId)
+    await loadHistorySession(sessionId, routeProfile.value)
   }
 }
 
@@ -161,13 +170,17 @@ onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
 })
 
-watch(routeSessionId, async (sessionId) => {
+watch([routeSessionId, routeProfile], async ([sessionId]) => {
   if (!sessionId) {
     historySessionId.value = null
     historySession.value = null
+    if (hermesSessionsLoaded.value) await loadHermesSessions()
     return
   }
   if (!hermesSessionsLoaded.value) return
+  if (routeProfile.value && !hermesSessions.value.some(s => s.profile === routeProfile.value)) {
+    await loadHermesSessions()
+  }
   await syncRouteSession()
 })
 
@@ -257,7 +270,7 @@ function toggleGroup(source: string) {
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
       // Auto-select and load first session when expanding group
-      void handleSessionClick(group.sessions[0].id)
+      void handleSessionClick(group.sessions[0].id, group.sessions[0].profile)
     }
   }
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -292,7 +305,7 @@ watch(hermesSessionsLoaded, (loaded) => {
           collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
         }
         // Load session details
-        void handleSessionClick(firstCliSession.id)
+        void handleSessionClick(firstCliSession.id, firstCliSession.profile)
       }
       // If no CLI session exists, don't auto-load any session
     }
@@ -316,15 +329,25 @@ async function copySessionId(id?: string) {
   }
 }
 
-function buildHistorySessionUrl(sessionId: string) {
-  const href = router.resolve({ name: 'hermes.historySession', params: { sessionId } }).href
+function historySessionProfile(sessionId: string): string | null {
+  return historySession.value?.id === sessionId
+    ? historySession.value.profile || null
+    : findHistorySession(sessionId)?.profile || null
+}
+
+function buildHistorySessionUrl(sessionId: string, profile?: string | null) {
+  const href = router.resolve({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  }).href
   return `${window.location.origin}${window.location.pathname}${href}`
 }
 
 async function copySessionLink(id?: string) {
   const sessionId = id || historySessionId.value
   if (sessionId) {
-    const ok = await copyToClipboard(buildHistorySessionUrl(sessionId))
+    const ok = await copyToClipboard(buildHistorySessionUrl(sessionId, historySessionProfile(sessionId)))
     if (ok) message.success(t('common.copied'))
     else message.error(t('common.copied') + ' ✗')
   }
@@ -346,7 +369,7 @@ async function handleDeleteSession(id: string, profile?: string | null) {
     historySessionId.value = null
     historySession.value = null
     const next = historySessions.value[0]
-    if (next) await handleSessionClick(next.id)
+    if (next) await handleSessionClick(next.id, next.profile)
     else await router.replace({ name: 'hermes.history' })
   }
 

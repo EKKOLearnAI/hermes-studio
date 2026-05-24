@@ -61,7 +61,12 @@ let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 
 async function handleSessionClick(sessionId: string) {
-  await router.push({ name: "hermes.session", params: { sessionId } });
+  const session = chatStore.sessions.find((item) => item.id === sessionId);
+  await router.push({
+    name: "hermes.session",
+    params: { sessionId },
+    query: session?.profile ? { profile: session.profile } : undefined,
+  });
   if (mobileQuery?.matches) showSessions.value = false;
 }
 
@@ -250,7 +255,11 @@ async function confirmNewChat() {
     provider: newChatProvider.value,
     model: newChatModel.value,
   });
-  await router.push({ name: "hermes.session", params: { sessionId: session.id } });
+  await router.push({
+    name: "hermes.session",
+    params: { sessionId: session.id },
+    query: session.profile ? { profile: session.profile } : undefined,
+  });
   showNewChatModal.value = false;
 }
 
@@ -258,15 +267,23 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
 }
 
-function buildSessionUrl(sessionId: string): string {
-  const base = `${window.location.origin}${window.location.pathname}`;
-  return `${base}#/hermes/session/${encodeURIComponent(sessionId)}`;
+function sessionProfile(sessionId: string): string | null {
+  return chatStore.sessions.find((session) => session.id === sessionId)?.profile || null;
+}
+
+function buildSessionUrl(sessionId: string, profile?: string | null): string {
+  const href = router.resolve({
+    name: "hermes.session",
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  }).href;
+  return `${window.location.origin}${window.location.pathname}${href}`;
 }
 
 async function copySessionLink(id?: string) {
   const sessionId = id || chatStore.activeSessionId;
   if (sessionId) {
-    const ok = await copyToClipboard(buildSessionUrl(sessionId));
+    const ok = await copyToClipboard(buildSessionUrl(sessionId, sessionProfile(sessionId)));
     if (ok) message.success(t("common.copied"));
     else message.error(t("common.copied") + " ✗");
   }

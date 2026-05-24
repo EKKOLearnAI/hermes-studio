@@ -19,6 +19,18 @@ const routeSessionId = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const routeProfile = computed(() => {
+  const value = route.query.profile
+  return typeof value === 'string' && value.trim() ? value : null
+})
+
+async function loadRouteSession() {
+  await chatStore.loadSessions(routeProfile.value, routeSessionId.value)
+  if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
+    await router.replace({ name: 'hermes.chat' })
+  }
+}
+
 onMounted(async () => {
   appStore.loadModels()
   // 先加载 profile，确保缓存 key 使用正确的 profile name；同时预取显示设置，
@@ -27,16 +39,21 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
-  await chatStore.loadSessions(undefined, routeSessionId.value)
-  if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
-    await router.replace({ name: 'hermes.chat' })
-  }
+  await loadRouteSession()
 })
 
-watch(routeSessionId, async (sessionId) => {
+watch([routeSessionId, routeProfile], async ([sessionId]) => {
   if (!chatStore.sessionsLoaded) return
-  if (!sessionId) return
-  if (chatStore.activeSessionId === sessionId) return
+  if (!sessionId) {
+    await chatStore.loadSessions(routeProfile.value)
+    return
+  }
+  if (chatStore.activeSessionId === sessionId && (!routeProfile.value || chatStore.activeSession?.profile === routeProfile.value)) return
+
+  if (routeProfile.value) {
+    await loadRouteSession()
+    return
+  }
 
   const exists = chatStore.sessions.some(session => session.id === sessionId)
   if (!exists) {

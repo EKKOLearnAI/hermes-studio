@@ -136,11 +136,11 @@ test.describe('history session deep links', () => {
     await expect(page.getByText('Answer from Alpha History Session')).toBeVisible()
 
     await page.getByText('Beta History Session').first().click()
-    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta$/)
+    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta\?profile=default$/)
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
 
     await page.reload()
-    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta$/)
+    await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta\?profile=default$/)
     await expect(page.getByText('Answer from Beta History Session')).toBeVisible()
   })
 

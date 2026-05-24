@@ -475,7 +475,7 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (!sid) return false
     try {
-      const detail = await fetchSession(sid)
+      const detail = await fetchSession(sid, activeSession.value?.profile)
       if (!detail) return false
       const target = sessions.value.find(s => s.id === sid)
       if (!target) return false
@@ -671,7 +671,7 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
           resolve()
-        })
+        }, activeSession.value?.profile)
       })
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
@@ -714,7 +714,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function deleteSession(sessionId: string) {
-    await deleteSessionApi(sessionId)
+    const target = sessions.value.find(s => s.id === sessionId)
+    await deleteSessionApi(sessionId, target?.profile)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {
@@ -1107,7 +1108,7 @@ export const useChatStore = defineStore('chat', () => {
       const runPayload = {
         input,
         session_id: sid,
-        profile: shouldSendInitialSessionConfig ? activeSession.value?.profile || undefined : undefined,
+        profile: activeSession.value?.profile || useProfilesStore().activeProfileName || undefined,
         model: shouldSendInitialSessionConfig ? sessionModel || undefined : undefined,
         provider: shouldSendInitialSessionConfig ? sessionProvider || undefined : undefined,
         model_groups: appStore.modelGroups.map(group => ({
@@ -2083,7 +2084,7 @@ export const useChatStore = defineStore('chat', () => {
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
             }
             resumeServerWorkingRun(sid)
-          })
+          }, activeSession.value?.profile)
         }
       }
     })
