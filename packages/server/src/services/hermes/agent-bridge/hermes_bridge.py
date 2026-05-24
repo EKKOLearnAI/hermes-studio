@@ -948,7 +948,7 @@ class AgentPool:
 
     def _tool_progress_callback(self, session_id: str):
         def callback(event_type, function_name=None, preview=None, function_args=None, **kwargs):
-            if event_type in (None, "tool.started", "tool.completed"):
+            if event_type in (None, "tool.started", "tool.completed") or str(event_type or "").startswith("subagent."):
                 print(
                     "[hermes_bridge] tool_progress_callback "
                     f"session={session_id} event={event_type} tool={function_name} "
@@ -962,6 +962,18 @@ class AgentPool:
                     "event": "reasoning.available",
                     "text": str(preview) if preview else "",
                 })
+                return
+
+            if str(event_type or "").startswith("subagent."):
+                payload = {
+                    "event": str(event_type),
+                    "tool_name": str(function_name) if function_name else "",
+                    "text": str(preview) if preview is not None else "",
+                    "args": _jsonable(function_args) if function_args else {},
+                }
+                for key, value in kwargs.items():
+                    payload[str(key)] = _jsonable(value)
+                self._append_event(session_id, payload)
                 return
 
             if event_type == "_thinking":

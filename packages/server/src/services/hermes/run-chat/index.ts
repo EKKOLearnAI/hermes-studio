@@ -168,6 +168,7 @@ export class ChatRunSocket {
           logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
           return
         }
+        state.events = []
         state.isWorking = true
         state.profile = runProfile
         state.source = source

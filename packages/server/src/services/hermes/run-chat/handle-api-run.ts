@@ -105,6 +105,7 @@ export async function handleApiRun(
       sessionMap.set(session_id, state)
     }
     state.isWorking = true
+    state.events = []
     state.profile = profile
     state.source = 'api_server'
     state.activeRunMarker = runMarker

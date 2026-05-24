@@ -1,9 +1,9 @@
 import type { Context } from 'koa'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, extname, isAbsolute, join, resolve } from 'path'
-import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
+import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { config } from '../../config'
-import { readConfigYaml } from '../../services/config-helpers'
+import { readConfigYamlForProfile } from '../../services/config-helpers'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -28,6 +28,42 @@ type FunCodexProvider = {
   model: string
 }
 
+function requestedProfileName(ctx: Context): string {
+  const headerProfile = ctx.get('x-hermes-profile')
+  const queryProfile = typeof ctx.query.profile === 'string' ? ctx.query.profile : ''
+  const body = ctx.request.body as { profile?: unknown } | undefined
+  const bodyProfile = typeof body?.profile === 'string' ? body.profile : ''
+  return (ctx.state.profile?.name || headerProfile || queryProfile || bodyProfile || '').trim()
+}
+
+function resolveMediaProfile(ctx: Context): string {
+  let requested = requestedProfileName(ctx)
+  if (!requested && ctx.state.user?.role !== 'super_admin' && !ctx.state.serverTokenAuth) {
+    const profiles = ctx.state.user?.profiles || []
+    if (profiles.length === 1) {
+      requested = profiles[0]
+    } else {
+      const err: any = new Error('Profile is required')
+      err.status = 400
+      err.code = 'profile_required'
+      throw err
+    }
+  }
+
+  const profile = requested || getActiveProfileName() || 'default'
+  if (!listProfileNamesFromDisk().includes(profile)) {
+    const err: any = new Error(`Profile "${profile}" does not exist`)
+    err.status = 404
+    err.code = 'profile_not_found'
+    throw err
+  }
+  return profile
+}
+
+function authPathForProfile(profile: string): string {
+  return join(getProfileDir(profile), 'auth.json')
+}
+
 function readJsonFile(path: string): any {
   try {
     return JSON.parse(readFileSync(path, 'utf-8'))
@@ -43,8 +79,8 @@ function buildApiUrl(baseUrl: string, pathWithV1: string): string {
   return `${base}${apiPath}`
 }
 
-async function resolveFunCodexProvider(): Promise<FunCodexProvider | null> {
-  const hermesConfig = await readConfigYaml()
+async function resolveFunCodexProvider(profile: string): Promise<FunCodexProvider | null> {
+  const hermesConfig = await readConfigYamlForProfile(profile)
   const customProviders = Array.isArray(hermesConfig.custom_providers)
     ? hermesConfig.custom_providers as any[]
     : []
@@ -59,11 +95,11 @@ async function resolveFunCodexProvider(): Promise<FunCodexProvider | null> {
   }
 }
 
-function resolveXaiToken(): { token: string; source: string } | null {
+function resolveXaiToken(profile: string): { token: string; source: string } | null {
   const envToken = String(process.env.XAI_API_KEY || '').trim()
   if (envToken) return { token: envToken, source: 'XAI_API_KEY' }
 
-  const auth = readJsonFile(getActiveAuthPath()) as AuthJson | null
+  const auth = readJsonFile(authPathForProfile(profile)) as AuthJson | null
   const providerToken = String(auth?.providers?.['xai-oauth']?.tokens?.access_token || auth?.providers?.['xai-oauth']?.access_token || '').trim()
   if (providerToken) return { token: providerToken, source: 'xai-oauth' }
 
@@ -421,11 +457,20 @@ function saveGeneratedImages(images: string[], requestedOutputPath?: string): st
 }
 
 export async function apiKeyImageGenerate(ctx: Context) {
-  const provider = await resolveFunCodexProvider()
+  let profile: string
+  try {
+    profile = resolveMediaProfile(ctx)
+  } catch (err: any) {
+    ctx.status = err.status || 400
+    ctx.body = { error: err.message || String(err), code: err.code || 'invalid_profile' }
+    return
+  }
+
+  const provider = await resolveFunCodexProvider(profile)
   if (!provider) {
     ctx.status = 401
     ctx.body = {
-      error: 'Missing fun-codex provider in active profile config.yaml.',
+      error: `Missing fun-codex provider in profile "${profile}" config.yaml.`,
       code: 'missing_fun_codex_provider',
     }
     return
@@ -443,6 +488,7 @@ export async function apiKeyImageGenerate(ctx: Context) {
       output_paths: outputPaths,
       provider: APIKEY_IMAGE_PROVIDER,
       base_url: provider.baseUrl,
+      profile,
     }
   } catch (err: any) {
     ctx.status = err.status || 500
@@ -484,11 +530,20 @@ async function downloadVideo(url: string, outputPath: string): Promise<void> {
 }
 
 export async function grokImageToVideo(ctx: Context) {
-  const tokenInfo = resolveXaiToken()
+  let profile: string
+  try {
+    profile = resolveMediaProfile(ctx)
+  } catch (err: any) {
+    ctx.status = err.status || 400
+    ctx.body = { error: err.message || String(err), code: err.code || 'invalid_profile' }
+    return
+  }
+
+  const tokenInfo = resolveXaiToken(profile)
   if (!tokenInfo) {
     ctx.status = 401
     ctx.body = {
-      error: 'Missing xAI token. Set XAI_API_KEY or complete xAI OAuth login first.',
+      error: `Missing xAI token for profile "${profile}". Set XAI_API_KEY or complete xAI OAuth login first.`,
       code: 'missing_xai_token',
     }
     return
@@ -539,6 +594,7 @@ export async function grokImageToVideo(ctx: Context) {
           video_url: videoUrl,
           output_path: outputPath,
           token_source: tokenInfo.source,
+          profile,
         }
         return
       }

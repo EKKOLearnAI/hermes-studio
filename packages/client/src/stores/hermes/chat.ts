@@ -667,6 +667,8 @@ export const useChatStore = defineStore('chat', () => {
                     toolResult: output,
                   })
                 }
+              } else if (String(e.event || '').startsWith('subagent.')) {
+                handleSubagentEvent(sessionId, e as RunEvent)
               }
             }
           }
@@ -755,6 +757,71 @@ export const useChatStore = defineStore('chat', () => {
     if (idx !== -1) {
       s.messages[idx] = { ...s.messages[idx], ...update }
     }
+  }
+
+  function handleSubagentEvent(sessionId: string, evt: RunEvent) {
+    const eventName = String(evt.event || '')
+    if (!eventName.startsWith('subagent.')) return
+
+    const subagentId = String((evt as any).subagent_id || `${(evt as any).task_index ?? 0}`)
+    const toolCallId = `subagent:${evt.run_id || 'run'}:${subagentId}`
+    const taskIndex = Number((evt as any).task_index ?? 0)
+    const taskCount = Number((evt as any).task_count ?? 1)
+    const label = `${taskIndex + 1}/${Math.max(1, taskCount || 1)}`
+    const toolName = String((evt as any).tool || (evt as any).name || '')
+    const toolCount = Number((evt as any).tool_count || 0)
+    const goal = String((evt as any).goal || '').trim()
+    const text = String(evt.text || evt.preview || '').trim()
+    const summary = String((evt as any).summary || '').trim()
+    const duration = Number((evt as any).duration_seconds ?? (evt as any).duration)
+
+    let preview = text || summary || goal
+    if (eventName === 'subagent.start') {
+      preview = `subagent ${label} started${goal ? `: ${goal}` : ''}`
+    } else if (eventName === 'subagent.tool') {
+      const prefix = `subagent ${label}${toolCount ? ` turn ${toolCount}` : ''}`
+      preview = `${prefix}${toolName ? `: ${toolName}` : ''}${text ? ` - ${text}` : ''}`
+    } else if (eventName === 'subagent.progress') {
+      preview = `subagent ${label}: ${text || 'working'}`
+    } else if (eventName === 'subagent.complete') {
+      const status = String((evt as any).status || 'completed')
+      preview = `subagent ${label} ${status}${summary ? `: ${summary}` : ''}`
+    }
+
+    const msgs = getSessionMsgs(sessionId)
+    const existing = msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
+    const toolStatus = eventName === 'subagent.complete'
+      ? ((evt as any).status && String((evt as any).status) !== 'completed' ? 'error' : 'done')
+      : 'running'
+    const update: Partial<Message> = {
+      toolName: 'delegate_task',
+      toolCallId,
+      toolPreview: preview.slice(0, 220),
+      toolStatus,
+      toolDuration: Number.isFinite(duration) ? duration : undefined,
+      toolResult: eventName === 'subagent.complete'
+        ? JSON.stringify({
+            status: (evt as any).status || 'completed',
+            summary: summary || text,
+            api_calls: (evt as any).api_calls,
+            input_tokens: (evt as any).input_tokens,
+            output_tokens: (evt as any).output_tokens,
+          }, null, 2)
+        : undefined,
+    }
+
+    if (existing) {
+      updateMessage(sessionId, existing.id, update)
+      return
+    }
+
+    addMessage(sessionId, {
+      id: uid(),
+      role: 'tool',
+      content: '',
+      timestamp: Date.now(),
+      ...update,
+    })
   }
 
   function addAgentErrorMessage(sessionId: string, error?: string | null) {
@@ -1383,6 +1450,15 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'subagent.start':
+            case 'subagent.tool':
+            case 'subagent.progress':
+            case 'subagent.complete': {
+              runHadToolActivity = true
+              handleSubagentEvent(sid, evt)
+              break
+            }
+
             case 'approval.requested': {
               setPendingApproval(evt)
               break
@@ -1824,6 +1900,15 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'subagent.start':
+        case 'subagent.tool':
+        case 'subagent.progress':
+        case 'subagent.complete': {
+          runHadToolActivity = true
+          handleSubagentEvent(sid, evt)
+          break
+        }
+
         case 'approval.requested': {
           setPendingApproval(evt)
           break
@@ -1971,6 +2056,7 @@ export const useChatStore = defineStore('chat', () => {
       onReasoningAvailable: (evt) => handleEvent(evt),
       onToolStarted: (evt) => handleEvent(evt),
       onToolCompleted: (evt) => handleEvent(evt),
+      onSubagentEvent: (evt) => handleEvent(evt),
       onRunStarted: (evt) => handleEvent(evt),
       onRunCompleted: (evt) => handleEvent(evt),
       onRunFailed: (evt) => handleEvent(evt),
