@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'Por favor, insira nome de usuario e senha',
     invalidCredentials: 'Nome de usuario ou senha incorretos',
     tooManyAttempts: 'Muitas tentativas falhadas, por favor tente novamente mais tarde',
+    lockResetHint: 'Se este for seu servidor, limpe o bloqueio de login com:',
+    defaultLoginResetHint: 'Para redefinir a senha admin padrao, execute:',
     sessionExpired: 'Login expirado. Entre novamente.',
     accessDenied: 'Voce nao tem permissao para acessar este recurso.',
     passwordMismatch: 'As senhas nao conferem',

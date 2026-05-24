@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'Bitte Benutzername und Passwort eingeben',
     invalidCredentials: 'Ungultiger Benutzername oder Passwort',
     tooManyAttempts: 'Zu viele fehlgeschlagene Versuche, bitte versuchen Sie es spater erneut',
+    lockResetHint: 'Wenn dies Ihr Server ist, heben Sie die Login-Sperre auf mit:',
+    defaultLoginResetHint: 'Um das Standard-Admin-Passwort zuruckzusetzen, fuhren Sie aus:',
     sessionExpired: 'Die Anmeldung ist abgelaufen. Bitte melden Sie sich erneut an.',
     accessDenied: 'Sie haben keine Berechtigung fur diese Ressource.',
     passwordMismatch: 'Passworter stimmen nicht uberein',

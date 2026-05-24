@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'Veuillez entrer le nom d\'utilisateur et le mot de passe',
     invalidCredentials: 'Nom d\'utilisateur ou mot de passe incorrect',
     tooManyAttempts: 'Trop de tentatives echouees, veuillez reessayer plus tard',
+    lockResetHint: 'Si c est votre serveur, supprimez le verrouillage de connexion avec :',
+    defaultLoginResetHint: 'Pour reinitialiser le mot de passe admin par defaut, executez :',
     sessionExpired: 'La session a expire. Veuillez vous reconnecter.',
     accessDenied: 'Vous n\'avez pas l\'autorisation d\'acceder a cette ressource.',
     passwordMismatch: 'Les mots de passe ne correspondent pas',

@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'Por favor, introduzca nombre de usuario y contrasena',
     invalidCredentials: 'Nombre de usuario o contrasena incorrectos',
     tooManyAttempts: 'Demasiados intentos fallidos, por favor intente mas tarde',
+    lockResetHint: 'Si este es su servidor, borre el bloqueo de inicio de sesion con:',
+    defaultLoginResetHint: 'Para restablecer la contrasena admin predeterminada, ejecute:',
     sessionExpired: 'La sesion expiro. Inicia sesion de nuevo.',
     accessDenied: 'No tienes permiso para acceder a este recurso.',
     passwordMismatch: 'Las contrasenas no coinciden',

@@ -12,6 +12,7 @@ const username = ref("");
 const password = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
+const showLockResetHint = ref(false);
 
 // If already has a key, try to go to main page
 if (hasApiKey()) {
@@ -38,6 +39,7 @@ async function handlePasswordLogin() {
 
   loading.value = true;
   errorMsg.value = "";
+  showLockResetHint.value = false;
 
   try {
     const sessionToken = await loginWithPassword(username.value.trim(), password.value);
@@ -46,6 +48,7 @@ async function handlePasswordLogin() {
   } catch (err: any) {
     if (err.status === 429 || err.status === 503) {
       errorMsg.value = t("login.tooManyAttempts");
+      showLockResetHint.value = true;
     } else {
       errorMsg.value = err.message || t("login.invalidCredentials");
     }
@@ -82,6 +85,12 @@ async function handlePasswordLogin() {
         />
 
         <div v-if="errorMsg" class="login-error">{{ errorMsg }}</div>
+        <div v-if="showLockResetHint" class="login-lock-hint">
+          <span>{{ t("login.lockResetHint") }}</span>
+          <code>hermes-web-ui clear-login-locks --restart</code>
+          <span>{{ t("login.defaultLoginResetHint") }}</span>
+          <code>hermes-web-ui reset-default-login</code>
+        </div>
         <button type="submit" class="login-btn" :disabled="loading">
           {{ loading ? "..." : t("login.submit") }}
         </button>
@@ -172,6 +181,25 @@ async function handlePasswordLogin() {
   font-size: 13px;
   color: $error;
   text-align: left;
+}
+
+.login-lock-hint {
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--warning-rgb), 0.35);
+  border-radius: $radius-sm;
+  background: rgba(var(--warning-rgb), 0.08);
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+
+  code {
+    display: block;
+    margin-top: 4px;
+    color: $text-primary;
+    font-family: $font-code;
+    word-break: break-all;
+  }
 }
 
 .login-btn {

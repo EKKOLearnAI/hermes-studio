@@ -16,6 +16,8 @@ export default {
     credentialsRequired: '請輸入使用者名稱和密碼',
     invalidCredentials: '使用者名稱或密碼錯誤',
     tooManyAttempts: '登入失敗次數過多，請稍後再試',
+    lockResetHint: '如果這是你的伺服器，可以執行以下命令清除登入鎖定：',
+    defaultLoginResetHint: '如需重置預設 admin 密碼，可以執行：',
     sessionExpired: '登入已過期，請重新登入',
     accessDenied: '你沒有權限存取此資源',
     passwordMismatch: '兩次密碼不一致',

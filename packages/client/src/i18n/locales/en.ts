@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'Please enter username and password',
     invalidCredentials: 'Invalid username or password',
     tooManyAttempts: 'Too many failed attempts, please try again later',
+    lockResetHint: 'If this is your server, clear the login lock with:',
+    defaultLoginResetHint: 'To reset the default admin password, run:',
     sessionExpired: 'Login expired. Please sign in again.',
     accessDenied: 'You do not have permission to access this resource.',
     passwordMismatch: 'Passwords do not match',

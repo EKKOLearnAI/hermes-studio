@@ -16,6 +16,8 @@ export default {
     credentialsRequired: 'ユーザー名とパスワードを入力してください',
     invalidCredentials: 'ユーザー名またはパスワードが正しくありません',
     tooManyAttempts: 'ログイン試行回数が多すぎます。しばらくしてからお試しください',
+    lockResetHint: '自分のサーバーの場合は、次のコマンドでログインロックを解除できます:',
+    defaultLoginResetHint: '既定の admin パスワードをリセットするには、次を実行してください:',
     sessionExpired: 'ログインの有効期限が切れました。再度ログインしてください。',
     accessDenied: 'このリソースにアクセスする権限がありません。',
     passwordMismatch: 'パスワードが一致しません',
