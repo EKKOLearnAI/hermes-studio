@@ -61,11 +61,9 @@ let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 
 function sessionHref(sessionId: string) {
-  const profile = sessionProfile(sessionId);
   return router.resolve({
     name: "hermes.session",
     params: { sessionId },
-    query: profile ? { profile } : undefined,
   }).href;
 }
 
@@ -75,11 +73,9 @@ function openSessionInNewTab(sessionId: string) {
 }
 
 async function handleSessionClick(sessionId: string) {
-  const session = chatStore.sessions.find((item) => item.id === sessionId);
   await router.push({
     name: "hermes.session",
     params: { sessionId },
-    query: session?.profile ? { profile: session.profile } : undefined,
   });
   if (mobileQuery?.matches) showSessions.value = false;
 }
@@ -283,7 +279,6 @@ async function confirmNewChat() {
   await router.push({
     name: "hermes.session",
     params: { sessionId: session.id },
-    query: session.profile ? { profile: session.profile } : undefined,
   });
   showNewChatModal.value = false;
 }

@@ -273,7 +273,7 @@ export default {
     monitorRoleUser: 'ユーザー',
     monitorRoleAssistant: 'アシスタント',
     copySessionLink: 'セッションリンクをコピー',
-    openSessionInNewTab: 'Open in new tab',
+    openSessionInNewTab: '新しいタブで開く',
     sessionLinkCopied: 'Session link copied',
     copySessionId: 'セッション ID をコピー',
     export: 'エクスポート',

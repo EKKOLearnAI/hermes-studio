@@ -32,6 +32,6 @@ test('session rows expose native session links', async ({ page }) => {
   await page.goto('/#/hermes/chat')
 
   const sessionLink = page.locator('.session-items a.session-item').first()
-  await expect(sessionLink).toHaveAttribute('href', '#/hermes/session/session-native-1?profile=research')
+  await expect(sessionLink).toHaveAttribute('href', '#/hermes/session/session-native-1')
   await expect(sessionLink).toContainText('Native Link Session')
 })
