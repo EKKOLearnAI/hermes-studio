@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
 import { randomBytes, scryptSync } from 'crypto'
 import { homedir } from 'os'
-import { DatabaseSync } from 'node:sqlite'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const __filename = fileURLToPath(import.meta.url)
@@ -497,9 +496,10 @@ function hashPassword(password) {
   return `scrypt:${salt}:${hash}`
 }
 
-function resetDefaultLogin(options = {}) {
+async function resetDefaultLogin(options = {}) {
   const { silent = false } = options
   mkdirSync(WEB_UI_HOME, { recursive: true })
+  const { DatabaseSync } = await import('node:sqlite')
   const db = new DatabaseSync(WEB_UI_DB_FILE)
   try {
     db.exec(`
@@ -545,7 +545,7 @@ function resetDefaultLogin(options = {}) {
   }
 }
 
-function main() {
+async function main() {
   const command = process.argv[2] || 'start'
 
   if (['-v', '--version', 'version'].includes(command)) {
@@ -604,7 +604,7 @@ Options:
       break
     }
     case 'reset-default-login':
-      resetDefaultLogin()
+      await resetDefaultLogin()
       break
     case 'update':
     case 'upgrade':
@@ -690,7 +690,10 @@ function runUpdateInstall(npm) {
 }
 
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
-  main()
+  main().catch(err => {
+    console.error(`  ✗ ${err?.message || err}`)
+    process.exit(1)
+  })
 }
 
 export {

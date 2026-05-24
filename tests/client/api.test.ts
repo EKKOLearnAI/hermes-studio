@@ -79,10 +79,20 @@ describe('API Client', () => {
       localStorage.setItem('hermes_active_profile_name', 'default')
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions')
+      await request('/api/hermes/sessions/session-1')
 
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers['X-Hermes-Profile']).toBe('default')
+    })
+
+    it('does not add the active profile header to profile-wide session collection requests', async () => {
+      localStorage.setItem('hermes_active_profile_name', 'research')
+      mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
+
+      await request('/api/hermes/sessions')
+
+      const [, options] = mockFetch.mock.calls[0]
+      expect(options.headers['X-Hermes-Profile']).toBeUndefined()
     })
 
     it('does not add Authorization header when no token', async () => {

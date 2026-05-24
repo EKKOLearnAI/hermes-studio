@@ -38,6 +38,11 @@ function requestedProfile(ctx: any): string | undefined {
   return value || undefined
 }
 
+function explicitProfileFilter(ctx: any): string | undefined {
+  const value = typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : ''
+  return value || undefined
+}
+
 function allowedProfileSet(ctx: any): Set<string> | null {
   const user = ctx.state?.user
   if (!user || user.role === 'super_admin') return null
@@ -103,7 +108,7 @@ export async function listConversations(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
 
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const sessions = localListSessions(profile, source, limit && limit > 0 ? limit : 200)
   const summaries: ConversationSummary[] = sessions.map(s => ({
     id: s.id,
@@ -168,7 +173,7 @@ export async function getConversationMessages(ctx: any) {
 export async function list(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
   const allSessions = localListSessions(profile, source, effectiveLimit)
@@ -199,7 +204,7 @@ export async function listHermesSessions(ctx: any) {
 export async function search(ctx: any) {
   const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {

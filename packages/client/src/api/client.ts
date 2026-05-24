@@ -65,10 +65,19 @@ function shouldAttachProfileHeader(path: string, options: RequestInit): boolean 
     const url = new URL(path, 'http://hermes.local')
     if (url.searchParams.has('profile')) return false
     if (url.pathname.startsWith('/api/hermes/profiles')) return false
+    if (isProfileWideSessionCollection(url.pathname)) return false
   } catch {
     if (path.startsWith('/api/hermes/profiles')) return false
+    if (isProfileWideSessionCollection(path.split('?')[0] || path)) return false
   }
   return !bodyHasProfileSelector(options.body)
+}
+
+function isProfileWideSessionCollection(pathname: string): boolean {
+  return pathname === '/api/hermes/sessions' ||
+    pathname === '/api/hermes/search/sessions' ||
+    pathname === '/api/hermes/sessions/search' ||
+    pathname === '/api/hermes/sessions/conversations'
 }
 
 function emitAuthNotice(kind: 'expired' | 'forbidden') {
