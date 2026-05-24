@@ -41,6 +41,45 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger("hermes_bridge")
 
 
+# --- Slash command resolution: hoisted imports ----------------------------
+# Resolve skill / bundle helpers once at module load instead of on every
+# chat message. Both modules live in hermes-agent (added to sys.path at
+# bridge startup via --agent-root). When unavailable (missing install or
+# unexpected module shape), we keep the symbols as None and skip resolution
+# gracefully — operators see a single WARNING in startup logs instead of
+# silent per-request DEBUG noise.
+try:
+    from agent.skill_bundles import (  # type: ignore[import-not-found]
+        build_bundle_invocation_message as _build_bundle_invocation_message,
+        resolve_bundle_command_key as _resolve_bundle_command_key,
+    )
+except Exception as _bundle_import_exc:  # pragma: no cover - defensive
+    _build_bundle_invocation_message = None
+    _resolve_bundle_command_key = None
+    logger.warning(
+        "Skill bundle support unavailable; /<bundle> commands will fall back "
+        "to plain user input: %s",
+        _bundle_import_exc,
+    )
+
+try:
+    from agent.skill_commands import (  # type: ignore[import-not-found]
+        build_skill_invocation_message as _build_skill_invocation_message,
+        resolve_skill_command_key as _resolve_skill_command_key,
+    )
+except Exception as _skill_import_exc:  # pragma: no cover - defensive
+    _build_skill_invocation_message = None
+    _resolve_skill_command_key = None
+    logger.warning(
+        "Skill command support unavailable; /<skill> commands will fall back "
+        "to plain user input: %s",
+        _skill_import_exc,
+    )
+
+# Compile once: matches "/name" or "/name args..." (name = letter then word chars/hyphens)
+_SLASH_COMMAND_RE = re.compile(r"^/([a-zA-Z][\w-]*)(?:\s+([\s\S]*))?$")
+
+
 DEFAULT_ENDPOINT = "tcp://127.0.0.1:18765" if os.name == "nt" else "ipc:///tmp/hermes-agent-bridge.sock"
 DEFAULT_AGENT_ROOT = "~/.hermes/hermes-agent"
 DEFAULT_HERMES_HOME = "~/.hermes"
@@ -1305,84 +1344,75 @@ class AgentPool:
                 db_count_after_prepersist = self._session_db_message_count(session.session_id, profile)
 
                 # --- Skill / bundle slash command resolution -----------------
-                # When the message is a "/skill-name [args]" string, replace it with
-                # the SKILL.md-derived user message before invoking the agent.
-                # This mirrors what cli.py and gateway/run.py do, so /plan, /spike,
-                # /goal, /tdd etc. work the same way they do in the CLI/gateway.
-                # Pure-additive: any failure (skill not found, import error) silently
-                # falls back to the original message.
+                # When the message is a "/skill-name [args]" string, replace it
+                # with the SKILL.md-derived user message before invoking the
+                # agent. Mirrors what cli.py and gateway/run.py do, so /plan,
+                # /spike, /goal, /tdd etc. work the same way they do in the
+                # CLI/gateway.
                 #
-                # NOTE: this must run AFTER _prepersist_user_message so the literal
-                # "/plan" text is what gets stored in the session DB (matching CLI
-                # behavior where the user's typed command is preserved in history),
-                # while the resolved skill content is what the model sees.
-                try:
-                    if isinstance(message, str) and message.startswith("/"):
-                        _slash_text = message.strip()
-                        if _slash_text.startswith("/") and len(_slash_text) > 1:
-                            _slash_match = re.match(r"^/([a-zA-Z][\w-]*)(?:\s+([\s\S]*))?$", _slash_text)
-                            if _slash_match:
-                                _cmd_raw = _slash_match.group(1)
-                                _cmd_args = (_slash_match.group(2) or "").strip()
-                                _resolved_msg: Optional[str] = None
+                # Pure-additive: any failure (skill not found, lookup error)
+                # silently falls back to the original message. Module-level
+                # ImportError already surfaced as a startup WARNING; per-request
+                # exceptions stay at DEBUG to avoid log spam on /unknown inputs
+                # that happen to hit a malformed skill.
+                #
+                # NOTE: this must run AFTER _prepersist_user_message so the
+                # literal "/plan" text is what gets stored in the session DB
+                # (matching CLI behavior where the user's typed command is
+                # preserved in history), while the resolved skill content is
+                # what the model actually sees.
+                if isinstance(message, str):
+                    _slash_match = _SLASH_COMMAND_RE.match(message.strip())
+                    if _slash_match:
+                        _cmd_raw = _slash_match.group(1)
+                        _cmd_args = (_slash_match.group(2) or "").strip()
+                        _resolved_msg: Optional[str] = None
 
-                                # 1) Skill bundles first (mirrors gateway/run.py order)
-                                try:
-                                    from agent.skill_bundles import (
-                                        build_bundle_invocation_message,
-                                        resolve_bundle_command_key,
+                        # 1) Skill bundles first (mirrors gateway/run.py order).
+                        if _resolve_bundle_command_key is not None and _build_bundle_invocation_message is not None:
+                            try:
+                                _bundle_key = _resolve_bundle_command_key(_cmd_raw)
+                                if _bundle_key is not None:
+                                    _bundle_result = _build_bundle_invocation_message(
+                                        _bundle_key, _cmd_args, task_id=session.session_id
                                     )
-                                    _bundle_key = resolve_bundle_command_key(_cmd_raw)
-                                    if _bundle_key is not None:
-                                        _bundle_result = build_bundle_invocation_message(
-                                            _bundle_key, _cmd_args, task_id=session.session_id
-                                        )
-                                        if _bundle_result:
-                                            _bundle_msg, _loaded_bundle, _missing_bundle = _bundle_result
-                                            if _bundle_msg:
-                                                _resolved_msg = _bundle_msg
-                                                if _missing_bundle:
-                                                    logger.info(
-                                                        "Bundle /%s skipped missing skills: %s",
-                                                        _cmd_raw, ", ".join(_missing_bundle),
-                                                    )
-                                except Exception as _bundle_exc:
-                                    logger.debug(
-                                        "Skill bundle dispatch failed (non-fatal) for /%s: %s",
-                                        _cmd_raw, _bundle_exc,
-                                    )
+                                    if _bundle_result:
+                                        _bundle_msg, _loaded_bundle, _missing_bundle = _bundle_result
+                                        if _bundle_msg:
+                                            _resolved_msg = _bundle_msg
+                                            if _missing_bundle:
+                                                logger.info(
+                                                    "Bundle /%s skipped missing skills: %s",
+                                                    _cmd_raw, ", ".join(_missing_bundle),
+                                                )
+                            except (AttributeError, KeyError, TypeError, ValueError) as _bundle_exc:
+                                logger.debug(
+                                    "Skill bundle dispatch failed (non-fatal) for /%s: %s",
+                                    _cmd_raw, _bundle_exc, exc_info=True,
+                                )
 
-                                # 2) Individual skill command
-                                if _resolved_msg is None:
-                                    try:
-                                        from agent.skill_commands import (
-                                            build_skill_invocation_message,
-                                            resolve_skill_command_key,
-                                        )
-                                        _cmd_key = resolve_skill_command_key(_cmd_raw)
-                                        if _cmd_key is not None:
-                                            _skill_msg = build_skill_invocation_message(
-                                                _cmd_key, _cmd_args, task_id=session.session_id
-                                            )
-                                            if _skill_msg:
-                                                _resolved_msg = _skill_msg
-                                    except Exception as _skill_exc:
-                                        logger.debug(
-                                            "Skill command dispatch failed (non-fatal) for /%s: %s",
-                                            _cmd_raw, _skill_exc,
-                                        )
-
-                                if _resolved_msg:
-                                    logger.info(
-                                        "Resolved /%s slash command for session %s (%d chars)",
-                                        _cmd_raw, session.session_id, len(_resolved_msg),
+                        # 2) Individual skill command.
+                        if _resolved_msg is None and _resolve_skill_command_key is not None and _build_skill_invocation_message is not None:
+                            try:
+                                _cmd_key = _resolve_skill_command_key(_cmd_raw)
+                                if _cmd_key is not None:
+                                    _skill_msg = _build_skill_invocation_message(
+                                        _cmd_key, _cmd_args, task_id=session.session_id
                                     )
-                                    message = _resolved_msg
-                except Exception as _slash_exc:
-                    # Defensive: any unexpected failure must not break the run.
-                    logger.warning(
-                        "Slash command resolution failed (non-fatal): %s", _slash_exc,
-                    )
+                                    if _skill_msg:
+                                        _resolved_msg = _skill_msg
+                            except (AttributeError, KeyError, TypeError, ValueError) as _skill_exc:
+                                logger.debug(
+                                    "Skill command dispatch failed (non-fatal) for /%s: %s",
+                                    _cmd_raw, _skill_exc, exc_info=True,
+                                )
+
+                        if _resolved_msg:
+                            logger.info(
+                                "Resolved /%s slash command for session %s (%d chars)",
+                                _cmd_raw, session.session_id, len(_resolved_msg),
+                            )
+                            message = _resolved_msg
                 # --- end skill / bundle slash command resolution -------------
 
                 if force_compress:
