@@ -740,7 +740,7 @@ class AgentPool:
                     session_db=self._db.get_for_profile(profile),
                     ephemeral_system_prompt=prompt,
                     status_callback=self._status_callback(session_id),
-                    thinking_callback=self._text_event_callback(session_id, "thinking.delta"),
+                    thinking_callback=self._make_thinking_callback(session_id),
                     reasoning_callback=self._text_event_callback(session_id, "reasoning.delta"),
                     tool_progress_callback=self._tool_progress_callback(session_id),
                     tool_start_callback=self._tool_start_callback(session_id),
@@ -989,6 +989,28 @@ class AgentPool:
     def _text_event_callback(self, session_id: str, event_name: str):
         def callback(text):
             self._append_event(session_id, {"event": event_name, "text": str(text)})
+
+        return callback
+
+    def _make_thinking_callback(self, session_id: str):
+        """Create a thinking callback that never forwards spinner text as content.
+
+        The hermes-agent CLI uses thinking_callback for its KawaiiSpinner TUI
+        widget — sending decorative text like "(◕‿◕✿) pondering..." during
+        API calls.  This is pure CLI UX decoration; it has no place in Web UI
+        conversation history.
+
+        Prior behaviour forwarded this text as thinking.delta events, which the
+        frontend stored in the message reasoning field.  Over long conversations
+        this contaminated the model's context: the LLM learned to reproduce
+        kaomoji patterns, creating a self-reinforcing degradation loop.
+
+        This callback sends empty text unconditionally.  The model's real
+        reasoning content arrives through reasoning_callback → reasoning.delta,
+        which is unaffected.
+        """
+        def callback(text=None):
+            self._append_event(session_id, {"event": "thinking.delta", "text": ""})
 
         return callback
 
