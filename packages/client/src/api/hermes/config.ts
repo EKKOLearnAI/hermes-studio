@@ -51,6 +51,12 @@ export interface ApprovalConfig {
   timeout?: number
 }
 
+export interface DevConfig {
+  enabled?: boolean
+  review_base?: string
+  preview_branch?: string
+}
+
 export interface AppConfig {
   display?: DisplayConfig
   agent?: AgentConfig

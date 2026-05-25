@@ -149,6 +149,11 @@ export async function updateConfig(ctx: any) {
   }
   try {
     const profile = requestedProfile(ctx)
+    if (section === 'dev' && ctx.state.user?.role !== 'super_admin') {
+      ctx.status = 403
+      ctx.body = { error: 'Super administrator privileges are required' }
+      return
+    }
     await safeFileStore.updateYaml(configPath(profile), (config) => {
       config[section] = deepMerge(config[section] || {}, values)
       return config
