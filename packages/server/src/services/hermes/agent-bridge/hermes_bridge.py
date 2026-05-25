@@ -447,14 +447,10 @@ def _profile_env(profile: str | None):
 
 
 def _refresh_terminal_env() -> None:
-    """Re-read terminal config from current HERMES_HOME/config.yaml to TERMINAL_* env vars.
+    """Bridge current worker HERMES_HOME/config.yaml terminal config to TERMINAL_* env vars.
 
-    gateway/run.py does this at module import time from the root config.yaml,
-    but when a non-default profile switches HERMES_HOME, the terminal env vars
-    still point to the root config's terminal settings (e.g. backend=local).
-    This function re-reads terminal config from the active HERMES_HOME so that
-    terminal_tool (which reads TERMINAL_ENV at call time) picks up the profile's
-    actual terminal configuration (e.g. backend=ssh).
+    Worker startup first overlays the profile .env, then this function lets
+    terminal config.yaml values override the matching terminal environment vars.
     """
     hermes_home = os.environ.get("HERMES_HOME", "")
     if not hermes_home:
@@ -499,26 +495,20 @@ def _refresh_terminal_env() -> None:
         for cfg_key, env_var in TERMINAL_ENV_MAP.items():
             if cfg_key in terminal_cfg:
                 val = terminal_cfg[cfg_key]
+                if cfg_key == "cwd" and str(val) in {".", "auto", "cwd"}:
+                    continue
+                if cfg_key == "cwd" and isinstance(val, str):
+                    val = os.path.expanduser(val)
                 if isinstance(val, (list, dict)):
                     os.environ[env_var] = json.dumps(val)
                 else:
                     os.environ[env_var] = str(val)
-            else:
-                os.environ.pop(env_var, None)
     except Exception:
         print(
             f"[hermes-bridge] Failed to refresh terminal env from {config_path}",
             file=sys.stderr,
             flush=True,
         )
-
-    # Invalidate cached default env on profile switch
-    try:
-        from tools.terminal_tool import _active_environments, _env_lock
-        with _env_lock:
-            _active_environments.pop("default", None)
-    except Exception:
-        pass
 
 
 def _resolve_model(cfg: dict[str, Any]) -> str:
@@ -713,9 +703,6 @@ class AgentPool:
             from run_agent import AIAgent
 
             with _profile_env(profile):
-                # Re-bridge terminal config from the profile's config.yaml so that
-                # terminal_tool sees the correct backend (e.g. ssh) for this profile.
-                _refresh_terminal_env()
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
                 runtime = _resolve_runtime(resolved_model, requested_provider or None)
@@ -1376,13 +1363,6 @@ class AgentPool:
 
     def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None) -> None:
         with _profile_env(profile):
-            # Re-bridge terminal config from the profile's config.yaml.
-            # gateway/run.py sets TERMINAL_* env vars at import time from the
-            # bridge's root config.yaml; when a non-default profile switches
-            # HERMES_HOME, the terminal env vars still reflect the root config.
-            # Refresh them so terminal_tool picks up the profile's backend.
-            _refresh_terminal_env()
-
             def stream_callback(delta: str) -> None:
                 with self._lock:
                     record.deltas.append(str(delta))
