@@ -49,11 +49,16 @@ WORKER_RUNTIME_ENV_KEYS = {
     "HOME",
     "HOMEDRIVE",
     "HOMEPATH",
+    "HERMES_ALLOW_ROOT_GATEWAY",
+    "HERMES_BIN",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",
     "LOCALAPPDATA",
     "LOGNAME",
+    "NO_PROXY",
     "PATH",
     "PATHEXT",
     "PROGRAMDATA",
@@ -67,6 +72,7 @@ WORKER_RUNTIME_ENV_KEYS = {
     "TEMP",
     "TMP",
     "TMPDIR",
+    "TZ",
     "USER",
     "USERDOMAIN",
     "USERNAME",
@@ -458,12 +464,11 @@ def _set_worker_profile_env(profile: str | None) -> None:
     os.environ["HERMES_HOME"] = str(profile_home)
     os.environ["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] = profile or "default"
     values = _read_dotenv(profile_home / ".env")
-    if profile and profile != "default":
-        keys = _profile_dotenv_keys()
-        keys.update(values.keys())
-        for key in keys:
-            if key.upper() not in WORKER_RUNTIME_ENV_KEYS:
-                os.environ.pop(key, None)
+    keys = _profile_dotenv_keys()
+    keys.update(values.keys())
+    for key in keys:
+        if key.upper() not in WORKER_RUNTIME_ENV_KEYS:
+            os.environ.pop(key, None)
     for key, value in values.items():
         os.environ[key] = value
     _refresh_terminal_env()
