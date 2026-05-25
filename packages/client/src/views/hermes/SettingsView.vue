@@ -18,6 +18,7 @@ import ModelSettings from "@/components/hermes/settings/ModelSettings.vue";
 import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
 import UserManagementSettings from "@/components/hermes/settings/UserManagementSettings.vue";
 import VoiceSettings from "@/components/hermes/settings/VoiceSettings.vue";
+import DevModeSettings from "@/components/hermes/settings/DevModeSettings.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useProfilesStore } from "@/stores/hermes/profiles";
 
@@ -32,6 +33,7 @@ const activeTab = ref("account");
 const validTabs = computed(() => new Set([
   "account",
   ...(canManageUsers ? ["users"] : []),
+  ...(canManageUsers ? ["dev"] : []),
   "display",
   "agent",
   "memory",
@@ -91,6 +93,9 @@ onMounted(() => {
           </NTabPane>
           <NTabPane v-if="canManageUsers" name="users" :tab="t('settings.tabs.users')">
             <UserManagementSettings />
+          </NTabPane>
+          <NTabPane v-if="canManageUsers" name="dev" :tab="t('settings.tabs.dev')">
+            <DevModeSettings />
           </NTabPane>
           <NTabPane name="display" :tab="t('settings.tabs.display')">
             <DisplaySettings />
