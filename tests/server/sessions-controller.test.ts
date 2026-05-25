@@ -601,6 +601,42 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('batch deletes sessions from their requested profiles', async () => {
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
+    getSessionMock.mockImplementation((id: string) => ({
+      id,
+      profile: id === 'travel-session' ? 'travel' : 'default',
+    }))
+    getExactSessionDetailFromDbWithProfileMock.mockResolvedValue({ id: 'matched', messages: [] })
+    deleteHermesSessionForProfileMock.mockResolvedValue(true)
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      request: {
+        body: {
+          sessions: [
+            { id: 'default-session', profile: 'default' },
+            { id: 'travel-session', profile: 'travel' },
+          ],
+        },
+      },
+      state: {
+        user: { id: 1, role: 'admin' },
+      },
+      body: null,
+    }
+    await mod.batchRemove(ctx)
+
+    expect(getExactSessionDetailFromDbWithProfileMock).toHaveBeenCalledWith('default-session', 'default')
+    expect(getExactSessionDetailFromDbWithProfileMock).toHaveBeenCalledWith('travel-session', 'travel')
+    expect(deleteHermesSessionForProfileMock).toHaveBeenCalledWith('default-session', 'default')
+    expect(deleteHermesSessionForProfileMock).toHaveBeenCalledWith('travel-session', 'travel')
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('default-session')
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('travel-session')
+    expect(ctx.body).toMatchObject({ ok: true, deleted: 2, failed: 0, hermesDeleted: 2 })
+  })
+
   describe('exportSession', () => {
     it('returns session as JSON download with correct headers (full mode)', async () => {
       const sessionData = { id: 'abc-123', title: 'Test Session', messages: [{ id: 1, role: 'user', content: 'hello' }] }

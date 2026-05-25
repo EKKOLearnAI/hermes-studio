@@ -43,7 +43,7 @@ const currentMode = ref<"chat" | "live">("chat");
 
 // Batch selection mode
 const isBatchMode = ref(false);
-const selectedSessionIds = ref<Set<string>>(new Set());
+const selectedSessionKeys = ref<Set<string>>(new Set());
 const showBatchDeleteConfirm = ref(false);
 const isBatchDeleting = ref(false);
 
@@ -328,39 +328,49 @@ function toggleBatchMode() {
   if (isBatchDeleting.value) return;
   isBatchMode.value = !isBatchMode.value;
   if (!isBatchMode.value) {
-    selectedSessionIds.value.clear();
+    selectedSessionKeys.value.clear();
     showBatchDeleteConfirm.value = false;
   }
 }
 
-function toggleSessionSelection(id: string) {
+function sessionSelectionKey(session: Pick<Session, "id" | "profile">): string {
+  return `${session.profile || "default"}\u0000${session.id}`;
+}
+
+function toggleSessionSelection(session: Session) {
   if (isBatchDeleting.value) return;
-  if (selectedSessionIds.value.has(id)) {
-    selectedSessionIds.value.delete(id);
+  const key = sessionSelectionKey(session);
+  if (selectedSessionKeys.value.has(key)) {
+    selectedSessionKeys.value.delete(key);
   } else {
-    selectedSessionIds.value.add(id);
+    selectedSessionKeys.value.add(key);
   }
-  selectedSessionIds.value = new Set(selectedSessionIds.value);
-  if (selectedSessionIds.value.size === 0) {
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value);
+  if (selectedSessionKeys.value.size === 0) {
     showBatchDeleteConfirm.value = false;
   }
 }
 
-function isSessionSelected(id: string): boolean {
-  return selectedSessionIds.value.has(id);
+function isSessionSelected(session: Session): boolean {
+  return selectedSessionKeys.value.has(sessionSelectionKey(session));
 }
 
 async function handleBatchDelete() {
-  if (selectedSessionIds.value.size === 0 || isBatchDeleting.value) return;
+  if (selectedSessionKeys.value.size === 0 || isBatchDeleting.value) return;
 
-  const ids = Array.from(selectedSessionIds.value);
+  const sessionsByKey = new Map(chatStore.sessions.map((session) => [sessionSelectionKey(session), session]));
+  const targets = Array.from(selectedSessionKeys.value)
+    .map((key) => sessionsByKey.get(key))
+    .filter((session): session is Session => Boolean(session))
+    .map((session) => ({ id: session.id, profile: session.profile || null }));
+  if (targets.length === 0) return;
   isBatchDeleting.value = true;
   try {
-    const result = await batchDeleteSessions(ids);
+    const result = await batchDeleteSessions(targets);
     if (result.deleted > 0) {
       // Remove from pinned sessions
-      for (const id of ids) {
-        sessionBrowserPrefsStore.removePinned(id);
+      for (const target of targets) {
+        sessionBrowserPrefsStore.removePinned(target.id);
       }
 
       // Remove deleted sessions from local store (without calling API again)
@@ -380,7 +390,7 @@ async function handleBatchDelete() {
     isBatchDeleting.value = false;
     showBatchDeleteConfirm.value = false;
     isBatchMode.value = false;
-    selectedSessionIds.value.clear();
+    selectedSessionKeys.value.clear();
   }
 }
 
@@ -391,16 +401,16 @@ function handleBatchDeleteConfirm() {
 
 function selectAllSessions() {
   if (isBatchDeleting.value) return;
-  selectedSessionIds.value.clear();
+  selectedSessionKeys.value.clear();
   for (const session of chatStore.sessions) {
     if (session.id !== chatStore.activeSessionId) {
-      selectedSessionIds.value.add(session.id);
+      selectedSessionKeys.value.add(sessionSelectionKey(session));
     }
   }
-  selectedSessionIds.value = new Set(selectedSessionIds.value);
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value);
 }
 
-const selectedCount = computed(() => selectedSessionIds.value.size);
+const selectedCount = computed(() => selectedSessionKeys.value.size);
 const canSelectAll = computed(() => {
   return chatStore.sessions.some(s => s.id !== chatStore.activeSessionId);
 });
@@ -856,13 +866,13 @@ async function handleSessionModelCustomSubmit() {
             "
             :streaming="chatStore.isSessionLive(s.id)"
             :selectable="isBatchMode"
-            :selected="isSessionSelected(s.id)"
+            :selected="isSessionSelected(s)"
             :show-profile="true"
             :to="sessionHref(s.id)"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
-            @toggle-select="toggleSessionSelection(s.id)"
+            @toggle-select="toggleSessionSelection(s)"
           />
         </template>
 
@@ -878,13 +888,13 @@ async function handleSessionModelCustomSubmit() {
           "
           :streaming="chatStore.isSessionLive(s.id)"
           :selectable="isBatchMode"
-          :selected="isSessionSelected(s.id)"
+          :selected="isSessionSelected(s)"
           :show-profile="true"
           :to="sessionHref(s.id)"
           @select="handleSessionClick(s.id)"
           @contextmenu="handleContextMenu($event, s.id)"
           @delete="handleDeleteSession(s.id)"
-          @toggle-select="toggleSessionSelection(s.id)"
+          @toggle-select="toggleSessionSelection(s)"
         />
       </div>
     </aside>

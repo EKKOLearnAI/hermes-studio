@@ -75,6 +75,7 @@ function shouldAttachProfileHeader(path: string, options: RequestInit): boolean 
 
 function isProfileWideSessionCollection(pathname: string): boolean {
   return pathname === '/api/hermes/sessions' ||
+    pathname === '/api/hermes/sessions/batch-delete' ||
     pathname === '/api/hermes/search/sessions' ||
     pathname === '/api/hermes/sessions/search' ||
     pathname === '/api/hermes/sessions/conversations'
