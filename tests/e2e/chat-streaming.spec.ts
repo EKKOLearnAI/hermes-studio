@@ -35,7 +35,7 @@ test('sends a chat run and renders streamed Socket.IO response events', async ({
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Summarize the queue')
 
@@ -79,7 +79,7 @@ test('uses the newly selected profile for the next chat-run socket after profile
   const api = await mockHermesApi(page, { initialProfileName: 'default' })
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
   await expect(page.getByTestId('profile-selector-select').filter({ hasText: 'default' })).toBeVisible()
 
   await sendChatMessage(page, 'Warm up default socket')
@@ -124,7 +124,7 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'First queued contract')
   const first = await waitForRun(page)
@@ -175,7 +175,7 @@ test('clears previous compression status when a new run starts', async ({ page }
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Trigger compression before answering')
   const first = await waitForRun(page)
@@ -222,7 +222,7 @@ test('surfaces an empty completed run as an error instead of leaving chat stalle
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Call a broken provider')
   const { run } = await waitForRun(page)
@@ -251,7 +251,7 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Use write_file with approval')
   const { run } = await waitForRun(page)
@@ -373,7 +373,7 @@ test('keeps prior tool trace visible while hiding only the active run tool trace
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'First tool trace')
   const first = await waitForRun(page)
@@ -476,7 +476,7 @@ test('keeps completed same-run tool traces hidden until the run finishes', async
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Run multiple tools')
   const { run } = await waitForRun(page)
@@ -569,7 +569,7 @@ test('keeps unnamed tool trace messages out of the transcript after completion',
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await sendChatMessage(page, 'Run internal unnamed tool')
   const { run } = await waitForRun(page)
@@ -704,7 +704,7 @@ test('keeps unnamed resumed tool traces hidden after session reload', async ({ p
   const api = await mockHermesApi(page, { sessions: [sessionSummary] })
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await expect(page.getByText('History answer visible.')).toBeVisible()
   await expect(page.locator('.message.tool .tool-line')).toHaveCount(0)
@@ -808,7 +808,7 @@ test('restores named resumed tool traces from assistant tool calls after session
   const api = await mockHermesApi(page, { sessions: [sessionSummary] })
   await mockChatSocket(page)
 
-  await page.goto('/#/hermes/chat')
+  await page.goto('/hermes/chat')
 
   await expect(page.getByText('Named history answer visible.')).toBeVisible()
   const restoredTrace = page.locator('.message.tool .tool-line').filter({ hasText: 'read_file' })

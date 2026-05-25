@@ -1,14 +1,29 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import { resolveLegacyHashRoute } from './legacy-history'
+
+const routerBase = import.meta.env.BASE_URL || '/'
+
+function getLegacyHashRoute() {
+  if (typeof window === 'undefined') return null
+  return resolveLegacyHashRoute(window.location.hash, window.location.search)
+}
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(routerBase),
   routes: [
     {
       path: '/',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
       meta: { public: true },
+    },
+    {
+      path: '/session/:sessionId',
+      redirect: to => ({
+        path: `/hermes/session/${to.params.sessionId}`,
+        query: to.query,
+      }),
     },
     {
       path: '/hermes/chat',
@@ -121,6 +136,12 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
+  const legacyHashRoute = getLegacyHashRoute()
+  if (legacyHashRoute) {
+    next(legacyHashRoute)
+    return
+  }
+
   // Public pages don't need auth
   if (to.meta.public) {
     // Already has key, skip login

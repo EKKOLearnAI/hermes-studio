@@ -23,6 +23,7 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
+import { shouldServeSpaFallback } from './services/spa-fallback'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -145,10 +146,7 @@ export async function bootstrap() {
   const distDir = resolve(__dirname, '..', 'client')
   app.use(serve(distDir))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
-      ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+    if (shouldServeSpaFallback(ctx.path)) {
       await send(ctx, 'index.html', { root: distDir })
     }
   })

@@ -297,7 +297,7 @@ function buildSessionUrl(sessionId: string, profile?: string | null): string {
     params: { sessionId },
     query: profile ? { profile } : undefined,
   }).href;
-  return `${window.location.origin}${window.location.pathname}${href}`;
+  return new URL(href, window.location.origin).toString();
 }
 
 async function copySessionLink(id?: string) {
