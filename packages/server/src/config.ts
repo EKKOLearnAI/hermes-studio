@@ -37,6 +37,11 @@ export function getListenHost(env: Record<string, string | undefined> = process.
   return host || '0.0.0.0'
 }
 
+export function getWebUiHome(env: Record<string, string | undefined> = process.env): string {
+  const configuredHome = env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()
+  return configuredHome ? resolve(configuredHome) : join(homedir(), '.hermes-web-ui')
+}
+
 function parseBoolean(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback
   const normalized = value.trim().toLowerCase()
@@ -52,6 +57,8 @@ function getDefaultUpdateCliBin(packageName: string): string {
   const packageBasename = packageName.split('/').filter(Boolean).pop() || packageName
   return `${packageBasename}.mjs`
 }
+
+const appHome = getWebUiHome()
 
 export const config = {
   port: parseInt(process.env.PORT || '8648', 10),
