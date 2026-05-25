@@ -60,7 +60,7 @@ function safeEqual(a: string, b: string): boolean {
   }
 }
 
-async function getJwtSecret(): Promise<string | null> {
+async function getJwtSecret(): Promise<string> {
   return process.env.AUTH_JWT_SECRET || await getToken()
 }
 
@@ -78,7 +78,7 @@ const SERVER_TOKEN_MEDIA_PATHS = new Set([
 async function allowServerTokenForMedia(ctx: Context, token: string): Promise<boolean> {
   if (!token || !SERVER_TOKEN_MEDIA_PATHS.has(ctx.path)) return false
   const serverToken = await getToken()
-  if (!serverToken || token !== serverToken) return false
+  if (token !== serverToken) return false
   ctx.state.serverTokenAuth = true
   return true
 }
@@ -128,7 +128,6 @@ export function verifyUserJwt(token: string, secret: string, now = Date.now()): 
 
 export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
   const secret = await getJwtSecret()
-  if (!secret) throw new Error('Auth is disabled on this server')
   return signUserJwt(user, secret)
 }
 
@@ -146,7 +145,6 @@ export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | '
 
 export async function authenticateUserToken(token: string): Promise<AuthenticatedUser | null> {
   const secret = await getJwtSecret()
-  if (!secret) return null
 
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) return null
@@ -157,7 +155,8 @@ export async function authenticateUserToken(token: string): Promise<Authenticate
 }
 
 export async function isAuthEnabled(): Promise<boolean> {
-  return !!await getJwtSecret()
+  await getJwtSecret()
+  return true
 }
 
 export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
@@ -167,11 +166,6 @@ export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
   }
 
   const secret = await getJwtSecret()
-  if (!secret) {
-    await next()
-    return
-  }
-
   const token = requestToken(ctx)
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) {

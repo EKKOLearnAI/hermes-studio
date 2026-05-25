@@ -50,21 +50,17 @@ describe('Auth Service', () => {
   })
 
   describe('getToken', () => {
-    it('returns null when AUTH_DISABLED=1', async () => {
+    it('ignores legacy AUTH_DISABLED=1 and still creates an auth token', async () => {
       process.env.AUTH_DISABLED = '1'
-      const { getToken, mocks } = await loadAuth()
+      const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'))
+      const writeFile = vi.fn()
+      const mkdir = vi.fn()
+      const { getToken } = await loadAuth({ readFile, writeFile, mkdir })
 
       const token = await getToken()
 
-      expect(token).toBeNull()
-      expect(mocks.readFile).not.toHaveBeenCalled()
-    })
-
-    it('returns null when AUTH_DISABLED=true', async () => {
-      process.env.AUTH_DISABLED = 'true'
-      const { getToken } = await loadAuth()
-
-      await expect(getToken()).resolves.toBeNull()
+      expect(token).toMatch(/^[a-f0-9]{64}$/)
+      expect(writeFile).toHaveBeenCalled()
     })
 
     it('returns AUTH_TOKEN env var if set', async () => {
@@ -108,17 +104,6 @@ describe('Auth Service', () => {
   })
 
   describe('requireAuth', () => {
-    it('allows all requests when auth is disabled (null token)', async () => {
-      const { requireAuth } = await loadAuth()
-      const middleware = requireAuth(null)
-      const ctx = createMockCtx('/api/hermes/sessions')
-      const next = vi.fn(async () => {})
-
-      await middleware(ctx, next)
-
-      expect(next).toHaveBeenCalledOnce()
-    })
-
     it('skips /health', async () => {
       const { requireAuth } = await loadAuth()
       const middleware = requireAuth('secret')

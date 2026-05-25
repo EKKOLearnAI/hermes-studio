@@ -43,8 +43,7 @@ function getToken() {
 }
 
 function ensureToken() {
-  // If AUTH_DISABLED or AUTH_TOKEN is set, let server handle it
-  if (process.env.AUTH_DISABLED === '1' || process.env.AUTH_DISABLED === 'true') return null
+  // If AUTH_TOKEN is set, let server handle it.
   if (process.env.AUTH_TOKEN) return process.env.AUTH_TOKEN
 
   let token = getToken()

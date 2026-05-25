@@ -12,13 +12,9 @@ function generateToken(): string {
 }
 
 /**
- * Get or create the auth token. Returns null if auth is disabled.
+ * Get or create the auth token.
  */
-export async function getToken(): Promise<string | null> {
-  if (process.env.AUTH_DISABLED === '1' || process.env.AUTH_DISABLED === 'true') {
-    return null
-  }
-
+export async function getToken(): Promise<string> {
   if (process.env.AUTH_TOKEN) {
     return process.env.AUTH_TOKEN
   }
@@ -45,11 +41,6 @@ export async function getToken(): Promise<string | null> {
  */
 export function requireAuth(token: string | null) {
   return async (ctx: any, next: () => Promise<void>) => {
-    if (!token) {
-      await next()
-      return
-    }
-
     const auth = ctx.headers.authorization || ''
     const provided = auth.startsWith('Bearer ')
       ? auth.slice(7)
