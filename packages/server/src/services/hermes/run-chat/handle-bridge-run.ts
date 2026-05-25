@@ -69,6 +69,38 @@ export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'e
   return null
 }
 
+function findOpenAssistantMessage(state: SessionState, runMarker: string) {
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i]
+    if (message.runMarker === runMarker && message.role === 'assistant' && message.finish_reason == null) return message
+  }
+  return undefined
+}
+
+function flushPendingToolMarkupToAssistant(
+  state: SessionState,
+  runMarker: string,
+  runId: string,
+  emit: (event: string, payload: any) => void,
+): string {
+  const pendingMarkup = flushPendingToolCallMarkup(state)
+  if (!pendingMarkup) return ''
+
+  state.bridgeOutput = (state.bridgeOutput || '') + pendingMarkup
+  state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + pendingMarkup
+  const last = findOpenAssistantMessage(state, runMarker)
+  if (last) {
+    last.content += pendingMarkup
+  }
+  emit('message.delta', {
+    event: 'message.delta',
+    run_id: runId,
+    delta: pendingMarkup,
+    output: state.bridgeOutput,
+  })
+  return pendingMarkup
+}
+
 function finiteToken(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
@@ -469,21 +501,7 @@ async function applyBridgeChunkAsync(
       // `[Ca`, etc. are silently dropped because no follow-up delta will
       // come for this assistant message — the next chunk is the tool call
       // itself. See bridge-delta.ts for full rationale.
-      const pendingMarkup = flushPendingToolCallMarkup(state)
-      if (pendingMarkup) {
-        state.bridgeOutput = (state.bridgeOutput || '') + pendingMarkup
-        state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + pendingMarkup
-        const last = [...state.messages].reverse().find(m => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
-        if (last) {
-          last.content += pendingMarkup
-        }
-        emit('message.delta', {
-          event: 'message.delta',
-          run_id: chunk.run_id,
-          delta: pendingMarkup,
-          output: state.bridgeOutput,
-        })
-      }
+      flushPendingToolMarkupToAssistant(state, runMarker, chunk.run_id, emit)
       flushBridgePendingToDb(state, sessionId, runMarker)
       const toolName = (ev.tool_name as string) || ''
       const args = ev.args as Record<string, unknown> | undefined
@@ -734,25 +752,12 @@ async function applyBridgeChunkAsync(
     return
   }
 
-  flushBridgePendingToDb(state, sessionId)
   // If the run terminated while we still had a partial tool-call-marker
   // prefix buffered, flush it to the user-visible stream now. Discarding
   // it (which the line below was doing implicitly) silently drops the
   // final characters of the assistant message.
-  const pendingFinalMarkup = flushPendingToolCallMarkup(state)
-  if (pendingFinalMarkup) {
-    state.bridgeOutput = (state.bridgeOutput || '') + pendingFinalMarkup
-    const last = [...state.messages].reverse().find(m => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
-    if (last) {
-      last.content += pendingFinalMarkup
-    }
-    emit('message.delta', {
-      event: 'message.delta',
-      run_id: chunk.run_id,
-      delta: pendingFinalMarkup,
-      output: state.bridgeOutput,
-    })
-  }
+  flushPendingToolMarkupToAssistant(state, runMarker, chunk.run_id, emit)
+  flushBridgePendingToDb(state, sessionId)
   state.bridgePendingToolCallMarkup = undefined
   updateSessionStats(sessionId)
   await delay(BRIDGE_USAGE_FLUSH_DELAY_MS)
