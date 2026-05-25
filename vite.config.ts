@@ -25,6 +25,7 @@ function createProxyConfig(): ProxyOptions {
 
 export default defineConfig({
   root: 'packages/client',
+  base: './',
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

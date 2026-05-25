@@ -1,8 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
 import { resolveLegacyHashRoute } from './legacy-history'
+import { resolveRouterBase } from './runtime-base'
 
-const routerBase = import.meta.env.BASE_URL || '/'
+const routerBase = resolveRouterBase()
 
 function getLegacyHashRoute() {
   if (typeof window === 'undefined') return null
