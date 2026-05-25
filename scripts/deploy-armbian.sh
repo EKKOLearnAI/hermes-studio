@@ -1,0 +1,567 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
+
+trap 'err "部署失败，出错行号: $LINENO"' ERR
+
+if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+  SUDO=()
+else
+  if ! command -v sudo >/dev/null 2>&1; then
+    err "当前不是 root，且系统中没有 sudo。请使用 root 运行该脚本。"
+    exit 1
+  fi
+  SUDO=(sudo)
+fi
+
+run() {
+  "${SUDO[@]}" "$@"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+python_cmd() {
+  if command_exists python3; then
+    echo "python3"
+    return 0
+  fi
+  if command_exists python; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return 0
+  fi
+  if command_exists docker-compose; then
+    echo "docker-compose"
+    return 0
+  fi
+  return 1
+}
+
+is_clock_synchronized() {
+  if ! command_exists timedatectl; then
+    return 1
+  fi
+
+  local value
+  value="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
+  [[ "$value" == "yes" ]]
+}
+
+try_sync_clock() {
+  if ! command_exists timedatectl; then
+    warn "系统未提供 timedatectl，跳过时间同步检测。"
+    return 1
+  fi
+
+  step "检查系统时间同步状态"
+  if is_clock_synchronized; then
+    info "系统时间已同步。"
+    return 0
+  fi
+
+  warn "系统时间尚未同步，尝试启用 NTP 并等待同步。"
+  run timedatectl set-ntp true || true
+  if command_exists systemctl; then
+    run systemctl restart systemd-timesyncd || true
+  fi
+
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 3
+    if is_clock_synchronized; then
+      info "系统时间同步成功。"
+      return 0
+    fi
+  done
+
+  warn "系统时间仍未同步，将在 apt update 时尝试跳过日期校验。"
+  return 1
+}
+
+apt_update() {
+  if run apt-get update -y; then
+    return 0
+  fi
+
+  warn "apt-get update 失败，尝试自动同步系统时间后重试。"
+  try_sync_clock || true
+
+  if run apt-get update -y; then
+    return 0
+  fi
+
+  warn "时间同步后仍失败，使用 Acquire::Check-Date=false 兜底更新软件源。"
+  run apt-get -o Acquire::Check-Date=false update -y
+}
+
+require_debian_like() {
+  if [[ ! -r /etc/os-release ]]; then
+    err "无法读取 /etc/os-release，当前系统不受支持。"
+    exit 1
+  fi
+
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  local id_like_value="${ID_LIKE:-}"
+  local id_value="${ID:-}"
+  if [[ "${id_value}" != "ubuntu" && "${id_value}" != "debian" && "${id_like_value}" != *"debian"* ]]; then
+    err "当前脚本仅支持 Debian/Ubuntu/Armbian 系列系统。"
+    echo "检测到: ID=${id_value:-unknown}, ID_LIKE=${id_like_value:-unknown}"
+    exit 1
+  fi
+
+  info "系统检测通过: ${PRETTY_NAME:-unknown}"
+}
+
+require_supported_arch() {
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    aarch64|arm64|x86_64|amd64)
+      info "架构检测通过: $arch"
+      ;;
+    *)
+      err "当前架构暂未验证: $arch"
+      err "建议使用 arm64/aarch64 或 amd64/x86_64 设备。"
+      exit 1
+      ;;
+  esac
+}
+
+install_base_packages() {
+  step "安装基础依赖"
+  apt_update
+  run apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    apt-transport-https \
+    software-properties-common
+}
+
+cleanup_docker_official_repo() {
+  warn "清理失败的 Docker 官方源配置"
+  run rm -f /etc/apt/sources.list.d/docker.list
+  run rm -f /etc/apt/keyrings/docker.asc
+}
+
+install_docker_from_system_repo() {
+  step "回退到系统仓库安装 Docker"
+  apt_update
+  if run apt-get install -y docker.io docker-compose-v2; then
+    info "已通过系统仓库安装 docker.io + docker-compose-v2"
+    return 0
+  fi
+
+  warn "docker-compose-v2 安装失败，尝试安装 docker-compose-plugin"
+  if run apt-get install -y docker.io docker-compose-plugin; then
+    info "已通过系统仓库安装 docker.io + docker-compose-plugin"
+    return 0
+  fi
+
+  warn "docker-compose-plugin 安装失败，尝试安装 legacy docker-compose"
+  run apt-get install -y docker.io docker-compose
+  info "已通过系统仓库安装 docker.io + docker-compose"
+}
+
+install_docker_from_official_repo() {
+  cleanup_docker_official_repo
+  run install -m 0755 -d /etc/apt/keyrings
+  if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | run gpg --dearmor -o /etc/apt/keyrings/docker.asc
+    run chmod a+r /etc/apt/keyrings/docker.asc
+  fi
+
+  local arch codename repo_os
+  arch="$(dpkg --print-architecture)"
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-noble}}"
+  repo_os="ubuntu"
+  if [[ "${ID:-}" == "debian" ]]; then
+    repo_os="debian"
+  fi
+
+  cat <<EOF | run tee /etc/apt/sources.list.d/docker.list >/dev/null
+deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${repo_os} ${codename} stable
+EOF
+
+  apt_update
+  run apt-get install -y \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-buildx-plugin \
+    docker-compose-plugin
+}
+
+install_docker() {
+  if command_exists docker && compose_cmd >/dev/null 2>&1; then
+    info "Docker 与 Docker Compose 已安装，跳过安装。"
+    return
+  fi
+
+  step "安装 Docker 与 Docker Compose 插件"
+
+  if install_docker_from_official_repo; then
+    run systemctl enable --now docker
+    info "Docker 官方源安装完成。"
+    return
+  fi
+
+  warn "Docker 官方源安装失败，自动回退到系统仓库。"
+  cleanup_docker_official_repo
+  install_docker_from_system_repo
+
+  run systemctl enable --now docker
+  info "Docker 安装完成。"
+}
+
+ensure_docker_running() {
+  step "检查 Docker 服务状态"
+  run systemctl enable --now docker
+  run docker version >/dev/null
+  if ! compose_cmd >/dev/null 2>&1; then
+    err "Docker Compose 不可用，请检查 Docker 安装。"
+    exit 1
+  fi
+  info "Docker 服务运行正常。"
+}
+
+update_docker_registry_mirrors_config() {
+  local mirror_csv="$1"
+  local daemon_file python_bin
+  daemon_file="/etc/docker/daemon.json"
+  python_bin="$(python_cmd || true)"
+
+  if [[ -z "$python_bin" ]]; then
+    warn "系统中未找到 python3/python，无法安全合并 daemon.json。"
+    return 1
+  fi
+
+  run install -m 0755 -d /etc/docker
+  if [[ ! -f "$daemon_file" ]]; then
+    run tee "$daemon_file" >/dev/null <<EOF
+{}
+EOF
+  fi
+
+  run env MIRROR_CSV="$mirror_csv" DAEMON_FILE="$daemon_file" "$python_bin" - <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+daemon_path = pathlib.Path(os.environ["DAEMON_FILE"])
+mirror_csv = os.environ["MIRROR_CSV"]
+mirrors = [item.strip() for item in mirror_csv.split(",") if item.strip()]
+
+try:
+    current = json.loads(daemon_path.read_text(encoding="utf-8"))
+    if not isinstance(current, dict):
+        raise ValueError("daemon.json root is not an object")
+except FileNotFoundError:
+    current = {}
+except Exception as exc:
+    print(f"无法解析 {daemon_path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if mirrors:
+    if current.get("registry-mirrors") == mirrors:
+        sys.exit(0)
+    current["registry-mirrors"] = mirrors
+else:
+    if "registry-mirrors" not in current:
+        sys.exit(0)
+    current.pop("registry-mirrors", None)
+
+daemon_path.write_text(
+    json.dumps(current, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+docker_registry_mirror_healthy() {
+  local mirror="$1"
+  local probe_url http_code
+  probe_url="${mirror%/}/v2/"
+  http_code="$(curl -k -sS -o /dev/null --connect-timeout 5 --max-time 8 -w '%{http_code}' "$probe_url" || true)"
+  case "$http_code" in
+    200|401|404)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+disable_docker_registry_mirrors() {
+  local reason="${1:-检测到当前 Docker 镜像源不可用，自动回退直连 docker.io。}"
+
+  if [[ "${DOCKER_REGISTRY_MIRRORS_DISABLED}" == "1" ]]; then
+    info "当前已处于直连 docker.io 模式，跳过重复切换。"
+    return 0
+  fi
+
+  warn "$reason"
+  if ! update_docker_registry_mirrors_config ""; then
+    warn "移除 Docker registry-mirrors 失败，将继续沿用当前配置。"
+    return 1
+  fi
+
+  run systemctl restart docker
+  DOCKER_REGISTRY_MIRRORS_DISABLED=1
+  ACTIVE_DOCKER_REGISTRY_MIRRORS=""
+  info "已移除 Docker registry-mirrors，回退直连 docker.io"
+}
+
+configure_docker_registry_mirrors() {
+  step "配置 Docker 国内镜像源"
+
+  local mirror_csv
+  local candidate
+  local -a requested_mirrors=()
+  local -a healthy_mirrors=()
+
+  mirror_csv="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
+  if [[ -z "${mirror_csv// }" ]]; then
+    warn "未提供 Docker 镜像源，保持直连 docker.io。"
+    disable_docker_registry_mirrors "未配置 Docker 镜像源，自动保持直连 docker.io。" || true
+    return 0
+  fi
+
+  IFS=',' read -r -a requested_mirrors <<< "$mirror_csv"
+  for candidate in "${requested_mirrors[@]}"; do
+    candidate="$(trim_whitespace "$candidate")"
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+
+    if docker_registry_mirror_healthy "$candidate"; then
+      healthy_mirrors+=("$candidate")
+    else
+      warn "Docker 镜像源不可用，已跳过: $candidate"
+    fi
+  done
+
+  if [[ ${#healthy_mirrors[@]} -eq 0 ]]; then
+    disable_docker_registry_mirrors "配置的 Docker 镜像源均不可用，自动回退直连 docker.io。" || true
+    return 0
+  fi
+
+  ACTIVE_DOCKER_REGISTRY_MIRRORS="$(IFS=,; echo "${healthy_mirrors[*]}")"
+  if ! update_docker_registry_mirrors_config "${ACTIVE_DOCKER_REGISTRY_MIRRORS}"; then
+    warn "写入 Docker 镜像源配置失败，将保持当前 Docker 配置。"
+    return 0
+  fi
+
+  run systemctl restart docker
+  DOCKER_REGISTRY_MIRRORS_DISABLED=0
+  info "已写入 Docker 镜像源: ${ACTIVE_DOCKER_REGISTRY_MIRRORS}"
+}
+
+compose_pull() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose pull
+    return
+  fi
+  run docker-compose pull
+}
+
+compose_build_webui() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose build hermes-webui
+    return
+  fi
+  run docker-compose build hermes-webui
+}
+
+compose_up_detached() {
+  local compose="$1"
+  if [[ "$compose" == "docker compose" ]]; then
+    run docker compose up -d
+    return
+  fi
+  run docker-compose up -d
+}
+
+pull_or_build_webui() {
+  local compose="$1"
+
+  if compose_pull "$compose"; then
+    return 0
+  fi
+
+  warn "拉取预构建镜像失败，尝试禁用 Docker 镜像源后重试。"
+  if disable_docker_registry_mirrors "检测到镜像拉取失败，自动摘除可能失效的 Docker 镜像源。" \
+    && compose_pull "$compose"; then
+    return 0
+  fi
+
+  warn "拉取预构建镜像仍失败，尝试本地构建 hermes-webui"
+  if compose_build_webui "$compose"; then
+    return 0
+  fi
+
+  warn "本地构建失败，尝试在直连 docker.io 模式下再次构建 hermes-webui"
+  disable_docker_registry_mirrors "检测到基础镜像拉取失败，再次确认已切换为直连 docker.io。" || true
+  compose_build_webui "$compose"
+}
+
+prepare_dirs() {
+  step "准备部署目录"
+  run mkdir -p "${DEPLOY_DIR}" "${HERMES_DATA_DIR}" "${HERMES_DATA_DIR}/hermes-web-ui"
+  info "部署目录: ${DEPLOY_DIR}"
+  info "数据目录: ${HERMES_DATA_DIR}"
+}
+
+write_env_file() {
+  step "写入部署环境变量"
+  run tee "${ENV_FILE}" >/dev/null <<EOF
+WEBUI_IMAGE=${WEBUI_IMAGE}
+WEBUI_CONTAINER_NAME=${WEBUI_CONTAINER_NAME}
+PORT=${PORT}
+AUTH_DISABLED=${AUTH_DISABLED}
+HERMES_DATA_DIR=${HERMES_DATA_DIR}
+EOF
+  info "已生成 ${ENV_FILE}"
+}
+
+write_compose_file() {
+  step "写入 docker-compose.yml"
+  if [[ -f "${LOCAL_COMPOSE_FILE}" ]]; then
+    if [[ "${LOCAL_COMPOSE_FILE}" == "${COMPOSE_FILE}" ]]; then
+      info "当前目录已是部署目录，直接复用现有 docker-compose.yml"
+      return
+    fi
+    run cp "${LOCAL_COMPOSE_FILE}" "${COMPOSE_FILE}"
+    info "使用仓库内 docker-compose.yml"
+    return
+  fi
+
+  curl -fsSL "${RAW_BASE_URL}/docker-compose.yml" | run tee "${COMPOSE_FILE}" >/dev/null
+  info "已从远程下载 docker-compose.yml"
+}
+
+pull_and_start() {
+  step "拉取并启动 hermes-web-ui 容器"
+  local compose
+  compose="$(compose_cmd)"
+  (
+    cd "${DEPLOY_DIR}"
+    pull_or_build_webui "$compose"
+    compose_up_detached "$compose"
+  )
+  info "容器已启动。"
+}
+
+wait_for_webui() {
+  step "等待 Web UI 就绪"
+  local url="http://127.0.0.1:${PORT}/health"
+  local attempts=60
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsSL --max-time 5 "${url}" >/dev/null 2>&1; then
+      info "Web UI 已可访问: ${url}"
+      return
+    fi
+    sleep 2
+  done
+  warn "Web UI 健康检查超时，你可以稍后手动执行: curl ${url}"
+}
+
+show_summary() {
+  local compose
+  compose="$(compose_cmd || echo 'docker compose')"
+  echo
+  info "部署完成"
+  echo "----------------------------------------"
+  echo "访问地址: http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT}"
+  echo "本机地址: http://127.0.0.1:${PORT}"
+  echo "部署目录: ${DEPLOY_DIR}"
+  echo "数据目录: ${HERMES_DATA_DIR}"
+  echo
+  echo "常用命令:"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} ps"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} logs -f ${WEBUI_CONTAINER_NAME}"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} restart"
+  echo "  cd ${DEPLOY_DIR} && sudo ${compose} down"
+  echo
+  echo "人工绑定 / 配置 Hermes:"
+  echo "  sudo docker exec -it ${WEBUI_CONTAINER_NAME} /opt/hermes/.venv/bin/hermes setup"
+  echo "  sudo docker exec -it ${WEBUI_CONTAINER_NAME} /opt/hermes/.venv/bin/hermes config"
+  echo
+  if [[ -f "${HERMES_DATA_DIR}/hermes-web-ui/.token" ]]; then
+    echo "Web UI Token:"
+    cat "${HERMES_DATA_DIR}/hermes-web-ui/.token"
+    echo
+  else
+    echo "首次启动 Token 可能还在日志里，查看方式:"
+    echo "  cd ${DEPLOY_DIR} && sudo ${compose} logs ${WEBUI_CONTAINER_NAME} | grep token"
+    echo
+  fi
+}
+
+DEPLOY_DIR="${DEPLOY_DIR:-/opt/hermes-web-ui}"
+PORT="${PORT:-6060}"
+AUTH_DISABLED="${AUTH_DISABLED:-false}"
+WEBUI_IMAGE="${WEBUI_IMAGE:-ekkoye8888/hermes-web-ui}"
+WEBUI_CONTAINER_NAME="${WEBUI_CONTAINER_NAME:-hermes-webui}"
+HERMES_DATA_DIR="${HERMES_DATA_DIR:-${DEPLOY_DIR}/hermes_data}"
+DOCKER_REGISTRY_MIRRORS="${DOCKER_REGISTRY_MIRRORS:-https://hub-mirror.c.163.com}"
+ACTIVE_DOCKER_REGISTRY_MIRRORS=""
+DOCKER_REGISTRY_MIRRORS_DISABLED=0
+REPO_REF="${REPO_REF:-main}"
+RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/${REPO_REF}}"
+ENV_FILE="${DEPLOY_DIR}/.env"
+COMPOSE_FILE="${DEPLOY_DIR}/docker-compose.yml"
+LOCAL_COMPOSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docker-compose.yml"
+
+echo
+echo "hermes / hermes-web-ui 一键部署"
+echo "================================"
+echo
+
+require_debian_like
+require_supported_arch
+install_base_packages
+install_docker
+configure_docker_registry_mirrors
+ensure_docker_running
+prepare_dirs
+write_env_file
+write_compose_file
+pull_and_start
+wait_for_webui
+show_summary
