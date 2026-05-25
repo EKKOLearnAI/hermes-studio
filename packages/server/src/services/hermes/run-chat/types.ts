@@ -38,6 +38,7 @@ export interface QueuedRun {
   profile: string
   source?: ChatRunSource
   originSocketId?: string
+  goalContinuation?: boolean
 }
 
 export interface SessionState {

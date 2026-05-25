@@ -52,8 +52,39 @@ const schedulePresets = computed(() => [
   { label: t('jobs.presetEveryMonth'), value: '0 9 1 * *' },
 ])
 
+function hasText(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isDeliverTargetConfigured(key: string): boolean {
+  const config = settingsStore.platforms[key] || {}
+  switch (key) {
+    case 'telegram':
+    case 'discord':
+    case 'slack':
+      return hasText(config.token)
+    case 'whatsapp':
+      return config.enabled === true || config.enabled === 'true'
+    case 'matrix':
+      return hasText(config.token) && hasText(config.extra?.homeserver)
+    case 'weixin':
+      return hasText(config.token) && hasText(config.extra?.account_id)
+    case 'wecom':
+      return hasText(config.extra?.bot_id) && hasText(config.extra?.secret)
+    case 'feishu':
+      return hasText(config.extra?.app_id) && hasText(config.extra?.app_secret)
+    case 'dingtalk':
+      return (hasText(config.extra?.client_id) && hasText(config.extra?.client_secret))
+        || (hasText(config.extra?.app_key) && hasText(config.extra?.client_secret))
+    case 'qqbot':
+      return hasText(config.extra?.app_id) && hasText(config.extra?.client_secret)
+    default:
+      return false
+  }
+}
+
 const targetOptions = computed(() => {
-  const options: Array<{ label: string; value: string }> = [
+  const options: Array<{ label: string; value: string; disabled?: boolean }> = [
     { label: t('jobs.origin'), value: 'origin' },
     { label: t('jobs.local'), value: 'local' },
   ]
@@ -67,12 +98,14 @@ const targetOptions = computed(() => {
     { key: 'wecom', label: 'WeCom' },
     { key: 'feishu', label: 'Feishu' },
     { key: 'dingtalk', label: 'DingTalk' },
+    { key: 'qqbot', label: 'QQBot' },
   ]
   for (const ch of channels) {
-    const config = settingsStore.platforms[ch.key] || {}
-    if (Object.keys(config).length > 0) {
-      options.push({ label: ch.label, value: ch.key })
-    }
+    options.push({
+      label: ch.label,
+      value: ch.key,
+      disabled: !isDeliverTargetConfigured(ch.key),
+    })
   }
   return options
 })
@@ -80,6 +113,10 @@ const targetOptions = computed(() => {
 const originalJob = ref<Job | null>(null)
 
 onMounted(async () => {
+  if (Object.keys(settingsStore.platforms || {}).length === 0) {
+    await settingsStore.fetchSettings()
+  }
+
   if (props.jobId) {
     try {
       const job = await getJob(props.jobId)

@@ -64,6 +64,12 @@ export async function handleAbort(
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
     }
+    try {
+      await bridge.goalPause?.(sessionId, 'user-interrupted', state.profile)
+      state.queue = state.queue.filter(item => !item.goalContinuation)
+    } catch (err) {
+      logger.debug(err, '[chat-run-socket][abort] goal pause-on-interrupt skipped for session %s', sessionId)
+    }
   } else if (state.abortController) {
     state.abortController.abort()
   }

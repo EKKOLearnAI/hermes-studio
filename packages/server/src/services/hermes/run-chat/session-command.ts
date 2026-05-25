@@ -15,6 +15,8 @@ type CommandName =
   | 'abort'
   | 'queue'
   | 'plan'
+  | 'goal'
+  | 'subgoal'
   | 'clear'
   | 'title'
   | 'compress'
@@ -34,6 +36,8 @@ interface SessionCommandContext {
   bridge: AgentBridgeClient
   profile: string
   model?: string
+  provider?: string
+  model_groups?: Array<{ provider: string; models: string[] }>
   instructions?: string
   queueId?: string
   runQueuedItem: (socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile?: string) => void
@@ -45,6 +49,8 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   abort: 'abort',
   queue: 'queue',
   plan: 'plan',
+  goal: 'goal',
+  subgoal: 'subgoal',
   clear: 'clear',
   title: 'title',
   compress: 'compress',
@@ -120,24 +126,30 @@ export async function handleSessionCommand(
 
     case 'status': {
       const row = getSession(sessionId)
+      const bridgeStatus = await getBridgeSessionStatus(ctx, sessionId)
+      const bridgeRunning = bridgeStatus?.running === true
+      const isWorking = state.isWorking || bridgeRunning
+      const runId = state.runId || state.activeRunMarker || bridgeStatus?.currentRunId || null
       emitCommand({
         action: 'status',
-        terminal: !state.isWorking,
+        terminal: !isWorking,
         message: [
-          `Status: ${state.isWorking ? 'running' : 'idle'}`,
+          `Status: ${isWorking ? 'running' : 'idle'}`,
           `source: ${state.source || row?.source || 'cli'}`,
           `profile: ${state.profile || ctx.profile || row?.profile || 'default'}`,
           `model: ${ctx.model || row?.model || '-'}`,
           `queue: ${state.queue.length}`,
-          `run: ${state.runId || state.activeRunMarker || '-'}`,
-        ].join(', '),
-        isWorking: state.isWorking,
+          `run: ${runId || '-'}`,
+          bridgeStatus ? `bridge: ${bridgeRunning ? 'running' : 'idle'}` : null,
+        ].filter(Boolean).join(', '),
+        isWorking,
         isAborting: Boolean(state.isAborting),
         queueLength: state.queue.length,
         source: state.source || row?.source || 'cli',
         profile: state.profile || ctx.profile || row?.profile || 'default',
         model: ctx.model || row?.model || null,
-        runId: state.runId || state.activeRunMarker || null,
+        runId,
+        bridgeStatus,
       })
       return
     }
@@ -161,6 +173,8 @@ export async function handleSessionCommand(
         queue_id: queueId,
         input: command.args,
         model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
         instructions: ctx.instructions,
         profile: ctx.profile,
         source: 'cli',
@@ -170,13 +184,7 @@ export async function handleSessionCommand(
         event: 'run.queued',
         session_id: sessionId,
         queue_length: state.queue.length,
-        queued_messages: state.queue.map(item => ({
-          id: item.queue_id,
-          role: 'user',
-          content: contentBlocksToString(item.input),
-          timestamp: Math.floor(Date.now() / 1000),
-          queued: true,
-        })),
+        queued_messages: serializeVisibleQueuedMessages(state.queue),
       })
       emitCommand({
         action: 'queue',
@@ -221,6 +229,8 @@ export async function handleSessionCommand(
         displayRole: 'command',
         storageMessage: displayCommand,
         model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
         instructions: ctx.instructions,
         profile: ctx.profile,
         source: 'cli',
@@ -233,15 +243,7 @@ export async function handleSessionCommand(
           event: 'run.queued',
           session_id: sessionId,
           queue_length: state.queue.length,
-          queued_messages: state.queue.map(item => ({
-            id: item.queue_id,
-            role: typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user',
-            content: item.displayInput === null
-              ? (item.storageMessage || '')
-              : contentBlocksToString(item.displayInput ?? item.input),
-            timestamp: Math.floor(Date.now() / 1000),
-            queued: true,
-          })),
+          queued_messages: serializeVisibleQueuedMessages(state.queue),
         })
         return
       }
@@ -251,6 +253,88 @@ export async function handleSessionCommand(
         terminal: false,
         started: true,
       })
+      ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
+      return
+    }
+
+    case 'goal':
+    case 'subgoal': {
+      const isGoalSet = command.name === 'goal'
+        && Boolean(command.args)
+        && !['status', 'pause', 'resume', 'clear', 'stop', 'done'].includes(command.args.toLowerCase())
+      if (state.isWorking && isGoalSet) {
+        emitCommand({
+          ok: false,
+          action: 'goal',
+          terminal: false,
+          message: 'Agent is running. Use /goal status, /goal pause, or /goal clear mid-run, or /abort before setting a new goal.',
+        })
+        return
+      }
+
+      const bridgeCommand = `${command.name}${command.args ? ` ${command.args}` : ''}`
+      let result
+      try {
+        result = await ctx.bridge.command(sessionId, bridgeCommand, ctx.profile)
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: command.name,
+          terminal: !state.isWorking,
+          message: `Goal command failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+        return
+      }
+
+      if (result.clear_goal_continuations) {
+        const removed = removeGoalContinuationRuns(state)
+        if (removed > 0) emitQueuedState(ctx, sessionId, state)
+      }
+
+      const kickoffPrompt = typeof result.kickoff_prompt === 'string' ? result.kickoff_prompt.trim() : ''
+
+      const bridgeStatus = result.action === 'goal_status' || result.action === 'status'
+        ? await getBridgeSessionStatus(ctx, sessionId)
+        : null
+      const message = formatGoalStatusMessage(String(result.message || ''), bridgeStatus)
+
+      const resultAction = String(result.action || command.name)
+      const action = (command.name === 'goal' || command.name === 'subgoal') && resultAction === 'clear'
+        ? `${command.name}_clear`
+        : resultAction
+
+      emitCommand({
+        action,
+        terminal: !state.isWorking && !kickoffPrompt,
+        started: Boolean(kickoffPrompt),
+        message,
+        type: result.type || 'goal',
+        maxTurns: result.max_turns,
+        bridgeStatus,
+      })
+
+      if (!kickoffPrompt) return
+
+      const next: QueuedRun = {
+        queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        input: kickoffPrompt,
+        displayInput: null,
+        storageMessage: kickoffPrompt,
+        model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
+        instructions: ctx.instructions,
+        profile: ctx.profile,
+        source: 'cli',
+        originSocketId: ctx.socket.id,
+      }
+
+      if (state.isWorking) {
+        state.queue.push(next)
+        emitQueuedState(ctx, sessionId, state)
+        return
+      }
+
       ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
       return
     }
@@ -460,6 +544,79 @@ function clearTransientRunState(state: SessionState) {
   state.runId = undefined
   state.abortController = undefined
   state.isAborting = false
+}
+
+function removeGoalContinuationRuns(state: SessionState): number {
+  const before = state.queue.length
+  state.queue = state.queue.filter(item => !item.goalContinuation)
+  return before - state.queue.length
+}
+
+function emitQueuedState(ctx: SessionCommandContext, sessionId: string, state: SessionState) {
+  emitToSession(ctx.nsp, ctx.socket, sessionId, 'run.queued', {
+    event: 'run.queued',
+    session_id: sessionId,
+    queue_length: state.queue.length,
+    queued_messages: serializeVisibleQueuedMessages(state.queue),
+  })
+}
+
+function serializeVisibleQueuedMessages(queue: QueuedRun[]) {
+  return queue.filter(item => item.displayInput !== null).map(item => ({
+    id: item.queue_id,
+    role: item.displayRole || (typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user'),
+    content: contentBlocksToString(item.displayInput ?? item.input),
+    timestamp: Math.floor(Date.now() / 1000),
+    queued: true,
+  }))
+}
+
+type BridgeSessionStatus = {
+  exists: boolean
+  running: boolean
+  currentRunId: string | null
+  messageCount: number
+}
+
+async function getBridgeSessionStatus(ctx: SessionCommandContext, sessionId: string): Promise<BridgeSessionStatus | null> {
+  try {
+    const raw = await ctx.bridge.status(sessionId, ctx.profile) as Record<string, unknown>
+    return {
+      exists: raw.exists === true,
+      running: raw.running === true,
+      currentRunId: typeof raw.current_run_id === 'string' && raw.current_run_id.trim()
+        ? raw.current_run_id
+        : null,
+      messageCount: typeof raw.message_count === 'number' && Number.isFinite(raw.message_count)
+        ? raw.message_count
+        : 0,
+    }
+  } catch (err) {
+    logger.debug({ err, sessionId }, '[chat-run-socket] bridge status lookup failed')
+    return null
+  }
+}
+
+function formatGoalStatusMessage(message: string, bridgeStatus: BridgeSessionStatus | null): string {
+  if (!bridgeStatus) return message
+  const lines = [message]
+  if (bridgeStatus.running) {
+    const progress = parseGoalTurnProgress(message)
+    lines.push(progress
+      ? `Current turn: ${Math.min(progress.used + 1, progress.max)}/${progress.max} running (completed turns: ${progress.used}/${progress.max}; count updates after the judge).`
+      : 'Current turn: running (turn count updates after the judge).')
+  }
+  lines.push(`Run: ${bridgeStatus.running ? 'running' : 'idle'}${bridgeStatus.currentRunId ? ` (${bridgeStatus.currentRunId})` : ''}`)
+  return lines.filter(Boolean).join('\n')
+}
+
+function parseGoalTurnProgress(message: string): { used: number; max: number } | null {
+  const match = message.match(/\b(\d+)\s*\/\s*(\d+)\s+turns\b/i)
+  if (!match) return null
+  const used = Number(match[1])
+  const max = Number(match[2])
+  if (!Number.isFinite(used) || !Number.isFinite(max) || max <= 0) return null
+  return { used, max }
 }
 
 function ensureCommandSession(sessionId: string, ctx: SessionCommandContext) {

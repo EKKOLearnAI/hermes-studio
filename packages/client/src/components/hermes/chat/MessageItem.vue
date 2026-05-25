@@ -38,7 +38,11 @@ const isAgentError = computed(() => props.message.role === "assistant" && props.
 const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
 const isCommandError = computed(() => props.message.role === "command" && props.message.systemType === "error");
-const isStatusCommand = computed(() => isCommandMessage.value && props.message.commandAction === "status");
+const isStatusCommand = computed(() =>
+  isCommandMessage.value
+  && props.message.commandAction === "status"
+  && props.message.commandData?.type !== "goal"
+);
 const statusItems = computed(() => {
   const data = props.message.commandData || {};
   return [

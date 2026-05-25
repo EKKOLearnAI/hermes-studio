@@ -1482,6 +1482,11 @@ class AgentPool:
         arg = parts[1] if len(parts) > 1 else ""
 
         with _profile_env(profile):
+            if name == "goal":
+                return self._dispatch_goal_command(session_id, arg)
+            if name == "subgoal":
+                return self._dispatch_subgoal_command(session_id, arg)
+
             try:
                 try:
                     from agent.skill_bundles import (
@@ -1543,6 +1548,222 @@ class AgentPool:
             "handled": False,
             "message": f"not a supported bridge command: /{name}",
         }
+
+    def _goal_max_turns_from_config(self) -> int:
+        try:
+            from hermes_cli.config import load_config
+
+            goals_cfg = (load_config() or {}).get("goals") or {}
+            return int(goals_cfg.get("max_turns", 20) or 20)
+        except Exception:
+            return 20
+
+    def _goal_manager(self, session_id: str):
+        from hermes_cli.goals import GoalManager
+
+        return GoalManager(
+            session_id=session_id,
+            default_max_turns=self._goal_max_turns_from_config(),
+        )
+
+    def _dispatch_goal_command(self, session_id: str, arg: str) -> dict[str, Any]:
+        mgr = self._goal_manager(session_id)
+        clean_arg = str(arg or "").strip()
+        lower = clean_arg.lower()
+
+        if not clean_arg or lower == "status":
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "goal_status",
+                "message": mgr.status_line(),
+            }
+
+        if lower == "pause":
+            state = mgr.pause(reason="user-paused")
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "pause",
+                "message": f"⏸ Goal paused: {state.goal}" if state else "No goal set.",
+                "clear_goal_continuations": True,
+            }
+
+        if lower == "resume":
+            state = mgr.resume()
+            prompt = mgr.next_continuation_prompt() if state else None
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "resume",
+                "message": f"▶ Goal resumed: {state.goal}" if state else "No goal to resume.",
+                "kickoff_prompt": prompt,
+                "max_turns": state.max_turns if state else None,
+            }
+
+        if lower in {"clear", "stop", "done"}:
+            had = mgr.has_goal()
+            mgr.clear()
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "clear",
+                "message": "✓ Goal cleared." if had else "No active goal.",
+                "clear_goal_continuations": True,
+            }
+
+        try:
+            state = mgr.set(clean_arg)
+        except ValueError as exc:
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "set",
+                "message": f"Invalid goal: {exc}",
+            }
+
+        return {
+            "session_id": session_id,
+            "command": "goal",
+            "handled": True,
+            "type": "goal",
+            "action": "set",
+            "message": (
+                f"⊙ Goal set ({state.max_turns}-turn budget): {state.goal}\n"
+                "After each turn, a judge model will check if the goal is done. "
+                "Hermes keeps working until it is, you pause/clear it, or the budget is exhausted."
+            ),
+            "kickoff_prompt": state.goal,
+            "max_turns": state.max_turns,
+        }
+
+    def _dispatch_subgoal_command(self, session_id: str, arg: str) -> dict[str, Any]:
+        mgr = self._goal_manager(session_id)
+        clean_arg = str(arg or "").strip()
+        if not mgr.has_goal():
+            return {
+                "session_id": session_id,
+                "command": "subgoal",
+                "handled": True,
+                "type": "goal",
+                "action": "subgoal",
+                "message": "No active goal. Set one with /goal <text>.",
+            }
+
+        if not clean_arg:
+            return {
+                "session_id": session_id,
+                "command": "subgoal",
+                "handled": True,
+                "type": "goal",
+                "action": "subgoal_status",
+                "message": f"{mgr.status_line()}\n{mgr.render_subgoals()}",
+            }
+
+        tokens = clean_arg.split(None, 1)
+        verb = tokens[0].lower()
+        rest = tokens[1].strip() if len(tokens) > 1 else ""
+
+        if verb == "remove":
+            if not rest:
+                message = "Usage: /subgoal remove <n>"
+            else:
+                try:
+                    idx = int(rest.split()[0])
+                    removed = mgr.remove_subgoal(idx)
+                    message = f"✓ Removed subgoal {idx}: {removed}"
+                except ValueError:
+                    message = "/subgoal remove: <n> must be an integer (1-based index)."
+                except (IndexError, RuntimeError) as exc:
+                    message = f"/subgoal remove: {exc}"
+            return {
+                "session_id": session_id,
+                "command": "subgoal",
+                "handled": True,
+                "type": "goal",
+                "action": "subgoal_remove",
+                "message": message,
+            }
+
+        if verb == "clear":
+            try:
+                prev = mgr.clear_subgoals()
+                message = f"✓ Cleared {prev} subgoal{'s' if prev != 1 else ''}." if prev else "No subgoals to clear."
+            except RuntimeError as exc:
+                message = f"/subgoal clear: {exc}"
+            return {
+                "session_id": session_id,
+                "command": "subgoal",
+                "handled": True,
+                "type": "goal",
+                "action": "subgoal_clear",
+                "message": message,
+            }
+
+        try:
+            text = mgr.add_subgoal(clean_arg)
+            idx = len(mgr.state.subgoals) if mgr.state else 0
+            message = f"✓ Added subgoal {idx}: {text}"
+        except (ValueError, RuntimeError) as exc:
+            message = f"/subgoal: {exc}"
+
+        return {
+            "session_id": session_id,
+            "command": "subgoal",
+            "handled": True,
+            "type": "goal",
+            "action": "subgoal_add",
+            "message": message,
+        }
+
+    def evaluate_goal(self, session_id: str, final_response: str, profile: str | None = None) -> dict[str, Any]:
+        with _profile_env(profile):
+            mgr = self._goal_manager(session_id)
+            if not mgr.is_active():
+                return {
+                    "session_id": session_id,
+                    "handled": True,
+                    "active": False,
+                    "should_continue": False,
+                    "continuation_prompt": None,
+                    "message": "",
+                    "verdict": "inactive",
+                }
+            decision = mgr.evaluate_after_turn(str(final_response or ""), user_initiated=True)
+            return {
+                "session_id": session_id,
+                "handled": True,
+                "active": mgr.is_active(),
+                **decision,
+            }
+
+    def pause_goal(self, session_id: str, reason: str, profile: str | None = None) -> dict[str, Any]:
+        with _profile_env(profile):
+            clean_reason = str(reason or "").strip() or "paused"
+            mgr = self._goal_manager(session_id)
+            state = mgr.pause(reason=clean_reason)
+            return {
+                "session_id": session_id,
+                "command": "goal",
+                "handled": True,
+                "type": "goal",
+                "action": "pause",
+                "active": mgr.is_active(),
+                "status": state.status if state else None,
+                "reason": clean_reason,
+                "message": f"⏸ Goal paused: {state.goal}" if state else "No goal set.",
+                "clear_goal_continuations": True,
+            }
 
     def get_result(self, run_id: str) -> dict[str, Any]:
         with self._lock:
@@ -1784,6 +2005,29 @@ class BridgeServer:
                 str(req.get("command") or ""),
                 req.get("profile"),
             )
+
+        if action == "goal_evaluate":
+            session_id = str(req.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required")
+            return self.pool.evaluate_goal(
+                session_id,
+                str(req.get("final_response") or ""),
+                req.get("profile"),
+            )
+
+        if action == "goal_pause":
+            session_id = str(req.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required")
+            return self.pool.pause_goal(
+                session_id,
+                str(req.get("reason") or ""),
+                req.get("profile"),
+            )
+
+        if action == "status":
+            return self.pool.status(str(req.get("session_id") or ""))
 
         if action == "destroy":
             return self.pool.destroy(str(req.get("session_id") or ""))
@@ -2359,7 +2603,7 @@ class BridgeBroker:
             profile = self._profile_for_run(str(req.get("run_id") or ""))
             return self._forward(profile, req)
 
-        if action in {"interrupt", "steer", "command", "get_history", "destroy"}:
+        if action in {"interrupt", "steer", "command", "goal_evaluate", "goal_pause", "status", "get_history", "destroy"}:
             session_id = str(req.get("session_id") or "")
             profile = self._profile_for_session(session_id, req.get("profile"))
             resp = self._forward(profile, req)
