@@ -445,6 +445,81 @@ def _profile_env(profile: str | None):
         _restore_profile_env(original)
 
 
+def _refresh_terminal_env() -> None:
+    """Re-read terminal config from current HERMES_HOME/config.yaml to TERMINAL_* env vars.
+
+    gateway/run.py does this at module import time from the root config.yaml,
+    but when a non-default profile switches HERMES_HOME, the terminal env vars
+    still point to the root config's terminal settings (e.g. backend=local).
+    This function re-reads terminal config from the active HERMES_HOME so that
+    terminal_tool (which reads TERMINAL_ENV at call time) picks up the profile's
+    actual terminal configuration (e.g. backend=ssh).
+    """
+    hermes_home = os.environ.get("HERMES_HOME", "")
+    if not hermes_home:
+        return
+    config_path = Path(hermes_home) / "config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        import yaml
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        terminal_cfg = cfg.get("terminal", {})
+        if not isinstance(terminal_cfg, dict):
+            return
+        TERMINAL_ENV_MAP = {
+            "backend": "TERMINAL_ENV",
+            "cwd": "TERMINAL_CWD",
+            "timeout": "TERMINAL_TIMEOUT",
+            "lifetime_seconds": "TERMINAL_LIFETIME_SECONDS",
+            "ssh_host": "TERMINAL_SSH_HOST",
+            "ssh_user": "TERMINAL_SSH_USER",
+            "ssh_port": "TERMINAL_SSH_PORT",
+            "ssh_key": "TERMINAL_SSH_KEY",
+            "docker_image": "TERMINAL_DOCKER_IMAGE",
+            "docker_forward_env": "TERMINAL_DOCKER_FORWARD_ENV",
+            "singularity_image": "TERMINAL_SINGULARITY_IMAGE",
+            "modal_image": "TERMINAL_MODAL_IMAGE",
+            "daytona_image": "TERMINAL_DAYTONA_IMAGE",
+            "vercel_runtime": "TERMINAL_VERCEL_RUNTIME",
+            "container_cpu": "TERMINAL_CONTAINER_CPU",
+            "container_memory": "TERMINAL_CONTAINER_MEMORY",
+            "container_disk": "TERMINAL_CONTAINER_DISK",
+            "container_persistent": "TERMINAL_CONTAINER_PERSISTENT",
+            "docker_volumes": "TERMINAL_DOCKER_VOLUMES",
+            "docker_env": "TERMINAL_DOCKER_ENV",
+            "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+            "docker_run_as_host_user": "TERMINAL_DOCKER_RUN_AS_HOST_USER",
+            "sandbox_dir": "TERMINAL_SANDBOX_DIR",
+            "persistent_shell": "TERMINAL_PERSISTENT_SHELL",
+            "modal_mode": "TERMINAL_MODAL_MODE",
+        }
+        for cfg_key, env_var in TERMINAL_ENV_MAP.items():
+            if cfg_key in terminal_cfg:
+                val = terminal_cfg[cfg_key]
+                if isinstance(val, (list, dict)):
+                    os.environ[env_var] = json.dumps(val)
+                else:
+                    os.environ[env_var] = str(val)
+            else:
+                os.environ.pop(env_var, None)
+    except Exception:
+        print(
+            f"[hermes-bridge] Failed to refresh terminal env from {config_path}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    # Invalidate cached default env on profile switch
+    try:
+        from tools.terminal_tool import _active_environments, _env_lock
+        with _env_lock:
+            _active_environments.pop("default", None)
+    except Exception:
+        pass
+
+
 def _resolve_model(cfg: dict[str, Any]) -> str:
     env_model = (
         os.environ.get("HERMES_MODEL", "")
@@ -637,6 +712,9 @@ class AgentPool:
             from run_agent import AIAgent
 
             with _profile_env(profile):
+                # Re-bridge terminal config from the profile's config.yaml so that
+                # terminal_tool sees the correct backend (e.g. ssh) for this profile.
+                _refresh_terminal_env()
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
                 runtime = _resolve_runtime(resolved_model, requested_provider or None)
@@ -1297,6 +1375,13 @@ class AgentPool:
 
     def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None) -> None:
         with _profile_env(profile):
+            # Re-bridge terminal config from the profile's config.yaml.
+            # gateway/run.py sets TERMINAL_* env vars at import time from the
+            # bridge's root config.yaml; when a non-default profile switches
+            # HERMES_HOME, the terminal env vars still reflect the root config.
+            # Refresh them so terminal_tool picks up the profile's backend.
+            _refresh_terminal_env()
+
             def stream_callback(delta: str) -> None:
                 with self._lock:
                     record.deltas.append(str(delta))
