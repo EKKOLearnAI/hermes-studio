@@ -612,10 +612,10 @@ async function applyBridgeChunkAsync(
         run_id: chunk.run_id,
         clarify_id: ev.clarify_id,
         question: ev.question,
-        choices: ev.choices,
+        choices: Array.isArray(ev.choices) ? ev.choices : null,
         timeout_ms: ev.timeout_ms,
       }
-      pushState(sessionMap, sessionId, 'clarify.requested', payload)
+      replaceState(sessionMap, sessionId, 'clarify.requested', payload)
       emit('clarify.requested', payload)
     } else if (evType === 'clarify.resolved') {
       const payload = {
@@ -623,7 +623,7 @@ async function applyBridgeChunkAsync(
         run_id: chunk.run_id,
         clarify_id: ev.clarify_id,
       }
-      pushState(sessionMap, sessionId, 'clarify.resolved', payload)
+      replaceState(sessionMap, sessionId, 'clarify.resolved', payload)
       emit('clarify.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
