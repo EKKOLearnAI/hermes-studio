@@ -417,7 +417,7 @@ async function preparePreviewWorktree(profile: string, branch: string): Promise<
   return worktreePath
 }
 
-function commandSpecs(): Array<{ label: string; command: string; args: string[] }> {
+export function commandSpecs(): Array<{ label: string; command: string; args: string[] }> {
   const viteBin = join(repoRoot(), 'node_modules', 'vite', 'bin', 'vite.js')
   const vueTscBin = join(repoRoot(), 'node_modules', 'vue-tsc', 'bin', 'vue-tsc.js')
   const tscBin = join(repoRoot(), 'node_modules', 'typescript', 'bin', 'tsc')
@@ -425,7 +425,7 @@ function commandSpecs(): Array<{ label: string; command: string; args: string[] 
 
   return [
     { label: 'vue-tsc', command: process.execPath, args: [vueTscBin, '-b'] },
-    { label: 'vite build', command: process.execPath, args: [viteBin, 'build'] },
+    { label: 'vite build', command: process.execPath, args: [viteBin, 'build', '--base=./'] },
     { label: 'server tsc', command: process.execPath, args: [tscBin, '--noEmit', '-p', 'packages/server/tsconfig.json'] },
     { label: 'server bundle', command: process.execPath, args: [buildServerScript] },
   ]

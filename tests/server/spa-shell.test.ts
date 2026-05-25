@@ -29,6 +29,7 @@ describe('spa shell helpers', () => {
     expect(html).toContain('<title>Test</title>')
   })
 
+
   it('renders a controlled unavailable preview page', () => {
     const html = buildUnavailablePreviewHtml('Preview demo', 'Preview is unavailable.')
 
