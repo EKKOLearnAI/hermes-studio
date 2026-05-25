@@ -429,6 +429,7 @@ def _set_worker_profile_env(profile: str | None) -> None:
     values = _read_dotenv(profile_home / ".env")
     for key, value in values.items():
         os.environ[key] = value
+    _refresh_terminal_env()
 
 
 @contextmanager
