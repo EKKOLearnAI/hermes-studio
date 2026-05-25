@@ -1,6 +1,6 @@
 import { request } from '../client'
 
-export type PreviewInstanceStatus = 'idle' | 'running' | 'success' | 'failed'
+export type PreviewInstanceStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped'
 
 export type PreviewCapabilityReason =
   | 'disabled'

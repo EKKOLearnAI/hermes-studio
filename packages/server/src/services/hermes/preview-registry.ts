@@ -160,7 +160,7 @@ async function readRegistry(profile: string): Promise<PreviewRegistryState> {
           profile,
           id: normalizeString(entry.id) || randomUUID(),
           target: normalizePreviewTarget(entry.target),
-          status: entry.status === 'idle' || entry.status === 'running' || entry.status === 'success' || entry.status === 'failed'
+          status: entry.status === 'idle' || entry.status === 'running' || entry.status === 'success' || entry.status === 'failed' || entry.status === 'stopped'
             ? entry.status
             : 'idle',
           startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : null,
@@ -268,7 +268,7 @@ export async function stopPreviewInstance(profile: string, previewId: string, re
 
     updatedRecord = {
       ...current,
-      status: 'success',
+      status: 'stopped',
       finishedAt: now,
       exitCode: 0,
       signal: null,

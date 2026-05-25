@@ -7,7 +7,7 @@ import { getProfileDir } from './hermes-profile'
 import { safeFileStore } from '../safe-file-store'
 import { logger } from '../logger'
 
-export type PreviewInstanceStatus = 'idle' | 'running' | 'success' | 'failed'
+export type PreviewInstanceStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped'
 
 export type PreviewCapabilityReason =
   | 'disabled'

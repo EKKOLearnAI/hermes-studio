@@ -50,14 +50,14 @@ describe('preview registry service', () => {
     expect(fetched).toEqual(started)
 
     const stopped = await stopPreviewInstance(profile, started.id, 'manual QA complete')
-    expect(stopped.status).toBe('success')
+    expect(stopped.status).toBe('stopped')
     expect(stopped.finishedAt).not.toBeNull()
     expect(stopped.exitCode).toBe(0)
     expect(stopped.error).toBeNull()
     expect(stopped.logTail.at(-1)).toContain('manual QA complete')
 
     const afterStop = await getPreviewInstance(profile, started.id)
-    expect(afterStop?.status).toBe('success')
+    expect(afterStop?.status).toBe('stopped')
     expect(afterStop?.finishedAt).toBe(stopped.finishedAt)
   })
 

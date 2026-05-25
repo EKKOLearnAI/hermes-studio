@@ -64,7 +64,7 @@ describe('preview controller', () => {
     stopCtx.request.body = { reason: 'QA complete' }
     await ctrl.stopPreview(stopCtx)
 
-    expect(stopCtx.body.preview.status).toBe('success')
+    expect(stopCtx.body.preview.status).toBe('stopped')
     expect(stopCtx.body.preview.finishedAt).not.toBeNull()
     expect(stopCtx.body.preview.logTail.at(-1)).toContain('QA complete')
   })

@@ -4,7 +4,7 @@ const handlers = {
   listPreviews: vi.fn(async (ctx: any) => { ctx.body = { previews: [] } }),
   getPreview: vi.fn(async (ctx: any) => { ctx.body = { preview: { id: ctx.params.previewId } } }),
   startPreview: vi.fn(async (ctx: any) => { ctx.body = { preview: { id: 'preview-1' } } }),
-  stopPreview: vi.fn(async (ctx: any) => { ctx.body = { preview: { id: ctx.params.previewId, status: 'success' } } }),
+  stopPreview: vi.fn(async (ctx: any) => { ctx.body = { preview: { id: ctx.params.previewId, status: 'stopped' } } }),
 }
 
 vi.mock('../../packages/server/src/controllers/hermes/previews', () => handlers)
