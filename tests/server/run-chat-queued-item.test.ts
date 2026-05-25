@@ -108,6 +108,7 @@ describe('ChatRunSocket queued bridge runs', () => {
       queue_id: 'queue-plan',
       input: '[IMPORTANT: expanded plan skill prompt]',
       displayInput: '/plan build the feature',
+      displayRole: 'command',
       storageMessage: '/plan build the feature',
       source: 'cli',
       profile: 'default',
@@ -118,6 +119,7 @@ describe('ChatRunSocket queued bridge runs', () => {
     expect(call[2]).toEqual(expect.objectContaining({
       input: '[IMPORTANT: expanded plan skill prompt]',
       display_input: '/plan build the feature',
+      display_role: 'command',
       storage_message: '/plan build the feature',
       queue_id: 'queue-plan',
     }))

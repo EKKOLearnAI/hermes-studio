@@ -967,12 +967,14 @@ export const useChatStore = defineStore('chat', () => {
       const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
         ? Math.round(peer.timestamp * 1000)
         : Date.now()
+      const role = peer?.role === 'command' ? 'command' : 'user'
       return [{
         id: messageId,
-        role: 'user' as const,
+        role,
         content,
         timestamp,
         queued: true,
+        systemType: role === 'command' ? 'command' as const : undefined,
       }]
     })
   }
@@ -1028,11 +1030,12 @@ export const useChatStore = defineStore('chat', () => {
     enqueueUserMessage(sessionId, {
       ...(existing || {}),
       id: messageId,
-      role: 'user',
+      role: peer?.role === 'command' ? 'command' : 'user',
       content,
       timestamp: existing?.timestamp || timestamp,
       attachments: existing?.attachments,
       queued: true,
+      systemType: peer?.role === 'command' ? 'command' : existing?.systemType,
     })
   }
 
@@ -1191,12 +1194,12 @@ export const useChatStore = defineStore('chat', () => {
 
     const userMsg: Message = {
       id: uid(),
-      role: isBridgeSlashCommand && !shouldQueue ? 'command' : 'user',
+      role: isBridgeSlashCommand ? 'command' : 'user',
       content: content.trim(),
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
       queued: shouldQueue,
-      systemType: isBridgeSlashCommand && !shouldQueue ? 'command' : undefined,
+      systemType: isBridgeSlashCommand ? 'command' : undefined,
     }
 
     if (!shouldQueue) {
@@ -2305,10 +2308,11 @@ export const useChatStore = defineStore('chat', () => {
 
     const message: Message = {
       id: messageId || uid(),
-      role: 'user',
+      role: peer?.role === 'command' ? 'command' : 'user',
       content,
       timestamp,
       queued: !!peer?.queued,
+      systemType: peer?.role === 'command' ? 'command' : undefined,
     }
     if (peer?.queued) {
       enqueueUserMessage(sid, message)

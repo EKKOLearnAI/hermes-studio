@@ -91,13 +91,14 @@ describe('plan session command', () => {
       queue_id: 'client-queue-id',
       input: '[IMPORTANT: expanded plan skill prompt]',
       displayInput: '/plan build the feature',
+      displayRole: 'command',
       storageMessage: '/plan build the feature',
     })])
     expect(namespaceEmit).toHaveBeenCalledWith('run.queued', expect.objectContaining({
       queue_length: 1,
       queued_messages: [expect.objectContaining({
         id: 'client-queue-id',
-        role: 'user',
+        role: 'command',
         content: '/plan build the feature',
         queued: true,
       })],

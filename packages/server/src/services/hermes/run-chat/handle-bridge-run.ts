@@ -126,7 +126,7 @@ function cacheBridgeContext(state: SessionState, data: Record<string, unknown> |
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -196,6 +196,7 @@ export async function handleBridgeRun(
   const displayInput = data.display_input === undefined ? input : data.display_input
   const inputStr = displayInput == null ? '' : contentBlocksToString(displayInput)
   const shouldPersistUserMessage = !skipUserMessage && displayInput !== null
+  const displayRole = data.display_role === 'command' ? 'command' : 'user'
   let messageId: number | string | undefined
 
   if (shouldPersistUserMessage) {
@@ -203,7 +204,7 @@ export async function handleBridgeRun(
       id: state.messages.length + 1,
       session_id,
       runMarker,
-      role: 'user',
+      role: displayRole,
       content: inputStr,
       timestamp: now,
     })
@@ -215,7 +216,7 @@ export async function handleBridgeRun(
     }
     messageId = addMessage({
       session_id,
-      role: 'user',
+      role: displayRole,
       content: inputStr,
       timestamp: now,
     })
@@ -235,7 +236,7 @@ export async function handleBridgeRun(
       session_id,
       message: {
         id: data.queue_id || messageId,
-        role: 'user',
+        role: displayRole,
         content: inputStr,
         timestamp: now,
       },

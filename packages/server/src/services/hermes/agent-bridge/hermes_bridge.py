@@ -1483,6 +1483,33 @@ class AgentPool:
 
         with _profile_env(profile):
             try:
+                try:
+                    from agent.skill_bundles import (
+                        build_bundle_invocation_message,
+                        resolve_bundle_command_key,
+                    )
+
+                    bundle_key = resolve_bundle_command_key(name)
+                    if bundle_key:
+                        bundle_result = build_bundle_invocation_message(
+                            bundle_key,
+                            arg,
+                            task_id=session_id,
+                        )
+                        if bundle_result:
+                            message, loaded_names, missing_names = bundle_result
+                            return {
+                                "session_id": session_id,
+                                "command": name,
+                                "handled": True,
+                                "type": "bundle",
+                                "message": message,
+                                "loaded": loaded_names,
+                                "missing": missing_names,
+                            }
+                except ImportError:
+                    pass
+
                 from agent.skill_commands import (
                     build_skill_invocation_message,
                     resolve_skill_command_key,

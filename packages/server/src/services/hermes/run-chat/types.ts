@@ -29,6 +29,7 @@ export interface QueuedRun {
   queue_id: string
   input: string | ContentBlock[]
   displayInput?: string | ContentBlock[] | null
+  displayRole?: 'user' | 'command'
   storageMessage?: string
   model?: string
   provider?: string

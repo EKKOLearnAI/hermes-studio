@@ -100,6 +100,7 @@ export class ChatRunSocket {
     socket.on('run', async (data: {
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
+      display_role?: 'user' | 'command'
       storage_message?: string
       session_id?: string
       model?: string
@@ -272,6 +273,7 @@ export class ChatRunSocket {
     data: {
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
+      display_role?: 'user' | 'command'
       storage_message?: string
       session_id?: string
       model?: string
@@ -367,6 +369,7 @@ export class ChatRunSocket {
     void this.handleRun(socket, {
       input: next.input,
       display_input: next.displayInput,
+      display_role: next.displayRole,
       storage_message: next.storageMessage,
       session_id: sessionId,
       model: next.model,
@@ -392,7 +395,7 @@ export class ChatRunSocket {
   private serializeQueuedMessages(queue: QueuedRun[]) {
     return queue.map(item => ({
       id: item.queue_id,
-      role: 'user',
+      role: item.displayRole || (typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user'),
       content: item.displayInput === null
         ? (item.storageMessage || '')
         : contentBlocksToString(item.displayInput ?? item.input),

@@ -218,6 +218,7 @@ export async function handleSessionCommand(
         queue_id: queueId,
         input: result.message,
         displayInput: displayCommand,
+        displayRole: 'command',
         storageMessage: displayCommand,
         model: ctx.model,
         instructions: ctx.instructions,
@@ -234,7 +235,7 @@ export async function handleSessionCommand(
           queue_length: state.queue.length,
           queued_messages: state.queue.map(item => ({
             id: item.queue_id,
-            role: 'user',
+            role: typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user',
             content: item.displayInput === null
               ? (item.storageMessage || '')
               : contentBlocksToString(item.displayInput ?? item.input),

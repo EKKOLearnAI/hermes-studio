@@ -113,6 +113,8 @@ export interface AgentBridgeCommandResult extends AgentBridgeResponse {
   message?: string
   output?: string
   notice?: string
+  loaded?: string[]
+  missing?: string[]
   new_session_id?: string
   history?: unknown[]
   retry?: boolean

@@ -325,6 +325,7 @@ describe('bridge run final context usage', () => {
       {
         input: '[IMPORTANT: expanded plan skill prompt]',
         display_input: '/plan build the feature',
+        display_role: 'command',
         storage_message: '/plan build the feature',
         session_id: 'session-1',
       },
@@ -336,12 +337,12 @@ describe('bridge run final context usage', () => {
       vi.fn(),
     )
 
-    expect(state.messages.find((message: any) => message.role === 'user')).toEqual(expect.objectContaining({
-      role: 'user',
+    expect(state.messages.find((message: any) => message.role === 'command')).toEqual(expect.objectContaining({
+      role: 'command',
       content: '/plan build the feature',
     }))
     expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
-      role: 'user',
+      role: 'command',
       content: '/plan build the feature',
     }))
     expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
