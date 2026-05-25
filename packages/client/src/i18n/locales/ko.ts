@@ -223,6 +223,7 @@ export default {
       goalStatus: 'Show the active goal status',
       goalPause: 'Pause the active goal loop',
       goalResume: 'Resume the paused goal loop',
+      goalDone: 'Complete and clear the active goal',
       goalClear: 'Clear the active goal',
       subgoal: 'Add a criterion to the active goal',
       clear: '현재 표시 내용 지우기',

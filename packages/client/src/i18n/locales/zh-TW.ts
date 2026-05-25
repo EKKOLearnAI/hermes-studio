@@ -223,6 +223,7 @@ export default {
       goalStatus: '查看目前目標狀態',
       goalPause: '暫停目前目標循環',
       goalResume: '繼續已暫停的目標循環',
+      goalDone: '完成並清除目前目標',
       goalClear: '清除目前目標',
       subgoal: '為目前目標追加驗收條件',
       clear: '清空目前顯示內容',

@@ -224,6 +224,7 @@ export default {
       goalStatus: '查看当前目标状态',
       goalPause: '暂停当前目标循环',
       goalResume: '继续已暂停的目标循环',
+      goalDone: '完成并清除当前目标',
       goalClear: '清除当前目标',
       subgoal: '为当前目标追加验收条件',
       clear: '清空当前显示内容',
