@@ -299,7 +299,7 @@ describe('bridge run final context usage', () => {
     }))
   })
 
-  it('keeps expanded plan prompts out of Web UI user-message history', async () => {
+  it('persists the visible plan command instead of the expanded skill prompt', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)
     const socket = makeSocket()
@@ -324,19 +324,26 @@ describe('bridge run final context usage', () => {
       socket,
       {
         input: '[IMPORTANT: expanded plan skill prompt]',
-        display_input: null,
+        display_input: '/plan build the feature',
         storage_message: '/plan build the feature',
         session_id: 'session-1',
       },
       'default',
       sessionMap,
       bridge,
-      true,
+      false,
       vi.fn(),
       vi.fn(),
     )
 
-    expect(state.messages.find((message: any) => message.role === 'user')).toBeUndefined()
+    expect(state.messages.find((message: any) => message.role === 'user')).toEqual(expect.objectContaining({
+      role: 'user',
+      content: '/plan build the feature',
+    }))
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'user',
+      content: '/plan build the feature',
+    }))
     expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
       role: 'user',
       content: '[IMPORTANT: expanded plan skill prompt]',

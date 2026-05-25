@@ -135,6 +135,7 @@ export class ChatRunSocket {
               profile: runProfile,
               model: data.model,
               instructions: data.instructions,
+              queueId: data.queue_id,
               runQueuedItem: this.runQueuedItem.bind(this),
             })
           } catch (err) {

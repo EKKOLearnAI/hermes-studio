@@ -99,7 +99,7 @@ describe('ChatRunSocket queued bridge runs', () => {
     expect(call[6]).toBe(false)
   })
 
-  it('hides expanded plan prompts when dequeuing plan command runs', async () => {
+  it('persists the visible plan command when dequeuing expanded plan command runs', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
@@ -107,7 +107,7 @@ describe('ChatRunSocket queued bridge runs', () => {
     ;(server as any).runQueuedItem(socket, 'session-1', {
       queue_id: 'queue-plan',
       input: '[IMPORTANT: expanded plan skill prompt]',
-      displayInput: null,
+      displayInput: '/plan build the feature',
       storageMessage: '/plan build the feature',
       source: 'cli',
       profile: 'default',
@@ -117,10 +117,10 @@ describe('ChatRunSocket queued bridge runs', () => {
     const call = handleBridgeRunMock.mock.calls.at(-1)!
     expect(call[2]).toEqual(expect.objectContaining({
       input: '[IMPORTANT: expanded plan skill prompt]',
-      display_input: null,
+      display_input: '/plan build the feature',
       storage_message: '/plan build the feature',
       queue_id: 'queue-plan',
     }))
-    expect(call[6]).toBe(true)
+    expect(call[6]).toBe(false)
   })
 })

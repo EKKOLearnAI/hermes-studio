@@ -1187,16 +1187,16 @@ export const useChatStore = defineStore('chat', () => {
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
     const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(content.trim())
     const wasLiveBeforeSend = isSessionLive(sid)
-    const shouldQueue = wasLiveBeforeSend && !isBridgeSlashCommand
+    const shouldQueue = wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand)
 
     const userMsg: Message = {
       id: uid(),
-      role: isBridgeSlashCommand ? 'command' : 'user',
+      role: isBridgeSlashCommand && !shouldQueue ? 'command' : 'user',
       content: content.trim(),
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
       queued: shouldQueue,
-      systemType: isBridgeSlashCommand ? 'command' : undefined,
+      systemType: isBridgeSlashCommand && !shouldQueue ? 'command' : undefined,
     }
 
     if (!shouldQueue) {

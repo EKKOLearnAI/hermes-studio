@@ -35,6 +35,7 @@ interface SessionCommandContext {
   profile: string
   model?: string
   instructions?: string
+  queueId?: string
   runQueuedItem: (socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile?: string) => void
 }
 
@@ -76,7 +77,9 @@ export async function handleSessionCommand(
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
   ensureCommandSession(sessionId, ctx)
-  persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
+  if (command.name !== 'plan') {
+    persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
+  }
 
   const emitCommand = (payload: Record<string, unknown>) => {
     const message = typeof payload.message === 'string' ? payload.message : ''
@@ -209,12 +212,12 @@ export async function handleSessionCommand(
         return
       }
 
-      const queueId = `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+      const queueId = ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
       const displayCommand = `/${bridgeCommand}`
       const next: QueuedRun = {
         queue_id: queueId,
         input: result.message,
-        displayInput: state.isWorking ? displayCommand : null,
+        displayInput: displayCommand,
         storageMessage: displayCommand,
         model: ctx.model,
         instructions: ctx.instructions,
@@ -238,12 +241,6 @@ export async function handleSessionCommand(
             timestamp: Math.floor(Date.now() / 1000),
             queued: true,
           })),
-        })
-        emitCommand({
-          action: 'plan',
-          terminal: false,
-          message: `Plan request queued. Queue length: ${state.queue.length}.`,
-          queueLength: state.queue.length,
         })
         return
       }
