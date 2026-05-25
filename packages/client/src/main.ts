@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import router from './router'
+import { normalizeLegacyRoutePath } from './router/legacy-routing'
 import { i18n } from './i18n'
 import App from './App.vue'
 import './styles/global.scss'
@@ -25,12 +26,25 @@ if (isComic) {
   document.documentElement.classList.add('comic')
 }
 
-// Read token from URL BEFORE router initializes (hash router strips params)
-const urlParams = new URLSearchParams(window.location.search)
+const legacyHashRedirect = normalizeLegacyRoutePath(window.location.hash)
+const currentSearch = new URLSearchParams(window.location.search)
 const hashQuery = window.location.hash.split('?')[1]
-const urlToken = urlParams.get('token') || (hashQuery ? new URLSearchParams(hashQuery).get('token') : null)
+const hashParams = hashQuery ? new URLSearchParams(hashQuery) : null
+const urlToken = currentSearch.get('token') || (hashParams ? hashParams.get('token') : null)
 if (urlToken) {
   ;(window as any).__LOGIN_TOKEN__ = urlToken
+}
+
+if (legacyHashRedirect) {
+  const [pathname, queryString = ''] = legacyHashRedirect.split('?')
+  if (queryString) {
+    const legacyQuery = new URLSearchParams(queryString)
+    legacyQuery.forEach((value, key) => {
+      currentSearch.set(key, value)
+    })
+  }
+  const search = currentSearch.toString()
+  window.history.replaceState(null, '', `${pathname}${search ? `?${search}` : ''}`)
 }
 
 const app = createApp(App)

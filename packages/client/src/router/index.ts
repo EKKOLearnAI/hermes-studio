@@ -1,8 +1,9 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory, type NavigationGuardNext, type RouteLocationGeneric, type RouteLocationNormalized } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import { normalizeLegacyRoutePath } from './legacy-routing'
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes: [
     {
       path: '/',
@@ -11,121 +12,136 @@ const router = createRouter({
       meta: { public: true },
     },
     {
-      path: '/hermes/chat',
+      path: '/session/new',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
     },
     {
-      path: '/hermes/session/:sessionId',
+      path: '/session/:sessionId',
       name: 'hermes.session',
       component: () => import('@/views/hermes/ChatView.vue'),
     },
     {
-      path: '/hermes/history',
+      path: '/history',
       name: 'hermes.history',
       component: () => import('@/views/hermes/HistoryView.vue'),
     },
     {
-      path: '/hermes/history/session/:sessionId',
+      path: '/history/session/:sessionId',
       name: 'hermes.historySession',
       component: () => import('@/views/hermes/HistoryView.vue'),
     },
     {
-      path: '/hermes/jobs',
+      path: '/jobs',
       name: 'hermes.jobs',
       component: () => import('@/views/hermes/JobsView.vue'),
     },
     {
-      path: '/hermes/kanban',
+      path: '/kanban',
       name: 'hermes.kanban',
       component: () => import('@/views/hermes/KanbanView.vue'),
     },
     {
-      path: '/hermes/models',
+      path: '/models',
       name: 'hermes.models',
       component: () => import('@/views/hermes/ModelsView.vue'),
     },
     {
-      path: '/hermes/profiles',
+      path: '/profiles',
       name: 'hermes.profiles',
       component: () => import('@/views/hermes/ProfilesView.vue'),
       meta: { requiresSuperAdmin: true },
     },
     {
-      path: '/hermes/logs',
+      path: '/logs',
       name: 'hermes.logs',
       component: () => import('@/views/hermes/LogsView.vue'),
     },
     {
-      path: '/hermes/usage',
+      path: '/usage',
       name: 'hermes.usage',
       component: () => import('@/views/hermes/UsageView.vue'),
     },
     {
-      path: '/hermes/performance',
+      path: '/performance',
       name: 'hermes.performance',
       component: () => import('@/views/hermes/PerformanceView.vue'),
       meta: { requiresSuperAdmin: true },
     },
     {
-      path: '/hermes/skills-usage',
+      path: '/skills-usage',
       name: 'hermes.skillsUsage',
       component: () => import('@/views/hermes/SkillsUsageView.vue'),
     },
     {
-      path: '/hermes/skills',
+      path: '/skills',
       name: 'hermes.skills',
       component: () => import('@/views/hermes/SkillsView.vue'),
     },
     {
-      path: '/hermes/plugins',
+      path: '/plugins',
       name: 'hermes.plugins',
       component: () => import('@/views/hermes/PluginsView.vue'),
     },
     {
-      path: '/hermes/memory',
+      path: '/memory',
       name: 'hermes.memory',
       component: () => import('@/views/hermes/MemoryView.vue'),
     },
     {
-      path: '/hermes/settings',
+      path: '/settings',
       name: 'hermes.settings',
       component: () => import('@/views/hermes/SettingsView.vue'),
     },
     {
-      path: '/hermes/channels',
+      path: '/channels',
       name: 'hermes.channels',
       component: () => import('@/views/hermes/ChannelsView.vue'),
     },
     {
-      path: '/hermes/terminal',
+      path: '/terminal',
       name: 'hermes.terminal',
       component: () => import('@/views/hermes/TerminalView.vue'),
     },
     {
-      path: '/hermes/group-chat',
+      path: '/group-chat',
       name: 'hermes.groupChat',
       component: () => import('@/views/hermes/GroupChatView.vue'),
     },
     {
-      path: '/hermes/group-chat/room/:roomId',
+      path: '/group-chat/room/:roomId',
       name: 'hermes.groupChatRoom',
       component: () => import('@/views/hermes/GroupChatView.vue'),
     },
     {
-      path: '/hermes/files',
+      path: '/files',
       name: 'hermes.files',
       component: () => import('@/views/hermes/FilesView.vue'),
+    },
+    {
+      path: '/hermes/chat',
+      redirect: { name: 'hermes.chat' },
+    },
+    {
+      path: '/hermes/:pathMatch(.*)*',
+      redirect: (to: RouteLocationGeneric) => {
+        const target = normalizeLegacyRoutePath(to.fullPath) || '/'
+        const [path, queryString = ''] = target.split('?')
+        return {
+          path,
+          query: queryString ? Object.fromEntries(new URLSearchParams(queryString)) : to.query,
+        }
+      },
     },
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach((to: RouteLocationNormalized, _from: RouteLocationNormalized, next: NavigationGuardNext) => {
   // Public pages don't need auth
   if (to.meta.public) {
     // Already has key, skip login
     if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/hermes/chat' })
+      next({ path: '/session/new' })
       return
     }
     next()
