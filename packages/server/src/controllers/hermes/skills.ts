@@ -10,6 +10,10 @@ import type { SkillSource } from '../../services/config-helpers'
 import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
+import type {
+  HermesSkillUsageRow, HermesSkillUsageDailySkillRow,
+  HermesSkillUsageDailyRow, HermesSkillUsageStats,
+} from '../../db/hermes/sessions-db'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -417,12 +421,40 @@ export async function list(ctx: any) {
 export async function usageStats(ctx: any) {
   const rawDays = parseInt(String(ctx.query?.days ?? '7'), 10)
   const days = Number.isFinite(rawDays) && rawDays > 0 ? Math.min(rawDays, 365) : 7
+  let skillUsageStats = {} as HermesSkillUsageStats
 
   try {
-    ctx.body = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
+    skillUsageStats = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+  }
+
+  const dayMap = new Map<string, HermesSkillUsageDailyRow>()
+  const now = new Date()
+
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
+    const key = d.toISOString().slice(0, 10)
+    dayMap.set(key, { date: key, manage_count: 0, total_count: 0, view_count: 0, skills: [] as HermesSkillUsageDailySkillRow[] })
+  }
+
+  for (const d of skillUsageStats.by_day) {
+    const existing = dayMap.get(d.date)
+
+    if (existing) {
+      existing.manage_count += d.manage_count
+      existing.total_count += d.total_count
+      existing.view_count += d.view_count
+      existing.skills = [...d.skills]
+    }
+  }
+
+  ctx.body = {
+    ...skillUsageStats,
+    period_days: days,
+    by_day: [...dayMap.values()],
   }
 }
 

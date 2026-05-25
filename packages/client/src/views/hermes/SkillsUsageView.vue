@@ -467,7 +467,7 @@ onMounted(() => {
 
 .skill-bar-col {
   flex: 1;
-  min-width: 3px;
+  min-width: 0px;
   position: relative;
   outline: none;
 

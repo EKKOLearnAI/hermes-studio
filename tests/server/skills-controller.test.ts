@@ -72,7 +72,7 @@ describe('skills controller', () => {
     await usageStats(ctx)
 
     expect(mockGetSkillUsageStatsFromDb).toHaveBeenCalledWith(30, undefined, 'research')
-    expect(ctx.body.period_days).toBe(7)
+    expect(ctx.body.period_days).toBe(30)
   })
 
   it('falls back to active profile when no request profile is set', async () => {
