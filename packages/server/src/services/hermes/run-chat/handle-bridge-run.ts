@@ -94,7 +94,7 @@ function cacheBridgeContext(state: SessionState, data: Record<string, unknown> |
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -128,10 +128,12 @@ export async function handleBridgeRun(
     if (resolvedProvider && sessionRow.provider !== resolvedProvider) updates.provider = resolvedProvider
     if (Object.keys(updates).length > 0) updateSession(session_id, updates)
   }
-  if (sessionRow?.workspace) {
-    const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
-    fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
-  }
+  const runContext = [
+    `[Current Hermes profile: ${profile}]`,
+    sessionRow?.workspace ? `[Current working directory: ${sessionRow.workspace}]` : '',
+    'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
+  ].filter(Boolean).join('\n')
+  fullInstructions = `\n${runContext}\n${fullInstructions}`
 
   const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   const now = Math.floor(Date.now() / 1000)
@@ -145,6 +147,7 @@ export async function handleBridgeRun(
 
   state.isWorking = true
   state.isAborting = false
+  state.events = []
   state.profile = profile
   state.source = 'cli'
   state.activeRunMarker = runMarker
@@ -173,7 +176,7 @@ export async function handleBridgeRun(
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
     createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
   }
-  addMessage({
+  const messageId = addMessage({
     session_id,
     role: 'user',
     content: inputStr,
@@ -181,6 +184,19 @@ export async function handleBridgeRun(
   })
 
   socket.join(`session:${session_id}`)
+  const peerTarget = data.peerExcludeSocketId
+    ? nsp.to(`session:${session_id}`).except(data.peerExcludeSocketId)
+    : socket.to(`session:${session_id}`)
+  peerTarget.emit('run.peer_user_message', {
+    event: 'run.peer_user_message',
+    session_id,
+    message: {
+      id: data.queue_id || messageId,
+      role: 'user',
+      content: inputStr,
+      timestamp: now,
+    },
+  })
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id }
     nsp.to(`session:${session_id}`).emit(event, tagged)
@@ -478,6 +494,38 @@ async function applyBridgeChunkAsync(
       }
       pushState(sessionMap, sessionId, 'tool.completed', payload)
       emit('tool.completed', payload)
+    } else if (evType?.startsWith('subagent.')) {
+      const payload = {
+        event: evType,
+        run_id: chunk.run_id,
+        subagent_id: ev.subagent_id,
+        parent_id: ev.parent_id,
+        depth: ev.depth,
+        task_index: ev.task_index,
+        task_count: ev.task_count,
+        goal: ev.goal,
+        model: ev.model,
+        toolsets: ev.toolsets,
+        tool_count: ev.tool_count,
+        tool: ev.tool_name,
+        name: ev.tool_name,
+        preview: ev.text || ev.summary || ev.tool_preview || '',
+        text: ev.text || '',
+        status: ev.status,
+        summary: ev.summary,
+        duration: ev.duration_seconds,
+        duration_seconds: ev.duration_seconds,
+        input_tokens: ev.input_tokens,
+        output_tokens: ev.output_tokens,
+        reasoning_tokens: ev.reasoning_tokens,
+        api_calls: ev.api_calls,
+        cost_usd: ev.cost_usd,
+        files_read: ev.files_read,
+        files_written: ev.files_written,
+        output_tail: ev.output_tail,
+      }
+      pushState(sessionMap, sessionId, evType, payload)
+      emit(evType, payload)
     } else if (evType === 'turn.boundary') {
       flushBridgePendingToDb(state, sessionId, runMarker)
     } else if (evType === 'reasoning.delta' || evType === 'thinking.delta') {

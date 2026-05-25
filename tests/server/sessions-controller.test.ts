@@ -5,6 +5,7 @@ const getConversationDetailFromDbMock = vi.fn()
 const listConversationSummariesMock = vi.fn()
 const getConversationDetailMock = vi.fn()
 const getSessionDetailFromDbMock = vi.fn()
+const getSessionDetailFromDbWithProfileMock = vi.fn()
 const getExactSessionDetailFromDbWithProfileMock = vi.fn()
 const getUsageStatsFromDbMock = vi.fn()
 const getSessionMock = vi.fn()
@@ -21,6 +22,7 @@ const getLocalUsageStatsMock = vi.fn()
 const getActiveProfileNameMock = vi.fn()
 const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
+const listUserProfilesMock = vi.fn()
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -51,6 +53,7 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   listSessionSummaries: vi.fn(),
   searchSessionSummaries: vi.fn(),
   getSessionDetailFromDb: getSessionDetailFromDbMock,
+  getSessionDetailFromDbWithProfile: getSessionDetailFromDbWithProfileMock,
   getExactSessionDetailFromDbWithProfile: getExactSessionDetailFromDbWithProfileMock,
   getUsageStatsFromDb: getUsageStatsFromDbMock,
 }))
@@ -64,6 +67,10 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   createSession: localCreateSessionMock,
   getSession: getSessionMock,
   updateSession: localUpdateSessionMock,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+  listUserProfiles: listUserProfilesMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
@@ -109,6 +116,7 @@ describe('session conversations controller', () => {
     listConversationSummariesMock.mockReset()
     getConversationDetailMock.mockReset()
     getSessionDetailFromDbMock.mockReset()
+    getSessionDetailFromDbWithProfileMock.mockReset()
     getExactSessionDetailFromDbWithProfileMock.mockReset()
     getUsageStatsFromDbMock.mockReset()
     getSessionMock.mockReset()
@@ -127,6 +135,8 @@ describe('session conversations controller', () => {
     getActiveProfileNameMock.mockReturnValue('default')
     loggerWarnMock.mockReset()
     getCompressionSnapshotMock.mockReset()
+    listUserProfilesMock.mockReset()
+    listUserProfilesMock.mockReturnValue([])
   })
 
   it('lists conversations from the local session store', async () => {
@@ -157,9 +167,123 @@ describe('session conversations controller', () => {
     const ctx: any = { query: { humanOnly: 'true', limit: '5' }, body: null }
     await mod.listConversations(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith('default', undefined, 5)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 5)
     expect(listConversationSummariesMock).not.toHaveBeenCalled()
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
+  })
+
+  it('lists all account-accessible single-chat sessions when only the active profile header is present', async () => {
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
+    localListSessionsMock.mockReturnValue([
+      {
+        id: 'default-session',
+        profile: 'default',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'Default',
+        started_at: 1,
+        ended_at: null,
+        last_active: 3,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+      {
+        id: 'travel-session',
+        profile: 'travel',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'Travel',
+        started_at: 2,
+        ended_at: null,
+        last_active: 4,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+      {
+        id: 'secret-session',
+        profile: 'secret',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'Secret',
+        started_at: 3,
+        ended_at: null,
+        last_active: 5,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: {},
+      state: {
+        user: { id: 1, role: 'admin' },
+        profile: { name: 'travel' },
+      },
+      body: null,
+    }
+    await mod.list(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2000)
+    expect(ctx.body.sessions.map((session: any) => session.id)).toEqual(['default-session', 'travel-session'])
+  })
+
+  it('filters the single-chat session list when profile is explicitly provided', async () => {
+    localListSessionsMock.mockReturnValue([])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { profile: 'travel' },
+      state: { profile: { name: 'default' } },
+      body: null,
+    }
+    await mod.list(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
+  })
+
+  it('searches all account-accessible single-chat sessions unless profile is explicit', async () => {
+    localSearchSessionsMock.mockReturnValue([])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { q: 'docker', limit: '10' },
+      state: { profile: { name: 'travel' } },
+      body: null,
+    }
+    await mod.search(ctx)
+
+    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
   })
 
   it('propagates local session store errors for conversation summaries', async () => {
@@ -261,6 +385,33 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('reads Hermes history detail from the requested profile database', async () => {
+    localGetSessionDetailMock.mockReturnValue(null)
+    getSessionDetailFromDbWithProfileMock.mockResolvedValue({
+      id: 'travel-session',
+      source: 'cli',
+      title: 'Travel detail',
+      messages: [
+        { id: 1, session_id: 'travel-session', role: 'user', content: 'from travel', timestamp: 1 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'travel-session' }, query: { profile: 'travel' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('travel-session')
+    expect(getSessionDetailFromDbWithProfileMock).toHaveBeenCalledWith('travel-session', 'travel')
+    expect(getSessionDetailFromDbMock).not.toHaveBeenCalled()
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body.session).toMatchObject({
+      id: 'travel-session',
+      profile: 'travel',
+      title: 'Travel detail',
+      messages: [{ content: 'from travel' }],
+    })
+  })
+
   it('does not return api_server sessions from the Hermes history detail endpoint', async () => {
     localGetSessionDetailMock.mockReturnValue({
       id: 'api-1',
@@ -342,6 +493,39 @@ describe('session conversations controller', () => {
       sessions: 2,
       cost: 0.02,
     })
+  })
+
+  it('loads usage analytics from the request-scoped profile state database', async () => {
+    getUsageStatsFromDbMock.mockResolvedValue({
+      input_tokens: 12,
+      output_tokens: 6,
+      cache_read_tokens: 3,
+      cache_write_tokens: 1,
+      reasoning_tokens: 2,
+      sessions: 1,
+      cost: 0.01,
+      total_api_calls: 4,
+      by_model: [
+        { model: 'research-model', input_tokens: 12, output_tokens: 6, cache_read_tokens: 3, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
+      ],
+      by_day: [],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { days: '2' }, state: { profile: { name: 'research' } }, body: null }
+    await mod.usageStats(ctx)
+
+    expect(getUsageStatsFromDbMock).toHaveBeenCalledWith(2, undefined, 'research')
+    expect(ctx.body).toMatchObject({
+      total_input_tokens: 12,
+      total_output_tokens: 6,
+      total_sessions: 1,
+      total_cost: 0.01,
+      total_api_calls: 4,
+    })
+    expect(ctx.body.model_usage).toEqual([
+      { model: 'research-model', input_tokens: 12, output_tokens: 6, cache_read_tokens: 3, cache_write_tokens: 1, reasoning_tokens: 2, sessions: 1 },
+    ])
   })
 
   it('keeps blank model usage as returned by state.db analytics', async () => {

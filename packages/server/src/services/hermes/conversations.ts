@@ -34,6 +34,7 @@ const exportCache = new Map<string, CachedExport>()
 
 export interface ConversationSummary {
   id: string
+  profile?: string | null
   source: string
   model: string
   title: string | null

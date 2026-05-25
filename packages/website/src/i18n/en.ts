@@ -40,11 +40,11 @@ export default {
     },
     profiles: {
       title: 'Multi-Profile',
-      desc: 'Isolated profiles with independent configs. Clone, import/export profiles, and run chats through the agent bridge.',
+      desc: 'Account-authorized Hermes profiles with isolated config, models, uploads, jobs, usage, memory, skills, plugins, and providers.',
     },
     files: {
       title: 'File Browser',
-      desc: 'Manage files across local, Docker, SSH, and Singularity backends with upload, preview, and edit.',
+      desc: 'Manage files across local, Docker, SSH, and Singularity backends with profile-scoped upload plus path-based download, preview, and edit.',
     },
     terminal: {
       title: 'Web Terminal',
@@ -124,7 +124,7 @@ export default {
       },
       login: {
         title: 'Login',
-        content: 'The auto-generated token is stored in ~/.hermes-web-ui/.token. You can also set up username/password login from the Settings page after your first login.',
+        content: 'The auto-generated token is stored in ~/.hermes-web-ui/.token. Username/password login is available with bootstrap credentials admin / 123456 on first use, and the app prompts users to change default credentials after login.',
       },
     },
     configuration: {
@@ -137,18 +137,18 @@ export default {
           ['AUTH_TOKEN', 'Custom auth token (overrides auto-generated)'],
           ['PORT', 'Server listen port (default: 8648)'],
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],
-          ['UPLOAD_DIR', 'Custom upload directory path'],
+          ['UPLOAD_DIR', 'Custom upload root. Uploaded files are stored below profile-scoped subdirectories.'],
           ['CORS_ORIGINS', 'CORS origin config (default: *)'],
           ['HERMES_BIN', 'Custom path to hermes CLI binary'],
         ],
       },
       gateway: {
         title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. The Web UI no longer starts or manages separate gateway processes.',
+        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
       },
       profiles: {
         title: 'Profiles',
-        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own Hermes config and cache. Create, clone, import, or export profiles from the Profiles page.',
+        content: 'Profiles provide isolated configurations for different use cases. Super administrators can manage every profile, while regular administrators only see and use profiles assigned to their account. Create, clone, import, export, or switch Hermes profiles from the Profiles page.',
       },
     },
     features: {
@@ -156,7 +156,7 @@ export default {
       intro: 'Explore the core features of Hermes Web UI.',
       chat: {
         title: 'AI Chat',
-        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and Ctrl+K search across the Web UI local session database.',
+        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Web UI local session database.',
       },
       kanban: {
         title: 'Kanban Board',
@@ -184,7 +184,7 @@ export default {
       },
       files: {
         title: 'File Browser',
-        content: 'Browse and manage files on remote backends including local, Docker, SSH, and Singularity. Upload, download, rename, move, delete files, and preview content with syntax highlighting.',
+        content: 'Browse and manage files on remote backends including local, Docker, SSH, and Singularity. Uploads are stored under the selected/requested profile, while downloads resolve real paths so agent-generated artifacts outside the upload directory still work.',
       },
       analytics: {
         title: 'Usage Analytics',
@@ -232,7 +232,7 @@ export default {
       intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
-        content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, memory operations, and static assets.',
+        content: 'The Koa server handles session management, profile CRUD, account- and profile-scoped management, config read/write, log access, skill listing, memory operations, and static assets.',
       },
       proxy: {
         title: 'Chat Streaming',
@@ -240,7 +240,7 @@ export default {
       },
       auth: {
         title: 'Authentication',
-        content: 'All API endpoints require a Bearer token via the Authorization header. The token is auto-generated on first run and stored in ~/.hermes-web-ui/.token. Optional username/password login can be configured from the Settings page.',
+        content: 'API endpoints require authenticated access. The token is auto-generated on first run and stored in ~/.hermes-web-ui/.token. Username/password login uses account records; super administrators manage users and profile bindings, while regular administrators manage their own account details.',
       },
     },
   },

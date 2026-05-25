@@ -21,6 +21,7 @@ function runPython(script: string): void {
 const harness = String.raw`
 import contextvars
 import importlib.util
+import json
 import os
 import sys
 import threading
@@ -309,6 +310,7 @@ broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
 profile_worker = FakeWorker(2)
 broker._workers["default"] = profile_worker
 broker._run_profile["run-session-a"] = "default"
+broker._running_run_profile["run-session-a"] = "default"
 broker._session_profile["session-a"] = "default"
 broker._approval_profile["approval-a"] = "default"
 broker._compression_profile["compression-a"] = "default"
@@ -318,6 +320,7 @@ assert destroy_profile_result == {"profile": "default", "destroyed": 2}
 assert profile_worker.stopped
 assert "default" not in broker._workers
 assert broker._run_profile == {}
+assert broker._running_run_profile == {}
 assert broker._session_profile == {}
 assert broker._approval_profile == {}
 assert broker._compression_profile == {}
@@ -327,6 +330,7 @@ worker_b = FakeWorker(3)
 broker._workers["a"] = worker_a
 broker._workers["b"] = worker_b
 broker._run_profile["run-a"] = "a"
+broker._running_run_profile["run-a"] = "a"
 broker._session_profile["session-b"] = "b"
 
 destroy_all_result = broker.handle({"action": "destroy_all"})
@@ -335,7 +339,36 @@ assert worker_a.stopped
 assert worker_b.stopped
 assert broker._workers == {}
 assert broker._run_profile == {}
+assert broker._running_run_profile == {}
 assert broker._session_profile == {}
+`)
+  })
+
+  it('builds broker ping metrics without calling profile workers', () => {
+    runPython(String.raw`
+${harness}
+
+class PingWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+
+    def request(self, req):
+        raise AssertionError("broker ping must not forward to worker")
+
+broker = bridge.BridgeBroker("ipc:///tmp/broker.sock")
+broker._workers["default"] = PingWorker()
+broker._session_profile["session-a"] = "default"
+broker._running_run_profile["run-a"] = "default"
+
+resp = broker.handle({"action": "ping"})
+assert resp["workers"] == {"default": True}
+assert resp["worker_details"]["default"]["pid"] == 12345
+assert resp["active_sessions"] == 1
+assert resp["running_sessions"] == 1
+assert resp["sessions_by_profile"] == {"default": 1}
+assert resp["running_sessions_by_profile"] == {"default": 1}
 `)
   })
 
@@ -393,6 +426,133 @@ assert calls == []
 pool._run_context.session_id = "session-a"
 assert pool._approval_dispatcher("cmd", "desc", allow_permanent=False) == "once"
 assert calls == [("cmd", "desc", False)]
+`)
+  })
+
+  it('cleans broker workers and wires worker parent watchdog state', () => {
+    runPython(String.raw`
+${harness}
+
+class FakeWorker:
+    def __init__(self):
+        self.running = True
+        self.stopped = False
+
+    def stop(self):
+        self.running = False
+        self.stopped = True
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+worker = FakeWorker()
+broker._workers["default"] = worker
+broker._run_profile["run-a"] = "default"
+broker._running_run_profile["run-a"] = "default"
+broker._session_profile["session-a"] = "default"
+broker._approval_profile["approval-a"] = "default"
+broker._compression_profile["compression-a"] = "default"
+
+broker.stop()
+assert broker._stop.is_set()
+assert worker.stopped
+assert broker._workers == {}
+assert broker._run_profile == {}
+assert broker._running_run_profile == {}
+assert broker._session_profile == {}
+assert broker._approval_profile == {}
+assert broker._compression_profile == {}
+
+created = {}
+
+class FakeProcess:
+    stdout = None
+    stderr = None
+
+    def poll(self):
+        return None
+
+def fake_popen(args, **kwargs):
+    created["args"] = args
+    created["env"] = kwargs["env"]
+    return FakeProcess()
+
+original_popen = bridge.subprocess.Popen
+original_getpid = bridge.os.getpid
+try:
+    bridge.subprocess.Popen = fake_popen
+    bridge.os.getpid = lambda: 4242
+    proc_worker = bridge.WorkerProcess("default", "ipc:///tmp/worker.sock", "/agent", "/home")
+    proc_worker._pipe_stderr = lambda: None
+    proc_worker._wait_ready = lambda: None
+    proc_worker.start()
+finally:
+    bridge.subprocess.Popen = original_popen
+    bridge.os.getpid = original_getpid
+
+assert created["env"]["HERMES_AGENT_BRIDGE_BROKER_PID"] == "4242"
+assert created["env"]["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] == "default"
+
+stop_event = threading.Event()
+seen_pids = []
+original_process_exists = bridge._process_exists
+try:
+    bridge._process_exists = lambda pid: seen_pids.append(pid) and False
+    bridge._start_parent_process_watchdog(12345, stop_event, "test", interval=0.01)
+    assert wait_for(stop_event.is_set, timeout=2)
+finally:
+    bridge._process_exists = original_process_exists
+
+assert seen_pids == [12345]
+`)
+  })
+
+  it('handles broker ping while another broker request is blocked', () => {
+    runPython(String.raw`
+${harness}
+
+class BlockingBroker(bridge.BridgeBroker):
+    def handle(self, req):
+        if req.get("action") == "block":
+            time.sleep(0.4)
+            return {"blocked": True}
+        return super().handle(req)
+
+class MemoryConn:
+    def __init__(self, req):
+        self.request = (json.dumps(req) + "\n").encode("utf-8")
+        self.response = b""
+        self.closed = False
+
+    def recv(self, size):
+        if not self.request:
+            return b""
+        chunk = self.request[:size]
+        self.request = self.request[size:]
+        return chunk
+
+    def sendall(self, payload):
+        self.response += payload
+
+    def close(self):
+        self.closed = True
+
+broker = BlockingBroker("ipc:///tmp/unused.sock")
+blocking_conn = MemoryConn({"action": "block"})
+thread = threading.Thread(target=broker._handle_connection, args=(blocking_conn,))
+thread.start()
+time.sleep(0.05)
+
+ping_conn = MemoryConn({"action": "ping"})
+broker._handle_connection(ping_conn)
+ping_resp = json.loads(ping_conn.response.decode("utf-8"))
+assert ping_resp["ok"] is True, ping_resp
+assert ping_resp["pong"] is True, ping_resp
+assert ping_conn.closed is True, ping_conn.closed
+
+thread.join(timeout=2)
+assert not thread.is_alive(), blocking_conn.response
+blocked_resp = json.loads(blocking_conn.response.decode("utf-8"))
+assert blocked_resp["ok"] is True, blocked_resp
+assert blocked_resp["blocked"] is True, blocked_resp
 `)
   })
 })

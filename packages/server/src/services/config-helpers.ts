@@ -2,7 +2,7 @@ import { readFile, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath, getProfileDir } from './hermes/hermes-profile'
+import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getProfileDir } from './hermes/hermes-profile'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
 
@@ -43,7 +43,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
 
 // --- Types ---
 
-export type SkillSource = 'builtin' | 'hub' | 'local'
+export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
 
 export interface SkillInfo {
   name: string
@@ -71,13 +71,15 @@ export interface ModelGroup {
 // --- Config YAML helpers ---
 
 const configPath = () => getActiveConfigPath()
+const configPathForProfile = (profile: string) => join(getProfileDir(profile), 'config.yaml')
+const envPathForProfile = (profile: string) => join(getProfileDir(profile), '.env')
 
 export async function readConfigYaml(): Promise<Record<string, any>> {
   return safeFileStore.readYaml(configPath())
 }
 
 export async function readConfigYamlForProfile(profile: string): Promise<Record<string, any>> {
-  return safeFileStore.readYaml(join(getProfileDir(profile), 'config.yaml'))
+  return safeFileStore.readYaml(configPathForProfile(profile))
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {
@@ -88,6 +90,13 @@ export async function updateConfigYaml<T = void>(
   updater: (config: Record<string, any>) => Record<string, any> | { data: Record<string, any>; result: T; write?: boolean } | Promise<Record<string, any> | { data: Record<string, any>; result: T; write?: boolean }>,
 ): Promise<T | undefined> {
   return safeFileStore.updateYaml(configPath(), updater, { backup: true })
+}
+
+export async function updateConfigYamlForProfile<T = void>(
+  profile: string,
+  updater: (config: Record<string, any>) => Record<string, any> | { data: Record<string, any>; result: T; write?: boolean } | Promise<Record<string, any> | { data: Record<string, any>; result: T; write?: boolean }>,
+): Promise<T | undefined> {
+  return safeFileStore.updateYaml(configPathForProfile(profile), updater, { backup: true })
 }
 
 export function stripLegacyApiServerGatewayConfig(config: Record<string, any>): { config: Record<string, any>; changed: boolean } {
@@ -112,9 +121,8 @@ function assertValidEnvKey(key: string): void {
   }
 }
 
-export async function saveEnvValue(key: string, value: string): Promise<void> {
+async function saveEnvValueAtPath(envPath: string, key: string, value: string): Promise<void> {
   assertValidEnvKey(key)
-  const envPath = getActiveEnvPath()
   await safeFileStore.updateText(envPath, (raw) => {
     const remove = !value
     const lines = raw.split('\n')
@@ -141,6 +149,14 @@ export async function saveEnvValue(key: string, value: string): Promise<void> {
     return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '') + '\n'
   })
   try { await chmod(envPath, 0o600) } catch { /* ignore */ }
+}
+
+export async function saveEnvValue(key: string, value: string): Promise<void> {
+  await saveEnvValueAtPath(getActiveEnvPath(), key, value)
+}
+
+export async function saveEnvValueForProfile(profile: string, key: string, value: string): Promise<void> {
+  await saveEnvValueAtPath(envPathForProfile(profile), key, value)
 }
 
 // --- File helpers ---

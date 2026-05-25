@@ -40,11 +40,11 @@ export default {
     },
     profiles: {
       title: '多配置',
-      desc: '隔离的多配置文件，独立配置。支持克隆、导入/导出，并通过 agent bridge 运行聊天。',
+      desc: '按账号授权的 Hermes Profile，隔离配置、模型、上传、任务、用量、记忆、技能、插件和 Provider。',
     },
     files: {
       title: '文件管理',
-      desc: '跨本地、Docker、SSH 和 Singularity 管理文件，支持上传、预览和编辑。',
+      desc: '跨本地、Docker、SSH 和 Singularity 管理文件，支持按 Profile 上传、按路径下载、预览和编辑。',
     },
     terminal: {
       title: 'Web 终端',
@@ -124,7 +124,7 @@ export default {
       },
       login: {
         title: '登录',
-        content: '自动生成的令牌存储在 ~/.hermes-web-ui/.token。首次登录后可在设置页面配置用户名/密码登录。',
+        content: '自动生成的令牌存储在 ~/.hermes-web-ui/.token。首次使用可通过默认登录名 admin / 默认密码 123456 登录；登录后系统会提示尽快修改默认账户和密码。',
       },
     },
     configuration: {
@@ -137,18 +137,18 @@ export default {
           ['AUTH_TOKEN', '自定义认证令牌（覆盖自动生成的令牌）'],
           ['PORT', '服务器监听端口（默认：8648）'],
           ['BIND_HOST', '服务器绑定地址（默认：0.0.0.0）。如需 IPv6，请显式设置为 ::。'],
-          ['UPLOAD_DIR', '自定义上传目录路径'],
+          ['UPLOAD_DIR', '自定义上传根目录。文件会保存在按 Profile 隔离的子目录下'],
           ['CORS_ORIGINS', 'CORS 来源配置（默认：*）'],
           ['HERMES_BIN', '自定义 hermes CLI 二进制路径'],
         ],
       },
       gateway: {
         title: 'Agent Bridge 运行时',
-        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。Web UI 不再启动或管理独立的 gateway 进程。',
+        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
       },
       profiles: {
         title: '配置文件',
-        content: '配置文件为不同场景提供隔离的配置。每个配置文件拥有独立的 Hermes 配置和缓存。可在配置页面创建、克隆、导入或导出配置文件。',
+        content: 'Profile 为不同场景提供隔离配置。超级管理员可以管理全部 Profile；普通管理员只能查看和使用分配给自己的 Profile。可在 Profile 页面创建、克隆、导入、导出或切换 Hermes Profile。',
       },
     },
     features: {
@@ -156,7 +156,7 @@ export default {
       intro: '探索 Hermes Web UI 的核心功能。',
       chat: {
         title: 'AI 聊天',
-        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、文件上传/下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
+        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
       },
       kanban: {
         title: '看板管理',
@@ -184,7 +184,7 @@ export default {
       },
       files: {
         title: '文件管理',
-        content: '浏览和管理本地、Docker、SSH 和 Singularity 等远程后端上的文件。支持上传、下载、重命名、移动、删除文件以及带语法高亮的内容预览。',
+        content: '浏览和管理本地、Docker、SSH 和 Singularity 等远程后端上的文件。上传保存到当前选择/请求的 Profile；下载按真实路径解析，因此上传目录外的 Agent 产物也可以下载。',
       },
       analytics: {
         title: '用量分析',
@@ -232,7 +232,7 @@ export default {
       intro: 'Hermes Web UI 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
       local: {
         title: '本地 BFF 端点',
-        content: 'Koa 服务器处理会话管理、配置文件 CRUD、配置读写、日志访问、技能列表、记忆操作和静态资源。',
+        content: 'Koa 服务器处理会话管理、Profile CRUD、分账户分 Profile 管理、配置读写、日志访问、技能列表、记忆操作和静态资源。',
       },
       proxy: {
         title: '聊天流式通信',
@@ -240,7 +240,7 @@ export default {
       },
       auth: {
         title: '认证',
-        content: '所有 API 端点需要通过 Authorization 头提供 Bearer 令牌。令牌在首次运行时自动生成并存储在 ~/.hermes-web-ui/.token。可在设置页面配置可选的用户名/密码登录。',
+        content: 'API 端点需要经过认证访问。令牌在首次运行时自动生成并存储在 ~/.hermes-web-ui/.token。用户名/密码登录使用账户记录；超级管理员管理用户和 Profile 绑定，普通管理员管理自己的账户信息。',
       },
     },
   },

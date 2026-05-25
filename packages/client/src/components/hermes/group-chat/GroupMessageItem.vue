@@ -538,6 +538,8 @@ onBeforeUnmount(() => {
     display: flex;
     gap: 10px;
     padding: 2px 0;
+    min-width: 0;
+    max-width: 100%;
 
     &.self {
         flex-direction: row-reverse;
@@ -586,6 +588,9 @@ onBeforeUnmount(() => {
     border-radius: $radius-sm;
     color: $text-muted;
     font-size: 11px;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 
     &.expandable {
         cursor: pointer;
@@ -612,17 +617,24 @@ onBeforeUnmount(() => {
 }
 
 .tool-name {
-    flex-shrink: 0;
+    flex: 0 1 auto;
+    min-width: 0;
     font-family: $font-code;
     color: $text-muted;
     font-weight: 400;
-}
-
-.tool-preview {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 400px;
+}
+
+.tool-preview {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: min(400px, 100%);
 }
 
 .tool-spinner {

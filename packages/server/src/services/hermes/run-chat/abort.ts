@@ -127,11 +127,6 @@ export async function markAbortCompleted(
   }
 
   state.events = []
-  replaceState(sessionMap, sessionId, 'abort.completed', {
-    event: 'abort.completed',
-    run_id: runId,
-    synced: true,
-  })
   emitToSession(nsp, socket, sessionId, 'abort.completed', {
     event: 'abort.completed',
     run_id: runId,

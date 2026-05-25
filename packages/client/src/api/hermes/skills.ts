@@ -1,6 +1,6 @@
 import { request } from '../client'
 
-export type SkillSource = 'builtin' | 'hub' | 'local'
+export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
 
 export interface SkillInfo {
   name: string

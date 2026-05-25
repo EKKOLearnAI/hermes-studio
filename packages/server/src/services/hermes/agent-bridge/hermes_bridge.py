@@ -10,13 +10,16 @@ delimited JSON request/response protocol over a local socket.
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
+import errno
 import hashlib
 import importlib.util
 import json
 import locale
 import os
 import queue
+import signal
 import shutil
 import socket
 import subprocess
@@ -38,10 +41,98 @@ DEFAULT_AGENT_ROOT = "~/.hermes/hermes-agent"
 DEFAULT_HERMES_HOME = "~/.hermes"
 APPROVAL_TIMEOUT_SECONDS = 120
 APPROVAL_TIMEOUT_MS = APPROVAL_TIMEOUT_SECONDS * 1000
+PARENT_WATCHDOG_INTERVAL_SECONDS = 2.0
 
 
 def _bridge_platform() -> str:
     return os.environ.get("HERMES_AGENT_BRIDGE_PLATFORM", "cli").strip() or "cli"
+
+
+def _positive_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["tasklist.exe", "/FI", f"PID eq {pid}", "/NH"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in (result.stdout or "")
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        return exc.errno != errno.ESRCH
+
+
+def _start_parent_process_watchdog(
+    parent_pid: int | None,
+    stop_event: threading.Event,
+    label: str,
+    interval: float = PARENT_WATCHDOG_INTERVAL_SECONDS,
+) -> None:
+    if not parent_pid or parent_pid == os.getpid():
+        return
+
+    def run() -> None:
+        while not stop_event.wait(interval):
+            if _process_exists(parent_pid):
+                continue
+            print(
+                f"[hermes-bridge] parent pid {parent_pid} exited; stopping {label}",
+                file=sys.stderr,
+                flush=True,
+            )
+            stop_event.set()
+            return
+
+    threading.Thread(target=run, daemon=True, name=f"hermes-bridge-parent-watchdog-{label}").start()
+
+
+def _install_stop_signal_handlers(stop_event: threading.Event) -> Callable[[], None]:
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    previous: list[tuple[signal.Signals, Any]] = []
+
+    def handle_signal(signum: int, _frame: Any) -> None:
+        stop_event.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            sig = signal.Signals(signum)
+            previous.append((sig, signal.getsignal(sig)))
+            signal.signal(sig, handle_signal)
+        except Exception:
+            pass
+
+    def restore() -> None:
+        for sig, handler in previous:
+            try:
+                signal.signal(sig, handler)
+            except Exception:
+                pass
+
+    return restore
 
 
 def _suppress_bridge_platform_hint() -> None:
@@ -507,6 +598,7 @@ class AgentPool:
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
+        self._clarify_requests: dict[str, queue.Queue[str]] = {}
         self._run_context = threading.local()
         self._approval_handlers: dict[str, Callable[..., str]] = {}
         self._exec_ask_depth = 0
@@ -576,6 +668,7 @@ class AgentPool:
                     tool_progress_callback=self._tool_progress_callback(session_id),
                     tool_start_callback=self._tool_start_callback(session_id),
                     tool_complete_callback=self._tool_complete_callback(session_id),
+                    clarify_callback=self._clarify_callback(session_id),
                 )
                 agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
@@ -857,7 +950,7 @@ class AgentPool:
 
     def _tool_progress_callback(self, session_id: str):
         def callback(event_type, function_name=None, preview=None, function_args=None, **kwargs):
-            if event_type in (None, "tool.started", "tool.completed"):
+            if event_type in (None, "tool.started", "tool.completed") or str(event_type or "").startswith("subagent."):
                 print(
                     "[hermes_bridge] tool_progress_callback "
                     f"session={session_id} event={event_type} tool={function_name} "
@@ -871,6 +964,18 @@ class AgentPool:
                     "event": "reasoning.available",
                     "text": str(preview) if preview else "",
                 })
+                return
+
+            if str(event_type or "").startswith("subagent."):
+                payload = {
+                    "event": str(event_type),
+                    "tool_name": str(function_name) if function_name else "",
+                    "text": str(preview) if preview is not None else "",
+                    "args": _jsonable(function_args) if function_args else {},
+                }
+                for key, value in kwargs.items():
+                    payload[str(key)] = _jsonable(value)
+                self._append_event(session_id, payload)
                 return
 
             if event_type == "_thinking":
@@ -947,6 +1052,30 @@ class AgentPool:
                 "choice": choice,
             })
             return choice
+
+        return callback
+
+    def _clarify_callback(self, session_id: str):
+        def callback(question: str, choices: list[str] | None = None) -> str:
+            clarify_id = uuid.uuid4().hex
+            response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+            with self._lock:
+                self._clarify_requests[clarify_id] = response_queue
+            self._append_event(session_id, {
+                "event": "clarify.requested",
+                "clarify_id": clarify_id,
+                "question": str(question or ""),
+                "choices": list(choices) if choices else None,
+                "timeout_ms": 300_000,
+            })
+            try:
+                user_response = response_queue.get(timeout=300)
+            except queue.Empty:
+                user_response = "[user did not respond within 5m]"
+            finally:
+                with self._lock:
+                    self._clarify_requests.pop(clarify_id, None)
+            return user_response
 
         return callback
 
@@ -1322,6 +1451,17 @@ class AgentPool:
             pass
         return {"approval_id": approval_id, "resolved": True, "choice": cleaned}
 
+    def respond_clarify(self, clarify_id: str, response: str) -> dict[str, Any]:
+        with self._lock:
+            response_queue = self._clarify_requests.get(clarify_id)
+        if response_queue is None:
+            return {"clarify_id": clarify_id, "resolved": False}
+        try:
+            response_queue.put_nowait(response)
+        except queue.Full:
+            pass
+        return {"clarify_id": clarify_id, "resolved": True}
+
     def get_history(self, session_id: str) -> dict[str, Any]:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -1452,12 +1592,18 @@ class BridgeServer:
             raise ValueError("action is required")
 
         if action == "ping":
+            with self.pool._lock:
+                sessions = list(self.pool._sessions.values())
+            running_sessions = sum(1 for session in sessions if session.running)
             return {
                 "pong": True,
                 "time": time.time(),
+                "pid": os.getpid(),
                 "agent_root": str(_agent_root()),
                 "profile": _worker_profile() or "default",
                 "hermes_home": str(_hermes_home()),
+                "session_count": len(sessions),
+                "running_session_count": running_sessions,
             }
 
         if action == "chat":
@@ -1531,6 +1677,13 @@ class BridgeServer:
                 raise ValueError("approval_id is required")
             return self.pool.respond_approval(approval_id, str(req.get("choice") or "deny"))
 
+        if action == "clarify_respond":
+            clarify_id = str(req.get("clarify_id") or "").strip()
+            if not clarify_id:
+                raise ValueError("clarify_id is required")
+            response = str(req.get("response") or "").strip()
+            return self.pool.respond_clarify(clarify_id, response)
+
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
             if not request_id:
@@ -1588,46 +1741,54 @@ class BridgeServer:
 
     def serve_forever(self) -> None:
         server = self._make_server_socket()
-        server.listen(16)
-        server.settimeout(0.2)
-        print(json.dumps({"event": "ready", "endpoint": self.endpoint}), flush=True)
+        restore_signals = _install_stop_signal_handlers(self._stop)
+        _start_parent_process_watchdog(
+            _positive_int(os.environ.get("HERMES_AGENT_BRIDGE_BROKER_PID")),
+            self._stop,
+            f"worker:{_worker_profile() or 'default'}",
+        )
+        try:
+            server.listen(16)
+            server.settimeout(0.2)
+            print(json.dumps({"event": "ready", "endpoint": self.endpoint}), flush=True)
 
-        while not self._stop.is_set():
-            conn: socket.socket | None = None
-            try:
+            while not self._stop.is_set():
+                conn: socket.socket | None = None
                 try:
-                    conn, _addr = server.accept()
-                except socket.timeout:
-                    self._gc_idle_sessions()
-                    continue
-                try:
-                    req = self._read_request(conn)
-                    data = self.handle(req)
-                    resp = {"ok": True, **_jsonable(data)}
-                except Exception as exc:
-                    resp = {
-                        "ok": False,
-                        "error": str(exc),
-                        "error_type": exc.__class__.__name__,
-                    }
-                self._write_response(conn, resp)
-            except KeyboardInterrupt:
-                break
-            except Exception as exc:
-                print(f"[hermes-bridge] server loop error: {exc}", file=sys.stderr, flush=True)
-            finally:
-                if conn is not None:
                     try:
-                        conn.close()
-                    except OSError:
-                        pass
-
-        server.close()
-        if self.endpoint.startswith("ipc://"):
-            try:
-                Path(self.endpoint.removeprefix("ipc://")).unlink(missing_ok=True)
-            except OSError:
-                pass
+                        conn, _addr = server.accept()
+                    except socket.timeout:
+                        self._gc_idle_sessions()
+                        continue
+                    try:
+                        req = self._read_request(conn)
+                        data = self.handle(req)
+                        resp = {"ok": True, **_jsonable(data)}
+                    except Exception as exc:
+                        resp = {
+                            "ok": False,
+                            "error": str(exc),
+                            "error_type": exc.__class__.__name__,
+                        }
+                    self._write_response(conn, resp)
+                except KeyboardInterrupt:
+                    break
+                except Exception as exc:
+                    print(f"[hermes-bridge] server loop error: {exc}", file=sys.stderr, flush=True)
+                finally:
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except OSError:
+                            pass
+        finally:
+            restore_signals()
+            server.close()
+            if self.endpoint.startswith("ipc://"):
+                try:
+                    Path(self.endpoint.removeprefix("ipc://")).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 class WorkerProcess:
@@ -1646,6 +1807,10 @@ class WorkerProcess:
     @property
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+    @property
+    def pid(self) -> int | None:
+        return self.process.pid if self.process is not None else None
 
     def start(self) -> None:
         with self._lock:
@@ -1668,6 +1833,7 @@ class WorkerProcess:
                 **os.environ,
                 "HERMES_AGENT_BRIDGE_ENDPOINT": self.endpoint,
                 "HERMES_AGENT_BRIDGE_WORKER_PROFILE": self.profile,
+                "HERMES_AGENT_BRIDGE_BROKER_PID": str(os.getpid()),
             }
             self.process = subprocess.Popen(
                 args,
@@ -1962,8 +2128,10 @@ class BridgeBroker:
         self.hermes_home = hermes_home
         self._workers: dict[str, WorkerProcess] = {}
         self._run_profile: dict[str, str] = {}
+        self._running_run_profile: dict[str, str] = {}
         self._session_profile: dict[str, str] = {}
         self._approval_profile: dict[str, str] = {}
+        self._clarify_profile: dict[str, str] = {}
         self._compression_profile: dict[str, str] = {}
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -2005,6 +2173,10 @@ class BridgeBroker:
         with self._lock:
             if run_id:
                 self._run_profile[run_id] = profile
+                if resp.get("status") == "running":
+                    self._running_run_profile[run_id] = profile
+                else:
+                    self._running_run_profile.pop(run_id, None)
             if session_id:
                 self._session_profile[session_id] = profile
             for event in resp.get("events") or []:
@@ -2013,11 +2185,28 @@ class BridgeBroker:
                 approval_id = str(event.get("approval_id") or "")
                 if approval_id:
                     self._approval_profile[approval_id] = profile
+                clarify_id = str(event.get("clarify_id") or "")
+                if clarify_id:
+                    self._clarify_profile[clarify_id] = profile
                 request_id = str(event.get("request_id") or "")
                 if event.get("event") == "bridge.compression.requested" and request_id:
                     self._compression_profile[request_id] = profile
                 if event.get("event") in {"bridge.compression.completed", "bridge.compression.failed"} and request_id:
                     self._compression_profile.pop(request_id, None)
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._lock:
+            workers = list(self._workers.values())
+            self._workers.clear()
+            self._run_profile.clear()
+            self._running_run_profile.clear()
+            self._session_profile.clear()
+            self._approval_profile.clear()
+            self._clarify_profile.clear()
+            self._compression_profile.clear()
+        for worker in workers:
+            worker.stop()
 
     def _forward(self, profile: str, req: dict[str, Any]) -> dict[str, Any]:
         worker = self._worker_for_profile(profile)
@@ -2034,8 +2223,39 @@ class BridgeBroker:
 
         if action == "ping":
             with self._lock:
-                workers = {profile: worker.running for profile, worker in self._workers.items()}
-            return {"pong": True, "time": time.time(), "mode": "broker", "workers": workers}
+                worker_details = {
+                    profile: {
+                        "running": worker.running,
+                        "pid": worker.pid,
+                        "endpoint": worker.endpoint,
+                        "last_used_at": worker.last_used_at,
+                    }
+                    for profile, worker in self._workers.items()
+                }
+                workers = {profile: details["running"] for profile, details in worker_details.items()}
+                sessions_by_profile: dict[str, int] = {}
+                for profile in self._session_profile.values():
+                    sessions_by_profile[profile] = sessions_by_profile.get(profile, 0) + 1
+                running_sessions_by_profile: dict[str, int] = {}
+                for profile in self._running_run_profile.values():
+                    running_sessions_by_profile[profile] = running_sessions_by_profile.get(profile, 0) + 1
+                active_sessions = len(self._session_profile)
+                running_sessions = len(self._running_run_profile)
+            return {
+                "pong": True,
+                "time": time.time(),
+                "mode": "broker",
+                "broker": {
+                    "pid": os.getpid(),
+                    "endpoint": self.endpoint,
+                },
+                "workers": workers,
+                "worker_details": worker_details,
+                "active_sessions": active_sessions,
+                "running_sessions": running_sessions,
+                "sessions_by_profile": sessions_by_profile,
+                "running_sessions_by_profile": running_sessions_by_profile,
+            }
 
         if action == "worker_ping":
             profile = self._normalize_profile(req.get("profile"))
@@ -2074,6 +2294,16 @@ class BridgeBroker:
                 raise KeyError(f"unknown approval request: {approval_id}")
             return self._forward(profile, req)
 
+        if action == "clarify_respond":
+            clarify_id = str(req.get("clarify_id") or "").strip()
+            if not clarify_id:
+                raise ValueError("clarify_id is required")
+            with self._lock:
+                profile = self._clarify_profile.get(clarify_id)
+            if not profile:
+                raise KeyError(f"unknown clarify request: {clarify_id}")
+            return self._forward(profile, req)
+
         if action == "compression_respond":
             request_id = str(req.get("request_id") or "").strip()
             if not request_id:
@@ -2089,8 +2319,10 @@ class BridgeBroker:
                 workers = list(self._workers.values())
                 self._workers.clear()
                 self._run_profile.clear()
+                self._running_run_profile.clear()
                 self._session_profile.clear()
                 self._approval_profile.clear()
+                self._clarify_profile.clear()
                 self._compression_profile.clear()
             destroyed = 0
             for worker in workers:
@@ -2109,8 +2341,10 @@ class BridgeBroker:
             with self._lock:
                 worker = self._workers.pop(profile, None)
                 self._run_profile = {key: value for key, value in self._run_profile.items() if value != profile}
+                self._running_run_profile = {key: value for key, value in self._running_run_profile.items() if value != profile}
                 self._session_profile = {key: value for key, value in self._session_profile.items() if value != profile}
                 self._approval_profile = {key: value for key, value in self._approval_profile.items() if value != profile}
+                self._clarify_profile = {key: value for key, value in self._clarify_profile.items() if value != profile}
                 self._compression_profile = {key: value for key, value in self._compression_profile.items() if value != profile}
 
             if worker is None or not worker.running:
@@ -2145,17 +2379,7 @@ class BridgeBroker:
             return {"sessions": sessions}
 
         if action == "shutdown":
-            self._stop.set()
-            with self._lock:
-                workers = list(self._workers.values())
-            for worker in workers:
-                if not worker.running:
-                    worker.stop()
-                    continue
-                try:
-                    worker.request({"action": "shutdown"})
-                except Exception:
-                    worker.stop()
+            self.stop()
             return {"status": "shutting_down"}
 
         raise ValueError(f"unknown action: {action}")
@@ -2168,6 +2392,27 @@ class BridgeBroker:
 
     def _write_response(self, conn: socket.socket, resp: dict[str, Any]) -> None:
         _write_json_response(conn, resp)
+
+    def _handle_connection(self, conn: socket.socket) -> None:
+        try:
+            try:
+                req = self._read_request(conn)
+                data = self.handle(req)
+                resp = {"ok": True, **_jsonable(data)}
+            except Exception as exc:
+                resp = {
+                    "ok": False,
+                    "error": str(exc),
+                    "error_type": exc.__class__.__name__,
+                }
+            self._write_response(conn, resp)
+        except Exception as exc:
+            print(f"[hermes-bridge-broker] connection error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def _gc_idle_workers(self) -> None:
         now = time.time()
@@ -2187,51 +2432,43 @@ class BridgeBroker:
 
     def serve_forever(self) -> None:
         server = self._make_server_socket()
-        server.listen(64)
-        server.settimeout(0.2)
-        print(json.dumps({"event": "ready", "endpoint": self.endpoint, "mode": "broker"}), flush=True)
+        restore_signals = _install_stop_signal_handlers(self._stop)
+        atexit.register(self.stop)
+        try:
+            server.listen(64)
+            server.settimeout(0.2)
+            print(json.dumps({"event": "ready", "endpoint": self.endpoint, "mode": "broker"}), flush=True)
 
-        while not self._stop.is_set():
-            conn: socket.socket | None = None
-            try:
+            while not self._stop.is_set():
                 try:
-                    conn, _addr = server.accept()
-                except socket.timeout:
-                    self._gc_idle_workers()
-                    continue
-                try:
-                    req = self._read_request(conn)
-                    data = self.handle(req)
-                    resp = {"ok": True, **_jsonable(data)}
-                except Exception as exc:
-                    resp = {
-                        "ok": False,
-                        "error": str(exc),
-                        "error_type": exc.__class__.__name__,
-                    }
-                self._write_response(conn, resp)
-            except KeyboardInterrupt:
-                break
-            except Exception as exc:
-                print(f"[hermes-bridge-broker] server loop error: {exc}", file=sys.stderr, flush=True)
-            finally:
-                if conn is not None:
                     try:
-                        conn.close()
-                    except OSError:
-                        pass
-
-        with self._lock:
-            workers = list(self._workers.values())
-            self._workers.clear()
-        for worker in workers:
-            worker.stop()
-        server.close()
-        if self.endpoint.startswith("ipc://"):
+                        conn, _addr = server.accept()
+                    except socket.timeout:
+                        self._gc_idle_workers()
+                        continue
+                    threading.Thread(
+                        target=self._handle_connection,
+                        args=(conn,),
+                        daemon=True,
+                        name="hermes-bridge-broker-connection",
+                    ).start()
+                except KeyboardInterrupt:
+                    break
+                except Exception as exc:
+                    print(f"[hermes-bridge-broker] server loop error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            restore_signals()
             try:
-                Path(self.endpoint.removeprefix("ipc://")).unlink(missing_ok=True)
-            except OSError:
+                atexit.unregister(self.stop)
+            except Exception:
                 pass
+            self.stop()
+            server.close()
+            if self.endpoint.startswith("ipc://"):
+                try:
+                    Path(self.endpoint.removeprefix("ipc://")).unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def main(argv: list[str] | None = None) -> int:

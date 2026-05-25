@@ -572,12 +572,12 @@ function chainOrderSql(ids: string[]): string {
   return ids.map((_, index) => `WHEN ? THEN ${index}`).join(' ')
 }
 
-async function openSessionDb() {
+async function openSessionDb(profile?: string) {
   if (!SQLITE_AVAILABLE) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = sessionDbPath()
+  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
   try {
     return new DatabaseSync(dbPath, { open: true, readOnly: true })
   } catch (err: any) {
@@ -953,11 +953,12 @@ function formatUnixDate(timestamp: number | null): string {
 export async function getSkillUsageStatsFromDb(
   days = 7,
   nowSeconds = Math.floor(Date.now() / 1000),
+  profile?: string,
 ): Promise<HermesSkillUsageStats> {
   const normalizedDays = Number.isFinite(days) ? days : 7
   const safeDays = Math.max(1, Math.floor(normalizedDays))
   const since = nowSeconds - safeDays * 24 * 60 * 60
-  const db = await openSessionDb()
+  const db = await openSessionDb(profile)
 
   try {
     const hasStartedIndex = db.prepare("PRAGMA index_list(sessions)").all()
@@ -1104,6 +1105,7 @@ export async function getSkillUsageStatsFromDb(
 export async function getUsageStatsFromDb(
   days = 30,
   nowSeconds = Math.floor(Date.now() / 1000),
+  profile?: string,
 ): Promise<HermesUsageStats> {
   const empty: HermesUsageStats = {
     input_tokens: 0,
@@ -1121,7 +1123,7 @@ export async function getUsageStatsFromDb(
   const normalizedDays = Number.isFinite(days) ? days : 30
   const safeDays = Math.max(1, Math.floor(normalizedDays))
   const since = nowSeconds - safeDays * 24 * 60 * 60
-  const db = await openSessionDb()
+  const db = await openSessionDb(profile)
 
   try {
     const apiCallsExpr = tableHasColumn(db, 'sessions', 'api_call_count')

@@ -6,6 +6,7 @@ import { flushBridgePendingToDb } from './bridge-message'
 import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
 import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
+import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 
 type CommandName =
@@ -150,18 +151,27 @@ export async function handleSessionCommand(
         emitCommand({ ok: false, action: 'queue', message: 'Session is idle. Send the message normally instead.' })
         return
       }
+      const queueId = `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
       state.queue.push({
-        queue_id: `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        queue_id: queueId,
         input: command.args,
         model: ctx.model,
         instructions: ctx.instructions,
         profile: ctx.profile,
         source: 'cli',
+        originSocketId: ctx.socket.id,
       })
       emitToSession(ctx.nsp, ctx.socket, sessionId, 'run.queued', {
         event: 'run.queued',
         session_id: sessionId,
         queue_length: state.queue.length,
+        queued_messages: state.queue.map(item => ({
+          id: item.queue_id,
+          role: 'user',
+          content: contentBlocksToString(item.input),
+          timestamp: Math.floor(Date.now() / 1000),
+          queued: true,
+        })),
       })
       emitCommand({
         action: 'queue',

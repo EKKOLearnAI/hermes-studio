@@ -196,7 +196,11 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const rooms = chatServer.getStorage().getAllRooms()
+    const user = ctx.state.user
+    const storage = chatServer.getStorage()
+    const rooms = !user || user.role === 'super_admin'
+        ? storage.getAllRooms()
+        : storage.getRoomsForProfiles(user.profiles || [])
     ctx.body = { rooms }
 })
 

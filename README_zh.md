@@ -49,10 +49,10 @@
 - 按最新消息时间排序会话列表
 - Markdown 渲染，支持语法高亮和代码复制
 - 工具调用详情展开（参数 / 结果）
-- 文件上传支持
-- 文件下载支持 — 支持下载用户上传的文件和 Agent 生成的文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
+- 按 Profile 隔离的文件上传
+- 文件下载支持 — 按解析后的路径下载用户上传文件和 Agent 生成文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
 - 会话搜索 — Ctrl+K 搜索 Web UI 本地会话库；不包含只读 Hermes 历史会话
-- 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
+- 按账号授权 Profile 汇总模型选择器 — 只展示当前账号可访问的 Hermes Profile 中可用的模型
 - 每个会话显示模型标签和上下文 Token 用量
 
 ### 平台渠道
@@ -102,12 +102,14 @@
 - 创建、重命名、删除、切换 Hermes 配置文件（Profile）
 - 克隆现有配置文件或从归档导入（`.tar.gz`）
 - 导出配置文件用于备份或分享
-- 配置文件级别的配置和缓存隔离
+- 按 Profile 隔离配置、缓存、上传、会话、任务、用量、记忆、技能、插件、Provider 和模型可见性
+- 账号绑定 Profile 权限：超级管理员可以管理全部 Profile；普通管理员只能查看和使用分配给自己的 Profile
 
 ### 文件浏览器
 
 - 浏览远程后端文件（local、Docker、SSH、Singularity）
 - 上传、下载、重命名、复制、移动和删除文件
+- 上传文件保存到当前选择/请求的 Hermes Profile 目录下；下载按真实路径解析，支持下载上传目录外的 Agent 产物
 - 创建目录
 - 查看文件内容，支持语法高亮
 
@@ -137,8 +139,25 @@
 ### 认证
 
 - 基于 Token 的认证（首次运行自动生成或通过 `AUTH_TOKEN` 环境变量设置）
-- 可选的用户名/密码登录 — 通过初始 Token 认证后在设置页面设置
+- 用户名/密码登录，并在设置页提供账户管理
+- 默认登录名/密码为 `admin` / `123456`；登录后会提示尽快修改默认账户和密码
+- 超级管理员可以管理用户和 Profile 绑定；普通管理员只能管理自己的账户信息
 - 可通过 `AUTH_DISABLED=1` 禁用认证
+
+CLI 维护命令：
+
+```bash
+# 删除持久化的登录 IP 锁记录
+hermes-web-ui clear-login-locks
+
+# 删除登录锁并重启正在运行的 Web UI 进程
+hermes-web-ui clear-login-locks --restart
+
+# 创建或重置默认超级管理员登录名/密码为 admin / 123456
+hermes-web-ui reset-default-login
+```
+
+`clear-login-locks` 会删除 `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`。如果服务正在运行，需要重启服务才能清理内存中的锁定状态。`reset-default-login` 会更新 Web UI 账户数据库；如果已存在 `admin` 用户，则会把密码重置为 `123456`，并启用为超级管理员账户。
 
 ### 设置
 
@@ -226,11 +245,11 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `PORT` | `8648` | Web UI 监听端口。 |
 | `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
-| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传目录。 |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传根目录。文件会保存在按 Profile 隔离的子目录下。 |
 | `CORS_ORIGINS` | `*` | Koa CORS origin 配置。 |
 | `AUTH_DISABLED` | 未设置 | 设置为 `1` 或 `true` 可关闭 Web UI 认证。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
-| `PROFILE` | `default` | 初始 Hermes profile 名称。 |
+| `PROFILE` | `default` | 启动/默认 Hermes profile。运行时请求使用前端当前选择且当前账号有权限访问的 Profile。 |
 | `LOG_LEVEL` | `info` | Server 日志级别。 |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | 最大文件下载大小。 |
@@ -289,14 +308,14 @@ npm run build   # 构建输出到 dist/
         Hermes agent bridge → Hermes Agent runtime
                 ↓
            Hermes CLI / profiles
-           ~/.hermes/config.yaml  (渠道行为配置)
-           ~/.hermes/auth.json    (凭证池)
+           profile config.yaml    (渠道/Provider 配置)
+           profile auth.json      (凭证池)
            腾讯 iLink API         (微信扫码登录)
 ```
 
 前端采用 **多 Agent 可扩展架构** — 所有 Hermes 相关代码都按命名空间组织在 `hermes/` 目录下（API、组件、视图、Store），可以方便地并行接入新的 Agent。
 
-BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、文件上传与下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
+BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、分账户分 Profile 管理、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
 
 ## 技术栈
 

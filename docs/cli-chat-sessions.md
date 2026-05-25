@@ -87,7 +87,7 @@ ChatRunSocket (Node.js)
 | `packages/server/src/index.ts` | 启动 `AgentBridgeManager` 和 `ChatRunSocket` |
 | `packages/server/src/services/shutdown.ts` | 关闭时停止 chat socket 和 bridge 子进程 |
 | `packages/server/src/controllers/hermes/sessions.ts` | 会话列表和详情读取，包含 `source` 信息 |
-| `packages/server/src/controllers/hermes/profiles.ts` | profile 切换/管理时清理 bridge 内存会话 |
+| `packages/server/src/controllers/hermes/profiles.ts` | profile 管理接口；按 URL/body 中的 profile 做权限校验 |
 
 ### 已移除的旧文件
 
@@ -302,7 +302,7 @@ Windows 使用 TCP 是因为部分 Python/Windows 环境没有 Unix domain socke
 | `get_output` | 通过 `cursor` 和 `event_cursor` 获取增量文本与事件 |
 | `interrupt` | 调用 agent 中断当前运行 |
 | `approval_respond` | 响应工具审批 |
-| `destroy_all` | profile 切换/管理时销毁全部 bridge 内存 session |
+| `destroy_all` | 维护动作；仅用于明确的全量清理/进程关闭场景，普通 profile 切换不会调用 |
 
 bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_result`、`get_history`、`destroy`、`list`、`shutdown`、`steer`。当前 `/chat-run` 前端路径不会直接暴露这些 action；需要的能力由 Node `/chat-run` 层封装，例如 `/steer` slash command 会调用 `steer` action。
 
@@ -313,7 +313,7 @@ bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_re
 `AgentPool` 维护 `session_id -> AgentSession`：
 
 - 每个 session 持有独立 `AIAgent` 实例。
-- session 按 profile 创建，profile 改变时会重建对应 agent。
+- session 按请求中的 profile 创建和复用；前端切换 Hermes Profile 只改变后续请求使用的 profile，不会影响其他 bridge 内存 session。
 - `HERMES_HOME` 会在创建 agent 时临时切到 profile home。
 - `SessionDB` 按 profile 的 `state.db` 路径缓存。
 - 空闲 session 会被 bridge GC，默认 30 分钟无运行后销毁内存态。
@@ -449,7 +449,7 @@ chatRunServer.init()
 | `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数 |
 | `UV` | uv 可执行文件路径 fallback |
 
-正常使用不需要配置这些变量。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
+正常使用不需要配置这些变量。Bridge 支持多个用户/多个 profile 的运行并存；Web UI 的 Hermes Profile 切换不会重启 bridge 或销毁其他正在运行的任务。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
 
 Windows 首次启动慢时可以临时放大：
 

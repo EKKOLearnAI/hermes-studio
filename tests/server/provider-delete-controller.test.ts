@@ -15,17 +15,18 @@ async function loadProvidersController() {
   return import('../../packages/server/src/controllers/hermes/providers')
 }
 
-function makeCtx(poolKey: string) {
+function makeCtx(poolKey: string, overrides: Record<string, any> = {}) {
   return {
     params: { poolKey: encodeURIComponent(poolKey) },
     request: { body: {} },
     status: 200,
     body: undefined as unknown,
+    ...overrides,
   }
 }
 
-function readAuth() {
-  return JSON.parse(readFileSync(join(hermesHome, 'auth.json'), 'utf-8'))
+function readAuth(profileDir = hermesHome) {
+  return JSON.parse(readFileSync(join(profileDir, 'auth.json'), 'utf-8'))
 }
 
 describe('providers controller delete', () => {
@@ -152,5 +153,87 @@ describe('providers controller delete', () => {
 
     expect(ctx.body).toEqual({ success: true })
     expect(existsSync(join(hermesHome, 'auth.json'))).toBe(false)
+  })
+
+  it('deletes provider state from the request-scoped profile only', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    mkdirSync(researchDir, { recursive: true })
+    writeFileSync(join(hermesHome, 'config.yaml'), [
+      'model:',
+      '  provider: deepseek',
+      '  default: keep-default-model',
+      '',
+    ].join('\n'))
+    writeFileSync(join(hermesHome, '.env'), [
+      ['DEEPSEEK_API_KEY', 'keep-default-key'].join('='),
+      ['OPENROUTER_API_KEY', 'keep-default-openrouter'].join('='),
+      '',
+    ].join('\n'))
+    writeFileSync(join(hermesHome, 'auth.json'), JSON.stringify({
+      providers: {
+        deepseek: { access_token: 'keep-default-token' },
+      },
+      credential_pool: {
+        deepseek: [{ label: 'keep-default' }],
+      },
+    }, null, 2))
+    writeFileSync(join(researchDir, 'config.yaml'), [
+      'model:',
+      '  provider: deepseek',
+      '  default: research-model',
+      'custom_providers:',
+      '  - name: keep-provider',
+      '    base_url: https://keep.invalid/v1',
+      '    api_key: placeholder',
+      '    model: keep-model',
+      '',
+    ].join('\n'))
+    writeFileSync(join(researchDir, '.env'), [
+      ['DEEPSEEK_API_KEY', 'remove-research-key'].join('='),
+      ['OPENROUTER_API_KEY', 'keep-research-openrouter'].join('='),
+      '',
+    ].join('\n'))
+    writeFileSync(join(researchDir, 'auth.json'), JSON.stringify({
+      providers: {
+        deepseek: { access_token: 'remove-research-token' },
+        openrouter: { access_token: 'keep-research-token' },
+      },
+      credential_pool: {
+        deepseek: [{ label: 'remove-research' }],
+        openrouter: [{ label: 'keep-research' }],
+      },
+    }, null, 2))
+
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('deepseek', { state: { profile: { name: 'research' } } })
+
+    await remove(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+
+    const defaultEnvAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
+    expect(defaultEnvAfter).toContain(['DEEPSEEK_API_KEY', 'keep-default-key'].join('='))
+    expect(defaultEnvAfter).toContain(['OPENROUTER_API_KEY', 'keep-default-openrouter'].join('='))
+    expect(readFileSync(join(hermesHome, 'config.yaml'), 'utf-8')).toContain('keep-default-model')
+    expect(readAuth()).toEqual({
+      providers: {
+        deepseek: { access_token: 'keep-default-token' },
+      },
+      credential_pool: {
+        deepseek: [{ label: 'keep-default' }],
+      },
+    })
+
+    const researchEnvAfter = readFileSync(join(researchDir, '.env'), 'utf-8')
+    expect(researchEnvAfter).not.toContain('DEEPSEEK_API_KEY')
+    expect(researchEnvAfter).toContain(['OPENROUTER_API_KEY', 'keep-research-openrouter'].join('='))
+    const researchConfigAfter = readFileSync(join(researchDir, 'config.yaml'), 'utf-8')
+    expect(researchConfigAfter).toContain('keep-provider')
+    expect(researchConfigAfter).toContain('keep-model')
+    const researchAuthAfter = readAuth(researchDir)
+    expect(researchAuthAfter.providers).not.toHaveProperty('deepseek')
+    expect(researchAuthAfter.credential_pool).not.toHaveProperty('deepseek')
+    expect(researchAuthAfter.providers.openrouter).toEqual({ access_token: 'keep-research-token' })
+    expect(researchAuthAfter.credential_pool.openrouter).toEqual([{ label: 'keep-research' }])
   })
 })

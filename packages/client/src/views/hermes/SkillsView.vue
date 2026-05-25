@@ -6,10 +6,12 @@ import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t, locale } = useI18n()
+const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
 const loading = ref(false)
@@ -56,6 +58,9 @@ onUnmounted(() => {
 async function loadSkills() {
   loading.value = true
   try {
+    if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+      await profilesStore.fetchProfiles()
+    }
     const data = await fetchSkills()
     categories.value = data.categories
     archived.value = data.archived
@@ -133,6 +138,9 @@ function handlePinToggled(name: string, pinned: boolean) {
         </button>
         <button class="legend-item" :class="{ active: sourceFilter === 'local' }" @click="toggleFilter('local')">
           <span class="legend-dot dot-local" />{{ t('skills.source.local') }}
+        </button>
+        <button class="legend-item" :class="{ active: sourceFilter === 'external' }" @click="toggleFilter('external')">
+          <span class="legend-dot dot-external" />{{ t('skills.source.external') }}
         </button>
         <button class="legend-item" :class="{ active: sourceFilter === 'modified' }" @click="toggleFilter('modified')">
           <span class="modified-icon">✎</span>{{ t('skills.modified') }}
@@ -245,6 +253,7 @@ function handlePinToggled(name: string, pinned: boolean) {
 .legend-dot.dot-builtin { background: #888; }
 .legend-dot.dot-hub { background: #4a90d9; }
 .legend-dot.dot-local { background: #66bb6a; }
+.legend-dot.dot-external { background: #f59e0b; }
 
 .modified-icon {
   font-size: 11px;

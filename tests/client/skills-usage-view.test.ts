@@ -3,9 +3,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const fetchSkillUsageStatsMock = vi.hoisted(() => vi.fn())
+const mockProfilesStore = vi.hoisted(() => ({
+  activeProfileName: 'default',
+  profiles: [{ name: 'default' }],
+  fetchProfiles: vi.fn(),
+}))
 
 vi.mock('@/api/hermes/skills', () => ({
   fetchSkillUsageStats: fetchSkillUsageStatsMock,
+}))
+
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => mockProfilesStore,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -70,6 +79,9 @@ describe('SkillsUsageView', () => {
   beforeEach(() => {
     fetchSkillUsageStatsMock.mockReset()
     fetchSkillUsageStatsMock.mockResolvedValue(sevenDayStats)
+    mockProfilesStore.activeProfileName = 'default'
+    mockProfilesStore.profiles = [{ name: 'default' }]
+    mockProfilesStore.fetchProfiles.mockReset()
   })
 
   it('loads rolling 7 day skill usage and renders statistics beside a skill-colored visual trend', async () => {

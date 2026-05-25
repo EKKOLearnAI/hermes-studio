@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useChatStore, type Session } from '@/stores/hermes/chat'
+import { useRoute, useRouter } from 'vue-router'
+import { type Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
@@ -13,12 +14,23 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import { deleteSession, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
 
-const chatStore = useChatStore()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+
+const routeSessionId = computed(() => {
+  const value = route.params.sessionId
+  return typeof value === 'string' && value.trim() ? value : null
+})
+
+const routeProfile = computed(() => {
+  const value = route.query.profile
+  return typeof value === 'string' && value.trim() ? value : null
+})
 
 // Hermes history sessions (exclude api_server)
 const hermesSessions = ref<SessionSummary[]>([])
@@ -33,7 +45,7 @@ async function loadHermesSessions() {
   if (hermesSessionsLoading.value) return
   hermesSessionsLoading.value = true
   try {
-    hermesSessions.value = await fetchHermesSessions()
+    hermesSessions.value = await fetchHermesSessions(undefined, undefined, routeProfile.value)
     hermesSessionsLoaded.value = true
   } catch (err) {
     console.error('Failed to load Hermes sessions:', err)
@@ -49,9 +61,15 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
-async function handleSessionClick(sessionId: string) {
+function findHistorySession(sessionId: string): SessionSummary | undefined {
+  return hermesSessions.value.find(session => session.id === sessionId)
+}
+
+async function loadHistorySession(sessionId: string, profile?: string | null) {
+  const summary = findHistorySession(sessionId)
+  const sessionProfile = profile || summary?.profile || null
   // First, fetch the Hermes session detail
-  const sessionDetail = await fetchHermesSession(sessionId)
+  const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
   if (!sessionDetail) {
     message.error(t('chat.sessionNotFound'))
     return
@@ -60,6 +78,7 @@ async function handleSessionClick(sessionId: string) {
   // Convert SessionDetail to Session format and add to chatStore
   const sessionData: Session = {
     id: sessionDetail.id,
+    profile: sessionDetail.profile || sessionProfile || undefined,
     title: sessionDetail.title || '',
     source: sessionDetail.source,
     createdAt: sessionDetail.started_at * 1000,
@@ -105,6 +124,30 @@ async function handleSessionClick(sessionId: string) {
   if (mobileQuery?.matches) showSessions.value = false
 }
 
+async function handleSessionClick(sessionId: string, profile?: string | null) {
+  await router.push({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  })
+}
+
+async function syncRouteSession() {
+  const sessionId = routeSessionId.value
+  if (!sessionId) return
+
+  if (!hermesSessions.value.some(s => s.id === sessionId)) {
+    historySessionId.value = null
+    historySession.value = null
+    await router.replace({ name: 'hermes.history' })
+    return
+  }
+
+  if (historySessionId.value !== sessionId) {
+    await loadHistorySession(sessionId, routeProfile.value)
+  }
+}
+
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   isMobile.value = e.matches
   if (e.matches && showSessions.value) {
@@ -116,6 +159,7 @@ onMounted(async () => {
   appStore.loadModels()
   await profilesStore.fetchProfiles()
   await loadHermesSessions()
+  await syncRouteSession()
 
   mobileQuery = window.matchMedia('(max-width: 768px)')
   handleMobileChange(mobileQuery)
@@ -126,13 +170,27 @@ onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
 })
 
+watch([routeSessionId, routeProfile], async ([sessionId]) => {
+  if (!sessionId) {
+    historySessionId.value = null
+    historySession.value = null
+    if (hermesSessionsLoaded.value) await loadHermesSessions()
+    return
+  }
+  if (!hermesSessionsLoaded.value) return
+  if (routeProfile.value && !hermesSessions.value.some(s => s.profile === routeProfile.value)) {
+    await loadHermesSessions()
+  }
+  await syncRouteSession()
+})
+
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
 
 // Convert SessionSummary to Session format
 function sessionSummaryToSession(summary: SessionSummary): Session {
   return {
     id: summary.id,
-    profile: summary.profile,
+    profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
     createdAt: summary.started_at * 1000,
@@ -212,7 +270,7 @@ function toggleGroup(source: string) {
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
       // Auto-select and load first session when expanding group
-      handleSessionClick(group.sessions[0].id)
+      void handleSessionClick(group.sessions[0].id, group.sessions[0].profile)
     }
   }
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -220,7 +278,7 @@ function toggleGroup(source: string) {
 
 watch(groupedSessions, groups => {
   if (localStorage.getItem('hermes_collapsed_groups') !== null) {
-    const activeSource = chatStore.activeSession?.source
+    const activeSource = historySession.value?.source
     if (activeSource && collapsedGroups.value.has(activeSource)) {
       collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== activeSource))
       localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -236,7 +294,7 @@ watch(groupedSessions, groups => {
 
 // Auto-load first CLI session when Hermes sessions are loaded
 watch(hermesSessionsLoaded, (loaded) => {
-  if (loaded && hermesSessions.value.length > 0) {
+  if (loaded && hermesSessions.value.length > 0 && !routeSessionId.value) {
     // Only auto-load if no session is currently active
     if (!historySessionId.value || !hermesSessions.value.find(s => s.id === historySessionId.value)) {
       // Find first CLI session.
@@ -247,7 +305,7 @@ watch(hermesSessionsLoaded, (loaded) => {
           collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
         }
         // Load session details
-        handleSessionClick(firstCliSession.id)
+        void handleSessionClick(firstCliSession.id, firstCliSession.profile)
       }
       // If no CLI session exists, don't auto-load any session
     }
@@ -271,8 +329,34 @@ async function copySessionId(id?: string) {
   }
 }
 
-async function handleDeleteSession(id: string) {
-  const ok = await deleteSession(id)
+function historySessionProfile(sessionId: string): string | null {
+  return historySession.value?.id === sessionId
+    ? historySession.value.profile || null
+    : findHistorySession(sessionId)?.profile || null
+}
+
+function buildHistorySessionUrl(sessionId: string, profile?: string | null) {
+  const href = router.resolve({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  }).href
+  return `${window.location.origin}${window.location.pathname}${href}`
+}
+
+async function copySessionLink(id?: string) {
+  const sessionId = id || historySessionId.value
+  if (sessionId) {
+    const ok = await copyToClipboard(buildHistorySessionUrl(sessionId, historySessionProfile(sessionId)))
+    if (ok) message.success(t('common.copied'))
+    else message.error(t('common.copied') + ' ✗')
+  }
+}
+
+async function handleDeleteSession(id: string, profile?: string | null) {
+  const summary = findHistorySession(id)
+  const sessionProfile = profile || summary?.profile || null
+  const ok = await deleteSession(id, sessionProfile)
   if (!ok) {
     message.error(t('common.deleteFailed'))
     return
@@ -285,7 +369,8 @@ async function handleDeleteSession(id: string) {
     historySessionId.value = null
     historySession.value = null
     const next = historySessions.value[0]
-    if (next) await handleSessionClick(next.id)
+    if (next) await handleSessionClick(next.id, next.profile)
+    else await router.replace({ name: 'hermes.history' })
   }
 
   message.success(t('chat.sessionDeleted'))
@@ -326,8 +411,8 @@ async function handleDeleteSession(id: string) {
             :can-delete="true"
             :streaming="false"
             :show-profile="false"
-            @select="handleSessionClick(s.id)"
-            @delete="handleDeleteSession(s.id)"
+            @select="handleSessionClick(s.id, s.profile)"
+            @delete="handleDeleteSession(s.id, s.profile)"
           />
         </template>
 
@@ -347,8 +432,8 @@ async function handleDeleteSession(id: string) {
               :can-delete="true"
               :streaming="false"
               :show-profile="false"
-              @select="handleSessionClick(s.id)"
-              @delete="handleDeleteSession(s.id)"
+              @select="handleSessionClick(s.id, s.profile)"
+              @delete="handleDeleteSession(s.id, s.profile)"
             />
           </template>
         </template>
@@ -377,6 +462,16 @@ async function handleDeleteSession(id: string) {
               </NButton>
             </template>
             {{ t('chat.outlineTitle') }}
+          </NTooltip>
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton quaternary size="small" @click="copySessionLink()" circle>
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.copySessionLink') }}
           </NTooltip>
           <NTooltip trigger="hover">
             <template #trigger>

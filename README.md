@@ -41,10 +41,10 @@
 - Sessions sorted by latest message time
 - Markdown rendering with syntax highlighting and code copy
 - Tool call detail expansion (arguments / result)
-- File upload support
-- File download support — download user-uploaded files and agent-generated files across local, Docker, SSH, and Singularity backends
+- Profile-scoped file uploads
+- File download support — download uploaded files and agent-generated files by resolved path across local, Docker, SSH, and Singularity backends
 - Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
-- Global model selector — discovers models from `~/.hermes/auth.json` credential pool
+- Profile-aware model selector — discovers models available to the signed-in account through authorized Hermes profiles
 - Per-session model display badge and context token usage
 
 ### Platform Channels
@@ -94,12 +94,14 @@ Unified configuration for **8 platforms** in one page:
 - Create, rename, delete, and switch between Hermes profiles
 - Clone existing profile or import from archive (`.tar.gz`)
 - Export profile for backup or sharing
-- Profile-scoped configuration and cache isolation
+- Profile-scoped configuration, cache, uploads, sessions, jobs, usage, memory, skills, plugins, providers, and model visibility
+- Account-bound profile access: super administrators can manage every profile; regular administrators only see and use profiles assigned to their account
 
 ### File Browser
 
 - Browse files on remote backends (local, Docker, SSH, Singularity)
 - Upload, download, rename, copy, move, and delete files
+- Store uploaded files under the selected/requested Hermes profile while keeping downloads path-based for agent-generated artifacts outside the upload directory
 - Create directories
 - View file content with syntax highlighting
 
@@ -129,8 +131,25 @@ Unified configuration for **8 platforms** in one page:
 ### Authentication
 
 - Token-based auth (auto-generated on first run or set via `AUTH_TOKEN` env var)
-- Optional username/password login — set via settings page after initial token auth
+- Username/password login with account management in Settings
+- Default bootstrap credentials are `admin` / `123456`; users are prompted after login to change the default username and password
+- Super administrators can manage users and profile bindings; regular administrators can manage their own account details
 - Auth can be disabled with `AUTH_DISABLED=1`
+
+CLI maintenance commands:
+
+```bash
+# Delete persisted login IP lock records
+hermes-web-ui clear-login-locks
+
+# Delete login locks and restart the running Web UI process
+hermes-web-ui clear-login-locks --restart
+
+# Create or reset the default super administrator login to admin / 123456
+hermes-web-ui reset-default-login
+```
+
+`clear-login-locks` removes `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`. If the server is running, restart it to clear in-memory lock state. `reset-default-login` updates the Web UI account database; if an `admin` user already exists, its password is reset to `123456` and the account is enabled as a super administrator.
 
 ### Settings
 
@@ -219,11 +238,11 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `PORT` | `8648` | Web UI listen port. |
 | `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
-| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload directory override. |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | `*` | Koa CORS origin setting. |
 | `AUTH_DISABLED` | unset | Set to `1` or `true` to disable Web UI auth. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
-| `PROFILE` | `default` | Initial Hermes profile name. |
+| `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
@@ -282,14 +301,14 @@ Browser → BFF (Koa, :8648) → Socket.IO /chat-run
         Hermes agent bridge → Hermes Agent runtime
                 ↓
            Hermes CLI / profiles
-           ~/.hermes/config.yaml  (channel behavior)
-           ~/.hermes/auth.json    (credential pool)
+           profile config.yaml    (channel/provider behavior)
+           profile auth.json      (credential pool)
            Tencent iLink API      (WeChat QR login)
 ```
 
 The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
 
-The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, file upload and download (multi-backend: local/Docker/SSH/Singularity), session CRUD, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
+The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account- and profile-scoped management, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
 
 ## Tech Stack
 

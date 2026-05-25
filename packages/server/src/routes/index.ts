@@ -31,13 +31,14 @@ import { ttsRoutes } from './hermes/tts'
 import { mediaRoutes } from './hermes/media'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
+import { performanceMonitorRoutes } from './hermes/performance-monitor'
 
 /**
  * Register all routes on the Koa app.
  * Public routes are registered first, then auth middleware,
  * then all protected routes. Returns the proxy middleware (must be mounted last).
  */
-export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next) => Promise<void>) {
+export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, next: Next) => Promise<void>>) {
   // --- Public routes (no auth required) ---
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
@@ -45,7 +46,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---
-  app.use(requireAuth)
+  authMiddleware.forEach((middleware) => app.use(middleware))
 
   // --- Protected routes (auth required) ---
   app.use(authProtectedRoutes.routes())
@@ -72,6 +73,7 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(cronHistoryRoutes.routes())        // Must be before proxy
   app.use(kanbanRoutes.routes())             // Must be before proxy
   app.use(mediaRoutes.routes())              // Must be before proxy
+  app.use(performanceMonitorRoutes.routes())  // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)

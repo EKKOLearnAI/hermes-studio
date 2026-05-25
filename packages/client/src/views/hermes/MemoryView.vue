@@ -4,9 +4,11 @@ import { NButton, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchMemory, saveMemory, type MemoryData } from '@/api/hermes/skills'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t } = useI18n()
 const message = useMessage()
+const profilesStore = useProfilesStore()
 const loading = ref(false)
 const data = ref<MemoryData | null>(null)
 const editingSection = ref<'memory' | 'user' | 'soul' | null>(null)
@@ -18,6 +20,9 @@ onMounted(loadMemory)
 async function loadMemory() {
   loading.value = true
   try {
+    if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+      await profilesStore.fetchProfiles()
+    }
     data.value = await fetchMemory()
   } catch (err: any) {
     console.error('Failed to load memory:', err)

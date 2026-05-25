@@ -3,7 +3,7 @@ import { spawn, execSync, execFileSync } from 'child_process'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
-import { randomBytes } from 'crypto'
+import { randomBytes, scryptSync } from 'crypto'
 import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -19,7 +19,11 @@ const PID_DIR = WEB_UI_HOME
 const PID_FILE = join(PID_DIR, 'server.pid')
 const LOG_FILE = join(PID_DIR, 'server.log')
 const TOKEN_FILE = join(PID_DIR, '.token')
+const LOGIN_LOCK_FILE = join(WEB_UI_HOME, '.login-lock.json')
+const WEB_UI_DB_FILE = join(WEB_UI_HOME, 'hermes-web-ui.db')
 const DEFAULT_PORT = 8648
+const DEFAULT_USERNAME = 'admin'
+const DEFAULT_PASSWORD = '123456'
 
 // ─── Auto-fix node-pty native module ──────────────────────────
 function ensureNativeModules() {
@@ -385,9 +389,7 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
@@ -399,9 +401,7 @@ function startDaemon(port) {
       } else {
         console.log(`  ⚠ Server process is running but health check failed after ${maxWait / 1000}s`)
         console.log(`    Check log: ${LOG_FILE}`)
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`    ${url}`)
       }
     }).catch(() => {
@@ -410,9 +410,7 @@ function startDaemon(port) {
       } else {
         console.log(`  ⚠ Server process is running but health check failed after ${maxWait / 1000}s`)
         console.log(`    Check log: ${LOG_FILE}`)
-        const url = token
-          ? `http://localhost:${port}/#/?token=${token}`
-          : `http://localhost:${port}`
+        const url = `http://localhost:${port}`
         console.log(`    ${url}`)
       }
     })
@@ -466,7 +464,88 @@ function showStatus() {
   }
 }
 
-function main() {
+function clearLoginLocks(options = {}) {
+  const { silent = false, checkRunning = true } = options
+  const serverRunning = checkRunning ? !!getPid() : false
+  let removed = false
+
+  try {
+    unlinkSync(LOGIN_LOCK_FILE)
+    removed = true
+    if (!silent) console.log(`  ✓ Removed login lock file: ${LOGIN_LOCK_FILE}`)
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      if (!silent) console.log(`  ✓ No login lock file found: ${LOGIN_LOCK_FILE}`)
+    } else {
+      if (!silent) console.log(`  ✗ Failed to remove login lock file: ${err.message}`)
+      throw err
+    }
+  }
+
+  if (!silent && serverRunning) {
+    console.log('  ⚠ hermes-web-ui is running; restart it to clear in-memory login locks.')
+    console.log('    Run: hermes-web-ui restart')
+  }
+
+  return { path: LOGIN_LOCK_FILE, removed, serverRunning }
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return `scrypt:${salt}:${hash}`
+}
+
+async function resetDefaultLogin(options = {}) {
+  const { silent = false } = options
+  mkdirSync(WEB_UI_HOME, { recursive: true })
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(WEB_UI_DB_FILE)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'admin',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_login_at INTEGER
+      )
+    `)
+
+    const now = Date.now()
+    const passwordHash = hashPassword(DEFAULT_PASSWORD)
+    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(DEFAULT_USERNAME)
+    if (existing?.id) {
+      db.prepare(
+        `UPDATE users
+         SET password_hash = ?, role = 'super_admin', status = 'active', updated_at = ?
+         WHERE id = ?`
+      ).run(passwordHash, now, existing.id)
+      if (!silent) {
+        console.log(`  ✓ Reset default login: ${DEFAULT_USERNAME} / ${DEFAULT_PASSWORD}`)
+        console.log(`    Database: ${WEB_UI_DB_FILE}`)
+      }
+      return { path: WEB_UI_DB_FILE, username: DEFAULT_USERNAME, password: DEFAULT_PASSWORD, action: 'updated' }
+    }
+
+    db.prepare(
+      `INSERT INTO users (username, password_hash, role, status, created_at, updated_at)
+       VALUES (?, ?, 'super_admin', 'active', ?, ?)`
+    ).run(DEFAULT_USERNAME, passwordHash, now, now)
+    if (!silent) {
+      console.log(`  ✓ Created default login: ${DEFAULT_USERNAME} / ${DEFAULT_PASSWORD}`)
+      console.log(`    Database: ${WEB_UI_DB_FILE}`)
+    }
+    return { path: WEB_UI_DB_FILE, username: DEFAULT_USERNAME, password: DEFAULT_PASSWORD, action: 'created' }
+  } finally {
+    db.close()
+  }
+}
+
+async function main() {
   const command = process.argv[2] || 'start'
 
   if (['-v', '--version', 'version'].includes(command)) {
@@ -485,6 +564,8 @@ Commands:
   stop               Stop the server
   restart [port]     Restart the server
   status             Show server status
+  clear-login-locks  Delete the login IP lock file
+  reset-default-login Create or reset the default login (${DEFAULT_USERNAME} / ${DEFAULT_PASSWORD})
   update             Update to latest version and restart
   upgrade            Alias for update
   version            Show version number
@@ -493,6 +574,7 @@ Options:
   -v, --version      Show version number
   -h, --help         Show this help message
   --port <port>      Specify port (used with start/restart)
+  --restart          Restart after clear-login-locks
 `)
     process.exit(0)
   }
@@ -510,6 +592,19 @@ Options:
       break
     case 'status':
       showStatus()
+      break
+    case 'clear-login-locks': {
+      const restartAfterClear = process.argv.includes('--restart')
+      const result = clearLoginLocks()
+      if (restartAfterClear && result.serverRunning) {
+        const port = getRunningPort() ?? getPort()
+        stopDaemon()
+        setTimeout(() => startDaemon(port), 500)
+      }
+      break
+    }
+    case 'reset-default-login':
+      await resetDefaultLogin()
       break
     case 'update':
     case 'upgrade':
@@ -595,11 +690,16 @@ function runUpdateInstall(npm) {
 }
 
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
-  main()
+  main().catch(err => {
+    console.error(`  ✗ ${err?.message || err}`)
+    process.exit(1)
+  })
 }
 
 export {
+  clearLoginLocks,
   commandExists,
   getListeningPids,
   parseUnixNetstatListeningPids,
+  resetDefaultLogin,
 }

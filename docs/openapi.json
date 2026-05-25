@@ -231,6 +231,32 @@
         }
       }
     },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get me",
+        "description": "GET /api/auth/me",
+        "operationId": "currentUser",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/auth/password": {
       "delete": {
         "tags": [
@@ -1986,32 +2012,6 @@
         "summary": "Create profiles",
         "description": "POST /api/hermes/profiles",
         "operationId": "create",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/hermes/profiles/active": {
-      "put": {
-        "tags": [
-          "Profiles"
-        ],
-        "summary": "Update active",
-        "description": "PUT /api/hermes/profiles/active",
-        "operationId": "switchProfile",
         "security": [
           {
             "BearerAuth": []

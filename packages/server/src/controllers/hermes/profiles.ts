@@ -16,6 +16,7 @@ import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
 import type { HermesProfile } from '../../services/hermes/hermes-cli'
+import { listUserProfiles } from '../../db/hermes/users-store'
 
 const bridgeCleanupClient = () => new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 })
 
@@ -125,6 +126,30 @@ function deleteForbiddenProfileFromDisk(name: string): boolean {
 
 function filterVisibleProfiles(profiles: HermesProfile[]): HermesProfile[] {
   return profiles.filter(profile => !isForbiddenProfileName(profile.name))
+}
+
+function requestedProfileName(ctx: any): string {
+  return ctx.state?.profile?.name || ctx.get?.('x-hermes-profile') || getActiveProfileName()
+}
+
+function filterProfilesForUser(ctx: any, profiles: HermesProfile[]): HermesProfile[] {
+  const user = ctx.state?.user
+  if (!user || user.role === 'super_admin') return profiles
+  const allowed = new Set(listUserProfiles(user.id).map(profile => profile.profile_name))
+  return profiles.filter(profile => allowed.has(profile.name))
+}
+
+function canAccessProfile(ctx: any, profileName: string): boolean {
+  const user = ctx.state?.user
+  if (!user || user.role === 'super_admin') return true
+  return listUserProfiles(user.id).some(profile => profile.profile_name === profileName)
+}
+
+function denyProfile(ctx: any, profileName: string): boolean {
+  if (canAccessProfile(ctx, profileName)) return false
+  ctx.status = 403
+  ctx.body = { error: `Profile "${profileName}" is not available for this user` }
+  return true
 }
 
 function profileMetadataRoot(): string {
@@ -299,21 +324,12 @@ export async function list(ctx: any) {
       profiles = listProfilesFromDisk('default')
     }
 
-    // Override active flag from the authoritative source (active_profile file)
-    // CLI output may be stale, but the file is written by hermes profile use
-    const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
-    const activeProfileName = getActiveProfileName()
+    const activeProfileName = requestedProfileName(ctx)
 
     profiles = filterVisibleProfiles(profiles)
+    profiles = filterProfilesForUser(ctx, profiles)
 
-    // Check if CLI's active flag matches the file (warn if inconsistent)
-    const cliActive = profiles.find(p => p.active)
-    if (cliActive?.name !== activeProfileName) {
-      logger.warn('[listProfiles] CLI active flag (%s) differs from active_profile file (%s) - using file as authoritative source',
-        cliActive?.name || 'none', activeProfileName)
-    }
-
-    // Fix the active flag based on the actual active_profile file
+    // Web UI active profile is request-scoped and comes from X-Hermes-Profile.
     profiles.forEach(p => {
       p.active = (p.name === activeProfileName)
     })
@@ -388,8 +404,10 @@ export async function create(ctx: any) {
 }
 
 export async function get(ctx: any) {
+  const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   try {
-    const profile = await hermesCli.getProfile(ctx.params.name)
+    const profile = await hermesCli.getProfile(name)
     ctx.body = { profile: { ...profile, avatar: readProfileAvatar(profile.name) } }
   } catch (err: any) {
     ctx.status = err.message.includes('not found') ? 404 : 500
@@ -399,6 +417,7 @@ export async function get(ctx: any) {
 
 export async function updateAvatar(ctx: any) {
   const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
     ctx.body = { error: `Profile name '${name}' is reserved` }
@@ -438,6 +457,7 @@ export async function updateAvatar(ctx: any) {
 
 export async function deleteAvatar(ctx: any) {
   const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   try {
     removeProfileMetadata(name)
     ctx.body = { success: true }
@@ -449,6 +469,7 @@ export async function deleteAvatar(ctx: any) {
 
 export async function runtimeStatus(ctx: any) {
   const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
     ctx.body = { error: `Profile name '${name}' is reserved` }
@@ -465,7 +486,7 @@ export async function runtimeStatus(ctx: any) {
 
 export async function runtimeStatuses(ctx: any) {
   try {
-    const profiles = await listProfilesForStatus()
+    const profiles = filterProfilesForUser(ctx, await listProfilesForStatus())
     const bridge = await readBridgeWorkers()
     const statuses = await Promise.all(profiles.map(profile => buildRuntimeStatus(profile, bridge)))
     ctx.body = { profiles: statuses }
@@ -487,6 +508,7 @@ async function listProfilesForStatus(): Promise<HermesProfile[]> {
 
 export async function restartGatewayForProfile(ctx: any) {
   const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
     ctx.body = { error: `Profile name '${name}' is reserved` }
@@ -509,6 +531,7 @@ export async function restartGatewayForProfile(ctx: any) {
 
 export async function restartProfileRuntime(ctx: any) {
   const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
   if (isForbiddenProfileName(name)) {
     ctx.status = 400
     ctx.body = { error: `Profile name '${name}' is reserved` }
@@ -532,6 +555,7 @@ export async function restartProfileRuntime(ctx: any) {
 
 export async function remove(ctx: any) {
   const { name } = ctx.params
+  if (denyProfile(ctx, name)) return
   if (name === 'default') {
     ctx.status = 400
     ctx.body = { error: 'Cannot delete the default profile' }
@@ -562,6 +586,7 @@ export async function remove(ctx: any) {
 }
 
 export async function rename(ctx: any) {
+  if (denyProfile(ctx, ctx.params.name)) return
   const { new_name } = ctx.request.body as { new_name?: string }
   if (!new_name) {
     ctx.status = 400
@@ -596,41 +621,28 @@ export async function switchProfile(ctx: any) {
     return
   }
   try {
+    if (denyProfile(ctx, name)) return
+
     const output = await useProfileWithFallback(name)
 
-    // Verify the active_profile file immediately (Hermes CLI writes synchronously)
-    // Quick verification with 2 retries to handle edge cases (filesystem delays, concurrency)
-    const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
-    let actualActive = getActiveProfileName()
-
-    // Quick retry (max 2 times, 100ms delay each)
-    for (let i = 0; i < 2; i++) {
-      if (actualActive === name) break
-      logger.debug('[switchProfile] Quick retry %d: current=%s, expected=%s', i + 1, actualActive, name)
-      await new Promise(r => setTimeout(r, 100))
-      actualActive = getActiveProfileName()
-    }
-
+    const actualActive = getActiveProfileName()
     if (actualActive !== name) {
-      logger.error('[switchProfile] Verification failed: active_profile is %s (expected %s)', actualActive, name)
       ctx.status = 500
       ctx.body = { error: `Profile switch verification failed - active profile is ${actualActive}` }
       return
     }
 
-    // Destroy all bridge sessions so they get recreated with the new profile config
     try {
-      await bridgeCleanupClient().destroyAll()
-      logger.info('[switchProfile] destroyed all bridge sessions for profile "%s"', name)
+      const result = await bridgeCleanupClient().destroyProfile(name)
+      logger.info('[switchProfile] destroyed bridge sessions for Hermes profile "%s" destroyed=%s', name, result.destroyed)
     } catch (err: any) {
-      logger.warn(err, '[switchProfile] failed to destroy bridge sessions')
+      logger.warn(err, '[switchProfile] failed to destroy bridge sessions for profile "%s"', name)
     }
 
     try {
       const detail = await hermesCli.getProfile(name)
       logger.debug('Profile detail.path = %s', detail.path)
 
-      // 确保配置文件存在，但不调用 setupReset()（会重置端口配置）
       const profileConfig = join(detail.path, 'config.yaml')
       if (!existsSync(profileConfig)) {
         writeFileSync(profileConfig, '# Hermes Agent Configuration\n', 'utf-8')
@@ -647,20 +659,13 @@ export async function switchProfile(ctx: any) {
     }
 
     await injectBundledSkillsForProfile(name)
-
-    // TODO: re-enable pending session delete drain after confirming safety
-    // const drainResult = await SessionDeleter.getInstance().drain(name)
     SessionDeleter.getInstance().switchProfile(name)
-    logger.info('[switchProfile] switched session deleter to profile "%s"', name)
-    // if (drainResult.failed.length > 0) {
-    //   logger.warn({ profile: name, failed: drainResult.failed }, 'Failed to drain some pending session deletes after profile switch')
-    // }
+    logger.info('[switchProfile] switched session deleter to Hermes profile "%s"', name)
 
     ctx.body = {
       success: true,
       message: output.trim(),
-      // drained_session_deletes: drainResult.deleted.length,
-      // failed_session_deletes: drainResult.failed.length,
+      active: name,
     }
   } catch (err: any) {
     ctx.status = 500
@@ -670,6 +675,7 @@ export async function switchProfile(ctx: any) {
 
 export async function exportProfile(ctx: any) {
   const { name } = ctx.params
+  if (denyProfile(ctx, name)) return
   const outputPath = join(tmpdir(), `hermes-profile-${name}.tar.gz`)
   try {
     await hermesCli.exportProfile(name, outputPath)

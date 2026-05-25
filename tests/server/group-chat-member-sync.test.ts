@@ -224,6 +224,52 @@ describe('Group Chat member/agent identity sync', () => {
     })
   })
 
+  it('filters room list to rooms containing one of the regular admin profiles', async () => {
+    const allRooms = [
+      { id: 'room-default', name: 'Default', inviteCode: null },
+      { id: 'room-private', name: 'Private', inviteCode: null },
+    ]
+    const visibleRooms = [allRooms[0]]
+    const storage = {
+      getAllRooms: vi.fn(() => allRooms),
+      getRoomsForProfiles: vi.fn(() => visibleRooms),
+    }
+    setGroupChatServer({ getStorage: () => storage } as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const ctx: any = {
+      state: { user: { id: 2, username: 'ops', role: 'admin', profiles: ['default', 'research'] } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(storage.getRoomsForProfiles).toHaveBeenCalledWith(['default', 'research'])
+    expect(storage.getAllRooms).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ rooms: visibleRooms })
+  })
+
+  it('keeps room list unrestricted for super admins', async () => {
+    const rooms = [{ id: 'room-1', name: 'All', inviteCode: null }]
+    const storage = {
+      getAllRooms: vi.fn(() => rooms),
+      getRoomsForProfiles: vi.fn(() => []),
+    }
+    setGroupChatServer({ getStorage: () => storage } as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const ctx: any = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(storage.getAllRooms).toHaveBeenCalledOnce()
+    expect(storage.getRoomsForProfiles).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ rooms })
+  })
+
   it('routes @mentions only from user messages, not agent replies', () => {
     const server = Object.create(GroupChatServer.prototype) as any
     const emit = vi.fn()

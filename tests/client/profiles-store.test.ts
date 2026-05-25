@@ -207,12 +207,11 @@ describe('Profiles Store', () => {
     expect(localStorage.getItem('hermes_active_profile_name')).toBe('dev')
   })
 
-  it('switchProfile rolls back if backend reports different active profile', async () => {
+  it('switchProfile keeps the local selected profile independent of backend active flags', async () => {
     const initialName = 'default'
     localStorage.setItem('hermes_active_profile_name', initialName)
 
     mockProfilesApi.switchProfile.mockResolvedValue(true)
-    // Backend returns success, but active profile is still default (not the one we switched to)
     mockProfilesApi.fetchProfiles.mockResolvedValue([
       { name: 'default', active: true, model: 'gpt-4', alias: '' },
       { name: 'dev', active: false, model: 'gpt-4', alias: '' },
@@ -222,11 +221,8 @@ describe('Profiles Store', () => {
     store.activeProfileName = initialName
     const result = await store.switchProfile('dev')
 
-    // Should return false (backend verification failed)
-    expect(result).toBe(false)
-    // activeProfileName should be rolled back to default
-    expect(store.activeProfileName).toBe('default')
-    // localStorage should be rolled back
-    expect(localStorage.getItem('hermes_active_profile_name')).toBe('default')
+    expect(result).toBe(true)
+    expect(store.activeProfileName).toBe('dev')
+    expect(localStorage.getItem('hermes_active_profile_name')).toBe('dev')
   })
 })

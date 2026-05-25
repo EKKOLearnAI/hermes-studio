@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
@@ -10,6 +10,8 @@ const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetc
   mockWriteAppConfig: vi.fn(),
   mockExistsSync: vi.fn(() => false),
   mockReadFileSync: vi.fn(),
+  mockListProfileNamesFromDisk: vi.fn(() => ['default']),
+  mockListUserProfiles: vi.fn(() => []),
 }))
 
 vi.mock('fs/promises', () => ({
@@ -26,7 +28,11 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveAuthPath: () => '/fake/home/.hermes/auth.json',
   getActiveProfileName: () => 'default',
   getProfileDir: () => '/fake/home/.hermes',
-  listProfileNamesFromDisk: () => ['default'],
+  listProfileNamesFromDisk: mockListProfileNamesFromDisk,
+}))
+
+vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+  listUserProfiles: mockListUserProfiles,
 }))
 
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
@@ -104,6 +110,8 @@ beforeEach(() => {
   mockWriteAppConfig.mockImplementation(async patch => patch)
   mockExistsSync.mockReturnValue(false)
   mockReadFileSync.mockReturnValue('{}')
+  mockListProfileNamesFromDisk.mockReturnValue(['default'])
+  mockListUserProfiles.mockReturnValue([])
 })
 
 describe('models controller — model visibility', () => {
@@ -150,6 +158,63 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.custom_models).toEqual({
       deepseek: ['gemma-4-26b-a4b-it', 'deepseek-chat'],
     })
+  })
+
+  it('limits the default available-models response to profiles bound to regular admins', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default', 'research', 'private'])
+    mockListUserProfiles.mockReturnValue([
+      { user_id: 7, profile_name: 'research', is_default: 1, created_at: 1 },
+    ])
+    mockReadConfigYamlForProfile.mockImplementation(async (profile: string) => ({
+      model: {
+        default: `${profile}-model`,
+        provider: 'deepseek',
+      },
+    }))
+
+    const ctx = makeCtx()
+    ctx.state = { user: { id: 7, username: 'ops', role: 'admin' } }
+    ctx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'private' : '')
+    await ctrl.getAvailable(ctx)
+
+    expect(mockReadConfigYamlForProfile).toHaveBeenCalledTimes(1)
+    expect(mockReadConfigYamlForProfile).toHaveBeenCalledWith('research')
+    expect(ctx.body.profiles.map((profile: any) => profile.profile)).toEqual(['research'])
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: 'deepseek' }),
+    ]))
+  })
+
+  it('uses the requested profile for aggregate response defaults', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default', 'tester'])
+    mockReadConfigYamlForProfile.mockImplementation(async (profile: string) => ({
+      model: {
+        default: profile === 'tester' ? 'deepseek-reasoner' : 'deepseek-chat',
+        provider: 'deepseek',
+      },
+    }))
+
+    const ctx = makeCtx()
+    ctx.state = { user: { id: 1, username: 'admin', role: 'super_admin' } }
+    ctx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'tester' : '')
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.default).toBe('deepseek-reasoner')
+    expect(ctx.body.default_provider).toBe('deepseek')
+    expect(ctx.body.profiles.map((profile: any) => profile.profile)).toEqual(['default', 'tester'])
+  })
+
+  it('uses explicit query profile for single-profile model fetches', async () => {
+    mockListProfileNamesFromDisk.mockReturnValue(['default', 'research'])
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'research' }
+    ctx.state = { profile: { name: 'default' }, user: { id: 1, username: 'admin', role: 'super_admin' } }
+    await ctrl.getAvailable(ctx)
+
+    expect(mockReadConfigYamlForProfile).toHaveBeenCalledTimes(1)
+    expect(mockReadConfigYamlForProfile).toHaveBeenCalledWith('research')
+    expect(ctx.body.profiles.map((profile: any) => profile.profile)).toEqual(['research'])
   })
   it('accepts OAuth providers stored in credential_pool entries', async () => {
     mockExistsSync.mockReturnValue(true)
