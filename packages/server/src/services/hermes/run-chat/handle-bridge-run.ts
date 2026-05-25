@@ -126,11 +126,11 @@ function cacheBridgeContext(state: SessionState, data: Record<string, unknown> |
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
-  _skipUserMessage = false,
+  skipUserMessage = false,
   loadSessionStateFromDbFn: (sid: string, sessionMap: Map<string, SessionState>) => Promise<SessionState>,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
@@ -193,42 +193,54 @@ export async function handleBridgeRun(
   state.bridgePendingTools = []
   state.responseRun = undefined
 
-  const inputStr = contentBlocksToString(input)
-  state.messages.push({
-    id: state.messages.length + 1,
-    session_id,
-    runMarker,
-    role: 'user',
-    content: inputStr,
-    timestamp: now,
-  })
+  const displayInput = data.display_input === undefined ? input : data.display_input
+  const inputStr = displayInput == null ? '' : contentBlocksToString(displayInput)
+  const shouldPersistUserMessage = !skipUserMessage && displayInput !== null
+  let messageId: number | string | undefined
 
-  if (!getSession(session_id)) {
-    const previewText = extractTextForPreview(input)
-    const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
-  }
-  const messageId = addMessage({
-    session_id,
-    role: 'user',
-    content: inputStr,
-    timestamp: now,
-  })
-
-  socket.join(`session:${session_id}`)
-  const peerTarget = data.peerExcludeSocketId
-    ? nsp.to(`session:${session_id}`).except(data.peerExcludeSocketId)
-    : socket.to(`session:${session_id}`)
-  peerTarget.emit('run.peer_user_message', {
-    event: 'run.peer_user_message',
-    session_id,
-    message: {
-      id: data.queue_id || messageId,
+  if (shouldPersistUserMessage) {
+    state.messages.push({
+      id: state.messages.length + 1,
+      session_id,
+      runMarker,
       role: 'user',
       content: inputStr,
       timestamp: now,
-    },
-  })
+    })
+
+    if (!getSession(session_id)) {
+      const previewText = extractTextForPreview(displayInput || input)
+      const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+      createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+    }
+    messageId = addMessage({
+      session_id,
+      role: 'user',
+      content: inputStr,
+      timestamp: now,
+    })
+  } else if (!getSession(session_id)) {
+    const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
+    const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+  }
+
+  socket.join(`session:${session_id}`)
+  if (shouldPersistUserMessage) {
+    const peerTarget = data.peerExcludeSocketId
+      ? nsp.to(`session:${session_id}`).except(data.peerExcludeSocketId)
+      : socket.to(`session:${session_id}`)
+    peerTarget.emit('run.peer_user_message', {
+      event: 'run.peer_user_message',
+      session_id,
+      message: {
+        id: data.queue_id || messageId,
+        role: 'user',
+        content: inputStr,
+        timestamp: now,
+      },
+    })
+  }
   const emit = (event: string, payload: any) => {
     const tagged = { ...payload, session_id }
     nsp.to(`session:${session_id}`).emit(event, tagged)
@@ -278,9 +290,11 @@ export async function handleBridgeRun(
     const bridgeInput = isContentBlockArray(input)
       ? await convertContentBlocksForAgent(input)
       : input
-    const bridgeStorageInput = isContentBlockArray(input)
-      ? inputStr
-      : undefined
+    const bridgeStorageInput = data.storage_message !== undefined
+      ? data.storage_message
+      : isContentBlockArray(input)
+        ? inputStr
+        : undefined
     logger.info('[chat-run-socket] starting CLI bridge run for session %s', session_id)
     bridgeLogger.info({
       sessionId: session_id,
@@ -606,6 +620,25 @@ async function applyBridgeChunkAsync(
       }
       replaceState(sessionMap, sessionId, 'approval.resolved', payload)
       emit('approval.resolved', payload)
+    } else if (evType === 'clarify.requested') {
+      const payload = {
+        event: 'clarify.requested',
+        run_id: chunk.run_id,
+        clarify_id: ev.clarify_id,
+        question: ev.question,
+        choices: Array.isArray(ev.choices) ? ev.choices : null,
+        timeout_ms: ev.timeout_ms,
+      }
+      replaceState(sessionMap, sessionId, 'clarify.requested', payload)
+      emit('clarify.requested', payload)
+    } else if (evType === 'clarify.resolved') {
+      const payload = {
+        event: 'clarify.resolved',
+        run_id: chunk.run_id,
+        clarify_id: ev.clarify_id,
+      }
+      replaceState(sessionMap, sessionId, 'clarify.resolved', payload)
+      emit('clarify.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
       const bridgeUsage = estimateUsageTokensFromMessages(bridgeHistory)

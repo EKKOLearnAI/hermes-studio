@@ -28,6 +28,7 @@ const bridgeCommands = computed(() => [
   { name: 'status', args: '', description: t('chat.slashCommands.status') },
   { name: 'abort', args: '', description: t('chat.slashCommands.abort') },
   { name: 'queue', args: t('chat.slashCommandArgs.message'), description: t('chat.slashCommands.queue') },
+  { name: 'plan', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.plan') },
   { name: 'clear', args: '', description: t('chat.slashCommands.clear') },
   { name: 'clear', args: '--history', insertText: 'clear --history', description: t('chat.slashCommands.clearHistory') },
   { name: 'title', args: t('chat.slashCommandArgs.title'), description: t('chat.slashCommands.title') },

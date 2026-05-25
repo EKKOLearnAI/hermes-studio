@@ -219,6 +219,7 @@ export default {
       status: '查看会话状态和队列',
       abort: '停止当前 Bridge 运行',
       queue: '把消息加入当前运行后的队列',
+      plan: '生成一份 Markdown 实施计划',
       clear: '清空当前显示内容',
       clearHistory: '删除当前会话已入库的消息历史',
       title: '重命名当前会话',

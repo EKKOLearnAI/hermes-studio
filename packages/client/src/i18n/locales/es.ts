@@ -218,6 +218,7 @@ export default {
       status: 'Mostrar estado de sesión y cola',
       abort: 'Detener la ejecución activa de Bridge',
       queue: 'Poner un mensaje en cola tras la ejecución activa',
+      plan: 'Escribir un plan de implementación en Markdown',
       clear: 'Limpiar la vista actual',
       clearHistory: 'Eliminar el historial de mensajes guardado de esta sesión',
       title: 'Renombrar esta sesión',

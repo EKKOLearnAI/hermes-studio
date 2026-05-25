@@ -28,6 +28,8 @@ export interface SessionMessage {
 export interface QueuedRun {
   queue_id: string
   input: string | ContentBlock[]
+  displayInput?: string | ContentBlock[] | null
+  storageMessage?: string
   model?: string
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>

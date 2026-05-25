@@ -1307,7 +1307,7 @@ async function handleSessionModelCustomSubmit() {
                 {{ t('chat.clarifyDismiss') }}
               </NButton>
             </div>
-            <div v-else class="clarify-actions">
+            <div v-else class="clarify-actions clarify-actions-open">
               <div class="clarify-input-row">
                 <NInput
                   v-model:value="clarifyResponse"
@@ -2168,12 +2168,24 @@ async function handleSessionModelCustomSubmit() {
 .clarify-input-row {
   display: flex;
   flex: 1;
+  width: 100%;
+  min-width: 0;
   gap: 8px;
   align-items: center;
 
-  .n-input {
-    flex: 1;
+  :deep(.n-input) {
+    flex: 1 1 auto;
+    min-width: 0;
   }
+
+  :deep(.n-button) {
+    flex: 0 0 auto;
+  }
+}
+
+.clarify-actions-open {
+  display: flex;
+  width: 100%;
 }
 @media (max-width: 768px) {
   .approval-bar {
@@ -2212,8 +2224,17 @@ async function handleSessionModelCustomSubmit() {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .clarify-actions-open {
+    display: flex;
+    grid-template-columns: none;
+  }
+
   .clarify-actions :deep(.n-button) {
     width: 100%;
+  }
+
+  .clarify-actions-open :deep(.n-button) {
+    width: auto;
   }
 }
 
@@ -2232,6 +2253,15 @@ async function handleSessionModelCustomSubmit() {
 
   .clarify-actions {
     grid-template-columns: 1fr;
+  }
+
+  .clarify-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .clarify-actions-open :deep(.n-button) {
+    width: 100%;
   }
 }
 

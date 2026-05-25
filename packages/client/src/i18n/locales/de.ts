@@ -218,6 +218,7 @@ export default {
       status: 'Sitzungsstatus und Warteschlange anzeigen',
       abort: 'Aktiven Bridge-Lauf stoppen',
       queue: 'Nachricht hinter dem aktiven Lauf einreihen',
+      plan: 'Markdown-Implementierungsplan schreiben',
       clear: 'Aktuelle Anzeige leeren',
       clearHistory: 'Gespeicherten Nachrichtenverlauf dieser Sitzung löschen',
       title: 'Diese Sitzung umbenennen',

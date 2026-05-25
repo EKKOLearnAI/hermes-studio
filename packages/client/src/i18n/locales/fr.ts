@@ -218,6 +218,7 @@ export default {
       status: 'Afficher l’état de la session et la file',
       abort: 'Arrêter l’exécution Bridge active',
       queue: 'Mettre un message en file après l’exécution active',
+      plan: 'Rédiger un plan d’implémentation Markdown',
       clear: 'Effacer l’affichage actuel',
       clearHistory: 'Supprimer l’historique des messages enregistrés de cette session',
       title: 'Renommer cette session',

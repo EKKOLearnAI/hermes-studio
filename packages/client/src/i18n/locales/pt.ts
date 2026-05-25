@@ -218,6 +218,7 @@ export default {
       status: 'Mostrar status da sessão e fila',
       abort: 'Parar a execução ativa do Bridge',
       queue: 'Enfileirar uma mensagem após a execução ativa',
+      plan: 'Escrever um plano de implementação em Markdown',
       clear: 'Limpar a visualização atual',
       clearHistory: 'Excluir o histórico de mensagens salvo desta sessão',
       title: 'Renomear esta sessão',

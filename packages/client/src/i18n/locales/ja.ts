@@ -218,6 +218,7 @@ export default {
       status: 'セッション状態とキューを表示',
       abort: '実行中の Bridge を停止',
       queue: '実行中の処理の後ろにメッセージをキュー追加',
+      plan: 'Markdown の実装計画を作成',
       clear: '現在の表示をクリア',
       clearHistory: 'このセッションの保存済みメッセージ履歴を削除',
       title: 'このセッション名を変更',

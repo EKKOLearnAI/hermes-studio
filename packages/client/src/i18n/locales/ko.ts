@@ -218,6 +218,7 @@ export default {
       status: '세션 상태와 대기열 표시',
       abort: '활성 Bridge 실행 중지',
       queue: '활성 실행 뒤에 메시지 대기열 추가',
+      plan: 'Markdown 구현 계획 작성',
       clear: '현재 표시 내용 지우기',
       clearHistory: '이 세션의 저장된 메시지 기록 삭제',
       title: '이 세션 이름 변경',

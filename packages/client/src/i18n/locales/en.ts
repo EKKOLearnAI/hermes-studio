@@ -219,6 +219,7 @@ export default {
       status: 'Show session status and queue',
       abort: 'Stop the active bridge run',
       queue: 'Queue a message behind the active run',
+      plan: 'Write a markdown implementation plan',
       clear: 'Clear the current display',
       clearHistory: 'Delete this session’s stored message history',
       title: 'Rename this session',

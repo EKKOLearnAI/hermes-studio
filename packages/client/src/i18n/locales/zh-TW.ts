@@ -218,6 +218,7 @@ export default {
       status: '查看會話狀態和佇列',
       abort: '停止目前 Bridge 執行',
       queue: '將訊息加入目前執行後的佇列',
+      plan: '產生一份 Markdown 實作計畫',
       clear: '清空目前顯示內容',
       clearHistory: '刪除目前會話已儲存的訊息歷史',
       title: '重新命名目前會話',

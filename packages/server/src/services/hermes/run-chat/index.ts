@@ -99,6 +99,8 @@ export class ChatRunSocket {
 
     socket.on('run', async (data: {
       input: string | ContentBlock[]
+      display_input?: string | ContentBlock[] | null
+      storage_message?: string
       session_id?: string
       model?: string
       instructions?: string
@@ -268,6 +270,8 @@ export class ChatRunSocket {
     socket: Socket,
     data: {
       input: string | ContentBlock[]
+      display_input?: string | ContentBlock[] | null
+      storage_message?: string
       session_id?: string
       model?: string
       provider?: string
@@ -360,6 +364,8 @@ export class ChatRunSocket {
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
     void this.handleRun(socket, {
       input: next.input,
+      display_input: next.displayInput,
+      storage_message: next.storageMessage,
       session_id: sessionId,
       model: next.model,
       provider: next.provider,
@@ -385,7 +391,9 @@ export class ChatRunSocket {
     return queue.map(item => ({
       id: item.queue_id,
       role: 'user',
-      content: contentBlocksToString(item.input),
+      content: item.displayInput === null
+        ? (item.storageMessage || '')
+        : contentBlocksToString(item.displayInput ?? item.input),
       timestamp: Math.floor(Date.now() / 1000),
       queued: true,
     }))
