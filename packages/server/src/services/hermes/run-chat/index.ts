@@ -362,6 +362,7 @@ export class ChatRunSocket {
   }
 
   private runQueuedItem(socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile = 'default') {
+    const skipUserMessage = next.displayInput === null
     void this.handleRun(socket, {
       input: next.input,
       display_input: next.displayInput,
@@ -374,7 +375,7 @@ export class ChatRunSocket {
       source: next.source,
       queue_id: next.queue_id,
       peerExcludeSocketId: next.originSocketId,
-    }, next.profile || fallbackProfile, true)
+    }, next.profile || fallbackProfile, skipUserMessage)
   }
 
   // --- Helpers ---
