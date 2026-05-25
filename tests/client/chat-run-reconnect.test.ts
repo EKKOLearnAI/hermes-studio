@@ -157,4 +157,36 @@ describe('chat-run socket reconnect handling', () => {
     expect(socket.__listenerCount('disconnect')).toBe(1)
     expect(socket.emit).toHaveBeenCalledWith('run', body)
   })
+
+  it('fans session.command events to run-local and global handlers', async () => {
+    const { onSessionCommand, startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
+    const onEvent = vi.fn()
+    const onGlobalCommand = vi.fn()
+    const offGlobalCommand = onSessionCommand(onGlobalCommand)
+
+    startRunViaSocket(
+      { session_id: 'session-1', input: '/goal status', profile: 'default', source: 'cli' },
+      onEvent,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const socket = socketState.sockets[0]
+    const event = {
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'goal',
+      action: 'status',
+      message: 'Goal (active, 0/20 turns): write site',
+    }
+
+    socket.__trigger('session.command', event)
+
+    expect(onEvent).toHaveBeenCalledWith(event)
+    expect(onGlobalCommand).toHaveBeenCalledWith(event)
+
+    offGlobalCommand()
+    socket.__trigger('session.command', { ...event, message: 'next status' })
+    expect(onGlobalCommand).toHaveBeenCalledTimes(1)
+  })
 })

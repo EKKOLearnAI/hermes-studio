@@ -27,7 +27,7 @@ import {
   recordBridgeToolCompleted,
 } from './bridge-message'
 import { summarizeToolArguments } from './response-utils'
-import type { ContentBlock, SessionState } from './types'
+import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
@@ -349,6 +349,7 @@ export async function handleBridgeRun(
         dequeueNextQueuedRun,
         fullInstructions,
         { model: resolvedModel, provider: resolvedProvider },
+        data.model_groups,
       )
       if (chunk.done) break
     }
@@ -485,6 +486,7 @@ async function applyBridgeChunkAsync(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
   instructions: string,
   modelContext: { model?: string | null; provider?: string | null },
+  modelGroups?: RunModelGroup[],
 ): Promise<void> {
   if (state.activeRunMarker !== runMarker) {
     bridgeLogger.info({
@@ -737,11 +739,13 @@ async function applyBridgeChunkAsync(
       replaceState(sessionMap, sessionId, 'compression.completed', payload)
       emit('compression.completed', payload)
     } else if (evType === 'status') {
-      emit('agent.event', {
+      const payload = {
+        ...ev,
         event: 'agent.event',
         run_id: chunk.run_id,
-        ...ev,
-      })
+      }
+      replaceState(sessionMap, sessionId, 'agent.event', payload)
+      emit('agent.event', payload)
     }
   }
 
@@ -812,19 +816,15 @@ async function applyBridgeChunkAsync(
     outputTokens: usage.outputTokens,
     profile: state.profile,
   })
-  const nextQueuedRun = state.queue.length > 0 ? state.queue[0] : undefined
-  state.isWorking = Boolean(nextQueuedRun)
+  const terminalError = bridgeTerminalError(chunk)
+  const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
+  state.isWorking = hadQueuedRunBeforeGoalEvaluation
   state.isAborting = false
-  if (nextQueuedRun) {
-    state.profile = nextQueuedRun.profile || profile
-    state.source = nextQueuedRun.source
-  } else {
-    state.profile = undefined
-  }
+  state.profile = hadQueuedRunBeforeGoalEvaluation ? (state.queue[0]?.profile || profile) : undefined
+  state.source = hadQueuedRunBeforeGoalEvaluation ? state.queue[0]?.source : state.source
   state.runId = undefined
   state.activeRunMarker = undefined
   state.events = []
-  const terminalError = bridgeTerminalError(chunk)
   const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {
     event: eventName,
@@ -838,8 +838,157 @@ async function applyBridgeChunkAsync(
     queue_remaining: state.queue.length,
   }
   emit(eventName, payload)
-  if (state.queue.length > 0) {
+
+  if (!terminalError) {
+    await maybeEnqueueGoalContinuation({
+      nsp,
+      socket,
+      sessionId,
+      state,
+      bridge,
+      profile,
+      modelContext,
+      modelGroups,
+      instructions,
+      finalResponse: bridgeFinalResponse(chunk, state),
+    })
+  }
+
+  if (state.queue.length > 0 && !state.activeRunMarker) {
+    const nextQueuedRun = state.queue[0]
+    state.isWorking = true
+    state.profile = nextQueuedRun.profile || profile
+    state.source = nextQueuedRun.source
     dequeueNextQueuedRun(socket, sessionId)
+  } else if (!state.activeRunMarker) {
+    state.isWorking = false
+    state.profile = undefined
+  }
+}
+
+function bridgeFinalResponse(chunk: AgentBridgeOutput, state: SessionState): string {
+  const result = chunk.result && typeof chunk.result === 'object' && !Array.isArray(chunk.result)
+    ? chunk.result as Record<string, unknown>
+    : null
+  const finalResponse = result && typeof result.final_response === 'string'
+    ? result.final_response
+    : ''
+  return finalResponse || chunk.output || state.bridgeOutput || ''
+}
+
+function hasRealQueuedRun(state: SessionState): boolean {
+  return state.queue.some(item => !item.goalContinuation)
+}
+
+async function maybeEnqueueGoalContinuation(args: {
+  nsp: ReturnType<Server['of']>
+  socket: Socket
+  sessionId: string
+  state: SessionState
+  bridge: AgentBridgeClient
+  profile: string
+  modelContext: { model?: string | null; provider?: string | null }
+  modelGroups?: RunModelGroup[]
+  instructions: string
+  finalResponse: string
+}) {
+  const finalResponse = args.finalResponse || ''
+  if (!finalResponse.trim()) return
+  if (hasRealQueuedRun(args.state)) return
+
+  let decision
+  try {
+    decision = await args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile)
+  } catch (err) {
+    logger.warn(err, '[chat-run-socket] /goal evaluation failed for session %s', args.sessionId)
+    return
+  }
+
+  if (isGoalJudgeUnavailable(decision.reason)) {
+    emitGoalStatus(
+      args.nsp,
+      args.socket,
+      args.sessionId,
+      args.state,
+      'judge_unavailable',
+      'Goal judge is not configured; automatic goal continuation was skipped. The goal remains active, but Hermes cannot mark it done automatically.',
+    )
+    return
+  }
+
+  const message = typeof decision.message === 'string' ? decision.message.trim() : ''
+  if (message) emitGoalStatus(args.nsp, args.socket, args.sessionId, args.state, decision.verdict || 'goal', message)
+
+  if (!decision.should_continue) return
+  if (hasRealQueuedRun(args.state)) return
+
+  const prompt = typeof decision.continuation_prompt === 'string'
+    ? decision.continuation_prompt.trim()
+    : ''
+  if (!prompt) return
+
+  const next: QueuedRun = {
+    queue_id: `goal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    input: prompt,
+    displayInput: null,
+    storageMessage: prompt,
+    model: args.modelContext.model || undefined,
+    provider: args.modelContext.provider || undefined,
+    model_groups: args.modelGroups,
+    instructions: undefined,
+    profile: args.profile,
+    source: 'cli',
+    goalContinuation: true,
+  }
+  args.state.queue.push(next)
+}
+
+function isGoalJudgeUnavailable(reason?: string | null): boolean {
+  const value = String(reason || '').toLowerCase()
+  return value.includes('no auxiliary client configured') || value.includes('auxiliary client unavailable')
+}
+
+function emitGoalStatus(
+  nsp: ReturnType<Server['of']>,
+  socket: Socket,
+  sessionId: string,
+  state: SessionState,
+  action: string,
+  message: string,
+) {
+  const now = Math.floor(Date.now() / 1000)
+  const id = addMessage({
+    session_id: sessionId,
+    role: 'command',
+    content: message,
+    timestamp: now,
+  })
+  state.messages.push({
+    id: id || `goal_${now}_${state.messages.length}`,
+    session_id: sessionId,
+    role: 'command',
+    content: message,
+    timestamp: now,
+  })
+  nsp.to(`session:${sessionId}`).emit('session.command', {
+    event: 'session.command',
+    session_id: sessionId,
+    command: 'goal',
+    ok: true,
+    action,
+    message,
+    terminal: false,
+  })
+  if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
+    socket.emit('session.command', {
+      event: 'session.command',
+      session_id: sessionId,
+      command: 'goal',
+      ok: true,
+      action,
+      message,
+      terminal: false,
+    })
   }
 }
 

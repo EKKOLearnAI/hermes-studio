@@ -47,6 +47,19 @@ describe('run chat model config', () => {
     expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
+  it('keeps an explicit model when no model group list is available', async () => {
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+
+    const result = await resolveBridgeRunModelConfig({
+      profile: 'default',
+      requestedModel: 'gpt-5.5',
+      requestedProvider: 'custom',
+    })
+
+    expect(result).toEqual({ model: 'gpt-5.5', provider: 'custom' })
+    expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
+  })
+
   it('falls back to the profile default when the candidate model is unavailable', async () => {
     const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
 

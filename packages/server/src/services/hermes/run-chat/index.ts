@@ -135,6 +135,8 @@ export class ChatRunSocket {
               bridge: this.bridge,
               profile: runProfile,
               model: data.model,
+              provider: data.provider,
+              model_groups: data.model_groups,
               instructions: data.instructions,
               queueId: data.queue_id,
               runQueuedItem: this.runQueuedItem.bind(this),
@@ -393,12 +395,10 @@ export class ChatRunSocket {
   }
 
   private serializeQueuedMessages(queue: QueuedRun[]) {
-    return queue.map(item => ({
+    return queue.filter(item => item.displayInput !== null).map(item => ({
       id: item.queue_id,
       role: item.displayRole || (typeof item.displayInput === 'string' && item.displayInput.trim().startsWith('/') ? 'command' : 'user'),
-      content: item.displayInput === null
-        ? (item.storageMessage || '')
-        : contentBlocksToString(item.displayInput ?? item.input),
+      content: contentBlocksToString(item.displayInput ?? item.input),
       timestamp: Math.floor(Date.now() / 1000),
       queued: true,
     }))

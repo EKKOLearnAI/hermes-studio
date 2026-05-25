@@ -119,6 +119,7 @@ const sessionEventHandlers = new Map<string, {
   onAbortStarted: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
+  onAgentEvent?: (event: RunEvent) => void
   onSessionCommand?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
@@ -129,6 +130,7 @@ const sessionEventHandlers = new Map<string, {
 }>()
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
+const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -357,6 +359,20 @@ function globalSessionCommandHandler(event: RunEvent): void {
   if (handlers?.onSessionCommand) {
     handlers.onSessionCommand(event)
   }
+
+  for (const handler of sessionCommandHandlers) {
+    handler(event)
+  }
+}
+
+function globalAgentEventHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAgentEvent) {
+    handlers.onAgentEvent(event)
+  }
 }
 
 function globalApprovalRequestedHandler(event: RunEvent): void {
@@ -437,6 +453,7 @@ export function registerSessionHandlers(
     onAbortStarted: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
+    onAgentEvent?: (event: RunEvent) => void
     onSessionCommand?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
@@ -466,6 +483,13 @@ export function onPeerUserMessage(handler: (event: RunEvent) => void): () => voi
   peerUserMessageHandlers.add(handler)
   return () => {
     peerUserMessageHandlers.delete(handler)
+  }
+}
+
+export function onSessionCommand(handler: (event: RunEvent) => void): () => void {
+  sessionCommandHandlers.add(handler)
+  return () => {
+    sessionCommandHandlers.delete(handler)
   }
 }
 
@@ -577,6 +601,7 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
+    chatRunSocket.on('agent.event', globalAgentEventHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)
 
     globalListenersRegistered = true
@@ -787,6 +812,10 @@ export function startRunViaSocket(
       onDone()
     },
     onUsageUpdated: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onAgentEvent: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },
