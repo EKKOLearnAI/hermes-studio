@@ -7,6 +7,8 @@ import {
   getPreviewInstance,
   listPreviewInstances,
   startPreviewInstance,
+  startPreviewInstanceWithId,
+  updatePreviewInstance,
   stopPreviewInstance,
 } from '../../packages/server/src/services/hermes/preview-registry'
 
@@ -59,6 +61,45 @@ describe('preview registry service', () => {
     const afterStop = await getPreviewInstance(profile, started.id)
     expect(afterStop?.status).toBe('stopped')
     expect(afterStop?.finishedAt).toBe(stopped.finishedAt)
+  })
+
+  it('upserts a git-branch preview instance by id', async () => {
+    await __resetPreviewRegistryForTest(profile)
+
+    const previewId = 'preview-branch-1'
+    const worktreePath = '/tmp/branch-preview-worktree'
+    const target = {
+      type: 'git-branch',
+      repo: '/repo/hermes-web-ui',
+      branch: 'feature/preview-instance',
+      provider: 'git-branch-worktree',
+      devOnly: true,
+      worktreePath,
+    } as const
+
+    const started = await startPreviewInstanceWithId(profile, target, previewId)
+    expect(started.id).toBe(previewId)
+    expect(started.status).toBe('running')
+
+    const updated = await updatePreviewInstance(profile, previewId, {
+      target,
+      status: 'success',
+      startedAt: started.startedAt,
+      finishedAt: started.startedAt ? started.startedAt + 123 : Date.now(),
+      exitCode: 0,
+      signal: null,
+      error: null,
+      logTail: [...started.logTail, 'Preview build complete'],
+    })
+
+    expect(updated.id).toBe(previewId)
+    expect(updated.status).toBe('success')
+    expect(updated.target).toEqual(target)
+    expect(updated.logTail.at(-1)).toBe('Preview build complete')
+
+    const listed = await listPreviewInstances(profile)
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toEqual(updated)
   })
 
   it('rejects invalid preview targets with a structured error', async () => {

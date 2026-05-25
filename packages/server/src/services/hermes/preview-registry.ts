@@ -226,10 +226,14 @@ export async function getPreviewInstance(profile: string, previewId: string): Pr
 
 export async function startPreviewInstance(profile: string, targetInput: unknown): Promise<PreviewInstance> {
   const target = normalizePreviewTarget(targetInput)
+  return startPreviewInstanceWithId(profile, target)
+}
+
+export async function startPreviewInstanceWithId(profile: string, target: PreviewTarget, previewId?: string): Promise<PreviewInstance> {
   const now = Date.now()
   const record: PreviewRegistryRecord = {
     profile,
-    id: randomUUID(),
+    id: previewId || randomUUID(),
     target,
     status: 'running',
     startedAt: now,
@@ -242,12 +246,63 @@ export async function startPreviewInstance(profile: string, targetInput: unknown
     updatedAt: now,
   }
 
-  await updateRegistry(profile, async (state) => ({
-    ...state,
-    instances: [...state.instances, record],
-  }))
+  let storedRecord = record
 
-  return toInstance(record)
+  await updateRegistry(profile, async (state) => {
+    const index = findInstanceIndex(state, record.id)
+    if (index < 0) {
+      return {
+        ...state,
+        instances: [...state.instances, record],
+      }
+    }
+
+    const instances = state.instances.slice()
+    const nextRecord = {
+      ...state.instances[index],
+      ...record,
+      createdAt: state.instances[index].createdAt,
+    }
+    instances[index] = nextRecord
+    storedRecord = nextRecord
+    return { ...state, instances }
+  })
+
+  return toInstance(storedRecord)
+}
+
+export async function updatePreviewInstance(profile: string, previewId: string, patch: Partial<Omit<PreviewRegistryRecord, 'profile' | 'id' | 'createdAt' | 'updatedAt'>>): Promise<PreviewInstance> {
+  const now = Date.now()
+  let updatedRecord: PreviewRegistryRecord | null = null
+
+  await updateRegistry(profile, async (state) => {
+    const index = findInstanceIndex(state, previewId)
+    if (index < 0) {
+      throw new PreviewRegistryError(404, 'preview_not_found', `Preview instance not found: ${previewId}`)
+    }
+
+    const current = state.instances[index]
+    updatedRecord = {
+      ...current,
+      ...patch,
+      id: current.id,
+      profile,
+      updatedAt: now,
+      logTail: Array.isArray(patch.logTail)
+        ? patch.logTail.filter((line): line is string => typeof line === 'string').slice(-MAX_LOG_LINES)
+        : current.logTail,
+    }
+
+    const instances = state.instances.slice()
+    instances[index] = updatedRecord
+    return { ...state, instances }
+  })
+
+  if (!updatedRecord) {
+    throw new PreviewRegistryError(500, 'preview_registry_write_failed', `Unable to update preview instance: ${previewId}`)
+  }
+
+  return toInstance(updatedRecord)
 }
 
 export async function stopPreviewInstance(profile: string, previewId: string, reason = 'Preview stopped'): Promise<PreviewInstance> {

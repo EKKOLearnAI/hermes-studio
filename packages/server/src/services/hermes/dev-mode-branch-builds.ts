@@ -4,6 +4,7 @@ import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { config } from '../../config'
 import { getProfileDir } from './hermes-profile'
+import { startPreviewInstanceWithId, updatePreviewInstance } from './preview-registry'
 import { safeFileStore } from '../safe-file-store'
 import { logger } from '../logger'
 
@@ -90,6 +91,7 @@ export type BranchBuildStatus = PreviewInstanceStatus
 export interface BranchBuildState {
   profile: string
   reviewBase: string
+  previewId: string | null
   previewBranch: string | null
   previewWorktreePath: string | null
   buildBranch: string | null
@@ -111,6 +113,8 @@ export interface BuildResult {
 export interface BranchBuildSummary {
   enabled: boolean
   status: BranchBuildStatus
+  previewId: string | null
+  previewUrl: string | null
   previewBranch: string | null
   previewWorktreePath: string | null
   buildBranch: string | null
@@ -162,6 +166,7 @@ function defaultState(profile: string, reviewBase = DEFAULT_REVIEW_BASE): Branch
   return {
     profile,
     reviewBase,
+    previewId: null,
     previewBranch: reviewBase,
     previewWorktreePath: null,
     buildBranch: null,
@@ -203,6 +208,9 @@ async function readState(profile: string): Promise<BranchBuildState> {
     return {
       ...state,
       reviewBase: reviewBaseBranch,
+      previewId: typeof parsed.previewId === 'string' && parsed.previewId.trim()
+        ? parsed.previewId.trim()
+        : null,
       previewBranch,
       previewWorktreePath: typeof parsed.previewWorktreePath === 'string' && parsed.previewWorktreePath.trim()
         ? parsed.previewWorktreePath.trim()
@@ -361,6 +369,10 @@ function uniqueWorktreePath(profile: string, branch: string): string {
   return join(buildRootPath(profile), `${sanitizeBranchLabel(branch)}-${Date.now()}-${randomUUID().slice(0, 8)}`)
 }
 
+function buildPreviewUrl(previewId: string | null): string | null {
+  return previewId ? `/preview/${previewId}/` : null
+}
+
 async function removeWorktree(worktreePath: string | null | undefined): Promise<void> {
   if (!worktreePath) return
   await gitCommand(['worktree', 'remove', '--force', worktreePath]).catch((err) => {
@@ -452,34 +464,65 @@ async function runCommand(profile: string, worktreePath: string, label: string, 
   })
 }
 
-async function persistActivatedPreview(profile: string, branch: string, worktreePath: string, reviewBase: string, previousPreviewPath?: string | null): Promise<BranchBuildState> {
+async function persistActivatedPreview(profile: string, previewId: string, branch: string, worktreePath: string, reviewBase: string, previousPreviewPath?: string | null): Promise<BranchBuildState> {
   if (previousPreviewPath && previousPreviewPath !== worktreePath) {
     await removeWorktree(previousPreviewPath)
   }
-  return updateState(profile, async (state) => ({
-    ...state,
+  const finishedAt = Date.now()
+  const state = await updateState(profile, async (current) => ({
+    ...current,
     reviewBase,
+    previewId,
     previewBranch: branch,
     previewWorktreePath: worktreePath,
     buildBranch: branch,
     status: 'success',
-    startedAt: state.startedAt,
-    finishedAt: Date.now(),
+    startedAt: current.startedAt,
+    finishedAt,
     exitCode: 0,
     signal: null,
     error: null,
   }))
+  await updatePreviewInstance(profile, previewId, {
+    target: {
+      type: 'git-branch',
+      repo: repoRoot(),
+      branch,
+      provider: 'git-branch-worktree',
+      devOnly: true,
+      worktreePath,
+    },
+    status: 'success',
+    startedAt: state.startedAt,
+    finishedAt,
+    exitCode: 0,
+    signal: null,
+    error: null,
+    logTail: [...state.logTail, `Preview built for ${branch}`].slice(-MAX_LOG_LINES),
+  })
+  return state
 }
 
-async function markBuildFailure(profile: string, error: string, exitCode: number | null = null, signal: string | null = null): Promise<BranchBuildState> {
-  return updateState(profile, async (state) => ({
-    ...state,
+async function markBuildFailure(profile: string, previewId: string, error: string, exitCode: number | null = null, signal: string | null = null): Promise<BranchBuildState> {
+  const finishedAt = Date.now()
+  const state = await updateState(profile, async (current) => ({
+    ...current,
+    previewId,
     status: 'failed',
-    finishedAt: Date.now(),
+    finishedAt,
     exitCode,
     signal,
     error,
   }))
+  await updatePreviewInstance(profile, previewId, {
+    status: 'failed',
+    finishedAt,
+    exitCode,
+    signal,
+    error,
+    logTail: [...state.logTail, `Preview build failed: ${error}`].slice(-MAX_LOG_LINES),
+  })
+  return state
 }
 
 export async function getBranchBuildSummary(profile: string): Promise<BranchBuildSummary> {
@@ -490,6 +533,8 @@ export async function getBranchBuildSummary(profile: string): Promise<BranchBuil
   return {
     enabled,
     status: state.status,
+    previewId: state.previewId,
+    previewUrl: buildPreviewUrl(state.previewId),
     previewBranch: state.previewBranch,
     previewWorktreePath: state.previewWorktreePath,
     buildBranch: state.buildBranch,
@@ -521,11 +566,21 @@ export async function startBranchBuild(profile: string, branch: string): Promise
   const resolvedBranch = await resolveBranchRef(branch)
   const commands = commandSpecs()
   const reviewBase = normalizeReviewBase(current.reviewBase)
+  const previewId = current.previewId || randomUUID()
   const worktreePath = await preparePreviewWorktree(profile, resolvedBranch)
+  const previewTarget = {
+    type: 'git-branch' as const,
+    repo: repoRoot(),
+    branch: resolvedBranch,
+    provider: 'git-branch-worktree' as const,
+    devOnly: true as const,
+    worktreePath,
+  }
 
   await updateState(profile, async (state) => ({
     ...state,
     reviewBase,
+    previewId,
     buildBranch: resolvedBranch,
     status: 'running',
     startedAt: Date.now(),
@@ -536,6 +591,8 @@ export async function startBranchBuild(profile: string, branch: string): Promise
     logTail: [...state.logTail, `Building branch ${resolvedBranch} in ${worktreePath}`].slice(-MAX_LOG_LINES),
   }))
 
+  await startPreviewInstanceWithId(profile, previewTarget, previewId)
+
   try {
     for (const spec of commands) {
       const result = await runCommand(profile, worktreePath, spec.label, spec.command, spec.args)
@@ -544,12 +601,12 @@ export async function startBranchBuild(profile: string, branch: string): Promise
       }
     }
 
-    const state = await persistActivatedPreview(profile, resolvedBranch, worktreePath, reviewBase, current.previewWorktreePath)
+    const state = await persistActivatedPreview(profile, previewId, resolvedBranch, worktreePath, reviewBase, current.previewWorktreePath)
     return { state, worktreePath }
   } catch (err: any) {
     await removeWorktree(worktreePath)
     const message = err instanceof Error ? err.message : String(err)
-    const state = await markBuildFailure(profile, message)
+    const state = await markBuildFailure(profile, previewId, message)
     return { state, worktreePath }
   }
 }
@@ -562,21 +619,34 @@ export async function resetPreviewTarget(profile: string): Promise<BranchBuildSu
   const current = await readState(profile)
   const reviewBase = normalizeReviewBase(current.reviewBase)
   const branch = await resolveBranchRef(reviewBase)
+  const previewId = current.previewId || randomUUID()
   const worktreePath = await preparePreviewWorktree(profile, branch)
   const previousPreviewPath = current.previewWorktreePath
   if (previousPreviewPath && previousPreviewPath !== worktreePath) {
     await removeWorktree(previousPreviewPath)
   }
 
+  const previewTarget = {
+    type: 'git-branch' as const,
+    repo: repoRoot(),
+    branch,
+    provider: 'git-branch-worktree' as const,
+    devOnly: true as const,
+    worktreePath,
+  }
+  await startPreviewInstanceWithId(profile, previewTarget, previewId)
+
+  const finishedAt = Date.now()
   const state = await updateState(profile, async () => ({
     profile,
     reviewBase,
+    previewId,
     previewBranch: branch,
     previewWorktreePath: worktreePath,
     buildBranch: branch,
     status: 'success',
     startedAt: null,
-    finishedAt: Date.now(),
+    finishedAt,
     exitCode: 0,
     signal: null,
     error: null,
@@ -584,9 +654,22 @@ export async function resetPreviewTarget(profile: string): Promise<BranchBuildSu
     updatedAt: Date.now(),
   }))
 
+  await updatePreviewInstance(profile, previewId, {
+    target: previewTarget,
+    status: 'success',
+    startedAt: null,
+    finishedAt,
+    exitCode: 0,
+    signal: null,
+    error: null,
+    logTail: [...state.logTail, `Preview target reset to ${branch}`].slice(-MAX_LOG_LINES),
+  })
+
   return {
     enabled: true,
     status: state.status,
+    previewId: state.previewId,
+    previewUrl: buildPreviewUrl(state.previewId),
     previewBranch: state.previewBranch,
     previewWorktreePath: state.previewWorktreePath,
     buildBranch: state.buildBranch,

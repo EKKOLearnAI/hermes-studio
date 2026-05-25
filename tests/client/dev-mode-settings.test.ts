@@ -168,13 +168,15 @@ describe('DevModeSettings', () => {
     })
     fetchBranchBuildBranches.mockResolvedValue(['main', 'feature/dev-a', 'feature/dev-b'])
     fetchBranchBuildStatus.mockResolvedValue({
-      status: 'idle',
-      previewBranch: null,
-      previewWorktreePath: null,
-      buildBranch: null,
-      startedAt: null,
-      finishedAt: null,
-      exitCode: null,
+      status: 'success',
+      previewId: 'preview-123',
+      previewUrl: '/preview/preview-123/',
+      previewBranch: 'feature/dev-b',
+      previewWorktreePath: '/tmp/worktree',
+      buildBranch: 'feature/dev-b',
+      startedAt: 1,
+      finishedAt: 2,
+      exitCode: 0,
       signal: null,
       error: null,
       reviewBase: 'main',
@@ -182,6 +184,8 @@ describe('DevModeSettings', () => {
     })
     buildBranchPreview.mockResolvedValue({
       status: 'success',
+      previewId: 'preview-123',
+      previewUrl: '/preview/preview-123/',
       previewBranch: 'feature/dev-b',
       previewWorktreePath: '/tmp/worktree',
       buildBranch: 'feature/dev-b',
@@ -196,6 +200,8 @@ describe('DevModeSettings', () => {
     })
     resetBranchPreview.mockResolvedValue({
       status: 'success',
+      previewId: 'preview-reset',
+      previewUrl: '/preview/preview-reset/',
       previewBranch: 'main',
       previewWorktreePath: '/tmp/review-base',
       buildBranch: 'main',
@@ -220,8 +226,9 @@ describe('DevModeSettings', () => {
     expect(wrapper.text()).toContain('settings.dev.branchPreviewTitle')
     expect(wrapper.text()).toContain('settings.dev.branchToPreview')
     expect(wrapper.text()).toContain('settings.dev.currentPreview')
+    expect(wrapper.text()).toContain('settings.dev.previewUrl')
+    expect(wrapper.text()).toContain('/preview/preview-123/')
     expect(wrapper.text()).toContain('settings.dev.buildPreview')
-    expect(wrapper.text()).toContain('settings.dev.resetToBase')
     expect(wrapper.text()).toContain('settings.dev.advancedDetails')
     expect(wrapper.text()).not.toContain('settings.dev.worktreePath')
     expect(wrapper.text()).not.toContain('settings.dev.exitCode')

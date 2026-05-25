@@ -44,6 +44,7 @@ const currentPreviewLabel = computed(() => {
   const status = branchBuild.value?.status || 'idle'
   return `${branch} · ${status}`
 })
+const currentPreviewUrl = computed(() => branchBuild.value?.previewUrl || null)
 const hasBuildError = computed(() => branchBuild.value?.status === 'failed' || Boolean(branchBuild.value?.error))
 const settingsChanged = computed(() =>
   draftEnabled.value !== persistedDevEnabled.value
@@ -294,6 +295,10 @@ onMounted(async () => {
         <div class="current-preview-block">
           <div class="current-preview-label">{{ t('settings.dev.currentPreview') }}</div>
           <div class="current-preview-value">{{ currentPreviewLabel }}</div>
+        </div>
+        <div v-if="currentPreviewUrl" class="current-preview-url-block">
+          <div class="current-preview-label">{{ t('settings.dev.previewUrl') }}</div>
+          <a :href="currentPreviewUrl" class="current-preview-url" target="_blank" rel="noreferrer">{{ currentPreviewUrl }}</a>
         </div>
       </div>
 

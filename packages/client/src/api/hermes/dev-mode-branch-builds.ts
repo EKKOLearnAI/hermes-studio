@@ -83,6 +83,8 @@ export type BranchBuildStatus = PreviewInstanceStatus
 export interface BranchBuildSummary {
   enabled: boolean
   status: BranchBuildStatus
+  previewId: string | null
+  previewUrl: string | null
   previewBranch: string | null
   previewWorktreePath: string | null
   buildBranch: string | null

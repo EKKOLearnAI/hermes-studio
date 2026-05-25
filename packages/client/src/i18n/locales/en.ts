@@ -940,6 +940,7 @@ export default {
       branchToPreviewHint: 'Select the branch that will be built and previewed.',
       branchToPreviewPlaceholder: 'Select branch to preview',
       currentPreview: 'Current preview',
+      previewUrl: 'Preview URL',
       buildPreview: 'Build preview',
       resetToBase: 'Reset to base',
       advancedDetails: 'Advanced details',
