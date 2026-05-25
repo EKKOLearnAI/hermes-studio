@@ -426,6 +426,16 @@ def _set_worker_profile_env(profile: str | None) -> None:
     profile_home = _profile_home(profile)
     os.environ["HERMES_HOME"] = str(profile_home)
     os.environ["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] = profile or "default"
+    _refresh_worker_profile_env()
+
+
+def _refresh_worker_profile_env() -> None:
+    """Overlay the current worker profile .env/config before creating a new agent."""
+    profile = _worker_profile()
+    if not profile:
+        return
+    profile_home = _profile_home(profile)
+    os.environ["HERMES_HOME"] = str(profile_home)
     values = _read_dotenv(profile_home / ".env")
     for key, value in values.items():
         os.environ[key] = value
@@ -703,6 +713,7 @@ class AgentPool:
             from run_agent import AIAgent
 
             with _profile_env(profile):
+                _refresh_worker_profile_env()
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
                 runtime = _resolve_runtime(resolved_model, requested_provider or None)
