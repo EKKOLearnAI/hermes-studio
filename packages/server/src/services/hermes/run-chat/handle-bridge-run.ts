@@ -606,6 +606,25 @@ async function applyBridgeChunkAsync(
       }
       replaceState(sessionMap, sessionId, 'approval.resolved', payload)
       emit('approval.resolved', payload)
+    } else if (evType === 'clarify.requested') {
+      const payload = {
+        event: 'clarify.requested',
+        run_id: chunk.run_id,
+        clarify_id: ev.clarify_id,
+        question: ev.question,
+        choices: ev.choices,
+        timeout_ms: ev.timeout_ms,
+      }
+      pushState(sessionMap, sessionId, 'clarify.requested', payload)
+      emit('clarify.requested', payload)
+    } else if (evType === 'clarify.resolved') {
+      const payload = {
+        event: 'clarify.resolved',
+        run_id: chunk.run_id,
+        clarify_id: ev.clarify_id,
+      }
+      pushState(sessionMap, sessionId, 'clarify.resolved', payload)
+      emit('clarify.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
       const bridgeUsage = estimateUsageTokensFromMessages(bridgeHistory)
