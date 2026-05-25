@@ -142,7 +142,6 @@
 - 用户名/密码登录，并在设置页提供账户管理
 - 默认登录名/密码为 `admin` / `123456`；登录后会提示尽快修改默认账户和密码
 - 超级管理员可以管理用户和 Profile 绑定；普通管理员只能管理自己的账户信息
-- 可通过 `AUTH_DISABLED=1` 禁用认证
 
 CLI 维护命令：
 
@@ -247,7 +246,6 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传根目录。文件会保存在按 Profile 隔离的子目录下。 |
 | `CORS_ORIGINS` | `*` | Koa CORS origin 配置。 |
-| `AUTH_DISABLED` | 未设置 | 设置为 `1` 或 `true` 可关闭 Web UI 认证。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
 | `PROFILE` | `default` | 启动/默认 Hermes profile。运行时请求使用前端当前选择且当前账号有权限访问的 Profile。 |
 | `LOG_LEVEL` | `info` | Server 日志级别。 |

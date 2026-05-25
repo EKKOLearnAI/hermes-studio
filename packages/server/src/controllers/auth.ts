@@ -99,7 +99,7 @@ export async function login(ctx: Context) {
     token = await issueUserJwt(user)
   } catch (err: any) {
     ctx.status = 500
-    ctx.body = { error: err?.message || 'Auth is disabled on this server' }
+    ctx.body = { error: err?.message || 'Failed to issue login token' }
     return
   }
 

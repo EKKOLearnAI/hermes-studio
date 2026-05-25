@@ -481,6 +481,10 @@ export class AgentBridgeClient {
     return this.request({ action: 'approval_respond', approval_id: approvalId, choice })
   }
 
+  clarifyRespond(clarifyId: string, response: string): Promise<AgentBridgeResponse> {
+    return this.request({ action: 'clarify_respond', clarify_id: clarifyId, response })
+  }
+
   compressionRespond(
     requestId: string,
     payload: { messages?: unknown[]; system_message?: string; error?: string },

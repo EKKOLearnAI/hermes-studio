@@ -32,6 +32,8 @@ const routeProfile = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const effectiveHistoryProfile = computed(() => profilesStore.activeProfileName || routeProfile.value || null)
+
 // Hermes history sessions (exclude api_server)
 const hermesSessions = ref<SessionSummary[]>([])
 const hermesSessionsLoading = ref(false)
@@ -40,17 +42,22 @@ const hermesSessionsLoaded = ref(false)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
 const showOutline = ref(false)
+let hermesSessionsRequestId = 0
 
 async function loadHermesSessions() {
-  if (hermesSessionsLoading.value) return
+  const requestId = ++hermesSessionsRequestId
   hermesSessionsLoading.value = true
   try {
-    hermesSessions.value = await fetchHermesSessions(undefined, undefined, routeProfile.value)
+    const sessions = await fetchHermesSessions(undefined, undefined, effectiveHistoryProfile.value)
+    if (requestId !== hermesSessionsRequestId) return
+    hermesSessions.value = sessions
     hermesSessionsLoaded.value = true
   } catch (err) {
     console.error('Failed to load Hermes sessions:', err)
   } finally {
-    hermesSessionsLoading.value = false
+    if (requestId === hermesSessionsRequestId) {
+      hermesSessionsLoading.value = false
+    }
   }
 }
 
@@ -132,6 +139,29 @@ async function handleSessionClick(sessionId: string, profile?: string | null) {
   })
 }
 
+async function openDefaultHistorySession(replace = false) {
+  const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
+  const firstSession = firstCliSession || hermesSessions.value[0]
+  if (!firstSession) {
+    historySessionId.value = null
+    historySession.value = null
+    if (routeSessionId.value) await router.replace({ name: 'hermes.history' })
+    return
+  }
+
+  if (collapsedGroups.value.has(firstSession.source)) {
+    collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== firstSession.source))
+  }
+
+  const location = {
+    name: 'hermes.historySession',
+    params: { sessionId: firstSession.id },
+    query: firstSession.profile ? { profile: firstSession.profile } : undefined,
+  }
+  if (replace) await router.replace(location)
+  else await router.push(location)
+}
+
 async function syncRouteSession() {
   const sessionId = routeSessionId.value
   if (!sessionId) return
@@ -143,8 +173,10 @@ async function syncRouteSession() {
     return
   }
 
-  if (historySessionId.value !== sessionId) {
-    await loadHistorySession(sessionId, routeProfile.value)
+  const sessionProfile = routeProfile.value || findHistorySession(sessionId)?.profile || null
+  const currentProfile = historySession.value?.profile || null
+  if (historySessionId.value !== sessionId || currentProfile !== sessionProfile) {
+    await loadHistorySession(sessionId, sessionProfile)
   }
 }
 
@@ -174,7 +206,6 @@ watch([routeSessionId, routeProfile], async ([sessionId]) => {
   if (!sessionId) {
     historySessionId.value = null
     historySession.value = null
-    if (hermesSessionsLoaded.value) await loadHermesSessions()
     return
   }
   if (!hermesSessionsLoaded.value) return
@@ -182,6 +213,15 @@ watch([routeSessionId, routeProfile], async ([sessionId]) => {
     await loadHermesSessions()
   }
   await syncRouteSession()
+})
+
+watch(() => profilesStore.activeProfileName, async () => {
+  if (!hermesSessionsLoaded.value) return
+  if (profilesStore.switching) return
+  historySessionId.value = null
+  historySession.value = null
+  await loadHermesSessions()
+  await openDefaultHistorySession(true)
 })
 
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
@@ -292,23 +332,10 @@ watch(groupedSessions, groups => {
   }
 }, { once: true })
 
-// Auto-load first CLI session when Hermes sessions are loaded
+// Auto-load the first CLI session when Hermes sessions are loaded.
 watch(hermesSessionsLoaded, (loaded) => {
   if (loaded && hermesSessions.value.length > 0 && !routeSessionId.value) {
-    // Only auto-load if no session is currently active
-    if (!historySessionId.value || !hermesSessions.value.find(s => s.id === historySessionId.value)) {
-      // Find first CLI session.
-      const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
-      if (firstCliSession) {
-        // Ensure the CLI group is expanded
-        if (collapsedGroups.value.has(firstCliSession.source)) {
-          collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
-        }
-        // Load session details
-        void handleSessionClick(firstCliSession.id, firstCliSession.profile)
-      }
-      // If no CLI session exists, don't auto-load any session
-    }
+    void openDefaultHistorySession(false)
   }
 }, { once: true })
 

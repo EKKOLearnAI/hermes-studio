@@ -15,6 +15,7 @@ vi.mock('@/router', () => ({
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
 import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
+import { batchDeleteSessions } from '../../packages/client/src/api/hermes/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -79,10 +80,20 @@ describe('API Client', () => {
       localStorage.setItem('hermes_active_profile_name', 'default')
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
 
-      await request('/api/hermes/sessions')
+      await request('/api/hermes/sessions/session-1')
 
       const [, options] = mockFetch.mock.calls[0]
       expect(options.headers['X-Hermes-Profile']).toBe('default')
+    })
+
+    it('does not add the active profile header to profile-wide session collection requests', async () => {
+      localStorage.setItem('hermes_active_profile_name', 'research')
+      mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => ({ data: 1 }) })
+
+      await request('/api/hermes/sessions')
+
+      const [, options] = mockFetch.mock.calls[0]
+      expect(options.headers['X-Hermes-Profile']).toBeUndefined()
     })
 
     it('does not add Authorization header when no token', async () => {
@@ -190,6 +201,34 @@ describe('API Client', () => {
       expect(options.headers.Authorization).toBe('Bearer secret-key')
       expect(options.headers['X-Hermes-Profile']).toBe('research')
       expect(options.body).toBeInstanceOf(FormData)
+    })
+  })
+
+  describe('sessions API', () => {
+    it('sends profile-qualified targets for batch deletes', async () => {
+      localStorage.setItem('hermes_active_profile_name', 'research')
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ deleted: 2, failed: 0, errors: [] }),
+      })
+
+      await batchDeleteSessions([
+        { id: 'session-default', profile: 'default' },
+        { id: 'session-travel', profile: 'travel' },
+      ])
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe('/api/hermes/sessions/batch-delete')
+      expect(options.method).toBe('POST')
+      expect(options.headers['X-Hermes-Profile']).toBeUndefined()
+      expect(JSON.parse(options.body)).toEqual({
+        ids: ['session-default', 'session-travel'],
+        sessions: [
+          { id: 'session-default', profile: 'default' },
+          { id: 'session-travel', profile: 'travel' },
+        ],
+      })
     })
   })
 })

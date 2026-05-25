@@ -38,6 +38,11 @@ function requestedProfile(ctx: any): string | undefined {
   return value || undefined
 }
 
+function explicitProfileFilter(ctx: any): string | undefined {
+  const value = typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : ''
+  return value || undefined
+}
+
 function allowedProfileSet(ctx: any): Set<string> | null {
   const user = ctx.state?.user
   if (!user || user.role === 'super_admin') return null
@@ -67,6 +72,11 @@ interface HermesDeleteResult {
   deleted: boolean
   profile?: string
   error?: string
+}
+
+interface BatchDeleteTarget {
+  id: string
+  profile?: string | null
 }
 
 function hasProfileOnDisk(profile: string): boolean {
@@ -103,7 +113,7 @@ export async function listConversations(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
 
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const sessions = localListSessions(profile, source, limit && limit > 0 ? limit : 200)
   const summaries: ConversationSummary[] = sessions.map(s => ({
     id: s.id,
@@ -168,7 +178,7 @@ export async function getConversationMessages(ctx: any) {
 export async function list(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
   const allSessions = localListSessions(profile, source, effectiveLimit)
@@ -199,7 +209,7 @@ export async function listHermesSessions(ctx: any) {
 export async function search(ctx: any) {
   const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = requestedProfile(ctx)
+  const profile = explicitProfileFilter(ctx)
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
@@ -287,15 +297,31 @@ export async function remove(ctx: any) {
 }
 
 export async function batchRemove(ctx: any) {
-  const { ids } = ctx.request.body as { ids?: string[] }
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+  const { ids, sessions } = ctx.request.body as { ids?: string[]; sessions?: BatchDeleteTarget[] }
+  const rawTargets = Array.isArray(sessions) && sessions.length > 0 ? sessions : ids
+  if (!rawTargets || !Array.isArray(rawTargets) || rawTargets.length === 0) {
     ctx.status = 400
     ctx.body = { error: 'ids is required and must be a non-empty array' }
     return
   }
 
-  const validIds = ids.filter(id => typeof id === 'string' && id.trim() !== '')
-  if (validIds.length === 0) {
+  const targets = rawTargets
+    .map((target): BatchDeleteTarget | null => {
+      if (typeof target === 'string') {
+        const id = target.trim()
+        return id ? { id } : null
+      }
+      if (!target || typeof target.id !== 'string') return null
+      const id = target.id.trim()
+      if (!id) return null
+      const profile = typeof target.profile === 'string' && target.profile.trim()
+        ? target.profile.trim()
+        : undefined
+      return { id, profile }
+    })
+    .filter((target): target is BatchDeleteTarget => Boolean(target))
+
+  if (targets.length === 0) {
     ctx.status = 400
     ctx.body = { error: 'No valid session ids provided' }
     return
@@ -310,14 +336,22 @@ export async function batchRemove(ctx: any) {
     hermesErrors: [] as Array<{ id: string; profile?: string; error: string }>
   }
 
-  for (const id of validIds) {
+  for (const target of targets) {
+    const { id } = target
     const existing = localGetSession(id)
-    if (existing && !canAccessProfile(ctx, existing.profile)) {
+    const targetProfile = target.profile || existing?.profile
+    if (targetProfile && !canAccessProfile(ctx, targetProfile)) {
+      results.failed++
+      results.errors.push({ id, error: `Profile "${targetProfile || 'default'}" is not available for this user` })
+      continue
+    }
+    if (!targetProfile && existing && !canAccessProfile(ctx, existing.profile)) {
       results.failed++
       results.errors.push({ id, error: `Profile "${existing.profile || 'default'}" is not available for this user` })
       continue
     }
-    const hermes = await deleteHermesSessionIfPresent(id, existing?.profile)
+
+    const hermes = await deleteHermesSessionIfPresent(id, targetProfile)
     if (hermes.deleted) {
       results.hermesDeleted++
     } else if (hermes.attempted && hermes.error) {
@@ -325,13 +359,21 @@ export async function batchRemove(ctx: any) {
       results.hermesErrors.push({ id, profile: hermes.profile, error: hermes.error })
     }
 
-    const ok = localDeleteSession(id)
-    if (ok) {
-      deleteUsage(id)
+    const shouldDeleteLocal = Boolean(existing && (!targetProfile || existing.profile === targetProfile))
+    if (shouldDeleteLocal) {
+      const ok = localDeleteSession(id)
+      if (ok) {
+        deleteUsage(id)
+        results.deleted++
+      } else {
+        results.failed++
+        results.errors.push({ id, error: 'Failed to delete session' })
+      }
+    } else if (hermes.deleted) {
       results.deleted++
     } else {
       results.failed++
-      results.errors.push({ id, error: 'Failed to delete session' })
+      results.errors.push({ id, error: 'Session not found' })
     }
   }
 

@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const mockGetSkillUsageStatsFromDb = vi.hoisted(() => vi.fn())
 const mockGetActiveProfileName = vi.hoisted(() => vi.fn())
 const mockGetProfileDir = vi.hoisted(() => vi.fn())
 const mockUpdateConfigYamlForProfile = vi.hoisted(() => vi.fn())
+const mockReadConfigYamlForProfile = vi.hoisted(() => vi.fn())
+const mockSafeReadFile = vi.hoisted(() => vi.fn())
+const mockExtractDescription = vi.hoisted(() => vi.fn())
+const mockListFilesRecursive = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   getSkillUsageStatsFromDb: mockGetSkillUsageStatsFromDb,
@@ -15,11 +22,11 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 }))
 
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
-  readConfigYamlForProfile: vi.fn(),
+  readConfigYamlForProfile: mockReadConfigYamlForProfile,
   updateConfigYamlForProfile: mockUpdateConfigYamlForProfile,
-  safeReadFile: vi.fn(),
-  extractDescription: vi.fn(),
-  listFilesRecursive: vi.fn(),
+  safeReadFile: mockSafeReadFile,
+  extractDescription: mockExtractDescription,
+  listFilesRecursive: mockListFilesRecursive,
 }))
 
 async function loadController() {
@@ -32,6 +39,18 @@ describe('skills controller', () => {
     vi.clearAllMocks()
     mockGetActiveProfileName.mockReturnValue('default')
     mockGetProfileDir.mockImplementation((profile: string) => `/tmp/hermes-${profile}`)
+    mockReadConfigYamlForProfile.mockResolvedValue({})
+    mockSafeReadFile.mockImplementation(async (path: string) => {
+      try {
+        return await readFile(path, 'utf-8')
+      } catch {
+        return null
+      }
+    })
+    mockExtractDescription.mockImplementation((content: string) => {
+      return content.split('\n').find(line => line.trim() && !line.startsWith('#'))?.trim() || ''
+    })
+    mockListFilesRecursive.mockResolvedValue([])
     mockUpdateConfigYamlForProfile.mockImplementation(async (_profile: string, updater: (config: Record<string, any>) => Record<string, any>) => updater({}))
     mockGetSkillUsageStatsFromDb.mockResolvedValue({
       period_days: 7,
@@ -87,5 +106,41 @@ describe('skills controller', () => {
       model: { default: 'glm-5.1' },
     })
     expect(ctx.body).toEqual({ success: true })
+  })
+
+  it('lists configured external skill directories with external source while keeping local skills first', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-external-skills-'))
+    const profileDir = join(root, 'profile')
+    const localSkillDir = join(profileDir, 'skills', 'tools', 'dupe-skill')
+    const externalDir = join(root, 'external-skills')
+    const externalSkillDir = join(externalDir, 'tools', 'external-skill')
+    const externalDupeDir = join(externalDir, 'tools', 'dupe-skill')
+
+    await mkdir(localSkillDir, { recursive: true })
+    await mkdir(externalSkillDir, { recursive: true })
+    await mkdir(externalDupeDir, { recursive: true })
+    await writeFile(join(localSkillDir, 'SKILL.md'), '# Local Dupe\nlocal copy\n', 'utf-8')
+    await writeFile(join(externalSkillDir, 'SKILL.md'), '# External Skill\nexternal copy\n', 'utf-8')
+    await writeFile(join(externalDupeDir, 'SKILL.md'), '# External Dupe\nexternal duplicate\n', 'utf-8')
+
+    mockGetProfileDir.mockReturnValue(profileDir)
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      skills: { external_dirs: [externalDir] },
+    })
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { state: { profile: { name: 'research' } }, body: null }
+
+      await list(ctx)
+
+      const tools = ctx.body.categories.find((category: any) => category.name === 'tools')
+      expect(tools.skills).toEqual([
+        expect.objectContaining({ name: 'dupe-skill', source: 'local', description: 'local copy' }),
+        expect.objectContaining({ name: 'external-skill', source: 'external', description: 'external copy' }),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

@@ -72,6 +72,19 @@ export interface RunEvent {
   }
 }
 
+export interface ResumeSessionPayload {
+  session_id: string
+  messages: any[]
+  isWorking: boolean
+  isAborting?: boolean
+  events: Array<{ event: string; data: RunEvent }>
+  inputTokens?: number
+  outputTokens?: number
+  contextTokens?: number
+  queueLength?: number
+  queueMessages?: RunEvent['queued_messages']
+}
+
 // ============================
 // Socket.IO chat run connection
 // ============================
@@ -79,6 +92,12 @@ export interface RunEvent {
 let chatRunSocket: Socket | null = null
 let globalListenersRegistered = false
 let chatRunSocketProfile: string | null = null
+
+const TRANSIENT_DISCONNECT_REASONS = new Set<string>([
+  'transport close',
+  'transport error',
+  'ping timeout',
+])
 
 /**
  * Session event handlers map
@@ -105,6 +124,8 @@ const sessionEventHandlers = new Map<string, {
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
   onPeerUserMessage?: (event: RunEvent) => void
+  onClarifyRequested?: (event: RunEvent) => void
+  onClarifyResolved?: (event: RunEvent) => void
 }>()
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
@@ -372,6 +393,26 @@ function globalPeerUserMessageHandler(event: RunEvent): void {
   }
 }
 
+function globalClarifyRequestedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyRequested) {
+    handlers.onClarifyRequested(event)
+  }
+}
+
+function globalClarifyResolvedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onClarifyResolved) {
+    handlers.onClarifyResolved(event)
+  }
+}
+
 /**
  * Register event handlers for a session
  * @param sessionId - Session ID
@@ -401,6 +442,8 @@ export function registerSessionHandlers(
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
     onPeerUserMessage?: (event: RunEvent) => void
+    onClarifyRequested?: (event: RunEvent) => void
+    onClarifyResolved?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -424,6 +467,19 @@ export function onPeerUserMessage(handler: (event: RunEvent) => void): () => voi
   return () => {
     peerUserMessageHandlers.delete(handler)
   }
+}
+
+export function respondClarify(
+  sessionId: string,
+  clarifyId: string,
+  response: string,
+): void {
+  const socket = connectChatRun()
+  socket.emit('clarify.respond', {
+    session_id: sessionId,
+    clarify_id: clarifyId,
+    response,
+  })
 }
 
 export function respondToolApproval(
@@ -510,6 +566,8 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
     chatRunSocket.on('run.peer_user_message', globalPeerUserMessageHandler)
+    chatRunSocket.on('clarify.requested', globalClarifyRequestedHandler)
+    chatRunSocket.on('clarify.resolved', globalClarifyResolvedHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
@@ -558,7 +616,7 @@ function removeSocketListener(socket: Socket, event: string, handler: (...args: 
  */
 export function resumeSession(
   sessionId: string,
-  onResumed: (data: { session_id: string; messages: any[]; isWorking: boolean; isAborting?: boolean; events: any[]; inputTokens?: number; outputTokens?: number; contextTokens?: number; queueLength?: number; queueMessages?: RunEvent['queued_messages'] }) => void,
+  onResumed: (data: ResumeSessionPayload) => void,
   profile?: string | null,
 ): Socket {
   const socket = connectChatRun(profile)
@@ -575,6 +633,9 @@ export function startRunViaSocket(
   onDone: () => void,
   onError: (err: Error) => void,
   onStarted?: (runId: string) => void,
+  options?: {
+    onReconnectResume?: (data: ResumeSessionPayload) => void
+  },
 ): { abort: () => void } {
   const sid = body.session_id
   if (!sid) {
@@ -583,24 +644,6 @@ export function startRunViaSocket(
 
   let closed = false
   const socket = connectChatRun(body.profile)
-  const handleSocketError = (err: Error) => {
-    if (closed) return
-    closed = true
-    sessionEventHandlers.delete(sid)
-    onError(err)
-  }
-  socket.once('connect_error', handleSocketError)
-  const handleSocketDisconnect = (reason: string) => {
-    if (closed || reason === 'io client disconnect') return
-    handleSocketError(new Error(`Socket disconnected: ${reason}`))
-  }
-  socket.once('disconnect', handleSocketDisconnect)
-
-  const removeTerminalSocketListeners = () => {
-    removeSocketListener(socket, 'connect_error', handleSocketError)
-    removeSocketListener(socket, 'disconnect', handleSocketDisconnect)
-  }
-
   if (sessionEventHandlers.has(sid)) {
     socket.emit('run', body)
     return {
@@ -610,6 +653,66 @@ export function startRunViaSocket(
         }
       },
     }
+  }
+
+  let sawTransientDisconnect = false
+  let removeTerminalSocketListeners: () => void = () => {}
+  let reconnectResumeHandler: ((data: ResumeSessionPayload) => void) | null = null
+
+  const clearReconnectResumeHandler = () => {
+    if (!reconnectResumeHandler) return
+    removeSocketListener(socket, 'resumed', reconnectResumeHandler)
+    reconnectResumeHandler = null
+  }
+
+  const emitReconnectResume = () => {
+    clearReconnectResumeHandler()
+    if (options?.onReconnectResume) {
+      reconnectResumeHandler = (data: ResumeSessionPayload) => {
+        clearReconnectResumeHandler()
+        if (closed || data.session_id !== sid) return
+        options.onReconnectResume?.(data)
+      }
+      socket.on('resumed', reconnectResumeHandler)
+    }
+    socket.emit('resume', { session_id: sid, ...(body.profile ? { profile: body.profile } : {}) })
+  }
+
+  const handleSocketError = (err: Error) => {
+    if (closed) return
+    closed = true
+    removeTerminalSocketListeners()
+    sessionEventHandlers.delete(sid)
+    onError(err)
+  }
+  const handleSocketConnectError = (err: Error) => {
+    if (closed) return
+    if (sawTransientDisconnect) return
+    handleSocketError(err)
+  }
+  socket.on('connect_error', handleSocketConnectError)
+  const handleSocketDisconnect = (reason: string) => {
+    if (closed || reason === 'io client disconnect') return
+    if (TRANSIENT_DISCONNECT_REASONS.has(reason)) {
+      sawTransientDisconnect = true
+      return
+    }
+    handleSocketError(new Error(`Socket disconnected: ${reason}`))
+  }
+  socket.on('disconnect', handleSocketDisconnect)
+
+  const handleSocketReconnect = () => {
+    if (closed || !sawTransientDisconnect) return
+    sawTransientDisconnect = false
+    emitReconnectResume()
+  }
+  socket.on('connect', handleSocketReconnect)
+
+  removeTerminalSocketListeners = () => {
+    clearReconnectResumeHandler()
+    removeSocketListener(socket, 'connect_error', handleSocketConnectError)
+    removeSocketListener(socket, 'disconnect', handleSocketDisconnect)
+    removeSocketListener(socket, 'connect', handleSocketReconnect)
   }
 
   // Define event handlers for this session
@@ -705,6 +808,14 @@ export function startRunViaSocket(
       onEvent(evt)
     },
     onApprovalResolved: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyRequested: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onClarifyResolved: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },

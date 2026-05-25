@@ -40,14 +40,11 @@ All key runtime settings are configured from compose variables.
 | `HERMES_AGENT_IMAGE` | `nousresearch/hermes-agent:latest` | Hermes Agent base image (used only during build) |
 | `WEBUI_IMAGE` | `hermes-web-ui-local:latest` | Web UI image (set to `ekkoye8888/hermes-web-ui` to use pre-built) |
 | `HERMES_DATA_DIR` | `./hermes_data` | Hermes runtime data directory |
-| `AUTH_DISABLED` | `false` | Set to `true` to disable login authentication |
 
 Override variables directly from shell:
 
 ```bash
-PORT=16060 \
-AUTH_DISABLED=true \
-docker compose up -d
+PORT=16060 docker compose up -d
 ```
 
 Or create a `.env` file in the project root:
@@ -55,7 +52,6 @@ Or create a `.env` file in the project root:
 ```
 WEBUI_IMAGE=ekkoye8888/hermes-web-ui
 PORT=6060
-AUTH_DISABLED=false
 ```
 
 ## Data Persistence
@@ -67,7 +63,7 @@ AUTH_DISABLED=false
 
 - Hermes data persists in `./hermes_data`, mapped to `/home/agent/.hermes` in the container.
 - Web UI data persists in `./hermes_data/hermes-web-ui/`, mapped to `/home/agent/.hermes-web-ui` in the container.
-- When `AUTH_DISABLED=false`, the auth token is auto-generated on first run and printed to container logs.
+- The auth token is auto-generated on first run and printed to container logs.
 - Deleting the token file and restarting will generate a new one.
 
 ## Port Mapping

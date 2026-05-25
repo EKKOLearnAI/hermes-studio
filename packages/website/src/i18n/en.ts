@@ -133,7 +133,6 @@ export default {
       envVars: {
         title: 'Environment Variables',
         rows: [
-          ['AUTH_DISABLED', 'Set to "1" to disable authentication'],
           ['AUTH_TOKEN', 'Custom auth token (overrides auto-generated)'],
           ['PORT', 'Server listen port (default: 8648)'],
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],

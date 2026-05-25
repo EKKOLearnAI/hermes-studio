@@ -55,6 +55,30 @@ vi.mock('/logo.png', () => ({
   default: 'logo.png',
 }))
 
+vi.mock('@/components/layout/ProfileSelector.vue', () => ({
+  default: { name: 'ProfileSelector', template: '<div />' },
+}))
+
+vi.mock('@/components/layout/ModelSelector.vue', () => ({
+  default: { name: 'ModelSelector', template: '<div />' },
+}))
+
+vi.mock('@/components/layout/LanguageSwitch.vue', () => ({
+  default: { name: 'LanguageSwitch', template: '<div />' },
+}))
+
+vi.mock('@/components/layout/ThemeSwitch.vue', () => ({
+  default: { name: 'ThemeSwitch', template: '<div />' },
+}))
+
+vi.mock('@/components/common/RouteLinkItem.vue', () => ({
+  default: {
+    name: 'RouteLinkItem',
+    props: ['to', 'active'],
+    template: '<a class="route-link-item" :class="{ active }" href="#"><slot /></a>',
+  },
+}))
+
 vi.mock('naive-ui', async () => {
   const actual = await vi.importActual<any>('naive-ui')
   return {

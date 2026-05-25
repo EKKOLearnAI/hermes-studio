@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { filterBridgeToolCallMarkupDelta } from '../../packages/server/src/services/hermes/run-chat/bridge-delta'
+import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from '../../packages/server/src/services/hermes/run-chat/bridge-delta'
 
 describe('run-chat bridge delta filtering', () => {
   it('keeps ordinary assistant text', () => {
@@ -36,5 +36,13 @@ describe('run-chat bridge delta filtering', () => {
 
     expect(filterBridgeToolCallMarkupDelta(state, 'Text [Call')).toBe('Text ')
     expect(filterBridgeToolCallMarkupDelta(state, 'ing tool: terminal with arguments: {}]\nDone')).toBe('Done')
+  })
+
+  it('flushes an orphan partial marker suffix when no text chunk follows', () => {
+    const state = {}
+
+    expect(filterBridgeToolCallMarkupDelta(state, 'Text [Call')).toBe('Text ')
+    expect(flushPendingToolCallMarkup(state)).toBe('[Call')
+    expect(flushPendingToolCallMarkup(state)).toBe('')
   })
 })

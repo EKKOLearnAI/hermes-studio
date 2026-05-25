@@ -132,7 +132,7 @@ describe('CLI port detection', () => {
 
     try {
       const { resetDefaultLogin } = await loadCli()
-      const created = resetDefaultLogin({ silent: true })
+      const created = await resetDefaultLogin({ silent: true })
       expect(created.action).toBe('created')
 
       const db = new DatabaseSync(dbPath)
@@ -144,7 +144,7 @@ describe('CLI port detection', () => {
         db.close()
       }
 
-      const updated = resetDefaultLogin({ silent: true })
+      const updated = await resetDefaultLogin({ silent: true })
       expect(updated.action).toBe('updated')
 
       const verifyDb = new DatabaseSync(dbPath)

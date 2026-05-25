@@ -134,7 +134,6 @@ Unified configuration for **8 platforms** in one page:
 - Username/password login with account management in Settings
 - Default bootstrap credentials are `admin` / `123456`; users are prompted after login to change the default username and password
 - Super administrators can manage users and profile bindings; regular administrators can manage their own account details
-- Auth can be disabled with `AUTH_DISABLED=1`
 
 CLI maintenance commands:
 
@@ -240,7 +239,6 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | `*` | Koa CORS origin setting. |
-| `AUTH_DISABLED` | unset | Set to `1` or `true` to disable Web UI auth. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |

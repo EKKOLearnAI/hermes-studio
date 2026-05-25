@@ -220,7 +220,7 @@ io(`${baseUrl}/chat-run`, {
 })
 ```
 
-如果未设置 `AUTH_DISABLED=1`，服务端会与 Web UI token 比对。
+服务端会与 Web UI token 比对。
 
 ---
 

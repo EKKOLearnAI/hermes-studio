@@ -25,7 +25,7 @@ const routeProfile = computed(() => {
 })
 
 async function loadRouteSession() {
-  await chatStore.loadSessions(routeProfile.value, routeSessionId.value)
+  await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
   if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
     await router.replace({ name: 'hermes.chat' })
   }
@@ -45,19 +45,14 @@ onMounted(async () => {
 watch([routeSessionId, routeProfile], async ([sessionId]) => {
   if (!chatStore.sessionsLoaded) return
   if (!sessionId) {
-    await chatStore.loadSessions(routeProfile.value)
+    await chatStore.loadSessions(chatStore.sessionProfileFilter)
     return
   }
-  if (chatStore.activeSessionId === sessionId && (!routeProfile.value || chatStore.activeSession?.profile === routeProfile.value)) return
-
-  if (routeProfile.value) {
-    await loadRouteSession()
-    return
-  }
+  if (chatStore.activeSessionId === sessionId) return
 
   const exists = chatStore.sessions.some(session => session.id === sessionId)
   if (!exists) {
-    await router.replace({ name: 'hermes.chat' })
+    await loadRouteSession()
     return
   }
 
