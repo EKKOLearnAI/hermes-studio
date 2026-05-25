@@ -42,6 +42,37 @@ DEFAULT_HERMES_HOME = "~/.hermes"
 APPROVAL_TIMEOUT_SECONDS = 120
 APPROVAL_TIMEOUT_MS = APPROVAL_TIMEOUT_SECONDS * 1000
 PARENT_WATCHDOG_INTERVAL_SECONDS = 2.0
+WORKER_RUNTIME_ENV_KEYS = {
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMSPEC",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOCALAPPDATA",
+    "LOGNAME",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PWD",
+    "SHELL",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USER",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+}
 
 
 def _bridge_platform() -> str:
@@ -427,6 +458,12 @@ def _set_worker_profile_env(profile: str | None) -> None:
     os.environ["HERMES_HOME"] = str(profile_home)
     os.environ["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] = profile or "default"
     values = _read_dotenv(profile_home / ".env")
+    if profile and profile != "default":
+        keys = _profile_dotenv_keys()
+        keys.update(values.keys())
+        for key in keys:
+            if key.upper() not in WORKER_RUNTIME_ENV_KEYS:
+                os.environ.pop(key, None)
     for key, value in values.items():
         os.environ[key] = value
     _refresh_terminal_env()
