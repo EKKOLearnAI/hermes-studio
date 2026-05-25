@@ -40,7 +40,7 @@ export async function resolveBridgeRunModelConfig(options: {
   const candidateProvider = sessionProvider || requestedProvider
   const hasGroups = Array.isArray(options.modelGroups) && options.modelGroups.length > 0
   const candidateAvailable = hasGroups && hasModelInGroups(options.modelGroups, candidateProvider, candidateModel)
-  const shouldUseDefault = !candidateModel || !candidateProvider || !candidateAvailable
+  const shouldUseDefault = !candidateModel || !candidateProvider || (hasGroups && !candidateAvailable)
   return shouldUseDefault
     ? resolveDefaultModelConfig(options.profile)
     : { model: candidateModel, provider: candidateProvider }
