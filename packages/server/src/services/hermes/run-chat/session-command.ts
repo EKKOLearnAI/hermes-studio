@@ -298,8 +298,13 @@ export async function handleSessionCommand(
         : null
       const message = formatGoalStatusMessage(String(result.message || ''), bridgeStatus)
 
+      const resultAction = String(result.action || command.name)
+      const action = (command.name === 'goal' || command.name === 'subgoal') && resultAction === 'clear'
+        ? `${command.name}_clear`
+        : resultAction
+
       emitCommand({
-        action: result.action || command.name,
+        action,
         terminal: !state.isWorking && !kickoffPrompt,
         started: Boolean(kickoffPrompt),
         message,

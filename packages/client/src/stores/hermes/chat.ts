@@ -881,11 +881,12 @@ export const useChatStore = defineStore('chat', () => {
     if (!sid) return
     const target = sessions.value.find(s => s.id === sid)
     const action = (evt as any).action as string | undefined
+    const command = String((evt as any).command || '').toLowerCase()
     if ((evt as any).started === true && (evt as any).terminal === false) {
       serverWorking.value.add(sid)
     }
 
-    if (action === 'clear') {
+    if (action === 'clear' && command === 'clear') {
       if (target) target.messages = []
       queuedUserMessages.value.delete(sid)
       queueLengths.value.delete(sid)

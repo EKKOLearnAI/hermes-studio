@@ -188,6 +188,46 @@ describe('plan session command', () => {
     }))
   })
 
+  it('emits a goal-specific clear action for goal done', async () => {
+    const state = {
+      messages: [],
+      isWorking: false,
+      events: [],
+      queue: [
+        { queue_id: 'goal-1', input: 'continue', displayInput: null, storageMessage: 'continue', profile: 'default', goalContinuation: true },
+      ],
+    }
+    const { bridge, namespaceEmit, runQueuedItem, sessionMap, socket, nsp } = makeContext(state, {
+      handled: true,
+      type: 'goal',
+      action: 'clear',
+      message: 'Goal cleared.',
+      clear_goal_continuations: true,
+    })
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/goal done')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      runQueuedItem,
+    })
+
+    expect(bridge.command).toHaveBeenCalledWith('session-1', 'goal done', 'default')
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(state.queue).toEqual([])
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'goal',
+      action: 'goal_clear',
+      message: 'Goal cleared.',
+      terminal: true,
+      started: false,
+    }))
+  })
+
   it('starts a resumed goal as a hidden continuation run', async () => {
     const state = { messages: [], isWorking: false, events: [], queue: [] }
     const { bridge, namespaceEmit, runQueuedItem, sessionMap, socket, nsp } = makeContext(state, {

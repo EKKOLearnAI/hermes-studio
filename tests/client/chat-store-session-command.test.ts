@@ -100,4 +100,33 @@ describe('chat store session.command fanout', () => {
       }),
     ])
   })
+
+  it('does not clear the transcript for goal done commands', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.messages = [
+      { id: 'user-1', role: 'user', content: 'keep me', timestamp: 1 },
+    ]
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    chatApi.sessionCommandHandlers[0]({
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'goal',
+      action: 'clear',
+      message: 'Goal cleared.',
+      terminal: true,
+    })
+
+    expect(store.messages).toEqual([
+      expect.objectContaining({ id: 'user-1', content: 'keep me' }),
+      expect.objectContaining({
+        role: 'command',
+        content: 'Goal cleared.',
+        commandAction: 'clear',
+      }),
+    ])
+  })
 })
