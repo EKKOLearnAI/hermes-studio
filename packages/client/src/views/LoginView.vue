@@ -63,7 +63,6 @@ async function handlePasswordLogin() {
       </div>
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
-      <p class="login-default-hint">{{ t("login.defaultCredentialsHint") }}</p>
 
       <form class="login-form" @submit.prevent="handleLogin">
         <input
