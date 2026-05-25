@@ -45,11 +45,20 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 let cachedLatestVersion = ''
 
+function isUpdateConfigured(): boolean {
+  return Boolean(config.update.enabled && config.update.packageName && config.update.registry)
+}
+
 export async function checkLatestVersion(): Promise<void> {
+  if (!isUpdateConfigured()) {
+    cachedLatestVersion = ''
+    return
+  }
+
   try {
-    const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
+    const packageName = config.update.packageName
     const registryName = encodeURIComponent(packageName)
-    const res = await fetch(`https://registry.npmjs.org/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
+    const res = await fetch(`${config.update.registry}/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
     if (res.ok) {
       const data = await res.json() as { version: string }
       cachedLatestVersion = data.version
@@ -61,6 +70,7 @@ export async function checkLatestVersion(): Promise<void> {
 }
 
 export function startVersionCheck(): void {
+  if (!isUpdateConfigured()) return
   setTimeout(checkLatestVersion, 5000)
   setInterval(checkLatestVersion, 30 * 60 * 1000)
 }
@@ -75,7 +85,9 @@ export async function healthCheck(ctx: any) {
     gateway: 'running',
     webui_version: LOCAL_VERSION,
     webui_latest: cachedLatestVersion,
-    webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
+    webui_update_enabled: isUpdateConfigured(),
+    webui_update_source_label: config.update.sourceLabel,
+    webui_update_available: Boolean(isUpdateConfigured() && LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
   }
 }

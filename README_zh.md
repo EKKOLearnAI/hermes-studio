@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Hermes Web UI</strong>
+  <strong>QuantHermes Web UI</strong>
   <a href="./README.md">English</a>
 </p>
 
@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="Hermes Web UI 演示" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="QuantHermes Web UI 演示" width="680"/>
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="Hermes Web UI 演示" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="QuantHermes Web UI 演示" width="680"/>
 </p>
 
 <p align="center">
@@ -228,6 +228,20 @@ docker compose logs -f hermes-webui
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)
 
+### Armbian / Ubuntu 源码部署
+
+如果你的设备无法稳定拉取 Docker Hub 镜像，推荐改用宿主机源码部署：
+
+```bash
+git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
+cd hermes-web-ui
+chmod +x scripts/deploy-source-armbian.sh
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+这条路径会自动安装 Hermes Agent、从镜像站下载 Node.js 23、源码构建 `hermes-web-ui`，并注册 `systemd` 服务。
+
+完整步骤、自定义变量和排障说明见：[`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md)
 ### Hermes Agent 运行时发现
 
 Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源码目录，例如
@@ -268,6 +282,26 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `hermes-web-ui -v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
 
+### 定制版更新策略
+
+对于定制版，不要再把应用内更新指向上游 `hermes-web-ui` 包，否则用户在页面里触发更新后，可能会直接用上游发布物覆盖你们的定制代码。
+
+推荐做法：
+
+- 在自有更新包准备好之前，先设置 `WEBUI_UPDATE_ENABLED=false`
+- 发布你们自己的包名，例如 `quanthermes-web-ui`
+- 让版本检测和实际安装都指向你们自己的内部 registry
+- 上游同步继续走独立的 git 合并与发布流程，不直接影响线上更新源
+
+示例配置：
+
+```env
+WEBUI_UPDATE_ENABLED=true
+WEBUI_UPDATE_PACKAGE=quanthermes-web-ui
+WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
+WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
+WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
+```
 `update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再执行 `npm install -g hermes-web-ui@latest` 并重启。缓存清理是 best-effort；如果清理失败，只提示 warning，升级安装会继续执行。
 
 ### 自动配置
