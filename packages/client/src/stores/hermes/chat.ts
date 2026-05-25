@@ -1001,6 +1001,23 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function promoteNextQueuedUserMessage(sessionId: string) {
+    const queue = queuedUserMessages.value.get(sessionId)
+    if (!queue?.length) return
+    const [next, ...rest] = queue
+    const nextMap = new Map(queuedUserMessages.value)
+    if (rest.length > 0) {
+      nextMap.set(sessionId, rest)
+    } else {
+      nextMap.delete(sessionId)
+    }
+    queuedUserMessages.value = nextMap
+    if (!getSessionMsgs(sessionId).some(message => message.id === next.id)) {
+      addMessage(sessionId, { ...next, queued: false })
+      updateSessionTitle(sessionId)
+    }
+  }
+
   function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
     if (!Array.isArray(rawMessages)) return []
     return rawMessages.flatMap((raw) => {
@@ -1461,6 +1478,7 @@ export const useChatStore = defineStore('chat', () => {
               runProducedAssistantText = false
               runHadToolActivity = false
               closeStreamingAssistant()
+              promoteNextQueuedUserMessage(sid)
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
               } else {
@@ -1952,6 +1970,7 @@ export const useChatStore = defineStore('chat', () => {
           runProducedAssistantText = false
           runHadToolActivity = false
           closeStreamingAssistant()
+          promoteNextQueuedUserMessage(sid)
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)
           } else {
