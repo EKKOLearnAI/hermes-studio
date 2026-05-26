@@ -30,6 +30,10 @@ export const useAppStore = defineStore('app', () => {
 
   const connected = ref(false)
   const serverVersion = ref(WEB_UI_VERSION)
+  const buildCommit = ref('')
+  const buildBranch = ref('')
+  const buildSource = ref('')
+  const builtAt = ref('')
   const latestVersion = ref('')
   const updateAvailable = ref(false)
   const clientOutdated = ref(false)
@@ -73,6 +77,10 @@ export const useAppStore = defineStore('app', () => {
       const res = await checkHealth()
       connected.value = res.status === 'ok'
       if (res.webui_version) serverVersion.value = res.webui_version
+      buildCommit.value = res.webui_build_commit || ''
+      buildBranch.value = res.webui_build_branch || ''
+      buildSource.value = res.webui_build_source || ''
+      builtAt.value = res.webui_built_at || ''
       clientOutdated.value = !!res.webui_version && res.webui_version !== WEB_UI_VERSION
       if (res.webui_latest) latestVersion.value = res.webui_latest
       updateAvailable.value = !!res.webui_update_available
@@ -329,6 +337,10 @@ export const useAppStore = defineStore('app', () => {
     toggleSidebarCollapsed,
     connected,
     serverVersion,
+    buildCommit,
+    buildBranch,
+    buildSource,
+    builtAt,
     latestVersion,
     nodeVersion,
     updateAvailable,

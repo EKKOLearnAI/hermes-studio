@@ -31,6 +31,32 @@ async function loadHealthControllerWithInjectedVersion(version: string) {
   return import('../../packages/server/src/controllers/health')
 }
 
+async function loadHealthControllerWithInjectedBuildMetadata(metadata: Record<string, string>) {
+  vi.resetModules()
+  ;(globalThis as any).__WEBUI_BUILD_METADATA__ = JSON.stringify(metadata)
+
+  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+    getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
+  }))
+
+  return import('../../packages/server/src/controllers/health')
+}
+
+async function loadHealthControllerWithMissingBuildMetadata() {
+  vi.resetModules()
+  delete (globalThis as any).__WEBUI_BUILD_METADATA__
+
+  vi.doMock('child_process', () => ({
+    execSync: vi.fn(() => { throw new Error('git unavailable') }),
+  }))
+
+  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+    getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
+  }))
+
+  return import('../../packages/server/src/controllers/health')
+}
+
 function createMockCtx() {
   return {
     body: null as any,
@@ -42,6 +68,8 @@ describe('health controller version metadata', () => {
     vi.restoreAllMocks()
     vi.resetModules()
     ;(globalThis as any).__APP_VERSION__ = 'test'
+    delete (globalThis as any).__WEBUI_BUILD_METADATA__
+    vi.unmock('child_process')
   })
 
   it('reads the root package version in ts-node/dev mode instead of falling back to 0.0.0', async () => {
@@ -66,6 +94,57 @@ describe('health controller version metadata', () => {
     await healthCheck(ctx)
 
     expect(ctx.body.webui_version).toBe('9.9.9-test')
+  })
+
+  it('uses injected build metadata when available', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck } = await loadHealthControllerWithInjectedBuildMetadata({
+      commit: 'abc123def456',
+      branch: 'upstream-pr/adr-009-singleton-updates-preview',
+      source: 'https://github.com/kira-project-lab/hermes-web-ui.git',
+      built_at: '2026-05-26T21:43:00.000Z',
+    })
+    const ctx = createMockCtx()
+
+    await healthCheck(ctx)
+
+    expect(ctx.body.webui_build_commit).toBe('abc123def456')
+    expect(ctx.body.webui_build_branch).toBe('upstream-pr/adr-009-singleton-updates-preview')
+    expect(ctx.body.webui_build_source).toBe('https://github.com/kira-project-lab/hermes-web-ui.git')
+    expect(ctx.body.webui_built_at).toBe('2026-05-26T21:43:00.000Z')
+  })
+
+  it('redacts credentials from injected build source URLs', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck } = await loadHealthControllerWithInjectedBuildMetadata({
+      commit: 'abc123def456',
+      branch: 'main',
+      source: 'https://token:secret@github.com/kira-project-lab/hermes-web-ui.git',
+      built_at: '2026-05-26T21:43:00.000Z',
+    })
+    const ctx = createMockCtx()
+
+    await healthCheck(ctx)
+
+    expect(ctx.body.webui_build_source).toBe('https://github.com/kira-project-lab/hermes-web-ui.git')
+    expect(ctx.body.webui_build_source).not.toContain('secret')
+    expect(ctx.body.webui_build_source).not.toContain('token')
+  })
+
+  it('falls back to unknown build metadata when no build info is available', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck } = await loadHealthControllerWithMissingBuildMetadata()
+    const ctx = createMockCtx()
+
+    await healthCheck(ctx)
+
+    expect(ctx.body.webui_build_commit).toBe('unknown')
+    expect(ctx.body.webui_build_branch).toBe('unknown')
+    expect(ctx.body.webui_build_source).toBe('unknown')
+    expect(ctx.body.webui_built_at).toBe('unknown')
   })
 
   it('checks npm latest using the root package name', async () => {

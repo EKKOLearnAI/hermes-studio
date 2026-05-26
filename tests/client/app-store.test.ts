@@ -165,6 +165,10 @@ describe('App Store', () => {
     mockSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
       webui_version: '0.5.17',
+      webui_build_commit: 'abc123def456',
+      webui_build_branch: 'upstream-pr/adr-009-singleton-updates-preview',
+      webui_build_source: 'https://github.com/kira-project-lab/hermes-web-ui.git',
+      webui_built_at: '2026-05-26T21:43:00.000Z',
       webui_latest: '0.5.17',
       webui_update_available: false,
     })
@@ -174,6 +178,10 @@ describe('App Store', () => {
 
     expect(store.connected).toBe(true)
     expect(store.serverVersion).toBe('0.5.17')
+    expect(store.buildCommit).toBe('abc123def456')
+    expect(store.buildBranch).toBe('upstream-pr/adr-009-singleton-updates-preview')
+    expect(store.buildSource).toBe('https://github.com/kira-project-lab/hermes-web-ui.git')
+    expect(store.builtAt).toBe('2026-05-26T21:43:00.000Z')
     expect(store.clientOutdated).toBe(true)
     expect(store.updateAvailable).toBe(false)
   })
@@ -182,6 +190,10 @@ describe('App Store', () => {
     mockSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
       webui_version: 'test',
+      webui_build_commit: 'unknown',
+      webui_build_branch: 'unknown',
+      webui_build_source: 'unknown',
+      webui_built_at: 'unknown',
       webui_latest: 'test',
       webui_update_available: false,
     })
@@ -190,6 +202,10 @@ describe('App Store', () => {
     await store.checkConnection()
 
     expect(store.serverVersion).toBe('test')
+    expect(store.buildCommit).toBe('unknown')
+    expect(store.buildBranch).toBe('unknown')
+    expect(store.buildSource).toBe('unknown')
+    expect(store.builtAt).toBe('unknown')
     expect(store.clientOutdated).toBe(false)
   })
 

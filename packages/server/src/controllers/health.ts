@@ -1,12 +1,21 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
 import * as hermesCli from '../services/hermes/hermes-cli'
 
 declare const __APP_VERSION__: string
+declare const __WEBUI_BUILD_METADATA__: string
 
 type PackageInfo = {
   name: string
   version: string
+}
+
+type WebUiBuildMetadata = {
+  commit?: string
+  branch?: string
+  source?: string
+  built_at?: string
 }
 
 function readPackageInfo(): PackageInfo | null {
@@ -43,6 +52,61 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : PACKAGE_INFO?.version || ''
 
+function readBuildMetadataFromGit(): WebUiBuildMetadata {
+  const repoRootCandidates = [
+    resolve(__dirname, '../../../../'),
+    resolve(__dirname, '../../'),
+    process.cwd(),
+  ]
+  const repoRoot = repoRootCandidates.find((candidate) => existsSync(resolve(candidate, '.git')) || existsSync(resolve(candidate, 'package.json'))) || process.cwd()
+
+  const readGitValue = (command: string) => {
+    try {
+      return execSync(command, { cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    } catch {
+      return ''
+    }
+  }
+
+  return {
+    commit: readGitValue('git rev-parse --short=12 HEAD'),
+    branch: readGitValue('git branch --show-current') || readGitValue('git rev-parse --abbrev-ref HEAD'),
+    source: readGitValue('git remote get-url origin'),
+  }
+}
+
+function readBuildMetadata(): WebUiBuildMetadata {
+  const injected = typeof __WEBUI_BUILD_METADATA__ !== 'undefined' ? __WEBUI_BUILD_METADATA__ : ''
+  if (injected) {
+    try {
+      return JSON.parse(injected) as WebUiBuildMetadata
+    } catch {
+      return {}
+    }
+  }
+
+  return readBuildMetadataFromGit()
+}
+
+const BUILD_METADATA = readBuildMetadata()
+
+function redactBuildSource(value?: string | null): string {
+  const raw = value?.trim()
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw)
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return raw.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^/@\s]+@/, '$1')
+  }
+}
+
+function normalizeBuildValue(value?: string | null): string {
+  return value && value.trim() ? value.trim() : 'unknown'
+}
+
 let cachedLatestVersion = ''
 
 export async function checkLatestVersion(): Promise<void> {
@@ -74,6 +138,10 @@ export async function healthCheck(ctx: any) {
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
+    webui_build_commit: normalizeBuildValue(BUILD_METADATA.commit),
+    webui_build_branch: normalizeBuildValue(BUILD_METADATA.branch),
+    webui_build_source: normalizeBuildValue(redactBuildSource(BUILD_METADATA.source)),
+    webui_built_at: normalizeBuildValue(BUILD_METADATA.built_at),
     webui_latest: cachedLatestVersion,
     webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
