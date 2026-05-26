@@ -5,10 +5,8 @@ import type { Message } from '@/stores/hermes/chat'
 
 interface OutlineItem {
   id: string
-  type: 'user' | 'outline'
   content: string
   messageId: string
-  level: number
   anchorId: string
 }
 
@@ -17,54 +15,6 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-
-function extractAllHeadings(text: string, messageId: string): OutlineItem[] {
-  const items: OutlineItem[] = []
-  let cleanedText = text.replace(/<think>[\s\S]*?<\/think>/g, '')
-  const lines = cleanedText.split('\n')
-  
-  let headingIndex = 0
-  for (const line of lines) {
-    const trimmed = line.trim()
-    const h1Match = trimmed.match(/^#\s+(.+)/)
-    const h2Match = trimmed.match(/^##\s+(.+)/)
-    const h3Match = trimmed.match(/^###\s+(.+)/)
-    
-    if (h1Match) {
-      headingIndex++
-      items.push({
-        id: `outline-${messageId}-h${headingIndex}`,
-        type: 'outline',
-        content: h1Match[1].trim(),
-        messageId,
-        level: 1,
-        anchorId: `msg-${messageId}-heading-${headingIndex}`
-      })
-    } else if (h2Match) {
-      headingIndex++
-      items.push({
-        id: `outline-${messageId}-h${headingIndex}`,
-        type: 'outline',
-        content: h2Match[1].trim(),
-        messageId,
-        level: 2,
-        anchorId: `msg-${messageId}-heading-${headingIndex}`
-      })
-    } else if (h3Match) {
-      headingIndex++
-      items.push({
-        id: `outline-${messageId}-h${headingIndex}`,
-        type: 'outline',
-        content: h3Match[1].trim(),
-        messageId,
-        level: 3,
-        anchorId: `msg-${messageId}-heading-${headingIndex}`
-      })
-    }
-  }
-  
-  return items
-}
 
 function extractUserQuestion(text: string): string {
   const cleanedText = text.replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -77,31 +27,15 @@ function extractUserQuestion(text: string): string {
 
 const outlineItems = computed<OutlineItem[]>(() => {
   const items: OutlineItem[] = []
-  let i = 0
-  const filteredMessages = props.messages.filter(m => m.role === 'user' || m.role === 'assistant')
-  
-  while (i < filteredMessages.length) {
-    const msg = filteredMessages[i]
-    if (msg.role === 'user') {
-      items.push({
-        id: `user-${msg.id}`,
-        type: 'user',
-        content: extractUserQuestion(msg.content || ''),
-        messageId: msg.id,
-        level: 0,
-        anchorId: `message-${msg.id}`
-      })
-      i++
-      while (i < filteredMessages.length && filteredMessages[i].role !== 'assistant') {
-        i++
-      }
-      if (i < filteredMessages.length) {
-        const assistantMsg = filteredMessages[i]
-        const headings = extractAllHeadings(assistantMsg.content || '', assistantMsg.id)
-        items.push(...headings)
-      }
-    }
-    i++
+  const filteredMessages = props.messages.filter(m => m.role === 'user')
+
+  for (const msg of filteredMessages) {
+    items.push({
+      id: `user-${msg.id}`,
+      content: extractUserQuestion(msg.content || ''),
+      messageId: msg.id,
+      anchorId: `message-${msg.id}`
+    })
   }
   return items
 })
@@ -131,28 +65,17 @@ function scrollToTarget(anchorId: string) {
     </div>
     <div class="outline-content">
       <template v-if="outlineItems.length > 0">
-        <template v-for="item in outlineItems" :key="item.id">
-          <div
-            v-if="item.type === 'user'"
-            class="outline-item user-item"
-            @click="scrollToTarget(item.anchorId)"
-          >
-            <div class="user-question">
-              <span class="q-label">Q:</span>
-              <span class="q-text">{{ item.content }}</span>
-            </div>
+        <div
+          v-for="item in outlineItems"
+          :key="item.id"
+          class="outline-item user-item"
+          @click="scrollToTarget(item.anchorId)"
+        >
+          <div class="user-question">
+            <span class="q-label">Q:</span>
+            <span class="q-text">{{ item.content }}</span>
           </div>
-          <div
-            v-else
-            class="outline-item outline-heading-item"
-            :class="`level-${item.level}`"
-            @click="scrollToTarget(item.anchorId)"
-          >
-            <div class="heading-item">
-              <span class="heading-text">{{ item.content }}</span>
-            </div>
-          </div>
-        </template>
+        </div>
       </template>
       <div v-else class="outline-empty">{{ t('chat.outlineEmpty') }}</div>
     </div>
@@ -239,73 +162,6 @@ function scrollToTarget(anchorId: string) {
     line-height: 1.4;
     word-break: break-word;
   }
-}
-
-.outline-heading-item {
-  &.level-1 {
-    padding-left: 0;
-  }
-
-  &.level-2 {
-    padding-left: 12px;
-  }
-
-  &.level-3 {
-    padding-left: 24px;
-  }
-}
-
-.heading-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.15s ease;
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
-
-    .dark & {
-      background-color: rgba(255, 255, 255, 0.06);
-    }
-  }
-
-  .level-1 & {
-    .heading-marker {
-      color: $text-primary;
-      font-weight: 600;
-    }
-    .heading-text {
-      color: $text-primary;
-      font-weight: 500;
-    }
-  }
-
-  .level-2 & {
-    .heading-marker {
-      color: $text-secondary;
-    }
-    .heading-text {
-      color: $text-secondary;
-    }
-  }
-
-  .level-3 & {
-    .heading-marker {
-      color: $text-muted;
-    }
-    .heading-text {
-      color: $text-muted;
-      font-size: 12px;
-    }
-  }
-}
-
-.heading-text {
-  font-size: 13px;
-  line-height: 1.4;
-  word-break: break-word;
 }
 
 .outline-empty {
