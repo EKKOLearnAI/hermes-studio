@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { setSessionModel } from '@/api/hermes/sessions'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -19,6 +20,10 @@ const routeSessionId = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const isNewSessionRoute = computed(() => route.path === '/session/new')
+const isContinueRoute = computed(() => isNewSessionRoute.value && route.query.continue === '1')
+const isCreatingNewSession = ref(false)
+
 const routeProfile = computed(() => {
   const value = route.query.profile
   return typeof value === 'string' && value.trim() ? value : null
@@ -31,18 +36,68 @@ async function loadRouteSession() {
   }
 }
 
+async function openNewSessionRoute() {
+  if (isCreatingNewSession.value) return
+  isCreatingNewSession.value = true
+  try {
+    const session = chatStore.newChat()
+    await setSessionModel(
+      session.id,
+      session.model || appStore.selectedModel || '',
+      session.provider || appStore.selectedProvider || '',
+    )
+    await router.replace({
+      name: 'hermes.session',
+      params: { sessionId: session.id },
+    })
+    await chatStore.loadSessions(chatStore.sessionProfileFilter, session.id)
+  } finally {
+    isCreatingNewSession.value = false
+  }
+}
+
+async function continueRootSessionRoute() {
+  if (isCreatingNewSession.value) return
+  await chatStore.loadSessions(chatStore.sessionProfileFilter)
+  if (chatStore.activeSessionId) {
+    await router.replace({
+      name: 'hermes.session',
+      params: { sessionId: chatStore.activeSessionId },
+    })
+    return
+  }
+  await openNewSessionRoute()
+}
+
 onMounted(async () => {
-  appStore.loadModels()
-  // 先加载 profile，确保缓存 key 使用正确的 profile name；同时预取显示设置，
-  // 让聊天完成提示音不依赖用户先打开 Settings 页面。
+  // 先加载模型、profile 和显示设置，确保新会话创建时的默认值与当前新聊天流程一致。
   await Promise.all([
+    appStore.loadModels(),
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
+  if (isContinueRoute.value) {
+    await continueRootSessionRoute()
+    return
+  }
+  if (isNewSessionRoute.value) {
+    await openNewSessionRoute()
+    return
+  }
   await loadRouteSession()
 })
 
 watch([routeSessionId, routeProfile], async ([sessionId]) => {
+  if (isContinueRoute.value) {
+    if (isCreatingNewSession.value) return
+    await continueRootSessionRoute()
+    return
+  }
+  if (isNewSessionRoute.value) {
+    if (isCreatingNewSession.value) return
+    await openNewSessionRoute()
+    return
+  }
   if (!chatStore.sessionsLoaded) return
   if (!sessionId) {
     await chatStore.loadSessions(chatStore.sessionProfileFilter)

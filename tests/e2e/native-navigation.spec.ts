@@ -31,7 +31,7 @@ test('session rows expose native session links', async ({ page }) => {
   await mockHermesApi(page, { sessions: [sampleSession] })
   await page.goto('/session/new')
 
-  const sessionLink = page.locator('.session-items a.session-item').first()
-  await expect(sessionLink).toHaveAttribute('href', '/session/session-native-1')
+  const sessionLink = page.locator('.session-items a.session-item[href="/session/session-native-1"]')
+  await expect(sessionLink).toHaveCount(1)
   await expect(sessionLink).toContainText('Native Link Session')
 })

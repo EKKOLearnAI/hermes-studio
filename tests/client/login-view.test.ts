@@ -51,7 +51,15 @@ describe('LoginView password login', () => {
 
     expect(mockLoginWithPassword).toHaveBeenCalledWith('admin', '123456')
     expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
-    expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
+    expect(mockReplace).toHaveBeenCalledWith({ path: '/session/new', query: { continue: '1' } })
+  })
+
+  it('redirects authenticated users to the continue route', () => {
+    mockHasApiKey.mockReturnValue(true)
+
+    mount(LoginView)
+
+    expect(mockReplace).toHaveBeenCalledWith({ path: '/session/new', query: { continue: '1' } })
   })
 
   it('shows the default login hint', () => {

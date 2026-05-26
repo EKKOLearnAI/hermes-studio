@@ -79,6 +79,41 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const unexpectedRequests: MockedRequest[] = []
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
+  const sessions = [...(options.sessions ?? [])] as any[]
+
+  function makeNewSessionSummary(id: string, model: string, provider: string) {
+    const now = Math.floor(Date.now() / 1000)
+    return {
+      id,
+      profile: activeProfileName,
+      source: 'api_server',
+      model,
+      provider,
+      title: null,
+      preview: '',
+      started_at: now,
+      ended_at: null,
+      last_active: now,
+      message_count: 0,
+      tool_call_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: null,
+      estimated_cost_usd: 0,
+      actual_cost_usd: null,
+      cost_status: '',
+      workspace: null,
+    }
+  }
+
+  function upsertSession(session: any) {
+    const index = sessions.findIndex(existing => existing.id === session.id)
+    if (index === -1) sessions.unshift(session)
+    else sessions[index] = { ...sessions[index], ...session }
+  }
 
   await page.route('**/*', async (route: Route) => {
     const request = route.request()
@@ -131,12 +166,38 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     }
 
     if (pathname === '/api/hermes/sessions') {
-      await route.fulfill(jsonResponse({ sessions: options.sessions ?? [] }, tokenValidationStatus))
+      await route.fulfill(jsonResponse({ sessions }, tokenValidationStatus))
       return
     }
 
     if (pathname === '/api/hermes/sessions/hermes') {
-      await route.fulfill(jsonResponse({ sessions: [] }))
+      await route.fulfill(jsonResponse({ sessions }))
+      return
+    }
+
+    const sessionModelMatch = pathname.match(/^\/api\/hermes\/sessions\/([^/]+)\/model$/)
+    if (sessionModelMatch) {
+      if (request.method() !== 'POST') {
+        await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+        return
+      }
+
+      let body: { model?: unknown; provider?: unknown }
+      try {
+        body = JSON.parse(request.postData() || '{}')
+      } catch {
+        await route.fulfill(jsonResponse({ error: 'Invalid JSON body' }, 400))
+        return
+      }
+
+      if (typeof body.model !== 'string' || !body.model.trim()) {
+        await route.fulfill(jsonResponse({ error: 'model is required' }, 400))
+        return
+      }
+
+      const sessionId = decodeURIComponent(sessionModelMatch[1])
+      upsertSession(makeNewSessionSummary(sessionId, body.model.trim(), typeof body.provider === 'string' ? body.provider.trim() : ''))
+      await route.fulfill(jsonResponse({ ok: true }))
       return
     }
 
@@ -300,9 +361,10 @@ function makeSocket(url, options) {
         const sessionId = payload && payload.session_id
         const resumes = window.__PW_CHAT_SOCKET_RESUMES__ || {}
         const response = sessionId ? resumes[sessionId] : null
-        if (response) {
-          setTimeout(() => this.__trigger('resumed', response), 0)
-        }
+        const fallback = sessionId
+          ? { session_id: sessionId, isWorking: false, queueLength: 0, messages: [] }
+          : null
+        setTimeout(() => this.__trigger('resumed', response || fallback), 0)
       }
       return this
     },

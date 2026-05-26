@@ -149,7 +149,7 @@ router.beforeEach((to: RouteLocationNormalized, _from: RouteLocationNormalized, 
   if (to.meta.public) {
     // Already has key, skip login
     if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/session/new' })
+      next({ path: '/session/new', query: { continue: '1' } })
       return
     }
     next()

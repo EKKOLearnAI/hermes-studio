@@ -172,7 +172,7 @@ describe('DevModeSettings', () => {
       canBuild: false,
       reason: null,
     })
-    fetchBranchBuildBranches.mockResolvedValue(['main', 'feature/dev-a', 'feature/dev-b'])
+    fetchBranchBuildBranches.mockResolvedValue(['feature/dev-b', 'main', 'feature/dev-a'])
     fetchBranchBuildStatus.mockResolvedValue({
       status: 'success',
       previewId: 'preview-slot',
@@ -373,6 +373,16 @@ describe('DevModeSettings', () => {
     await flushPromises()
 
     const selects = wrapper.findAll('select')
+    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
+      'feature/dev-a',
+      'feature/dev-b',
+      'main',
+    ])
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual([
+      'feature/dev-a',
+      'feature/dev-b',
+      'main',
+    ])
     await selects[0].setValue('feature/dev-b')
     await selects[1].setValue('feature/dev-a')
 

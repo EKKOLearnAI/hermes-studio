@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { isStoredSuperAdmin } from '@/api/client'
 import { fetchBranchBuildStatus, fetchBranchPreviewCapabilities, type BranchBuildSummary, type BranchPreviewCapabilities } from '@/api/hermes/dev-mode-branch-builds'
 import { useAppStore } from '@/stores/hermes/app'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import DevModeSettings from '@/components/hermes/settings/DevModeSettings.vue'
 
 const appStore = useAppStore()
 const settingsStore = useSettingsStore()
-const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
 
@@ -111,10 +110,6 @@ async function handleUpdateNow() {
   } else {
     message.error(t('updates.updateFailed'))
   }
-}
-
-function openDevModeSettings() {
-  router.push({ name: 'hermes.settings', query: { tab: 'dev' } })
 }
 
 onMounted(() => {
@@ -219,12 +214,8 @@ onMounted(() => {
                   <strong>{{ fmtTime(previewStatus?.startedAt) }}</strong>
                 </div>
               </div>
-              <NButton v-if="canUseDevMode" secondary size="small" @click="openDevModeSettings">
-                {{ t('updates.openDevMode') }}
-              </NButton>
             </div>
           </NCard>
-
 
           <NCard size="small" class="updates-card" :title="t('updates.recoveryTitle')">
             <div class="card-stack">
@@ -232,17 +223,14 @@ onMounted(() => {
               <NAlert type="info" :title="t('updates.recoveryHintTitle')">
                 {{ t('updates.recoveryHintBody') }}
               </NAlert>
-              <NSpace>
-                <NButton :disabled="!appStore.clientOutdated" @click="appStore.reloadClient()">
-                  {{ t('updates.reloadClient') }}
-                </NButton>
-                <NButton :disabled="!appStore.updateAvailable" type="primary" :loading="appStore.updating" @click="handleUpdateNow">
-                  {{ t('updates.updateNow') }}
-                </NButton>
-              </NSpace>
+              <NButton :disabled="!appStore.clientOutdated" @click="appStore.reloadClient()">
+                {{ t('updates.reloadClient') }}
+              </NButton>
             </div>
           </NCard>
         </section>
+
+        <DevModeSettings />
       </main>
     </NSpin>
   </div>

@@ -144,7 +144,7 @@ async function refreshBranches() {
   if (!canListBranches.value) return
   loading.value = true
   try {
-    branchList.value = await fetchBranchBuildBranches()
+    branchList.value = [...await fetchBranchBuildBranches()].sort((a, b) => a.localeCompare(b))
     ensureSelections()
   } catch (err: any) {
     message.error(err?.message || t('settings.dev.loadFailed'))
@@ -168,7 +168,7 @@ async function refreshStatus() {
       fetchBranchBuildBranches(),
     ])
     branchBuild.value = status
-    branchList.value = branches
+    branchList.value = [...branches].sort((a, b) => a.localeCompare(b))
     if (status.reviewBase) {
       draftReviewBase.value = status.reviewBase
     }
