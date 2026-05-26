@@ -2332,10 +2332,11 @@ class WorkerProcess:
             except OSError:
                 pass
 
-    def request(self, req: dict[str, Any]) -> dict[str, Any]:
+    def request(self, req: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
         self.start()
         self.last_used_at = time.time()
-        return _send_bridge_request(self.endpoint, req, self.REQUEST_TIMEOUT_SECONDS)
+        request_timeout = timeout if timeout is not None and timeout > 0 else self.REQUEST_TIMEOUT_SECONDS
+        return _send_bridge_request(self.endpoint, req, request_timeout)
 
 
 def _worker_endpoint(key: str) -> str:
@@ -2648,9 +2649,18 @@ class BridgeBroker:
         forwarded = dict(req)
         forwarded["profile"] = profile
         forwarded.pop("worker_key", None)
-        resp = worker.request(forwarded)
+        resp = worker.request(forwarded, self._worker_request_timeout(req))
         self._record_response_routes(profile, key, resp)
         return resp
+
+    def _worker_request_timeout(self, req: dict[str, Any]) -> float:
+        try:
+            timeout = float(req.get("timeout", 0) or 0)
+        except (TypeError, ValueError):
+            timeout = 0
+        if timeout <= 0:
+            return WorkerProcess.REQUEST_TIMEOUT_SECONDS
+        return max(WorkerProcess.REQUEST_TIMEOUT_SECONDS, timeout + 10)
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()

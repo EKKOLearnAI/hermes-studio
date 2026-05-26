@@ -52,7 +52,7 @@ export interface CompressionConfig {
   headMessageCount: number
   /** Number of recent messages to keep verbatim (default: 10) */
   tailMessageCount: number
-  /** Timeout for LLM summarization call (default: 60_000ms) */
+  /** Timeout for LLM summarization call (default: 300_000ms) */
   summarizationTimeoutMs: number
 }
 
@@ -61,7 +61,7 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   summaryBudget: 8_000,
   headMessageCount: 0,
   tailMessageCount: 10,
-  summarizationTimeoutMs: 120_000,
+  summarizationTimeoutMs: 300_000,
 }
 
 export interface CompressedResult {

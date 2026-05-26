@@ -406,7 +406,7 @@ class RoutedWorker:
         self.requests = []
         self.stopped = False
 
-    def request(self, req):
+    def request(self, req, timeout=None):
         self.requests.append(req)
         action = req.get("action")
         if action == "chat":
@@ -634,6 +634,37 @@ assert not thread.is_alive(), blocking_conn.response
 blocked_resp = json.loads(blocking_conn.response.decode("utf-8"))
 assert blocked_resp["ok"] is True, blocked_resp
 assert blocked_resp["blocked"] is True, blocked_resp
+`)
+  })
+
+  it('extends profile worker request timeout from wait requests', () => {
+    runPython(String.raw`
+${harness}
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+assert broker._worker_request_timeout({"action": "chat"}) == bridge.WorkerProcess.REQUEST_TIMEOUT_SECONDS
+assert broker._worker_request_timeout({"action": "chat", "timeout": 60}) == bridge.WorkerProcess.REQUEST_TIMEOUT_SECONDS
+assert broker._worker_request_timeout({"action": "chat", "timeout": 300}) == 310
+
+captured = {}
+worker = bridge.WorkerProcess("default", "default", "ipc:///tmp/worker.sock", None, None)
+worker.start = lambda: None
+original_send = bridge._send_bridge_request
+try:
+    def fake_send(endpoint, req, timeout):
+        captured["endpoint"] = endpoint
+        captured["req"] = req
+        captured["timeout"] = timeout
+        return {"ok": True}
+    bridge._send_bridge_request = fake_send
+    response = worker.request({"action": "chat"}, 310)
+finally:
+    bridge._send_bridge_request = original_send
+
+assert response["ok"] is True, response
+assert captured["endpoint"] == "ipc:///tmp/worker.sock", captured
+assert captured["req"] == {"action": "chat"}, captured
+assert captured["timeout"] == 310, captured
 `)
   })
 })
