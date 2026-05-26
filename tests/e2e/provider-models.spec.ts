@@ -13,7 +13,7 @@ test('fetches custom provider models through the backend proxy', async ({ page }
     }
   })
 
-  await page.goto('/hermes/models')
+  await page.goto('/models')
 
   await page.getByRole('button', { name: 'Add Provider' }).click()
   await page.getByRole('button', { name: 'Custom' }).click()

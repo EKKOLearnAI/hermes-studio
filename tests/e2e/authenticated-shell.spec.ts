@@ -5,7 +5,7 @@ test('renders authenticated shell and navigates between key product routes', asy
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)
 
-  await page.goto('/hermes/jobs')
+  await page.goto('/jobs')
 
   await expect(page.getByRole('heading', { name: 'Scheduled Jobs' })).toBeVisible()
   await expect(page.getByText('Nightly Smoke')).toBeVisible()
@@ -17,16 +17,16 @@ test('renders authenticated shell and navigates between key product routes', asy
   expect(cronHistoryRequest?.headers['x-hermes-profile']).toBe('research')
 
   const modelsLink = page.locator('aside.sidebar').getByRole('link', { name: /^Models$/ })
-  await expect(modelsLink).toHaveAttribute('href', '/hermes/models')
+  await expect(modelsLink).toHaveAttribute('href', '/models')
   await modelsLink.click()
-  await expect(page).toHaveURL(/\/hermes\/models$/)
+  await expect(page).toHaveURL(/\/models$/)
   await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
   await expect(page.getByText('test-model').first()).toBeVisible()
 
   const settingsLink = page.locator('aside.sidebar').getByRole('link', { name: /^Settings$/ })
-  await expect(settingsLink).toHaveAttribute('href', '/hermes/settings')
+  await expect(settingsLink).toHaveAttribute('href', '/settings')
   await settingsLink.click()
-  await expect(page).toHaveURL(/\/hermes\/settings$/)
+  await expect(page).toHaveURL(/\/settings$/)
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   expect(api.unexpectedRequests).toEqual([])
 })

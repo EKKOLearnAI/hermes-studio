@@ -4,7 +4,7 @@ import { mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 test('redirects protected routes to the login screen without a token', async ({ page }) => {
   const api = await mockHermesApi(page)
 
-  await page.goto('/hermes/jobs')
+  await page.goto('/jobs')
 
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('heading', { name: 'Hermes Web UI' })).toBeVisible()
@@ -35,7 +35,7 @@ test('logs in with password through the BFF before entering the app', async ({ p
   await page.getByPlaceholder('Password').fill('correct-password')
   await page.getByRole('button', { name: 'Login' }).click()
 
-  await expect(page).toHaveURL(/\/hermes\/chat$/)
+  await expect(page).toHaveURL(/\/session\/new$/)
   await expect(page.evaluate(() => window.localStorage.getItem('hermes_api_key'))).resolves.toBe(TEST_ACCESS_KEY)
 
   const loginRequest = api.requests.find((request) => request.pathname === '/api/auth/login')

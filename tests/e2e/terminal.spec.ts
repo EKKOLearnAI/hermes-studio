@@ -6,7 +6,7 @@ test('opens terminal websocket session and forwards user input', async ({ page }
   const api = await mockHermesApi(page)
   await mockTerminalWebSocket(page)
 
-  await page.goto('/hermes/terminal')
+  await page.goto('/terminal')
 
   await expect(page.getByText('Sessions')).toBeVisible()
   await expect(page.locator('.session-item-title', { hasText: 'zsh #1' })).toBeVisible()
