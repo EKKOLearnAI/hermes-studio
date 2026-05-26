@@ -87,7 +87,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockReset()
 
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default' })
-    getModelContextLengthMock.mockReturnValue(200_000)
+    getModelContextLengthMock.mockReturnValue(256_000)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 0, outputTokens: 0 })
     getCompressionSnapshotMock.mockReturnValue(null)
@@ -142,7 +142,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { threshold: 0.25, target_ratio: 0.1, protect_last_n: 7, protect_first_n: 2 },
     })
-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 60_000, outputTokens: 0 })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 70_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'compressed' }],
       meta: {
@@ -212,7 +212,7 @@ describe('run chat compression trigger', () => {
       emit,
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )
 
     expect(history).toEqual([{ role: 'user', content: 'compressed by local context estimate' }])
@@ -356,7 +356,7 @@ describe('run chat compression trigger', () => {
       emit,
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
       700,
     )
 
@@ -387,7 +387,7 @@ describe('run chat compression trigger', () => {
       emit,
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
 
     expect(emit).not.toHaveBeenCalledWith('usage.updated', expect.anything())
@@ -420,7 +420,7 @@ describe('run chat compression trigger', () => {
       vi.fn(),
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
 
     expect(compressorCompressMock).not.toHaveBeenCalled()
@@ -443,7 +443,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { protect_last_n: 5 },
     })
-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 120_000, outputTokens: 0 })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 160_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'compressed' }],
       meta: {
@@ -468,8 +468,8 @@ describe('run chat compression trigger', () => {
 
     expect(compressorConstructorMock).toHaveBeenCalledWith({
       config: {
-        triggerTokens: 100_000,
-        summaryBudget: 40_000,
+        triggerTokens: 128_000,
+        summaryBudget: 51_200,
         headMessageCount: 3,
         tailMessageCount: 5,
       },
@@ -544,7 +544,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { protect_first_n: 2, protect_last_n: 3 },
     })
-    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 120_000, outputTokens: 0 })
+    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 160_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'updated stale compressed' }],
       meta: {
