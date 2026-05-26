@@ -33,8 +33,12 @@ function resolveLocale(saved: string | null): SupportedLocale {
   return 'en'
 }
 
+const rtlLocales: readonly string[] = ['ar']
+
 function setHtmlLang(locale: SupportedLocale) {
   document.documentElement.lang = locale
+  document.documentElement.classList.toggle('rtl', rtlLocales.includes(locale))
+  document.documentElement.classList.toggle('ltr', !rtlLocales.includes(locale))
 }
 
 const locale = resolveLocale(saved)

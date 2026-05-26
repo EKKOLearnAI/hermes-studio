@@ -1108,6 +1108,7 @@ export default {
     label: 'Language',
     zh: '中文',
     en: 'English',
+    ar: 'العربية',
   },
 
   // Terminal

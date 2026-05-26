@@ -205,3 +205,13 @@ a {
     width: 100%;
   }
 }
+
+/* RTL support */
+html.rtl {
+  direction: rtl;
+}
+
+html.rtl .n-select-menu,
+html.rtl .n-base-select-menu {
+  direction: ltr;
+}
