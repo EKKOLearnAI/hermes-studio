@@ -6,6 +6,7 @@ const isStoredSuperAdminMock = vi.hoisted(() => vi.fn())
 const fetchBranchPreviewCapabilitiesMock = vi.hoisted(() => vi.fn())
 const fetchBranchBuildStatusMock = vi.hoisted(() => vi.fn())
 const fetchBranchBuildBranchesMock = vi.hoisted(() => vi.fn())
+const fetchAvailableReleasesMock = vi.hoisted(() => vi.fn())
 const buildBranchPreviewMock = vi.hoisted(() => vi.fn())
 const promoteBranchPreviewMock = vi.hoisted(() => vi.fn())
 const restoreLatestUpstreamReleaseMock = vi.hoisted(() => vi.fn())
@@ -40,6 +41,7 @@ vi.mock('@/api/hermes/dev-mode-branch-builds', () => ({
   fetchBranchPreviewCapabilities: (...args: any[]) => fetchBranchPreviewCapabilitiesMock(...args),
   fetchBranchBuildStatus: (...args: any[]) => fetchBranchBuildStatusMock(...args),
   fetchBranchBuildBranches: (...args: any[]) => fetchBranchBuildBranchesMock(...args),
+  fetchAvailableReleases: (...args: any[]) => fetchAvailableReleasesMock(...args),
   promoteBranchPreview: (...args: any[]) => promoteBranchPreviewMock(...args),
   restoreLatestUpstreamRelease: (...args: any[]) => restoreLatestUpstreamReleaseMock(...args),
 }))
@@ -78,7 +80,7 @@ vi.mock('naive-ui', async () => {
     NSelect: {
       props: ['value', 'options', 'disabled', 'loading', 'filterable', 'clearable', 'placeholder'],
       emits: ['update:value'],
-      template: '<select class="n-select" :disabled="disabled" @change="$emit(\'update:value\', $event.target.value)"><option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select>',
+      template: '<select class="n-select" :disabled="disabled" @change="$emit(\'update:value\', $event.target.value)"><option v-for="opt in options" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option></select>',
     },
     NSwitch: {
       props: ['value', 'disabled', 'loading'],
@@ -105,6 +107,8 @@ describe('UpdatesView', () => {
     fetchBranchPreviewCapabilitiesMock.mockReset()
     fetchBranchBuildStatusMock.mockReset()
     fetchBranchBuildBranchesMock.mockReset()
+    fetchAvailableReleasesMock.mockReset()
+    fetchAvailableReleasesMock.mockResolvedValue(['0.6.1'])
     buildBranchPreviewMock.mockReset()
     promoteBranchPreviewMock.mockReset()
     restoreLatestUpstreamReleaseMock.mockReset()
@@ -153,6 +157,126 @@ describe('UpdatesView', () => {
     expect(fetchBranchBuildBranchesMock).not.toHaveBeenCalled()
   })
 
+  it.each([
+    {
+      title: 'Dev Mode off + missing repo keeps release enabled and hides dev-only sources',
+      devModeEnabled: false,
+      capabilityReason: 'repo_path_missing',
+      branchAvailable: false,
+      commitAvailable: false,
+      expectedSourceOptions: [
+        { label: 'Release', disabled: false },
+      ],
+    },
+    {
+      title: 'Dev Mode on + missing repo keeps release enabled but disables dev-only sources',
+      devModeEnabled: true,
+      capabilityReason: 'repo_path_missing',
+      branchAvailable: false,
+      commitAvailable: false,
+      expectedSourceOptions: [
+        { label: 'Release', disabled: false },
+        { label: 'Branch', disabled: true },
+        { label: 'Commit', disabled: true },
+      ],
+    },
+    {
+      title: 'Dev Mode on + invalid repo keeps release enabled but disables dev-only sources',
+      devModeEnabled: true,
+      capabilityReason: 'not_git_repo',
+      branchAvailable: false,
+      commitAvailable: false,
+      expectedSourceOptions: [
+        { label: 'Release', disabled: false },
+        { label: 'Branch', disabled: true },
+        { label: 'Commit', disabled: true },
+      ],
+    },
+    {
+      title: 'Dev Mode on + valid repo enables every source option',
+      devModeEnabled: true,
+      capabilityReason: null,
+      branchAvailable: true,
+      commitAvailable: true,
+      expectedSourceOptions: [
+        { label: 'Release', disabled: false },
+        { label: 'Branch', disabled: false },
+        { label: 'Commit', disabled: false },
+      ],
+    },
+  ])('$title', async ({ devModeEnabled, capabilityReason, branchAvailable, commitAvailable, expectedSourceOptions }) => {
+    isStoredSuperAdminMock.mockReturnValue(true)
+    settingsStoreMock.dev.enabled = devModeEnabled
+    fetchBranchPreviewCapabilitiesMock.mockResolvedValue({
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: branchAvailable,
+      branchPreviewConfigured: branchAvailable,
+      canListBranches: branchAvailable,
+      canBuild: branchAvailable,
+      reason: capabilityReason,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: branchAvailable,
+          configured: branchAvailable,
+          devOnly: true,
+          canListTargets: branchAvailable,
+          canBuild: branchAvailable,
+          reason: capabilityReason,
+        },
+        {
+          provider: 'commit',
+          available: commitAvailable,
+          configured: commitAvailable,
+          devOnly: true,
+          canListTargets: commitAvailable,
+          canBuild: commitAvailable,
+          reason: capabilityReason,
+        },
+      ],
+    })
+    fetchBranchBuildStatusMock.mockResolvedValue({
+      status: 'running',
+      previewId: null,
+      previewUrl: '/preview/',
+      previewBranch: 'main',
+      previewWorktreePath: '/tmp/worktree',
+      buildBranch: 'main',
+      startedAt: 1710000000000,
+      finishedAt: null,
+      exitCode: null,
+      signal: null,
+      error: null,
+      reviewBase: 'main',
+      logTail: ['line 1'],
+    })
+
+    const wrapper = mount(UpdatesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    expect(selects).toHaveLength(2)
+
+    const sourceOptions = selects[0].findAll('option').map((option) => ({
+      label: option.text(),
+      disabled: (option.element as HTMLOptionElement).disabled,
+    }))
+    expect(sourceOptions).toEqual(expectedSourceOptions)
+
+    const releaseButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')
+    expect(releaseButton?.element.disabled).toBe(false)
+  })
+
   it('loads release preview state for super admins even when Dev Mode is disabled', async () => {
     isStoredSuperAdminMock.mockReturnValue(true)
     settingsStoreMock.dev.enabled = false
@@ -164,6 +288,35 @@ describe('UpdatesView', () => {
       canListBranches: true,
       canBuild: true,
       reason: null,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'commit',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+      ],
     })
     fetchBranchBuildStatusMock.mockResolvedValue({
       status: 'running',
@@ -210,6 +363,35 @@ describe('UpdatesView', () => {
       canListBranches: true,
       canBuild: true,
       reason: null,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'commit',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+      ],
     })
     fetchBranchBuildStatusMock.mockResolvedValue({
       status: 'running',
@@ -249,12 +431,13 @@ describe('UpdatesView', () => {
     )
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(1)
+    expect(selects).toHaveLength(2)
     expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
   })
 
   it('expands source choices and shows failure logs when Dev Mode is enabled', async () => {
@@ -268,6 +451,35 @@ describe('UpdatesView', () => {
       canListBranches: true,
       canBuild: true,
       reason: null,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'commit',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+      ],
     })
     fetchBranchBuildBranchesMock.mockResolvedValue([
       'feature/z',
@@ -295,12 +507,13 @@ describe('UpdatesView', () => {
 
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(1)
+    expect(selects).toHaveLength(2)
     expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
 
     await selects[0].setValue('branch')
     await flushPromises()
@@ -333,6 +546,35 @@ describe('UpdatesView', () => {
       canListBranches: true,
       canBuild: true,
       reason: null,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'commit',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+      ],
     })
     fetchBranchBuildStatusMock.mockResolvedValue({
       status: 'success',
@@ -390,7 +632,7 @@ describe('UpdatesView', () => {
 
     await buildButton.trigger('click')
     await flushPromises()
-    expect(restoreLatestUpstreamReleaseMock).toHaveBeenCalledTimes(1)
+    expect(restoreLatestUpstreamReleaseMock).toHaveBeenCalledWith('0.6.1')
 
     const promoteButton = wrapper.findAll('button').find((button) => button.text() === 'Preview -> Stable')!
     await promoteButton.trigger('click')

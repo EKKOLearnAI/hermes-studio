@@ -49,7 +49,7 @@ await esbuild.build({
   external: ['node-pty', 'node:sqlite', 'socket.io'],
   define: {
     __APP_VERSION__: JSON.stringify(version),
-    __WEBUI_BUILD_METADATA__: JSON.stringify(buildMetadata),
+    __WEBUI_BUILD_METADATA__: JSON.stringify(JSON.stringify(buildMetadata)),
   },
   sourcemap: true,
   minify: true,

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { isStoredSuperAdmin } from '@/api/client'
 import {
   buildBranchPreview,
+  fetchAvailableReleases,
   fetchBranchBuildBranches,
   fetchBranchBuildStatus,
   fetchBranchPreviewCapabilities,
@@ -12,6 +13,8 @@ import {
   restoreLatestUpstreamRelease,
   type BranchBuildSummary,
   type BranchPreviewCapabilities,
+  type PreviewSourceCapability,
+  type PreviewSourceKind,
 } from '@/api/hermes/dev-mode-branch-builds'
 import { useAppStore } from '@/stores/hermes/app'
 import { useSettingsStore } from '@/stores/hermes/settings'
@@ -21,7 +24,6 @@ const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
 
-type PreviewSourceKind = 'release' | 'branch' | 'commit'
 
 const loading = ref(false)
 const previewLoading = ref(false)
@@ -31,21 +33,68 @@ const stableLastCheckedAt = ref<number | null>(null)
 const previewCapabilities = ref<BranchPreviewCapabilities | null>(null)
 const previewStatus = ref<BranchBuildSummary | null>(null)
 const previewBranches = ref<string[]>([])
+const availableReleases = ref<string[]>([])
 const previewSourceKind = ref<PreviewSourceKind>('release')
 const previewBranchRef = ref('')
 const previewCommitRef = ref('')
-
+const releaseVersionRef = ref('')
 const canUseDevMode = computed(() => isStoredSuperAdmin())
 const devModeEnabled = ref(false)
-const previewConfigured = computed(() => previewCapabilities.value?.branchPreviewConfigured !== false)
-const currentStableVersion = computed(() => appStore.serverVersion || '—')
+const previewSourceCapabilities = computed<Record<PreviewSourceKind, PreviewSourceCapability>>(() => {
+  const known = new Map((previewCapabilities.value?.providers || []).map(entry => [entry.provider, entry]))
+  const release = known.get('release') || {
+    provider: 'release',
+    available: !!appStore.latestVersion,
+    configured: !!appStore.latestVersion,
+    devOnly: false,
+    canListTargets: !!appStore.latestVersion,
+    canBuild: !!appStore.latestVersion,
+    reason: null,
+  }
+  const branch = known.get('branch') || {
+    provider: 'branch',
+    available: false,
+    configured: false,
+    devOnly: true,
+    canListTargets: false,
+    canBuild: false,
+    reason: null,
+  }
+  const commit = known.get('commit') || {
+    provider: 'commit',
+    available: false,
+    configured: false,
+    devOnly: true,
+    canListTargets: false,
+    canBuild: false,
+    reason: null,
+  }
+  return { release, branch, commit }
+})
+const releasePreviewAvailable = computed(() => previewSourceCapabilities.value.release.available)
+const branchPreviewAvailable = computed(() => previewSourceCapabilities.value.branch.available)
+const commitPreviewAvailable = computed(() => previewSourceCapabilities.value.commit.available)
+const releaseOptions = computed(() => {
+  const releases = new Set(availableReleases.value)
+  if (latestReleaseVersion.value !== '—') releases.add(latestReleaseVersion.value)
+  return [...releases]
+    .filter(version => version.trim())
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((version) => ({ label: version, value: version }))
+})
 const latestReleaseVersion = computed(() => appStore.latestVersion || '—')
+const selectedReleaseVersion = computed(() => releaseVersionRef.value || releaseOptions.value[0]?.value || '')
+const currentStableVersion = computed(() => fmtUnknown(appStore.serverVersion))
 const hasLatestRelease = computed(() => !!appStore.latestVersion)
 const previewReady = computed(() => previewStatus.value?.status === 'success')
 const previewRunning = computed(() => previewStatus.value?.status === 'running')
 const previewFailed = computed(() => previewStatus.value?.status === 'failed')
 const previewUrl = computed(() => previewStatus.value?.previewUrl || '/preview/')
 const previewLogs = computed(() => previewStatus.value?.logTail?.join('\n') || t('settings.dev.noLogs'))
+const stableBuildCommit = computed(() => fmtUnknown(appStore.buildCommit))
+const stableBuildBranch = computed(() => fmtUnknown(appStore.buildBranch))
+const stableBuildSource = computed(() => fmtUnknown(appStore.buildSource))
+const stableBuiltAt = computed(() => fmtDateTime(appStore.builtAt))
 const stableStatusText = computed(() => {
   if (!appStore.connected) return t('updates.sourceUnavailable')
   if (appStore.updateAvailable) return t('updates.updateAvailable')
@@ -63,12 +112,12 @@ const updateStableLabel = computed(() => {
 })
 const previewSummaryText = computed(() => {
   if (!canUseDevMode.value) return t('updates.previewUnavailable')
-  if (!previewConfigured.value) return t('updates.previewUnavailable')
+  if (!releasePreviewAvailable.value && !branchPreviewAvailable.value && !commitPreviewAvailable.value) return t('updates.previewUnavailable')
   if (!previewStatus.value) return 'idle'
   return previewStatus.value.status || 'idle'
 })
 const previewTagType = computed(() => {
-  if (!canUseDevMode.value || !previewConfigured.value || !previewStatus.value) return 'default'
+  if (!canUseDevMode.value || (!releasePreviewAvailable.value && !branchPreviewAvailable.value && !commitPreviewAvailable.value) || !previewStatus.value) return 'default'
   switch (previewStatus.value.status) {
     case 'running': return 'warning'
     case 'success': return 'success'
@@ -76,12 +125,12 @@ const previewTagType = computed(() => {
     default: return 'default'
   }
 })
-const previewSourceOptions = computed<Array<{ label: string, value: PreviewSourceKind }>>(() => {
-  const options: Array<{ label: string, value: PreviewSourceKind }> = [{ label: 'Release', value: 'release' }]
+const previewSourceOptions = computed<Array<{ label: string, value: PreviewSourceKind, disabled?: boolean }>>(() => {
+  const options: Array<{ label: string, value: PreviewSourceKind, disabled?: boolean }> = [{ label: 'Release', value: 'release', disabled: !releasePreviewAvailable.value }]
   if (devModeEnabled.value) {
     options.push(
-      { label: 'Branch', value: 'branch' },
-      { label: 'Commit', value: 'commit' },
+      { label: 'Branch', value: 'branch', disabled: !branchPreviewAvailable.value },
+      { label: 'Commit', value: 'commit', disabled: !commitPreviewAvailable.value },
     )
   }
   return options
@@ -101,11 +150,11 @@ const currentPreviewSourceLabel = computed(() => {
 })
 const previewModeCopy = computed(() => t('updates.previewStableCopy'))
 const canBuildPreview = computed(() => {
-  if (!canUseDevMode.value || !previewConfigured.value) return false
-  if (previewSourceKind.value === 'release') return true
+  if (!canUseDevMode.value) return false
+  if (previewSourceKind.value === 'release') return releasePreviewAvailable.value && Boolean(selectedReleaseVersion.value)
   if (!devModeEnabled.value) return false
-  if (previewSourceKind.value === 'branch') return Boolean(previewBranchRef.value)
-  return Boolean(previewCommitRef.value)
+  if (previewSourceKind.value === 'branch') return branchPreviewAvailable.value && Boolean(previewBranchRef.value)
+  return commitPreviewAvailable.value && Boolean(previewCommitRef.value)
 })
 
 watch(devModeEnabled, (enabled) => {
@@ -117,6 +166,17 @@ watch(devModeEnabled, (enabled) => {
 function fmtTime(value: number | null | undefined) {
   if (!value) return '—'
   return new Date(value).toLocaleString()
+}
+
+function fmtUnknown(value: string | null | undefined) {
+  return value?.trim() || 'unknown'
+}
+
+function fmtDateTime(value: string | null | undefined) {
+  if (!value?.trim()) return 'unknown'
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) return value
+  return new Date(parsed).toLocaleString()
 }
 
 function statusLabel(status: BranchBuildSummary['status'] | null | undefined) {
@@ -165,36 +225,64 @@ async function refreshPreviewStatus(forceDevModeEnabled = devModeEnabled.value) 
 
   previewLoading.value = true
   try {
-    const capabilities = await fetchBranchPreviewCapabilities()
-    previewCapabilities.value = capabilities
-    if (!capabilities.branchPreviewConfigured) {
+    const [capabilitiesResult, statusResult] = await Promise.allSettled([
+      fetchBranchPreviewCapabilities(),
+      fetchBranchBuildStatus(),
+    ])
+
+    if (capabilitiesResult.status === 'fulfilled') {
+      previewCapabilities.value = capabilitiesResult.value
+    } else {
+      previewCapabilities.value = null
+    }
+
+    if (statusResult.status === 'fulfilled') {
+      const status = statusResult.value
+      previewStatus.value = status
+      previewBranchRef.value = status.previewBranch || status.buildBranch || previewBranchRef.value
+    } else {
       previewStatus.value = null
+    }
+
+    const releaseProvider = previewSourceCapabilities.value.release
+    if (releaseProvider.canListTargets && releaseProvider.available) {
+      try {
+        const releases = await fetchAvailableReleases()
+        availableReleases.value = [...releases]
+        if (!releaseVersionRef.value || !availableReleases.value.includes(releaseVersionRef.value)) {
+          releaseVersionRef.value = availableReleases.value[0] || appStore.latestVersion || ''
+        }
+      } catch {
+        availableReleases.value = appStore.latestVersion ? [appStore.latestVersion] : []
+        if (!releaseVersionRef.value) {
+          releaseVersionRef.value = appStore.latestVersion || ''
+        }
+      }
+    } else {
+      availableReleases.value = appStore.latestVersion ? [appStore.latestVersion] : []
+      if (!releaseVersionRef.value) {
+        releaseVersionRef.value = appStore.latestVersion || ''
+      }
+    }
+
+    const branchProvider = previewSourceCapabilities.value.branch
+    if (forceDevModeEnabled && branchProvider.canListTargets && branchProvider.available) {
+      try {
+        const branches = await fetchBranchBuildBranches()
+        previewBranches.value = [...branches].sort((a, b) => a.localeCompare(b))
+        ensureBranchSelection()
+      } catch {
+        previewBranches.value = []
+      }
+    } else {
       previewBranches.value = []
-      return
     }
 
-    const tasks: Promise<any>[] = [fetchBranchBuildStatus()]
-    if (forceDevModeEnabled && capabilities.canListBranches) {
-      tasks.push(fetchBranchBuildBranches())
-    }
-
-    const [status, branches] = await Promise.all(tasks)
-    previewStatus.value = status
-    previewBranchRef.value = status.previewBranch || status.buildBranch || previewBranchRef.value
-    if (Array.isArray(branches)) {
-      previewBranches.value = [...branches].sort((a, b) => a.localeCompare(b))
-      ensureBranchSelection()
+    if (previewSourceKind.value !== 'release' && !previewSourceCapabilities.value[previewSourceKind.value].available) {
+      previewSourceKind.value = 'release'
     }
   } catch (err: any) {
-    previewCapabilities.value = {
-      isSuperAdmin: true,
-      devModeAvailable: true,
-      branchPreviewAvailable: false,
-      branchPreviewConfigured: false,
-      canListBranches: false,
-      canBuild: false,
-      reason: 'not_git_repo',
-    }
+    previewCapabilities.value = null
     previewStatus.value = null
     previewBranches.value = []
     message.error(err?.message || t('updates.loadFailed'))
@@ -241,7 +329,7 @@ async function handleBuildPreview() {
   previewActionLoading.value = true
   try {
     if (previewSourceKind.value === 'release') {
-      await restoreLatestUpstreamRelease()
+      await restoreLatestUpstreamRelease(selectedReleaseVersion.value || undefined)
     } else {
       const sourceRef = previewSourceKind.value === 'branch'
         ? previewBranchRef.value.trim()
@@ -325,6 +413,22 @@ onMounted(() => {
                 <strong>{{ currentStableVersion }}</strong>
               </div>
               <div class="metric-row">
+                <span>Build commit</span>
+                <strong>{{ stableBuildCommit }}</strong>
+              </div>
+              <div class="metric-row">
+                <span>Build branch</span>
+                <strong>{{ stableBuildBranch }}</strong>
+              </div>
+              <div class="metric-row">
+                <span>Build source</span>
+                <strong>{{ stableBuildSource }}</strong>
+              </div>
+              <div class="metric-row">
+                <span>Built at</span>
+                <strong>{{ stableBuiltAt }}</strong>
+              </div>
+              <div class="metric-row">
                 <span>{{ t('updates.latestReleaseVersion') }}</span>
                 <strong>{{ latestReleaseVersion }}</strong>
               </div>
@@ -353,7 +457,7 @@ onMounted(() => {
               <p class="card-copy">{{ t('updates.previewBody') }}</p>
               <p class="card-copy preview-mode-copy">{{ previewModeCopy }}</p>
 
-              <NAlert v-if="!previewConfigured" type="info" :title="t('updates.previewUnavailableTitle')">
+              <NAlert v-if="!releasePreviewAvailable && !branchPreviewAvailable && !commitPreviewAvailable" type="info" :title="t('updates.previewUnavailableTitle')">
                 {{ t('updates.previewUnavailable') }}
               </NAlert>
 
@@ -392,7 +496,22 @@ onMounted(() => {
                     />
                   </div>
 
-                  <div v-if="previewSourceKind === 'branch'" class="field-row">
+                  <div v-if="previewSourceKind === 'release'" class="field-row">
+                    <span>Release version</span>
+                    <NSelect
+                      v-model:value="releaseVersionRef"
+                      filterable
+                      clearable
+                      size="small"
+                      :loading="previewLoading"
+                      :options="releaseOptions"
+                      :placeholder="latestReleaseVersion"
+                      :disabled="previewActionLoading"
+                    />
+                    <small class="field-hint">Select which upstream release to restore into the preview slot.</small>
+                  </div>
+
+                  <div v-else-if="previewSourceKind === 'branch'" class="field-row">
                     <span>{{ t('settings.dev.branchToPreview') }}</span>
                     <NSelect
                       v-model:value="previewBranchRef"
