@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 const openSessionSearchMock = vi.hoisted(() => vi.fn())
+const routerPushMock = vi.hoisted(() => vi.fn())
 const mockAppStore = vi.hoisted(() => ({
   sidebarOpen: true,
   sidebarCollapsed: false,
@@ -34,7 +35,7 @@ vi.mock('vue-router', async (importOriginal) => {
   return {
     ...actual,
     useRoute: () => ({ name: 'hermes.chat' }),
-    useRouter: () => ({ push: vi.fn() }),
+    useRouter: () => ({ push: routerPushMock }),
   }
 })
 
@@ -145,12 +146,26 @@ describe('AppSidebar search entry', () => {
       },
     })
 
-    const reloadButton = wrapper.findAll('button')
-      .find(node => node.text().includes('sidebar.reloadClientVersion'))
-    expect(reloadButton).toBeTruthy()
+    const reloadButton = wrapper.find('.update-btn')
+    expect(reloadButton.exists()).toBe(true)
 
-    await reloadButton!.trigger('click')
+    await reloadButton.trigger('click')
     expect(mockAppStore.reloadClient).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the dedicated updates entry in the system section', async () => {
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('sidebar.updates')
   })
 
   it('uses short group labels and keeps group folding active when collapsed', async () => {
