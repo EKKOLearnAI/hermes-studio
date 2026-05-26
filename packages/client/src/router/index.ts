@@ -1,9 +1,12 @@
 import { createRouter, createWebHistory, type NavigationGuardNext, type RouteLocationGeneric, type RouteLocationNormalized } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
 import { normalizeLegacyRoutePath } from './legacy-routing'
+import { resolveRouterBase } from './runtime-base'
+
+const routerBase = resolveRouterBase()
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(routerBase),
   routes: [
     {
       path: '/',

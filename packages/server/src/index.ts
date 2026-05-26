@@ -2,7 +2,6 @@ import Koa from 'koa'
 import cors from '@koa/cors'
 import bodyParser from '@koa/bodyparser'
 import serve from 'koa-static'
-import send from 'koa-send'
 import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
@@ -23,6 +22,8 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
+import { shouldServeSpaFallback } from './services/spa-fallback'
+import { readSpaShell } from './services/spa-shell'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -145,14 +146,11 @@ export async function bootstrap() {
   const distDir = resolve(__dirname, '..', 'client')
   app.use(serve(distDir))
   app.use(async (ctx) => {
-    if (!ctx.path.startsWith('/api') &&
-      ctx.path !== '/health' &&
-      ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
-      await send(ctx, 'index.html', { root: distDir })
+    if (shouldServeSpaFallback(ctx.path)) {
+      ctx.type = 'html'
+      ctx.body = await readSpaShell(distDir, '/')
     }
   })
-  console.log('[bootstrap] SPA fallback registered')
 
   // Start server using the configured bind host. Default is IPv4 for WSL stability.
   const listenResult = await listenWithFallback(app, config.port, config.host)
