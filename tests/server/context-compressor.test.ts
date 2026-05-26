@@ -178,8 +178,14 @@ describe('ChatContextCompressor', () => {
       action: 'chat',
       profile: 'default',
       worker_key: 'default:compression:s1',
+      message: 'Generate the context checkpoint summary now.',
       wait: true,
     }), expect.any(Object))
+    const request = bridgeRequestMock.mock.calls[0][0]
+    expect(request.conversation_history[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      content: expect.stringContaining('TURNS TO SUMMARIZE:'),
+    }))
     const compressSessionId = bridgeRequestMock.mock.calls[0][0].session_id
     expect(String(compressSessionId)).toMatch(/^compress_/)
     expect(bridgeDestroyMock).toHaveBeenCalledWith(
@@ -471,6 +477,16 @@ describe('ChatContextCompressor', () => {
     const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
 
     expect(bridgeRequestMock).toHaveBeenCalledTimes(1)
+    const request = bridgeRequestMock.mock.calls[0][0]
+    expect(request.message).toBe('Generate the context checkpoint summary now.')
+    expect(request.conversation_history.slice(0, 3)).toEqual([
+      { role: 'user', content: '[Previous summary]\nprevious summary' },
+      { role: 'assistant', content: 'Understood, I will update the summary.' },
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('NEW TURNS TO INCORPORATE:'),
+      }),
+    ])
     expect(result.messages.map(m => m.content)).toEqual([
       'head 0',
       'head 1',

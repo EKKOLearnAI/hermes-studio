@@ -333,7 +333,6 @@ export async function buildCompressedHistory(
         history = await compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor, currentRunInputTokens)
       }
     }
-
     return history
   } catch (err) {
     if (isContextWindowTooSmallError(err)) throw err

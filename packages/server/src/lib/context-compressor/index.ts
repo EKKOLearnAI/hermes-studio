@@ -15,6 +15,8 @@
 
 import { encodingForModel, getEncoding } from 'js-tiktoken'
 import { randomUUID } from 'crypto'
+import { mkdir, writeFile } from 'fs/promises'
+import { resolve } from 'path'
 import { logger } from '../../services/logger'
 import { AgentBridgeClient, type AgentBridgeRunResult } from '../../services/hermes/agent-bridge'
 import {
@@ -80,6 +82,25 @@ export interface SummarizerOptions {
   model?: string | null
   provider?: string | null
   workerKey?: string
+}
+
+const SUMMARIZER_TRIGGER_MESSAGE = 'Generate the context checkpoint summary now.'
+const SUMMARIZER_DEBUG_DIR = 'logs/context-compressor'
+const SUMMARIZER_DEBUG_FILE = 'summarizer-debug.json'
+
+async function writeSummarizerDebugDump(payload: Record<string, unknown>): Promise<void> {
+  if (process.env.NODE_ENV !== 'development') return
+  try {
+    const debugDir = resolve(process.cwd(), SUMMARIZER_DEBUG_DIR)
+    await mkdir(debugDir, { recursive: true })
+    await writeFile(
+      resolve(debugDir, SUMMARIZER_DEBUG_FILE),
+      `${JSON.stringify(payload, null, 2)}\n`,
+      'utf8',
+    )
+  } catch (err) {
+    logger.warn(err, '[context-compressor] failed to write summarizer debug dump')
+  }
 }
 
 // ─── Token counting ─────────────────────────────────────
@@ -444,24 +465,40 @@ export async function callSummarizer(
     ? { profile: summarizer }
     : summarizer || {}
   const profile = options.profile || 'default'
-  const convHistory: Array<{ role: string; content: string }> = [...history]
+  void history
+  const convHistory: Array<{ role: string; content: string }> = []
 
   if (previousSummary) {
     convHistory.unshift(
       { role: 'user', content: `[Previous summary]\n${previousSummary}` },
       { role: 'assistant', content: 'Understood, I will update the summary.' },
+      { role: 'user', content: prompt },
     )
+  } else {
+    convHistory.unshift({ role: 'user', content: prompt })
   }
 
   const bridge = new AgentBridgeClient({ timeoutMs: timeoutMs + 15_000 })
   const sessionId = `compress_${Date.now().toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 12)}`
   const workerKey = options.workerKey || `${profile}:compression:${sessionId}`
+  const message = SUMMARIZER_TRIGGER_MESSAGE
+
+  await writeSummarizerDebugDump({
+    writtenAt: new Date().toISOString(),
+    sessionId,
+    workerKey,
+    profile,
+    model: options.model || null,
+    provider: options.provider || null,
+    message,
+    convHistory,
+  })
 
   try {
     const result = await bridge.request<AgentBridgeRunResult>({
       action: 'chat',
       session_id: sessionId,
-      message: prompt,
+      message,
       conversation_history: convHistory,
       profile,
       worker_key: workerKey,
@@ -622,10 +659,9 @@ export class ChatContextCompressor {
     try {
       const contentToSummarize = serializeForSummary(toCompress)
       const prompt = buildIncrementalPrompt(previousSummary, contentToSummarize, this.config.summaryBudget)
-      const history = buildConversationHistory(toCompress)
 
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, previousSummary, summarizer)
+      summary = await callSummarizer(upstream, apiKey, prompt, [], this.config.summarizationTimeoutMs, previousSummary, summarizer)
       logger.info('[context-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
       logger.warn('[context-compressor] incremental-llm failed: %s — keeping new messages verbatim', err.message)
@@ -701,12 +737,11 @@ export class ChatContextCompressor {
 
     const contentToSummarize = serializeForSummary(toCompress)
     const prompt = buildFullPrompt(contentToSummarize, this.config.summaryBudget)
-    const history = buildConversationHistory(toCompress)
 
     let summary: string | null = null
     try {
       const t0 = Date.now()
-      summary = await callSummarizer(upstream, apiKey, prompt, history, this.config.summarizationTimeoutMs, undefined, summarizer)
+      summary = await callSummarizer(upstream, apiKey, prompt, [], this.config.summarizationTimeoutMs, undefined, summarizer)
       logger.info('[context-compressor] full-llm done in %dms, %d chars', Date.now() - t0, summary.length)
     } catch (err: any) {
       logger.warn('[context-compressor] full-llm failed: %s', err.message)
