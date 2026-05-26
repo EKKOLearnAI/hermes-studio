@@ -1,5 +1,6 @@
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { getAvailableReleases, getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, promotePreviewTarget, removePreviewTarget, resetPreviewTarget, restoreLatestUpstreamRelease, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
+import { clearPreviewRepository, savePreviewRepository } from '../../services/hermes/preview-repository'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -104,6 +105,21 @@ export async function promoteBranchPreview(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to promote preview target' }
+  }
+}
+
+export async function saveRepository(ctx: any) {
+  try {
+    const body = ctx.request.body || {}
+    const descriptor = body.repository ?? body.descriptor ?? body
+    if (body.clear === true) {
+      ctx.body = await clearPreviewRepository(requestedProfile(ctx))
+      return
+    }
+    ctx.body = await savePreviewRepository(requestedProfile(ctx), descriptor, { validate: body.validate !== false })
+  } catch (err: any) {
+    ctx.status = 400
+    ctx.body = { error: err?.message || 'Failed to save preview repository' }
   }
 }
 

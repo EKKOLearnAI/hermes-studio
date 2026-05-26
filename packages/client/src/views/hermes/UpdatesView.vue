@@ -11,9 +11,11 @@ import {
   fetchBranchPreviewCapabilities,
   promoteBranchPreview,
   restoreLatestUpstreamRelease,
+  savePreviewRepository,
   type BranchBuildSummary,
   type BranchPreviewCapabilities,
   type PreviewSourceCapability,
+  type PreviewRepositoryDescriptor,
   type PreviewSourceKind,
 } from '@/api/hermes/dev-mode-branch-builds'
 import { useAppStore } from '@/stores/hermes/app'
@@ -38,6 +40,12 @@ const previewSourceKind = ref<PreviewSourceKind>('release')
 const previewBranchRef = ref('')
 const previewCommitRef = ref('')
 const releaseVersionRef = ref('')
+const repositorySaving = ref(false)
+const repoType = ref<PreviewRepositoryDescriptor['type']>('git-url')
+const repoLocalPath = ref('')
+const repoGitUrl = ref('')
+const repoGithubOwnerRepo = ref('')
+const logsExpanded = ref(false)
 const canUseDevMode = computed(() => isStoredSuperAdmin())
 const devModeEnabled = ref(false)
 const previewSourceCapabilities = computed<Record<PreviewSourceKind, PreviewSourceCapability>>(() => {
@@ -91,6 +99,7 @@ const previewRunning = computed(() => previewStatus.value?.status === 'running')
 const previewFailed = computed(() => previewStatus.value?.status === 'failed')
 const previewUrl = computed(() => previewStatus.value?.previewUrl || '/preview/')
 const previewLogs = computed(() => previewStatus.value?.logTail?.join('\n') || t('settings.dev.noLogs'))
+const showPreviewLogs = computed(() => previewRunning.value || previewFailed.value || logsExpanded.value)
 const stableBuildCommit = computed(() => fmtUnknown(appStore.buildCommit))
 const stableBuildBranch = computed(() => fmtUnknown(appStore.buildBranch))
 const stableBuildSource = computed(() => fmtUnknown(appStore.buildSource))
@@ -149,6 +158,26 @@ const currentPreviewSourceLabel = computed(() => {
   return 'Commit'
 })
 const previewModeCopy = computed(() => t('updates.previewStableCopy'))
+const repositoryResolution = computed(() => previewCapabilities.value?.repository || null)
+const repositoryReason = computed(() => repositoryResolution.value?.reason || null)
+const repositoryStatusText = computed(() => {
+  const resolution = repositoryResolution.value
+  if (!resolution) return 'Repository status unknown'
+  if (resolution.available && resolution.repoRoot) return `Valid repository: ${resolution.repoRoot}`
+  if (resolution.reason === 'repo_path_missing') return 'Repository path is missing or unavailable'
+  if (resolution.reason === 'not_git_repo') return 'Repository is not configured or is not a git checkout'
+  return 'Repository not available'
+})
+const repoTypeOptions = [
+  { label: 'Git URL', value: 'git-url' },
+  { label: 'GitHub repo', value: 'github' },
+  { label: 'Local path', value: 'local' },
+]
+const canSaveRepository = computed(() => {
+  if (repoType.value === 'local') return Boolean(repoLocalPath.value.trim())
+  if (repoType.value === 'git-url') return Boolean(repoGitUrl.value.trim())
+  return Boolean(parseGithubOwnerRepo(repoGithubOwnerRepo.value))
+})
 const canBuildPreview = computed(() => {
   if (!canUseDevMode.value) return false
   if (previewSourceKind.value === 'release') return releasePreviewAvailable.value && Boolean(selectedReleaseVersion.value)
@@ -187,6 +216,34 @@ function statusLabel(status: BranchBuildSummary['status'] | null | undefined) {
     case 'stopped': return 'stopped'
     default: return 'idle'
   }
+}
+
+function parseGithubOwnerRepo(value: string): { owner: string, repo: string } | null {
+  const raw = value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '')
+  const [owner, repo] = raw.split('/').map(part => part.trim()).filter(Boolean)
+  return owner && repo ? { owner, repo } : null
+}
+
+function currentRepositoryDescriptor(): PreviewRepositoryDescriptor | null {
+  if (repoType.value === 'local') {
+    const path = repoLocalPath.value.trim()
+    return path ? { type: 'local', path } : null
+  }
+  if (repoType.value === 'git-url') {
+    const url = repoGitUrl.value.trim()
+    return url ? { type: 'git-url', url } : null
+  }
+  const parsed = parseGithubOwnerRepo(repoGithubOwnerRepo.value)
+  return parsed ? { type: 'github', ...parsed } : null
+}
+
+function syncRepositoryForm() {
+  const descriptor = previewCapabilities.value?.repository?.descriptor
+  if (!descriptor) return
+  repoType.value = descriptor.type
+  if (descriptor.type === 'local') repoLocalPath.value = descriptor.path
+  if (descriptor.type === 'git-url') repoGitUrl.value = descriptor.url
+  if (descriptor.type === 'github') repoGithubOwnerRepo.value = `${descriptor.owner}/${descriptor.repo}`
 }
 
 function ensureBranchSelection() {
@@ -232,6 +289,7 @@ async function refreshPreviewStatus(forceDevModeEnabled = devModeEnabled.value) 
 
     if (capabilitiesResult.status === 'fulfilled') {
       previewCapabilities.value = capabilitiesResult.value
+      syncRepositoryForm()
     } else {
       previewCapabilities.value = null
     }
@@ -323,6 +381,38 @@ async function handleUpdateNow() {
   }
 }
 
+async function handleSaveRepository(validate = true) {
+  const descriptor = currentRepositoryDescriptor()
+  if (!descriptor) {
+    message.warning('Enter a repository first')
+    return
+  }
+  repositorySaving.value = true
+  try {
+    await savePreviewRepository(descriptor, validate)
+    message.success(validate ? 'Repository validated' : 'Repository saved')
+    await refreshPreviewStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || 'Failed to save repository')
+    await refreshPreviewStatus(true)
+  } finally {
+    repositorySaving.value = false
+  }
+}
+
+async function handleFetchBranches() {
+  previewLoading.value = true
+  try {
+    previewBranches.value = await fetchBranchBuildBranches()
+    ensureBranchSelection()
+    message.success('Branches refreshed')
+  } catch (err: any) {
+    message.error(err?.message || 'Failed to load branches')
+  } finally {
+    previewLoading.value = false
+  }
+}
+
 async function handleBuildPreview() {
   if (!canBuildPreview.value) return
 
@@ -381,20 +471,7 @@ onMounted(() => {
         <h2 class="header-title">{{ t('updates.title') }}</h2>
         <p class="header-subtitle">{{ t('updates.subtitle') }}</p>
       </div>
-      <div class="header-actions">
-        <NButton size="small" :loading="loading || previewLoading" @click="refreshAll(false)">
-          {{ t('updates.refresh') }}
-        </NButton>
-        <NButton
-          size="small"
-          type="primary"
-          :disabled="!appStore.updateAvailable"
-          :loading="appStore.updating"
-          @click="handleUpdateNow"
-        >
-          {{ appStore.updating ? t('updates.updating') : updateStableLabel }}
-        </NButton>
-      </div>
+
     </header>
 
     <NSpin :show="loading && !currentStableVersion" class="updates-spin">
@@ -443,10 +520,25 @@ onMounted(() => {
               <NAlert v-if="!appStore.connected" type="warning" :title="t('updates.sourceUnavailableTitle')">
                 {{ t('updates.sourceUnavailableBody') }}
               </NAlert>
+
+              <div class="actions-row">
+                <NButton size="small" :loading="loading || previewLoading" @click="refreshAll(false)">
+                  {{ t('updates.refresh') }}
+                </NButton>
+                <NButton
+                  size="small"
+                  type="primary"
+                  :disabled="!appStore.updateAvailable"
+                  :loading="appStore.updating"
+                  @click="handleUpdateNow"
+                >
+                  {{ appStore.updating ? t('updates.updating') : updateStableLabel }}
+                </NButton>
+              </div>
             </div>
           </NCard>
 
-          <NCard v-if="canUseDevMode" size="small" class="updates-card" :title="t('updates.previewTitle')">
+          <NCard size="small" class="updates-card" :title="t('updates.previewTitle')">
             <template #header-extra>
               <NTag :type="previewTagType" size="small">
                 {{ previewSummaryText }}
@@ -479,6 +571,52 @@ onMounted(() => {
                 <NAlert v-if="canUseDevMode && !devModeEnabled" type="info" :title="t('updates.previewUnavailableTitle')">
                   {{ t('settings.dev.disabledNote') }}
                 </NAlert>
+
+                <section v-if="canUseDevMode && devModeEnabled" class="developer-panel">
+                  <div class="developer-panel-header">
+                    <strong>Developer repository</strong>
+                    <span>Release previews remain available and do not use git.</span>
+                  </div>
+                  <NAlert type="warning" title="Trusted repositories only">
+                    Branch and commit previews run repository install/build scripts on this machine.
+                  </NAlert>
+                  <div class="field-grid">
+                    <div class="field-row">
+                      <span>Repository type</span>
+                      <NSelect v-model:value="repoType" size="small" :options="repoTypeOptions" :disabled="repositorySaving || previewActionLoading" />
+                    </div>
+                    <div v-if="repoType === 'git-url'" class="field-row">
+                      <span>Git URL</span>
+                      <input v-model="repoGitUrl" class="text-input" type="text" placeholder="https://github.com/owner/repo.git" :disabled="repositorySaving || previewActionLoading">
+                    </div>
+                    <div v-else-if="repoType === 'github'" class="field-row">
+                      <span>GitHub repo</span>
+                      <input v-model="repoGithubOwnerRepo" class="text-input" type="text" placeholder="owner/repo" :disabled="repositorySaving || previewActionLoading">
+                    </div>
+                    <div v-else class="field-row">
+                      <span>Local path</span>
+                      <input v-model="repoLocalPath" class="text-input" type="text" placeholder="/path/to/hermes-web-ui" :disabled="repositorySaving || previewActionLoading">
+                    </div>
+                  </div>
+                  <div class="metric-row">
+                    <span>Repository status</span>
+                    <strong>{{ repositoryStatusText }}</strong>
+                  </div>
+                  <NAlert v-if="repositoryReason && previewSourceKind !== 'release'" type="warning" title="Repository required">
+                    Configure and validate a local path, Git URL, or GitHub repo to build Branch/Commit previews.
+                  </NAlert>
+                  <div class="actions-row">
+                    <NButton size="small" type="primary" :disabled="!canSaveRepository" :loading="repositorySaving" @click="handleSaveRepository(true)">
+                      Validate repository
+                    </NButton>
+                    <NButton size="small" :disabled="!canSaveRepository || repositorySaving" @click="handleSaveRepository(false)">
+                      Save only
+                    </NButton>
+                    <NButton size="small" :disabled="!branchPreviewAvailable || previewLoading" :loading="previewLoading" @click="handleFetchBranches">
+                      Fetch branches
+                    </NButton>
+                  </div>
+                </section>
 
                 <div class="field-grid">
                   <div class="metric-row">
@@ -571,11 +709,11 @@ onMounted(() => {
                 <div class="log-block">
                   <div class="metric-row log-title-row">
                     <span>Build logs</span>
-                    <strong v-if="previewRunning">building</strong>
-                    <strong v-else-if="previewFailed">failed</strong>
-                    <strong v-else>{{ previewStatus ? previewStatus.status : 'idle' }}</strong>
+                    <button class="preview-link-button" type="button" @click="logsExpanded = !logsExpanded">
+                      {{ showPreviewLogs ? 'Hide logs' : 'Show logs' }}
+                    </button>
                   </div>
-                  <pre class="log-tail">{{ previewLogs }}</pre>
+                  <pre v-if="showPreviewLogs" class="log-tail">{{ previewLogs }}</pre>
                 </div>
 
                 <NAlert v-if="previewFailed && previewStatus?.error" type="error" :title="t('settings.dev.lastError')">
@@ -643,7 +781,8 @@ onMounted(() => {
 
 .updates-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 980px;
   gap: 16px;
 }
 
@@ -654,6 +793,30 @@ onMounted(() => {
 .card-stack {
   display: grid;
   gap: 12px;
+}
+
+
+.developer-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.28);
+  border-radius: 10px;
+  background: rgba(var(--accent-primary-rgb), 0.05);
+}
+
+.developer-panel-header {
+  display: grid;
+  gap: 4px;
+
+  strong {
+    color: $text-primary;
+  }
+
+  span {
+    color: $text-muted;
+    font-size: 12px;
+  }
 }
 
 .card-copy {

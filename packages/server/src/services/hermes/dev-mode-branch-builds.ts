@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 import { config } from '../../config'
 import { getProfileDir } from './hermes-profile'
 import { getLatestAvailableRelease, listAvailableReleases, prepareReleasePreviewPackage } from './webui-releases'
-import { listPreviewRepositoryBranches, previewRepositoryRoot, resolvePreviewRepository } from './preview-repository'
+import { listPreviewRepositoryBranches, previewRepositoryRoot, resolvePreviewRepository, type PreviewRepositoryResolution } from './preview-repository'
 import { PREVIEW_SLOT_ID, removePreviewInstance, startPreviewInstanceWithId, updatePreviewInstance } from './preview-registry'
 import { safeFileStore } from '../safe-file-store'
 import { logger } from '../logger'
@@ -156,6 +156,7 @@ export interface BranchPreviewCapabilities {
   canBuild: boolean
   reason: BranchPreviewCapabilityReason | null
   providers?: PreviewSourceCapability[]
+  repository?: PreviewRepositoryResolution
 }
 
 const DEFAULT_REVIEW_BASE = 'main'
@@ -391,6 +392,7 @@ export async function getBranchPreviewCapabilities(profile: string, isSuperAdmin
     canBuild: branchProvider.canBuild,
     reason: branchReason,
     providers: [releaseProvider, branchProvider, commitProvider],
+    repository,
   }
 }
 

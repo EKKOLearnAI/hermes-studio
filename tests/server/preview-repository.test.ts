@@ -5,16 +5,19 @@ import { join } from 'path'
 import { execFileSync } from 'child_process'
 
 let configYaml: any = {}
+const updateYamlMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/safe-file-store', () => ({
   safeFileStore: {
     readYaml: vi.fn(async () => configYaml),
+    updateYaml: updateYamlMock,
   },
 }))
 
 import {
   listPreviewRepositoryBranches,
   resolvePreviewRepository,
+  savePreviewRepository,
 } from '../../packages/server/src/services/hermes/preview-repository'
 
 function makeGitRepo(): string {
@@ -34,6 +37,10 @@ describe('preview repository resolution', () => {
 
   beforeEach(() => {
     configYaml = {}
+    updateYamlMock.mockReset()
+    updateYamlMock.mockImplementation(async (_path: string, updater: (current: Record<string, any>) => Record<string, any>) => {
+      configYaml = updater(configYaml)
+    })
     if (repoDir) {
       rmSync(repoDir, { recursive: true, force: true })
     }
@@ -63,7 +70,7 @@ describe('preview repository resolution', () => {
       dev: {
         preview_repository: {
           type: 'local',
-          path: join(repoDir, 'missing'),
+          path: join(repoDir as string, 'missing'),
         },
       },
     }
@@ -92,21 +99,27 @@ describe('preview repository resolution', () => {
     expect(branches.some((branch) => branch.includes('HEAD'))).toBe(false)
   })
 
-  it('treats a git-url descriptor as configured without needing a clone', async () => {
-    configYaml = {
-      dev: {
-        preview_repository: {
-          type: 'git-url',
-          url: 'https://example.com/acme/repo.git',
-        },
-      },
-    }
+  it('does not persist an invalid repository when validation fails', async () => {
+    await expect(savePreviewRepository('profile-a', {
+      type: 'local',
+      path: join(repoDir as string, 'missing'),
+    }, { validate: true })).rejects.toThrow('Preview repository path is missing')
 
-    const resolution = await resolvePreviewRepository('profile-a', { fetchRemote: false })
+    expect(updateYamlMock).not.toHaveBeenCalled()
+    expect(configYaml.dev?.preview_repository).toBeUndefined()
+  })
 
-    expect(resolution.configured).toBe(true)
-    expect(resolution.available).toBe(true)
-    expect(resolution.reason).toBeNull()
-    expect(resolution.cachePath).toContain('.preview-repositories')
+  it('persists a valid repository after validation', async () => {
+    const result = await savePreviewRepository('profile-a', {
+      type: 'local',
+      path: repoDir as string,
+    }, { validate: true })
+
+    expect(result.resolution.available).toBe(true)
+    expect(updateYamlMock).toHaveBeenCalledTimes(1)
+    expect(configYaml.dev.preview_repository).toEqual({
+      type: 'local',
+      path: repoDir,
+    })
   })
 })

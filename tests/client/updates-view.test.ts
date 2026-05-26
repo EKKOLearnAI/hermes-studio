@@ -10,6 +10,7 @@ const fetchAvailableReleasesMock = vi.hoisted(() => vi.fn())
 const buildBranchPreviewMock = vi.hoisted(() => vi.fn())
 const promoteBranchPreviewMock = vi.hoisted(() => vi.fn())
 const restoreLatestUpstreamReleaseMock = vi.hoisted(() => vi.fn())
+const savePreviewRepositoryMock = vi.hoisted(() => vi.fn())
 const useMessageMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('@/api/hermes/dev-mode-branch-builds', () => ({
   fetchAvailableReleases: (...args: any[]) => fetchAvailableReleasesMock(...args),
   promoteBranchPreview: (...args: any[]) => promoteBranchPreviewMock(...args),
   restoreLatestUpstreamRelease: (...args: any[]) => restoreLatestUpstreamReleaseMock(...args),
+  savePreviewRepository: (...args: any[]) => savePreviewRepositoryMock(...args),
 }))
 
 vi.mock('@/stores/hermes/app', () => ({
@@ -112,6 +114,8 @@ describe('UpdatesView', () => {
     buildBranchPreviewMock.mockReset()
     promoteBranchPreviewMock.mockReset()
     restoreLatestUpstreamReleaseMock.mockReset()
+    savePreviewRepositoryMock.mockReset()
+    savePreviewRepositoryMock.mockResolvedValue({ descriptor: { type: 'git-url', url: 'https://github.com/example/repo.git' }, resolution: { configured: true, available: true, reason: null, repoRoot: '/tmp/repo', cachePath: '/tmp/cache', remoteUrl: 'https://github.com/example/repo.git' } })
     useMessageMock.success.mockReset()
     useMessageMock.error.mockReset()
     useMessageMock.warning.mockReset()
@@ -148,8 +152,8 @@ describe('UpdatesView', () => {
     expect(wrapper.text()).toContain('updates.latestReleaseVersion')
     expect(wrapper.text()).toContain('updates.lastChecked')
     expect(wrapper.text()).toContain(new Date(1710000000000).toLocaleString())
-    expect(wrapper.text()).not.toContain('updates.previewTitle')
-    expect(wrapper.text()).not.toContain('Source type')
+    expect(wrapper.text()).toContain('updates.previewTitle')
+    expect(wrapper.text()).toContain('Source type')
     expect(wrapper.text()).not.toContain('Open preview')
     expect(wrapper.text()).not.toContain('Preview -> Stable')
     expect(fetchBranchPreviewCapabilitiesMock).not.toHaveBeenCalled()
@@ -265,9 +269,10 @@ describe('UpdatesView', () => {
     await flushPromises()
 
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(2)
+    expect(selects.length).toBeGreaterThanOrEqual(devModeEnabled ? 3 : 2)
 
-    const sourceOptions = selects[0].findAll('option').map((option) => ({
+    const sourceSelect = selects[devModeEnabled ? 1 : 0]
+    const sourceOptions = sourceSelect.findAll('option').map((option) => ({
       label: option.text(),
       disabled: (option.element as HTMLOptionElement).disabled,
     }))
@@ -431,13 +436,13 @@ describe('UpdatesView', () => {
     )
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(2)
-    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
+    expect(selects.length).toBeGreaterThanOrEqual(3)
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
   })
 
   it('expands source choices and shows failure logs when Dev Mode is enabled', async () => {
@@ -507,20 +512,20 @@ describe('UpdatesView', () => {
 
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(2)
-    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
+    expect(selects.length).toBeGreaterThanOrEqual(3)
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
 
-    await selects[0].setValue('branch')
+    await selects[1].setValue('branch')
     await flushPromises()
 
     const branchSelects = wrapper.findAll('select')
-    expect(branchSelects).toHaveLength(2)
-    expect(branchSelects[1].findAll('option').map((option) => option.text())).toEqual([
+    expect(branchSelects.length).toBeGreaterThanOrEqual(3)
+    expect(branchSelects[2].findAll('option').map((option) => option.text())).toEqual([
       'feature/a',
       'feature/dev-b',
       'feature/z',

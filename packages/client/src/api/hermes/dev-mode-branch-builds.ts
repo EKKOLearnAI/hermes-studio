@@ -30,6 +30,7 @@ export interface ReleaseArtifactPreviewTarget {
   type: 'release-artifact'
   version: string
   source: 'github-release'
+  artifactPath?: string | null
 }
 
 export interface DockerImagePreviewTarget {
@@ -124,6 +125,26 @@ export interface BranchBuildActionResponse extends BranchBuildSummary {
 
 export type BranchPreviewCapabilityReason = PreviewCapabilityReason
 
+export type PreviewRepositoryDescriptor =
+  | { type: 'local'; path: string }
+  | { type: 'git-url'; url: string }
+  | { type: 'github'; owner: string; repo: string }
+
+export interface PreviewRepositoryResolution {
+  descriptor: PreviewRepositoryDescriptor | null
+  configured: boolean
+  available: boolean
+  reason: PreviewCapabilityReason | null
+  repoRoot: string | null
+  cachePath: string | null
+  remoteUrl: string | null
+}
+
+export interface PreviewRepositoryConfigResult {
+  descriptor: PreviewRepositoryDescriptor | null
+  resolution: PreviewRepositoryResolution
+}
+
 export interface BranchPreviewCapabilities {
   isSuperAdmin: boolean
   devModeAvailable: boolean
@@ -133,6 +154,7 @@ export interface BranchPreviewCapabilities {
   canBuild: boolean
   reason: BranchPreviewCapabilityReason | null
   providers?: PreviewSourceCapability[]
+  repository?: PreviewRepositoryResolution
 }
 
 export async function fetchBranchPreviewCapabilities(): Promise<BranchPreviewCapabilities> {
@@ -175,6 +197,13 @@ export async function removeBranchPreview(): Promise<BranchBuildSummary> {
 export async function promoteBranchPreview(): Promise<BranchBuildSummary> {
   return request<BranchBuildSummary>('/api/hermes/dev/branch-builds/promote', {
     method: 'POST',
+  })
+}
+
+export async function savePreviewRepository(repository: PreviewRepositoryDescriptor, validate = true): Promise<PreviewRepositoryConfigResult> {
+  return request<PreviewRepositoryConfigResult>('/api/hermes/dev/branch-builds/repository', {
+    method: 'POST',
+    body: JSON.stringify({ repository, validate }),
   })
 }
 

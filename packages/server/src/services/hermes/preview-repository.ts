@@ -13,6 +13,11 @@ export type PreviewRepositoryDescriptor =
 
 export type PreviewRepositoryReason = 'repo_path_missing' | 'not_git_repo'
 
+export interface PreviewRepositoryConfigResult {
+  descriptor: PreviewRepositoryDescriptor | null
+  resolution: PreviewRepositoryResolution
+}
+
 export interface PreviewRepositoryResolution {
   descriptor: PreviewRepositoryDescriptor | null
   configured: boolean
@@ -52,7 +57,7 @@ function normalizeRepositoryPath(pathValue: unknown): string {
   return normalize(pathValue)
 }
 
-function normalizePreviewRepository(raw: unknown): PreviewRepositoryDescriptor | null {
+export function normalizePreviewRepository(raw: unknown): PreviewRepositoryDescriptor | null {
   if (!raw || typeof raw !== 'object') return null
   const value = raw as Record<string, any>
   const type = normalize(value.type)
@@ -255,11 +260,11 @@ async function resolveRemoteRepository(profile: string, descriptor: Exclude<Prev
   }
 }
 
-export async function resolvePreviewRepository(profile: string, options: { fetchRemote?: boolean } = {}): Promise<PreviewRepositoryResolution> {
-  const config = await safeFileStore.readYaml(previewRepositoryConfigPath(profile))
-  const descriptor = normalizePreviewRepository(config?.dev?.preview_repository)
-  const fetchRemote = options.fetchRemote !== false
+function cloneConfig(value: Record<string, any>): Record<string, any> {
+  return JSON.parse(JSON.stringify(value || {}))
+}
 
+async function resolveDescriptor(profile: string, descriptor: PreviewRepositoryDescriptor | null, fetchRemote: boolean): Promise<PreviewRepositoryResolution> {
   if (!descriptor) {
     const repoRoot = await gitRepoRoot(process.cwd())
     if (!repoRoot) {
@@ -290,6 +295,48 @@ export async function resolvePreviewRepository(profile: string, options: { fetch
   }
 
   return resolveRemoteRepository(profile, descriptor, fetchRemote)
+}
+
+export async function resolvePreviewRepository(profile: string, options: { fetchRemote?: boolean } = {}): Promise<PreviewRepositoryResolution> {
+  const config = await safeFileStore.readYaml(previewRepositoryConfigPath(profile))
+  const descriptor = normalizePreviewRepository(config?.dev?.preview_repository)
+  const fetchRemote = options.fetchRemote !== false
+  return resolveDescriptor(profile, descriptor, fetchRemote)
+}
+
+export async function savePreviewRepository(profile: string, rawDescriptor: unknown, options: { validate?: boolean } = {}): Promise<PreviewRepositoryConfigResult> {
+  const descriptor = normalizePreviewRepository(rawDescriptor)
+  if (!descriptor) {
+    throw new Error('Invalid preview repository configuration')
+  }
+
+  const shouldValidate = options.validate !== false
+  const resolution = await resolveDescriptor(profile, descriptor, shouldValidate)
+  if (shouldValidate && !resolution.available) {
+    throw new Error(resolution.reason === 'repo_path_missing'
+      ? 'Preview repository path is missing'
+      : 'Preview repository is not a git checkout')
+  }
+
+  await safeFileStore.updateYaml(previewRepositoryConfigPath(profile), (current) => {
+    const data = cloneConfig(current)
+    data.dev = data.dev && typeof data.dev === 'object' ? data.dev : {}
+    data.dev.preview_repository = descriptor
+    return data
+  }, { backup: true })
+
+  return { descriptor, resolution }
+}
+
+export async function clearPreviewRepository(profile: string): Promise<PreviewRepositoryConfigResult> {
+  await safeFileStore.updateYaml(previewRepositoryConfigPath(profile), (current) => {
+    const data = cloneConfig(current)
+    data.dev = data.dev && typeof data.dev === 'object' ? data.dev : {}
+    delete data.dev.preview_repository
+    return data
+  }, { backup: true })
+  const resolution = await resolveDescriptor(profile, null, false)
+  return { descriptor: null, resolution }
 }
 
 export async function listPreviewRepositoryBranches(profile: string): Promise<string[]> {
