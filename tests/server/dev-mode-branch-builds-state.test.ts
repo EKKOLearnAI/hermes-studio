@@ -14,6 +14,9 @@ const writeText = vi.hoisted(() => vi.fn(async (filePath: string, text: string) 
 const removePreviewInstance = vi.hoisted(() => vi.fn())
 const updatePreviewInstance = vi.hoisted(() => vi.fn())
 const startPreviewInstanceWithId = vi.hoisted(() => vi.fn())
+const listAvailableReleases = vi.hoisted(() => vi.fn())
+const getLatestAvailableRelease = vi.hoisted(() => vi.fn())
+const prepareReleasePreviewPackage = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getProfileDir: (profile: string) => join(env.profileRoot, profile),
@@ -31,6 +34,12 @@ vi.mock('../../packages/server/src/services/hermes/preview-registry', () => ({
   removePreviewInstance: (...args: any[]) => (removePreviewInstance as any)(...args),
   updatePreviewInstance: (...args: any[]) => (updatePreviewInstance as any)(...args),
   startPreviewInstanceWithId: (...args: any[]) => (startPreviewInstanceWithId as any)(...args),
+}))
+
+vi.mock('../../packages/server/src/services/hermes/webui-releases', () => ({
+  listAvailableReleases: (...args: any[]) => (listAvailableReleases as any)(...args),
+  getLatestAvailableRelease: (...args: any[]) => (getLatestAvailableRelease as any)(...args),
+  prepareReleasePreviewPackage: (...args: any[]) => (prepareReleasePreviewPackage as any)(...args),
 }))
 
 import {
@@ -57,6 +66,17 @@ describe('dev-mode branch build state transitions', () => {
     removePreviewInstance.mockReset()
     updatePreviewInstance.mockReset()
     startPreviewInstanceWithId.mockReset()
+    listAvailableReleases.mockReset()
+    getLatestAvailableRelease.mockReset()
+    prepareReleasePreviewPackage.mockReset()
+    listAvailableReleases.mockResolvedValue(['0.6.2', '0.6.1'])
+    getLatestAvailableRelease.mockResolvedValue('0.6.2')
+    prepareReleasePreviewPackage.mockImplementation(async (_profile: string, version: string) => {
+      const packagePath = join(env.profileRoot, 'release-cache', version, 'package')
+      await mkdir(join(packagePath, 'dist', 'client'), { recursive: true })
+      await writeFile(join(packagePath, 'dist', 'client', 'index.html'), '<html></html>')
+      return packagePath
+    })
     readYaml.mockResolvedValue({
       dev: {
         enabled: true,
@@ -72,8 +92,10 @@ describe('dev-mode branch build state transitions', () => {
       reviewBase: 'main',
       previewId: 'preview-slot',
       previewBranch: 'feature/a',
+      previewReleaseVersion: null,
       previewWorktreePath: '/tmp/worktree',
       buildBranch: 'feature/a',
+      buildReleaseVersion: null,
       status: 'success',
       startedAt: 1,
       finishedAt: 2,
@@ -113,8 +135,10 @@ describe('dev-mode branch build state transitions', () => {
       reviewBase: 'main',
       previewId: 'preview-slot',
       previewBranch: 'feature/b',
+      previewReleaseVersion: null,
       previewWorktreePath: '/tmp/worktree',
       buildBranch: 'feature/b',
+      buildReleaseVersion: null,
       status: 'success',
       startedAt: 10,
       finishedAt: 20,
@@ -143,15 +167,17 @@ describe('dev-mode branch build state transitions', () => {
     expect(state.previewBranch).toBeNull()
   })
 
-  it('restores the latest upstream release and clears the preview', async () => {
+  it('builds the latest upstream release as a servable preview', async () => {
     const profile = 'profile-a'
     await prepareProfile(profile, {
       profile,
       reviewBase: 'feature/b',
       previewId: 'preview-slot',
       previewBranch: 'feature/b',
+      previewReleaseVersion: null,
       previewWorktreePath: '/tmp/worktree',
       buildBranch: 'feature/b',
+      buildReleaseVersion: null,
       status: 'success',
       startedAt: 10,
       finishedAt: 20,
@@ -167,19 +193,37 @@ describe('dev-mode branch build state transitions', () => {
     expect(removePreviewInstance).toHaveBeenCalledWith(profile, 'preview-slot')
     expect(summary).toMatchObject({
       reviewBase: 'main',
-      previewId: null,
+      previewId: 'preview-slot',
       previewBranch: null,
+      previewReleaseVersion: '0.6.2',
       buildBranch: null,
-      status: 'idle',
+      buildReleaseVersion: '0.6.2',
+      status: 'success',
     })
+    expect(startPreviewInstanceWithId).toHaveBeenCalledWith(profile, {
+      type: 'release-artifact',
+      version: '0.6.2',
+      source: 'github-release',
+      artifactPath: null,
+    }, 'preview-slot')
+    expect(updatePreviewInstance).toHaveBeenCalledWith(profile, 'preview-slot', expect.objectContaining({
+      status: 'success',
+      target: expect.objectContaining({
+        type: 'release-artifact',
+        version: '0.6.2',
+        artifactPath: expect.stringContaining('release-cache'),
+      }),
+    }))
 
     const state = JSON.parse(await (await import('fs/promises')).readFile(statePath(profile), 'utf-8'))
     expect(state).toMatchObject({
       reviewBase: 'main',
-      previewId: null,
+      previewId: 'preview-slot',
       previewBranch: null,
+      previewReleaseVersion: '0.6.2',
       buildBranch: null,
-      status: 'idle',
+      buildReleaseVersion: '0.6.2',
+      status: 'success',
     })
   })
 })

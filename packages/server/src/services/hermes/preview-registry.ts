@@ -116,7 +116,7 @@ function normalizePreviewTarget(raw: unknown): PreviewTarget {
       if (!version || source !== 'github-release') {
         throw new PreviewRegistryError(400, 'preview_invalid_target', 'release-artifact target requires version and source=github-release')
       }
-      return { type: 'release-artifact', version, source: 'github-release' }
+      return { type: 'release-artifact', version, source: 'github-release', artifactPath: normalizeString(target.artifactPath) || null }
     }
     case 'docker-image': {
       const image = normalizeString(target.image)

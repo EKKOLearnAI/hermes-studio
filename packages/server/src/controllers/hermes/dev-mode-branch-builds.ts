@@ -1,5 +1,5 @@
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
-import { getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, promotePreviewTarget, removePreviewTarget, resetPreviewTarget, restoreLatestUpstreamRelease, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
+import { getAvailableReleases, getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, promotePreviewTarget, removePreviewTarget, resetPreviewTarget, restoreLatestUpstreamRelease, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -30,10 +30,19 @@ export async function getCapabilities(ctx: any) {
 
 export async function listBranches(ctx: any) {
   try {
-    ctx.body = { branches: await listRepositoryBranches() }
+    ctx.body = { branches: await listRepositoryBranches(requestedProfile(ctx)) }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to list branches' }
+  }
+}
+
+export async function listReleases(ctx: any) {
+  try {
+    ctx.body = { releases: await getAvailableReleases() }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to list releases' }
   }
 }
 
@@ -100,11 +109,11 @@ export async function promoteBranchPreview(ctx: any) {
 
 export async function restoreLatestRelease(ctx: any) {
   try {
-    const profile = await requireDevMode(ctx)
-    if (!profile) return
-    ctx.body = await restoreLatestUpstreamRelease(profile)
+    const profile = requestedProfile(ctx)
+    const version = typeof ctx.request.body?.version === 'string' && ctx.request.body.version.trim() ? ctx.request.body.version.trim() : undefined
+    ctx.body = await restoreLatestUpstreamRelease(profile, version)
   } catch (err: any) {
     ctx.status = 500
-    ctx.body = { error: err?.message || 'Failed to restore latest upstream release' }
+    ctx.body = { error: err?.message || 'Failed to build release preview' }
   }
 }

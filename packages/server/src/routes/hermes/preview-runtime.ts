@@ -80,16 +80,29 @@ async function resolvePreviewRoot(profile: string): Promise<string | null> {
   const preview = await getPreviewInstance(profile, PREVIEW_SLOT_ID)
   if (!preview) return null
   if (preview.status !== 'success') return null
-  if (preview.target.type !== 'git-branch') return null
-  if (!preview.target.worktreePath) return null
-
-  const root = join(preview.target.worktreePath, 'dist', 'client')
-  try {
-    await access(join(root, 'index.html'))
-  } catch {
-    return null
+  if (preview.target.type === 'git-branch') {
+    if (!preview.target.worktreePath) return null
+    const root = join(preview.target.worktreePath, 'dist', 'client')
+    try {
+      await access(join(root, 'index.html'))
+    } catch {
+      return null
+    }
+    return root
   }
-  return root
+
+  if (preview.target.type === 'release-artifact') {
+    if (!preview.target.artifactPath) return null
+    const root = join(preview.target.artifactPath, 'dist', 'client')
+    try {
+      await access(join(root, 'index.html'))
+    } catch {
+      return null
+    }
+    return root
+  }
+
+  return null
 }
 
 function unavailablePreviewResponse(message: string, status = 503): { status: number, type: string, body: string } {

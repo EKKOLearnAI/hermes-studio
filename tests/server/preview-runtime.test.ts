@@ -77,6 +77,34 @@ describe('previewRuntimeMiddleware', () => {
     expect(String(ctx.body)).toContain('<title>Preview</title>')
   })
 
+  it('serves a release artifact preview shell on singleton preview URLs', async () => {
+    mocks.getPreviewInstance.mockResolvedValue({
+      id: 'preview-slot',
+      status: 'success',
+      startedAt: Date.now(),
+      finishedAt: null,
+      exitCode: null,
+      signal: null,
+      error: null,
+      logTail: [],
+      updatedAt: Date.now(),
+      target: {
+        type: 'release-artifact',
+        version: '0.6.2',
+        source: 'github-release',
+        artifactPath: worktreePath,
+      },
+    })
+
+    const ctx = createContext('/preview/hermes/chat')
+    await previewRuntimeMiddleware(ctx, async () => undefined)
+
+    expect(ctx.status).toBe(0)
+    expect(ctx.type).toBe('html')
+    expect(String(ctx.body)).toContain('<base href="/preview/">')
+    expect(String(ctx.body)).toContain('<title>Preview</title>')
+  })
+
   it('redirects legacy singleton preview URLs to the canonical slot', async () => {
     mocks.getPreviewInstance.mockResolvedValue({
       id: 'preview-slot',

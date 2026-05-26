@@ -9,6 +9,17 @@ export type PreviewCapabilityReason =
 
 export type PreviewTargetKind = 'installed-version' | 'release-artifact' | 'docker-image' | 'git-branch'
 export type PreviewProviderKey = 'installed-version' | 'release-artifact' | 'docker-image' | 'git-branch-worktree'
+export type PreviewSourceKind = 'release' | 'branch' | 'commit'
+
+export interface PreviewSourceCapability {
+  provider: PreviewSourceKind
+  available: boolean
+  configured: boolean
+  devOnly: boolean
+  canListTargets: boolean
+  canBuild: boolean
+  reason: PreviewCapabilityReason | null
+}
 
 export interface InstalledVersionPreviewTarget {
   type: 'installed-version'
@@ -86,8 +97,10 @@ export interface BranchBuildSummary {
   previewId: string | null
   previewUrl: string | null
   previewBranch: string | null
+  previewReleaseVersion: string | null
   previewWorktreePath: string | null
   buildBranch: string | null
+  buildReleaseVersion: string | null
   startedAt: number | null
   finishedAt: number | null
   exitCode: number | null
@@ -95,6 +108,10 @@ export interface BranchBuildSummary {
   error: string | null
   reviewBase: string
   logTail: string[]
+}
+
+export interface AvailableReleasesResponse {
+  releases: string[]
 }
 
 export interface BranchBuildListResponse {
@@ -115,6 +132,7 @@ export interface BranchPreviewCapabilities {
   canListBranches: boolean
   canBuild: boolean
   reason: BranchPreviewCapabilityReason | null
+  providers?: PreviewSourceCapability[]
 }
 
 export async function fetchBranchPreviewCapabilities(): Promise<BranchPreviewCapabilities> {
@@ -124,6 +142,11 @@ export async function fetchBranchPreviewCapabilities(): Promise<BranchPreviewCap
 export async function fetchBranchBuildBranches(): Promise<string[]> {
   const data = await request<BranchBuildListResponse>('/api/hermes/dev/branch-builds/branches')
   return data.branches || []
+}
+
+export async function fetchAvailableReleases(): Promise<string[]> {
+  const data = await request<AvailableReleasesResponse>('/api/hermes/dev/branch-builds/releases')
+  return data.releases || []
 }
 
 export async function fetchBranchBuildStatus(): Promise<BranchBuildSummary> {
@@ -155,8 +178,9 @@ export async function promoteBranchPreview(): Promise<BranchBuildSummary> {
   })
 }
 
-export async function restoreLatestUpstreamRelease(): Promise<BranchBuildSummary> {
+export async function restoreLatestUpstreamRelease(version?: string): Promise<BranchBuildSummary> {
   return request<BranchBuildSummary>('/api/hermes/dev/branch-builds/restore-latest-release', {
     method: 'POST',
+    body: JSON.stringify(version ? { version } : {}),
   })
 }

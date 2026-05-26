@@ -10,6 +10,7 @@ const promotePreviewTarget = vi.fn()
 const restoreLatestUpstreamRelease = vi.fn()
 const getBranchBuildSummary = vi.fn()
 const getBranchPreviewCapabilities = vi.fn()
+const getAvailableReleases = vi.fn()
 const getActiveProfileName = vi.fn()
 
 vi.mock('../../packages/server/src/services/hermes/dev-mode-branch-builds', () => ({
@@ -22,6 +23,7 @@ vi.mock('../../packages/server/src/services/hermes/dev-mode-branch-builds', () =
   restoreLatestUpstreamRelease: (...args: any[]) => restoreLatestUpstreamRelease(...args),
   getBranchBuildSummary: (...args: any[]) => getBranchBuildSummary(...args),
   getBranchPreviewCapabilities: (...args: any[]) => getBranchPreviewCapabilities(...args),
+  getAvailableReleases: (...args: any[]) => getAvailableReleases(...args),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -71,6 +73,7 @@ beforeEach(() => {
   restoreLatestUpstreamRelease.mockReset()
   getBranchBuildSummary.mockReset()
   getBranchPreviewCapabilities.mockReset()
+  getAvailableReleases.mockReset()
   getActiveProfileName.mockReset()
   getActiveProfileName.mockReturnValue('default')
 })
@@ -85,6 +88,35 @@ describe('dev-mode branch build controller', () => {
       canListBranches: true,
       canBuild: false,
       reason: null,
+      providers: [
+        {
+          provider: 'release',
+          available: true,
+          configured: true,
+          devOnly: false,
+          canListTargets: true,
+          canBuild: true,
+          reason: null,
+        },
+        {
+          provider: 'branch',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: false,
+          reason: null,
+        },
+        {
+          provider: 'commit',
+          available: true,
+          configured: true,
+          devOnly: true,
+          canListTargets: true,
+          canBuild: false,
+          reason: null,
+        },
+      ],
     }
     getBranchPreviewCapabilities.mockResolvedValue(capabilities)
     const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
@@ -106,6 +138,17 @@ describe('dev-mode branch build controller', () => {
     expect(listRepositoryBranches).toHaveBeenCalledTimes(1)
     expect(ctx.status).toBe(0)
     expect(ctx.body).toEqual({ branches: ['feature/a', 'feature/b'] })
+  })
+
+  it('lists releases even when dev mode is disabled', async () => {
+    getAvailableReleases.mockResolvedValue(['1.2.3', '1.2.2'])
+    const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+
+    await ctrl.listReleases(ctx)
+
+    expect(getAvailableReleases).toHaveBeenCalledTimes(1)
+    expect(ctx.status).toBe(0)
+    expect(ctx.body).toEqual({ releases: ['1.2.3', '1.2.2'] })
   })
 
   it('returns a disabled status summary instead of rejecting status reads', async () => {
@@ -206,27 +249,33 @@ describe('dev-mode branch build controller', () => {
     })
   })
 
-  it('restores the latest upstream release when enabled', async () => {
-    isDevModeEnabled.mockResolvedValue(true)
+  it('builds the selected upstream release without requiring Dev Mode', async () => {
+    isDevModeEnabled.mockResolvedValue(false)
     restoreLatestUpstreamRelease.mockResolvedValue({
-      ...disabledSummary,
-      status: 'idle',
-      previewId: null,
-      previewBranch: 'main',
-      buildBranch: 'main',
+      ...enabledSummary,
+      status: 'success',
+      previewId: 'preview-slot',
+      previewBranch: null,
+      buildBranch: null,
+      previewReleaseVersion: '1.2.3',
+      buildReleaseVersion: '1.2.3',
       reviewBase: 'main',
     })
     const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+    ctx.request.body = { version: '1.2.3' }
 
     await ctrl.restoreLatestRelease(ctx)
 
-    expect(restoreLatestUpstreamRelease).toHaveBeenCalledWith('profile-a')
+    expect(isDevModeEnabled).not.toHaveBeenCalled()
+    expect(restoreLatestUpstreamRelease).toHaveBeenCalledWith('profile-a', '1.2.3')
     expect(ctx.body).toEqual({
-      ...disabledSummary,
-      status: 'idle',
-      previewId: null,
-      previewBranch: 'main',
-      buildBranch: 'main',
+      ...enabledSummary,
+      status: 'success',
+      previewId: 'preview-slot',
+      previewBranch: null,
+      buildBranch: null,
+      previewReleaseVersion: '1.2.3',
+      buildReleaseVersion: '1.2.3',
       reviewBase: 'main',
     })
   })

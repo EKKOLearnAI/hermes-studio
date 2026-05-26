@@ -102,6 +102,23 @@ describe('preview registry service', () => {
     expect(listed[0]).toEqual(updated)
   })
 
+  it('preserves release artifact path metadata', async () => {
+    await __resetPreviewRegistryForTest(profile)
+
+    const target = {
+      type: 'release-artifact',
+      version: '0.6.2',
+      source: 'github-release',
+      artifactPath: '/tmp/hermes-web-ui-0.6.2',
+    } as const
+
+    const started = await startPreviewInstanceWithId(profile, target, 'preview-slot')
+    expect(started.target).toEqual(target)
+
+    const fetched = await getPreviewInstance(profile, 'preview-slot')
+    expect(fetched?.target).toEqual(target)
+  })
+
   it('rejects invalid preview targets with a structured error', async () => {
     await expect(startPreviewInstance(profile, { type: 'installed-version' })).rejects.toMatchObject({
       status: 400,
