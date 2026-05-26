@@ -195,7 +195,8 @@ export async function buildCompressedHistory(
   emit: (event: string, payload: any) => void,
   sessionMap: Map<string, SessionState>,
   modelContext: { model?: string | null; provider?: string | null } = {},
-  contextTokenEstimator?: (messages: ChatMessage[]) => Promise<number | null | undefined>,
+  contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>,
+  currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
   try {
     let history = await buildDbHistory(sessionId, { excludeLastUser: true })
@@ -213,14 +214,18 @@ export async function buildCompressedHistory(
     }
     const cState = getOrCreateSession(sessionMap, sessionId)
     const assembledTokens = await calcAndUpdateUsage(sessionId, cState, emit)
-    const estimateFullContextTokens = async (messages: ChatMessage[], fallback: number) => {
+    const currentRunInputTokens = typeof currentInputTokens === 'number' && Number.isFinite(currentInputTokens) && currentInputTokens > 0
+      ? Math.floor(currentInputTokens)
+      : 0
+    const estimateLocalContextTokens = async (messages: ChatMessage[], messageTokens: number) => {
+      const localMessageTokens = Math.max(0, Math.floor(messageTokens))
       try {
-        const estimate = await contextTokenEstimator?.(messages)
+        const estimate = await contextTokenEstimator?.(messages, localMessageTokens)
         if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate > 0) return Math.floor(estimate)
       } catch (err) {
-        logger.warn(err, '[context-compress] session=%s: full context token estimate failed; using message-only estimate', sessionId)
+        logger.warn(err, '[context-compress] session=%s: fixed context token estimate failed; using message-only estimate', sessionId)
       }
-      return fallback
+      return localMessageTokens
     }
     const emitContextUsage = (contextTokens: number) => {
       cState.contextTokens = contextTokens
@@ -236,10 +241,10 @@ export async function buildCompressedHistory(
     let totalTokens = messageOnlyTotalTokens
 
     if (history.length === 0) {
-      totalTokens = await estimateFullContextTokens([], 0)
+      totalTokens = await estimateLocalContextTokens([], Math.max(currentRunInputTokens, messageOnlyTotalTokens))
       if (totalTokens > triggerTokens) {
         throw new ContextWindowTooSmallError(
-          `Context window is too small: system prompt and tool schemas already use ~${totalTokens} tokens, exceeding compression threshold ${triggerTokens}. Increase model context length, raise compression.threshold, or disable some tools.`,
+          `Context window is too small: fixed prompt/tool overhead plus the current input uses ~${totalTokens} tokens, exceeding compression threshold ${triggerTokens}. Increase model context length, raise compression.threshold, shorten the input, or disable some tools.`,
         )
       }
       if (totalTokens > 0) emitContextUsage(totalTokens)
@@ -254,13 +259,15 @@ export async function buildCompressedHistory(
         sessionId, snapshot.lastMessageIndex, history.length)
       const staleHistory = buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
       const staleUsage = estimateUsageTokensFromMessages(staleHistory)
-      totalTokens = await estimateFullContextTokens(staleHistory, staleUsage.inputTokens + staleUsage.outputTokens)
+      const staleMessageTokens = staleUsage.inputTokens + staleUsage.outputTokens
+      const staleRunMessageTokens = Math.max(staleMessageTokens + currentRunInputTokens, messageOnlyTotalTokens)
+      totalTokens = await estimateLocalContextTokens(staleHistory, staleRunMessageTokens)
       emitContextUsage(totalTokens)
       logger.info({
         sessionId,
         profile,
         messages: staleHistory.length,
-        messageOnlyTokens: staleUsage.inputTokens + staleUsage.outputTokens,
+        messageOnlyTokens: staleRunMessageTokens,
         fullContextTokens: totalTokens,
         triggerTokens,
         decision: totalTokens > triggerTokens ? 'compress' : 'skip',
@@ -272,13 +279,15 @@ export async function buildCompressedHistory(
       const newMessages = history.slice(snapshot.lastMessageIndex + 1)
       const snapshotHistory = buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
       const snapshotUsage = estimateUsageTokensFromMessages(snapshotHistory)
-      totalTokens = await estimateFullContextTokens(snapshotHistory, snapshotUsage.inputTokens + snapshotUsage.outputTokens)
+      const snapshotMessageTokens = snapshotUsage.inputTokens + snapshotUsage.outputTokens
+      const snapshotRunMessageTokens = Math.max(snapshotMessageTokens + currentRunInputTokens, messageOnlyTotalTokens)
+      totalTokens = await estimateLocalContextTokens(snapshotHistory, snapshotRunMessageTokens)
       emitContextUsage(totalTokens)
       logger.info({
         sessionId,
         profile,
         messages: snapshotHistory.length,
-        messageOnlyTokens: snapshotUsage.inputTokens + snapshotUsage.outputTokens,
+        messageOnlyTokens: snapshotRunMessageTokens,
         fullContextTokens: totalTokens,
         triggerTokens,
         decision: totalTokens > triggerTokens ? 'compress' : 'skip',
@@ -289,22 +298,25 @@ export async function buildCompressedHistory(
       if (totalTokens <= triggerTokens) {
         history = snapshotHistory
       } else {
-        history = await compressHistory(history, newMessages, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor)
+        history = await compressHistory(history, newMessages, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor, currentRunInputTokens)
       }
     } else if (snapshot && staleSnapshot) {
       if (totalTokens <= triggerTokens) {
         history = buildSnapshotHistory(snapshot, history, compressionConfig.compressor) || history
       } else {
-        history = await compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor)
+        history = await compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor, currentRunInputTokens)
       }
     } else {
-      totalTokens = await estimateFullContextTokens(history, totalTokens)
+      const historyUsage = estimateUsageTokensFromMessages(history)
+      const historyMessageTokens = historyUsage.inputTokens + historyUsage.outputTokens
+      const runMessageTokens = Math.max(historyMessageTokens + currentRunInputTokens, messageOnlyTotalTokens)
+      totalTokens = await estimateLocalContextTokens(history, runMessageTokens)
       emitContextUsage(totalTokens)
       logger.info({
         sessionId,
         profile,
         messages: history.length,
-        messageOnlyTokens: messageOnlyTotalTokens,
+        messageOnlyTokens: runMessageTokens,
         fullContextTokens: totalTokens,
         triggerTokens,
         decision: totalTokens > triggerTokens ? 'compress' : 'skip',
@@ -318,10 +330,9 @@ export async function buildCompressedHistory(
       if (totalTokens <= triggerTokens) {
         logger.info('[context-compress] session=%s: %d messages, ~%d tokens — under threshold, skip', sessionId, history.length, totalTokens)
       } else {
-        history = await compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor)
+        history = await compressHistory(history, null, sessionId, upstream, apiKey, cState, totalTokens, emit, sessionMap, modelContext, compressionConfig.compressor, currentRunInputTokens)
       }
     }
-
     return history
   } catch (err) {
     if (isContextWindowTooSmallError(err)) throw err
@@ -342,8 +353,12 @@ export async function compressHistory(
   sessionMap: Map<string, SessionState>,
   modelContext: { model?: string | null; provider?: string | null } = {},
   compressionConfig?: Partial<CompressorConfig>,
+  currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
   const msgCount = newMessagesOnly ? newMessagesOnly.length : history.length
+  const currentRunInputTokens = typeof currentInputTokens === 'number' && Number.isFinite(currentInputTokens) && currentInputTokens > 0
+    ? Math.floor(currentInputTokens)
+    : 0
   pushState(sessionMap, sessionId, 'compression.started', {
     event: 'compression.started', message_count: msgCount, token_count: totalTokens,
   })
@@ -353,14 +368,22 @@ export async function compressHistory(
 
   try {
     const session = getSession(sessionId)
+    const summarizerProfile = session?.profile || 'default'
     const compressor = new ChatContextCompressor({ config: compressionConfig })
     const result = await compressor.compress(history, upstream, apiKey, sessionId, {
-      profile: session?.profile,
+      profile: summarizerProfile,
       model: modelContext.model || session?.model,
       provider: modelContext.provider || session?.provider,
+      workerKey: `${summarizerProfile}:compression:${sessionId}`,
     })
     const afterTokens = await calcAndUpdateUsage(sessionId, cState, emit)
     const compressedAfterTokens = afterTokens.inputTokens + afterTokens.outputTokens
+    const resultUsage = estimateUsageTokensFromMessages(result.messages)
+    const resultMessageTokens = resultUsage.inputTokens + resultUsage.outputTokens
+    const compressedRunMessageTokens = Math.max(
+      compressedAfterTokens,
+      resultMessageTokens + currentRunInputTokens,
+    )
     const compressedMeta: any = {
       event: 'compression.completed' as const,
       compressed: result.meta.compressed,
@@ -368,15 +391,15 @@ export async function compressHistory(
       totalMessages: result.meta.totalMessages,
       resultMessages: result.messages.length,
       beforeTokens: totalTokens,
-      afterTokens: compressedAfterTokens,
+      afterTokens: compressedRunMessageTokens,
       summaryTokens: result.meta.summaryTokenEstimate,
       verbatimCount: result.meta.verbatimCount,
       compressedStartIndex: result.meta.compressedStartIndex,
     }
     replaceState(sessionMap, sessionId, 'compression.completed', compressedMeta)
     logger.info('[context-compress] AFTER  session=%s: %d messages, ~%d tokens (was %d)',
-      sessionId, result.messages.length, compressedAfterTokens, totalTokens)
-    const compressedContextTokens = updateMessageContextTokenUsage(sessionId, cState, emit, compressedAfterTokens, afterTokens)
+      sessionId, result.messages.length, compressedRunMessageTokens, totalTokens)
+    const compressedContextTokens = updateMessageContextTokenUsage(sessionId, cState, emit, compressedRunMessageTokens, afterTokens)
     if (compressedContextTokens != null) {
       compressedMeta.contextTokens = compressedContextTokens
     }
@@ -403,6 +426,7 @@ export async function compressHistory(
       resultMessages: msgCount,
       beforeTokens: totalTokens,
       afterTokens: totalTokens,
+      contextTokens: totalTokens,
       summaryTokens: 0,
       verbatimCount: msgCount,
       compressedStartIndex: -1,
@@ -458,10 +482,12 @@ export async function forceCompressBridgeHistory(
   }, '[chat-run-socket] bridge forced compression started')
 
   const compressor = new ChatContextCompressor({ config: compressionConfig.compressor })
+  const summarizerProfile = session?.profile || profile || 'default'
   const result = await compressor.compress(history, upstream, apiKey, sessionId, {
-    profile: session?.profile || profile,
+    profile: summarizerProfile,
     model: session?.model,
     provider: session?.provider,
+    workerKey: `${summarizerProfile}:compression:${sessionId}`,
   })
   const compressedMessages = result.messages.map(m => {
     const msg: any = { role: m.role, content: m.content }

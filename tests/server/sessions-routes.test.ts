@@ -16,7 +16,7 @@ const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folder
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
 const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
-const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 200000 } })
+const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 256000 } })
 const batchRemoveMock = vi.fn(async (ctx: any) => { ctx.body = { deleted: 1, failed: 0, errors: [] } })
 const exportSessionMock = vi.fn(async (ctx: any) => { ctx.body = JSON.stringify({ id: ctx.params.id }) })
 

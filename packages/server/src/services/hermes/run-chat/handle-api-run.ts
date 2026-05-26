@@ -18,7 +18,7 @@ import { convertHistoryFormat } from './message-format'
 import { readSseFrames } from './sse-utils'
 import { extractResponseText } from './response-utils'
 import { applyResponseStreamEvent, flushResponseRunToDb } from './response-stream'
-import { buildCompressedHistory, getOrCreateSession } from './compression'
+import { buildCompressedHistory, buildDbHistory, buildSnapshotAwareHistory, getOrCreateSession } from './compression'
 import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
@@ -37,6 +37,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
 
     let inputTokens: number
     let outputTokens: number
+    let contextTokens: number | undefined
     const snapshot = getCompressionSnapshot(sid)
     if (snapshot && snapshot.lastMessageIndex >= 0 && snapshot.lastMessageIndex < messages.length) {
       const newMessages = messages.slice(snapshot.lastMessageIndex + 1)
@@ -49,6 +50,20 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
       inputTokens = usage.inputTokens
       outputTokens = usage.outputTokens
     }
+    try {
+      const session = getSession(sid)
+      const dbHistory = await buildDbHistory(sid, { excludeLastUser: false })
+      const snapshotHistory = await buildSnapshotAwareHistory(
+        sid,
+        session?.profile || 'default',
+        dbHistory,
+        { model: session?.model, provider: session?.provider },
+      )
+      const contextUsage = estimateUsageTokensFromMessages(snapshotHistory)
+      contextTokens = contextUsage.inputTokens + contextUsage.outputTokens
+    } catch (err) {
+      logger.warn(err, '[chat-run-socket] failed to calculate snapshot-aware context tokens for session %s', sid)
+    }
 
     logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
     return {
@@ -57,6 +72,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
       events: [],
       inputTokens,
       outputTokens,
+      contextTokens,
       queue: [],
     }
   } catch (err) {

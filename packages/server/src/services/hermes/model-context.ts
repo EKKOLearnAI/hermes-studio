@@ -8,7 +8,7 @@ import { detectHermesHome } from './hermes-path'
 
 const HERMES_BASE = detectHermesHome()
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
-const DEFAULT_CONTEXT_LENGTH = 200_000
+const DEFAULT_CONTEXT_LENGTH = 256_000
 
 export interface ModelContextLengthOptions {
   profile?: string
@@ -112,7 +112,7 @@ function getDefaultProvider(config: any): string | null {
 
 /**
  * Read context_length from config.yaml, only as a sibling of default.
- * e.g. model:\n  default: gpt-5.4\n  context_length: 200000
+ * e.g. model:\n  default: gpt-5.4\n  context_length: 256000
  */
 function getConfigContextLength(config: any): number | null {
   const model = config?.model

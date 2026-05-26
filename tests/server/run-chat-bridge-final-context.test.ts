@@ -127,8 +127,18 @@ describe('bridge run final context usage', () => {
     buildSnapshotAwareHistoryMock.mockImplementation(async (_sessionId: string, _profile: string, history: any[]) => history)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 11, outputTokens: 7 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 11, outputTokens: 7 })
-    getCachedBridgeContextOverheadMock.mockReturnValue(undefined)
-    contextTokensWithCachedOverheadMock.mockImplementation((_state: any, messageTokens: number) => messageTokens)
+    getCachedBridgeContextOverheadMock.mockImplementation((state: any) => {
+      const fixed = state?.bridgeContext?.fixedContextTokens
+      return typeof fixed === 'number' ? fixed : undefined
+    })
+    contextTokensWithCachedOverheadMock.mockImplementation((state: any, messageTokens: number) => {
+      const fixed = state?.bridgeContext?.fixedContextTokens
+      return typeof fixed === 'number' ? fixed + messageTokens : messageTokens
+    })
+    updateMessageContextTokenUsageMock.mockImplementation((sid: string, state: any, emit: any, messageTokens: number, usage?: { inputTokens: number; outputTokens: number }) => {
+      const contextTokens = contextTokensWithCachedOverheadMock(state, messageTokens)
+      return updateContextTokenUsageMock(sid, state, emit, contextTokens, usage)
+    })
   })
 
   it('refreshes full context tokens when a bridge run completes', async () => {
@@ -141,6 +151,7 @@ describe('bridge run final context usage', () => {
       chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
       contextEstimate: vi.fn().mockResolvedValue({
         token_count: 12345,
+        fixed_context_tokens: 12327,
         message_count: 2,
         tool_count: 4,
         system_prompt_chars: 13,
@@ -165,10 +176,7 @@ describe('bridge run final context usage', () => {
 
     expect(bridge.contextEstimate).toHaveBeenCalledWith(
       'session-1',
-      [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'done' },
-      ],
+      [],
       expect.stringContaining('[Current Hermes profile: default]'),
       'default',
       { model: 'gpt-test', provider: 'openai' },
@@ -326,14 +334,22 @@ describe('bridge run final context usage', () => {
     const nsp = makeNamespace(emit)
     const socket = makeSocket()
     const state = makeState()
-    state.bridgeContext = { fixedContextTokens: 20_000 }
     const sessionMap = new Map([['session-1', state]])
-    getCachedBridgeContextOverheadMock.mockReturnValue(20_000)
-    updateMessageContextTokenUsageMock.mockImplementation((sid: string, targetState: any, targetEmit: any, messageTokens: number, usage?: { inputTokens: number; outputTokens: number }) => updateContextTokenUsageMock(sid, targetState, targetEmit, 20_000 + messageTokens, usage))
     const bridge = {
       chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
       contextEstimate: vi.fn(),
       streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: false,
+          status: 'running',
+          events: [{
+            event: 'bridge.context.ready',
+            fixed_context_tokens: 20_000,
+            system_prompt_tokens: 3_000,
+            tool_tokens: 17_000,
+          }],
+        }
         yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
       }),
     } as any
@@ -362,6 +378,80 @@ describe('bridge run final context usage', () => {
     expect(state.contextTokens).toBe(20_018)
     expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
       contextTokens: 20_018,
+    }))
+  })
+
+  it('keeps bridge context ready updates on the snapshot-aware token baseline', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 28_000, outputTokens: 0 })
+    buildDbHistoryMock.mockResolvedValue([
+      { role: 'user', content: 'very large old context' },
+      { role: 'assistant', content: 'large old response' },
+      { role: 'user', content: 'hello' },
+    ])
+    buildSnapshotAwareHistoryMock.mockResolvedValue([
+      { role: 'user', content: '[Previous context summary]\n\nsmall summary' },
+      { role: 'user', content: 'hello' },
+    ])
+    estimateUsageTokensFromMessagesMock.mockImplementation((messages: any[]) => {
+      if (messages?.[0]?.content?.includes('small summary')) {
+        return { inputTokens: 9_000, outputTokens: 0 }
+      }
+      return { inputTokens: 28_000, outputTokens: 0 }
+    })
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn(),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: false,
+          status: 'running',
+          events: [{
+            event: 'bridge.context.ready',
+            fixed_context_tokens: 10_000,
+            system_prompt_tokens: 2_000,
+            tool_tokens: 8_000,
+          }],
+        }
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(updateMessageContextTokenUsageMock).toHaveBeenCalledWith(
+      'session-1',
+      state,
+      expect.any(Function),
+      9_000,
+      { inputTokens: 28_000, outputTokens: 0 },
+    )
+    expect(updateMessageContextTokenUsageMock).not.toHaveBeenCalledWith(
+      'session-1',
+      state,
+      expect.any(Function),
+      28_000,
+      { inputTokens: 28_000, outputTokens: 0 },
+    )
+    expect(state.contextTokens).toBe(19_000)
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      contextTokens: 19_000,
     }))
   })
 
@@ -502,6 +592,7 @@ describe('bridge run final context usage', () => {
       chat: vi.fn().mockRejectedValue(new Error('bridge timeout')),
       contextEstimate: vi.fn().mockResolvedValue({
         token_count: 54321,
+        fixed_context_tokens: 54303,
         message_count: 1,
         tool_count: 4,
         system_prompt_chars: 13,
