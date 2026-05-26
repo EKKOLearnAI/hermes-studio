@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 
 let updateInProgress = false
@@ -63,6 +64,7 @@ function runNpm(args: string[], options: { timeout?: number } = {}) {
   return execFileSync(command, commandArgs, {
     encoding: 'utf-8',
     timeout: options.timeout,
+    cwd: homedir(),
     stdio: ['pipe', 'pipe', 'pipe'],
     env: getCurrentNodeEnv(),
     windowsHide: true,
