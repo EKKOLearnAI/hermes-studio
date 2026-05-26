@@ -5,6 +5,9 @@ const isDevModeEnabled = vi.fn()
 const listRepositoryBranches = vi.fn()
 const startBranchBuild = vi.fn()
 const resetPreviewTarget = vi.fn()
+const removePreviewTarget = vi.fn()
+const promotePreviewTarget = vi.fn()
+const restoreLatestUpstreamRelease = vi.fn()
 const getBranchBuildSummary = vi.fn()
 const getBranchPreviewCapabilities = vi.fn()
 const getActiveProfileName = vi.fn()
@@ -14,6 +17,9 @@ vi.mock('../../packages/server/src/services/hermes/dev-mode-branch-builds', () =
   listRepositoryBranches: (...args: any[]) => listRepositoryBranches(...args),
   startBranchBuild: (...args: any[]) => startBranchBuild(...args),
   resetPreviewTarget: (...args: any[]) => resetPreviewTarget(...args),
+  removePreviewTarget: (...args: any[]) => removePreviewTarget(...args),
+  promotePreviewTarget: (...args: any[]) => promotePreviewTarget(...args),
+  restoreLatestUpstreamRelease: (...args: any[]) => restoreLatestUpstreamRelease(...args),
   getBranchBuildSummary: (...args: any[]) => getBranchBuildSummary(...args),
   getBranchPreviewCapabilities: (...args: any[]) => getBranchPreviewCapabilities(...args),
 }))
@@ -60,6 +66,9 @@ beforeEach(() => {
   listRepositoryBranches.mockReset()
   startBranchBuild.mockReset()
   resetPreviewTarget.mockReset()
+  removePreviewTarget.mockReset()
+  promotePreviewTarget.mockReset()
+  restoreLatestUpstreamRelease.mockReset()
   getBranchBuildSummary.mockReset()
   getBranchPreviewCapabilities.mockReset()
   getActiveProfileName.mockReset()
@@ -155,6 +164,71 @@ describe('dev-mode branch build controller', () => {
     expect(ctx.status).toBe(403)
     expect(ctx.body).toEqual({ error: 'Dev Mode is disabled' })
     expect(resetPreviewTarget).not.toHaveBeenCalled()
+  })
+
+  it('removes the preview target when requested', async () => {
+    isDevModeEnabled.mockResolvedValue(true)
+    removePreviewTarget.mockResolvedValue({
+      ...disabledSummary,
+      status: 'idle',
+      previewId: null,
+      previewBranch: null,
+      reviewBase: 'main',
+    })
+    const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+
+    await ctrl.removeBranchPreview(ctx)
+
+    expect(removePreviewTarget).toHaveBeenCalledWith('profile-a')
+    expect(ctx.body).toEqual({
+      ...disabledSummary,
+      status: 'idle',
+      previewId: null,
+      previewBranch: null,
+      reviewBase: 'main',
+    })
+  })
+
+  it('promotes the current preview when enabled', async () => {
+    isDevModeEnabled.mockResolvedValue(true)
+    promotePreviewTarget.mockResolvedValue({
+      ...enabledSummary,
+      reviewBase: 'feature/a',
+    })
+    const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+
+    await ctrl.promoteBranchPreview(ctx)
+
+    expect(promotePreviewTarget).toHaveBeenCalledWith('profile-a')
+    expect(ctx.body).toEqual({
+      ...enabledSummary,
+      reviewBase: 'feature/a',
+    })
+  })
+
+  it('restores the latest upstream release when enabled', async () => {
+    isDevModeEnabled.mockResolvedValue(true)
+    restoreLatestUpstreamRelease.mockResolvedValue({
+      ...disabledSummary,
+      status: 'idle',
+      previewId: null,
+      previewBranch: 'main',
+      buildBranch: 'main',
+      reviewBase: 'main',
+    })
+    const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+
+    await ctrl.restoreLatestRelease(ctx)
+
+    expect(restoreLatestUpstreamRelease).toHaveBeenCalledWith('profile-a')
+    expect(ctx.body).toEqual({
+      ...disabledSummary,
+      status: 'idle',
+      previewId: null,
+      previewBranch: 'main',
+      buildBranch: 'main',
+      reviewBase: 'main',
+    })
   })
 
   it('resets the preview target when enabled', async () => {

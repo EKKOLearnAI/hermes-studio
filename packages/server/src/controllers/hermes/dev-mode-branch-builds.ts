@@ -1,5 +1,5 @@
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
-import { getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, resetPreviewTarget, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
+import { getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, promotePreviewTarget, removePreviewTarget, resetPreviewTarget, restoreLatestUpstreamRelease, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -73,5 +73,38 @@ export async function resetBranchPreview(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to reset preview target' }
+  }
+}
+
+export async function removeBranchPreview(ctx: any) {
+  try {
+    const profile = await requireDevMode(ctx)
+    if (!profile) return
+    ctx.body = await removePreviewTarget(profile)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to remove preview target' }
+  }
+}
+
+export async function promoteBranchPreview(ctx: any) {
+  try {
+    const profile = await requireDevMode(ctx)
+    if (!profile) return
+    ctx.body = await promotePreviewTarget(profile)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to promote preview target' }
+  }
+}
+
+export async function restoreLatestRelease(ctx: any) {
+  try {
+    const profile = await requireDevMode(ctx)
+    if (!profile) return
+    ctx.body = await restoreLatestUpstreamRelease(profile)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to restore latest upstream release' }
   }
 }

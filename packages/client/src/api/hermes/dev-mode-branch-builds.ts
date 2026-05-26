@@ -142,3 +142,21 @@ export async function resetBranchPreview(): Promise<BranchBuildSummary> {
     method: 'POST',
   })
 }
+
+export async function removeBranchPreview(): Promise<BranchBuildSummary> {
+  return request<BranchBuildSummary>('/api/hermes/dev/branch-builds/remove', {
+    method: 'POST',
+  })
+}
+
+export async function promoteBranchPreview(): Promise<BranchBuildSummary> {
+  return request<BranchBuildSummary>('/api/hermes/dev/branch-builds/promote', {
+    method: 'POST',
+  })
+}
+
+export async function restoreLatestUpstreamRelease(): Promise<BranchBuildSummary> {
+  return request<BranchBuildSummary>('/api/hermes/dev/branch-builds/restore-latest-release', {
+    method: 'POST',
+  })
+}

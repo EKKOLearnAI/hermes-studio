@@ -309,6 +309,19 @@ export async function updatePreviewInstance(profile: string, previewId: string, 
   return toInstance(updatedRecord)
 }
 
+export async function removePreviewInstance(profile: string, previewId: string): Promise<void> {
+  await updateRegistry(profile, async (state) => {
+    const index = resolveInstanceIndex(state, previewId)
+    if (index < 0) {
+      throw new PreviewRegistryError(404, 'preview_not_found', `Preview instance not found: ${previewId}`)
+    }
+    return {
+      ...state,
+      instances: state.instances.filter((_, entryIndex) => entryIndex !== index),
+    }
+  })
+}
+
 export async function stopPreviewInstance(profile: string, previewId: string, reason = 'Preview stopped'): Promise<PreviewInstance> {
   const now = Date.now()
   let updatedRecord: PreviewRegistryRecord | null = null

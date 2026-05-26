@@ -9,6 +9,9 @@ const fetchBranchBuildStatus = vi.hoisted(() => vi.fn())
 const fetchBranchPreviewCapabilities = vi.hoisted(() => vi.fn())
 const buildBranchPreview = vi.hoisted(() => vi.fn())
 const resetBranchPreview = vi.hoisted(() => vi.fn())
+const removeBranchPreview = vi.hoisted(() => vi.fn())
+const promoteBranchPreview = vi.hoisted(() => vi.fn())
+const restoreLatestUpstreamRelease = vi.hoisted(() => vi.fn())
 const useMessageMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -41,6 +44,9 @@ vi.mock('@/api/hermes/dev-mode-branch-builds', () => ({
   fetchBranchPreviewCapabilities: (...args: any[]) => fetchBranchPreviewCapabilities(...args),
   buildBranchPreview: (...args: any[]) => buildBranchPreview(...args),
   resetBranchPreview: (...args: any[]) => resetBranchPreview(...args),
+  removeBranchPreview: (...args: any[]) => removeBranchPreview(...args),
+  promoteBranchPreview: (...args: any[]) => promoteBranchPreview(...args),
+  restoreLatestUpstreamRelease: (...args: any[]) => restoreLatestUpstreamRelease(...args),
 }))
 
 vi.mock('@/stores/hermes/settings', () => ({
@@ -213,6 +219,51 @@ describe('DevModeSettings', () => {
       reviewBase: 'main',
       logTail: [],
     })
+    removeBranchPreview.mockResolvedValue({
+      status: 'idle',
+      previewId: null,
+      previewUrl: null,
+      previewBranch: null,
+      previewWorktreePath: null,
+      buildBranch: null,
+      startedAt: null,
+      finishedAt: 3,
+      exitCode: null,
+      signal: null,
+      error: null,
+      reviewBase: 'main',
+      logTail: [],
+    })
+    promoteBranchPreview.mockResolvedValue({
+      status: 'success',
+      previewId: 'preview-slot',
+      previewUrl: '/preview/',
+      previewBranch: 'feature/dev-b',
+      previewWorktreePath: '/tmp/worktree',
+      buildBranch: 'feature/dev-b',
+      startedAt: 1,
+      finishedAt: 4,
+      exitCode: 0,
+      signal: null,
+      error: null,
+      reviewBase: 'feature/dev-b',
+      logTail: [],
+    })
+    restoreLatestUpstreamRelease.mockResolvedValue({
+      status: 'idle',
+      previewId: null,
+      previewUrl: null,
+      previewBranch: 'main',
+      previewWorktreePath: null,
+      buildBranch: 'main',
+      startedAt: null,
+      finishedAt: 5,
+      exitCode: null,
+      signal: null,
+      error: null,
+      reviewBase: 'main',
+      logTail: [],
+    })
   })
 
   it('renders the minimal primary UI and hides advanced/debug fields by default', async () => {
@@ -326,6 +377,43 @@ describe('DevModeSettings', () => {
     })
     expect(fetchBranchBuildStatus).toHaveBeenCalledTimes(1)
     expect(useMessageMock.success).toHaveBeenCalledWith('settings.saved')
+  })
+
+  it('wires remove, promote, and restore actions to the branch preview API', async () => {
+    settingsStore.dev.enabled = true
+    const confirmMock = vi.fn(() => true)
+    Object.defineProperty(window, 'confirm', { value: confirmMock, configurable: true })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const buttonByText = (label: string) => wrapper.findAll('button').find((button) => button.text() === label)!
+
+    await buttonByText('settings.dev.removePreview').trigger('click')
+    await flushPromises()
+    expect(removeBranchPreview).toHaveBeenCalledTimes(1)
+    expect(settingsStore.updateLocal).toHaveBeenCalledWith('dev', {
+      preview_branch: '',
+      review_base: 'main',
+    })
+    expect(useMessageMock.success).toHaveBeenCalledWith('settings.dev.removePreviewDone')
+
+    await buttonByText('settings.dev.promotePreview').trigger('click')
+    await flushPromises()
+    expect(promoteBranchPreview).toHaveBeenCalledTimes(1)
+    expect(settingsStore.updateLocal).toHaveBeenCalledWith('dev', {
+      review_base: 'feature/dev-b',
+    })
+    expect(useMessageMock.success).toHaveBeenCalledWith('settings.dev.promotePreviewDone')
+
+    await buttonByText('settings.dev.restoreLatestRelease').trigger('click')
+    await flushPromises()
+    expect(restoreLatestUpstreamRelease).toHaveBeenCalledTimes(1)
+    expect(settingsStore.updateLocal).toHaveBeenCalledWith('dev', {
+      preview_branch: '',
+      review_base: 'main',
+    })
+    expect(useMessageMock.success).toHaveBeenCalledWith('settings.dev.restoreLatestReleaseDone')
+
   })
 
   it('shows a compact unavailable state when branch preview is not configured', async () => {

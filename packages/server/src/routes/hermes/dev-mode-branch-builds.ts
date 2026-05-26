@@ -9,3 +9,6 @@ devModeBranchBuildRoutes.get('/api/hermes/dev/branch-builds/branches', requireSu
 devModeBranchBuildRoutes.get('/api/hermes/dev/branch-builds/status', requireSuperAdmin, ctrl.getStatus)
 devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/build', requireSuperAdmin, ctrl.buildBranch)
 devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/reset', requireSuperAdmin, ctrl.resetBranchPreview)
+devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/remove', requireSuperAdmin, ctrl.removeBranchPreview)
+devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/promote', requireSuperAdmin, ctrl.promoteBranchPreview)
+devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/restore-latest-release', requireSuperAdmin, ctrl.restoreLatestRelease)

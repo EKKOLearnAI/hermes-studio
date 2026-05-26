@@ -9,7 +9,10 @@ import {
   fetchBranchBuildBranches,
   fetchBranchBuildStatus,
   fetchBranchPreviewCapabilities,
+  promoteBranchPreview,
+  removeBranchPreview,
   resetBranchPreview,
+  restoreLatestUpstreamRelease,
   type BranchBuildSummary,
   type BranchPreviewCapabilities,
 } from '@/api/hermes/dev-mode-branch-builds'
@@ -46,6 +49,10 @@ const currentPreviewLabel = computed(() => {
 })
 const currentPreviewUrl = computed(() => branchBuild.value?.previewUrl || null)
 const hasBuildError = computed(() => branchBuild.value?.status === 'failed' || Boolean(branchBuild.value?.error))
+const hasActivePreview = computed(() => Boolean(branchBuild.value?.previewId))
+const canRemovePreview = computed(() => canRunPreviewActions.value && hasActivePreview.value)
+const canPromotePreview = computed(() => canRunPreviewActions.value && branchBuild.value?.status === 'success' && Boolean(branchBuild.value?.previewBranch))
+const canRestoreLatestRelease = computed(() => canRunPreviewActions.value)
 const settingsChanged = computed(() =>
   draftEnabled.value !== persistedDevEnabled.value
   || draftReviewBase.value !== (settingsStore.dev.review_base || DEFAULT_REVIEW_BASE)
@@ -91,6 +98,11 @@ function statusType(status: BranchBuildSummary['status']) {
 function fmtTime(value: number | null) {
   if (!value) return '—'
   return new Date(value).toLocaleString()
+}
+
+function confirmAction(messageText: string) {
+  if (typeof window === 'undefined') return true
+  return window.confirm(messageText)
 }
 
 watch(() => ({ ...settingsStore.dev }), () => {
@@ -233,6 +245,70 @@ async function resetToReviewBase() {
   }
 }
 
+async function removeCurrentPreview() {
+  if (!confirmAction(t('settings.dev.removePreviewConfirm'))) return
+  running.value = true
+  try {
+    const result = await removeBranchPreview()
+    branchBuild.value = result
+    draftPreviewBranch.value = ''
+    draftReviewBase.value = result.reviewBase || DEFAULT_REVIEW_BASE
+    settingsStore.updateLocal('dev', {
+      preview_branch: '',
+      review_base: draftReviewBase.value,
+    })
+    message.success(t('settings.dev.removePreviewDone'))
+    await refreshStatus()
+  } catch (err: any) {
+    message.error(err?.message || t('settings.dev.removePreviewFailed'))
+  } finally {
+    running.value = false
+  }
+}
+
+async function promoteCurrentPreview() {
+  if (!confirmAction(t('settings.dev.promotePreviewConfirm'))) return
+  running.value = true
+  try {
+    const result = await promoteBranchPreview()
+    branchBuild.value = result
+    draftReviewBase.value = result.reviewBase || draftReviewBase.value
+    if (result.previewBranch) {
+      draftPreviewBranch.value = result.previewBranch
+    }
+    settingsStore.updateLocal('dev', {
+      review_base: draftReviewBase.value,
+    })
+    message.success(t('settings.dev.promotePreviewDone'))
+    await refreshStatus()
+  } catch (err: any) {
+    message.error(err?.message || t('settings.dev.promotePreviewFailed'))
+  } finally {
+    running.value = false
+  }
+}
+
+async function restoreLatestRelease() {
+  if (!confirmAction(t('settings.dev.restoreLatestReleaseConfirm'))) return
+  running.value = true
+  try {
+    const result = await restoreLatestUpstreamRelease()
+    branchBuild.value = result
+    draftPreviewBranch.value = ''
+    draftReviewBase.value = result.reviewBase || DEFAULT_REVIEW_BASE
+    settingsStore.updateLocal('dev', {
+      preview_branch: '',
+      review_base: draftReviewBase.value,
+    })
+    message.success(t('settings.dev.restoreLatestReleaseDone'))
+    await refreshStatus()
+  } catch (err: any) {
+    message.error(err?.message || t('settings.dev.restoreLatestReleaseFailed'))
+  } finally {
+    running.value = false
+  }
+}
+
 onMounted(async () => {
   await refreshStatus()
 })
@@ -312,6 +388,20 @@ onMounted(async () => {
           </NButton>
           <NButton :loading="running" :disabled="!canRunPreviewActions" @click="resetToReviewBase">
             {{ t('settings.dev.resetToBase') }}
+          </NButton>
+        </NSpace>
+      </div>
+
+      <div class="actions actions-recovery">
+        <NSpace>
+          <NButton :loading="running" :disabled="!canRemovePreview" @click="removeCurrentPreview">
+            {{ t('settings.dev.removePreview') }}
+          </NButton>
+          <NButton :loading="running" :disabled="!canPromotePreview" @click="promoteCurrentPreview">
+            {{ t('settings.dev.promotePreview') }}
+          </NButton>
+          <NButton :loading="running" :disabled="!canRestoreLatestRelease" @click="restoreLatestRelease">
+            {{ t('settings.dev.restoreLatestRelease') }}
           </NButton>
         </NSpace>
       </div>

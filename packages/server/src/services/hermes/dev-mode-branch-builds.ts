@@ -4,7 +4,7 @@ import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { config } from '../../config'
 import { getProfileDir } from './hermes-profile'
-import { PREVIEW_SLOT_ID, startPreviewInstanceWithId, updatePreviewInstance } from './preview-registry'
+import { PREVIEW_SLOT_ID, removePreviewInstance, startPreviewInstanceWithId, updatePreviewInstance } from './preview-registry'
 import { safeFileStore } from '../safe-file-store'
 import { logger } from '../logger'
 
@@ -525,11 +525,7 @@ async function markBuildFailure(profile: string, previewId: string, error: strin
   return state
 }
 
-export async function getBranchBuildSummary(profile: string): Promise<BranchBuildSummary> {
-  const [enabled, state] = await Promise.all([
-    isDevModeEnabled(profile),
-    readState(profile),
-  ])
+function summarizeBranchBuildState(enabled: boolean, state: BranchBuildState): BranchBuildSummary {
   return {
     enabled,
     status: state.status,
@@ -546,6 +542,14 @@ export async function getBranchBuildSummary(profile: string): Promise<BranchBuil
     reviewBase: state.reviewBase,
     logTail: state.logTail,
   }
+}
+
+export async function getBranchBuildSummary(profile: string): Promise<BranchBuildSummary> {
+  const [enabled, state] = await Promise.all([
+    isDevModeEnabled(profile),
+    readState(profile),
+  ])
+  return summarizeBranchBuildState(enabled, state)
 }
 
 export async function isDevModeEnabled(profile: string): Promise<boolean> {
@@ -665,22 +669,97 @@ export async function resetPreviewTarget(profile: string): Promise<BranchBuildSu
     logTail: [...state.logTail, `Preview target reset to ${branch}`].slice(-MAX_LOG_LINES),
   })
 
-  return {
-    enabled: true,
-    status: state.status,
-    previewId: state.previewId,
-    previewUrl: buildPreviewUrl(state.previewId),
-    previewBranch: state.previewBranch,
-    previewWorktreePath: state.previewWorktreePath,
-    buildBranch: state.buildBranch,
-    startedAt: state.startedAt,
-    finishedAt: state.finishedAt,
-    exitCode: state.exitCode,
-    signal: state.signal,
-    error: state.error,
-    reviewBase: state.reviewBase,
-    logTail: state.logTail,
+  return summarizeBranchBuildState(true, state)
+}
+
+export async function removePreviewTarget(profile: string): Promise<BranchBuildSummary> {
+  if (!await isDevModeEnabled(profile)) {
+    throw new Error('Dev Mode is disabled')
   }
+
+  const current = await readState(profile)
+  if (current.previewId) {
+    await removePreviewInstance(profile, current.previewId)
+  }
+
+  const state = await updateState(profile, async (next) => ({
+    ...next,
+    previewId: null,
+    previewBranch: null,
+    previewWorktreePath: null,
+    buildBranch: null,
+    status: 'idle',
+    startedAt: null,
+    finishedAt: Date.now(),
+    exitCode: null,
+    signal: null,
+    error: null,
+    logTail: [...next.logTail, 'Preview removed'].slice(-MAX_LOG_LINES),
+  }))
+
+  return summarizeBranchBuildState(true, state)
+}
+
+export async function promotePreviewTarget(profile: string): Promise<BranchBuildSummary> {
+  if (!await isDevModeEnabled(profile)) {
+    throw new Error('Dev Mode is disabled')
+  }
+
+  const current = await readState(profile)
+  if (!current.previewBranch || current.status !== 'success') {
+    throw new Error('No successful preview is available to promote')
+  }
+
+  if (current.previewId) {
+    await removePreviewInstance(profile, current.previewId)
+  }
+
+  const state = await updateState(profile, async (next) => ({
+    ...next,
+    reviewBase: current.previewBranch ?? next.reviewBase,
+    previewId: null,
+    previewBranch: null,
+    previewWorktreePath: null,
+    buildBranch: null,
+    status: 'idle',
+    startedAt: null,
+    finishedAt: Date.now(),
+    exitCode: null,
+    signal: null,
+    error: null,
+    logTail: [...next.logTail, `Promoted preview branch ${current.previewBranch} to review base`].slice(-MAX_LOG_LINES),
+  }))
+
+  return summarizeBranchBuildState(true, state)
+}
+
+export async function restoreLatestUpstreamRelease(profile: string): Promise<BranchBuildSummary> {
+  if (!await isDevModeEnabled(profile)) {
+    throw new Error('Dev Mode is disabled')
+  }
+
+  const current = await readState(profile)
+  if (current.previewId) {
+    await removePreviewInstance(profile, current.previewId)
+  }
+
+  const state = await updateState(profile, async (next) => ({
+    ...next,
+    reviewBase: DEFAULT_REVIEW_BASE,
+    previewId: null,
+    previewBranch: null,
+    previewWorktreePath: null,
+    buildBranch: null,
+    status: 'idle',
+    startedAt: null,
+    finishedAt: Date.now(),
+    exitCode: null,
+    signal: null,
+    error: null,
+    logTail: [...next.logTail, 'Restored latest upstream release'].slice(-MAX_LOG_LINES),
+  }))
+
+  return summarizeBranchBuildState(true, state)
 }
 
 export function isSafeBranchNameForTest(branch: string): boolean {
