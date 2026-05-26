@@ -271,16 +271,17 @@ describe('DevModeSettings', () => {
 
     await flushPromises()
 
-    expect(fetchBranchBuildBranches).toHaveBeenCalledTimes(1)
-    expect(fetchBranchBuildStatus).toHaveBeenCalledTimes(1)
+    expect(fetchBranchBuildBranches).not.toHaveBeenCalled()
+    expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
+    expect(fetchBranchPreviewCapabilities).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('settings.dev.warningTitle')
-    expect(wrapper.text()).toContain('settings.dev.branchPreviewTitle')
-    expect(wrapper.text()).toContain('settings.dev.branchToPreview')
-    expect(wrapper.text()).toContain('settings.dev.currentPreview')
-    expect(wrapper.text()).toContain('settings.dev.previewUrl')
-    expect(wrapper.text()).toContain('/preview/')
-    expect(wrapper.text()).toContain('settings.dev.buildPreview')
-    expect(wrapper.text()).toContain('settings.dev.advancedDetails')
+    expect(wrapper.text()).toContain('settings.dev.disabledNote')
+    expect(wrapper.text()).not.toContain('settings.dev.branchPreviewTitle')
+    expect(wrapper.text()).not.toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.currentPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.previewUrl')
+    expect(wrapper.text()).not.toContain('settings.dev.buildPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.advancedDetails')
     expect(wrapper.text()).not.toContain('settings.dev.worktreePath')
     expect(wrapper.text()).not.toContain('settings.dev.exitCode')
     expect(wrapper.text()).not.toContain('settings.dev.signal')
@@ -289,15 +290,11 @@ describe('DevModeSettings', () => {
     expect(wrapper.text()).not.toContain('settings.dev.noLogs')
 
     const selects = wrapper.findAll('select')
-    expect(selects).toHaveLength(1)
-    expect(selects[0].attributes('data-filterable')).toBe('true')
-    expect(selects[0].attributes('data-placeholder')).toBe('settings.dev.branchToPreviewPlaceholder')
-    expect(selects[0].element.querySelectorAll('option')).toHaveLength(3)
-    expect((wrapper.find('button.advanced-summary').element as HTMLButtonElement).textContent).toContain('settings.dev.advancedDetails')
-
+    expect(selects).toHaveLength(0)
   })
 
   it('reveals advanced details when opened and auto-opens on failed build status', async () => {
+    settingsStore.dev.enabled = true
     fetchBranchBuildStatus.mockResolvedValue({
       status: 'failed',
       previewBranch: 'feature/dev-b',
@@ -333,22 +330,39 @@ describe('DevModeSettings', () => {
     expect(wrapper.text()).not.toContain('settings.dev.finishedAt')
   })
 
-  it('keeps Build preview disabled until Dev Mode is persisted', async () => {
+  it('keeps branch preview controls hidden until Dev Mode is persisted', async () => {
     const wrapper = mountComponent()
 
     await flushPromises()
 
-    const buildButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')!
-    expect(buildButton.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('settings.dev.branchPreviewTitle')
+    expect(wrapper.findAll('select')).toHaveLength(0)
 
     await wrapper.find('.n-switch').trigger('click')
     await flushPromises()
 
     expect(settingsStore.dev.enabled).toBe(false)
-    expect(buildButton.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('settings.dev.branchPreviewTitle')
+    expect(wrapper.findAll('select')).toHaveLength(0)
+
+    const saveButton = wrapper.findAll('button').find((button) => button.text() === 'common.save')!
+    await saveButton.trigger('click')
+    await flushPromises()
+
+    expect(settingsStore.saveSection).toHaveBeenCalledWith('dev', {
+      enabled: true,
+      review_base: 'main',
+      preview_branch: '',
+    })
+    expect(fetchBranchBuildStatus).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('settings.dev.branchPreviewTitle')
+    expect(wrapper.findAll('select')).toHaveLength(1)
+    const buildButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')!
+    expect(buildButton.attributes('disabled')).toBeUndefined()
   })
 
   it('saves the selected preview/base branches only after save succeeds and refreshes status', async () => {
+    settingsStore.dev.enabled = true
     const wrapper = mountComponent()
 
     await flushPromises()
@@ -361,9 +375,8 @@ describe('DevModeSettings', () => {
     const selects = wrapper.findAll('select')
     await selects[0].setValue('feature/dev-b')
     await selects[1].setValue('feature/dev-a')
-    await wrapper.find('.n-switch').trigger('click')
 
-    expect(settingsStore.dev.enabled).toBe(false)
+    expect(settingsStore.dev.enabled).toBe(true)
     expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
 
     const saveButton = wrapper.findAll('button').find((button) => button.text() === 'common.save')!
@@ -417,6 +430,7 @@ describe('DevModeSettings', () => {
   })
 
   it('shows a compact unavailable state when branch preview is not configured', async () => {
+    settingsStore.dev.enabled = true
     fetchBranchPreviewCapabilities.mockResolvedValue({
       isSuperAdmin: true,
       devModeAvailable: true,

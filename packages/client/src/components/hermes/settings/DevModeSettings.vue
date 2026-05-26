@@ -37,9 +37,10 @@ const showAdvancedDetails = ref(false)
 
 const canUseDevMode = computed(() => isStoredSuperAdmin())
 const branchPreviewConfigured = computed(() => capabilities.value?.branchPreviewConfigured !== false)
-const canListBranches = computed(() => canUseDevMode.value && capabilities.value?.canListBranches !== false)
+const canListBranches = computed(() => canUseDevMode.value && persistedDevEnabled.value && capabilities.value?.canListBranches !== false)
 const capabilityReason = computed(() => capabilities.value?.reason ? t(`settings.dev.capabilityReasons.${capabilities.value.reason}`) : t('settings.dev.capabilityUnavailable'))
 const persistedDevEnabled = computed(() => !!settingsStore.dev.enabled)
+const showBranchPreviewWorkflow = computed(() => canUseDevMode.value && persistedDevEnabled.value)
 const canRunPreviewActions = computed(() => canUseDevMode.value && branchPreviewConfigured.value && persistedDevEnabled.value)
 const branchOptions = computed(() => branchList.value.map((branch) => ({ label: branch, value: branch })))
 const currentPreviewLabel = computed(() => {
@@ -153,7 +154,7 @@ async function refreshBranches() {
 }
 
 async function refreshStatus() {
-  if (!canUseDevMode.value) return
+  if (!showBranchPreviewWorkflow.value) return
   loading.value = true
   try {
     const caps = await refreshCapabilities()
@@ -322,7 +323,7 @@ onMounted(async () => {
     </div>
 
     <NAlert
-      v-if="capabilities && !branchPreviewConfigured"
+      v-if="showBranchPreviewWorkflow && capabilities && !branchPreviewConfigured"
       type="info"
       class="dev-warning"
       :title="t('settings.dev.notConfiguredTitle')"
@@ -330,7 +331,7 @@ onMounted(async () => {
       {{ capabilityReason }}
     </NAlert>
 
-    <template v-else>
+    <div v-else>
       <NAlert type="warning" class="dev-warning" :title="t('settings.dev.warningTitle')">
         {{ t('settings.dev.warningBody') }}
       </NAlert>
@@ -346,112 +347,120 @@ onMounted(async () => {
         {{ t('settings.dev.disabledNote') }}
       </NAlert>
 
-      <NCard size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
-      <template #header-extra>
-        <NTag :type="statusType(branchBuild?.status || 'idle')" size="small">
-          {{ branchBuild?.status || 'idle' }}
-        </NTag>
-      </template>
-
-      <div class="branch-preview-grid">
-        <SettingRow :label="t('settings.dev.branchToPreview')" :hint="t('settings.dev.branchToPreviewHint')">
-          <NSelect
-            v-model:value="draftPreviewBranch"
-            filterable
-            clearable
-            size="small"
-            class="input-lg"
-            :loading="loading"
-            :options="branchOptions"
-            :placeholder="t('settings.dev.branchToPreviewPlaceholder')"
-            :disabled="running"
-          />
-        </SettingRow>
-
-        <div class="current-preview-block">
-          <div class="current-preview-label">{{ t('settings.dev.currentPreview') }}</div>
-          <div class="current-preview-value">{{ currentPreviewLabel }}</div>
-        </div>
-        <div v-if="currentPreviewUrl" class="current-preview-url-block">
-          <div class="current-preview-label">{{ t('settings.dev.previewUrl') }}</div>
-          <a :href="currentPreviewUrl" class="current-preview-url" target="_blank" rel="noreferrer">{{ currentPreviewUrl }}</a>
-        </div>
-      </div>
-
       <div class="actions actions-primary">
         <NSpace>
           <NButton type="primary" :loading="saving" :disabled="!canUseDevMode || !settingsChanged" @click="saveDevSettings">
             {{ t('common.save') }}
           </NButton>
-          <NButton type="info" :loading="running" :disabled="!canRunPreviewActions || !draftPreviewBranch || !branchList.length" @click="buildSelectedBranch">
-            {{ t('settings.dev.buildPreview') }}
-          </NButton>
-          <NButton :loading="running" :disabled="!canRunPreviewActions" @click="resetToReviewBase">
-            {{ t('settings.dev.resetToBase') }}
-          </NButton>
         </NSpace>
       </div>
 
-      <div class="actions actions-recovery">
-        <NSpace>
-          <NButton :loading="running" :disabled="!canRemovePreview" @click="removeCurrentPreview">
-            {{ t('settings.dev.removePreview') }}
-          </NButton>
-          <NButton :loading="running" :disabled="!canPromotePreview" @click="promoteCurrentPreview">
-            {{ t('settings.dev.promotePreview') }}
-          </NButton>
-          <NButton :loading="running" :disabled="!canRestoreLatestRelease" @click="restoreLatestRelease">
-            {{ t('settings.dev.restoreLatestRelease') }}
-          </NButton>
-        </NSpace>
+      <div v-if="showBranchPreviewWorkflow">
+        <NCard size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
+          <template #header-extra>
+            <NTag :type="statusType(branchBuild?.status || 'idle')" size="small">
+              {{ branchBuild?.status || 'idle' }}
+            </NTag>
+          </template>
+
+          <div class="branch-preview-grid">
+            <SettingRow :label="t('settings.dev.branchToPreview')" :hint="t('settings.dev.branchToPreviewHint')">
+              <NSelect
+                v-model:value="draftPreviewBranch"
+                filterable
+                clearable
+                size="small"
+                class="input-lg"
+                :loading="loading"
+                :options="branchOptions"
+                :placeholder="t('settings.dev.branchToPreviewPlaceholder')"
+                :disabled="running"
+              />
+            </SettingRow>
+
+            <div class="current-preview-block">
+              <div class="current-preview-label">{{ t('settings.dev.currentPreview') }}</div>
+              <div class="current-preview-value">{{ currentPreviewLabel }}</div>
+            </div>
+            <div v-if="currentPreviewUrl" class="current-preview-url-block">
+              <div class="current-preview-label">{{ t('settings.dev.previewUrl') }}</div>
+              <a :href="currentPreviewUrl" class="current-preview-url" target="_blank" rel="noreferrer">{{ currentPreviewUrl }}</a>
+            </div>
+          </div>
+
+          <div class="actions actions-primary">
+            <NSpace>
+              <NButton type="info" :loading="running" :disabled="!canRunPreviewActions || !draftPreviewBranch || !branchList.length" @click="buildSelectedBranch">
+                {{ t('settings.dev.buildPreview') }}
+              </NButton>
+              <NButton :loading="running" :disabled="!canRunPreviewActions" @click="resetToReviewBase">
+                {{ t('settings.dev.resetToBase') }}
+              </NButton>
+            </NSpace>
+          </div>
+
+          <div class="actions actions-recovery">
+            <NSpace>
+              <NButton :loading="running" :disabled="!canRemovePreview" @click="removeCurrentPreview">
+                {{ t('settings.dev.removePreview') }}
+              </NButton>
+              <NButton :loading="running" :disabled="!canPromotePreview" @click="promoteCurrentPreview">
+                {{ t('settings.dev.promotePreview') }}
+              </NButton>
+              <NButton :loading="running" :disabled="!canRestoreLatestRelease" @click="restoreLatestRelease">
+                {{ t('settings.dev.restoreLatestRelease') }}
+              </NButton>
+            </NSpace>
+          </div>
+
+          <button class="advanced-summary" type="button" @click="showAdvancedDetails = !showAdvancedDetails">
+            {{ t('settings.dev.advancedDetails') }}
+            <span class="advanced-summary-caret">{{ showAdvancedDetails ? '▾' : '▸' }}</span>
+          </button>
+
+          <div v-if="showAdvancedDetails" class="advanced-content">
+            <SettingRow :label="t('settings.dev.baseBranch')" :hint="t('settings.dev.baseBranchHint')">
+              <NSelect
+                v-model:value="draftReviewBase"
+                filterable
+                size="small"
+                class="input-lg"
+                :loading="loading"
+                :options="branchOptions"
+                :placeholder="t('settings.dev.baseBranchPlaceholder')"
+                :disabled="!canUseDevMode || running"
+              />
+            </SettingRow>
+
+            <div class="actions actions-secondary">
+              <NSpace>
+                <NButton :loading="loading" :disabled="!canUseDevMode || running" @click="refreshBranches">
+                  {{ t('settings.dev.refreshBranches') }}
+                </NButton>
+                <NButton :loading="loading" :disabled="!canUseDevMode || running" @click="refreshStatus">
+                  {{ t('settings.dev.refreshStatus') }}
+                </NButton>
+              </NSpace>
+            </div>
+
+            <div class="meta-grid">
+              <div><strong>{{ t('settings.dev.worktreePath') }}:</strong> {{ branchBuild?.previewWorktreePath || '—' }}</div>
+              <div><strong>{{ t('settings.dev.startedAt') }}:</strong> {{ fmtTime(branchBuild?.startedAt || null) }}</div>
+              <div><strong>{{ t('settings.dev.finishedAt') }}:</strong> {{ fmtTime(branchBuild?.finishedAt || null) }}</div>
+              <div><strong>{{ t('settings.dev.exitCode') }}:</strong> {{ branchBuild?.exitCode ?? '—' }}</div>
+              <div><strong>{{ t('settings.dev.signal') }}:</strong> {{ branchBuild?.signal || '—' }}</div>
+            </div>
+
+            <div v-if="branchBuild?.error" class="error-block">
+              <strong>{{ t('settings.dev.lastError') }}:</strong> {{ branchBuild.error }}
+            </div>
+
+            <pre class="log-tail">{{ branchBuild?.logTail?.join('\n') || t('settings.dev.noLogs') }}</pre>
+          </div>
+        </NCard>
       </div>
+    </div>
 
-      <button class="advanced-summary" type="button" @click="showAdvancedDetails = !showAdvancedDetails">
-        {{ t('settings.dev.advancedDetails') }}
-        <span class="advanced-summary-caret">{{ showAdvancedDetails ? '▾' : '▸' }}</span>
-      </button>
-
-      <div v-if="showAdvancedDetails" class="advanced-content">
-        <SettingRow :label="t('settings.dev.baseBranch')" :hint="t('settings.dev.baseBranchHint')">
-          <NSelect
-            v-model:value="draftReviewBase"
-            filterable
-            size="small"
-            class="input-lg"
-            :loading="loading"
-            :options="branchOptions"
-            :placeholder="t('settings.dev.baseBranchPlaceholder')"
-            :disabled="!canUseDevMode || running"
-          />
-        </SettingRow>
-
-        <div class="actions actions-secondary">
-          <NSpace>
-            <NButton :loading="loading" :disabled="!canUseDevMode || running" @click="refreshBranches">
-              {{ t('settings.dev.refreshBranches') }}
-            </NButton>
-            <NButton :loading="loading" :disabled="!canUseDevMode || running" @click="refreshStatus">
-              {{ t('settings.dev.refreshStatus') }}
-            </NButton>
-          </NSpace>
-        </div>
-
-        <div class="meta-grid">
-          <div><strong>{{ t('settings.dev.worktreePath') }}:</strong> {{ branchBuild?.previewWorktreePath || '—' }}</div>
-          <div><strong>{{ t('settings.dev.startedAt') }}:</strong> {{ fmtTime(branchBuild?.startedAt || null) }}</div>
-          <div><strong>{{ t('settings.dev.finishedAt') }}:</strong> {{ fmtTime(branchBuild?.finishedAt || null) }}</div>
-          <div><strong>{{ t('settings.dev.exitCode') }}:</strong> {{ branchBuild?.exitCode ?? '—' }}</div>
-          <div><strong>{{ t('settings.dev.signal') }}:</strong> {{ branchBuild?.signal || '—' }}</div>
-        </div>
-
-        <div v-if="branchBuild?.error" class="error-block">
-          <strong>{{ t('settings.dev.lastError') }}:</strong> {{ branchBuild.error }}
-        </div>
-
-        <pre class="log-tail">{{ branchBuild?.logTail?.join('\n') || t('settings.dev.noLogs') }}</pre>
-      </div>
-      </NCard>
-    </template>
   </section>
 </template>
 

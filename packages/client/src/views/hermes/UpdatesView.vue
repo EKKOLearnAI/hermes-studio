@@ -189,7 +189,7 @@ onMounted(() => {
             </div>
           </NCard>
 
-          <NCard size="small" class="updates-card" :title="t('updates.previewTitle')">
+          <NCard v-if="canUseDevMode" size="small" class="updates-card" :title="t('updates.previewTitle')">
             <template #header-extra>
               <NTag :type="previewTagType" size="small">
                 {{ previewSummaryText }}
@@ -224,6 +224,7 @@ onMounted(() => {
               </NButton>
             </div>
           </NCard>
+
 
           <NCard size="small" class="updates-card" :title="t('updates.recoveryTitle')">
             <div class="card-stack">

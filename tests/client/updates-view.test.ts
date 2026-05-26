@@ -119,8 +119,8 @@ describe('UpdatesView', () => {
 
     expect(wrapper.text()).toContain('updates.currentStableTitle')
     expect(wrapper.text()).toContain('updates.latestReleaseTitle')
-    expect(wrapper.text()).toContain('updates.previewTitle')
     expect(wrapper.text()).toContain('updates.recoveryTitle')
+    expect(wrapper.text()).not.toContain('updates.previewTitle')
     expect(wrapper.text()).not.toContain('updates.openDevMode')
     expect(fetchBranchPreviewCapabilitiesMock).not.toHaveBeenCalled()
   })
