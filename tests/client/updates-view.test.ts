@@ -425,7 +425,8 @@ describe('UpdatesView', () => {
     const switchButton = wrapper.find('button.n-switch')
     expect(switchButton.exists()).toBe(true)
     expect(wrapper.text()).toContain('updates.previewStableCopy')
-    expect(wrapper.text()).toContain('settings.dev.disabledNote')
+    expect(wrapper.text()).not.toContain('settings.dev.disabledNote')
+    expect(wrapper.text()).not.toContain('updates.previewUnavailableTitle')
 
     await switchButton.trigger('click')
     await flushPromises()
@@ -442,7 +443,7 @@ describe('UpdatesView', () => {
       'Branch',
       'Commit',
     ])
-    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
   })
 
   it('expands source choices and shows failure logs when Dev Mode is enabled', async () => {
@@ -518,7 +519,7 @@ describe('UpdatesView', () => {
       'Branch',
       'Commit',
     ])
-    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
 
     await selects[1].setValue('branch')
     await flushPromises()

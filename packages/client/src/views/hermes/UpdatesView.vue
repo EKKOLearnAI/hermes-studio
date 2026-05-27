@@ -85,13 +85,20 @@ const commitPreviewAvailable = computed(() => previewSourceCapabilities.value.co
 const releaseOptions = computed(() => {
   const releases = new Set(availableReleases.value)
   if (latestReleaseVersion.value !== '—') releases.add(latestReleaseVersion.value)
+  const current = currentPreviewReleaseVersion.value
   return [...releases]
     .filter(version => version.trim())
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
-    .map((version) => ({ label: version, value: version }))
+    .map((version) => {
+      const labels: string[] = []
+      if (version === latestReleaseVersion.value) labels.push('latest')
+      if (current && version === current) labels.push('current')
+      return { label: labels.length ? `${version} (${labels.join(', ')})` : version, value: version }
+    })
 })
 const latestReleaseVersion = computed(() => appStore.latestVersion || '—')
 const selectedReleaseVersion = computed(() => releaseVersionRef.value || releaseOptions.value[0]?.value || '')
+const currentPreviewReleaseVersion = computed(() => previewStatus.value?.previewReleaseVersion || previewStatus.value?.buildReleaseVersion || '')
 const currentStableVersion = computed(() => fmtUnknown(appStore.serverVersion))
 const hasLatestRelease = computed(() => !!appStore.latestVersion)
 const previewReady = computed(() => previewStatus.value?.status === 'success')
@@ -120,13 +127,12 @@ const updateStableLabel = computed(() => {
   return t('updates.updateNow')
 })
 const previewSummaryText = computed(() => {
-  if (!canUseDevMode.value) return t('updates.previewUnavailable')
   if (!releasePreviewAvailable.value && !branchPreviewAvailable.value && !commitPreviewAvailable.value) return t('updates.previewUnavailable')
   if (!previewStatus.value) return 'idle'
   return previewStatus.value.status || 'idle'
 })
 const previewTagType = computed(() => {
-  if (!canUseDevMode.value || (!releasePreviewAvailable.value && !branchPreviewAvailable.value && !commitPreviewAvailable.value) || !previewStatus.value) return 'default'
+  if ((!releasePreviewAvailable.value && !branchPreviewAvailable.value && !commitPreviewAvailable.value) || !previewStatus.value) return 'default'
   switch (previewStatus.value.status) {
     case 'running': return 'warning'
     case 'success': return 'success'
@@ -159,7 +165,6 @@ const currentPreviewSourceLabel = computed(() => {
 })
 const previewModeCopy = computed(() => t('updates.previewStableCopy'))
 const repositoryResolution = computed(() => previewCapabilities.value?.repository || null)
-const repositoryReason = computed(() => repositoryResolution.value?.reason || null)
 const repositoryStatusText = computed(() => {
   const resolution = repositoryResolution.value
   if (!resolution) return 'Repository status unknown'
@@ -167,6 +172,12 @@ const repositoryStatusText = computed(() => {
   if (resolution.reason === 'repo_path_missing') return 'Repository path is missing or unavailable'
   if (resolution.reason === 'not_git_repo') return 'Repository is not configured or is not a git checkout'
   return 'Repository not available'
+})
+const repositoryBlocksSelectedDevSource = computed(() => {
+  if (previewSourceKind.value === 'release') return false
+  const resolution = repositoryResolution.value
+  if (!resolution) return true
+  return !resolution.available || resolution.reason === 'repo_path_missing' || resolution.reason === 'not_git_repo'
 })
 const repoTypeOptions = [
   { label: 'Git URL', value: 'git-url' },
@@ -179,8 +190,8 @@ const canSaveRepository = computed(() => {
   return Boolean(parseGithubOwnerRepo(repoGithubOwnerRepo.value))
 })
 const canBuildPreview = computed(() => {
-  if (!canUseDevMode.value) return false
   if (previewSourceKind.value === 'release') return releasePreviewAvailable.value && Boolean(selectedReleaseVersion.value)
+  if (!canUseDevMode.value) return false
   if (!devModeEnabled.value) return false
   if (previewSourceKind.value === 'branch') return branchPreviewAvailable.value && Boolean(previewBranchRef.value)
   return commitPreviewAvailable.value && Boolean(previewCommitRef.value)
@@ -490,36 +501,25 @@ onMounted(() => {
                 <strong>{{ currentStableVersion }}</strong>
               </div>
               <div class="metric-row">
-                <span>Build commit</span>
-                <strong>{{ stableBuildCommit }}</strong>
-              </div>
-              <div class="metric-row">
-                <span>Build branch</span>
-                <strong>{{ stableBuildBranch }}</strong>
-              </div>
-              <div class="metric-row">
-                <span>Build source</span>
-                <strong>{{ stableBuildSource }}</strong>
-              </div>
-              <div class="metric-row">
-                <span>Built at</span>
-                <strong>{{ stableBuiltAt }}</strong>
-              </div>
-              <div class="metric-row">
                 <span>{{ t('updates.latestReleaseVersion') }}</span>
                 <strong>{{ latestReleaseVersion }}</strong>
               </div>
               <div class="metric-row">
-                <span>{{ t('updates.updateStatus') }}</span>
-                <strong>{{ stableStatusText }}</strong>
+                <span>Build</span>
+                <strong>{{ stableBuildCommit }} · {{ stableBuildBranch }}</strong>
               </div>
-              <div class="metric-row">
+              <div class="metric-row muted-row">
+                <span>Source</span>
+                <strong>{{ stableBuildSource }}</strong>
+              </div>
+              <div class="metric-row muted-row">
+                <span>Built at</span>
+                <strong>{{ stableBuiltAt }}</strong>
+              </div>
+              <div class="metric-row muted-row">
                 <span>{{ t('updates.lastChecked') }}</span>
                 <strong>{{ stableLastCheckedText }}</strong>
               </div>
-              <NAlert v-if="!appStore.connected" type="warning" :title="t('updates.sourceUnavailableTitle')">
-                {{ t('updates.sourceUnavailableBody') }}
-              </NAlert>
 
               <div class="actions-row">
                 <NButton size="small" :loading="loading || previewLoading" @click="refreshAll(false)">
@@ -554,10 +554,6 @@ onMounted(() => {
               </NAlert>
 
               <template v-else>
-                <NAlert v-if="canUseDevMode" type="warning" :title="t('settings.dev.warningTitle')">
-                  {{ t('settings.dev.warningBody') }}
-                </NAlert>
-
                 <div v-if="canUseDevMode" class="field-row dev-mode-row">
                   <span>{{ t('settings.dev.enabled') }}</span>
                   <NSwitch
@@ -568,18 +564,14 @@ onMounted(() => {
                   />
                 </div>
 
-                <NAlert v-if="canUseDevMode && !devModeEnabled" type="info" :title="t('updates.previewUnavailableTitle')">
-                  {{ t('settings.dev.disabledNote') }}
-                </NAlert>
-
                 <section v-if="canUseDevMode && devModeEnabled" class="developer-panel">
                   <div class="developer-panel-header">
                     <strong>Developer repository</strong>
                     <span>Release previews remain available and do not use git.</span>
                   </div>
-                  <NAlert type="warning" title="Trusted repositories only">
-                    Branch and commit previews run repository install/build scripts on this machine.
-                  </NAlert>
+                  <p class="muted-note">
+                    Trusted repositories only: Branch and Commit previews run repository install/build scripts on this machine.
+                  </p>
                   <div class="field-grid">
                     <div class="field-row">
                       <span>Repository type</span>
@@ -598,11 +590,11 @@ onMounted(() => {
                       <input v-model="repoLocalPath" class="text-input" type="text" placeholder="/path/to/hermes-web-ui" :disabled="repositorySaving || previewActionLoading">
                     </div>
                   </div>
-                  <div class="metric-row">
+                  <div class="metric-row muted-row">
                     <span>Repository status</span>
                     <strong>{{ repositoryStatusText }}</strong>
                   </div>
-                  <NAlert v-if="repositoryReason && previewSourceKind !== 'release'" type="warning" title="Repository required">
+                  <NAlert v-if="repositoryBlocksSelectedDevSource" type="warning" title="Repository required">
                     Configure and validate a local path, Git URL, or GitHub repo to build Branch/Commit previews.
                   </NAlert>
                   <div class="actions-row">
@@ -746,7 +738,7 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 20px 24px 32px;
 }
 
 .page-header {
@@ -755,7 +747,9 @@ onMounted(() => {
   justify-content: space-between;
   gap: 16px;
   flex-shrink: 0;
-  padding: 20px 20px 0;
+  width: min(100%, 880px);
+  margin: 0 auto;
+  padding: 20px 24px 0;
 }
 
 .header-title {
@@ -782,7 +776,8 @@ onMounted(() => {
 .updates-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  max-width: 980px;
+  width: min(100%, 880px);
+  margin: 0 auto;
   gap: 16px;
 }
 
@@ -800,9 +795,9 @@ onMounted(() => {
   display: grid;
   gap: 12px;
   padding: 12px;
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.28);
+  border: 1px solid rgba(127, 127, 127, 0.2);
   border-radius: 10px;
-  background: rgba(var(--accent-primary-rgb), 0.05);
+  background: rgba(127, 127, 127, 0.04);
 }
 
 .developer-panel-header {
