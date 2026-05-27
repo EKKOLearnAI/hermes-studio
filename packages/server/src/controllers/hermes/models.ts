@@ -801,6 +801,13 @@ export async function fetchProviderModelList(ctx: any) {
       return
     }
 
+    const { isSafeUrl } = await import('../../lib/ssrf-protection')
+    if (!(await isSafeUrl(baseUrl))) {
+      ctx.status = 400
+      ctx.body = { error: 'base_url must be a public URL' }
+      return
+    }
+
     const base = baseUrl.replace(/\/+$/, '')
     const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
     const headers: Record<string, string> = {}

@@ -227,6 +227,11 @@ export async function listFilesRecursive(dir: string, prefix: string): Promise<{
 // --- Provider model helpers ---
 
 export async function fetchProviderModels(baseUrl: string, apiKey: string, freeOnly = false): Promise<string[]> {
+  const { isSafeUrl } = await import('../lib/ssrf-protection')
+  if (!(await isSafeUrl(baseUrl))) {
+    logger.warn('ssrf-protection %s is not a public URL, skipping', baseUrl)
+    return []
+  }
   const base = baseUrl.replace(/\/+$/, '')
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
