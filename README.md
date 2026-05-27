@@ -180,18 +180,30 @@ hermes-web-ui start
 
 Open **http://localhost:8648**
 
-### One-line Setup (Auto-detect OS)
-
 Automatically installs Node.js (if missing) and hermes-web-ui on Debian/Ubuntu/macOS:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
 ```
+
+### Windows
+
+On Windows (PowerShell or Command Prompt), use npm directly:
+
+```powershell
+# Install Node.js first if needed: https://nodejs.org/
+npm install -g hermes-web-ui
+hermes-web-ui start
+```
+
+Open **http://localhost:8648**
+
+> **Note:** Do not use `bash <(curl ...)` in PowerShell — process substitution `<(...)` is a Bash feature and is not supported on Windows.
 
 ### WSL
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
 hermes-web-ui start
 ```
 
