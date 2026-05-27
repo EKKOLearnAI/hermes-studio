@@ -434,6 +434,40 @@ async function removeWorktree(worktreePath: string | null | undefined, repoRootP
   await rm(worktreePath, { recursive: true, force: true }).catch(() => undefined)
 }
 
+const DEPENDENCY_READY_MARKERS = [
+  join('vue-tsc', 'bin', 'vue-tsc.js'),
+  join('typescript', 'bin', 'tsc'),
+  join('@vue', 'tsconfig', 'tsconfig.dom.json'),
+]
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function verifyDependencyTree(nodeModulesPath: string): Promise<void> {
+  for (const marker of DEPENDENCY_READY_MARKERS) {
+    await access(join(nodeModulesPath, marker))
+  }
+}
+
+async function waitForDependencyTree(profile: string, sourceNodeModules: string): Promise<void> {
+  let lastError: unknown = null
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await verifyDependencyTree(sourceNodeModules)
+      return
+    } catch (err) {
+      lastError = err
+      if (attempt < 5) {
+        await appendLog(profile, `Waiting for branch preview dependencies (${attempt}/5) in ${sourceNodeModules}`)
+        await sleep(200 * attempt)
+      }
+    }
+  }
+
+  throw new Error(`Branch preview dependencies are not ready in ${sourceNodeModules}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+}
+
 async function linkDependencyTree(profile: string, worktreePath: string): Promise<void> {
   const sourceNodeModules = join(serverRepoRoot(), 'node_modules')
   const targetNodeModules = join(worktreePath, 'node_modules')
@@ -447,14 +481,10 @@ async function linkDependencyTree(profile: string, worktreePath: string): Promis
     throw new Error(`Branch preview dependencies are not installed in ${serverRepoRoot()}: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  try {
-    await lstat(targetNodeModules)
-    return
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw err
-  }
-
+  await waitForDependencyTree(profile, sourceNodeModules)
+  await rm(targetNodeModules, { recursive: true, force: true }).catch(() => undefined)
   await symlink(sourceNodeModules, targetNodeModules, 'dir')
+  await verifyDependencyTree(targetNodeModules)
   await appendLog(profile, `Linked dependencies from ${sourceNodeModules}`)
 }
 
