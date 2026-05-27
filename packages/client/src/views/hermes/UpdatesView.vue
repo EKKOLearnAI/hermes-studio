@@ -110,19 +110,17 @@ const showPreviewLogs = computed(() => previewRunning.value || previewFailed.val
 const stableBuildCommit = computed(() => fmtUnknown(appStore.buildCommit))
 const stableBuildBranch = computed(() => fmtUnknown(appStore.buildBranch))
 const stableBuildSource = computed(() => fmtUnknown(appStore.buildSource))
-const stableBuiltAt = computed(() => fmtDateTime(appStore.builtAt))
 const stableStatusText = computed(() => {
   if (!appStore.connected) return t('updates.sourceUnavailable')
-  if (appStore.updateAvailable) return t('updates.updateAvailable')
-  return t('updates.upToDate')
+  return 'Running'
 })
-const stableStatusType = computed(() => {
-  if (!appStore.connected) return 'error'
-  if (appStore.updateAvailable) return 'warning'
-  return 'success'
-})
+const stableStatusType = computed(() => (appStore.connected ? 'success' : 'error'))
 const stableLastCheckedText = computed(() => fmtTime(stableLastCheckedAt.value))
-const updateStableLabel = computed(() => {
+const latestReleaseLabel = computed(() => {
+  if (!hasLatestRelease.value) return t('updates.unavailable')
+  return `${latestReleaseVersion.value} available`
+})
+const updateLiveLabel = computed(() => {
   if (hasLatestRelease.value) return t('updates.updateStableTo', { version: latestReleaseVersion.value })
   return t('updates.updateNow')
 })
@@ -210,13 +208,6 @@ function fmtTime(value: number | null | undefined) {
 
 function fmtUnknown(value: string | null | undefined) {
   return value?.trim() || 'unknown'
-}
-
-function fmtDateTime(value: string | null | undefined) {
-  if (!value?.trim()) return 'unknown'
-  const parsed = Date.parse(value)
-  if (Number.isNaN(parsed)) return value
-  return new Date(parsed).toLocaleString()
 }
 
 function statusLabel(status: BranchBuildSummary['status'] | null | undefined) {
@@ -496,13 +487,14 @@ onMounted(() => {
             </template>
 
             <div class="card-stack">
+              <p class="card-copy card-eyebrow">Live app at /</p>
               <div class="metric-row">
                 <span>{{ t('updates.installedVersion') }}</span>
                 <strong>{{ currentStableVersion }}</strong>
               </div>
               <div class="metric-row">
                 <span>{{ t('updates.latestReleaseVersion') }}</span>
-                <strong>{{ latestReleaseVersion }}</strong>
+                <strong>{{ latestReleaseLabel }}</strong>
               </div>
               <div class="metric-row">
                 <span>Build</span>
@@ -511,10 +503,6 @@ onMounted(() => {
               <div class="metric-row muted-row">
                 <span>Source</span>
                 <strong>{{ stableBuildSource }}</strong>
-              </div>
-              <div class="metric-row muted-row">
-                <span>Built at</span>
-                <strong>{{ stableBuiltAt }}</strong>
               </div>
               <div class="metric-row muted-row">
                 <span>{{ t('updates.lastChecked') }}</span>
@@ -532,7 +520,7 @@ onMounted(() => {
                   :loading="appStore.updating"
                   @click="handleUpdateNow"
                 >
-                  {{ appStore.updating ? t('updates.updating') : updateStableLabel }}
+                  {{ appStore.updating ? t('updates.updating') : updateLiveLabel }}
                 </NButton>
               </div>
             </div>
@@ -546,7 +534,7 @@ onMounted(() => {
             </template>
 
             <div class="card-stack">
-              <p class="card-copy">{{ t('updates.previewBody') }}</p>
+              <p class="card-copy">Candidate app at /preview/</p>
               <p class="card-copy preview-mode-copy">{{ previewModeCopy }}</p>
 
               <NAlert v-if="!releasePreviewAvailable && !branchPreviewAvailable && !commitPreviewAvailable" type="info" :title="t('updates.previewUnavailableTitle')">
@@ -555,7 +543,10 @@ onMounted(() => {
 
               <template v-else>
                 <div v-if="canUseDevMode" class="field-row dev-mode-row">
-                  <span>{{ t('settings.dev.enabled') }}</span>
+                  <div class="dev-mode-copy">
+                    <strong>Developer Mode</strong>
+                    <span>{{ devModeEnabled ? 'on' : 'off' }}</span>
+                  </div>
                   <NSwitch
                     :value="devModeEnabled"
                     :loading="devModeSaving"
@@ -563,43 +554,43 @@ onMounted(() => {
                     @update:value="handleDevModeToggle"
                   />
                 </div>
+                <p v-if="canUseDevMode" class="muted-note">
+                  {{ devModeEnabled ? 'Branch and commit previews from a repository.' : 'Enable branch and commit previews.' }}
+                </p>
 
-                <section v-if="canUseDevMode && devModeEnabled && previewSourceKind !== 'release'" class="developer-panel">
+                <section v-if="canUseDevMode && devModeEnabled" class="developer-panel">
                   <div class="developer-panel-header">
-                    <strong>Developer repository</strong>
-                    <span>Release previews remain available and do not use git.</span>
+                    <strong>Repository</strong>
+                    <span>Branch and commit previews use repository checkout/build scripts.</span>
                   </div>
-                  <p class="muted-note">
-                    Trusted repositories only: Branch and Commit previews run repository install/build scripts on this machine.
-                  </p>
                   <div class="field-grid">
                     <div class="field-row">
-                      <span>Repository type</span>
+                      <span>Type</span>
                       <NSelect v-model:value="repoType" size="small" :options="repoTypeOptions" :disabled="repositorySaving || previewActionLoading" />
                     </div>
                     <div v-if="repoType === 'git-url'" class="field-row">
-                      <span>Git URL</span>
+                      <span>URL</span>
                       <input v-model="repoGitUrl" class="text-input" type="text" placeholder="https://github.com/owner/repo.git" :disabled="repositorySaving || previewActionLoading">
                     </div>
                     <div v-else-if="repoType === 'github'" class="field-row">
-                      <span>GitHub repo</span>
+                      <span>URL</span>
                       <input v-model="repoGithubOwnerRepo" class="text-input" type="text" placeholder="owner/repo" :disabled="repositorySaving || previewActionLoading">
                     </div>
                     <div v-else class="field-row">
-                      <span>Local path</span>
+                      <span>URL</span>
                       <input v-model="repoLocalPath" class="text-input" type="text" placeholder="/path/to/hermes-web-ui" :disabled="repositorySaving || previewActionLoading">
                     </div>
                   </div>
                   <div class="metric-row muted-row">
-                    <span>Repository status</span>
+                    <span>Status</span>
                     <strong>{{ repositoryStatusText }}</strong>
                   </div>
                   <NAlert v-if="repositoryBlocksSelectedDevSource" type="warning" title="Repository required">
-                    Configure and validate a local path, Git URL, or GitHub repo to build Branch/Commit previews.
+                    Configure and validate a local path, Git URL, or GitHub repo to build branch or commit previews.
                   </NAlert>
                   <div class="actions-row">
                     <NButton size="small" type="primary" :disabled="!canSaveRepository" :loading="repositorySaving" @click="handleSaveRepository(true)">
-                      Validate repository
+                      Validate
                     </NButton>
                     <NButton size="small" :disabled="!canSaveRepository || repositorySaving" @click="handleSaveRepository(false)">
                       Save only
@@ -610,14 +601,10 @@ onMounted(() => {
                   </div>
                 </section>
 
+                <div class="section-label">Build preview from</div>
                 <div class="field-grid">
-                  <div class="metric-row">
-                    <span>Source</span>
-                    <strong>{{ currentPreviewSourceLabel }}</strong>
-                  </div>
-
                   <div class="field-row">
-                    <span>Source type</span>
+                    <span>Source</span>
                     <NSelect
                       v-model:value="previewSourceKind"
                       size="small"
@@ -627,7 +614,7 @@ onMounted(() => {
                   </div>
 
                   <div v-if="previewSourceKind === 'release'" class="field-row">
-                    <span>Release version</span>
+                    <span>Release</span>
                     <NSelect
                       v-model:value="releaseVersionRef"
                       filterable
@@ -642,7 +629,7 @@ onMounted(() => {
                   </div>
 
                   <div v-else-if="previewSourceKind === 'branch'" class="field-row">
-                    <span>{{ t('settings.dev.branchToPreview') }}</span>
+                    <span>Branch</span>
                     <NSelect
                       v-model:value="previewBranchRef"
                       filterable
@@ -674,16 +661,8 @@ onMounted(() => {
                   <strong>{{ statusLabel(previewStatus?.status) }}</strong>
                 </div>
                 <div class="metric-row">
-                  <span>Built at</span>
-                  <strong>{{ fmtTime(previewStatus?.finishedAt || previewStatus?.startedAt || null) }}</strong>
-                </div>
-                <div class="metric-row">
-                  <span>{{ t('settings.dev.previewUrl') }}</span>
-                  <strong>
-                    <button class="preview-link-button" type="button" :disabled="!previewUrl" @click="openPreview">
-                      {{ previewUrl }}
-                    </button>
-                  </strong>
+                  <span>Source</span>
+                  <strong>{{ currentPreviewSourceLabel }}</strong>
                 </div>
 
                 <div class="actions-row">
@@ -691,7 +670,7 @@ onMounted(() => {
                     {{ t('settings.dev.buildPreview') }}
                   </NButton>
                   <NButton v-if="previewReady" type="primary" :loading="previewActionLoading" @click="handlePromotePreview">
-                    Preview -> Stable
+                    Preview → Live
                   </NButton>
                   <NButton v-if="previewReady" :disabled="!previewUrl" @click="openPreview">
                     Open preview
@@ -806,6 +785,42 @@ onMounted(() => {
 
   strong {
     color: $text-primary;
+  }
+
+  span {
+    color: $text-muted;
+    font-size: 12px;
+  }
+}
+
+.card-eyebrow {
+  color: $text-primary;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.muted-note {
+  margin: 0;
+  color: $text-muted;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.section-label {
+  color: $text-muted;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.dev-mode-copy {
+  display: grid;
+  gap: 2px;
+
+  strong {
+    color: $text-primary;
+    font-size: 13px;
   }
 
   span {

@@ -56,11 +56,51 @@ vi.mock('@/stores/hermes/settings', () => ({
   useSettingsStore: () => settingsStoreMock,
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string) => key,
-  }),
-}))
+vi.mock('vue-i18n', () => {
+  const labels: Record<string, string> = {
+    'updates.title': 'Updates',
+    'updates.subtitle': 'Live, preview, and developer source controls',
+    'updates.refresh': 'Refresh',
+    'updates.updating': 'Updating...',
+    'updates.currentStableTitle': 'Live',
+    'updates.installedVersion': 'Version',
+    'updates.latestReleaseVersion': 'Latest version',
+    'updates.lastChecked': 'Last checked',
+    'updates.previewTitle': 'Preview',
+    'updates.previewBody': 'Preview the next build before you switch live.',
+    'updates.previewStableCopy': 'Live stays unchanged unless you click Preview → Live.',
+    'updates.previewUnavailableTitle': 'Preview unavailable',
+    'updates.previewUnavailable': 'Preview is not configured on this installation.',
+    'updates.updateNow': 'Update now',
+    'updates.updateAvailable': 'Update available',
+    'updates.upToDate': 'Up to date',
+    'updates.sourceUnavailable': 'Source unavailable',
+    'updates.unavailable': 'Unavailable',
+    'updates.updateStableTo': 'Update live to v0.6.1',
+    'updates.updateStarted': 'Update started',
+    'updates.updateFailed': 'Update failed',
+    'settings.saved': 'Settings saved',
+    'settings.dev.noLogs': 'No logs',
+    'settings.dev.buildPreview': 'Build preview',
+    'settings.dev.promotePreviewDone': 'Preview promoted',
+    'settings.dev.promotePreviewFailed': 'Failed to promote preview',
+    'settings.dev.lastError': 'Last error',
+    'settings.dev.enabled': 'Developer Mode',
+    'settings.dev.branchToPreview': 'Branch',
+    'settings.dev.branchToPreviewPlaceholder': 'Select a branch',
+    'settings.dev.branchToPreviewHint': 'Select which branch to build.',
+    'settings.dev.previewUrl': 'Preview URL',
+    'settings.dev.branchRequired': 'Branch required',
+  }
+  return {
+    useI18n: () => ({
+      t: (key: string, params?: Record<string, any>) => {
+        if (key === 'updates.updateStableTo' && params?.version) return `Update live to v${params.version}`
+        return labels[key] || key
+      },
+    }),
+  }
+})
 
 vi.mock('naive-ui', async () => {
   const actual = await vi.importActual<any>('naive-ui')
@@ -148,14 +188,13 @@ describe('UpdatesView', () => {
     const wrapper = mount(UpdatesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('updates.currentStableTitle')
-    expect(wrapper.text()).toContain('updates.latestReleaseVersion')
-    expect(wrapper.text()).toContain('updates.lastChecked')
+    expect(wrapper.text()).toContain('Live')
+    expect(wrapper.text()).toContain('Latest version')
+    expect(wrapper.text()).toContain('Last checked')
     expect(wrapper.text()).toContain(new Date(1710000000000).toLocaleString())
-    expect(wrapper.text()).toContain('updates.previewTitle')
-    expect(wrapper.text()).toContain('Source type')
+    expect(wrapper.text()).toContain('Preview')
+    expect(wrapper.text()).toContain('Source')
     expect(wrapper.text()).not.toContain('Open preview')
-    expect(wrapper.text()).not.toContain('Preview -> Stable')
     expect(fetchBranchPreviewCapabilitiesMock).not.toHaveBeenCalled()
     expect(fetchBranchBuildStatusMock).not.toHaveBeenCalled()
     expect(fetchBranchBuildBranchesMock).not.toHaveBeenCalled()
@@ -271,14 +310,14 @@ describe('UpdatesView', () => {
     const selects = wrapper.findAll('select')
     expect(selects.length).toBeGreaterThanOrEqual(2)
 
-    const sourceSelect = selects[0]
+    const sourceSelect = selects.find((select) => select.findAll('option').some((option) => option.text() === 'Release')) || selects[0]
     const sourceOptions = sourceSelect.findAll('option').map((option) => ({
       label: option.text(),
       disabled: (option.element as HTMLOptionElement).disabled,
     }))
     expect(sourceOptions).toEqual(expectedSourceOptions)
 
-    const releaseButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')
+    const releaseButton = wrapper.findAll('button').find((button) => button.text() === 'Build preview')
     expect(releaseButton?.element.disabled).toBe(false)
   })
 
@@ -345,13 +384,13 @@ describe('UpdatesView', () => {
     expect(fetchBranchPreviewCapabilitiesMock).toHaveBeenCalledTimes(1)
     expect(fetchBranchBuildStatusMock).toHaveBeenCalledTimes(1)
     expect(fetchBranchBuildBranchesMock).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('updates.previewTitle')
-    expect(wrapper.text()).toContain('Source type')
+    expect(wrapper.text()).toContain('Preview')
+    expect(wrapper.text()).toContain('Source')
     expect(wrapper.text()).toContain('Release')
     expect(wrapper.text()).not.toContain('Branch')
     expect(wrapper.text()).not.toContain('Commit')
-    expect(wrapper.text()).toContain('updates.previewBody')
-    expect(wrapper.text()).toContain('updates.previewStableCopy')
+    expect(wrapper.text()).toContain('Candidate app at /preview/')
+    expect(wrapper.text()).toContain('Live stays unchanged unless you click Preview → Live.')
     expect(wrapper.text()).toContain('line 1')
     expect(wrapper.text()).toContain('/preview/')
     expect(wrapper.text()).toContain('running')
@@ -424,9 +463,9 @@ describe('UpdatesView', () => {
 
     const switchButton = wrapper.find('button.n-switch')
     expect(switchButton.exists()).toBe(true)
-    expect(wrapper.text()).toContain('updates.previewStableCopy')
+    expect(wrapper.text()).toContain('Live stays unchanged unless you click Preview → Live.')
     expect(wrapper.text()).not.toContain('settings.dev.disabledNote')
-    expect(wrapper.text()).not.toContain('updates.previewUnavailableTitle')
+    expect(wrapper.text()).not.toContain('Preview unavailable')
 
     await switchButton.trigger('click')
     await flushPromises()
@@ -438,12 +477,13 @@ describe('UpdatesView', () => {
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
     expect(selects.length).toBeGreaterThanOrEqual(2)
-    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
+    const sourceSelect = selects.find((select) => select.findAll('option').some((option) => option.text() === 'Release')) || selects[0]
+    expect(sourceSelect.findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
   })
 
   it('expands source choices and shows failure logs when Dev Mode is enabled', async () => {
@@ -514,14 +554,15 @@ describe('UpdatesView', () => {
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
     expect(selects.length).toBeGreaterThanOrEqual(2)
-    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
+    const sourceSelect = selects.find((select) => select.findAll('option').some((option) => option.text() === 'Release')) || selects[0]
+    expect(sourceSelect.findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
+    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
 
-    await selects[0].setValue('branch')
+    await selects[1].setValue('branch')
     await flushPromises()
 
     const branchSelects = wrapper.findAll('select')
@@ -537,7 +578,6 @@ describe('UpdatesView', () => {
     expect(wrapper.text()).toContain('line two')
     expect(wrapper.text()).toContain('build exploded')
     expect(wrapper.text()).toContain('failed')
-    expect(wrapper.text()).not.toContain('Preview -> Stable')
     expect(wrapper.text()).not.toContain('Open preview')
   })
 
@@ -631,19 +671,19 @@ describe('UpdatesView', () => {
     const wrapper = mount(UpdatesView)
     await flushPromises()
 
-    const buildButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')!
+    const buildButton = wrapper.findAll('button').find((button) => button.text() === 'Build preview')!
     expect(buildButton.exists()).toBe(true)
     expect(wrapper.text()).toContain('Open preview')
-    expect(wrapper.text()).toContain('Preview -> Stable')
+    expect(wrapper.text()).toContain('Preview → Live')
 
     await buildButton.trigger('click')
     await flushPromises()
     expect(restoreLatestUpstreamReleaseMock).toHaveBeenCalledWith('0.6.1')
 
-    const promoteButton = wrapper.findAll('button').find((button) => button.text() === 'Preview -> Stable')!
+    const promoteButton = wrapper.findAll('button').find((button) => button.text() === 'Preview → Live')!
     await promoteButton.trigger('click')
     await flushPromises()
     expect(promoteBranchPreviewMock).toHaveBeenCalledTimes(1)
-    expect(useMessageMock.success).toHaveBeenCalledWith('settings.dev.promotePreviewDone')
+    expect(useMessageMock.success).toHaveBeenCalledWith('Preview promoted')
   })
 })
