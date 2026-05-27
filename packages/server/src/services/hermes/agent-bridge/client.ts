@@ -166,7 +166,7 @@ export class AgentBridgeClient {
   private summarizePayload(payload: Record<string, unknown>): Record<string, unknown> {
     const action = String(payload.action || '')
     const summary: Record<string, unknown> = { action }
-    for (const key of ['session_id', 'run_id', 'request_id', 'approval_id', 'profile']) {
+    for (const key of ['session_id', 'run_id', 'request_id', 'approval_id', 'profile', 'worker_key']) {
       if (payload[key] != null) summary[key] = payload[key]
     }
     if (Array.isArray(payload.conversation_history)) summary.conversation_history_count = payload.conversation_history.length
@@ -569,11 +569,12 @@ export class AgentBridgeClient {
     })
   }
 
-  destroy(sessionId: string, profile?: string): Promise<AgentBridgeResponse> {
+  destroy(sessionId: string, profile?: string, workerKey?: string): Promise<AgentBridgeResponse> {
     return this.request({
       action: 'destroy',
       session_id: sessionId,
       ...(profile ? { profile } : {}),
+      ...(workerKey ? { worker_key: workerKey } : {}),
     })
   }
 

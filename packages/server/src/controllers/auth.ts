@@ -8,7 +8,6 @@ import {
   countUsers,
   createUser,
   deleteUser,
-  findFirstUser,
   findUserById,
   findUserByUsername,
   listUsers,
@@ -27,10 +26,8 @@ import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
  * Check if username/password login is configured (public).
  */
 export async function authStatus(ctx: Context) {
-  const firstUser = findFirstUser()
   ctx.body = {
     hasPasswordLogin: true,
-    username: firstUser?.username || DEFAULT_USERNAME,
     hasUsers: countUsers() > 0,
   }
 }

@@ -1313,7 +1313,6 @@ async function handleSessionModelCustomSubmit() {
                   v-model:value="clarifyResponse"
                   size="small"
                   :placeholder="t('chat.clarifyPlaceholder')"
-                  @keyup.enter="handleClarify()"
                 />
                 <NButton size="small" type="primary" @click="handleClarify()">
                   {{ t('chat.clarifySubmit') }}

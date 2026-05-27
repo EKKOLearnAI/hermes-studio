@@ -6,6 +6,7 @@ const getConversationMessagesPaginatedMock = vi.fn(async (ctx: any) => { ctx.bod
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
 const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'hermes-1' }] } })
 const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
+const importHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -16,7 +17,7 @@ const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folder
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
 const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
-const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 200000 } })
+const contextLengthMock = vi.fn(async (ctx: any) => { ctx.body = { context_length: 256000 } })
 const batchRemoveMock = vi.fn(async (ctx: any) => { ctx.body = { deleted: 1, failed: 0, errors: [] } })
 const exportSessionMock = vi.fn(async (ctx: any) => { ctx.body = JSON.stringify({ id: ctx.params.id }) })
 
@@ -27,6 +28,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   list: listMock,
   listHermesSessions: listHermesSessionsMock,
   getHermesSession: getHermesSessionMock,
+  importHermesSession: importHermesSessionMock,
   search: searchMock,
   get: getMock,
   remove: removeMock,
@@ -49,6 +51,9 @@ describe('session routes', () => {
     getConversationMessagesMock.mockClear()
     getConversationMessagesPaginatedMock.mockClear()
     listMock.mockClear()
+    listHermesSessionsMock.mockClear()
+    getHermesSessionMock.mockClear()
+    importHermesSessionMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
     removeMock.mockClear()
@@ -65,6 +70,9 @@ describe('session routes', () => {
       '/api/hermes/sessions/conversations/:id/messages',
       '/api/hermes/sessions/conversations/:id/messages/paginated',
       '/api/hermes/sessions',
+      '/api/hermes/sessions/hermes',
+      '/api/hermes/sessions/hermes/:id',
+      '/api/hermes/sessions/hermes/:id/import',
       '/api/hermes/search/sessions',
       '/api/hermes/sessions/search',
       '/api/hermes/sessions/usage',
@@ -116,6 +124,18 @@ describe('session routes', () => {
     await detailLayer.stack[0](detailCtx)
     expect(getConversationMessagesMock).toHaveBeenCalledWith(detailCtx)
     expect(detailCtx.body).toEqual({ session_id: 'child-session', messages: [] })
+  })
+
+  it('delegates Hermes session import to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/:id/import')
+    const handler = layer.stack[0]
+    const ctx: any = { params: { id: 'hermes-abc' }, query: {}, request: { body: { profile: 'default' } }, body: null }
+
+    await handler(ctx)
+
+    expect(importHermesSessionMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ session_id: 'hermes-abc' })
   })
 
   it('delegates session export to the controller', async () => {

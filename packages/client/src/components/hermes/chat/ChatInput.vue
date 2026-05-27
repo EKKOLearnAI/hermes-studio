@@ -148,12 +148,12 @@ function selectBridgeCommand(command: { name: string; args: string; insertText?:
 
 // --- Context info ---
 
-const contextLength = ref(200000)
-const FALLBACK_CONTEXT = 200000
+const contextLength = ref(256000)
+const FALLBACK_CONTEXT = 256000
 
 // Context length editing
 const showContextEditModal = ref(false)
-const editingContextLimit = ref(200000)
+const editingContextLimit = ref(256000)
 const isSavingContextLimit = ref(false)
 
 async function handleEditContextLimit() {

@@ -41,6 +41,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'LM Studio',
+    value: 'lmstudio',
+    builtin: true,
+    base_url: 'http://127.0.0.1:1234/v1',
+    api_mode: 'chat_completions',
+    models: [],
+  },
+  {
     label: 'Anthropic',
     value: 'anthropic',
     builtin: true,

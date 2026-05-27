@@ -1,7 +1,6 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
-import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
 import { restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
 import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
@@ -31,6 +30,7 @@ const envPlatformMap: Record<string, [string, string]> = {
   DINGTALK_CLIENT_ID: ['dingtalk', 'extra.client_id'],
   DINGTALK_CLIENT_SECRET: ['dingtalk', 'extra.client_secret'],
   DINGTALK_APP_KEY: ['dingtalk', 'extra.app_key'],
+  DINGTALK_CARD_TEMPLATE_ID: ['dingtalk', 'extra.card_template_id'],
   DINGTALK_ALLOWED_USERS: ['dingtalk', 'allowed_users'],
   DINGTALK_ALLOW_ALL_USERS: ['dingtalk', 'allow_all_users'],
   QQ_APP_ID: ['qqbot', 'extra.app_id'],
@@ -82,15 +82,6 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
     }
   }
   return target
-}
-
-async function destroyBridgeProfile(profile: string): Promise<void> {
-  try {
-    const result = await new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 }).destroyProfile(profile)
-    logger.info('[config] destroyed bridge sessions after gateway restart profile=%s destroyed=%s', profile, result.destroyed)
-  } catch (err) {
-    logger.warn(err, '[config] failed to destroy bridge sessions after gateway restart profile=%s', profile)
-  }
 }
 
 async function readEnvPlatforms(profile: string): Promise<Record<string, any>> {
@@ -159,13 +150,12 @@ export async function updateConfig(ctx: any) {
       },
     })
 
-    // Platform adapters still run through Hermes gateway; restart it so channel
-    // config changes (Feishu/Weixin/etc.) are applied, then refresh bridge sessions.
+    // Platform adapters run through Hermes gateway; restart it so channel
+    // config changes (Feishu/Weixin/etc.) are applied.
     if (restart !== false && PLATFORM_SECTIONS.has(section)) {
       try {
         const restartResult = await restartGatewayForProfile(profile)
         logger.info('[config] gateway restarted after config update section=%s profile=%s result=%j', section, profile, restartResult)
-        await destroyBridgeProfile(profile)
       } catch (err) {
         logger.error(err, 'Gateway restart failed')
         ctx.status = 500
@@ -227,12 +217,11 @@ export async function updateCredentials(ctx: any) {
       },
     })
 
-    // Platform adapters still run through Hermes gateway; restart it so channel
-    // credentials are applied, then refresh bridge sessions.
+    // Platform adapters run through Hermes gateway; restart it so channel
+    // credentials are applied.
     try {
       const restartResult = await restartGatewayForProfile(profile)
       logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%j', platform, profile, restartResult)
-      await destroyBridgeProfile(profile)
     } catch (err) {
       logger.error(err, 'Gateway restart failed')
       ctx.status = 500

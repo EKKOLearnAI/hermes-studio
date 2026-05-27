@@ -15,7 +15,7 @@ vi.mock('@/router', () => ({
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
 import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
-import { batchDeleteSessions } from '../../packages/client/src/api/hermes/sessions'
+import { batchDeleteSessions, importHermesSession } from '../../packages/client/src/api/hermes/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -229,6 +229,20 @@ describe('API Client', () => {
           { id: 'session-travel', profile: 'travel' },
         ],
       })
+    })
+
+    it('sends the profile selector when importing a Hermes session', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, imported: true }),
+      })
+
+      await importHermesSession('cli-1', 'travel')
+
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe('/api/hermes/sessions/hermes/cli-1/import?profile=travel')
+      expect(options.method).toBe('POST')
     })
   })
 })

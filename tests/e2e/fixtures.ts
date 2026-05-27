@@ -141,7 +141,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     }
 
     if (pathname === '/api/hermes/sessions/context-length') {
-      await route.fulfill(jsonResponse({ context_length: 200000 }))
+      await route.fulfill(jsonResponse({ context_length: 256000 }))
       return
     }
 

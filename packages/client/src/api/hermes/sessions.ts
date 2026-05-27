@@ -23,6 +23,7 @@ export interface SessionSummary {
   actual_cost_usd: number | null
   cost_status: string
   workspace?: string | null
+  webui_imported?: boolean
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -120,6 +121,16 @@ export async function deleteSession(id: string, profile?: string | null): Promis
   } catch {
     return false
   }
+}
+
+export async function importHermesSession(id: string, profile?: string | null): Promise<{ ok: boolean; imported: boolean; session?: SessionDetail }> {
+  const params = new URLSearchParams()
+  if (profile) params.set('profile', profile)
+  const query = params.toString()
+  return request<{ ok: boolean; imported: boolean; session?: SessionDetail }>(
+    `/api/hermes/sessions/hermes/${encodeURIComponent(id)}/import${query ? `?${query}` : ''}`,
+    { method: 'POST' },
+  )
 }
 
 export interface BatchDeleteSessionTarget {

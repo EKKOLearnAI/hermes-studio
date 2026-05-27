@@ -250,6 +250,7 @@ export class ChatRunSocket {
 
     socket.on('clarify.respond', async (data: { session_id?: string; clarify_id?: string; response?: string }) => {
       if (!data.session_id || !data.clarify_id) return
+      this.clearClarifyEventState(data.session_id, data.clarify_id)
       try {
         const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {
@@ -385,6 +386,19 @@ export class ChatRunSocket {
   }
 
   // --- Helpers ---
+
+  private clearClarifyEventState(sessionId: string, clarifyId: string) {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.events.length) return
+
+    const nextEvents = state.events.filter(({ event, data }) => {
+      if (event !== 'clarify.requested' && event !== 'clarify.resolved') return true
+      return data?.clarify_id !== clarifyId
+    })
+    if (nextEvents.length !== state.events.length) {
+      state.events = nextEvents
+    }
+  }
 
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }

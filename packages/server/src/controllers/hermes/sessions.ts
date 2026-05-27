@@ -7,6 +7,10 @@ import {
   getSessionDetail as localGetSessionDetail,
   deleteSession as localDeleteSession,
   renameSession as localRenameSession,
+  createSession as localCreateSession,
+  addMessages as localAddMessages,
+  updateSession as localUpdateSession,
+  updateSessionStats as localUpdateSessionStats,
 } from '../../db/hermes/session-store'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
@@ -18,6 +22,7 @@ import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import { readConfigYamlForProfile } from '../../services/config-helpers'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -79,6 +84,26 @@ interface BatchDeleteTarget {
   profile?: string | null
 }
 
+interface ProfileDefaultModel {
+  model: string
+  provider: string
+}
+
+interface LocalImportMessage {
+  session_id: string
+  role: string
+  content: string
+  tool_call_id?: string | null
+  tool_calls?: any[] | null
+  tool_name?: string | null
+  timestamp?: number
+  token_count?: number | null
+  finish_reason?: string | null
+  reasoning?: string | null
+  reasoning_details?: string | null
+  reasoning_content?: string | null
+}
+
 function hasProfileOnDisk(profile: string): boolean {
   return listProfileNamesFromDisk().includes(profile || 'default')
 }
@@ -107,6 +132,115 @@ async function deleteHermesSessionIfPresent(sessionId: string, profile?: string 
     logger.warn({ err, sessionId, profile: targetProfile }, 'Hermes Session: profile delete skipped')
     return { attempted: true, deleted: false, profile: targetProfile, error: message }
   }
+}
+
+async function getProfileDefaultModel(profile: string): Promise<ProfileDefaultModel> {
+  try {
+    const config = await readConfigYamlForProfile(profile)
+    const modelSection = config?.model
+    if (modelSection && typeof modelSection === 'object' && !Array.isArray(modelSection)) {
+      return {
+        model: String(modelSection.default || '').trim(),
+        provider: String(modelSection.provider || '').trim(),
+      }
+    }
+    if (typeof modelSection === 'string') {
+      return { model: modelSection.trim(), provider: '' }
+    }
+  } catch (err) {
+    logger.warn({ err, profile }, 'Hermes Session: failed to read profile default model for import')
+  }
+  return { model: '', provider: '' }
+}
+
+function normalizeImportText(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function normalizeImportNullableText(value: unknown): string | null {
+  const text = normalizeImportText(value)
+  return text ? text : null
+}
+
+function normalizeImportToolCalls(value: unknown): any[] | null {
+  if (!Array.isArray(value)) return null
+  const calls = value
+    .map((call: any) => {
+      const id = String(call?.id || '').trim()
+      const fn = call?.function && typeof call.function === 'object' ? call.function : {}
+      const name = String(fn.name || call?.name || '').trim()
+      if (!id || !name) return null
+      const rawArgs = fn.arguments ?? call?.arguments ?? {}
+      const args = typeof rawArgs === 'string' ? rawArgs : normalizeImportText(rawArgs || {})
+      return {
+        id,
+        type: String(call?.type || 'function'),
+        function: { name, arguments: args || '{}' },
+      }
+    })
+    .filter((call): call is { id: string; type: string; function: { name: string; arguments: string } } => Boolean(call))
+  return calls.length > 0 ? calls : null
+}
+
+function buildImportMessages(sessionId: string, messages: any[]): LocalImportMessage[] {
+  const result: LocalImportMessage[] = []
+  const knownToolCallIds = new Set<string>()
+
+  for (const message of messages) {
+    const role = String(message?.role || '').trim()
+    if (role !== 'user' && role !== 'assistant' && role !== 'tool') continue
+
+    const toolCalls = role === 'assistant' ? normalizeImportToolCalls(message.tool_calls) : null
+    if (toolCalls) {
+      for (const call of toolCalls) knownToolCallIds.add(call.id)
+    }
+
+    if (role === 'tool') {
+      const callId = String(message?.tool_call_id || '').trim()
+      if (!callId || !knownToolCallIds.has(callId)) continue
+      result.push({
+        session_id: sessionId,
+        role,
+        content: normalizeImportText(message?.content),
+        tool_call_id: callId,
+        tool_calls: null,
+        tool_name: normalizeImportNullableText(message?.tool_name),
+        timestamp: Number(message?.timestamp || 0),
+        token_count: message?.token_count == null ? null : Number(message.token_count),
+        finish_reason: normalizeImportNullableText(message?.finish_reason),
+        reasoning: null,
+        reasoning_details: null,
+        reasoning_content: null,
+      })
+      continue
+    }
+
+    const content = normalizeImportText(message?.content)
+    if (role === 'assistant' && !content.trim() && !toolCalls) continue
+
+    result.push({
+      session_id: sessionId,
+      role,
+      content,
+      tool_call_id: null,
+      tool_calls: toolCalls,
+      tool_name: null,
+      timestamp: Number(message?.timestamp || 0),
+      token_count: message?.token_count == null ? null : Number(message.token_count),
+      finish_reason: normalizeImportNullableText(message?.finish_reason),
+      reasoning: role === 'assistant' ? normalizeImportNullableText(message?.reasoning) : null,
+      reasoning_details: role === 'assistant' ? normalizeImportNullableText(message?.reasoning_details) : null,
+      reasoning_content: role === 'assistant' ? normalizeImportNullableText(message?.reasoning_content) : null,
+    })
+  }
+
+  return result
 }
 
 export async function listConversations(ctx: any) {
@@ -201,8 +335,12 @@ export async function listHermesSessions(ctx: any) {
   const profile = requestedProfile(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
 
+  const importedIds = new Set(localListSessions(profile, undefined, effectiveLimit).map(session => session.id))
   const allSessions = (await listSessionSummaries(source, effectiveLimit, profile))
-    .map(session => profile ? { ...session, profile } : session)
+    .map(session => ({
+      ...(profile ? { ...session, profile } : session),
+      webui_imported: importedIds.has(session.id),
+    }))
   ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => s.source !== 'api_server')) }
 }
 
@@ -278,6 +416,94 @@ export async function getHermesSession(ctx: any) {
   }
   if (denySessionAccess(ctx, session)) return
   ctx.body = { session }
+}
+
+export async function importHermesSession(ctx: any) {
+  const sessionId = ctx.params.id
+  const profile = requestedProfile(ctx) || getActiveProfileName()
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile || 'default'}" is not available for this user` }
+    return
+  }
+
+  const existing = localGetSessionDetail(sessionId)
+  if (existing) {
+    ctx.body = { ok: true, imported: false, session: existing }
+    return
+  }
+
+  let detail
+  try {
+    detail = await getSessionDetailFromDbWithProfile(sessionId, profile)
+  } catch (err) {
+    logger.warn({ err, sessionId, profile }, 'Hermes Session: import query failed')
+    ctx.status = 500
+    ctx.body = { error: 'Failed to read Hermes session' }
+    return
+  }
+
+  if (!detail || detail.source === 'api_server') {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+
+  const profileDefault = await getProfileDefaultModel(profile)
+  const importTimestamp = Math.floor(Date.now() / 1000)
+
+  localCreateSession({
+    id: detail.id,
+    profile,
+    source: 'cli',
+    model: profileDefault.model,
+    provider: profileDefault.provider,
+    title: detail.title || undefined,
+  })
+
+  localUpdateSession(detail.id, {
+    source: 'cli',
+    user_id: detail.user_id,
+    model: profileDefault.model,
+    provider: profileDefault.provider,
+    title: detail.title,
+    started_at: detail.started_at,
+    ended_at: detail.ended_at,
+    end_reason: detail.end_reason,
+    message_count: detail.message_count,
+    tool_call_count: detail.tool_call_count,
+    input_tokens: detail.input_tokens,
+    output_tokens: detail.output_tokens,
+    cache_read_tokens: detail.cache_read_tokens,
+    cache_write_tokens: detail.cache_write_tokens,
+    reasoning_tokens: detail.reasoning_tokens,
+    billing_provider: detail.billing_provider,
+    estimated_cost_usd: detail.estimated_cost_usd,
+    actual_cost_usd: detail.actual_cost_usd,
+    cost_status: detail.cost_status,
+    preview: detail.preview,
+    last_active: importTimestamp,
+  })
+
+  const importMessages = buildImportMessages(detail.id, Array.isArray(detail.messages) ? detail.messages : [])
+  localAddMessages(importMessages)
+  localUpdateSessionStats(detail.id)
+  localUpdateSession(detail.id, {
+    tool_call_count: detail.tool_call_count,
+    input_tokens: detail.input_tokens,
+    output_tokens: detail.output_tokens,
+    cache_read_tokens: detail.cache_read_tokens,
+    cache_write_tokens: detail.cache_write_tokens,
+    reasoning_tokens: detail.reasoning_tokens,
+    billing_provider: detail.billing_provider,
+    estimated_cost_usd: detail.estimated_cost_usd,
+    actual_cost_usd: detail.actual_cost_usd,
+    cost_status: detail.cost_status,
+    last_active: importTimestamp,
+    ended_at: detail.ended_at,
+  })
+
+  ctx.body = { ok: true, imported: true, session: localGetSessionDetail(detail.id) }
 }
 
 export async function remove(ctx: any) {

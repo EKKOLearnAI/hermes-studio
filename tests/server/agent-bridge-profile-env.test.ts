@@ -32,6 +32,80 @@ async function runBridgeProbe(script: string): Promise<any> {
   return JSON.parse(stdout)
 }
 
+describe('agent bridge JSON encoding', () => {
+  it('replaces lone surrogate characters before bridge socket writes', async () => {
+    const result = await runBridgeProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+class FakeSocket:
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+        self._read = False
+
+    def sendall(self, payload):
+        self.sent.append(payload)
+
+    def recv(self, size):
+        if self._read:
+            return b""
+        self._read = True
+        return b'{"ok":true}\n'
+
+    def close(self):
+        self.closed = True
+
+class FakeConn:
+    def __init__(self):
+        self.sent = b""
+
+    def sendall(self, payload):
+        self.sent += payload
+
+fake_socket = FakeSocket()
+bridge._connect_bridge_socket = lambda endpoint, timeout: fake_socket
+bridge._send_bridge_request("tcp://127.0.0.1:1", {
+    "message": "request-\ud800",
+    "items": ["nested-\udfff"],
+}, 1)
+
+fake_conn = FakeConn()
+bridge._write_json_response(fake_conn, {
+    "ok": True,
+    "message": "response-\udc00",
+    "nested": {"key-\ud800": "value-\udfff"},
+})
+
+print(json.dumps({
+    "request": json.loads(fake_socket.sent[0].decode("utf-8")),
+    "response": json.loads(fake_conn.sent.decode("utf-8")),
+    "closed": fake_socket.closed,
+}))
+`)
+
+    expect(result).toEqual({
+      request: {
+        message: 'request-\uFFFD',
+        items: ['nested-\uFFFD'],
+      },
+      response: {
+        ok: true,
+        message: 'response-\uFFFD',
+        nested: { 'key-\uFFFD': 'value-\uFFFD' },
+      },
+      closed: true,
+    })
+  })
+})
+
 describe('agent bridge profile environment', () => {
   it('runs agent calls with the requested profile HERMES_HOME and restores the bridge home', async () => {
     const profileHome = join(tempDir, 'profiles', 'work')

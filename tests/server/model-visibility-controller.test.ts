@@ -42,8 +42,9 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   fetchProviderModels: mockFetchProviderModels,
   buildModelGroups: mockBuildModelGroups,
   PROVIDER_ENV_MAP: {
-    deepseek: { api_key_env: 'DEEPSEEK_API_KEY' },
-    'xai-oauth': { api_key_env: '', base_url_env: 'XAI_BASE_URL' },
+    deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
+    lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
+    'xai-oauth': { api_key_env: '', base_url_env: '' },
     openrouter: {},
   },
 }))
@@ -66,6 +67,12 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       label: 'OpenRouter',
       base_url: 'https://openrouter.ai/api/v1',
       models: ['openrouter/auto'],
+    },
+    {
+      value: 'lmstudio',
+      label: 'LM Studio',
+      base_url: 'http://127.0.0.1:1234/v1',
+      models: [],
     },
     {
       value: 'xai-oauth',
@@ -103,6 +110,7 @@ function makeCtx(body: Record<string, unknown> = {}): any {
 beforeEach(() => {
   vi.clearAllMocks()
   mockReadFile.mockResolvedValue('DEEPSEEK_API_KEY=sk-test\n')
+  mockFetchProviderModels.mockResolvedValue([])
   mockReadConfigYaml.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
   mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
   mockBuildModelGroups.mockReturnValue({ default: '', groups: [] })
@@ -260,6 +268,44 @@ describe('models controller — model visibility', () => {
         models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
       }),
     ]))
+  })
+
+  it('marks allProviders with base URL env support for editable preset URLs', async () => {
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.allProviders).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'deepseek',
+        base_url_env: 'DEEPSEEK_BASE_URL',
+      }),
+      expect.not.objectContaining({
+        provider: 'xai-oauth',
+        base_url_env: expect.any(String),
+      }),
+    ]))
+  })
+
+  it('returns LM Studio configured default model when env credentials exist and catalog is empty', async () => {
+    mockReadFile.mockResolvedValue('LM_API_KEY=local\nLM_BASE_URL=http://127.0.0.1:1234/v1\n')
+    mockReadConfigYaml.mockResolvedValue({ model: { default: 'eee', provider: 'lmstudio' } })
+    mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'eee', provider: 'lmstudio' } })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'lmstudio',
+        label: 'LM Studio',
+        base_url: 'http://127.0.0.1:1234/v1',
+        models: ['eee'],
+        available_models: ['eee'],
+      }),
+    ]))
+    expect(ctx.body.default).toBe('eee')
+    expect(ctx.body.default_provider).toBe('lmstudio')
   })
 
 

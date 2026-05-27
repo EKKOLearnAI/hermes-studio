@@ -9,6 +9,7 @@ sessionRoutes.get('/api/hermes/sessions/conversations/:id/messages/paginated', c
 sessionRoutes.get('/api/hermes/sessions', ctrl.list)
 sessionRoutes.get('/api/hermes/sessions/hermes', ctrl.listHermesSessions)
 sessionRoutes.get('/api/hermes/sessions/hermes/:id', ctrl.getHermesSession)
+sessionRoutes.post('/api/hermes/sessions/hermes/:id/import', ctrl.importHermesSession)
 sessionRoutes.get('/api/hermes/search/sessions', ctrl.search)
 sessionRoutes.get('/api/hermes/sessions/search', ctrl.search)
 sessionRoutes.get('/api/hermes/sessions/usage', ctrl.usageBatch)

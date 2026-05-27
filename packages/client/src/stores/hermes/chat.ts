@@ -85,6 +85,15 @@ export interface Session {
   workspace?: string | null
 }
 
+interface CompressionState {
+  compressing: boolean
+  messageCount: number
+  beforeTokens: number
+  afterTokens: number
+  compressed: boolean | null
+  error?: string
+}
+
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
@@ -272,6 +281,8 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     messageCount: s.message_count,
+    inputTokens: s.input_tokens,
+    outputTokens: s.output_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     workspace: s.workspace || null,
@@ -377,6 +388,8 @@ export const useChatStore = defineStore('chat', () => {
   const queueLengths = ref<Map<string, number>>(new Map())
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
+  /** sessionId → queue ids that server reported as dequeued before the peer message arrived */
+  const dequeuedQueueIds = ref<Map<string, Set<string>>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
@@ -405,18 +418,20 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingMessages = ref(false)
   const isRunActive = computed(() => isStreaming.value)
 
-  // Compression state
-  const compressionState = ref<{
-    compressing: boolean
-    messageCount: number
-    beforeTokens: number
-    afterTokens: number
-    compressed: boolean | null
-    error?: string
-  } | null>(null)
+  // Compression state is scoped per session because sockets can stay joined to
+  // background sessions while another chat is active.
+  const compressionStates = ref<Map<string, CompressionState>>(new Map())
+  const compressionState = computed<CompressionState | null>(() => {
+    const sid = activeSessionId.value
+    return sid ? compressionStates.value.get(sid) || null : null
+  })
 
-  function setCompressionState(state: typeof compressionState.value) {
-    compressionState.value = state
+  function setCompressionState(sessionId: string | null | undefined, state: CompressionState | null) {
+    if (!sessionId) return
+    const next = new Map(compressionStates.value)
+    if (state) next.set(sessionId, state)
+    else next.delete(sessionId)
+    compressionStates.value = next
   }
 
   const abortState = ref<{
@@ -438,11 +453,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearActiveSession() {
+    const sid = activeSessionId.value
     activeSessionId.value = null
     activeSession.value = null
     focusMessageId.value = null
     setAbortState(null)
-    setCompressionState(null)
+    setCompressionState(sid, null)
     removeItem(storageKey())
   }
 
@@ -453,10 +469,14 @@ export const useChatStore = defineStore('chat', () => {
       const fresh = list.map(mapHermesSession)
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
-      const msgsByIdBefore = new Map(sessions.value.map(s => [s.id, s.messages]))
+      const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
+        messages: s.messages,
+        contextTokens: s.contextTokens,
+      }]))
       for (const s of fresh) {
-        const prev = msgsByIdBefore.get(s.id)
-        if (prev && prev.length) s.messages = prev
+        const prev = runtimeByIdBefore.get(s.id)
+        if (prev?.messages?.length) s.messages = prev.messages
+        if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
       }
       sessions.value = fresh
 
@@ -594,6 +614,7 @@ export const useChatStore = defineStore('chat', () => {
           } else if (!data.isWorking) {
             setAbortState(null)
           }
+          if (!data.isWorking) setCompressionState(sessionId, null)
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
@@ -613,7 +634,7 @@ export const useChatStore = defineStore('chat', () => {
             for (const evt of data.events) {
               const e = evt.data as any
               if (e.event === 'compression.started') {
-                setCompressionState({
+                setCompressionState(sessionId, {
                   compressing: true,
                   messageCount: e.message_count || 0,
                   beforeTokens: e.token_count || 0,
@@ -622,7 +643,7 @@ export const useChatStore = defineStore('chat', () => {
                 })
               } else if (e.event === 'compression.completed') {
                 const afterTokens = e.contextTokens || e.afterTokens || 0
-                setCompressionState({
+                setCompressionState(sessionId, {
                   compressing: false,
                   messageCount: e.totalMessages || 0,
                   beforeTokens: e.beforeTokens || 0,
@@ -983,39 +1004,40 @@ export const useChatStore = defineStore('chat', () => {
     queuedUserMessages.value = nextMap
   }
 
-  function removeQueuedMessage(sessionId: string, messageId: string) {
+  function updateQueuedUserMessage(sessionId: string, messageId: string, patch: Partial<Message>) {
     const queue = queuedUserMessages.value.get(sessionId)
     if (!queue?.length) return
+    const next = queue.map(message => message.id === messageId
+      ? { ...message, ...patch, queued: true }
+      : message)
+    const nextMap = new Map(queuedUserMessages.value)
+    nextMap.set(sessionId, next)
+    queuedUserMessages.value = nextMap
+  }
+
+  function dropQueuedUserMessage(sessionId: string, messageId: string): boolean {
+    const queue = queuedUserMessages.value.get(sessionId)
+    if (!queue?.length) return false
     const next = queue.filter(message => message.id !== messageId)
+    if (next.length === queue.length) return false
     const nextMap = new Map(queuedUserMessages.value)
     if (next.length > 0) {
       nextMap.set(sessionId, next)
+      queueLengths.value.set(sessionId, next.length)
     } else {
       nextMap.delete(sessionId)
+      queueLengths.value.delete(sessionId)
     }
     queuedUserMessages.value = nextMap
-    queueLengths.value.set(sessionId, next.length)
+    return true
+  }
+
+  function removeQueuedMessage(sessionId: string, messageId: string) {
+    if (!dropQueuedUserMessage(sessionId, messageId)) return
     getChatRunSocket()?.emit('cancel_queued_run', {
       session_id: sessionId,
       queue_id: messageId,
     })
-  }
-
-  function promoteNextQueuedUserMessage(sessionId: string) {
-    const queue = queuedUserMessages.value.get(sessionId)
-    if (!queue?.length) return
-    const [next, ...rest] = queue
-    const nextMap = new Map(queuedUserMessages.value)
-    if (rest.length > 0) {
-      nextMap.set(sessionId, rest)
-    } else {
-      nextMap.delete(sessionId)
-    }
-    queuedUserMessages.value = nextMap
-    if (!getSessionMsgs(sessionId).some(message => message.id === next.id)) {
-      addMessage(sessionId, { ...next, queued: false })
-      updateSessionTitle(sessionId)
-    }
   }
 
   function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
@@ -1057,6 +1079,26 @@ export const useChatStore = defineStore('chat', () => {
     queuedUserMessages.value = nextMap
   }
 
+  function markDequeuedQueueId(sessionId: string, messageId: string) {
+    const nextMap = new Map(dequeuedQueueIds.value)
+    const ids = new Set(nextMap.get(sessionId) || [])
+    ids.add(messageId)
+    nextMap.set(sessionId, ids)
+    dequeuedQueueIds.value = nextMap
+  }
+
+  function consumeDequeuedQueueId(sessionId: string, messageId: string): boolean {
+    const ids = dequeuedQueueIds.value.get(sessionId)
+    if (!ids?.has(messageId)) return false
+    const nextIds = new Set(ids)
+    nextIds.delete(messageId)
+    const nextMap = new Map(dequeuedQueueIds.value)
+    if (nextIds.size > 0) nextMap.set(sessionId, nextIds)
+    else nextMap.delete(sessionId)
+    dequeuedQueueIds.value = nextMap
+    return true
+  }
+
   function handleRunQueuedEvent(sessionId: string, evt: RunEvent) {
     const queueLength = Number((evt as any).queue_length || 0)
     if (queueLength > 0) {
@@ -1081,6 +1123,8 @@ export const useChatStore = defineStore('chat', () => {
       if (dequeued && !getSessionMsgs(sessionId).some(message => message.id === dequeued.id)) {
         addMessage(sessionId, { ...dequeued, queued: false })
         updateSessionTitle(sessionId)
+      } else if (!dequeued) {
+        markDequeuedQueueId(sessionId, dequeuedId)
       }
       return
     }
@@ -1269,11 +1313,15 @@ export const useChatStore = defineStore('chat', () => {
       systemType: isBridgeSlashCommand ? 'command' : undefined,
     }
 
-    if (!shouldQueue) {
+    if (shouldQueue) {
+      enqueueUserMessage(sid, userMsg)
+    } else {
       addMessage(sid, userMsg)
       updateSessionTitle(sid)
+      serverWorking.value.add(sid)
     }
 
+    let runSubmitted = false
     try {
 
       // Build input in Anthropic format
@@ -1291,6 +1339,7 @@ export const useChatStore = defineStore('chat', () => {
             const dl = urlMap.get(a.name)
             return dl ? { ...a, url: dl } : a
           })
+          updateQueuedUserMessage(sid, userMsg.id, { attachments: userMsg.attachments })
         } else {
           const msgs = getSessionMsgs(sid)
           const lastUser = msgs.findLast(m => m.id === userMsg.id)
@@ -1328,10 +1377,6 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
-      }
-
-      if (shouldQueue) {
-        enqueueUserMessage(sid, userMsg)
       }
 
       // Helper to clean up this session's stream state
@@ -1385,6 +1430,7 @@ export const useChatStore = defineStore('chat', () => {
         } else if (!data.isWorking) {
           setAbortState(null)
         }
+        if (!data.isWorking) setCompressionState(sid, null)
 
         if (data.inputTokens != null) target.inputTokens = data.inputTokens
         if (data.outputTokens != null) target.outputTokens = data.outputTokens
@@ -1407,7 +1453,7 @@ export const useChatStore = defineStore('chat', () => {
             const e = evt.data as RunEvent
             switch (e.event) {
               case 'compression.started':
-                setCompressionState({
+                setCompressionState(sid, {
                   compressing: true,
                   messageCount: (e as any).message_count || 0,
                   beforeTokens: (e as any).token_count || 0,
@@ -1417,7 +1463,7 @@ export const useChatStore = defineStore('chat', () => {
                 break
               case 'compression.completed': {
                 const afterTokens = (e as any).contextTokens || (e as any).afterTokens || 0
-                setCompressionState({
+                setCompressionState(sid, {
                   compressing: false,
                   messageCount: (e as any).totalMessages || 0,
                   beforeTokens: (e as any).beforeTokens || 0,
@@ -1474,11 +1520,10 @@ export const useChatStore = defineStore('chat', () => {
             case 'run.started':
               clearAgentEventMessages(sid)
               setAbortState(null)
-              setCompressionState(null)
+              setCompressionState(sid, null)
               runProducedAssistantText = false
               runHadToolActivity = false
               closeStreamingAssistant()
-              promoteNextQueuedUserMessage(sid)
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
               } else {
@@ -1502,7 +1547,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'compression.started': {
-              setCompressionState({
+              setCompressionState(sid, {
                 compressing: true,
                 messageCount: (evt as any).message_count || 0,
                 beforeTokens: (evt as any).token_count || 0,
@@ -1514,7 +1559,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'compression.completed': {
               const afterTokens = (evt as any).contextTokens || (evt as any).afterTokens || 0
-              setCompressionState({
+              setCompressionState(sid, {
                 compressing: false,
                 messageCount: (evt as any).totalMessages || 0,
                 beforeTokens: (evt as any).beforeTokens || 0,
@@ -1528,8 +1573,9 @@ export const useChatStore = defineStore('chat', () => {
               }
               // Auto-clear after 5s
               setTimeout(() => {
-                if (compressionState.value && !compressionState.value.compressing) {
-                  setCompressionState(null)
+                const state = compressionStates.value.get(sid)
+                if (state && !state.compressing) {
+                  setCompressionState(sid, null)
                 }
               }, 5000)
               break
@@ -1893,11 +1939,18 @@ export const useChatStore = defineStore('chat', () => {
         undefined,
         { onReconnectResume: applyReconnectResume },
       )
+      runSubmitted = true
 
       if (!isBridgeSlashCommand || isBridgeCompressCommand || isBridgePlanCommand || isBridgeGoalCommand) {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {
+      if (shouldQueue && !runSubmitted) {
+        dropQueuedUserMessage(sid, userMsg.id)
+      }
+      if (!shouldQueue && !runSubmitted) {
+        serverWorking.value.delete(sid)
+      }
       addMessage(sid, {
         id: uid(),
         role: 'system',
@@ -1966,11 +2019,10 @@ export const useChatStore = defineStore('chat', () => {
         case 'run.started':
           clearAgentEventMessages(sid)
           setAbortState(null)
-          setCompressionState(null)
+          setCompressionState(sid, null)
           runProducedAssistantText = false
           runHadToolActivity = false
           closeStreamingAssistant()
-          promoteNextQueuedUserMessage(sid)
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)
           } else {
@@ -1979,7 +2031,7 @@ export const useChatStore = defineStore('chat', () => {
           break
 
         case 'compression.started': {
-          setCompressionState({
+          setCompressionState(sid, {
             compressing: true,
             messageCount: (evt as any).message_count || 0,
             beforeTokens: (evt as any).token_count || 0,
@@ -1991,7 +2043,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'compression.completed': {
           const afterTokens = (evt as any).contextTokens || (evt as any).afterTokens || 0
-          setCompressionState({
+          setCompressionState(sid, {
             compressing: false,
             messageCount: (evt as any).totalMessages || 0,
             beforeTokens: (evt as any).beforeTokens || 0,
@@ -2004,8 +2056,9 @@ export const useChatStore = defineStore('chat', () => {
             if (target) target.contextTokens = (evt as any).contextTokens
           }
           setTimeout(() => {
-            if (compressionState.value && !compressionState.value.compressing) {
-              setCompressionState(null)
+            const state = compressionStates.value.get(sid)
+            if (state && !state.compressing) {
+              setCompressionState(sid, null)
             }
           }, 5000)
           break
@@ -2394,7 +2447,8 @@ export const useChatStore = defineStore('chat', () => {
       queued: !!peer?.queued,
       systemType: peer?.role === 'command' ? 'command' : undefined,
     }
-    if (peer?.queued) {
+    const wasDequeued = messageId ? consumeDequeuedQueueId(sid, messageId) : false
+    if (peer?.queued || (!wasDequeued && isSessionLive(sid))) {
       enqueueUserMessage(sid, message)
     } else {
       addMessage(sid, message)
@@ -2461,6 +2515,7 @@ export const useChatStore = defineStore('chat', () => {
             } else if (!data.isWorking) {
               setAbortState(null)
             }
+            if (!data.isWorking) setCompressionState(sid, null)
             if (data.messages?.length && activeSession.value) {
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
             }
