@@ -32,6 +32,15 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+require_safe_env_value() {
+  local name="$1"
+  local value="$2"
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    err "环境变量 ${name} 包含非法换行符。"
+    exit 1
+  fi
+}
+
 run_as_app_user() {
   local command="$1"
   shift || true
@@ -339,19 +348,101 @@ write_service_env() {
 
   run tee "${SERVICE_ENV_FILE}" >/dev/null <<EOF
 PORT=${PORT}
-HOST=0.0.0.0
-AUTH_DISABLED=${AUTH_DISABLED}
+BIND_HOST=${BIND_HOST}
 NODE_ENV=production
 HOME=${APP_USER_HOME}
 PATH=${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 HERMES_HOME=${HERMES_HOME_DIR}
 HERMES_BIN=${hermes_bin}
 HERMES_AGENT_ROOT=${APP_USER_HOME}/.hermes/hermes-agent
+HERMES_WEB_UI_HOME=${APP_USER_HOME}/.hermes-web-ui
 EOF
 
   run chown root:root "${SERVICE_ENV_FILE}"
   run chmod 0644 "${SERVICE_ENV_FILE}"
   info "已生成 ${SERVICE_ENV_FILE}"
+}
+
+wait_for_http_ready() {
+  local url="$1"
+  local expected_fragment="$2"
+  local max_attempts="${3:-20}"
+  local i
+  for ((i=1; i<=max_attempts; i++)); do
+    local body
+    if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)" && [[ "$body" == *"$expected_fragment"* ]]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+require_log_dir_writable() {
+  local state_dir="${APP_USER_HOME}/.hermes-web-ui"
+  local log_dir="${state_dir}/logs"
+  step "检查运行时目录权限"
+  run mkdir -p "${log_dir}"
+  run chown -R "${APP_USER}:${APP_USER}" "${state_dir}"
+  run_as_app_user "test -w '${state_dir}' && test -w '${log_dir}'"
+  info "运行时目录可写: ${log_dir}"
+}
+
+check_runtime_artifacts() {
+  local hermes_bin="${APP_USER_HOME}/.local/bin/hermes"
+  step "检查运行时工件"
+  run test -x "${NODE_BIN}"
+  run_as_app_user "test -x '${hermes_bin}' && '${hermes_bin}' --version >/dev/null"
+  run test -f "${DEPLOY_DIR}/dist/server/index.js"
+  run test -f "${DEPLOY_DIR}/dist/client/index.html"
+  info "Node、Hermes 与构建产物检查通过。"
+}
+
+check_bridge_status() {
+  local bridge_log="${APP_USER_HOME}/.hermes-web-ui/logs/bridge.log"
+  step "检查 agent bridge 日志"
+  if [[ ! -f "${bridge_log}" ]]; then
+    warn "bridge 日志不存在，跳过 bridge 稳定性检查。"
+    return 0
+  fi
+
+  if run bash -lc "tail -n 200 '${bridge_log}' | grep -E 'bridge exited unexpectedly|agent-bridge\\] exited code='" >/dev/null 2>&1; then
+    err "检测到 agent bridge 异常退出，请查看 ${bridge_log}"
+    return 1
+  fi
+
+  info "agent bridge 日志未发现异常退出。"
+}
+
+post_deploy_self_check() {
+  local probe_url="http://127.0.0.1:${PORT}"
+  step "执行部署后自检"
+
+  if ! run systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}"; then
+    err "systemd 服务未处于 active 状态: ${SYSTEMD_SERVICE_NAME}"
+    run systemctl status "${SYSTEMD_SERVICE_NAME}" --no-pager || true
+    return 1
+  fi
+  info "systemd 服务状态正常。"
+
+  check_runtime_artifacts
+  require_log_dir_writable
+
+  if ! wait_for_http_ready "${probe_url}/health" "\"status\":\"ok\""; then
+    err "健康检查未通过: ${probe_url}/health"
+    run journalctl -u "${SYSTEMD_SERVICE_NAME}" -n 120 --no-pager || true
+    return 1
+  fi
+  info "健康检查通过。"
+
+  if ! wait_for_http_ready "${probe_url}/api/auth/status" "\"hasPasswordLogin\":true"; then
+    err "认证状态检查未通过: ${probe_url}/api/auth/status"
+    run journalctl -u "${SYSTEMD_SERVICE_NAME}" -n 120 --no-pager || true
+    return 1
+  fi
+  info "认证状态检查通过。"
+
+  check_bridge_status
 }
 
 install_systemd_service() {
@@ -416,7 +507,7 @@ show_summary() {
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/hermes-web-ui}"
 PORT="${PORT:-6060}"
-AUTH_DISABLED="${AUTH_DISABLED:-false}"
+BIND_HOST="${BIND_HOST:-0.0.0.0}"
 APP_USER="${APP_USER:-hermesui}"
 REPO_URL="${REPO_URL:-https://github.com/EKKOLearnAI/hermes-web-ui.git}"
 REPO_REF="${REPO_REF:-main}"
@@ -438,6 +529,13 @@ SERVICE_ENV_FILE="${SERVICE_ENV_FILE:-/etc/default/hermes-web-ui}"
 APP_USER_HOME=""
 NODE_ARCH=""
 
+require_safe_env_value "PORT" "${PORT}"
+require_safe_env_value "BIND_HOST" "${BIND_HOST}"
+require_safe_env_value "APP_USER" "${APP_USER}"
+require_safe_env_value "DEPLOY_DIR" "${DEPLOY_DIR}"
+require_safe_env_value "HERMES_HOME_DIR" "${HERMES_HOME_DIR}"
+require_safe_env_value "SERVICE_ENV_FILE" "${SERVICE_ENV_FILE}"
+
 echo
 echo "hermes / hermes-web-ui 源码一键部署"
 echo "=================================="
@@ -456,4 +554,5 @@ install_webui_dependencies
 build_webui
 write_service_env
 install_systemd_service
+post_deploy_self_check
 show_summary

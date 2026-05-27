@@ -1,4 +1,4 @@
-# Armbian/Ubuntu 源码部署指南
+﻿# Armbian/Ubuntu 源码部署指南
 
 本文档面向无法稳定访问 Docker Hub 的 `Armbian / Ubuntu 24.04` 设备，目标是直接在宿主机完成：
 
@@ -108,7 +108,7 @@ DEPLOY_DIR=/opt/hermes-web-ui
 HERMES_HOME_DIR=/opt/hermes-web-ui/hermes_data
 APP_USER=hermesui
 PORT=6060
-AUTH_DISABLED=false
+BIND_HOST=0.0.0.0
 NODE_REQUIRED_MAJOR=23
 NODE_VERSION=23.11.1
 NODE_INSTALL_DIR=/opt/node-v23
@@ -145,10 +145,10 @@ sudo HERMES_HOME_DIR=/data/hermes ./scripts/deploy-source-armbian.sh
 sudo NODE_VERSION=23.12.0 ./scripts/deploy-source-armbian.sh
 ```
 
-### 关闭认证
+### 修改监听地址
 
 ```bash
-sudo AUTH_DISABLED=true ./scripts/deploy-source-armbian.sh
+sudo BIND_HOST=127.0.0.1 ./scripts/deploy-source-armbian.sh
 ```
 
 ## 部署后目录说明
@@ -383,3 +383,4 @@ sudo systemctl daemon-reload
 - `npm` 包镜像
 
 相比单纯依赖 Docker Hub，这条链路在国内网络环境里通常更容易逐段兜底。
+
