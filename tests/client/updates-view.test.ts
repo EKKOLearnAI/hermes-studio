@@ -269,9 +269,9 @@ describe('UpdatesView', () => {
     await flushPromises()
 
     const selects = wrapper.findAll('select')
-    expect(selects.length).toBeGreaterThanOrEqual(devModeEnabled ? 3 : 2)
+    expect(selects.length).toBeGreaterThanOrEqual(2)
 
-    const sourceSelect = selects[devModeEnabled ? 1 : 0]
+    const sourceSelect = selects[0]
     const sourceOptions = sourceSelect.findAll('option').map((option) => ({
       label: option.text(),
       disabled: (option.element as HTMLOptionElement).disabled,
@@ -437,13 +437,13 @@ describe('UpdatesView', () => {
     )
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects.length).toBeGreaterThanOrEqual(3)
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual([
+    expect(selects.length).toBeGreaterThanOrEqual(2)
+    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
   })
 
   it('expands source choices and shows failure logs when Dev Mode is enabled', async () => {
@@ -513,15 +513,15 @@ describe('UpdatesView', () => {
 
     expect(fetchBranchBuildBranchesMock).toHaveBeenCalledTimes(1)
     const selects = wrapper.findAll('select')
-    expect(selects.length).toBeGreaterThanOrEqual(3)
-    expect(selects[1].findAll('option').map((option) => option.text())).toEqual([
+    expect(selects.length).toBeGreaterThanOrEqual(2)
+    expect(selects[0].findAll('option').map((option) => option.text())).toEqual([
       'Release',
       'Branch',
       'Commit',
     ])
-    expect(selects[2].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
+    expect(selects[1].findAll('option').map((option) => option.text())).toEqual(['0.6.1 (latest)'])
 
-    await selects[1].setValue('branch')
+    await selects[0].setValue('branch')
     await flushPromises()
 
     const branchSelects = wrapper.findAll('select')

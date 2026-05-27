@@ -564,7 +564,7 @@ onMounted(() => {
                   />
                 </div>
 
-                <section v-if="canUseDevMode && devModeEnabled" class="developer-panel">
+                <section v-if="canUseDevMode && devModeEnabled && previewSourceKind !== 'release'" class="developer-panel">
                   <div class="developer-panel-header">
                     <strong>Developer repository</strong>
                     <span>Release previews remain available and do not use git.</span>
