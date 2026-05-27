@@ -185,7 +185,9 @@ function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
-  return profileModels?.groups || [];
+  // Prefer profile-specific models, fall back to account-level models
+  // so Hermes-configured models work without per-profile Web UI config
+  return profileModels?.groups?.length ? profileModels.groups : appStore.modelGroups;
 }
 
 function getDefaultModelForProfile(profile: string) {
@@ -193,8 +195,9 @@ function getDefaultModelForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
+  // Use profile-specific defaults if set, otherwise fall back to account-level defaults
+  const defaultProvider = profileModels?.default_provider || appStore.selectedProvider || "";
+  const defaultModel = profileModels?.default || appStore.selectedModel || "";
   const providerGroup = defaultProvider
     ? groups.find((group) => group.provider === defaultProvider)
     : undefined;
