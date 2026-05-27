@@ -42,6 +42,11 @@ DEFAULT_HERMES_HOME = "~/.hermes"
 APPROVAL_TIMEOUT_SECONDS = 120
 APPROVAL_TIMEOUT_MS = APPROVAL_TIMEOUT_SECONDS * 1000
 PARENT_WATCHDOG_INTERVAL_SECONDS = 2.0
+OPENROUTER_ATTRIBUTION_ENV = {
+    "referer": "HERMES_OPENROUTER_APP_REFERER",
+    "title": "HERMES_OPENROUTER_APP_TITLE",
+    "categories": "HERMES_OPENROUTER_APP_CATEGORIES",
+}
 
 
 def _bridge_platform() -> str:
@@ -349,6 +354,32 @@ def _ensure_agent_imports() -> None:
         )
     os.environ.setdefault("HERMES_HOME", str(_hermes_home()))
     os.environ.setdefault("HERMES_AGENT_BRIDGE_BASE_HOME", str(_hermes_home()))
+    _apply_openrouter_attribution_override()
+
+
+def _apply_openrouter_attribution_override() -> None:
+    """Override hermes-agent OpenRouter attribution at bridge runtime only."""
+    referer = os.environ.get(OPENROUTER_ATTRIBUTION_ENV["referer"], "").strip()
+    title = os.environ.get(OPENROUTER_ATTRIBUTION_ENV["title"], "").strip()
+    categories = os.environ.get(OPENROUTER_ATTRIBUTION_ENV["categories"], "").strip()
+    if not (referer or title or categories):
+        return
+    try:
+        from agent import auxiliary_client
+    except Exception:
+        return
+    headers = dict(getattr(auxiliary_client, "_OR_HEADERS_BASE", {}) or {})
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if title:
+        headers.pop("X-Title", None)
+        headers["X-OpenRouter-Title"] = title
+    if categories:
+        headers["X-OpenRouter-Categories"] = categories
+    try:
+        auxiliary_client._OR_HEADERS_BASE = headers
+    except Exception:
+        pass
 
 
 def _load_cfg(profile: str | None = None) -> dict[str, Any]:
