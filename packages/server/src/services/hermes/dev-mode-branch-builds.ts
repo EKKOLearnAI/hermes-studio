@@ -484,7 +484,7 @@ async function linkDependencyTree(profile: string, worktreePath: string): Promis
   await waitForDependencyTree(profile, sourceNodeModules)
   await rm(targetNodeModules, { recursive: true, force: true }).catch(() => undefined)
   await symlink(sourceNodeModules, targetNodeModules, 'dir')
-  await verifyDependencyTree(targetNodeModules)
+  await waitForDependencyTree(profile, targetNodeModules)
   await appendLog(profile, `Linked dependencies from ${sourceNodeModules}`)
 }
 
