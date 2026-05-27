@@ -60,7 +60,7 @@ RUN set -e; \
     bun --version
 
 # 安装 Hermes Link 
-# RUN curl -fsSL https://hs.clawpilot.me/install/install.sh | bash
+RUN curl -fsSL https://hs.clawpilot.me/install/install.sh | bash
 
 # 安装 mem0ai和hindsight_client
 RUN uv pip install mem0ai
