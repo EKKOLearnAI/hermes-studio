@@ -71,8 +71,8 @@ describe('dev-mode branch build state transitions', () => {
     prepareReleasePreviewPackage.mockReset()
     listAvailableReleases.mockResolvedValue(['0.6.2', '0.6.1'])
     getLatestAvailableRelease.mockResolvedValue('0.6.2')
-    prepareReleasePreviewPackage.mockImplementation(async (_profile: string, version: string) => {
-      const packagePath = join(env.profileRoot, 'release-cache', version, 'package')
+    prepareReleasePreviewPackage.mockImplementation(async (_profile: string, version: string, targetPath?: string) => {
+      const packagePath = targetPath || join(env.profileRoot, 'release-cache', version, 'package')
       await mkdir(join(packagePath, 'dist', 'client'), { recursive: true })
       await writeFile(join(packagePath, 'dist', 'client', 'index.html'), '<html></html>')
       return packagePath
@@ -211,7 +211,7 @@ describe('dev-mode branch build state transitions', () => {
       target: expect.objectContaining({
         type: 'release-artifact',
         version: '0.6.2',
-        artifactPath: expect.stringContaining('release-cache'),
+        artifactPath: expect.stringContaining('.preview-slot'),
       }),
     }))
 

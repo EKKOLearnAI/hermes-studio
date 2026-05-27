@@ -1,7 +1,6 @@
 import { spawn } from 'child_process'
 import { access, lstat, mkdir, readFile, rm, symlink } from 'fs/promises'
 import { join, resolve } from 'path'
-import { randomUUID } from 'crypto'
 import { config } from '../../config'
 import { getProfileDir } from './hermes-profile'
 import { getLatestAvailableRelease, listAvailableReleases, prepareReleasePreviewPackage } from './webui-releases'
@@ -163,6 +162,9 @@ const DEFAULT_REVIEW_BASE = 'main'
 const MAX_LOG_LINES = 800
 const BUILD_STATE_FILE = '.dev-mode-branch-builds.json'
 const BUILD_WORKTREE_DIR = '.dev-mode-branch-builds'
+const PREVIEW_SLOT_DIR = '.preview-slot'
+const PREVIEW_SLOT_WORKTREE_DIR = 'worktree'
+const PREVIEW_SLOT_ARTIFACT_DIR = 'artifact'
 const BUILD_ROOT = resolve(process.cwd())
 
 function profileDir(profile: string): string {
@@ -175,6 +177,18 @@ function statePath(profile: string): string {
 
 function worktreeRoot(profile: string): string {
   return join(profileDir(profile), BUILD_WORKTREE_DIR)
+}
+
+function previewSlotRoot(profile: string): string {
+  return join(profileDir(profile), PREVIEW_SLOT_DIR)
+}
+
+function previewSlotWorktreePath(profile: string): string {
+  return join(previewSlotRoot(profile), PREVIEW_SLOT_WORKTREE_DIR)
+}
+
+function previewSlotArtifactPath(profile: string): string {
+  return join(previewSlotRoot(profile), PREVIEW_SLOT_ARTIFACT_DIR)
 }
 
 function normalizeReviewBase(value?: unknown): string {
@@ -408,15 +422,6 @@ function buildRootPath(profile: string): string {
   return join(profileDir(profile), BUILD_WORKTREE_DIR)
 }
 
-function sanitizeBranchLabel(branch: string): string {
-  const base = branch.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  return (base || 'branch').slice(0, 64)
-}
-
-function uniqueWorktreePath(profile: string, branch: string): string {
-  return join(buildRootPath(profile), `${sanitizeBranchLabel(branch)}-${Date.now()}-${randomUUID().slice(0, 8)}`)
-}
-
 function buildPreviewUrl(previewId: string | null): string | null {
   return previewId ? '/preview/' : null
 }
@@ -453,9 +458,15 @@ async function linkDependencyTree(profile: string, worktreePath: string): Promis
   await appendLog(profile, `Linked dependencies from ${sourceNodeModules}`)
 }
 
-async function preparePreviewWorktree(profile: string, branch: string, repoRootPath: string): Promise<string> {
-  const worktreePath = uniqueWorktreePath(profile, branch)
+async function preparePreviewWorktree(profile: string, branch: string, repoRootPath: string, previousWorktreePath?: string | null): Promise<string> {
+  const worktreePath = previewSlotWorktreePath(profile)
   await mkdir(buildRootPath(profile), { recursive: true })
+  await mkdir(previewSlotRoot(profile), { recursive: true })
+  if (previousWorktreePath && previousWorktreePath !== worktreePath) {
+    await removeWorktree(previousWorktreePath, repoRootPath)
+  }
+  await removeWorktree(worktreePath, repoRootPath)
+  await rm(previewSlotArtifactPath(profile), { recursive: true, force: true }).catch(() => undefined)
 
   const addResult = await gitCommand(['worktree', 'add', '--detach', worktreePath, branch], repoRootPath)
   if (addResult.code !== 0) {
@@ -626,7 +637,7 @@ export async function startBranchBuild(profile: string, branch: string): Promise
   const commands = commandSpecs()
   const reviewBase = normalizeReviewBase(current.reviewBase)
   const previewId = current.previewId || PREVIEW_SLOT_ID
-  const worktreePath = await preparePreviewWorktree(profile, resolvedBranch, repoRootPath)
+  const worktreePath = await preparePreviewWorktree(profile, resolvedBranch, repoRootPath, current.previewWorktreePath)
   const previewTarget = {
     type: 'git-branch' as const,
     repo: repoRootPath,
@@ -681,8 +692,8 @@ export async function resetPreviewTarget(profile: string): Promise<BranchBuildSu
   const repoRootPath: string = (await previewRepositoryRoot(profile)) ?? serverRepoRoot()
   const branch = await resolveBranchRef(profile, reviewBase, repoRootPath)
   const previewId = current.previewId || PREVIEW_SLOT_ID
-  const worktreePath = await preparePreviewWorktree(profile, branch, repoRootPath)
-  const previousPreviewPath = current.previewWorktreePath
+  const worktreePath = await preparePreviewWorktree(profile, branch, repoRootPath, current.previewWorktreePath)
+  const previousPreviewPath = null
   if (previousPreviewPath && previousPreviewPath !== worktreePath) {
     await removeWorktree(previousPreviewPath, repoRootPath)
   }
@@ -741,6 +752,12 @@ export async function removePreviewTarget(profile: string): Promise<BranchBuildS
     await removePreviewInstance(profile, current.previewId)
   }
 
+  const repoRootPath: string = (await previewRepositoryRoot(profile)) ?? serverRepoRoot()
+  if (current.previewWorktreePath) {
+    await removeWorktree(current.previewWorktreePath, repoRootPath)
+  }
+  await rm(previewSlotRoot(profile), { recursive: true, force: true }).catch(() => undefined)
+
   const state = await updateState(profile, async (next) => ({
     ...next,
     previewId: null,
@@ -774,6 +791,12 @@ export async function promotePreviewTarget(profile: string): Promise<BranchBuild
   if (current.previewId) {
     await removePreviewInstance(profile, current.previewId)
   }
+
+  const repoRootPath: string = (await previewRepositoryRoot(profile)) ?? serverRepoRoot()
+  if (current.previewWorktreePath) {
+    await removeWorktree(current.previewWorktreePath, repoRootPath)
+  }
+  await rm(previewSlotRoot(profile), { recursive: true, force: true }).catch(() => undefined)
 
   const state = await updateState(profile, async (next) => ({
     ...next,
@@ -814,6 +837,12 @@ export async function restoreLatestUpstreamRelease(profile: string, version?: st
 
   const startedAt = Date.now()
   const previewId = current.previewId || PREVIEW_SLOT_ID
+  const repoRootPath: string = (await previewRepositoryRoot(profile)) ?? serverRepoRoot()
+  if (current.previewWorktreePath) {
+    await removeWorktree(current.previewWorktreePath, repoRootPath)
+  }
+  const artifactSlotPath = previewSlotArtifactPath(profile)
+  await rm(artifactSlotPath, { recursive: true, force: true }).catch(() => undefined)
   await updateState(profile, async (next) => ({
     ...next,
     reviewBase: DEFAULT_REVIEW_BASE,
@@ -841,7 +870,7 @@ export async function restoreLatestUpstreamRelease(profile: string, version?: st
   await startPreviewInstanceWithId(profile, previewTarget, previewId)
 
   try {
-    const artifactPath = await prepareReleasePreviewPackage(profile, releaseVersion)
+    const artifactPath = await prepareReleasePreviewPackage(profile, releaseVersion, artifactSlotPath)
     await access(join(artifactPath, 'dist', 'client', 'index.html'))
     const finishedAt = Date.now()
     const state = await updateState(profile, async (next) => ({

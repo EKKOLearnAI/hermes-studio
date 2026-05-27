@@ -147,8 +147,12 @@ function releaseCacheRoot(profile: string): string {
   return join(getProfileDir(profile), '.webui-release-previews')
 }
 
-function releasePackagePath(profile: string, version: string): string {
+function defaultReleasePackagePath(profile: string, version: string): string {
   return join(releaseCacheRoot(profile), sanitizeReleaseVersion(version), 'package')
+}
+
+function releasePackagePath(profile: string, version: string, targetPath?: string): string {
+  return targetPath || defaultReleasePackagePath(profile, version)
 }
 
 function runCommand(command: string, args: string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
@@ -172,20 +176,23 @@ async function assertReleasePreviewRoot(packagePath: string): Promise<void> {
   await access(join(packagePath, 'dist', 'client', 'index.html'))
 }
 
-export async function prepareReleasePreviewPackage(profile: string, version: string): Promise<string> {
+export async function prepareReleasePreviewPackage(profile: string, version: string, targetPath?: string): Promise<string> {
   const safeVersion = sanitizeReleaseVersion(version)
-  const packagePath = releasePackagePath(profile, safeVersion)
-  try {
-    await assertReleasePreviewRoot(packagePath)
-    return packagePath
-  } catch {
-    // Populate below.
+  const packagePath = releasePackagePath(profile, safeVersion, targetPath)
+  if (!targetPath) {
+    try {
+      await assertReleasePreviewRoot(packagePath)
+      return packagePath
+    } catch {
+      // Populate below.
+    }
   }
 
   const root = releaseCacheRoot(profile)
-  const versionRoot = join(root, safeVersion)
+  const versionRoot = targetPath ? join(root, 'tarballs', safeVersion) : join(root, safeVersion)
   const tarballDir = join(versionRoot, 'tarball')
-  await rm(versionRoot, { recursive: true, force: true })
+  await rm(packagePath, { recursive: true, force: true })
+  if (!targetPath) await rm(versionRoot, { recursive: true, force: true })
   await mkdir(tarballDir, { recursive: true })
   await mkdir(packagePath, { recursive: true })
 
