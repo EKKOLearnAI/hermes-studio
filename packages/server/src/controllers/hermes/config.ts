@@ -30,6 +30,7 @@ const envPlatformMap: Record<string, [string, string]> = {
   DINGTALK_CLIENT_ID: ['dingtalk', 'extra.client_id'],
   DINGTALK_CLIENT_SECRET: ['dingtalk', 'extra.client_secret'],
   DINGTALK_APP_KEY: ['dingtalk', 'extra.app_key'],
+  DINGTALK_CARD_TEMPLATE_ID: ['dingtalk', 'extra.card_template_id'],
   DINGTALK_ALLOWED_USERS: ['dingtalk', 'allowed_users'],
   DINGTALK_ALLOW_ALL_USERS: ['dingtalk', 'allow_all_users'],
   QQ_APP_ID: ['qqbot', 'extra.app_id'],

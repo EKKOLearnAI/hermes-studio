@@ -1069,6 +1069,8 @@ export default {
     clientIdHint: '釘釘 Client ID',
     clientSecret: 'Client Secret',
     clientSecretHint: '釘釘 Client Secret',
+    cardTemplateId: 'AI 卡片範本 ID',
+    cardTemplateIdHint: '釘釘 AI 卡片範本 ID；留空則不啟用 AI 卡片',
     allowedUsers: '允許使用者',
     allowedUsersHint: '使用者 ID 或 OpenID 白名單，多個請用英文逗號分隔',
     allowAllUsers: '允許所有使用者',

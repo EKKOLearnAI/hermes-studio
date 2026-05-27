@@ -975,6 +975,8 @@ export default {
     clientIdHint: 'DingTalk Client ID',
     clientSecret: 'Client Secret',
     clientSecretHint: 'DingTalk Client Secret',
+    cardTemplateId: 'AI 카드 템플릿 ID',
+    cardTemplateIdHint: 'DingTalk AI 카드 템플릿 ID; 비워 두면 AI 카드를 사용하지 않음',
     botId: 'Bot ID',
     botIdHint: 'WeCom Bot ID',
     wecomSecretHint: 'WeCom Bot Secret',

@@ -1077,6 +1077,8 @@ export default {
     clientIdHint: 'DingTalk Client ID',
     clientSecret: 'Client Secret',
     clientSecretHint: 'DingTalk Client Secret',
+    cardTemplateId: 'AI Card Template ID',
+    cardTemplateIdHint: 'DingTalk AI Card template ID; leave empty to disable AI Cards',
     allowedUsers: 'Allowed Users',
     allowedUsersHint: 'Whitelist user IDs or OpenIDs (comma-separated)',
     allowAllUsers: 'Allow All Users',

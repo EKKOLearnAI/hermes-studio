@@ -1069,6 +1069,8 @@ export default {
     clientIdHint: '钉钉 Client ID',
     clientSecret: 'Client Secret',
     clientSecretHint: '钉钉 Client Secret',
+    cardTemplateId: 'AI 卡片模板 ID',
+    cardTemplateIdHint: '钉钉 AI 卡片模板 ID；留空则不启用 AI 卡片',
     allowedUsers: '允许用户',
     allowedUsersHint: '用户 ID 或 OpenID 白名单，多个用英文逗号分隔',
     allowAllUsers: '允许所有用户',

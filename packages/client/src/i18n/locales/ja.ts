@@ -975,6 +975,8 @@ export default {
     clientIdHint: 'DingTalk Client ID',
     clientSecret: 'Client Secret',
     clientSecretHint: 'DingTalk Client Secret',
+    cardTemplateId: 'AI カードテンプレート ID',
+    cardTemplateIdHint: 'DingTalk AI カードテンプレート ID。空欄の場合は AI カードを無効化',
     botId: 'Bot ID',
     botIdHint: 'WeCom Bot ID',
     wecomSecretHint: 'WeCom Bot Secret',
