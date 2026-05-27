@@ -11,6 +11,7 @@ import {
     renderHighlightedCodeBlock,
 } from '../chat/highlight'
 import { parseThinking, countThinkingChars } from '@/utils/thinking-parser'
+import { isUnifiedDiff } from '@/utils/diff'
 import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
@@ -235,10 +236,6 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
     const truncated = visit(value, 0)
     if (stringifyLength(truncated) <= TOOL_PAYLOAD_DISPLAY_LIMIT) return truncated
     return { [JSON_TRUNCATED_KEY]: marker }
-}
-
-function isUnifiedDiff(content: string): boolean {
-    return /^(---|\+\+\+|@@ |diff )/.test(content.trim())
 }
 
 function formatToolPayload(raw?: string): ToolPayload {

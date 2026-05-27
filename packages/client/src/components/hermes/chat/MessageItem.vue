@@ -7,6 +7,7 @@ import { downloadFile, getDownloadUrl } from "@/api/hermes/download";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
+import { isUnifiedDiff } from "@/utils/diff";
 import { useChatStore } from "@/stores/hermes/chat";
 import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSettingsStore } from "@/stores/hermes/settings";
@@ -437,10 +438,6 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
   const truncated = visit(value, 0);
   if (stringifyLength(truncated) <= TOOL_PAYLOAD_DISPLAY_LIMIT) return truncated;
   return { [JSON_TRUNCATED_KEY]: marker };
-}
-
-function isUnifiedDiff(content: string): boolean {
-  return /^(---|\+\+\+|@@ |diff )/.test(content.trim())
 }
 
 function formatToolPayload(raw?: string): ToolPayload {

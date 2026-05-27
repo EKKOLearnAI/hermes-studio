@@ -185,7 +185,8 @@ function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
-  return profileModels?.groups || [];
+  const groups = profileModels?.groups;
+  return groups && groups.length > 0 ? groups : appStore.modelGroups;
 }
 
 function getDefaultModelForProfile(profile: string) {
@@ -193,8 +194,9 @@ function getDefaultModelForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
     (entry) => entry.profile === profile,
   );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
+  const hasProfileDefaults = profileModels?.default_provider || profileModels?.default;
+  const defaultProvider = hasProfileDefaults ? (profileModels?.default_provider || "") : appStore.selectedProvider;
+  const defaultModel = hasProfileDefaults ? (profileModels?.default || "") : appStore.selectedModel;
   const providerGroup = defaultProvider
     ? groups.find((group) => group.provider === defaultProvider)
     : undefined;

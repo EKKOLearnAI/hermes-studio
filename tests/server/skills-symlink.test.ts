@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, symlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -48,5 +48,38 @@ describe('scanSkillsDir symlink handling', () => {
 
     const allSkillNames = result.flatMap(c => c.skills).map(s => s.name)
     expect(allSkillNames).not.toContain('.hidden-skill')
+  })
+
+  it('includes skills installed as valid symlinks', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hermes-symlink-test-'))
+    const skillsDir = join(root, 'skills')
+    const realSkillDir = join(root, 'real-skills', 'my-linked-skill')
+    await mkdir(realSkillDir, { recursive: true })
+    await mkdir(skillsDir, { recursive: true })
+    await writeFile(join(realSkillDir, 'SKILL.md'), '# Linked Skill\ndesc\n', 'utf-8')
+    await symlink(realSkillDir, join(skillsDir, 'my-linked-skill'))
+
+    const { scanSkillsDir } = await import('../../packages/server/src/controllers/hermes/skills')
+    const result = await scanSkillsDir(skillsDir, new Map(), new Set(), [], new Map())
+
+    const flatSkill = result.flatMap(c => c.skills).find(s => s?.name === 'my-linked-skill')
+    expect(flatSkill).toBeDefined()
+    expect(flatSkill?.name).toBe('my-linked-skill')
+  })
+
+  it('skips broken symlinks', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hermes-symlink-test-'))
+    const skillsDir = join(root, 'skills')
+    const targetDir = join(root, 'vanished')
+    await mkdir(targetDir, { recursive: true })
+    await mkdir(skillsDir, { recursive: true })
+    await symlink(targetDir, join(skillsDir, 'broken-link'))
+    await rm(targetDir, { recursive: true })
+
+    const { scanSkillsDir } = await import('../../packages/server/src/controllers/hermes/skills')
+    const result = await scanSkillsDir(skillsDir, new Map(), new Set(), [], new Map())
+
+    const allSkillNames = result.flatMap(c => c.skills).map(s => s.name)
+    expect(allSkillNames).not.toContain('broken-link')
   })
 })
