@@ -26,9 +26,10 @@ import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
  * Check if username/password login is configured (public).
  */
 export async function authStatus(ctx: Context) {
-  const disabled = process.env.AUTH_DISABLED === '1' || process.env.AUTH_DISABLED === 'true'
+  const firstUser = findFirstUser()
   ctx.body = {
-    hasPasswordLogin: !disabled,
+    hasPasswordLogin: true,
+    username: firstUser?.username || DEFAULT_USERNAME,
     hasUsers: countUsers() > 0,
   }
 }
