@@ -5,14 +5,14 @@ import { type Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
-import { NButton, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NPopconfirm, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
-import { deleteSession, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, importHermesSession, type SessionSummary } from '@/api/hermes/sessions'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -42,6 +42,14 @@ const hermesSessionsLoaded = ref(false)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
 const showOutline = ref(false)
+const isBatchMode = ref(false)
+const isBatchDeleting = ref(false)
+const showBatchDeleteConfirm = ref(false)
+const selectedSessionKeys = ref<Set<string>>(new Set())
+const contextSessionId = ref<string | null>(null)
+const showContextMenu = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
 let hermesSessionsRequestId = 0
 
 async function loadHermesSessions() {
@@ -71,6 +79,28 @@ const isMobile = ref(false)
 function findHistorySession(sessionId: string): SessionSummary | undefined {
   return hermesSessions.value.find(session => session.id === sessionId)
 }
+
+const contextSessionSummary = computed(() =>
+  contextSessionId.value ? findHistorySession(contextSessionId.value) || null : null,
+)
+
+const contextSessionPinned = computed(() =>
+  contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
+)
+
+const contextMenuOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    {
+      label: t('chat.importToWebUi'),
+      key: 'import-webui',
+      disabled: Boolean(contextSessionSummary.value?.webui_imported),
+    },
+    { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
+    { label: t('chat.copySessionLink'), key: 'copy-link' },
+    { label: t('chat.copySessionId'), key: 'copy-id' },
+  ]
+  return options
+})
 
 async function loadHistorySession(sessionId: string, profile?: string | null) {
   const summary = findHistorySession(sessionId)
@@ -252,6 +282,58 @@ const historySessions = computed<Session[]>(() =>
   hermesSessions.value.map(sessionSummaryToSession)
 )
 
+function sessionSelectionKey(session: Pick<Session, 'id' | 'profile'>): string {
+  return `${session.profile || 'default'}\u0000${session.id}`
+}
+
+function toggleBatchMode() {
+  if (isBatchDeleting.value) return
+  isBatchMode.value = !isBatchMode.value
+  if (!isBatchMode.value) {
+    selectedSessionKeys.value.clear()
+    showBatchDeleteConfirm.value = false
+  }
+}
+
+function toggleSessionSelection(session: Session) {
+  if (isBatchDeleting.value) return
+  const key = sessionSelectionKey(session)
+  if (selectedSessionKeys.value.has(key)) {
+    selectedSessionKeys.value.delete(key)
+  } else {
+    selectedSessionKeys.value.add(key)
+  }
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+  if (selectedSessionKeys.value.size === 0) {
+    showBatchDeleteConfirm.value = false
+  }
+}
+
+function isSessionSelected(session: Session): boolean {
+  return selectedSessionKeys.value.has(sessionSelectionKey(session))
+}
+
+function toggleSelectAllSessions() {
+  if (isBatchDeleting.value) return
+  if (allSessionsSelected.value) {
+    selectedSessionKeys.value.clear()
+    selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+    showBatchDeleteConfirm.value = false
+    return
+  }
+  selectedSessionKeys.value.clear()
+  for (const session of historySessions.value) {
+    selectedSessionKeys.value.add(sessionSelectionKey(session))
+  }
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+}
+
+const selectedCount = computed(() => selectedSessionKeys.value.size)
+const canSelectAll = computed(() => historySessions.value.length > 0)
+const allSessionsSelected = computed(() =>
+  historySessions.value.length > 0 && selectedSessionKeys.value.size === historySessions.value.length
+)
+
 // Source sort order: api_server first, cron last, others alphabetical
 function sourceSortKey(source: string): number {
   if (source === 'api_server') return -1
@@ -380,6 +462,47 @@ async function copySessionLink(id?: string) {
   }
 }
 
+function handleContextMenu(e: MouseEvent, sessionId: string) {
+  e.preventDefault()
+  contextSessionId.value = sessionId
+  showContextMenu.value = true
+  contextMenuX.value = e.clientX
+  contextMenuY.value = e.clientY
+}
+
+function handleClickOutside() {
+  showContextMenu.value = false
+}
+
+async function handleImportToWebUi(sessionId: string) {
+  const summary = findHistorySession(sessionId)
+  try {
+    const result = await importHermesSession(sessionId, summary?.profile || null)
+    if (result.ok) {
+      message.success(t(result.imported ? 'chat.importSessionSuccess' : 'chat.importSessionAlreadyExists'))
+      await loadHermesSessions()
+      return
+    }
+  } catch {
+    // Fall through to the shared failure message.
+  }
+  message.error(t('chat.importSessionFailed'))
+}
+
+async function handleContextMenuSelect(key: string) {
+  showContextMenu.value = false
+  if (!contextSessionId.value) return
+  if (key === 'pin') {
+    sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
+  } else if (key === 'copy-link') {
+    await copySessionLink(contextSessionId.value)
+  } else if (key === 'copy-id') {
+    await copySessionId(contextSessionId.value)
+  } else if (key === 'import-webui') {
+    await handleImportToWebUi(contextSessionId.value)
+  }
+}
+
 async function handleDeleteSession(id: string, profile?: string | null) {
   const summary = findHistorySession(id)
   const sessionProfile = profile || summary?.profile || null
@@ -403,6 +526,58 @@ async function handleDeleteSession(id: string, profile?: string | null) {
   message.success(t('chat.sessionDeleted'))
 }
 
+async function handleBatchDelete() {
+  if (selectedSessionKeys.value.size === 0 || isBatchDeleting.value) return
+
+  const sessionsByKey = new Map(historySessions.value.map(session => [sessionSelectionKey(session), session]))
+  const targets = Array.from(selectedSessionKeys.value)
+    .map(key => sessionsByKey.get(key))
+    .filter((session): session is Session => Boolean(session))
+    .map(session => ({ id: session.id, profile: session.profile || null }))
+  if (targets.length === 0) return
+
+  const activeWasSelected = historySession.value
+    ? selectedSessionKeys.value.has(sessionSelectionKey(historySession.value))
+    : false
+
+  isBatchDeleting.value = true
+  try {
+    const result = await batchDeleteSessions(targets)
+    if (result.deleted > 0) {
+      for (const target of targets) {
+        sessionBrowserPrefsStore.removePinned(target.id)
+      }
+
+      await loadHermesSessions()
+
+      if (activeWasSelected || (historySessionId.value && !findHistorySession(historySessionId.value))) {
+        historySessionId.value = null
+        historySession.value = null
+        await openDefaultHistorySession(true)
+      }
+
+      message.success(t('chat.batchDeleteSuccess', { count: result.deleted }))
+      if (result.failed > 0) {
+        message.warning(t('chat.batchDeletePartial', { failed: result.failed }))
+      }
+    } else {
+      message.error(t('chat.batchDeleteFailed'))
+    }
+  } catch {
+    message.error(t('chat.batchDeleteFailed'))
+  } finally {
+    isBatchDeleting.value = false
+    showBatchDeleteConfirm.value = false
+    isBatchMode.value = false
+    selectedSessionKeys.value.clear()
+  }
+}
+
+function handleBatchDeleteConfirm() {
+  void handleBatchDelete()
+  return false
+}
+
 </script>
 
 <template>
@@ -415,6 +590,66 @@ async function handleDeleteSession(id: string, profile?: string | null) {
           <button class="session-close-btn" @click="showSessions = false">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
+          <NButton
+            v-if="!isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="hermesSessions.length === 0"
+            :title="t('chat.toggleBatchMode')"
+            @click="toggleBatchMode"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="!canSelectAll || isBatchDeleting"
+            :title="allSessionsSelected ? t('common.cancel') : t('chat.selectAll')"
+            @click="toggleSelectAllSessions"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NPopconfirm
+            v-if="isBatchMode && selectedCount > 0"
+            v-model:show="showBatchDeleteConfirm"
+            :positive-button-props="{ loading: isBatchDeleting, disabled: isBatchDeleting }"
+            :negative-button-props="{ disabled: isBatchDeleting }"
+            @positive-click="handleBatchDeleteConfirm"
+          >
+            <template #trigger>
+              <NButton quaternary size="tiny" type="error" :loading="isBatchDeleting" :disabled="isBatchDeleting">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.confirmBatchDelete', { count: selectedCount }) }}
+          </NPopconfirm>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="isBatchDeleting"
+            @click="toggleBatchMode"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </template>
+          </NButton>
         </div>
       </div>
       <div v-if="showSessions" class="session-scope-note">
@@ -437,9 +672,13 @@ async function handleDeleteSession(id: string, profile?: string | null) {
             :pinned="true"
             :can-delete="true"
             :streaming="false"
+            :selectable="isBatchMode"
+            :selected="isSessionSelected(s)"
             :show-profile="false"
-            @select="handleSessionClick(s.id, s.profile)"
+            @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
+            @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id, s.profile)"
+            @toggle-select="toggleSessionSelection(s)"
           />
         </template>
 
@@ -458,14 +697,29 @@ async function handleDeleteSession(id: string, profile?: string | null) {
               :pinned="false"
               :can-delete="true"
               :streaming="false"
+              :selectable="isBatchMode"
+              :selected="isSessionSelected(s)"
               :show-profile="false"
-              @select="handleSessionClick(s.id, s.profile)"
+              @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
+              @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id, s.profile)"
+              @toggle-select="toggleSessionSelection(s)"
             />
           </template>
         </template>
       </div>
     </aside>
+
+    <NDropdown
+      placement="bottom-start"
+      trigger="manual"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      :options="contextMenuOptions"
+      :show="showContextMenu"
+      @select="handleContextMenuSelect"
+      @clickoutside="handleClickOutside"
+    />
 
     <div class="chat-main">
       <header class="chat-header">
@@ -489,16 +743,6 @@ async function handleDeleteSession(id: string, profile?: string | null) {
               </NButton>
             </template>
             {{ t('chat.outlineTitle') }}
-          </NTooltip>
-          <NTooltip trigger="hover">
-            <template #trigger>
-              <NButton quaternary size="small" @click="copySessionLink()" circle>
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                </template>
-              </NButton>
-            </template>
-            {{ t('chat.copySessionLink') }}
           </NTooltip>
           <NTooltip trigger="hover">
             <template #trigger>

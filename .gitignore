@@ -31,6 +31,7 @@ config.yaml
 .env
 hermes_data/
 hermes-dependencies.md
+.curator_state
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -45,3 +46,5 @@ hermes-dependencies.md
 CLAUDE.md
 # Client source map artifacts
 packages/client/src/**/*.js
+.runtime-hermes/state.db-wal
+

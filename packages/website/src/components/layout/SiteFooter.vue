@@ -9,8 +9,8 @@ const { t } = useI18n()
     <div class="footer-inner">
       <div class="footer-left">
         <div class="footer-brand">
-          <img src="/logo.png" alt="Quanthermes" class="footer-logo" />
-          <span>Quanthermes</span>
+          <img src="/logo.png" alt="QuantHermes" class="footer-logo" />
+          <span>QuantHermes Web UI</span>
         </div>
         <p class="footer-desc">{{ t('footer.description') }}</p>
       </div>

@@ -5,7 +5,9 @@ export interface HealthResponse {
   version?: string
   webui_version?: string
   webui_latest?: string
+  webui_update_enabled?: boolean
   webui_update_available?: boolean
+  webui_update_source_label?: string
   node_version?: string
 }
 
@@ -42,6 +44,8 @@ export interface AvailableModelGroup {
   available_models?: string[]
   api_key: string
   builtin?: boolean
+  /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
+  base_url_env?: string
   /** 可选：模型 ID -> 元数据（preview/disabled/alias）。alias 仅用于 Web UI 展示。 */
   model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }

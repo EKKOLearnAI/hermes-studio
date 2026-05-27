@@ -4,6 +4,7 @@ const listConversationSummariesFromDbMock = vi.fn()
 const getConversationDetailFromDbMock = vi.fn()
 const listConversationSummariesMock = vi.fn()
 const getConversationDetailMock = vi.fn()
+const listSessionSummariesMock = vi.fn()
 const getSessionDetailFromDbMock = vi.fn()
 const getSessionDetailFromDbWithProfileMock = vi.fn()
 const getExactSessionDetailFromDbWithProfileMock = vi.fn()
@@ -17,12 +18,15 @@ const localDeleteSessionMock = vi.fn()
 const localRenameSessionMock = vi.fn()
 const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
+const localAddMessagesMock = vi.fn()
+const localUpdateSessionStatsMock = vi.fn()
 const getGroupChatServerMock = vi.fn()
 const getLocalUsageStatsMock = vi.fn()
 const getActiveProfileNameMock = vi.fn()
 const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
+const readConfigYamlForProfileMock = vi.fn()
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -50,7 +54,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
-  listSessionSummaries: vi.fn(),
+  listSessionSummaries: listSessionSummariesMock,
   searchSessionSummaries: vi.fn(),
   getSessionDetailFromDb: getSessionDetailFromDbMock,
   getSessionDetailFromDbWithProfile: getSessionDetailFromDbWithProfileMock,
@@ -65,8 +69,10 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   deleteSession: localDeleteSessionMock,
   renameSession: localRenameSessionMock,
   createSession: localCreateSessionMock,
+  addMessages: localAddMessagesMock,
   getSession: getSessionMock,
   updateSession: localUpdateSessionMock,
+  updateSessionStats: localUpdateSessionStatsMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
@@ -93,6 +99,10 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
 
+vi.mock('../../packages/server/src/services/config-helpers', () => ({
+  readConfigYamlForProfile: readConfigYamlForProfileMock,
+}))
+
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
@@ -115,6 +125,7 @@ describe('session conversations controller', () => {
     getConversationDetailFromDbMock.mockReset()
     listConversationSummariesMock.mockReset()
     getConversationDetailMock.mockReset()
+    listSessionSummariesMock.mockReset()
     getSessionDetailFromDbMock.mockReset()
     getSessionDetailFromDbWithProfileMock.mockReset()
     getExactSessionDetailFromDbWithProfileMock.mockReset()
@@ -128,6 +139,8 @@ describe('session conversations controller', () => {
     localRenameSessionMock.mockReset()
     localCreateSessionMock.mockReset()
     localUpdateSessionMock.mockReset()
+    localAddMessagesMock.mockReset()
+    localUpdateSessionStatsMock.mockReset()
     getGroupChatServerMock.mockReset()
     getGroupChatServerMock.mockReturnValue(null)
     getLocalUsageStatsMock.mockReset()
@@ -137,6 +150,8 @@ describe('session conversations controller', () => {
     getCompressionSnapshotMock.mockReset()
     listUserProfilesMock.mockReset()
     listUserProfilesMock.mockReturnValue([])
+    readConfigYamlForProfileMock.mockReset()
+    readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
   })
 
   it('lists conversations from the local session store', async () => {
@@ -270,6 +285,66 @@ describe('session conversations controller', () => {
     await mod.list(ctx)
 
     expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
+  })
+
+  it('marks Hermes history sessions that already exist in the Web UI store', async () => {
+    localListSessionsMock.mockReturnValue([{ id: 'cli-1', profile: 'travel' }])
+    listSessionSummariesMock.mockResolvedValue([
+      {
+        id: 'cli-1',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'Imported',
+        started_at: 1,
+        ended_at: null,
+        last_active: 2,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+      {
+        id: 'cli-2',
+        source: 'cli',
+        model: 'gpt-5',
+        title: 'History only',
+        started_at: 1,
+        ended_at: null,
+        last_active: 2,
+        message_count: 1,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        billing_provider: null,
+        estimated_cost_usd: 0,
+        actual_cost_usd: null,
+        cost_status: '',
+        preview: '',
+      },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
+
+    await mod.listHermesSessions(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
+    expect(listSessionSummariesMock).toHaveBeenCalledWith(undefined, 2000, 'travel')
+    expect(ctx.body.sessions).toEqual([
+      expect.objectContaining({ id: 'cli-1', profile: 'travel', webui_imported: true }),
+      expect.objectContaining({ id: 'cli-2', profile: 'travel', webui_imported: false }),
+    ])
   })
 
   it('searches all account-accessible single-chat sessions unless profile is explicit', async () => {
@@ -635,6 +710,80 @@ describe('session conversations controller', () => {
     expect(localDeleteSessionMock).toHaveBeenCalledWith('default-session')
     expect(localDeleteSessionMock).toHaveBeenCalledWith('travel-session')
     expect(ctx.body).toMatchObject({ ok: true, deleted: 2, failed: 0, hermesDeleted: 2 })
+  })
+
+  it('imports a Hermes session into the local Web UI store', async () => {
+    const hermesDetail = {
+      id: 'cli-1',
+      source: 'cli',
+      user_id: null,
+      model: 'gpt-5',
+      title: 'CLI run',
+      started_at: 100,
+      ended_at: 200,
+      end_reason: null,
+      message_count: 2,
+      tool_call_count: 0,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: null,
+      estimated_cost_usd: 0,
+      actual_cost_usd: null,
+      cost_status: '',
+      preview: 'hello',
+      last_active: 200,
+      thread_session_count: 1,
+      messages: [
+        { id: 1, session_id: 'cli-1', role: 'user', content: 'hello', tool_call_id: null, tool_calls: null, tool_name: null, timestamp: 100, token_count: null, finish_reason: null, reasoning: null },
+        { id: 2, session_id: 'cli-1', role: 'assistant', content: 'hi', tool_call_id: null, tool_calls: null, tool_name: null, timestamp: 101, token_count: null, finish_reason: null, reasoning: null, reasoning_details: { text: 'ok' } },
+        { id: 3, session_id: 'cli-1', role: 'assistant', content: '', tool_call_id: null, tool_calls: [{ id: 'call-1', function: { name: 'read_file', arguments: { path: 'README.md' } } }], tool_name: null, timestamp: 102, token_count: null, finish_reason: 'tool_calls', reasoning: null },
+        { id: 4, session_id: 'cli-1', role: 'tool', content: { ok: true }, tool_call_id: 'call-1', tool_calls: null, tool_name: 'read_file', timestamp: 103, token_count: null, finish_reason: null, reasoning: null },
+        { id: 5, session_id: 'cli-1', role: 'tool', content: 'orphan', tool_call_id: null, tool_calls: null, tool_name: 'bad_tool', timestamp: 104, token_count: null, finish_reason: null, reasoning: null },
+        { id: 6, session_id: 'cli-1', role: 'system', content: 'drop me', tool_call_id: null, tool_calls: null, tool_name: null, timestamp: 105, token_count: null, finish_reason: null, reasoning: null },
+      ],
+    }
+    localGetSessionDetailMock.mockReturnValueOnce(null).mockReturnValueOnce({ ...hermesDetail, profile: 'travel' })
+    getSessionDetailFromDbWithProfileMock.mockResolvedValue(hermesDetail)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'cli-1' }, query: { profile: 'travel' }, state: {}, body: null }
+
+    await mod.importHermesSession(ctx)
+
+    expect(getSessionDetailFromDbWithProfileMock).toHaveBeenCalledWith('cli-1', 'travel')
+    expect(localCreateSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'cli-1',
+      profile: 'travel',
+      source: 'cli',
+      model: 'gpt-default',
+      provider: 'openai',
+      title: 'CLI run',
+    }))
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('cli-1', expect.objectContaining({
+      source: 'cli',
+      model: 'gpt-default',
+      provider: 'openai',
+    }))
+    expect(localAddMessagesMock).toHaveBeenCalledWith([
+      expect.objectContaining({ session_id: 'cli-1', role: 'user', content: 'hello', tool_calls: null }),
+      expect.objectContaining({ session_id: 'cli-1', role: 'assistant', content: 'hi', reasoning_details: '{"text":"ok"}' }),
+      expect.objectContaining({
+        session_id: 'cli-1',
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"README.md"}' } }],
+      }),
+      expect.objectContaining({ session_id: 'cli-1', role: 'tool', content: '{"ok":true}', tool_call_id: 'call-1', tool_name: 'read_file' }),
+    ])
+    expect(localUpdateSessionStatsMock).toHaveBeenCalledWith('cli-1')
+    expect(localUpdateSessionMock.mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({
+      last_active: expect.any(Number),
+    }))
+    expect(localUpdateSessionMock.mock.calls.at(-1)?.[1].last_active).toBeGreaterThan(200)
+    expect(ctx.body).toMatchObject({ ok: true, imported: true })
   })
 
   describe('exportSession', () => {

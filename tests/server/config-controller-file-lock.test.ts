@@ -74,7 +74,7 @@ describe('config controller locked file updates', () => {
 
     expect(ctx.body).toEqual({ success: true })
     expect(mockRestartGateway).toHaveBeenCalledWith('default')
-    expect(mockDestroyProfile).toHaveBeenCalledWith('default')
+    expect(mockDestroyProfile).not.toHaveBeenCalled()
     const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     expect(config.telegram.enabled).toBe(true)
     expect(config.telegram.extra).toEqual({ mode: 'old', token_mode: 'env' })
@@ -191,7 +191,7 @@ describe('config controller locked file updates', () => {
     }, 'research'))
 
     expect(mockRestartGateway).toHaveBeenCalledWith('research')
-    expect(mockDestroyProfile).toHaveBeenCalledWith('research')
+    expect(mockDestroyProfile).not.toHaveBeenCalled()
     const defaultConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
     const researchConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
     expect(defaultConfig.telegram.require_mention).toBe(false)

@@ -46,11 +46,29 @@ function buildProviderEntry(name: string, base_url: string, api_key: string, mod
   return entry
 }
 
+function normalizeBaseUrl(url: string): string {
+  return String(url || '').trim().replace(/\/+$/, '')
+}
+
+function builtinBaseUrl(poolKey: string, requestedBaseUrl: string): string {
+  return requestedBaseUrl || PROVIDER_PRESETS.find(p => p.value === poolKey)?.base_url || ''
+}
+
+function shouldPersistBuiltinBaseUrl(poolKey: string, requestedBaseUrl: string): boolean {
+  const presetBaseUrl = PROVIDER_PRESETS.find(p => p.value === poolKey)?.base_url || ''
+  if (!requestedBaseUrl || !presetBaseUrl) return !!requestedBaseUrl
+  return normalizeBaseUrl(requestedBaseUrl) !== normalizeBaseUrl(presetBaseUrl)
+}
+
 export async function create(ctx: any) {
   const { name, base_url, api_key, model, context_length, providerKey } = ctx.request.body as {
     name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null
   }
-  if (!name || !base_url || !model) {
+  const normalizedName = String(name || '').trim()
+  const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
+  const isBuiltin = poolKey in PROVIDER_ENV_MAP
+  const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
+  if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
   }
   if (!api_key && !OPTIONAL_API_KEY_PROVIDERS.has(String(providerKey || ''))) {
@@ -58,8 +76,6 @@ export async function create(ctx: any) {
   }
   try {
     const profile = requestedProfile(ctx)
-    const poolKey = providerKey || `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
-    const isBuiltin = poolKey in PROVIDER_ENV_MAP
     await updateConfigYamlForProfile(profile, async (config) => {
       if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
       if (!isBuiltin) {
@@ -68,7 +84,7 @@ export async function create(ctx: any) {
           (e: any) => `custom:${e.name}` === poolKey
         )
         if (existing) {
-          existing.base_url = base_url
+          existing.base_url = effectiveBaseUrl
           existing.api_key = api_key
           existing.model = model
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
@@ -79,7 +95,7 @@ export async function create(ctx: any) {
             existing.models[model].context_length = context_length
           }
         } else {
-          const entry = buildProviderEntry(name.trim().toLowerCase().replace(/ /g, '-'), base_url, api_key, model, context_length)
+          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length)
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) entry.api_mode = preset.api_mode
           config.custom_providers.push(entry)
@@ -89,11 +105,11 @@ export async function create(ctx: any) {
       } else {
         if (PROVIDER_ENV_MAP[poolKey].api_key_env) {
           await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].api_key_env, api_key)
-          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
+          if (PROVIDER_ENV_MAP[poolKey].base_url_env && shouldPersistBuiltinBaseUrl(poolKey, base_url)) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, effectiveBaseUrl) }
           config.model.default = model
           config.model.provider = poolKey
         } else if (DIRECT_CONFIG_PROVIDERS.has(poolKey)) {
-          if (PROVIDER_ENV_MAP[poolKey].base_url_env) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, base_url) }
+          if (PROVIDER_ENV_MAP[poolKey].base_url_env && shouldPersistBuiltinBaseUrl(poolKey, base_url)) { await saveEnvValueForProfile(profile, PROVIDER_ENV_MAP[poolKey].base_url_env, effectiveBaseUrl) }
           config.model.default = model
           config.model.provider = poolKey
         } else {
@@ -102,7 +118,7 @@ export async function create(ctx: any) {
             (e: any) => `custom:${e.name}` === `custom:${poolKey}`
           )
           if (existing) {
-            existing.base_url = base_url
+            existing.base_url = effectiveBaseUrl
             existing.api_key = api_key
             existing.model = model
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
@@ -113,7 +129,7 @@ export async function create(ctx: any) {
               existing.models[model].context_length = context_length
             }
           } else {
-            const entry = buildProviderEntry(poolKey, base_url, api_key, model, context_length)
+            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length)
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) entry.api_mode = preset.api_mode
             config.custom_providers.push(entry)
@@ -191,7 +207,9 @@ export async function remove(ctx: any) {
         const envMapping = PROVIDER_ENV_MAP[poolKey]
         if (envMapping?.api_key_env) {
           await saveEnvValueForProfile(profile, envMapping.api_key_env, '')
-          if (envMapping.base_url_env) { await saveEnvValueForProfile(profile, envMapping.base_url_env, '') }
+        }
+        if (envMapping?.base_url_env) {
+          await saveEnvValueForProfile(profile, envMapping.base_url_env, '')
         }
       }
       if (config.model?.provider === poolKey) {

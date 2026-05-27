@@ -1,0 +1,839 @@
+{
+  "timestamp": "20260515T162805",
+  "mode": "execute",
+  "source_root": "C:\\Users\\DELL\\.openclaw",
+  "target_root": "C:\\Users\\DELL\\AppData\\Local\\hermes",
+  "workspace_target": null,
+  "output_dir": "C:\\Users\\DELL\\AppData\\Local\\hermes\\migration\\openclaw\\20260515T162805",
+  "migrate_secrets": "[redacted]",
+  "preset": "full",
+  "skill_conflict_mode": "skip",
+  "selection": {
+    "selected": [
+      "agent-config",
+      "approvals-config",
+      "archive",
+      "browser-config",
+      "command-allowlist",
+      "cron-jobs",
+      "daily-memory",
+      "deep-channels",
+      "discord-settings",
+      "full-providers",
+      "gateway-config",
+      "hooks-config",
+      "logging-config",
+      "mcp-servers",
+      "memory",
+      "memory-backend",
+      "messaging-settings",
+      "model-config",
+      "plugins-config",
+      "provider-keys",
+      "secret-settings",
+      "session-config",
+      "shared-skills",
+      "signal-settings",
+      "skills",
+      "skills-config",
+      "slack-settings",
+      "soul",
+      "tools-config",
+      "tts-assets",
+      "tts-config",
+      "ui-identity",
+      "user-profile",
+      "whatsapp-settings",
+      "workspace-agents"
+    ],
+    "preset": "full",
+    "skill_conflict_mode": "skip",
+    "available": [
+      {
+        "id": "soul",
+        "label": "SOUL.md",
+        "description": "Import the OpenClaw persona file into Hermes."
+      },
+      {
+        "id": "workspace-agents",
+        "label": "Workspace instructions",
+        "description": "Copy the OpenClaw workspace instructions file into a chosen workspace."
+      },
+      {
+        "id": "memory",
+        "label": "MEMORY.md",
+        "description": "Import long-term memory entries into Hermes memories."
+      },
+      {
+        "id": "user-profile",
+        "label": "USER.md",
+        "description": "Import user profile entries into Hermes memories."
+      },
+      {
+        "id": "messaging-settings",
+        "label": "Messaging settings",
+        "description": "Import Hermes-compatible messaging settings such as allowlists and working directory."
+      },
+      {
+        "id": "secret-settings",
+        "label": "Allowlisted secrets",
+        "description": "Import the small allowlist of Hermes-compatible secrets when explicitly enabled."
+      },
+      {
+        "id": "command-allowlist",
+        "label": "Command allowlist",
+        "description": "Merge OpenClaw exec approval patterns into Hermes command_allowlist."
+      },
+      {
+        "id": "skills",
+        "label": "User skills",
+        "description": "Copy OpenClaw skills into ~/.hermes/skills/openclaw-imports/."
+      },
+      {
+        "id": "tts-assets",
+        "label": "TTS assets",
+        "description": "Copy compatible workspace TTS assets into ~/.hermes/tts/."
+      },
+      {
+        "id": "discord-settings",
+        "label": "Discord settings",
+        "description": "Import Discord bot token and allowlist into Hermes .env."
+      },
+      {
+        "id": "slack-settings",
+        "label": "Slack settings",
+        "description": "Import Slack bot/app tokens and allowlist into Hermes .env."
+      },
+      {
+        "id": "whatsapp-settings",
+        "label": "WhatsApp settings",
+        "description": "Import WhatsApp allowlist into Hermes .env."
+      },
+      {
+        "id": "signal-settings",
+        "label": "Signal settings",
+        "description": "Import Signal account, HTTP URL, and allowlist into Hermes .env."
+      },
+      {
+        "id": "provider-keys",
+        "label": "Provider API keys",
+        "description": "Import model provider API keys into Hermes .env (requires --migrate-secrets)."
+      },
+      {
+        "id": "model-config",
+        "label": "Default model",
+        "description": "Import the default model setting into Hermes config.yaml."
+      },
+      {
+        "id": "tts-config",
+        "label": "TTS configuration",
+        "description": "Import TTS provider and voice settings into Hermes config.yaml."
+      },
+      {
+        "id": "shared-skills",
+        "label": "Shared skills",
+        "description": "Copy shared OpenClaw skills from ~/.openclaw/skills/ into Hermes."
+      },
+      {
+        "id": "daily-memory",
+        "label": "Daily memory files",
+        "description": "Merge daily memory entries from workspace/memory/ into Hermes MEMORY.md."
+      },
+      {
+        "id": "archive",
+        "label": "Archive unmapped docs",
+        "description": "Archive compatible-but-unmapped docs for later manual review."
+      },
+      {
+        "id": "mcp-servers",
+        "label": "MCP servers",
+        "description": "Import MCP server definitions from OpenClaw into Hermes config.yaml."
+      },
+      {
+        "id": "plugins-config",
+        "label": "Plugins configuration",
+        "description": "Archive OpenClaw plugin configuration and installed extensions for manual review."
+      },
+      {
+        "id": "cron-jobs",
+        "label": "Cron / scheduled tasks",
+        "description": "Import cron job definitions. Archive for manual recreation via 'hermes cron'."
+      },
+      {
+        "id": "hooks-config",
+        "label": "Hooks and webhooks",
+        "description": "Archive OpenClaw hook configuration (internal hooks, webhooks, Gmail integration)."
+      },
+      {
+        "id": "agent-config",
+        "label": "Agent defaults and multi-agent setup",
+        "description": "Import agent defaults (compaction, context, thinking) into Hermes config. Archive multi-agent list."
+      },
+      {
+        "id": "gateway-config",
+        "label": "Gateway configuration",
+        "description": "Import gateway port and auth settings. Archive full gateway config for manual setup."
+      },
+      {
+        "id": "session-config",
+        "label": "Session configuration",
+        "description": "Import session reset policies (daily/idle) into Hermes session_reset config."
+      },
+      {
+        "id": "full-providers",
+        "label": "Full model provider definitions",
+        "description": "Import custom model providers (baseUrl, apiType, headers) into Hermes custom_providers."
+      },
+      {
+        "id": "deep-channels",
+        "label": "Deep channel configuration",
+        "description": "Import extended channel settings (Matrix, Mattermost, IRC, group configs). Archive complex settings."
+      },
+      {
+        "id": "browser-config",
+        "label": "Browser configuration",
+        "description": "Import browser automation settings into Hermes config.yaml."
+      },
+      {
+        "id": "tools-config",
+        "label": "Tools configuration",
+        "description": "Import tool settings (exec timeout, sandbox, web search) into Hermes config.yaml."
+      },
+      {
+        "id": "approvals-config",
+        "label": "Approval rules",
+        "description": "Import approval mode and rules into Hermes config.yaml approvals section."
+      },
+      {
+        "id": "memory-backend",
+        "label": "Memory backend configuration",
+        "description": "Archive OpenClaw memory backend settings (QMD, vector search, citations) for manual review."
+      },
+      {
+        "id": "skills-config",
+        "label": "Skills registry configuration",
+        "description": "Archive per-skill enabled/config/env settings from OpenClaw skills.entries."
+      },
+      {
+        "id": "ui-identity",
+        "label": "UI and identity settings",
+        "description": "Archive OpenClaw UI theme, assistant identity, and display preferences."
+      },
+      {
+        "id": "logging-config",
+        "label": "Logging and diagnostics",
+        "description": "Archive OpenClaw logging and diagnostics configuration."
+      }
+    ],
+    "presets": [
+      {
+        "id": "user-data",
+        "selected": [
+          "agent-config",
+          "approvals-config",
+          "archive",
+          "browser-config",
+          "command-allowlist",
+          "cron-jobs",
+          "daily-memory",
+          "deep-channels",
+          "discord-settings",
+          "full-providers",
+          "gateway-config",
+          "hooks-config",
+          "logging-config",
+          "mcp-servers",
+          "memory",
+          "memory-backend",
+          "messaging-settings",
+          "model-config",
+          "plugins-config",
+          "session-config",
+          "shared-skills",
+          "signal-settings",
+          "skills",
+          "skills-config",
+          "slack-settings",
+          "soul",
+          "tools-config",
+          "tts-assets",
+          "tts-config",
+          "ui-identity",
+          "user-profile",
+          "whatsapp-settings",
+          "workspace-agents"
+        ]
+      },
+      {
+        "id": "full",
+        "selected": [
+          "agent-config",
+          "approvals-config",
+          "archive",
+          "browser-config",
+          "command-allowlist",
+          "cron-jobs",
+          "daily-memory",
+          "deep-channels",
+          "discord-settings",
+          "full-providers",
+          "gateway-config",
+          "hooks-config",
+          "logging-config",
+          "mcp-servers",
+          "memory",
+          "memory-backend",
+          "messaging-settings",
+          "model-config",
+          "plugins-config",
+          "provider-keys",
+          "secret-settings",
+          "session-config",
+          "shared-skills",
+          "signal-settings",
+          "skills",
+          "skills-config",
+          "slack-settings",
+          "soul",
+          "tools-config",
+          "tts-assets",
+          "tts-config",
+          "ui-identity",
+          "user-profile",
+          "whatsapp-settings",
+          "workspace-agents"
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "migrated": 17,
+    "archived": 1,
+    "skipped": 34,
+    "conflict": 0,
+    "error": 0
+  },
+  "items": [
+    {
+      "kind": "soul",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\SOUL.md",
+      "status": "skipped",
+      "reason": "No OpenClaw SOUL.md found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "workspace-agents",
+      "source": "workspace/AGENTS.md",
+      "destination": null,
+      "status": "skipped",
+      "reason": "Source file not found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "memory",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\memories\\MEMORY.md",
+      "status": "skipped",
+      "reason": "Source file not found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "user-profile",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\memories\\USER.md",
+      "status": "skipped",
+      "reason": "Source file not found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "messaging-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No Hermes-compatible messaging settings found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "secret-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No allowlisted Hermes-compatible secrets found",
+      "details": {
+        "supported_targets": [
+          "ANTHROPIC_API_KEY",
+          "ELEVENLABS_API_KEY",
+          "OPENAI_API_KEY",
+          "OPENROUTER_API_KEY",
+          "TELEGRAM_BOT_TOKEN",
+          "VOICE_TOOLS_OPENAI_KEY"
+        ]
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "discord-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No Discord settings found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "slack-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No Slack settings found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "whatsapp-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No WhatsApp settings found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "signal-settings",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No Signal settings found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "provider-keys",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\.env",
+      "status": "skipped",
+      "reason": "No provider API keys found",
+      "details": {
+        "supported_targets": [
+          "ANTHROPIC_API_KEY",
+          "ELEVENLABS_API_KEY",
+          "OPENAI_API_KEY",
+          "OPENROUTER_API_KEY",
+          "TELEGRAM_BOT_TOKEN",
+          "VOICE_TOOLS_OPENAI_KEY"
+        ]
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "model-config",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\config.yaml",
+      "status": "skipped",
+      "reason": "No default model found in OpenClaw config",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "tts-config",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\config.yaml",
+      "status": "skipped",
+      "reason": "No TTS configuration found in OpenClaw config",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "command-allowlist",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\config.yaml",
+      "status": "skipped",
+      "reason": "No OpenClaw exec approvals file found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "skills",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports",
+      "status": "skipped",
+      "reason": "No OpenClaw skills directory found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "shared-skills",
+      "source": "C:\\Users\\DELL\\.openclaw\\skills",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports",
+      "status": "skipped",
+      "reason": "No skills with SKILL.md found in managed skills",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\caveman",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\caveman",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\diagnose",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\diagnose",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\find-skills",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\find-skills",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\grill-me",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\grill-me",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\grill-with-docs",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\grill-with-docs",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\handoff",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\handoff",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\improve-codebase-architecture",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\improve-codebase-architecture",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\prototype",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\prototype",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\setup-matt-pocock-skills",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\setup-matt-pocock-skills",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\tdd",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\tdd",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\to-issues",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\to-issues",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\to-prd",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\to-prd",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\triage",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\triage",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\write-a-skill",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\write-a-skill",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "personal-skills",
+      "source": "C:\\Users\\DELL\\.agents\\skills\\zoom-out",
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\skills\\openclaw-imports\\zoom-out",
+      "status": "migrated",
+      "reason": "",
+      "details": {
+        "backup": ""
+      },
+      "sensitive": false
+    },
+    {
+      "kind": "daily-memory",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\memories\\MEMORY.md",
+      "status": "skipped",
+      "reason": "No workspace/memory/ directory found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "tts-assets",
+      "source": null,
+      "destination": "C:\\Users\\DELL\\AppData\\Local\\hermes\\tts",
+      "status": "skipped",
+      "reason": "Source directory not found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "raw-config-skip",
+      "source": "C:\\Users\\DELL\\.openclaw\\openclaw.json",
+      "destination": null,
+      "status": "skipped",
+      "reason": "Selected Hermes-compatible values were extracted; raw OpenClaw config was not copied.",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "sensitive-skip",
+      "source": "C:\\Users\\DELL\\.openclaw\\identity",
+      "destination": null,
+      "status": "skipped",
+      "reason": "Contains secrets, binary state, or product-specific runtime data",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "mcp-servers",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No MCP servers found in OpenClaw config",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "plugins-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No plugins configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "cron-jobs",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No cron configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "hooks-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No hooks configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "agent-config",
+      "source": "openclaw.json agents.defaults",
+      "destination": "config.yaml agent/compression/terminal",
+      "status": "migrated",
+      "reason": "Agent defaults mapped to Hermes config",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "gateway-config",
+      "source": "openclaw.json gateway.*",
+      "destination": "archive/gateway-config.json",
+      "status": "archived",
+      "reason": "Gateway config archived. Use 'hermes gateway' to configure.",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "env-var",
+      "source": "gateway.auth.token",
+      "destination": ".env HERMES_GATEWAY_TOKEN",
+      "status": "migrated",
+      "reason": "",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "session-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No session configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "full-providers",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No model providers found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "deep-channels",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No channel configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "browser-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No browser configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "tools-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No tools configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "approvals-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No approvals configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "memory-backend",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No memory backend configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "skills-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No skills registry configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "ui-identity",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No UI/identity configuration found",
+      "details": {},
+      "sensitive": false
+    },
+    {
+      "kind": "logging-config",
+      "source": null,
+      "destination": null,
+      "status": "skipped",
+      "reason": "No logging/diagnostics configuration found",
+      "details": {},
+      "sensitive": false
+    }
+  ],
+  "warnings": [],
+  "next_steps": [
+    "Review the migration report at C:\\Users\\DELL\\AppData\\Local\\hermes\\migration\\openclaw\\20260515T162805/summary.md",
+    "Start a new Hermes session (or /reset) to pick up the imported config."
+  ]
+}

@@ -87,7 +87,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockReset()
 
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default' })
-    getModelContextLengthMock.mockReturnValue(200_000)
+    getModelContextLengthMock.mockReturnValue(256_000)
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 0, outputTokens: 0 })
     getCompressionSnapshotMock.mockReturnValue(null)
@@ -142,7 +142,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { threshold: 0.25, target_ratio: 0.1, protect_last_n: 7, protect_first_n: 2 },
     })
-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 60_000, outputTokens: 0 })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 70_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'compressed' }],
       meta: {
@@ -175,7 +175,7 @@ describe('run chat compression trigger', () => {
     )
   })
 
-  it('uses full context estimates for compression threshold decisions', async () => {
+  it('uses local context estimates for compression threshold decisions', async () => {
     const messages = Array.from({ length: 10 }, (_, index) => ({
       id: index + 1,
       session_id: 'session-1',
@@ -191,7 +191,7 @@ describe('run chat compression trigger', () => {
     getSessionDetailMock.mockReturnValue({ messages })
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
-      messages: [{ role: 'user', content: 'compressed by full context estimate' }],
+      messages: [{ role: 'user', content: 'compressed by local context estimate' }],
       meta: {
         compressed: true,
         llmCompressed: true,
@@ -212,10 +212,10 @@ describe('run chat compression trigger', () => {
       emit,
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )
 
-    expect(history).toEqual([{ role: 'user', content: 'compressed by full context estimate' }])
+    expect(history).toEqual([{ role: 'user', content: 'compressed by local context estimate' }])
     expect(compressorCompressMock).toHaveBeenCalledTimes(1)
     expect(updateMessageContextTokenUsageMock).toHaveBeenCalledWith(
       'session-1',
@@ -226,7 +226,7 @@ describe('run chat compression trigger', () => {
     )
   })
 
-  it('emits full context token usage when the full estimate is under threshold', async () => {
+  it('emits local context token usage when the local estimate is under threshold', async () => {
     const messages = Array.from({ length: 10 }, (_, index) => ({
       id: index + 1,
       session_id: 'session-1',
@@ -257,7 +257,10 @@ describe('run chat compression trigger', () => {
     )
 
     expect(history).toHaveLength(9)
-    expect(contextTokenEstimator).toHaveBeenCalledWith(expect.arrayContaining([{ role: 'user', content: 'message 0' }]))
+    expect(contextTokenEstimator).toHaveBeenCalledWith(
+      expect.arrayContaining([{ role: 'user', content: 'message 0' }]),
+      1_900,
+    )
     expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
       event: 'usage.updated',
       session_id: 'session-1',
@@ -266,6 +269,108 @@ describe('run chat compression trigger', () => {
       contextTokens: 19_379,
     }))
     expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
+  it('includes current input tokens when estimating snapshot-aware context', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: 'previous summary',
+      lastMessageIndex: 4,
+      messageCountAtTime: 5,
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 10, outputTokens: 0 })
+    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 1_000, outputTokens: 0 })
+    const emit = vi.fn()
+    const contextTokenEstimator = vi.fn(async (_messages, messageTokens: number) => 20_000 + messageTokens)
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      emit,
+      new Map(),
+      {},
+      contextTokenEstimator,
+      700,
+    )
+
+    expect(contextTokenEstimator).toHaveBeenCalledWith(expect.any(Array), 1_700)
+    expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
+      contextTokens: 21_700,
+    }))
+    expect(compressorCompressMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps current input tokens in the compression completed context total', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 100, outputTokens: 0 })
+    estimateUsageTokensFromMessagesMock.mockImplementation((items: any[]) => {
+      if (items?.[0]?.content === 'compressed result') return { inputTokens: 1_000, outputTokens: 0 }
+      return { inputTokens: 100, outputTokens: 0 }
+    })
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed result' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 9,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+    const emit = vi.fn()
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      emit,
+      new Map(),
+      {},
+      vi.fn(async () => 160_000),
+      700,
+    )
+
+    expect(updateMessageContextTokenUsageMock).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Object),
+      emit,
+      1_700,
+      { inputTokens: 100, outputTokens: 0 },
+    )
+    expect(emit).toHaveBeenCalledWith('compression.completed', expect.objectContaining({
+      afterTokens: 1_700,
+      contextTokens: 1_700,
+    }))
   })
 
   it('throws when fixed prompt and tool schemas exceed threshold before any history exists', async () => {
@@ -282,7 +387,7 @@ describe('run chat compression trigger', () => {
       emit,
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
 
     expect(emit).not.toHaveBeenCalledWith('usage.updated', expect.anything())
@@ -315,7 +420,7 @@ describe('run chat compression trigger', () => {
       vi.fn(),
       new Map(),
       {},
-      vi.fn(async () => 120_000),
+      vi.fn(async () => 160_000),
     )).rejects.toBeInstanceOf(ContextWindowTooSmallError)
 
     expect(compressorCompressMock).not.toHaveBeenCalled()
@@ -338,7 +443,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { protect_last_n: 5 },
     })
-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 120_000, outputTokens: 0 })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 160_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'compressed' }],
       meta: {
@@ -363,8 +468,8 @@ describe('run chat compression trigger', () => {
 
     expect(compressorConstructorMock).toHaveBeenCalledWith({
       config: {
-        triggerTokens: 100_000,
-        summaryBudget: 40_000,
+        triggerTokens: 128_000,
+        summaryBudget: 51_200,
         headMessageCount: 3,
         tailMessageCount: 5,
       },
@@ -439,7 +544,7 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({
       compression: { protect_first_n: 2, protect_last_n: 3 },
     })
-    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 120_000, outputTokens: 0 })
+    estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 160_000, outputTokens: 0 })
     compressorCompressMock.mockResolvedValue({
       messages: [{ role: 'user', content: 'updated stale compressed' }],
       meta: {

@@ -292,9 +292,11 @@ except RuntimeError as exc:
     assert "already running" in str(exc)
 
 class FakeWorker:
-    def __init__(self, destroyed):
+    def __init__(self, destroyed, profile="default", key="default"):
         self.running = True
         self.destroyed = destroyed
+        self.profile = profile
+        self.key = key
         self.requests = []
         self.stopped = False
 
@@ -310,28 +312,41 @@ broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
 profile_worker = FakeWorker(2)
 broker._workers["default"] = profile_worker
 broker._run_profile["run-session-a"] = "default"
+broker._run_worker_key["run-session-a"] = "default"
 broker._running_run_profile["run-session-a"] = "default"
+broker._running_run_worker_key["run-session-a"] = "default"
 broker._session_profile["session-a"] = "default"
+broker._session_worker_key["session-a"] = "default"
 broker._approval_profile["approval-a"] = "default"
+broker._approval_worker_key["approval-a"] = "default"
 broker._compression_profile["compression-a"] = "default"
+broker._compression_worker_key["compression-a"] = "default"
 
 destroy_profile_result = broker.handle({"action": "destroy_profile", "profile": "default"})
 assert destroy_profile_result == {"profile": "default", "destroyed": 2}
 assert profile_worker.stopped
 assert "default" not in broker._workers
 assert broker._run_profile == {}
+assert broker._run_worker_key == {}
 assert broker._running_run_profile == {}
+assert broker._running_run_worker_key == {}
 assert broker._session_profile == {}
+assert broker._session_worker_key == {}
 assert broker._approval_profile == {}
+assert broker._approval_worker_key == {}
 assert broker._compression_profile == {}
+assert broker._compression_worker_key == {}
 
-worker_a = FakeWorker(1)
-worker_b = FakeWorker(3)
+worker_a = FakeWorker(1, "default", "a")
+worker_b = FakeWorker(3, "work", "b")
 broker._workers["a"] = worker_a
 broker._workers["b"] = worker_b
-broker._run_profile["run-a"] = "a"
-broker._running_run_profile["run-a"] = "a"
-broker._session_profile["session-b"] = "b"
+broker._run_profile["run-a"] = "default"
+broker._run_worker_key["run-a"] = "a"
+broker._running_run_profile["run-a"] = "default"
+broker._running_run_worker_key["run-a"] = "a"
+broker._session_profile["session-b"] = "work"
+broker._session_worker_key["session-b"] = "b"
 
 destroy_all_result = broker.handle({"action": "destroy_all"})
 assert destroy_all_result == {"destroyed": 4}
@@ -339,8 +354,11 @@ assert worker_a.stopped
 assert worker_b.stopped
 assert broker._workers == {}
 assert broker._run_profile == {}
+assert broker._run_worker_key == {}
 assert broker._running_run_profile == {}
+assert broker._running_run_worker_key == {}
 assert broker._session_profile == {}
+assert broker._session_worker_key == {}
 `)
   })
 
@@ -369,6 +387,69 @@ assert resp["active_sessions"] == 1
 assert resp["running_sessions"] == 1
 assert resp["sessions_by_profile"] == {"default": 1}
 assert resp["running_sessions_by_profile"] == {"default": 1}
+`)
+  })
+
+  it('routes worker-keyed broker requests without stopping the worker on session destroy', () => {
+    runPython(String.raw`
+${harness}
+
+class RoutedWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+
+    def __init__(self, profile, key):
+        self.profile = profile
+        self.key = key
+        self.requests = []
+        self.stopped = False
+
+    def request(self, req, timeout=None):
+        self.requests.append(req)
+        action = req.get("action")
+        if action == "chat":
+            return {"ok": True, "run_id": "run-compress", "session_id": req["session_id"], "status": "running"}
+        if action == "get_output":
+            return {"ok": True, "run_id": req["run_id"], "session_id": "compress-temp", "status": "complete", "done": True}
+        if action == "destroy":
+            return {"ok": True, "session_id": req["session_id"], "destroyed": True}
+        raise AssertionError(f"unexpected action: {action}")
+
+    def stop(self):
+        self.stopped = True
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+worker = RoutedWorker("default", "default:compression:session-a")
+broker._workers[worker.key] = worker
+
+chat_resp = broker.handle({
+    "action": "chat",
+    "session_id": "compress-temp",
+    "profile": "default",
+    "worker_key": worker.key,
+    "message": "summarize",
+})
+assert chat_resp["run_id"] == "run-compress"
+assert worker.requests[-1]["profile"] == "default"
+assert "worker_key" not in worker.requests[-1]
+
+broker.handle({"action": "get_output", "run_id": "run-compress"})
+assert worker.requests[-1]["action"] == "get_output"
+
+destroy_resp = broker.handle({
+    "action": "destroy",
+    "session_id": "compress-temp",
+    "profile": "default",
+    "worker_key": worker.key,
+})
+assert destroy_resp["destroyed"] is True
+assert worker.requests[-1]["action"] == "destroy"
+assert not worker.stopped
+assert worker.key in broker._workers
+assert "compress-temp" not in broker._session_profile
+assert "compress-temp" not in broker._session_worker_key
 `)
   })
 
@@ -480,7 +561,7 @@ original_getpid = bridge.os.getpid
 try:
     bridge.subprocess.Popen = fake_popen
     bridge.os.getpid = lambda: 4242
-    proc_worker = bridge.WorkerProcess("default", "ipc:///tmp/worker.sock", "/agent", "/home")
+    proc_worker = bridge.WorkerProcess("default:compression:session-a", "default", "ipc:///tmp/worker.sock", "/agent", "/home")
     proc_worker._pipe_stderr = lambda: None
     proc_worker._wait_ready = lambda: None
     proc_worker.start()
@@ -553,6 +634,37 @@ assert not thread.is_alive(), blocking_conn.response
 blocked_resp = json.loads(blocking_conn.response.decode("utf-8"))
 assert blocked_resp["ok"] is True, blocked_resp
 assert blocked_resp["blocked"] is True, blocked_resp
+`)
+  })
+
+  it('extends profile worker request timeout from wait requests', () => {
+    runPython(String.raw`
+${harness}
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+assert broker._worker_request_timeout({"action": "chat"}) == bridge.WorkerProcess.REQUEST_TIMEOUT_SECONDS
+assert broker._worker_request_timeout({"action": "chat", "timeout": 60}) == bridge.WorkerProcess.REQUEST_TIMEOUT_SECONDS
+assert broker._worker_request_timeout({"action": "chat", "timeout": 300}) == 310
+
+captured = {}
+worker = bridge.WorkerProcess("default", "default", "ipc:///tmp/worker.sock", None, None)
+worker.start = lambda: None
+original_send = bridge._send_bridge_request
+try:
+    def fake_send(endpoint, req, timeout):
+        captured["endpoint"] = endpoint
+        captured["req"] = req
+        captured["timeout"] = timeout
+        return {"ok": True}
+    bridge._send_bridge_request = fake_send
+    response = worker.request({"action": "chat"}, 310)
+finally:
+    bridge._send_bridge_request = original_send
+
+assert response["ok"] is True, response
+assert captured["endpoint"] == "ipc:///tmp/worker.sock", captured
+assert captured["req"] == {"action": "chat"}, captured
+assert captured["timeout"] == 310, captured
 `)
   })
 })

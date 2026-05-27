@@ -2,7 +2,6 @@ import { request } from './client'
 
 export interface AuthStatus {
   hasPasswordLogin: boolean
-  username: string | null
   hasUsers?: boolean
 }
 

@@ -77,7 +77,7 @@ export default {
   },
   install: {
     title: 'Quick Start',
-    desc: 'Use the built-in deployment scripts to bring Quanthermes online in under a minute.',
+    desc: 'Get QuantHermes Web UI running in under a minute.',
     npm: {
       title: 'Source Deploy Script',
       cmd1: 'bash scripts/deploy-source-armbian.sh',
@@ -113,14 +113,14 @@ export default {
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Quanthermes is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Quanthermes Agent CLI and provides a beautiful web interface.',
+      intro: 'QuantHermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
         content: 'Use the built-in deployment script to install Quanthermes. Node.js 23 or higher is required.',
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Quanthermes will automatically generate an auth token, initialize local data, start the Quanthermes agent bridge, and open the dashboard in your browser.',
+        content: 'On first start, QuantHermes Web UI will automatically generate an auth token, validate configuration files, start the Hermes gateway, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
@@ -129,7 +129,7 @@ export default {
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Quanthermes can be configured via environment variables.',
+      intro: 'QuantHermes Web UI can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
@@ -142,8 +142,8 @@ export default {
         ],
       },
       gateway: {
-        title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Quanthermes agent bridge, which runs alongside the Web UI server and talks directly to the Quanthermes Agent runtime. Switching the frontend Quanthermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
+        title: 'Gateway Management',
+        content: 'The gateway is the Hermes Agent process that handles AI conversations. QuantHermes Web UI manages the gateway lifecycle — start, stop, and monitor from the Gateways page. Multiple gateways can run with different profiles, and each profile resolves its own gateway host/port from its Hermes config.',
       },
       profiles: {
         title: 'Profiles',
@@ -152,7 +152,7 @@ export default {
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Quanthermes.',
+      intro: 'Explore the core features of QuantHermes Web UI.',
       chat: {
         title: 'AI Chat',
         content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Web UI local session database.',
@@ -228,7 +228,7 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Quanthermes provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
+      intro: 'QuantHermes Web UI provides both a local BFF API and proxies requests to the upstream Hermes gateway.',
       local: {
         title: 'Local BFF Endpoints',
         content: 'The Koa server handles session management, profile CRUD, account- and profile-scoped management, config read/write, log access, skill listing, memory operations, and static assets.',
