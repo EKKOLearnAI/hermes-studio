@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises'
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { createHash } from 'crypto'
@@ -201,9 +201,20 @@ async function resolveSkillDirFromConfig(
  */
 async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, string>, hubNames: Set<string>, disabledList: string[], usageStats: Map<string, UsageStats>) {
   const allEntries = await readdir(skillsDir, { withFileTypes: true })
-  const dirNames = allEntries
-    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-    .map(e => e.name)
+  const dirNames: string[] = []
+  for (const e of allEntries) {
+    if (e.name.startsWith('.')) continue
+    if (e.isDirectory()) {
+      dirNames.push(e.name)
+    } else if (e.isSymbolicLink()) {
+      try {
+        await realpath(join(skillsDir, e.name))
+        dirNames.push(e.name)
+      } catch {
+        // broken symlink — skip
+      }
+    }
+  }
 
   // Classify directories: categories vs. flat skills
   const categoryDirs: { name: string; description: string }[] = []
