@@ -42,6 +42,8 @@ export interface AvailableModelGroup {
   available_models?: string[]
   api_key: string
   builtin?: boolean
+  /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
+  base_url_env?: string
   /** 可选：模型 ID -> 元数据（preview/disabled/alias）。alias 仅用于 Web UI 展示。 */
   model_meta?: Record<string, { preview?: boolean; disabled?: boolean; alias?: string }>
 }

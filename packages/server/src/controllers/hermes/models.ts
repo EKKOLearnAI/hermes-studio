@@ -13,7 +13,7 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
-type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[] }
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string }
 type ModelVisibility = Record<string, ModelVisibilityRule>
 type CustomModels = Record<string, string[]>
 
@@ -89,6 +89,18 @@ function applyCustomModels(groups: AvailableGroup[], customModels: CustomModels)
     const availableModels = [...new Set([...(group.available_models || group.models), ...extra])]
     return { ...group, models, available_models: availableModels }
   })
+}
+
+function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
+  const envMapping = PROVIDER_ENV_MAP[p.value]
+  return {
+    provider: p.value,
+    label: p.label,
+    base_url: p.base_url,
+    models: models || p.models,
+    api_key: '',
+    ...(envMapping?.base_url_env ? { base_url_env: envMapping.base_url_env } : {}),
+  }
 }
 
 function normalizeModelVisibility(input: unknown): ModelVisibility {
@@ -167,6 +179,18 @@ function envReader(envContent: string) {
 
 function providerKeyForCustom(name: string): string {
   return `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
+}
+
+function providerShouldFetchLiveModels(providerKey: string): boolean {
+  return providerKey === 'openrouter' ||
+    providerKey === 'cliproxyapi' ||
+    providerKey === 'ollama-cloud' ||
+    providerKey === 'lmstudio'
+}
+
+function includeConfiguredDefaultModel(providerKey: string, modelsList: string[], currentDefault: string, currentDefaultProvider: string): string[] {
+  if (!currentDefault || providerKey !== currentDefaultProvider) return modelsList
+  return [...new Set([...modelsList, currentDefault])]
 }
 
 function mergeAvailableGroups(groups: AvailableGroup[]): AvailableGroup[] {
@@ -347,15 +371,18 @@ async function buildAvailableForProfile(
         }
         if (Object.keys(modelMeta).length === 0) modelMeta = undefined
       }
-    } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
+    } else if (providerShouldFetchLiveModels(providerKey)) {
       if (envMapping.api_key_env) {
         const apiKey = envGetValue(envMapping.api_key_env)
         if (apiKey) {
-          const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey, providerKey === 'openrouter')
-          if (fetched.length > 0) modelsList = fetched
+          try {
+            const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey, providerKey === 'openrouter')
+            if (fetched.length > 0) modelsList = fetched
+          } catch { /* ignore live catalog failures */ }
         }
       }
     }
+    modelsList = includeConfiguredDefaultModel(providerKey, modelsList, currentDefault, currentDefaultProvider)
     if (modelsList.length > 0) {
       const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
       addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
@@ -428,13 +455,7 @@ export async function getAvailable(ctx: any) {
         defaultProfile?.default_provider || '',
         visibleGroups,
       )
-      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => ({
-        provider: p.value,
-        label: p.label,
-        base_url: p.base_url,
-        models: p.models,
-        api_key: '',
-      }))
+      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p))
       ctx.body = {
         default: visibleDefault.defaultModel,
         default_provider: visibleDefault.defaultProvider,
@@ -465,13 +486,7 @@ export async function getAvailable(ctx: any) {
       default: visibleProfileDefault.defaultModel,
       default_provider: visibleProfileDefault.defaultProvider,
       groups: visibleProfileGroups,
-      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => ({
-        provider: p.value,
-        label: p.label,
-        base_url: p.base_url,
-        models: p.models,
-        api_key: '',
-      })), modelAliasesForProfile),
+      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p)), modelAliasesForProfile),
       model_aliases: modelAliasesForProfile,
       model_visibility: modelVisibilityForProfile,
       custom_models: customModelsForProfile,
@@ -608,8 +623,8 @@ export async function getAvailable(ctx: any) {
           }
           modelMeta = Object.keys(nextModelMeta).length > 0 ? nextModelMeta : undefined
         }
-      } else if (providerKey === 'openrouter' || providerKey === 'cliproxyapi' || providerKey === 'ollama-cloud') {
-        // OpenRouter and local CLIProxyAPI expose dynamic OpenAI-compatible /models catalogs.
+      } else if (providerShouldFetchLiveModels(providerKey)) {
+        // These providers expose dynamic OpenAI-compatible /models catalogs.
         if (envMapping.api_key_env) {
           const apiKey = envGetValue(envMapping.api_key_env)
           if (apiKey) {
@@ -620,6 +635,7 @@ export async function getAvailable(ctx: any) {
           }
         }
       }
+      modelsList = includeConfiguredDefaultModel(providerKey, modelsList, currentDefault, currentDefaultProvider)
       if (modelsList.length > 0) {
         const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
         addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
@@ -661,12 +677,10 @@ export async function getAvailable(ctx: any) {
     const liveCopilotModels = copilotEnabled ? await getCopilotLive() : []
     const liveCopilotIds = liveCopilotModels.map((m) => m.id)
 
-    const allProvidersBase = PROVIDER_PRESETS.map((p: any) => ({
-      provider: p.value,
-      label: p.label,
-      base_url: p.base_url,
-      models: p.value === 'copilot' && liveCopilotIds.length > 0 ? liveCopilotIds : p.models,
-    }))
+    const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
+      p,
+      p.value === 'copilot' && liveCopilotIds.length > 0 ? liveCopilotIds : p.models,
+    ))
     const allProviders = applyModelAliases(allProvidersBase, modelAliases)
 
     if (groups.length === 0) {

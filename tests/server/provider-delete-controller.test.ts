@@ -47,7 +47,9 @@ describe('providers controller delete', () => {
   it('removes built-in API-key provider credentials from env and auth pool', async () => {
     writeFileSync(join(hermesHome, '.env'), [
       ['DEEPSEEK_API_KEY', 'deepseek-placeholder'].join('='),
+      ['DEEPSEEK_BASE_URL', 'https://deepseek-proxy.invalid/v1'].join('='),
       ['OPENROUTER_API_KEY', 'openrouter-placeholder'].join('='),
+      ['OPENROUTER_BASE_URL', 'https://openrouter-proxy.invalid/v1'].join('='),
       '',
     ].join('\n'))
     writeFileSync(join(hermesHome, 'auth.json'), JSON.stringify({
@@ -69,7 +71,9 @@ describe('providers controller delete', () => {
     expect(ctx.body).toEqual({ success: true })
     const envAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
     expect(envAfter).not.toContain('DEEPSEEK_API_KEY')
+    expect(envAfter).not.toContain('DEEPSEEK_BASE_URL')
     expect(envAfter).toContain(['OPENROUTER_API_KEY', 'openrouter-placeholder'].join('='))
+    expect(envAfter).toContain(['OPENROUTER_BASE_URL', 'https://openrouter-proxy.invalid/v1'].join('='))
 
     const authAfter = readAuth()
     expect(authAfter.providers).not.toHaveProperty('deepseek')
@@ -78,6 +82,24 @@ describe('providers controller delete', () => {
     expect(authAfter.credential_pool.openrouter).toEqual([
       { label: 'OPENROUTER_API_KEY', source: 'env:OPENROUTER_API_KEY' },
     ])
+  })
+
+  it('does not remove unrelated base URL env for a provider without a base URL env mapping', async () => {
+    writeFileSync(join(hermesHome, '.env'), [
+      ['XAI_BASE_URL', 'https://xai-proxy.invalid/v1'].join('='),
+      ['DEEPSEEK_BASE_URL', 'https://deepseek-proxy.invalid/v1'].join('='),
+      '',
+    ].join('\n'))
+
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('xai-oauth')
+
+    await remove(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const envAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
+    expect(envAfter).toContain(['XAI_BASE_URL', 'https://xai-proxy.invalid/v1'].join('='))
+    expect(envAfter).toContain(['DEEPSEEK_BASE_URL', 'https://deepseek-proxy.invalid/v1'].join('='))
   })
 
   it('removes custom provider config and any matching stored auth entry', async () => {
