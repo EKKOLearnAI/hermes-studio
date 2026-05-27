@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   // 登入
   login: {
-    title: 'Hermes Web UI',
+    title: 'Quanthermes',
     description: '輸入使用者名稱和密碼以繼續。',
     placeholder: '存取權杖',
     submit: '登入',
@@ -203,7 +203,7 @@ export default {
     contextEditInvalid: '請輸入有效的上下文長度',
     contextEditSuccess: '上下文長度已更新',
     contextEditFailed: '更新失敗',
-    emptyState: '開始與 Hermes Agent 對話',
+    emptyState: '開始與 Quanthermes Agent 對話',
     outlineTitle: '會話大綱',
     outlineEmpty: '暫無會話內容',
     outlineUserQuestion: '使用者問題',
@@ -1344,3 +1344,4 @@ export default {
     new_0_6_1_10: '移除舊的 AUTH_DISABLED 認證繞過以符合多使用者權限模型，同時保留 AUTH_TOKEN 支援',
   },
 }
+

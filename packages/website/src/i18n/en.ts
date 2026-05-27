@@ -8,8 +8,8 @@ export default {
     title: 'Self-Hosted AI Chat Dashboard',
     subtitle: 'Open-source AI agent dashboard — streaming chat, multi-model routing, Kanban boards, usage analytics, web terminal, all in one self-hosted interface.',
     cta: 'Get Started',
-    viewGithub: 'View on GitHub',
-    install: 'npm install -g hermes-web-ui',
+    viewGithub: 'Deployment Guide',
+    install: 'bash scripts/deploy-source-armbian.sh',
   },
   features: {
     title: 'Everything You Need',
@@ -40,7 +40,7 @@ export default {
     },
     profiles: {
       title: 'Multi-Profile',
-      desc: 'Account-authorized Hermes profiles with isolated config, models, uploads, jobs, usage, memory, skills, plugins, and providers.',
+      desc: 'Account-authorized Quanthermes profiles with isolated config, models, uploads, jobs, usage, memory, skills, plugins, and providers.',
     },
     files: {
       title: 'File Browser',
@@ -52,7 +52,7 @@ export default {
     },
     quickInstall: {
       title: 'One Command',
-      desc: 'Install and start with a single command. Initializes Web UI data, starts the bridge, and opens the browser.',
+      desc: 'Use the built-in deployment scripts to initialize data, start the bridge, and open the browser.',
     },
     i18n: {
       title: '8 Languages',
@@ -77,29 +77,29 @@ export default {
   },
   install: {
     title: 'Quick Start',
-    desc: 'Get Hermes Web UI running in under a minute.',
+    desc: 'Use the built-in deployment scripts to bring Quanthermes online in under a minute.',
     npm: {
-      title: 'npm',
-      cmd1: 'npm install -g hermes-web-ui',
-      cmd2: 'hermes-web-ui start',
+      title: 'Source Deploy Script',
+      cmd1: 'bash scripts/deploy-source-armbian.sh',
+      cmd2: 'systemctl restart hermes-web-ui',
     },
     docker: {
       title: 'Docker',
       cmd: 'docker compose up -d',
     },
     source: {
-      title: 'From Source',
-      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-web-ui.git',
-      cmd2: 'cd hermes-web-ui && npm install && npm run dev',
+      title: 'Manual Build',
+      cmd1: '# Sync your approved source package to this directory',
+      cmd2: 'bash scripts/deploy-source-armbian.sh',
     },
     prereq: 'Requires Node.js >= 23',
   },
   starHistory: {
     title: 'Growing Community',
-    desc: 'Star us on GitHub and join the community.',
+    desc: 'Use the internal deployment package and deployment scripts to join the Quanthermes environment quickly.',
   },
   footer: {
-    description: 'Self-hosted AI chat dashboard for Hermes Agent.',
+    description: 'Self-hosted AI chat dashboard for Quanthermes Agent.',
     license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
   },
@@ -113,14 +113,14 @@ export default {
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Hermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
+      intro: 'Quanthermes is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Quanthermes Agent CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
-        content: 'Install globally via npm. Node.js 23 or higher is required.',
+        content: 'Use the built-in deployment script to install Quanthermes. Node.js 23 or higher is required.',
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Hermes Web UI will automatically generate an auth token, initialize local data, start the Hermes agent bridge, and open the dashboard in your browser.',
+        content: 'On first start, Quanthermes will automatically generate an auth token, initialize local data, start the Quanthermes agent bridge, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
@@ -129,7 +129,7 @@ export default {
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Hermes Web UI can be configured via environment variables.',
+      intro: 'Quanthermes can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
@@ -143,16 +143,16 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
+        content: 'Chat runs are handled through the Quanthermes agent bridge, which runs alongside the Web UI server and talks directly to the Quanthermes Agent runtime. Switching the frontend Quanthermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
       },
       profiles: {
         title: 'Profiles',
-        content: 'Profiles provide isolated configurations for different use cases. Super administrators can manage every profile, while regular administrators only see and use profiles assigned to their account. Create, clone, import, export, or switch Hermes profiles from the Profiles page.',
+        content: 'Profiles provide isolated configurations for different use cases. Super administrators can manage every profile, while regular administrators only see and use profiles assigned to their account. Create, clone, import, export, or switch Quanthermes profiles from the Profiles page.',
       },
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Hermes Web UI.',
+      intro: 'Explore the core features of Quanthermes.',
       chat: {
         title: 'AI Chat',
         content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Web UI local session database.',
@@ -228,7 +228,7 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
+      intro: 'Quanthermes provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
         content: 'The Koa server handles session management, profile CRUD, account- and profile-scoped management, config read/write, log access, skill listing, memory operations, and static assets.',
@@ -244,3 +244,4 @@ export default {
     },
   },
 }
+

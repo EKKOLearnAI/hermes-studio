@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   // Login
   login: {
-    title: 'Hermes Web UI',
+    title: 'Quanthermes',
     description: 'Geben Sie Benutzername und Passwort ein, um fortzufahren.',
     placeholder: 'Zugangs-Token',
     submit: 'Anmelden',
@@ -203,7 +203,7 @@ export default {
     contextEditInvalid: 'Bitte geben Sie eine gültige Kontextlänge ein',
     contextEditSuccess: 'Kontextlänge aktualisiert',
     contextEditFailed: 'Aktualisierung fehlgeschlagen',
-    emptyState: 'Starten Sie eine Konversation mit Hermes Agent',
+    emptyState: 'Starten Sie eine Konversation mit Quanthermes Agent',
     outlineTitle: 'Konversationsübersicht',
     outlineEmpty: 'Kein Konversationsinhalt',
     outlineUserQuestion: 'Benutzerfrage',
@@ -1339,3 +1339,4 @@ jobTriggered: 'Job ausgelost',
     },
   },
 }
+

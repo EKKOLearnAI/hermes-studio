@@ -30,26 +30,13 @@ function goHome() {
   <header class="site-header">
     <div class="header-inner">
       <div class="header-left" @click="goHome">
-        <img src="/logo.png" alt="Hermes" class="logo-icon" />
-        <span class="logo-text">Hermes Web UI</span>
+        <img src="/logo.png" alt="Quanthermes" class="logo-icon" />
+        <span class="logo-text">Quanthermes</span>
       </div>
 
       <nav class="header-nav">
         <a class="nav-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="nav-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
-        <a
-          class="nav-link"
-          href="https://github.com/EKKOLearnAI/hermes-web-ui"
-          target="_blank"
-          rel="noopener"
-        >
-          {{ t('nav.github') }}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="external-icon">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            <polyline points="15 3 21 3 21 9" />
-            <line x1="10" y1="14" x2="21" y2="3" />
-          </svg>
-        </a>
         <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? '中文' : 'English'">
           {{ locale === 'en' ? '中' : 'EN' }}
         </button>
@@ -84,7 +71,6 @@ function goHome() {
       <div class="mobile-menu-inner" @click.stop>
         <a class="mobile-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
-        <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
         <div class="mobile-actions">
           <button class="mobile-action-btn" @click="switchLocale">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
@@ -182,11 +168,6 @@ function goHome() {
     color: var(--text-primary);
     background: var(--bg-secondary);
   }
-}
-
-.external-icon {
-  width: 12px;
-  height: 12px;
 }
 
 .icon-btn {

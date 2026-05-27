@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   // 로그인
   login: {
-    title: 'Hermes Web UI',
+    title: 'Quanthermes',
     description: '계속하려면 사용자 이름과 비밀번호를 입력하세요.',
     placeholder: '액세스 토큰',
     submit: '로그인',
@@ -203,7 +203,7 @@ export default {
     contextEditInvalid: '유효한 컨텍스트 길이를 입력하세요',
     contextEditSuccess: '컨텍스트 길이가 업데이트되었습니다',
     contextEditFailed: '업데이트 실패',
-    emptyState: 'Hermes Agent와 대화를 시작하세요',
+    emptyState: 'Quanthermes Agent와 대화를 시작하세요',
     outlineTitle: '대화 개요',
     outlineEmpty: '대화 내용이 없습니다',
     outlineUserQuestion: '사용자 질문',
@@ -1339,3 +1339,4 @@ export default {
     },
   },
 }
+

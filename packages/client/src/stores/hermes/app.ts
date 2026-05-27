@@ -7,7 +7,6 @@ import {
   removeCustomModel as deletePersistedCustomModel,
   updateDefaultModel,
   updateModelVisibility,
-  triggerUpdate,
   updateModelAlias,
   type AvailableModelGroup,
   type AvailableModelsResponse,
@@ -52,20 +51,10 @@ export const useAppStore = defineStore('app', () => {
   let modelsLastRequestedAt = 0
 
   async function doUpdate(): Promise<boolean> {
-    updating.value = true
-    try {
-      const res = await triggerUpdate()
-      if (res.success) {
-        updateAvailable.value = false
-        await checkConnection()
-      }
-      return res.success
-    } catch (err) {
-      console.error('Failed to update Hermes Web UI:', err)
-      return false
-    } finally {
-      updating.value = false
-    }
+    updateAvailable.value = false
+    clientOutdated.value = false
+    latestVersion.value = ''
+    return false
   }
 
   async function checkConnection() {
@@ -73,9 +62,9 @@ export const useAppStore = defineStore('app', () => {
       const res = await checkHealth()
       connected.value = res.status === 'ok'
       if (res.webui_version) serverVersion.value = res.webui_version
-      clientOutdated.value = !!res.webui_version && res.webui_version !== WEB_UI_VERSION
-      if (res.webui_latest) latestVersion.value = res.webui_latest
-      updateAvailable.value = !!res.webui_update_available
+      clientOutdated.value = false
+      latestVersion.value = ''
+      updateAvailable.value = false
       if (res.node_version) nodeVersion.value = res.node_version
     } catch {
       connected.value = false

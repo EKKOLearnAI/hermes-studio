@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   // 登录
   login: {
-    title: 'Hermes Web UI',
+    title: 'Quanthermes',
     description: '输入用户名和密码以继续。',
     placeholder: '访问令牌',
     submit: '登录',
@@ -203,7 +203,7 @@ export default {
     contextEditInvalid: '请输入有效的上下文长度',
     contextEditSuccess: '上下文长度已更新',
     contextEditFailed: '更新失败',
-    emptyState: '开始与 Hermes Agent 对话',
+    emptyState: '开始与 Quanthermes Agent 对话',
     cliEmptyState: '开始 CLI 对话',
     outlineTitle: '会话大纲',
     outlineEmpty: '暂无会话内容',
@@ -1342,3 +1342,4 @@ export default {
 
   },
 }
+

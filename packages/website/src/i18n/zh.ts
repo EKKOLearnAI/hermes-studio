@@ -8,8 +8,8 @@ export default {
     title: '自托管 AI 聊天仪表板',
     subtitle: '开源 AI Agent 仪表板 — 流式对话、多模型调度、看板管理、用量分析、Web 终端，一个界面掌控一切。',
     cta: '快速开始',
-    viewGithub: '查看 GitHub',
-    install: 'npm install -g hermes-web-ui',
+    viewGithub: '部署指南',
+    install: 'bash scripts/deploy-source-armbian.sh',
   },
   features: {
     title: '功能齐全',
@@ -40,7 +40,7 @@ export default {
     },
     profiles: {
       title: '多配置',
-      desc: '按账号授权的 Hermes Profile，隔离配置、模型、上传、任务、用量、记忆、技能、插件和 Provider。',
+      desc: '按账号授权的 Quanthermes Profile，隔离配置、模型、上传、任务、用量、记忆、技能、插件和 Provider。',
     },
     files: {
       title: '文件管理',
@@ -52,7 +52,7 @@ export default {
     },
     quickInstall: {
       title: '一键安装',
-      desc: '一条命令安装启动。初始化 Web UI 数据、启动 bridge 并打开浏览器。',
+      desc: '使用内置部署脚本完成初始化、启动 bridge 并打开浏览器。',
     },
     i18n: {
       title: '8 种语言',
@@ -77,29 +77,29 @@ export default {
   },
   install: {
     title: '快速开始',
-    desc: '一分钟内启动 Hermes Web UI。',
+    desc: '使用内置部署脚本，在一分钟内启动 Quanthermes。',
     npm: {
-      title: 'npm',
-      cmd1: 'npm install -g hermes-web-ui',
-      cmd2: 'hermes-web-ui start',
+      title: '源码部署脚本',
+      cmd1: 'bash scripts/deploy-source-armbian.sh',
+      cmd2: 'systemctl restart hermes-web-ui',
     },
     docker: {
       title: 'Docker',
       cmd: 'docker compose up -d',
     },
     source: {
-      title: '源码安装',
-      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-web-ui.git',
-      cmd2: 'cd hermes-web-ui && npm install && npm run dev',
+      title: '手动构建',
+      cmd1: '# 将已审核的源码包同步到当前目录',
+      cmd2: 'bash scripts/deploy-source-armbian.sh',
     },
     prereq: '需要 Node.js >= 23',
   },
   starHistory: {
     title: '社区成长',
-    desc: '在 GitHub 上给我们加星，加入社区。',
+    desc: '使用内部部署包与部署脚本，快速接入 Quanthermes 环境。',
   },
   footer: {
-    description: 'Hermes Agent 的自托管 AI 聊天仪表板。',
+    description: 'Quanthermes Agent 的自托管 AI 聊天仪表板。',
     license: 'BSL-1.1 开源协议',
     madeWith: '使用 Vue 3、Naive UI 和 TypeScript 构建。',
   },
@@ -113,14 +113,14 @@ export default {
     },
     gettingStarted: {
       title: '快速开始',
-      intro: 'Hermes Web UI 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Hermes Agent CLI 并提供美观的 Web 界面。',
+      intro: 'Quanthermes 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Quanthermes Agent CLI 并提供美观的 Web 界面。',
       install: {
         title: '安装',
-        content: '通过 npm 全局安装。需要 Node.js 23 或更高版本。',
+        content: '使用仓库内置部署脚本完成安装。需要 Node.js 23 或更高版本。',
       },
       firstRun: {
         title: '首次运行',
-        content: '首次启动时，Hermes Web UI 会自动生成认证令牌、初始化本地数据、启动 Hermes agent bridge 并在浏览器中打开仪表板。',
+        content: '首次启动时，Quanthermes 会自动生成认证令牌、初始化本地数据、启动 Quanthermes agent bridge 并在浏览器中打开仪表板。',
       },
       login: {
         title: '登录',
@@ -129,7 +129,7 @@ export default {
     },
     configuration: {
       title: '配置说明',
-      intro: 'Hermes Web UI 可通过环境变量进行配置。',
+      intro: 'Quanthermes 可通过环境变量进行配置。',
       envVars: {
         title: '环境变量',
         rows: [
@@ -143,16 +143,16 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge 运行时',
-        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
+        content: '聊天运行通过 Quanthermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Quanthermes Agent runtime。前端切换 Quanthermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
       },
       profiles: {
         title: '配置文件',
-        content: 'Profile 为不同场景提供隔离配置。超级管理员可以管理全部 Profile；普通管理员只能查看和使用分配给自己的 Profile。可在 Profile 页面创建、克隆、导入、导出或切换 Hermes Profile。',
+        content: 'Profile 为不同场景提供隔离配置。超级管理员可以管理全部 Profile；普通管理员只能查看和使用分配给自己的 Profile。可在 Profile 页面创建、克隆、导入、导出或切换 Quanthermes Profile。',
       },
     },
     features: {
       title: '功能详解',
-      intro: '探索 Hermes Web UI 的核心功能。',
+      intro: '探索 Quanthermes 的核心功能。',
       chat: {
         title: 'AI 聊天',
         content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
@@ -228,7 +228,7 @@ export default {
     },
     api: {
       title: 'API 参考',
-      intro: 'Hermes Web UI 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
+      intro: 'Quanthermes 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
       local: {
         title: '本地 BFF 端点',
         content: 'Koa 服务器处理会话管理、Profile CRUD、分账户分 Profile 管理、配置读写、日志访问、技能列表、记忆操作和静态资源。',
@@ -244,3 +244,4 @@ export default {
     },
   },
 }
+

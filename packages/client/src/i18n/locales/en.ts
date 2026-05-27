@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   // Login
   login: {
-    title: 'Hermes Web UI',
+    title: 'Quanthermes',
     description: 'Enter your username and password to continue.',
     placeholder: 'Access token',
     submit: 'Login',
@@ -203,7 +203,7 @@ export default {
     contextEditInvalid: 'Please enter a valid context length',
     contextEditSuccess: 'Context length updated',
     contextEditFailed: 'Update failed',
-    emptyState: 'Start a conversation with Hermes Agent',
+    emptyState: 'Start a conversation with Quanthermes Agent',
     cliEmptyState: 'Start a CLI chat session',
     outlineTitle: 'Conversation Outline',
     outlineEmpty: 'No conversation content',
@@ -1340,3 +1340,4 @@ export default {
 
   },
 }
+
