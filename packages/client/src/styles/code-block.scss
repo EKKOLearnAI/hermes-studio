@@ -109,6 +109,19 @@
   .hljs-meta {
     color: #6b7280;
   }
+
+  // Unified diff colors
+  .hljs-addition,
+  .hljs .addition {
+    color: #166534;
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .hljs-deletion,
+  .hljs .deletion {
+    color: #991b1b;
+    background: rgba(239, 68, 68, 0.1);
+  }
 }
 
 // Dark mode highlight.js — clearer separation without neon
@@ -166,5 +179,18 @@
 
   .hljs-meta {
     color: #94a3b8;
+  }
+
+  // Unified diff colors — dark mode
+  .hljs-addition,
+  .hljs .addition {
+    color: #86efac;
+    background: rgba(34, 197, 94, 0.15);
+  }
+
+  .hljs-deletion,
+  .hljs .deletion {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.15);
   }
 }
