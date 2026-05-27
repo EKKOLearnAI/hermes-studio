@@ -32,6 +32,14 @@ This prevents a label like `0.6.1` from being mistaken for a clean upstream `0.6
 
 Preview is the single candidate build served at `/preview/`.
 This iteration is explicitly singleton-only: there is one preview slot, not a list of preview environments.
+Every new preview build replaces the previous candidate.
+
+Storage is split into cache vs active slot:
+
+- repository cache may persist under the profile so Git URL/GitHub sources do not need to reclone every time;
+- active branch/commit worktree is always the singleton preview slot worktree;
+- active release artifact is always the singleton preview slot artifact;
+- old active preview worktrees/artifacts are removed when a new preview source is built or the preview is cleared.
 
 ## Health and build metadata
 
@@ -125,12 +133,14 @@ The user should not need to manually choose a local path unless they select Loca
 - User can select any known release.
 - Release list is sorted newest version → oldest version.
 - Release preview does not use git branch preview machinery.
+- Building a release preview replaces the singleton preview artifact instead of accumulating per-version active artifacts.
 
 ### Branch
 
 - Visible/selectable only when Dev Mode is on.
 - Requires valid repository configuration.
 - Uses clone/fetch/cache/worktree flow.
+- Repository clones/caches may persist, but the active branch preview uses one singleton worktree and replaces the previous candidate.
 - Runs install/build scripts and must be super-admin/dev-only.
 
 ### Commit
@@ -139,6 +149,7 @@ The user should not need to manually choose a local path unless they select Loca
 - Requires valid repository configuration.
 - Requires a commit SHA/ref input.
 - Uses clone/fetch/cache/worktree flow.
+- Repository clones/caches may persist, but the active commit preview uses one singleton worktree and replaces the previous candidate.
 - Runs install/build scripts and must be super-admin/dev-only.
 
 ## Capability matrix
