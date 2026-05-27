@@ -440,32 +440,67 @@ const DEPENDENCY_READY_MARKERS = [
   join('@vue', 'tsconfig', 'tsconfig.dom.json'),
 ]
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 async function verifyDependencyTree(nodeModulesPath: string): Promise<void> {
   for (const marker of DEPENDENCY_READY_MARKERS) {
     await access(join(nodeModulesPath, marker))
   }
 }
 
-async function waitForDependencyTree(profile: string, sourceNodeModules: string): Promise<void> {
-  let lastError: unknown = null
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      await verifyDependencyTree(sourceNodeModules)
-      return
-    } catch (err) {
-      lastError = err
-      if (attempt < 5) {
-        await appendLog(profile, `Waiting for branch preview dependencies (${attempt}/5) in ${sourceNodeModules}`)
-        await sleep(200 * attempt)
+async function installBranchBuildDependencies(profile: string): Promise<void> {
+  const cwd = serverRepoRoot()
+  await appendLog(profile, `> npm install --include=dev --ignore-scripts --no-audit --no-fund`)
+
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn('npm', ['install', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
+      cwd,
+      env: {
+        ...process.env,
+        NODE_ENV: 'production',
+      },
+      shell: false,
+    })
+
+    const pushChunk = (chunk: unknown) => {
+      const text = String(chunk)
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim()) void appendLog(profile, `[npm install] ${line}`)
       }
+    }
+
+    child.stdout?.on('data', pushChunk)
+    child.stderr?.on('data', pushChunk)
+    child.on('error', (err) => {
+      void appendLog(profile, `[npm install] error: ${err instanceof Error ? err.message : String(err)}`)
+      rejectPromise(err)
+    })
+    child.on('close', (code, signal) => {
+      void appendLog(profile, `[npm install] exit ${code ?? 'null'}${signal ? ` signal=${signal}` : ''}`)
+      if (code !== 0) {
+        rejectPromise(new Error(`npm install failed with exit code ${code ?? 'null'}${signal ? ` signal=${signal}` : ''}`))
+        return
+      }
+      resolvePromise()
+    })
+  })
+}
+
+async function ensureDependencyTree(profile: string, nodeModulesPath: string): Promise<void> {
+  try {
+    await verifyDependencyTree(nodeModulesPath)
+    return
+  } catch (err) {
+    if (nodeModulesPath !== join(serverRepoRoot(), 'node_modules')) {
+      throw new Error(`Branch preview dependencies are not ready in ${nodeModulesPath}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  throw new Error(`Branch preview dependencies are not ready in ${sourceNodeModules}: ${lastError instanceof Error ? lastError.message : String(lastError)}`)
+  await appendLog(profile, `Bootstrapping branch preview dependencies in ${serverRepoRoot()}`)
+  await installBranchBuildDependencies(profile)
+  try {
+    await verifyDependencyTree(nodeModulesPath)
+  } catch (err) {
+    throw new Error(`Branch preview dependencies are not ready in ${nodeModulesPath}: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 async function linkDependencyTree(profile: string, worktreePath: string): Promise<void> {
@@ -481,10 +516,10 @@ async function linkDependencyTree(profile: string, worktreePath: string): Promis
     throw new Error(`Branch preview dependencies are not installed in ${serverRepoRoot()}: ${err instanceof Error ? err.message : String(err)}`)
   }
 
-  await waitForDependencyTree(profile, sourceNodeModules)
+  await ensureDependencyTree(profile, sourceNodeModules)
   await rm(targetNodeModules, { recursive: true, force: true }).catch(() => undefined)
   await symlink(sourceNodeModules, targetNodeModules, 'dir')
-  await waitForDependencyTree(profile, targetNodeModules)
+  await verifyDependencyTree(targetNodeModules)
   await appendLog(profile, `Linked dependencies from ${sourceNodeModules}`)
 }
 

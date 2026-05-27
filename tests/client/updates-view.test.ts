@@ -579,6 +579,14 @@ describe('UpdatesView', () => {
     expect(wrapper.text()).toContain('build exploded')
     expect(wrapper.text()).toContain('failed')
     expect(wrapper.text()).not.toContain('Open preview')
+
+    const toggleLogsButton = wrapper.findAll('button').find((button) => button.text() === 'Hide logs')
+    expect(toggleLogsButton).toBeTruthy()
+    await toggleLogsButton!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('line one')
+    expect(wrapper.text()).not.toContain('line two')
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Show logs')).toBe(true)
   })
 
   it('builds a preview from the release source and promotes the ready preview', async () => {

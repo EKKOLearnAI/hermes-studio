@@ -102,11 +102,10 @@ const currentPreviewReleaseVersion = computed(() => previewStatus.value?.preview
 const currentStableVersion = computed(() => fmtUnknown(appStore.serverVersion))
 const hasLatestRelease = computed(() => !!appStore.latestVersion)
 const previewReady = computed(() => previewStatus.value?.status === 'success')
-const previewRunning = computed(() => previewStatus.value?.status === 'running')
 const previewFailed = computed(() => previewStatus.value?.status === 'failed')
 const previewUrl = computed(() => previewStatus.value?.previewUrl || '/preview/')
 const previewLogs = computed(() => previewStatus.value?.logTail?.join('\n') || t('settings.dev.noLogs'))
-const showPreviewLogs = computed(() => previewRunning.value || previewFailed.value || logsExpanded.value)
+const showPreviewLogs = computed(() => logsExpanded.value)
 const stableBuildCommit = computed(() => fmtUnknown(appStore.buildCommit))
 const stableBuildBranch = computed(() => fmtUnknown(appStore.buildBranch))
 const stableBuildSource = computed(() => fmtUnknown(appStore.buildSource))
@@ -198,6 +197,16 @@ const canBuildPreview = computed(() => {
 watch(devModeEnabled, (enabled) => {
   if (!enabled && previewSourceKind.value !== 'release') {
     previewSourceKind.value = 'release'
+  }
+})
+
+watch(() => previewStatus.value?.status, (status, previousStatus) => {
+  if (status === 'running' || status === 'failed') {
+    logsExpanded.value = true
+    return
+  }
+  if (status === 'idle' && previousStatus && previousStatus !== 'idle') {
+    logsExpanded.value = false
   }
 })
 
