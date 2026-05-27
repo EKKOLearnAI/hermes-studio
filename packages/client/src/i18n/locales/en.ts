@@ -1296,6 +1296,13 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_3_1: 'Bridge spinner status is no longer stored as model reasoning, preventing decorative thinking text from contaminating future context',
+    new_0_6_3_2: 'History now includes controls to import Hermes CLI sessions into the Web UI local history with safer message normalization',
+    new_0_6_3_3: 'Provider setup now supports editable built-in base URLs, LM Studio as a built-in provider, and live LM Studio /models discovery',
+    new_0_6_3_4: 'OpenRouter requests sent through the Web UI bridge now include Hermes Web UI app attribution headers',
+    new_0_6_3_5: 'The public auth status endpoint no longer exposes the first username to unauthenticated requests',
+    new_0_6_3_6: 'DingTalk settings now include an AI Card Template ID field persisted as DINGTALK_CARD_TEMPLATE_ID',
+    new_0_6_3_7: 'Bridge socket JSON output now sanitizes lone Unicode surrogate characters to prevent SSE crashes during chat',
     new_0_6_2_1: 'Web Bridge now supports /plan commands with correct run startup and visible command state',
     new_0_6_2_2: 'The chat input command menu now includes /goal and /subgoal commands, including status, pause, resume, done, and clear actions',
     new_0_6_2_3: 'Goal and subgoal workflows now integrate with chat sessions, including goal continuations and status updates',

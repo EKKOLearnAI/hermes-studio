@@ -1074,6 +1074,13 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_3_1: 'El estado del spinner de Bridge ya no se guarda como reasoning del modelo, evitando que texto decorativo de thinking contamine el contexto futuro',
+    new_0_6_3_2: 'History ahora incluye controles para importar sesiones de Hermes CLI al historial local de Web UI con normalizacion de mensajes mas segura',
+    new_0_6_3_3: 'La configuracion de Provider admite base URLs integradas editables, LM Studio como provider integrado y descubrimiento en vivo desde LM Studio /models',
+    new_0_6_3_4: 'Las solicitudes OpenRouter enviadas por el bridge de Web UI ahora incluyen headers de atribucion de la app Hermes Web UI',
+    new_0_6_3_5: 'El endpoint publico de auth status ya no expone el primer nombre de usuario a solicitudes no autenticadas',
+    new_0_6_3_6: 'La configuracion de DingTalk ahora incluye un campo AI Card Template ID persistido como DINGTALK_CARD_TEMPLATE_ID',
+    new_0_6_3_7: 'La salida JSON del socket Bridge limpia caracteres Unicode surrogate aislados para evitar caidas de SSE durante el chat',
     new_0_6_2_1: 'Web Bridge ahora soporta comandos /plan con inicio correcto del run y estado visible del comando',
     new_0_6_2_2: 'El menú de comandos del input de chat ahora incluye /goal y /subgoal, con acciones de estado, pausa, reanudar, finalizar y limpiar',
     new_0_6_2_3: 'Los flujos de Goal y subgoal se integran con sesiones de chat, incluyendo continuaciones de objetivos y actualizaciones de estado',

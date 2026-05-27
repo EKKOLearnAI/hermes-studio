@@ -1074,6 +1074,13 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_3_1: 'Bridge-Spinner-Status wird nicht mehr als Modell-Reasoning gespeichert und verschmutzt dadurch keinen späteren Kontext',
+    new_0_6_3_2: 'History bietet jetzt Controls zum Import von Hermes-CLI-Sessions in die lokale Web-UI-Historie mit sichererer Nachrichten-Normalisierung',
+    new_0_6_3_3: 'Provider-Setup unterstützt editierbare eingebaute Base URLs, LM Studio als eingebauten Provider und Live-Erkennung über LM Studio /models',
+    new_0_6_3_4: 'OpenRouter-Anfragen über die Web-UI-Bridge enthalten jetzt Hermes Web UI App-Attribution-Header',
+    new_0_6_3_5: 'Der öffentliche auth status endpoint gibt den ersten Benutzernamen nicht mehr an nicht authentifizierte Anfragen aus',
+    new_0_6_3_6: 'DingTalk-Einstellungen enthalten jetzt ein AI Card Template ID Feld, gespeichert als DINGTALK_CARD_TEMPLATE_ID',
+    new_0_6_3_7: 'Bridge-Socket-JSON-Ausgaben bereinigen isolierte Unicode-Surrogate und verhindern dadurch SSE-Abstürze im Chat',
     new_0_6_2_1: 'Web Bridge unterstützt jetzt /plan-Befehle mit korrektem Run-Start und sichtbarem Befehlsstatus',
     new_0_6_2_2: 'Das Befehlsmenü im Chat-Eingabefeld enthält jetzt /goal und /subgoal mit Status, Pause, Resume, Done und Clear',
     new_0_6_2_3: 'Goal- und Subgoal-Workflows sind jetzt in Chat-Sessions integriert, inklusive Ziel-Fortsetzungen und Statusupdates',

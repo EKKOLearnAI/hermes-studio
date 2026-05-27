@@ -1074,6 +1074,13 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_3_1: 'Bridge spinner 상태를 더 이상 모델 reasoning 으로 저장하지 않아 장식용 thinking 텍스트가 이후 컨텍스트를 오염시키지 않습니다',
+    new_0_6_3_2: 'History 에 Hermes CLI 세션을 Web UI 로컬 기록으로 가져오는 컨트롤을 추가하고 메시지 구조를 더 안전하게 정규화합니다',
+    new_0_6_3_3: 'Provider 설정에서 기본 base URL 편집을 지원하고 LM Studio 를 내장 Provider 로 추가했으며 LM Studio /models 실시간 검색을 지원합니다',
+    new_0_6_3_4: 'Web UI bridge 를 통해 전송되는 OpenRouter 요청에 Hermes Web UI 앱 attribution headers 가 포함됩니다',
+    new_0_6_3_5: '공개 auth status endpoint 가 인증되지 않은 요청에 첫 번째 사용자 이름을 더 이상 노출하지 않습니다',
+    new_0_6_3_6: 'DingTalk 설정에 AI Card Template ID 필드를 추가하고 DINGTALK_CARD_TEMPLATE_ID 로 저장합니다',
+    new_0_6_3_7: 'Bridge socket JSON 출력이 고립된 Unicode surrogate 문자를 정리하여 채팅 SSE 충돌을 방지합니다',
     new_0_6_2_1: 'Web Bridge가 /plan 명령을 지원하며 run 시작과 명령 상태 표시가 올바르게 동작합니다',
     new_0_6_2_2: '채팅 입력 명령 메뉴에 /goal 및 /subgoal이 추가되어 상태, 일시정지, 재개, 완료, 초기화 작업을 지원합니다',
     new_0_6_2_3: 'Goal 및 subgoal 워크플로가 채팅 세션에 통합되어 목표 이어가기와 상태 업데이트를 지원합니다',
