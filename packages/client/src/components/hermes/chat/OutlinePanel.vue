@@ -2,9 +2,11 @@
 import { computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@/stores/hermes/chat'
+import { useChatStore } from '@/stores/hermes/chat'
 
 interface OutlineItem {
   id: string
+  type: 'question' | 'answer'
   content: string
   messageId: string
   anchorId: string
@@ -14,45 +16,95 @@ const props = defineProps<{
   messages: Message[]
 }>()
 
+const chatStore = useChatStore()
 const { t } = useI18n()
 
-function extractUserQuestion(text: string): string {
-  const cleanedText = text.replace(/<think>[\s\S]*?<\/think>/g, '')
-  const firstLine = cleanedText.split('\n')[0] || ''
-  if (firstLine.length > 50) {
-    return firstLine.slice(0, 50) + '...'
+const sessionInfo = computed(() => {
+  const s = chatStore.activeSession
+  if (!s) return null
+  return {
+    messageCount: s.messageCount ?? s.messages.length,
+    displayedCount: s.messages.length,
   }
+})
+
+const showLoadAll = computed(() => {
+  const info = sessionInfo.value
+  if (!info) return false
+  return info.displayedCount < info.messageCount
+})
+
+async function handleLoadAll() {
+  const sid = chatStore.activeSessionId
+  if (!sid) return
+  try {
+    await chatStore.fetchAllMessages(sid)
+  } catch (err) {
+    console.error('Failed to load all messages:', err)
+  }
+}
+
+function extractUserQuestion(text: string): string {
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '')
+  const firstLine = cleaned.split('\n')[0] || ''
+  if (firstLine.length > 50) return firstLine.slice(0, 50) + '...'
   return firstLine || t('chat.outlineUserQuestion')
+}
+
+function extractAnswerSummary(text: string): string {
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '')
+  const lines = cleaned.split('\n')
+  for (const line of lines) {
+    const trimmed = line.trim()
+    // Skip empty lines, code blocks, markdown headings, blockquotes
+    if (!trimmed || trimmed.startsWith('```') || trimmed.startsWith('#') || trimmed.startsWith('>')) continue
+    if (trimmed.startsWith('| ') || trimmed.match(/^\|/)) continue
+    if (trimmed.length > 80) return trimmed.slice(0, 80) + '...'
+    return trimmed
+  }
+  return t('chat.outlineAnswer')
 }
 
 const outlineItems = computed<OutlineItem[]>(() => {
   const items: OutlineItem[] = []
-  const filteredMessages = props.messages.filter(m => m.role === 'user')
+  const filtered = props.messages.filter(m => m.role === 'user' || m.role === 'assistant')
 
-  for (const msg of filteredMessages) {
-    items.push({
-      id: `user-${msg.id}`,
-      content: extractUserQuestion(msg.content || ''),
-      messageId: msg.id,
-      anchorId: `message-${msg.id}`
-    })
+  let i = 0
+  while (i < filtered.length) {
+    const msg = filtered[i]
+    if (msg.role === 'user') {
+      items.push({
+        id: `question-${msg.id}`,
+        type: 'question',
+        content: extractUserQuestion(msg.content || ''),
+        messageId: msg.id,
+        anchorId: `message-${msg.id}`,
+      })
+      i++
+      // Find the next assistant message
+      while (i < filtered.length && filtered[i].role !== 'assistant') i++
+      if (i < filtered.length) {
+        const assistant = filtered[i]
+        items.push({
+          id: `answer-${assistant.id}`,
+          type: 'answer',
+          content: extractAnswerSummary(assistant.content || ''),
+          messageId: assistant.id,
+          anchorId: `message-${assistant.id}`,
+        })
+      }
+    } else {
+      i++
+    }
   }
   return items
 })
 
 function scrollToTarget(anchorId: string) {
-  console.log('Attempting to scroll to anchor:', anchorId)
   nextTick(() => {
     const el = document.getElementById(anchorId)
-    console.log('Found element:', el)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    } else {
-      // Debug: log all heading elements with IDs
-      console.log('All heading elements on page:')
-      document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(el => {
-        console.log('  -', el.id, ':', el.textContent?.slice(0, 50))
-      })
     }
   })
 }
@@ -62,18 +114,56 @@ function scrollToTarget(anchorId: string) {
   <div class="outline-panel">
     <div class="outline-header">
       <span class="outline-title">{{ t('chat.outlineTitle') }}</span>
+      <button
+        v-if="showLoadAll"
+        type="button"
+        class="load-all-btn"
+        :disabled="chatStore.isFetchingAllMessages"
+        @click="handleLoadAll"
+        :title="`${t('chat.loadAllMessages')} (${sessionInfo?.displayedCount}/${sessionInfo?.messageCount})`"
+      >
+        <svg
+          v-if="chatStore.isFetchingAllMessages"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          class="load-all-spinner"
+        >
+          <path d="M21 12a9 9 0 11-6.219-8.56" />
+        </svg>
+        <svg
+          v-else
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        <span>{{ chatStore.isFetchingAllMessages ? t('chat.loadingAllMessages') : `${t('chat.loadAllMessages')} (${sessionInfo?.displayedCount}/${sessionInfo?.messageCount})` }}</span>
+      </button>
     </div>
     <div class="outline-content">
       <template v-if="outlineItems.length > 0">
         <div
           v-for="item in outlineItems"
           :key="item.id"
-          class="outline-item user-item"
+          class="outline-item"
+          :class="item.type === 'question' ? 'question-item' : 'answer-item'"
           @click="scrollToTarget(item.anchorId)"
         >
-          <div class="user-question">
-            <span class="q-label">Q:</span>
-            <span class="q-text">{{ item.content }}</span>
+          <div class="outline-text">
+            <span class="outline-label">{{ item.type === 'question' ? 'Q' : 'A' }}:</span>
+            <span class="outline-content">{{ item.content }}</span>
           </div>
         </div>
       </template>
@@ -109,9 +199,13 @@ function scrollToTarget(anchorId: string) {
   padding: 16px;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .outline-title {
+  flex: 1;
   font-size: 14px;
   font-weight: 600;
   color: $text-primary;
@@ -124,7 +218,7 @@ function scrollToTarget(anchorId: string) {
 }
 
 .outline-item {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   cursor: pointer;
   transition: opacity 0.2s ease;
 
@@ -133,102 +227,49 @@ function scrollToTarget(anchorId: string) {
   }
 }
 
-.user-item {
-  margin-bottom: 6px;
-}
-
-.user-question {
-  background-color: $bg-secondary;
-  color: $text-primary;
-  padding: 8px 12px;
-  border-radius: 8px;
+.outline-text {
+  padding: 6px 10px;
+  border-radius: 6px;
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
 
-  .dark & {
-    background-color: $bg-input;
-  }
-
-  .q-label {
+  .outline-label {
     font-weight: 600;
     flex-shrink: 0;
-    font-size: 13px;
-    line-height: 1.4;
   }
 
-  .q-text {
-    font-size: 13px;
-    line-height: 1.4;
+  .outline-content {
     word-break: break-word;
   }
 }
 
-.outline-heading-item {
-  &.level-1 {
-    padding-left: 0;
-  }
-
-  &.level-2 {
-    padding-left: 12px;
-  }
-
-  &.level-3 {
-    padding-left: 24px;
-  }
-}
-
-.heading-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.15s ease;
-
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
+.question-item {
+  .outline-text {
+    background-color: $bg-secondary;
+    color: $text-primary;
 
     .dark & {
-      background-color: rgba(255, 255, 255, 0.06);
+      background-color: $bg-input;
     }
-  }
 
-  .level-1 & {
-    .heading-marker {
-      color: $text-primary;
-      font-weight: 600;
-    }
-    .heading-text {
-      color: $text-primary;
-      font-weight: 500;
-    }
-  }
-
-  .level-2 & {
-    .heading-marker {
-      color: $text-secondary;
-    }
-    .heading-text {
-      color: $text-secondary;
-    }
-  }
-
-  .level-3 & {
-    .heading-marker {
-      color: $text-muted;
-    }
-    .heading-text {
-      color: $text-muted;
-      font-size: 12px;
+    .outline-label {
+      color: #3b82f6;
     }
   }
 }
 
-.heading-text {
-  font-size: 13px;
-  line-height: 1.4;
-  word-break: break-word;
+.answer-item {
+  margin-top: 2px;
+  .outline-text {
+    color: $text-secondary;
+
+    .outline-label {
+      color: #22c55e;
+    }
+  }
 }
 
 .outline-empty {
