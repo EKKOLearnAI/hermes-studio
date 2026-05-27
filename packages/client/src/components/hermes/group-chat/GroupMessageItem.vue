@@ -237,6 +237,10 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
     return { [JSON_TRUNCATED_KEY]: marker }
 }
 
+function isUnifiedDiff(content: string): boolean {
+    return /^(---|\+\+\+|@@ |diff )/.test(content.trim())
+}
+
 function formatToolPayload(raw?: string): ToolPayload {
     if (!raw) return { full: '', display: '' }
     try {
@@ -247,6 +251,14 @@ function formatToolPayload(raw?: string): ToolPayload {
             : full
         return { full, display, language: 'json' }
     } catch {
+        // Not JSON — check if it's a unified diff
+        if (isUnifiedDiff(raw)) {
+            return {
+                full: raw,
+                display: raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + '\n' + t('chat.truncated') : raw,
+                language: 'diff',
+            }
+        }
         return {
             full: raw,
             display: raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + '\n' + t('chat.truncated') : raw,

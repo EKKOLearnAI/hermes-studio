@@ -1060,18 +1060,24 @@ export async function getSkillUsageStatsFromDb(
     const totalLoads = [...skillMap.values()].reduce((sum, skill) => sum + skill.view_count, 0)
     const totalEdits = [...skillMap.values()].reduce((sum, skill) => sum + skill.manage_count, 0)
     const totalActions = totalLoads + totalEdits
-    const byDay = [...dayMap.values()]
-      .map(day => ({
+    const byDayMap = new Map([...(dayMap.values())].map(day => [day.date, day]))
+    const filledByDay: HermesSkillUsageDailyRow[] = []
+    for (let i = 0; i < safeDays; i++) {
+      const dayTs = nowSeconds - (safeDays - 1 - i) * 86400
+      const date = formatUnixDate(dayTs)
+      const day = byDayMap.get(date)
+      filledByDay.push(day ? {
         ...day,
         total_count: day.view_count + day.manage_count,
-        skills: [...(daySkillMap.get(day.date)?.values() || [])]
+        skills: [...(daySkillMap.get(date)?.values() || [])]
           .map(skill => ({
             ...skill,
             total_count: skill.view_count + skill.manage_count,
           }))
           .sort((a, b) => b.total_count - a.total_count || a.skill.localeCompare(b.skill)),
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date))
+      } : { date, view_count: 0, manage_count: 0, total_count: 0, skills: [] })
+    }
+    const byDay = filledByDay
     const topSkills = [...skillMap.values()]
       .map(skill => ({
         ...skill,
