@@ -1301,6 +1301,13 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_3_1: 'Bridge spinner 狀態不再寫入模型 reasoning，避免裝飾性 thinking 文字污染後續上下文',
+    new_0_6_3_2: 'History 新增 Hermes CLI 工作階段匯入控制，並在匯入時更安全地規範化訊息結構',
+    new_0_6_3_3: 'Provider 設定支援編輯內建 base URL，新增 LM Studio 內建 Provider，並支援從 LM Studio /models 即時發現模型',
+    new_0_6_3_4: '透過 Web UI bridge 發起的 OpenRouter 請求會攜帶 Hermes Web UI 應用歸因 headers',
+    new_0_6_3_5: '公開 auth status 介面不再向未登入請求暴露第一個使用者名稱',
+    new_0_6_3_6: '釘釘設定新增 AI Card Template ID，並持久化為 DINGTALK_CARD_TEMPLATE_ID',
+    new_0_6_3_7: 'Bridge socket JSON 輸出會清洗孤立 Unicode surrogate 字元，避免聊天 SSE 崩潰',
     new_0_6_2_1: 'Web Bridge 支援 /plan 命令，計畫命令會正確啟動並顯示執行狀態',
     new_0_6_2_2: '聊天輸入框指令選單新增 /goal 和 /subgoal，支援狀態、暫停、恢復、完成和清空等操作',
     new_0_6_2_3: 'Goal 與 subgoal 工作流接入聊天工作階段，支援目標延續與狀態更新',
