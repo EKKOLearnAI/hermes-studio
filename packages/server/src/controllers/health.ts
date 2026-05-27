@@ -4,36 +4,13 @@ declare const __APP_VERSION__: string
 
 const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
-  : PACKAGE_INFO?.version || ''
-
-let cachedLatestVersion = ''
-
-function isUpdateConfigured(): boolean {
-  return Boolean(config.update.enabled && config.update.packageName && config.update.registry)
-}
+  : ''
 
 export async function checkLatestVersion(): Promise<void> {
-  if (!isUpdateConfigured()) {
-    cachedLatestVersion = ''
-    return
-  }
-
-  try {
-    const packageName = config.update.packageName
-    const registryName = encodeURIComponent(packageName)
-    const res = await fetch(`${config.update.registry}/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
-    if (res.ok) {
-      const data = await res.json() as { version: string }
-      cachedLatestVersion = data.version
-      if (LOCAL_VERSION && cachedLatestVersion !== LOCAL_VERSION) {
-        console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
-      }
-    }
-  } catch { /* ignore */ }
+  return Promise.resolve()
 }
 
 export function startVersionCheck(): void {
-  if (!isUpdateConfigured()) return
   // Auto-update checks are intentionally disabled for the branded distribution.
 }
 
@@ -46,10 +23,10 @@ export async function healthCheck(ctx: any) {
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
-    webui_latest: cachedLatestVersion,
-    webui_update_enabled: isUpdateConfigured(),
-    webui_update_source_label: config.update.sourceLabel,
-    webui_update_available: Boolean(isUpdateConfigured() && LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
+    webui_latest: '',
+    webui_update_enabled: false,
+    webui_update_source_label: '',
+    webui_update_available: false,
     node_version: process.versions.node,
   }
 }

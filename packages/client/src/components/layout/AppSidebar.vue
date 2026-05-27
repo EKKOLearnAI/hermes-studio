@@ -294,18 +294,12 @@ function openChangelog() {
         <span class="version-text" @click="openChangelog">Quanthermes v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
-      <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
-        {{ t('sidebar.reloadClientVersion', { version: appStore.serverVersion }) }}
-      </NButton>
       <div v-if="appStore.updateEnabled && appStore.updateSourceLabel" class="update-source">
         {{ t('sidebar.updateSource', { source: appStore.updateSourceLabel }) }}
       </div>
       <div v-else-if="!appStore.updateEnabled" class="update-source">
         {{ t('sidebar.updateManagedInternally') }}
       </div>
-      <NButton v-if="appStore.updateEnabled && appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
-        {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
-      </NButton>
     </div>
 
     <!-- Changelog modal -->
