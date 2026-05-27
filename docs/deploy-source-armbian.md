@@ -1,4 +1,4 @@
-﻿# Armbian/Ubuntu 源码部署指南
+# Armbian/Ubuntu 源码部署指南
 
 本文档面向无法稳定访问 Docker Hub 的 `Armbian / Ubuntu 24.04` 设备，目标是直接在宿主机完成：
 
@@ -219,6 +219,8 @@ http://127.0.0.1:6060
 
 ## 手动验证
 
+如果你是在 Armbian / Ubuntu 设备上首次走源码部署，建议先阅读 [`docs/work-log.md`](./work-log.md) 中 `2026-05-19` 的排障记录，再做下面这些检查。
+
 ### 检查 Node 版本
 
 ```bash
@@ -246,6 +248,26 @@ ls -lah /opt/hermes-web-ui/dist/server
 cat /etc/default/hermes-web-ui
 systemctl cat hermes-web-ui.service
 ```
+
+## 部署后快速自检
+
+如果页面能打开，但聊天报错、模型请求异常或页面提示无法连接 Hermes agent bridge，优先执行下面这组检查：
+
+```bash
+sudo systemctl status hermes-web-ui.service --no-pager -l
+sudo journalctl -u hermes-web-ui.service -n 120 --no-pager
+sudo -u hermesui -H ls -lah /home/hermesui/.local/bin/hermes
+sudo -u hermesui -H head -n 1 /home/hermesui/.local/bin/hermes
+sudo -u hermesui -H ls -lah /tmp/hermes-agent-bridge.sock
+```
+
+预期结果：
+
+- `hermes-web-ui.service` 为 `active (running)`
+- 日志里没有 `agent bridge exited before ready` 或 `run_agent.py not found`
+- `/home/hermesui/.local/bin/hermes` 归属 `hermesui`
+- `/home/hermesui/.local/bin/hermes` 不应链接到 `/root/.local/...`
+- `/tmp/hermes-agent-bridge.sock` 存在
 
 ## 排障建议
 
@@ -345,7 +367,43 @@ sudo journalctl -u hermes-web-ui.service -n 200 --no-pager
 - `HERMES_HOME` 是否指向 `/opt/hermes-web-ui/hermes_data`
 - `hermes setup` / `hermes model` 是否已经完成
 
-### 7. 想重新部署
+### 7. 页面能打开，但聊天报 `ENOENT /tmp/hermes-agent-bridge.sock`
+
+这通常不是前端问题，而是 `hermes-web-ui.service` 虽然启动了，但 Hermes agent bridge 没有真正起来。
+
+优先检查：
+
+```bash
+sudo journalctl -u hermes-web-ui.service -n 200 --no-pager
+sudo -u hermesui -H ls -lah /home/hermesui/.local/bin/hermes
+sudo -u hermesui -H head -n 1 /home/hermesui/.local/bin/hermes
+sudo -u hermesui -H ls -lah /tmp/hermes-agent-bridge.sock
+```
+
+如果你看到下面任一现象：
+
+- 日志里出现 `agent bridge exited before ready`
+- 日志里出现 `RuntimeError: hermes-agent run_agent.py not found`
+- `/home/hermesui/.local/bin/hermes` 链接到了 `/root/.local/bin/hermes`
+- `/tmp/hermes-agent-bridge.sock` 不存在
+
+基本可以判定为 Hermes 安装归属错误，常见于：
+
+- 服务以 `hermesui` 用户运行
+- 但 Hermes 实际被装到了 `root` 用户目录
+- 或 `hermesui` 目录下存在不完整的旧安装残留
+
+建议修复方式：
+
+1. 停掉 `hermes-web-ui.service`
+2. 清理 `hermesui` 和 `root` 下冲突的 Hermes 安装残留
+3. 预先以 `root` 安装 `ripgrep`、`ffmpeg`、`build-essential`、`python3-dev`、`libffi-dev`
+4. 重新以 `hermesui` 用户安装 Hermes
+5. 重启 `hermes-web-ui.service`
+
+详细过程见 [`docs/work-log.md`](./work-log.md) 中 `2026-05-19 - Armbian 源码部署排障补充`。
+
+### 8. 想重新部署
 
 如果你只是更新代码，推荐：
 

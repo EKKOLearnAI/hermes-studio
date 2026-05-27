@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>QuantHermes Web UI</strong>
+  <strong>Hermes Web UI</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="QuantHermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image1.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="QuantHermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/packages/client/src/assets/image2.png" alt="Hermes Web UI Demo" width="680"/>
 </p>
 
 <p align="center">
@@ -220,20 +220,14 @@ Open **http://localhost:6060**
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 
-### Armbian / Ubuntu Source Deployment
+### Source Deployment Note
 
-If your device cannot reliably pull from Docker Hub, use the host-level source deployment path instead:
+For Armbian / Ubuntu host-level source deployment, review [`docs/work-log.md`](./docs/work-log.md) before following deployment steps.
 
-```bash
-git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
-cd hermes-web-ui
-chmod +x scripts/deploy-source-armbian.sh
-sudo ./scripts/deploy-source-armbian.sh
-```
+- The 2026-05-19 log records a real failure where Hermes was installed under `root` while `hermes-web-ui.service` ran as `hermesui`
+- That mismatch caused the agent bridge to fail with `run_agent.py not found`, and chat requests then hit `ENOENT /tmp/hermes-agent-bridge.sock`
+- After source deployment, verify that `/home/hermesui/.local/bin/hermes` belongs to `hermesui` rather than linking into `/root/.local/...`
 
-This path installs Hermes Agent, downloads Node.js 23 from a mirror, builds `hermes-web-ui` from source, and registers a `systemd` service.
-
-See [`docs/deploy-source-armbian.md`](./docs/deploy-source-armbian.md) for the full workflow, custom env vars, and troubleshooting steps.
 ### Hermes Agent Runtime Discovery
 
 When Web UI starts backend chat features, it prefers a source checkout that
@@ -275,26 +269,6 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
 
-### Customized Build Updates
-
-For customized builds, do not point the in-app update feature at the upstream `hermes-web-ui` package. Otherwise, a user-triggered update can overwrite your custom code with the upstream release.
-
-Recommended setup:
-
-- Set `WEBUI_UPDATE_ENABLED=false` until your internal package is ready
-- Publish your own package, for example `quanthermes-web-ui`
-- Point both update checks and installs to your internal registry
-- Keep upstream sync as a separate git merge/release workflow
-
-Example configuration:
-
-```env
-WEBUI_UPDATE_ENABLED=true
-WEBUI_UPDATE_PACKAGE=quanthermes-web-ui
-WEBUI_UPDATE_REGISTRY=https://your-registry.example.com
-WEBUI_UPDATE_SOURCE_LABEL=QuantHermes Internal Registry
-WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
-```
 `update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
 
 ### Auto Configuration

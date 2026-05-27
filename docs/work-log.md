@@ -293,3 +293,56 @@ WEBUI_UPDATE_CLI_BIN=quanthermes-web-ui.mjs
   - 校验新增脚本和文档诊断
   - 提交本轮改动到 Git
   - 由用户推送远端并在目标设备执行源码部署脚本验证
+
+## 2026-05-19 - Armbian 源码部署排障补充
+
+### 现场现象
+
+- 目标设备已完成 `scripts/deploy-source-armbian.sh` 部署，`hermes-web-ui.service` 状态正常
+- 页面可以访问，但实际聊天时报错：
+  - `Error: connect ENOENT /tmp/hermes-agent-bridge.sock`
+- 前端可用但 `/chat-run` 不可用，说明 Web UI 主服务启动成功、Hermes agent bridge 未正常就绪
+
+### 根因分析
+
+- `agent bridge` 在启动阶段直接退出，未能创建 `/tmp/hermes-agent-bridge.sock`
+- 设备上 `hermesui` 用户实际引用到了 `root` 目录下的 Hermes 安装：
+  - `/home/hermesui/.local/bin/hermes -> /root/.local/bin/hermes`
+- Web UI 会根据 `hermes` 命令和 Hermes 源码目录反推 `run_agent.py` 所在位置
+- 当 `hermesui` 运行的服务错误引用 `root` 用户目录下的 Hermes 安装时，bridge 会报：
+  - `RuntimeError: hermes-agent run_agent.py not found`
+- 这类情况下即使 `systemd` 服务本身为 `active (running)`，聊天链路仍会失败
+
+### 修复过程
+
+- 停止 `hermes-web-ui.service`
+- 清理以下错误或残留安装，避免 `hermesui` 与 `root` 的 Hermes 安装互相污染：
+  - `/home/hermesui/.hermes/hermes-agent`
+  - `/home/hermesui/.local/share/uv/tools/hermes-agent`
+  - `/home/hermesui/.local/bin/hermes`
+  - `/root/.local/share/uv/tools/hermes-agent`
+  - `/root/.local/bin/hermes`
+- 由于 Hermes 官方安装脚本会尝试通过 `sudo` 安装可选依赖，需提前以 `root` 安装系统依赖，避免安装过程卡在 `hermesui` 的 sudo 密码交互：
+  - `ripgrep`
+  - `ffmpeg`
+  - `build-essential`
+  - `python3-dev`
+  - `libffi-dev`
+- 重新以 `hermesui` 用户安装 Hermes，确保安装路径回到 `hermesui` 自己目录
+- 安装完成后重启 `hermes-web-ui.service`
+
+### 验证结果
+
+- `hermesui` 用户下的 `hermes` 命令恢复正常
+- 重启服务后，聊天功能恢复可用
+- 本次问题确认不是前端 UI 或模型配置问题，而是源码部署后的 Hermes 安装归属错误导致 bridge 启动失败
+
+### 后续部署注意事项
+
+- 源码部署完成后，必须优先检查：
+  - `/home/hermesui/.local/bin/hermes`
+  - `head -n 1 /home/hermesui/.local/bin/hermes`
+  - `hermes-web-ui.service` 日志中是否出现 bridge ready
+  - `/tmp/hermes-agent-bridge.sock` 是否存在
+- 如果发现 `hermesui` 下的 `hermes` 链接到了 `/root/.local/...`，应立即判定为错误安装状态，先修正 Hermes 安装归属再继续排查
+- 后续 README 和部署说明需要明确提醒：源码部署前先看 `docs/work-log.md` 中的排障记录
