@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
@@ -37,7 +37,7 @@ describe('LoginView password login', () => {
     delete (window as any).__LOGIN_TOKEN__
     vi.clearAllMocks()
     mockHasApiKey.mockReturnValue(false)
-    mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
+    mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'quanthermes' })
   })
 
   it('logs in with username and password', async () => {
@@ -45,11 +45,11 @@ describe('LoginView password login', () => {
     const wrapper = mount(LoginView)
 
     const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
-    await inputs[1].setValue('123456')
+    await inputs[0].setValue('quanthermes')
+    await inputs[1].setValue('12345678')
     await wrapper.find('form.login-form').trigger('submit')
 
-    expect(mockLoginWithPassword).toHaveBeenCalledWith('admin', '123456')
+    expect(mockLoginWithPassword).toHaveBeenCalledWith('quanthermes', '12345678')
     expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
   })
@@ -65,7 +65,7 @@ describe('LoginView password login', () => {
     const wrapper = mount(LoginView)
 
     const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
+    await inputs[0].setValue('quanthermes')
     await inputs[1].setValue('bad-password')
     await wrapper.find('form.login-form').trigger('submit')
 
@@ -81,8 +81,8 @@ describe('LoginView password login', () => {
     const wrapper = mount(LoginView)
 
     const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
-    await inputs[1].setValue('123456')
+    await inputs[0].setValue('quanthermes')
+    await inputs[1].setValue('12345678')
     await wrapper.find('form.login-form').trigger('submit')
 
     expect(wrapper.find('.login-error').text()).toBe('login.tooManyAttempts')

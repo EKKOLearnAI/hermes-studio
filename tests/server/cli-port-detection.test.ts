@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -153,9 +153,9 @@ describe('CLI port detection', () => {
 
       const db = new DatabaseSync(dbPath)
       try {
-        const initial = db.prepare('SELECT id, username, password_hash FROM users WHERE username = ?').get('admin') as any
-        expect(verifyPassword('123456', initial.password_hash)).toBe(true)
-        db.prepare('UPDATE users SET password_hash = ? WHERE username = ?').run('scrypt:bad:bad', 'admin')
+        const initial = db.prepare('SELECT id, username, password_hash FROM users WHERE username = ?').get('quanthermes') as any
+        expect(verifyPassword('12345678', initial.password_hash)).toBe(true)
+        db.prepare('UPDATE users SET password_hash = ? WHERE username = ?').run('scrypt:bad:bad', 'quanthermes')
       } finally {
         db.close()
       }
@@ -165,9 +165,9 @@ describe('CLI port detection', () => {
 
       const verifyDb = new DatabaseSync(dbPath)
       try {
-        const rows = verifyDb.prepare('SELECT id, username, password_hash, role, status FROM users WHERE username = ?').all('admin') as any[]
+        const rows = verifyDb.prepare('SELECT id, username, password_hash, role, status FROM users WHERE username = ?').all('quanthermes') as any[]
         expect(rows).toHaveLength(1)
-        expect(verifyPassword('123456', rows[0].password_hash)).toBe(true)
+        expect(verifyPassword('12345678', rows[0].password_hash)).toBe(true)
         expect(rows[0].role).toBe('super_admin')
         expect(rows[0].status).toBe('active')
       } finally {

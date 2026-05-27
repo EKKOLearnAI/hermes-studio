@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('user auth tables and middleware', () => {
   let db: any = null
@@ -47,15 +47,15 @@ describe('user auth tables and middleware', () => {
   it('creates the default super admin without profile bindings', async () => {
     const { schemas, users } = await initUsers()
 
-    const created = users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const created = users.bootstrapDefaultSuperAdmin('quanthermes', '12345678')
     expect(created?.id).toBe(1)
 
     const row = db.prepare(`SELECT * FROM ${schemas.USERS_TABLE} WHERE id = ?`).get(1) as any
-    expect(row.username).toBe('admin')
+    expect(row.username).toBe('quanthermes')
     expect(row.role).toBe('super_admin')
     expect(row.status).toBe('active')
     expect(row.password_hash).not.toBe('123456')
-    expect(users.verifyPassword('123456', row.password_hash)).toBe(true)
+    expect(users.verifyPassword('12345678', row.password_hash)).toBe(true)
 
     const profileCount = db.prepare(`SELECT COUNT(*) as count FROM ${schemas.USER_PROFILES_TABLE} WHERE user_id = ?`).get(1) as any
     expect(profileCount.count).toBe(0)
@@ -63,10 +63,10 @@ describe('user auth tables and middleware', () => {
 
   it('allows super admin to access profiles without explicit binding', async () => {
     const { users, auth } = await initUsers()
-    const created = users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const created = users.bootstrapDefaultSuperAdmin('quanthermes', '12345678')
     expect(created?.role).toBe('super_admin')
 
-    const ctx = makeCtx({ id: created?.id, username: 'admin', role: 'super_admin' }, 'research')
+    const ctx = makeCtx({ id: created?.id, username: 'quanthermes', role: 'super_admin' }, 'research')
     const next = vi.fn(async () => {})
 
     await auth.resolveUserProfile(ctx, next)
@@ -140,10 +140,10 @@ describe('user auth tables and middleware', () => {
     const { schemas, users } = await initUsers()
 
     expect(users.countUsers()).toBe(0)
-    expect(users.bootstrapDefaultSuperAdmin('admin', 'bad-password')).toBeNull()
+    expect(users.bootstrapDefaultSuperAdmin('quanthermes', 'bad-password')).toBeNull()
     expect(users.countUsers()).toBe(0)
 
-    const created = users.bootstrapDefaultSuperAdmin('admin', '123456')
+    const created = users.bootstrapDefaultSuperAdmin('quanthermes', '12345678')
     expect(created?.role).toBe('super_admin')
     expect(users.countUsers()).toBe(1)
 
@@ -153,11 +153,11 @@ describe('user auth tables and middleware', () => {
 
   it('signs and verifies user JWTs', async () => {
     const { auth } = await initUsers()
-    const token = auth.signUserJwt({ id: 1, username: 'admin', role: 'super_admin' }, 'secret', 1000)
+    const token = auth.signUserJwt({ id: 1, username: 'quanthermes', role: 'super_admin' }, 'secret', 1000)
 
     const payload = auth.verifyUserJwt(token, 'secret', 1000)
     expect(payload?.sub).toBe('1')
-    expect(payload?.username).toBe('admin')
+    expect(payload?.username).toBe('quanthermes')
     expect(payload?.role).toBe('super_admin')
 
     expect(auth.verifyUserJwt(token, 'wrong', 1000)).toBeNull()
@@ -165,7 +165,7 @@ describe('user auth tables and middleware', () => {
 
   it('authenticates JWTs passed as query tokens for download and websocket URLs', async () => {
     const { users, auth } = await initUsers()
-    const user = users.bootstrapDefaultSuperAdmin('admin', '123456')!
+    const user = users.bootstrapDefaultSuperAdmin('quanthermes', '12345678')!
     const token = auth.signUserJwt(user, 'test-secret')
     const ctx = {
       path: '/api/hermes/download',
@@ -180,7 +180,7 @@ describe('user auth tables and middleware', () => {
 
     await auth.requireUserJwt(ctx, next)
 
-    expect(ctx.state.user).toEqual({ id: user.id, username: 'admin', role: 'super_admin' })
+    expect(ctx.state.user).toEqual({ id: user.id, username: 'quanthermes', role: 'super_admin' })
     expect(next).toHaveBeenCalledOnce()
   })
 
@@ -228,7 +228,7 @@ describe('user auth tables and middleware', () => {
     await initUsers()
     const ctrl = await import('../../packages/server/src/controllers/auth')
     const ctx = {
-      request: { body: { username: 'admin', password: '123456' } },
+      request: { body: { username: 'quanthermes', password: '12345678' } },
       headers: {},
       ip: '127.0.0.1',
       status: 200,
@@ -241,13 +241,13 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body.token).toMatch(/^[^.]+\.[^.]+\.[^.]+$/)
   })
 
-  it('marks only admin with password 123456 as requiring a credential change', async () => {
+  it('marks only quanthermes with password 12345678 as requiring a credential change', async () => {
     const { users } = await initUsers()
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
     const ctrl = await import('../../packages/server/src/controllers/auth')
 
     const defaultCtx = {
-      state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
+      state: { user: { id: admin.id, username: 'quanthermes', role: 'super_admin' } },
       status: 200,
       body: null,
     } as any
@@ -256,14 +256,14 @@ describe('user auth tables and middleware', () => {
 
     users.updateUserPassword(admin.id, 'stronger-password')
     const passwordChangedCtx = {
-      state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
+      state: { user: { id: admin.id, username: 'quanthermes', role: 'super_admin' } },
       status: 200,
       body: null,
     } as any
     await ctrl.currentUser(passwordChangedCtx)
     expect(passwordChangedCtx.body.user.requiresCredentialChange).toBe(false)
 
-    users.updateUserPassword(admin.id, '123456')
+    users.updateUserPassword(admin.id, '12345678')
     users.updateUsername(admin.id, 'owner')
     const usernameChangedCtx = {
       state: { user: { id: admin.id, username: 'owner', role: 'super_admin' } },
@@ -311,7 +311,7 @@ describe('user auth tables and middleware', () => {
     }))
     const ctrl = await import('../../packages/server/src/controllers/auth')
     const ctx = {
-      state: { user: { id: admin.id, username: 'admin', role: 'super_admin' } },
+      state: { user: { id: admin.id, username: 'quanthermes', role: 'super_admin' } },
       params: { id: String(admin.id) },
       request: { body: { status: 'disabled' } },
       status: 200,
