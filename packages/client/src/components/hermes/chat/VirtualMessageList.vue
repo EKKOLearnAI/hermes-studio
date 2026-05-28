@@ -36,11 +36,15 @@ const scrollerRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const viewportHeight = ref(0);
 const heightVersion = ref(0);
+const forcedRange = ref<{ start: number; end: number } | null>(null);
 const measuredHeights = new Map<string, number>();
 const observedElements = new Map<string, HTMLElement>();
 const observers = new Map<string, ResizeObserver>();
 let keepBottomUntil = 0;
 let bottomFrame: number | null = null;
+let anchorFrame: number | null = null;
+let anchorToken = 0;
+let activeAnchorTarget: { token: number; messageId: string; anchorId: string; key: string } | null = null;
 
 const messageKeys = computed(() => props.messages.map(messageKey));
 
@@ -62,8 +66,9 @@ function setMeasuredHeight(key: string, height: number) {
 
   const el = scrollerRef.value;
   const shouldKeepBottom = !!el && (Date.now() < keepBottomUntil || isNearBottom(64));
+  const shouldKeepAnchor = !!activeAnchorTarget;
   const index = messageKeys.value.indexOf(key);
-  if (index >= 0 && !shouldKeepBottom) {
+  if (index >= 0 && !shouldKeepBottom && !shouldKeepAnchor) {
     const rowTop = layout.value.offsets[index] || 0;
     const delta = height - oldHeight;
     if (el && rowTop < scrollTop.value && delta !== 0) {
@@ -75,6 +80,7 @@ function setMeasuredHeight(key: string, height: number) {
   measuredHeights.set(key, height);
   heightVersion.value += 1;
   if (shouldKeepBottom) scheduleScrollToBottom(2);
+  if (shouldKeepAnchor && activeAnchorTarget) scheduleAnchorAlignment(activeAnchorTarget.token, 4);
 }
 
 const layout = computed(() => {
@@ -91,6 +97,12 @@ const layout = computed(() => {
 const visibleRange = computed(() => {
   const count = props.messages.length;
   if (count === 0) return { start: 0, end: -1 };
+  if (forcedRange.value) {
+    return {
+      start: Math.max(0, Math.min(count - 1, forcedRange.value.start)),
+      end: Math.max(0, Math.min(count - 1, forcedRange.value.end)),
+    };
+  }
 
   const overscanPx = props.estimatedItemHeight * props.overscan;
   const startPx = Math.max(0, scrollTop.value - overscanPx);
@@ -199,6 +211,85 @@ function scheduleScrollToBottom(frames = 1) {
   bottomFrame = requestAnimationFrame(() => step(frames));
 }
 
+function forceRangeAround(index: number) {
+  forcedRange.value = {
+    start: Math.max(0, index - 3),
+    end: Math.min(props.messages.length - 1, index + 6),
+  };
+}
+
+function findTargetElement(messageId: string, anchorId: string): HTMLElement | null {
+  const el = scrollerRef.value;
+  if (!el) return null;
+
+  const anchor = document.getElementById(anchorId);
+  if (anchor instanceof HTMLElement && el.contains(anchor)) return anchor;
+
+  const message = document.getElementById(`message-${messageId}`);
+  if (message instanceof HTMLElement && el.contains(message)) return message;
+
+  return null;
+}
+
+function alignAnchorTarget(target: { messageId: string; anchorId: string }): boolean {
+  const el = scrollerRef.value;
+  if (!el) return false;
+
+  const targetEl = findTargetElement(target.messageId, target.anchorId);
+  if (!targetEl) return false;
+
+  const scrollerRect = el.getBoundingClientRect();
+  const targetRect = targetEl.getBoundingClientRect();
+  const delta = targetRect.top - scrollerRect.top - 24;
+  if (Math.abs(delta) > 1) {
+    el.scrollTop = Math.max(0, el.scrollTop + delta);
+    syncViewport();
+    return false;
+  }
+
+  syncViewport();
+  return true;
+}
+
+function clearAnchorTarget(token: number) {
+  if (!activeAnchorTarget || activeAnchorTarget.token !== token) return;
+  activeAnchorTarget = null;
+  forcedRange.value = null;
+  nextTick(syncViewport);
+}
+
+function scheduleAnchorAlignment(token: number, frames = 1) {
+  if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
+
+  const step = (remaining: number) => {
+    const target = activeAnchorTarget;
+    if (!target || target.token !== token) {
+      anchorFrame = null;
+      return;
+    }
+
+    alignAnchorTarget(target);
+    if (remaining <= 1) {
+      anchorFrame = null;
+      clearAnchorTarget(token);
+      return;
+    }
+    anchorFrame = requestAnimationFrame(() => step(remaining - 1));
+  };
+
+  anchorFrame = requestAnimationFrame(() => step(frames));
+}
+
+function cancelAnchorTarget() {
+  anchorToken += 1;
+  activeAnchorTarget = null;
+  forcedRange.value = null;
+  if (anchorFrame != null) {
+    cancelAnimationFrame(anchorFrame);
+    anchorFrame = null;
+  }
+}
+
 function scrollToMessage(messageId: string) {
   const index = props.messages.findIndex(message => String(message.id) === messageId);
   if (index < 0) return;
@@ -218,16 +309,25 @@ function scrollToAnchor(messageId: string, anchorId: string) {
   const index = props.messages.findIndex(message => String(message.id) === messageId);
   if (index < 0) return;
 
+  cancelAnchorTarget();
+  const token = anchorToken;
+  activeAnchorTarget = {
+    token,
+    messageId,
+    anchorId,
+    key: messageKey(props.messages[index]),
+  };
+  forceRangeAround(index);
+
   nextTick(() => {
     const el = scrollerRef.value;
-    if (!el) return;
+    if (!el) {
+      clearAnchorTarget(token);
+      return;
+    }
     el.scrollTop = Math.max(0, (layout.value.offsets[index] || 0) - 24);
     syncViewport();
-    nextTick(() => {
-      const target = document.getElementById(anchorId) || document.getElementById(`message-${messageId}`);
-      target?.scrollIntoView({ behavior: "smooth", block: "start" });
-      syncViewport();
-    });
+    scheduleAnchorAlignment(token, 8);
   });
 }
 
@@ -262,6 +362,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (bottomFrame != null) cancelAnimationFrame(bottomFrame);
+  if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
   resizeObserver?.disconnect();
   for (const observer of observers.values()) observer.disconnect();
   observers.clear();
@@ -283,6 +384,7 @@ watch(messageKeys, keys => {
     droppedHeights = true;
   }
   if (droppedHeights) heightVersion.value += 1;
+  if (activeAnchorTarget && !activeKeys.has(activeAnchorTarget.key)) cancelAnchorTarget();
   nextTick(syncViewport);
 });
 
