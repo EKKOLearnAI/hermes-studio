@@ -63,7 +63,8 @@
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "vue-virtual-scroller": "^3.0.4"
   },
   "devDependencies": {
     "@koa/bodyparser": "^5.0.0",
