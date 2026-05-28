@@ -1,6 +1,7 @@
 name: Build and Push Docker Image to Docker Hub
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
@@ -42,4 +43,4 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.event.release.tag_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.event.release.tag_name || github.ref_name }}
