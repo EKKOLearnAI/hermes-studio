@@ -175,7 +175,10 @@ function handleChatDrop(event: DragEvent) {
 
 function onOutlineMessagesLoaded(messages: any[]) {
   if (chatStore.activeSession) {
-    chatStore.activeSession.messages = messages;
+    // Skip leading messages before first user message (command/system)
+    const firstUserIdx = messages.findIndex(m => m.role === 'user');
+    const clean = firstUserIdx > 0 ? messages.slice(firstUserIdx) : messages;
+    chatStore.activeSession.messages = clean;
   }
 }
 }

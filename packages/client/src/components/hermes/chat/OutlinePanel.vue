@@ -51,7 +51,7 @@ function extractUserQuestion(text: string): string {
   return firstLine || t('chat.outlineUserQuestion')
 }
 
-function extractAnswerSummary(text: string): string {
+function extractAnswerSummary(text: string): string | null {
   const cleanedText = text.replace(/<think>[\s\S]*?<\/think>/g, '')
   const lines = cleanedText.split('\n')
   for (const line of lines) {
@@ -61,7 +61,7 @@ function extractAnswerSummary(text: string): string {
     if (trimmed.length > 80) return trimmed.slice(0, 80) + '...'
     return trimmed
   }
-  return t('chat.outlineAnswer')
+  return null
 }
 
 const outlineItems = computed<OutlineItem[]>(() => {
@@ -83,13 +83,16 @@ const outlineItems = computed<OutlineItem[]>(() => {
       while (i < filteredMessages.length && filteredMessages[i].role !== 'assistant') i++
       if (i < filteredMessages.length) {
         const assistant = filteredMessages[i]
-        items.push({
-          id: `answer-${assistant.id}`,
-          type: 'answer',
-          content: extractAnswerSummary(assistant.content || ''),
-          messageId: assistant.id,
-          anchorId: `message-${assistant.id}`,
-        })
+        const summary = extractAnswerSummary(assistant.content || '')
+        if (summary !== null) {
+          items.push({
+            id: `answer-${assistant.id}`,
+            type: 'answer',
+            content: summary,
+            messageId: assistant.id,
+            anchorId: `message-${assistant.id}`,
+          })
+        }
       }
     } else {
       i++
