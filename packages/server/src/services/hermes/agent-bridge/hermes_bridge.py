@@ -2416,11 +2416,14 @@ class WorkerProcess:
 def _worker_endpoint(key: str, namespace: str | None = None) -> str:
     namespace_key = f"{namespace or ''}\0{key}"
     safe = hashlib.sha256(namespace_key.encode("utf-8")).hexdigest()[:16]
-    if os.name == "nt":
-        port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
-        return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
-    root = Path(tempfile.gettempdir()) / "hermes-agent-bridge-workers"
-    return f"ipc://{root / f'{safe}.sock'}"
+    # Always use TCP loopback. Unix domain sockets in /tmp are rejected by
+    # some macOS EDR/sandbox configurations when the broker is spawned from
+    # an unsigned Electron child — the worker is SIGKILL'd within ~150ms of
+    # bind() before it can emit a "ready" event. TCP loopback bypasses this
+    # entirely and is performance-equivalent to AF_UNIX on macOS/Linux
+    # (kernel zero-copy in both cases).
+    port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
+    return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
 
 
 def _connect_bridge_socket(endpoint: str, timeout: float) -> socket.socket:
