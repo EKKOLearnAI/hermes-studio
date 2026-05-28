@@ -12,6 +12,9 @@ const PREVIEW_HOME_DIR_NAME = 'hermes-web-ui-pereview-home'
 const PREVIEW_BACKEND_PORT = 8650
 const PREVIEW_FRONTEND_PORT = 8651
 const PREVIEW_AGENT_BRIDGE_PORT = 18650
+const PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE = 19650
+const PREVIEW_AGENT_BRIDGE_ENDPOINT_ENV = 'HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT'
+const PREVIEW_AGENT_BRIDGE_TRANSPORT_ENV = 'HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT'
 const PREVIEW_FRONTEND_URL = `http://localhost:${PREVIEW_FRONTEND_PORT}`
 const PREVIEW_TAG_REF_PATTERN = /^[A-Za-z0-9._/-]+$/
 const PREVIEW_MAIN_REF = 'main'
@@ -207,10 +210,41 @@ function getPreviewHomeDir() {
   return join(getWebUiHome(), PREVIEW_HOME_DIR_NAME)
 }
 
+function normalizePreviewAgentBridgeTransport(value: string | undefined) {
+  const transport = value?.trim().toLowerCase()
+  return transport && ['tcp', 'ipc', 'unix'].includes(transport) ? transport : ''
+}
+
 function getPreviewAgentBridgeEndpoint() {
-  return process.platform === 'win32'
+  const configured = process.env[PREVIEW_AGENT_BRIDGE_ENDPOINT_ENV]?.trim()
+  if (configured) return configured
+
+  const transport = normalizePreviewAgentBridgeTransport(process.env[PREVIEW_AGENT_BRIDGE_TRANSPORT_ENV])
+    || normalizePreviewAgentBridgeTransport(process.env.HERMES_AGENT_BRIDGE_WORKER_TRANSPORT)
+  const useTcp = transport ? transport === 'tcp' : process.platform === 'win32'
+  return useTcp
     ? `tcp://127.0.0.1:${PREVIEW_AGENT_BRIDGE_PORT}`
     : `ipc://${join(getPreviewHomeDir(), 'agent-bridge.sock')}`
+}
+
+function getTcpEndpointPort(endpoint: string): number | null {
+  try {
+    const url = new URL(endpoint)
+    if (url.protocol !== 'tcp:') return null
+    const port = Number(url.port)
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null
+  } catch {
+    return null
+  }
+}
+
+function getPreviewListeningPorts() {
+  const agentBridgePort = getTcpEndpointPort(getPreviewAgentBridgeEndpoint())
+  return [
+    PREVIEW_BACKEND_PORT,
+    PREVIEW_FRONTEND_PORT,
+    ...(agentBridgePort ? [agentBridgePort] : []),
+  ]
 }
 
 function getPreviewPackagePath() {
@@ -315,11 +349,7 @@ function parsePidLines(output: string): number[] {
 }
 
 function getPreviewListeningPids(): number[] {
-  const ports = [
-    PREVIEW_BACKEND_PORT,
-    PREVIEW_FRONTEND_PORT,
-    ...(process.platform === 'win32' ? [PREVIEW_AGENT_BRIDGE_PORT] : []),
-  ]
+  const ports = getPreviewListeningPorts()
   const pids = new Set<number>()
 
   if (process.platform === 'win32') {
@@ -367,11 +397,7 @@ function getUnixProcessGroupId(pid: number): number | null {
 }
 
 async function assertPreviewPortsAvailable() {
-  const ports = [
-    PREVIEW_BACKEND_PORT,
-    PREVIEW_FRONTEND_PORT,
-    ...(process.platform === 'win32' ? [PREVIEW_AGENT_BRIDGE_PORT] : []),
-  ]
+  const ports = getPreviewListeningPorts()
   const checks = await Promise.all(ports.map(port => isPortAvailable(port)))
   const busy = ports.filter((_, index) => !checks[index])
 
@@ -964,6 +990,7 @@ export async function startPreview(ctx: any) {
         HERMES_WEB_UI_HOME: getPreviewHomeDir(),
         HERMES_WEBUI_STATE_DIR: getPreviewHomeDir(),
         HERMES_AGENT_BRIDGE_ENDPOINT: getPreviewAgentBridgeEndpoint(),
+        HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE),
         AUTH_TOKEN: '',
         HERMES_WEB_UI_BACKEND_PORT: String(PREVIEW_BACKEND_PORT),
         HERMES_WEB_UI_FRONTEND_PORT: String(PREVIEW_FRONTEND_PORT),

@@ -2416,7 +2416,9 @@ class WorkerProcess:
 def _worker_endpoint(key: str, namespace: str | None = None) -> str:
     namespace_key = f"{namespace or ''}\0{key}"
     safe = hashlib.sha256(namespace_key.encode("utf-8")).hexdigest()[:16]
-    if os.name == "nt":
+    transport = os.environ.get("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", "").strip().lower()
+    use_tcp = transport == "tcp" or (transport not in {"ipc", "unix"} and os.name == "nt")
+    if use_tcp:
         port_base = int(os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", "18780"))
         return f"tcp://127.0.0.1:{port_base + int(safe[:4], 16) % 1000}"
     root = Path(tempfile.gettempdir()) / "hermes-agent-bridge-workers"
