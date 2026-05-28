@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   // 登录
   login: {
     title: 'QuantHermes Web UI',
@@ -138,6 +138,7 @@
     groupMonitoringShort: '监控',
     groupTools: '工具',
     settings: '设置',
+    networkConfig: '配网',
     connected: '已连接',
     disconnected: '未连接',
     collapse: '收起菜单',

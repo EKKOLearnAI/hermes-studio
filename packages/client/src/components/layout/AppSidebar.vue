@@ -243,6 +243,19 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
+          <a class="nav-item" :href="`http://${window.location.hostname}:80`" target="_blank">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="16" y="16" width="6" height="6" rx="1" />
+              <path d="M32 22h-8" />
+              <path d="M22 22h-2" />
+              <path d="M32 16h-12" />
+              <path d="M18 16H2" />
+              <path d="M32 10H12" />
+              <path d="M18 10H2" />
+              <path d="M22 4H2" />
+            </svg>
+            <span>{{ t("sidebar.networkConfig") }}</span>
+          </a>
           <RouteLinkItem v-if="isSuperAdmin" class="nav-item" :to="{ name: 'hermes.profiles' }" :active="selectedKey === 'hermes.profiles'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />

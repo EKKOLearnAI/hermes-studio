@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   // Login
   login: {
     title: 'QuantHermes Web UI',
@@ -138,6 +138,7 @@
     groupMonitoringShort: 'Mon',
     groupTools: 'Tools',
     settings: 'Settings',
+    networkConfig: 'Network Config',
     connected: 'Connected',
     disconnected: 'Disconnected',
     collapse: 'Collapse menu',
