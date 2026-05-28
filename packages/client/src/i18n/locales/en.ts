@@ -420,6 +420,8 @@ export default {
     outlineTitle: 'Conversation Outline',
     outlineEmpty: 'No conversation content',
     outlineUserQuestion: 'User question',
+    outlineAnswer: 'Answer',
+    loadAllMessages: 'Load All',
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     slashCommandArgs: {
       message: '<message>',

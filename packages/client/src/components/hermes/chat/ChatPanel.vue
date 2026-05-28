@@ -173,6 +173,13 @@ function handleChatDrop(event: DragEvent) {
   chatInputRef.value?.addFiles?.(files);
 }
 
+function onOutlineMessagesLoaded(messages: any[]) {
+  if (chatStore.activeSession) {
+    chatStore.activeSession.messages = messages;
+  }
+}
+}
+
 async function handleSessionClick(sessionId: string) {
   chatStore.clearSessionCompletedUnread(sessionId);
   await router.push({
@@ -1581,7 +1588,11 @@ async function handleSessionModelCustomSubmit() {
           <OutlinePanel
             v-if="showOutline"
             :messages="chatStore.messages"
+            :session-id="chatStore.activeSessionId || undefined"
+            :session-profile="chatStore.activeSession ? sessionProfile(chatStore.activeSession.id) : null"
+            :show-load-all="true"
             @navigate="handleOutlineNavigate"
+            @messages-loaded="onOutlineMessagesLoaded"
           />
           <aside
             v-if="showToolPanel"
