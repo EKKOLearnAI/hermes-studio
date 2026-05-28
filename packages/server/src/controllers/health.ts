@@ -45,7 +45,23 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 let cachedLatestVersion = ''
 
+/**
+ * Whether the periodic npm-registry version check is disabled.
+ *
+ * Useful when hermes-web-ui is bundled inside a packaged distribution
+ * (e.g. a desktop app) where the user can't `npm install -g hermes-web-ui@latest`
+ * to upgrade — the "update available" prompt would be misleading and
+ * the periodic outbound HTTP request to the npm registry is unnecessary.
+ *
+ * Set HERMES_WEB_UI_DISABLE_UPDATE_CHECK=true (or 1, on, yes) to disable.
+ */
+function isUpdateCheckDisabled(): boolean {
+  const raw = (process.env.HERMES_WEB_UI_DISABLE_UPDATE_CHECK || '').trim().toLowerCase()
+  return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes'
+}
+
 export async function checkLatestVersion(): Promise<void> {
+  if (isUpdateCheckDisabled()) return
   try {
     const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
     const registryName = encodeURIComponent(packageName)
@@ -61,6 +77,7 @@ export async function checkLatestVersion(): Promise<void> {
 }
 
 export function startVersionCheck(): void {
+  if (isUpdateCheckDisabled()) return
   setTimeout(checkLatestVersion, 5000)
   setInterval(checkLatestVersion, 30 * 60 * 1000)
 }
@@ -74,8 +91,10 @@ export async function healthCheck(ctx: any) {
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
-    webui_latest: cachedLatestVersion,
-    webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
+    webui_latest: isUpdateCheckDisabled() ? '' : cachedLatestVersion,
+    webui_update_available: isUpdateCheckDisabled()
+      ? false
+      : Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
   }
 }
