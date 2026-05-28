@@ -165,6 +165,14 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
   }
 }
 
+function onHistoryOutlineMessagesLoaded(messages: any[]) {
+  if (historySession.value) {
+    const firstUserIdx = messages.findIndex(m => m.role === 'user');
+    const clean = firstUserIdx > 0 ? messages.slice(firstUserIdx) : messages;
+    historySession.value.messages = clean;
+  }
+}
+
 async function loadHistorySession(sessionId: string, profile?: string | null) {
   const summary = findHistorySession(sessionId)
   const sessionProfile = profile || summary?.profile || null
@@ -868,7 +876,9 @@ function handleBatchDeleteConfirm() {
           :messages="historySession.messages || []"
           :session-id="historySession.id"
           :session-profile="historySession.profile || null"
+          :show-load-all="true"
           @navigate="handleOutlineNavigate"
+          @messages-loaded="onHistoryOutlineMessagesLoaded"
         />
       </div>
     </div>
