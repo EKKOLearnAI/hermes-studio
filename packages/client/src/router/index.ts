@@ -117,6 +117,12 @@ const router = createRouter({
       name: 'hermes.files',
       component: () => import('@/views/hermes/FilesView.vue'),
     },
+    {
+      path: '/hermes/version-preview',
+      name: 'hermes.versionPreview',
+      component: () => import('@/views/hermes/VersionPreviewView.vue'),
+      meta: { requiresSuperAdmin: true },
+    },
   ],
 })
 

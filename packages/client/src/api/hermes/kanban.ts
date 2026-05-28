@@ -267,8 +267,9 @@ export function buildKanbanEventsWebSocketUrl(opts?: KanbanBoardOptions): string
     return `${websocketProtocol(base)}//${new URL(base).host}${path}`
   }
 
-  const host = import.meta.env.DEV
-    ? formatHostForPort(location.hostname, 8648)
+  const directDevPort = import.meta.env.VITE_HERMES_DIRECT_WS_PORT
+  const host = import.meta.env.DEV && directDevPort
+    ? formatHostForPort(location.hostname, Number(directDevPort))
     : location.host
   return `${websocketProtocol()}//${host}${path}`
 }
