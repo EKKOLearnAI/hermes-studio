@@ -12,7 +12,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, importHermesSession, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -52,6 +52,8 @@ const showContextMenu = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 let hermesSessionsRequestId = 0
+
+const HISTORY_PAGE_SIZE = 300
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
   historyMessageListRef.value?.scrollToAnchor(target.messageId, target.anchorId)
@@ -107,56 +109,98 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
   return options
 })
 
+function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
+  return messages.map(m => {
+    const msg: Session['messages'][number] = {
+      id: String(m.id),
+      role: m.role,
+      content: m.content || '',
+      timestamp: m.timestamp * 1000,
+      reasoning: m.reasoning || undefined,
+      systemType: m.role === 'command' ? 'command' : undefined,
+    }
+
+    if (m.role === 'tool') {
+      msg.toolName = m.tool_name || undefined
+      msg.toolCallId = m.tool_call_id || undefined
+      msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
+        ? JSON.stringify(m.tool_calls[0].function.arguments)
+        : undefined
+      msg.toolStatus = 'done'
+      msg.toolResult = m.content || undefined
+      msg.content = ''
+    }
+
+    return msg
+  })
+}
+
+function sessionFromSummary(summary: SessionSummary, messages: Session['messages'] = []): Session {
+  return {
+    id: summary.id,
+    profile: summary.profile || undefined,
+    title: summary.title || '',
+    source: summary.source,
+    createdAt: summary.started_at * 1000,
+    updatedAt: (summary.last_active || summary.ended_at || summary.started_at) * 1000,
+    model: summary.model,
+    provider: summary.provider,
+    messageCount: summary.message_count,
+    messageTotal: summary.message_count,
+    loadedMessageCount: messages.length,
+    hasMoreBefore: false,
+    inputTokens: summary.input_tokens,
+    outputTokens: summary.output_tokens,
+    endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
+    lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
+    workspace: summary.workspace || undefined,
+    messages,
+  }
+}
+
 async function loadHistorySession(sessionId: string, profile?: string | null) {
   const summary = findHistorySession(sessionId)
   const sessionProfile = profile || summary?.profile || null
-  // First, fetch the Hermes session detail
-  const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
-  if (!sessionDetail) {
-    message.error(t('chat.sessionNotFound'))
-    return
-  }
+  const page = await fetchSessionMessagesPage(sessionId, 0, HISTORY_PAGE_SIZE, sessionProfile)
+  let sessionData: Session | null = null
 
-  // Convert SessionDetail to Session format and add to chatStore
-  const sessionData: Session = {
-    id: sessionDetail.id,
-    profile: sessionDetail.profile || sessionProfile || undefined,
-    title: sessionDetail.title || '',
-    source: sessionDetail.source,
-    createdAt: sessionDetail.started_at * 1000,
-    updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
-    model: sessionDetail.model,
-    messageCount: sessionDetail.message_count,
-    inputTokens: sessionDetail.input_tokens,
-    outputTokens: sessionDetail.output_tokens,
-    endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
-    lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
-    workspace: sessionDetail.workspace || undefined,
-    messages: sessionDetail.messages.map(m => {
-      const msg: any = {
-        id: String(m.id),
-        sessionId: m.session_id,
-        role: m.role,
-        content: m.content || '',
-        timestamp: m.timestamp * 1000,
-      }
+  if (page) {
+    const base = summary || page.session
+    sessionData = sessionFromSummary(base, mapHistoryMessages(page.messages))
+    sessionData.profile = summary?.profile || sessionProfile || undefined
+    sessionData.messageCount = page.total
+    sessionData.messageTotal = page.total
+    sessionData.loadedMessageCount = page.messages.length
+    sessionData.hasMoreBefore = page.hasMore
+  } else {
+    // Some imported/legacy Hermes sessions may only exist in Hermes state.db.
+    // Keep the old full-detail path as a compatibility fallback.
+    const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
+    if (!sessionDetail) {
+      message.error(t('chat.sessionNotFound'))
+      return
+    }
 
-      // Preserve tool-related fields
-      if (m.role === 'tool') {
-        msg.toolName = m.tool_name
-        msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
-          ? JSON.stringify(m.tool_calls[0].function.arguments)
-          : undefined
-        msg.toolStatus = 'done'
-      }
-
-      // Preserve reasoning field
-      if (m.reasoning) {
-        msg.reasoning = m.reasoning
-      }
-
-      return msg
-    }),
+    sessionData = {
+      id: sessionDetail.id,
+      profile: sessionDetail.profile || sessionProfile || undefined,
+      title: sessionDetail.title || '',
+      source: sessionDetail.source,
+      createdAt: sessionDetail.started_at * 1000,
+      updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
+      model: sessionDetail.model,
+      provider: sessionDetail.provider,
+      messageCount: sessionDetail.message_count,
+      messageTotal: sessionDetail.message_count,
+      loadedMessageCount: sessionDetail.messages.length,
+      hasMoreBefore: false,
+      inputTokens: sessionDetail.input_tokens,
+      outputTokens: sessionDetail.output_tokens,
+      endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
+      lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
+      workspace: sessionDetail.workspace || undefined,
+      messages: mapHistoryMessages(sessionDetail.messages),
+    }
   }
 
   // Set history page's own session state (independent from chatStore)
@@ -164,6 +208,34 @@ async function loadHistorySession(sessionId: string, profile?: string | null) {
   historySession.value = sessionData
 
   if (mobileQuery?.matches) showSessions.value = false
+}
+
+async function loadOlderHistoryMessages(sessionId: string): Promise<boolean> {
+  const target = historySession.value
+  if (!target || target.id !== sessionId || target.isLoadingOlderMessages || !target.hasMoreBefore) return false
+  const offset = target.loadedMessageCount || 0
+  target.isLoadingOlderMessages = true
+  try {
+    const page = await fetchSessionMessagesPage(sessionId, offset, HISTORY_PAGE_SIZE, target.profile)
+    if (!page || page.messages.length === 0) {
+      target.hasMoreBefore = false
+      return false
+    }
+
+    const existingIds = new Set(target.messages.map(message => message.id))
+    const olderMessages = mapHistoryMessages(page.messages).filter(message => !existingIds.has(message.id))
+    target.messages = [...olderMessages, ...target.messages]
+    target.loadedMessageCount = offset + page.messages.length
+    target.messageTotal = page.total
+    target.messageCount = page.total
+    target.hasMoreBefore = page.hasMore
+    return olderMessages.length > 0
+  } catch (err) {
+    console.error('Failed to load older history messages:', err)
+    return false
+  } finally {
+    target.isLoadingOlderMessages = false
+  }
 }
 
 async function handleSessionClick(sessionId: string, profile?: string | null) {
@@ -764,7 +836,11 @@ function handleBatchDeleteConfirm() {
 
       <div class="history-content-wrapper">
         <div class="history-main-content">
-          <HistoryMessageList ref="historyMessageListRef" :session="historySession" />
+          <HistoryMessageList
+            ref="historyMessageListRef"
+            :session="historySession"
+            :load-older="loadOlderHistoryMessages"
+          />
         </div>
         <OutlinePanel
           v-if="showOutline && historySession"

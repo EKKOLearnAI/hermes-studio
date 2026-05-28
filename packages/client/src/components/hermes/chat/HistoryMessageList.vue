@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
@@ -9,6 +9,7 @@ import type { Session } from "@/stores/hermes/chat";
 
 const props = defineProps<{
   session?: Session | null; // Optional: use this session instead of chatStore.activeSession
+  loadOlder?: (sessionId: string) => Promise<boolean>;
 }>();
 
 const chatStore = useChatStore();
@@ -43,6 +44,16 @@ function scrollToMessage(messageId: string) {
 
 function scrollToAnchor(messageId: string, anchorId: string) {
   listRef.value?.scrollToAnchor(messageId, anchorId);
+}
+
+async function handleTopReach() {
+  const session = activeSession.value;
+  if (!session?.hasMoreBefore || session.isLoadingOlderMessages || !props.loadOlder) return;
+  const snapshot = listRef.value?.captureScrollPosition() ?? null;
+  const loaded = await props.loadOlder(session.id);
+  if (!loaded) return;
+  await nextTick();
+  listRef.value?.restoreScrollPosition(snapshot);
 }
 
 // Scroll to bottom on session switch
@@ -97,11 +108,20 @@ defineExpose({
   <VirtualMessageList
     ref="listRef"
     :messages="displayMessages"
+    @top-reach="handleTopReach"
   >
     <template #empty>
       <div class="empty-state">
         <img src="/logo.png" alt="Hermes" class="empty-logo" />
         <p>{{ t("chat.emptyState") }}</p>
+      </div>
+    </template>
+    <template #before>
+      <div
+        v-if="activeSession?.hasMoreBefore || activeSession?.isLoadingOlderMessages"
+        class="history-loader"
+      >
+        <span v-if="activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
       </div>
     </template>
     <template #item="{ message: msg }">
@@ -133,6 +153,34 @@ defineExpose({
 
   p {
     font-size: 14px;
+  }
+}
+
+.history-loader {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.history-loader-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.16);
+  border-top-color: $accent-primary;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+
+  .dark & {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: $accent-primary;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

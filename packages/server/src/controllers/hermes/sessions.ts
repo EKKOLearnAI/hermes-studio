@@ -1,5 +1,5 @@
 import * as hermesCli from '../../services/hermes/hermes-cli'
-import { listSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb, getSessionDetailFromDbWithProfile, getExactSessionDetailFromDbWithProfile } from '../../db/hermes/sessions-db'
+import { listSessionSummaries, getUsageStatsFromDb, getSessionDetailFromDb, getSessionDetailFromDbWithProfile, getSessionDetailPaginatedFromDbWithProfile, getExactSessionDetailFromDbWithProfile } from '../../db/hermes/sessions-db'
 import {
   listSessions as localListSessions,
   searchSessions as localSearchSessions,
@@ -872,29 +872,35 @@ function serializeAsText(title: string | null, messages: any[]): string {
 export async function getConversationMessagesPaginated(ctx: any) {
   const offset = ctx.query.offset ? parseInt(ctx.query.offset as string, 10) : 0
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 50
+  const profile = requestedProfile(ctx)
 
   const { getSessionDetailPaginated } = await import('../../db/hermes/session-store')
-  const result = getSessionDetailPaginated(ctx.params.id, offset, limit)
+  const localResult = getSessionDetailPaginated(ctx.params.id, offset, limit)
+  const result = localResult && (!profile || localResult.session.profile === profile)
+    ? localResult
+    : await getSessionDetailPaginatedFromDbWithProfile(ctx.params.id, profile || 'default', offset, limit)
 
   if (!result) {
     ctx.status = 404
     ctx.body = { error: 'Conversation not found' }
     return
   }
-  if (denySessionAccess(ctx, result.session)) return
+  const session = { ...result.session, profile: (result.session as any).profile || profile || 'default' }
+  if (denySessionAccess(ctx, session)) return
 
   ctx.body = {
     session: {
-      id: result.session.id,
-      source: result.session.source,
-      model: result.session.model,
-      title: result.session.title,
-      started_at: result.session.started_at,
-      ended_at: result.session.ended_at,
-      last_active: result.session.last_active,
-      message_count: result.session.message_count,
-      input_tokens: result.session.input_tokens,
-      output_tokens: result.session.output_tokens,
+      id: session.id,
+      profile: session.profile,
+      source: session.source,
+      model: session.model,
+      title: session.title,
+      started_at: session.started_at,
+      ended_at: session.ended_at,
+      last_active: session.last_active,
+      message_count: session.message_count,
+      input_tokens: session.input_tokens,
+      output_tokens: session.output_tokens,
     },
     messages: result.messages,
     total: result.total,
