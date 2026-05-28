@@ -1106,6 +1106,13 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_4_1: 'CI est renforcé avec une installation npm figée et une couverture Docker smoke pour les PR',
+    new_0_6_4_2: 'Le chat utilise maintenant une pagination virtualisée pour rendre les longues conversations plus fiables au scroll et au chargement',
+    new_0_6_4_3: 'La publication des images Docker ne s exécute désormais que pour les releases, pas pour les checks PR ordinaires',
+    new_0_6_4_4: 'Version Preview est disponible pour les super admins, avec sélection main/tag, checkout preview, installation des dépendances, start/stop et logs',
+    new_0_6_4_5: 'Les instances preview isolent les ports frontend/backend, le Web UI home et l agent bridge endpoint, avec des patches runtime pour les anciens tags couvrant ports, WebSocket, base URL et navigation preview imbriquée',
+    new_0_6_4_6: 'Les tables legacy session_usage sans created_at migrent maintenant correctement avec une valeur par défaut',
+    new_0_6_4_7: 'Les endpoints bridge profile worker sont maintenant séparés par broker endpoint, évitant que production et preview avec le même Profile se volent les worker sockets et provoquent des erreurs unknown run',
     new_0_6_3_1: 'Le statut du spinner Bridge n est plus stocke comme reasoning du modele, evitant que du texte thinking decoratif contamine le contexte futur',
     new_0_6_3_2: 'History ajoute des controles pour importer les sessions Hermes CLI dans l historique local Web UI avec une normalisation de messages plus sure',
     new_0_6_3_3: 'La configuration Provider prend en charge les base URLs integrees editables, LM Studio comme provider integre et la decouverte live via LM Studio /models',

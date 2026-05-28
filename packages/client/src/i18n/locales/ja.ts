@@ -1105,6 +1105,13 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_4_1: 'CI を強化し、npm install の挙動を固定して PR の Docker smoke チェックを追加しました',
+    new_0_6_4_2: 'チャットに仮想ページングを追加し、長い会話のスクロールと読み込みをより安定させました',
+    new_0_6_4_3: 'Docker イメージ公開は通常の PR チェックではなく release の場合のみ実行されます',
+    new_0_6_4_4: 'Version Preview を super admin 向けに追加し、main/tag 選択、preview checkout、依存関係インストール、start/stop、ログ確認に対応しました',
+    new_0_6_4_5: 'Preview インスタンスは frontend/backend ポート、Web UI home、agent bridge endpoint を分離し、古い tag にはポート、WebSocket、base URL、ネストした preview ナビゲーションの runtime patch を適用します',
+    new_0_6_4_6: 'created_at がない legacy session_usage テーブルをデフォルト値付きで安全に移行します',
+    new_0_6_4_7: 'Bridge profile worker endpoint を broker endpoint ごとに分離し、同じ Profile の本番/preview が worker socket を奪い合って unknown run を起こす問題を防ぎます',
     new_0_6_3_1: 'Bridge spinner の状態をモデル reasoning として保存しないようにし、装飾的な thinking テキストが後続コンテキストを汚染しないようにしました',
     new_0_6_3_2: 'History に Hermes CLI セッションを Web UI のローカル履歴へインポートする操作を追加し、メッセージ構造をより安全に正規化します',
     new_0_6_3_3: 'Provider 設定で組み込み base URL を編集できるようになり、LM Studio を組み込み Provider として追加し、LM Studio /models のライブ取得に対応しました',

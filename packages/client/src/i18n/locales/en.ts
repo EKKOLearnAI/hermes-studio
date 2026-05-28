@@ -1328,6 +1328,13 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_4_1: 'CI is hardened with pinned npm install behavior and PR Docker smoke coverage',
+    new_0_6_4_2: 'Chat now uses virtualized pagination so long conversations scroll and load more reliably',
+    new_0_6_4_3: 'Docker image publishing now runs only for releases instead of ordinary PR checks',
+    new_0_6_4_4: 'Version Preview is available to super admins, with main/tag selection, preview checkout, dependency install, start/stop controls, and logs',
+    new_0_6_4_5: 'Preview instances isolate frontend/backend ports, Web UI home, and agent bridge endpoint, with runtime patches for older tags covering ports, WebSocket routing, base URL behavior, and nested preview navigation',
+    new_0_6_4_6: 'Legacy session_usage tables missing created_at now migrate safely with a default value',
+    new_0_6_4_7: 'Bridge profile worker endpoints are now namespaced by broker endpoint, preventing production and preview instances with the same Profile from stealing worker sockets and causing unknown run errors',
     new_0_6_3_1: 'Bridge spinner status is no longer stored as model reasoning, preventing decorative thinking text from contaminating future context',
     new_0_6_3_2: 'History now includes controls to import Hermes CLI sessions into the Web UI local history with safer message normalization',
     new_0_6_3_3: 'Provider setup now supports editable built-in base URLs, LM Studio as a built-in provider, and live LM Studio /models discovery',

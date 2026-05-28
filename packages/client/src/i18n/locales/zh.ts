@@ -1330,6 +1330,13 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_4_1: 'CI 流程加固：PR 检查固定 npm 安装路径，并补齐 Docker smoke 校验',
+    new_0_6_4_2: '聊天消息列表新增虚拟分页，长会话滚动和加载更稳定',
+    new_0_6_4_3: 'Docker 镜像发布改为仅在 release 场景执行，避免普通 PR 触发发布流程',
+    new_0_6_4_4: '新增版本预览工作流：超级管理员可选择 main 或 GitHub tag，准备预览代码、安装依赖、启动/停止预览并查看日志',
+    new_0_6_4_5: '预览实例隔离前后端端口、Web UI home 和 agent bridge endpoint，并在运行时修补旧版本的端口、WebSocket、base URL 与嵌套预览入口',
+    new_0_6_4_6: '修复 legacy session_usage 表缺少 created_at 时的迁移问题，旧数据会以默认值补齐',
+    new_0_6_4_7: '预览和正式环境的 bridge profile worker endpoint 按 broker 隔离，避免同名 Profile 并发聊天时互相抢占导致 unknown run',
     new_0_6_3_1: 'Bridge spinner 状态不再写入模型 reasoning，避免装饰性 thinking 文案污染后续上下文',
     new_0_6_3_2: 'History 新增 Hermes CLI 会话导入控制，并在导入时更安全地规范化消息结构',
     new_0_6_3_3: 'Provider 配置支持编辑内置 base URL，新增 LM Studio 内置 Provider，并支持从 LM Studio /models 实时发现模型',

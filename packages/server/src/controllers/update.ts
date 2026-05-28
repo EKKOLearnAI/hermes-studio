@@ -141,6 +141,16 @@ function getNpmBin() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
+function isTermuxRuntime() {
+  const prefix = process.env.PREFIX || ''
+  return prefix.includes('/com.termux/') ||
+    existsSync('/data/data/com.termux/files/usr')
+}
+
+function getPreviewViteHostArg() {
+  return isTermuxRuntime() ? '127.0.0.1' : ''
+}
+
 function getGlobalPackageBin(root: string) {
   return join(root, 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
 }
@@ -261,7 +271,8 @@ function getPreviewStatus() {
   const exists = existsSync(previewDir)
   const hasPackage = existsSync(packagePath)
   const installed = hasPackage && getMissingPreviewDependencyBins().length === 0
-  const running = Boolean(previewProcess?.pid && !previewProcess.killed)
+  const runtimePids = getPreviewListeningPids()
+  const running = Boolean(previewProcess?.pid && !previewProcess.killed) || runtimePids.length > 0
   const currentTag = getCurrentPreviewTag()
 
   return {
@@ -270,7 +281,7 @@ function getPreviewStatus() {
     has_package: hasPackage,
     installed,
     running,
-    pid: running ? previewProcess?.pid : null,
+    pid: running ? previewProcess?.pid || runtimePids[0] || null : null,
     current_tag: currentTag,
     frontend_url: PREVIEW_FRONTEND_URL,
     agent_bridge_endpoint: getPreviewAgentBridgeEndpoint(),
@@ -294,6 +305,65 @@ function isPortAvailable(port: number): Promise<boolean> {
     })
     server.listen(port, '127.0.0.1')
   })
+}
+
+function parsePidLines(output: string): number[] {
+  return [...new Set(output
+    .split(/\r?\n/)
+    .map(line => Number(line.trim()))
+    .filter(pid => Number.isFinite(pid) && pid > 0))]
+}
+
+function getPreviewListeningPids(): number[] {
+  const ports = [
+    PREVIEW_BACKEND_PORT,
+    PREVIEW_FRONTEND_PORT,
+    ...(process.platform === 'win32' ? [PREVIEW_AGENT_BRIDGE_PORT] : []),
+  ]
+  const pids = new Set<number>()
+
+  if (process.platform === 'win32') {
+    try {
+      const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], { encoding: 'utf-8', windowsHide: true })
+      for (const line of output.split(/\r?\n/)) {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length < 5) continue
+        const [proto, localAddress, , state, pidRaw] = parts
+        if (proto.toUpperCase() !== 'TCP' || state.toUpperCase() !== 'LISTENING') continue
+        const listenPort = Number(localAddress.split(':').pop())
+        if (!ports.includes(listenPort)) continue
+        const pid = Number(pidRaw)
+        if (Number.isFinite(pid) && pid > 0) pids.add(pid)
+      }
+    } catch {}
+    return [...pids]
+  }
+
+  for (const port of ports) {
+    try {
+      for (const pid of parsePidLines(execFileSync('lsof', [`-tiTCP:${port}`, '-sTCP:LISTEN'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }))) {
+        pids.add(pid)
+      }
+    } catch {}
+  }
+
+  return [...pids]
+}
+
+function getUnixProcessGroupId(pid: number): number | null {
+  try {
+    const output = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    const pgid = Number(output)
+    return Number.isFinite(pgid) && pgid > 0 ? pgid : null
+  } catch {
+    return null
+  }
 }
 
 async function assertPreviewPortsAvailable() {
@@ -343,28 +413,50 @@ function openPreviewLogFile() {
 
 async function stopPreviewProcess() {
   const child = previewProcess
-  if (!child?.pid || child.killed) {
+  const pids = new Set<number>()
+  if (child?.pid && !child.killed) pids.add(child.pid)
+  for (const pid of getPreviewListeningPids()) pids.add(pid)
+
+  if (!pids.size) {
     previewProcess = null
     return
   }
 
-  appendPreviewActionLog(`stopping preview process pid=${child.pid}`)
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
-    } else {
+  appendPreviewActionLog(`stopping preview process pid(s)=${[...pids].join(', ')}`)
+  if (process.platform === 'win32') {
+    for (const pid of pids) {
       try {
-        process.kill(-child.pid, 'SIGTERM')
+        execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+      } catch {}
+    }
+  } else {
+    const pgids = new Set<number>()
+    for (const pid of pids) {
+      const pgid = getUnixProcessGroupId(pid)
+      if (pgid) pgids.add(pgid)
+      else pgids.add(pid)
+    }
+    for (const pgid of pgids) {
+      try {
+        process.kill(-pgid, 'SIGTERM')
       } catch {
-        child.kill('SIGTERM')
+        try { process.kill(pgid, 'SIGTERM') } catch {}
       }
     }
-  } catch {
-    child.kill()
+    await sleep(800)
+    const remainingPids = getPreviewListeningPids()
+    const remainingPgids = new Set(remainingPids.map(getUnixProcessGroupId).filter((pgid): pgid is number => Boolean(pgid)))
+    for (const pgid of remainingPgids) {
+      try { process.kill(-pgid, 'SIGKILL') } catch {}
+    }
   }
 
   previewProcess = null
   await sleep(800)
+}
+
+export async function stopPreviewRuntime(): Promise<void> {
+  await stopPreviewProcess()
 }
 
 function assertPreviewPackage() {
@@ -482,9 +574,12 @@ function applyPreviewRuntimePatch() {
 
   if (existsSync(packagePath)) {
     const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'))
+    const hostArg = getPreviewViteHostArg()
     pkg.scripts = {
       ...pkg.scripts,
-      'dev:client': `vite --host --port ${PREVIEW_FRONTEND_PORT} --strictPort`,
+      'dev:client': hostArg
+        ? `vite --host ${hostArg} --port ${PREVIEW_FRONTEND_PORT} --strictPort`
+        : `vite --host --port ${PREVIEW_FRONTEND_PORT} --strictPort`,
     }
     writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
   }
@@ -892,6 +987,7 @@ export async function startPreview(ctx: any) {
     ctx.body = previewPayload({ success: true, message: 'Preview started' })
   } catch (err: any) {
     appendPreviewActionLog(`npm run dev failed: ${err.stderr?.toString() || err.message || String(err)}`)
+    await stopPreviewProcess()
     ctx.status = 500
     ctx.body = previewPayload({ success: false, message: err.message || String(err) })
   }
