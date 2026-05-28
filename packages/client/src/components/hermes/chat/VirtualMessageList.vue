@@ -326,7 +326,7 @@ defineExpose({
           :active="active"
           class="virtual-row"
         >
-          <slot name="item" :message="item" />
+          <slot v-if="active" name="item" :message="item" />
         </DynamicScrollerItem>
       </template>
       <template #after>
