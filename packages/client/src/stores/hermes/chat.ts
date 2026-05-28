@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
@@ -77,6 +77,10 @@ export interface Session {
   model?: string
   provider?: string
   messageCount?: number
+  messageTotal?: number
+  loadedMessageCount?: number
+  hasMoreBefore?: boolean
+  isLoadingOlderMessages?: boolean
   inputTokens?: number
   outputTokens?: number
   contextTokens?: number
@@ -281,6 +285,9 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     messageCount: s.message_count,
+    messageTotal: s.message_count,
+    loadedMessageCount: 0,
+    hasMoreBefore: false,
     inputTokens: s.input_tokens,
     outputTokens: s.output_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
@@ -511,13 +518,18 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (!sid) return false
     try {
-      const detail = await fetchSession(sid, activeSession.value?.profile)
-      if (!detail) return false
       const target = sessions.value.find(s => s.id === sid)
       if (!target) return false
+      const limit = Math.max(target.loadedMessageCount || 300, 300)
+      const detail = await fetchSessionMessagesPage(sid, 0, limit, activeSession.value?.profile)
+      if (!detail) return false
       const mapped = mapHermesMessages(detail.messages || [])
       target.messages = mapped
-      if (detail.title) target.title = detail.title
+      target.loadedMessageCount = detail.messages.length
+      target.messageTotal = detail.total
+      target.messageCount = detail.total
+      target.hasMoreBefore = detail.hasMore
+      if (detail.session.title) target.title = detail.session.title
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -620,6 +632,10 @@ export const useChatStore = defineStore('chat', () => {
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
           if (data.messages?.length) {
             target.messages = mapHermesMessages(data.messages as any[])
+            target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+            target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
+            target.messageCount = target.messageTotal
+            target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
           }
           if (!target.title) {
             const firstUser = target.messages.find(m => m.role === 'user')
@@ -725,6 +741,36 @@ export const useChatStore = defineStore('chat', () => {
     // Resume in-flight run event listeners if needed
     if (activeSessionId.value === sessionId) {
       resumeServerWorkingRun(sessionId)
+    }
+  }
+
+  async function loadOlderMessages(sessionId = activeSessionId.value): Promise<boolean> {
+    if (!sessionId) return false
+    const target = sessions.value.find(s => s.id === sessionId)
+    if (!target || target.isLoadingOlderMessages || !target.hasMoreBefore) return false
+    const offset = target.loadedMessageCount || 0
+    const limit = 300
+    target.isLoadingOlderMessages = true
+    try {
+      const page = await fetchSessionMessagesPage(sessionId, offset, limit, target.profile)
+      if (!page || page.messages.length === 0) {
+        target.hasMoreBefore = false
+        return false
+      }
+
+      const existingIds = new Set(target.messages.map(message => message.id))
+      const olderMessages = mapHermesMessages(page.messages).filter(message => !existingIds.has(message.id))
+      target.messages = [...olderMessages, ...target.messages]
+      target.loadedMessageCount = offset + page.messages.length
+      target.messageTotal = page.total
+      target.messageCount = page.total
+      target.hasMoreBefore = page.hasMore
+      return olderMessages.length > 0
+    } catch (err) {
+      console.error('Failed to load older session messages:', err)
+      return false
+    } finally {
+      target.isLoadingOlderMessages = false
     }
   }
 
@@ -1438,6 +1484,10 @@ export const useChatStore = defineStore('chat', () => {
 
         if (Array.isArray(data.messages)) {
           target.messages = mapHermesMessages(data.messages as any[])
+          target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+          target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
+          target.messageCount = target.messageTotal
+          target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
           const lastAssistant = [...target.messages].reverse().find(m => m.role === 'assistant')
           if (data.isWorking && lastAssistant) {
             lastAssistant.isStreaming = true
@@ -2518,6 +2568,10 @@ export const useChatStore = defineStore('chat', () => {
             if (!data.isWorking) setCompressionState(sid, null)
             if (data.messages?.length && activeSession.value) {
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
+              activeSession.value.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+              activeSession.value.messageTotal = data.messageTotal ?? activeSession.value.messageCount ?? activeSession.value.loadedMessageCount
+              activeSession.value.messageCount = activeSession.value.messageTotal
+              activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
             }
             resumeServerWorkingRun(sid)
           }, activeSession.value?.profile)
@@ -2618,6 +2672,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     newCliSession,
     switchSession,
+    loadOlderMessages,
     switchSessionModel,
     addOrUpdateSession,
     clearProviderFromSessions,

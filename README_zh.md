@@ -289,8 +289,8 @@ npm install
 npm run dev
 ```
 
-- 前端：http://localhost:5173
-- BFF 服务器：http://localhost:8648
+- 前端：http://localhost:8649
+- BFF 服务器：http://localhost:8647
 
 ```bash
 npm run build   # 构建输出到 dist/

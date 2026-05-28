@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
@@ -8,12 +9,13 @@ import type { Session } from "@/stores/hermes/chat";
 
 const props = defineProps<{
   session?: Session | null; // Optional: use this session instead of chatStore.activeSession
+  loadOlder?: (sessionId: string) => Promise<boolean>;
 }>();
 
 const chatStore = useChatStore();
 const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
-const listRef = ref<HTMLElement>();
+const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
 
 // Use provided session or fall back to chatStore's active session
 const activeSession = computed(() => props.session || chatStore.activeSession);
@@ -29,38 +31,41 @@ const displayMessages = computed(() =>
 );
 
 function isNearBottom(threshold = 200): boolean {
-  const el = listRef.value;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  return listRef.value?.isNearBottom(threshold) ?? true;
 }
 
 function scrollToBottom() {
-  nextTick(() => {
-    if (listRef.value) {
-      listRef.value.scrollTop = listRef.value.scrollHeight;
-    }
-  });
+  listRef.value?.scrollToBottom();
 }
 
 function scrollToMessage(messageId: string) {
-  nextTick(() => {
-    const el = document.getElementById(`message-${messageId}`);
-    if (el) {
-      el.scrollIntoView({ block: 'center' });
-    }
-  });
+  listRef.value?.scrollToMessage(messageId);
+}
+
+function scrollToAnchor(messageId: string, anchorId: string) {
+  listRef.value?.scrollToAnchor(messageId, anchorId);
+}
+
+async function handleTopReach() {
+  const session = activeSession.value;
+  if (!session?.hasMoreBefore || session.isLoadingOlderMessages || !props.loadOlder) return;
+  const snapshot = listRef.value?.captureScrollPosition() ?? null;
+  const loaded = await props.loadOlder(session.id);
+  if (!loaded) return;
+  await nextTick();
+  listRef.value?.restoreScrollPosition(snapshot);
 }
 
 // Scroll to bottom on session switch
 watch(
-  () => chatStore.activeSessionId,
+  () => activeSession.value?.id,
   (id) => {
     if (!id) return;
     if (chatStore.focusMessageId) {
-      nextTick(() => scrollToMessage(chatStore.focusMessageId!));
+      scrollToMessage(chatStore.focusMessageId);
       return;
     }
-    nextTick(() => scrollToBottom());
+    scrollToBottom();
   },
   { immediate: true },
 );
@@ -91,39 +96,45 @@ watch(
     scrollToBottom();
   },
 );
+
+defineExpose({
+  scrollToBottom,
+  scrollToMessage,
+  scrollToAnchor,
+});
 </script>
 
 <template>
-  <div ref="listRef" class="message-list">
-    <div v-if="!activeSession || activeSession.messages.length === 0" class="empty-state">
-      <img src="/logo.png" alt="Hermes" class="empty-logo" />
-      <p>{{ t("chat.emptyState") }}</p>
-    </div>
-    <MessageItem
-      v-for="msg in displayMessages"
-      :key="msg.id"
-      :message="msg"
-      :highlight="chatStore.focusMessageId === msg.id"
-    />
-  </div>
+  <VirtualMessageList
+    ref="listRef"
+    :messages="displayMessages"
+    @top-reach="handleTopReach"
+  >
+    <template #empty>
+      <div class="empty-state">
+        <img src="/logo.png" alt="Hermes" class="empty-logo" />
+        <p>{{ t("chat.emptyState") }}</p>
+      </div>
+    </template>
+    <template #before>
+      <div
+        v-if="activeSession?.hasMoreBefore || activeSession?.isLoadingOlderMessages"
+        class="history-loader"
+      >
+        <span v-if="activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
+      </div>
+    </template>
+    <template #item="{ message: msg }">
+      <MessageItem
+        :message="msg"
+        :highlight="chatStore.focusMessageId === msg.id"
+      />
+    </template>
+  </VirtualMessageList>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
-
-.message-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  background-color: $bg-card;
-
-  .dark & {
-    background-color: #333333;
-  }
-}
 
 .empty-state {
   flex: 1;
@@ -142,6 +153,34 @@ watch(
 
   p {
     font-size: 14px;
+  }
+}
+
+.history-loader {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.history-loader-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.16);
+  border-top-color: $accent-primary;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+
+  .dark & {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: $accent-primary;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

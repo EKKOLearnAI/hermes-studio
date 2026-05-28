@@ -68,6 +68,10 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
     logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
     return {
       messages,
+      messageTotal: actualDetail?.total || messages.length,
+      messageLoadedCount: actualDetail?.messages.length || messages.length,
+      messagePageLimit: actualDetail?.limit,
+      hasMoreBefore: actualDetail?.hasMore || false,
       isWorking: false,
       events: [],
       inputTokens,

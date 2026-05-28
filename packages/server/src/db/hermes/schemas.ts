@@ -19,7 +19,7 @@ export const USAGE_SCHEMA: Record<string, string> = {
   reasoning_tokens: 'INTEGER NOT NULL DEFAULT 0',
   model: "TEXT NOT NULL DEFAULT ''",
   profile: "TEXT NOT NULL DEFAULT 'default'",
-  created_at: 'INTEGER NOT NULL',
+  created_at: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 // ============================================================================

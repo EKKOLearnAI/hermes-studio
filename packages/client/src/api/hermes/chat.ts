@@ -75,6 +75,10 @@ export interface RunEvent {
 export interface ResumeSessionPayload {
   session_id: string
   messages: any[]
+  messageTotal?: number
+  messageLoadedCount?: number
+  messagePageLimit?: number
+  hasMoreBefore?: boolean
   isWorking: boolean
   isAborting?: boolean
   events: Array<{ event: string; data: RunEvent }>

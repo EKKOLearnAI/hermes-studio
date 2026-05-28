@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@/stores/hermes/chat'
 
@@ -14,6 +14,10 @@ interface OutlineItem {
 
 const props = defineProps<{
   messages: Message[]
+}>()
+
+const emit = defineEmits<{
+  navigate: [target: { messageId: string; anchorId: string }]
 }>()
 
 const { t } = useI18n()
@@ -106,20 +110,10 @@ const outlineItems = computed<OutlineItem[]>(() => {
   return items
 })
 
-function scrollToTarget(anchorId: string) {
-  console.log('Attempting to scroll to anchor:', anchorId)
-  nextTick(() => {
-    const el = document.getElementById(anchorId)
-    console.log('Found element:', el)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    } else {
-      // Debug: log all heading elements with IDs
-      console.log('All heading elements on page:')
-      document.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(el => {
-        console.log('  -', el.id, ':', el.textContent?.slice(0, 50))
-      })
-    }
+function scrollToTarget(item: OutlineItem) {
+  emit('navigate', {
+    messageId: item.messageId,
+    anchorId: item.anchorId,
   })
 }
 </script>
@@ -135,7 +129,7 @@ function scrollToTarget(anchorId: string) {
           <div
             v-if="item.type === 'user'"
             class="outline-item user-item"
-            @click="scrollToTarget(item.anchorId)"
+            @click="scrollToTarget(item)"
           >
             <div class="user-question">
               <span class="q-label">Q:</span>
@@ -146,7 +140,7 @@ function scrollToTarget(anchorId: string) {
             v-else
             class="outline-item outline-heading-item"
             :class="`level-${item.level}`"
-            @click="scrollToTarget(item.anchorId)"
+            @click="scrollToTarget(item)"
           >
             <div class="heading-item">
               <span class="heading-text">{{ item.content }}</span>

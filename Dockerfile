@@ -1,6 +1,8 @@
 ARG BASE_IMAGE=nousresearch/hermes-agent:latest
 FROM ${BASE_IMAGE}
 
+ARG NODE_VERSION=24.15.0
+
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,19 +14,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN ARCH=$(dpkg --print-architecture) \
     && if [ "$ARCH" = "amd64" ]; then NODE_ARCH="x64"; else NODE_ARCH="$ARCH"; fi \
-    && echo "Downloading Node.js v23.11.0 for ${NODE_ARCH}" \
-    && curl -fsSL "https://nodejs.org/dist/v23.11.0/node-v23.11.0-linux-${NODE_ARCH}.tar.gz" \
+    && echo "Downloading Node.js v${NODE_VERSION} for ${NODE_ARCH}" \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" \
        -o /tmp/node.tar.gz \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+       /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
     && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
     && rm -f /tmp/node.tar.gz \
-    && node --version
+    && node --version \
+    && npm --version
 
 WORKDIR /app
 
 COPY package*.json ./
 # Increase Node.js memory limit to prevent OOM during build
 ENV NODE_OPTIONS=--max-old-space-size=4096
-RUN npm install --ignore-scripts && npm rebuild node-pty
+RUN npm ci --ignore-scripts && npm rebuild node-pty
 
 COPY . .
 

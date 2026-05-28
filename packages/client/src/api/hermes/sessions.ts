@@ -30,6 +30,15 @@ export interface SessionDetail extends SessionSummary {
   messages: HermesMessage[]
 }
 
+export interface PaginatedSessionMessages {
+  session: SessionSummary
+  messages: HermesMessage[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+
 export interface SessionSearchResult extends SessionSummary {
   matched_message_id: number | null
   snippet: string
@@ -91,6 +100,26 @@ export async function fetchSession(id: string, profile?: string | null): Promise
     const query = params.toString()
     const res = await request<{ session: SessionDetail }>(`/api/hermes/sessions/${id}${query ? `?${query}` : ''}`)
     return res.session
+  } catch {
+    return null
+  }
+}
+
+export async function fetchSessionMessagesPage(
+  id: string,
+  offset: number,
+  limit = 300,
+  profile?: string | null,
+): Promise<PaginatedSessionMessages | null> {
+  try {
+    const params = new URLSearchParams()
+    params.set('offset', String(offset))
+    params.set('limit', String(limit))
+    if (profile) params.set('profile', profile)
+    const res = await request<PaginatedSessionMessages>(
+      `/api/hermes/sessions/conversations/${encodeURIComponent(id)}/messages/paginated?${params}`,
+    )
+    return res
   } catch {
     return null
   }

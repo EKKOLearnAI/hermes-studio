@@ -334,6 +334,10 @@ export class ChatRunSocket {
     socket.emit('resumed', {
       session_id: sid,
       messages: state.messages,
+      messageTotal: state.messageTotal,
+      messageLoadedCount: state.messageLoadedCount,
+      messagePageLimit: state.messagePageLimit,
+      hasMoreBefore: state.hasMoreBefore,
       isWorking: state.isWorking,
       isAborting: state.isAborting || false,
       events: state.isWorking ? state.events : [],

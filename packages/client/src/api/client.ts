@@ -3,6 +3,7 @@ import router from '@/router'
 const DEFAULT_BASE_URL = ''
 
 function getBaseUrl(): string {
+  if (import.meta.env.VITE_HERMES_PREVIEW === '1') return DEFAULT_BASE_URL
   return localStorage.getItem('hermes_server_url') || DEFAULT_BASE_URL
 }
 
