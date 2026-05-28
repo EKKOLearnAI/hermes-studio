@@ -866,6 +866,8 @@ function handleBatchDeleteConfirm() {
         <OutlinePanel
           v-if="showOutline && historySession"
           :messages="historySession.messages || []"
+          :session-id="historySession.id"
+          :session-profile="historySession.profile || null"
           @navigate="handleOutlineNavigate"
         />
       </div>

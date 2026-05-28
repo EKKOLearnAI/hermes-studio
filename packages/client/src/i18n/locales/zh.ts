@@ -423,6 +423,8 @@ export default {
     outlineTitle: '会话大纲',
     outlineEmpty: '暂无会话内容',
     outlineUserQuestion: '用户问题',
+    outlineAnswer: '回答',
+    loadAllMessages: '加载所有消息',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     slashCommandArgs: {
       message: '<消息>',

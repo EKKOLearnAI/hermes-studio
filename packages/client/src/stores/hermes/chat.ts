@@ -335,7 +335,7 @@ function resolveResumedAssistantState(
   }
 }
 
-function mapHermesMessages(msgs: HermesMessage[]): Message[] {
+export function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   // Filter out assistant messages with no display content unless they carry tool call metadata
   // needed to name later tool result rows when resuming persisted history.
   const filteredMsgs = msgs.filter(m => {
