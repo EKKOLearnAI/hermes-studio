@@ -83,6 +83,7 @@ function safeNetworkInterfaces() {
 
 export async function bootstrap() {
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
+  console.log('[bootstrap] merge permission test')
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 
