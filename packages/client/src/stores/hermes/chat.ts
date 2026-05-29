@@ -102,15 +102,15 @@ export interface Session {
 }
 
 /** Apply token usage from a run.* event, preferring upstream API data */
-function applyApiUsage(target: Session, evt: Record<string, unknown>): void {
-  const apiUsage = (evt as any).apiUsage
+function applyApiUsage(target: Session, evt: any): void {
+  const apiUsage = evt.apiUsage
   if (apiUsage) {
     target.inputTokens = apiUsage.inputTokens
     target.outputTokens = apiUsage.outputTokens
     target.apiUsage = apiUsage
-  } else if ((evt as any).inputTokens != null) {
-    target.inputTokens = (evt as any).inputTokens
-    target.outputTokens = (evt as any).outputTokens
+  } else if (evt.inputTokens != null) {
+    target.inputTokens = evt.inputTokens
+    target.outputTokens = evt.outputTokens
   }
 }
 
