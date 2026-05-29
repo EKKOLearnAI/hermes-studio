@@ -77,6 +77,34 @@ export function isSessionCommand(input: string | ContentBlock[]): boolean {
   return parseSessionCommand(input) !== null
 }
 
+// ─── /usage helpers ────────────────────────────────────────
+
+function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsageState | null {
+  if (!row || !row.input_tokens || !row.cost_status) return null
+  return {
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    cacheWriteTokens: row.cache_write_tokens,
+    reasoningTokens: row.reasoning_tokens,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_write_tokens,
+    apiCalls: 0,
+    model: row.model || undefined,
+    estimatedCostUsd: row.estimated_cost_usd || undefined,
+    actualCostUsd: row.actual_cost_usd ?? undefined,
+    costStatus: row.cost_status || undefined,
+    costSource: undefined,
+  }
+}
+
+function formatCost(bu: BridgeUsageState): string {
+  if (bu.actualCostUsd != null) return `$${bu.actualCostUsd.toFixed(6)}`
+  if (bu.estimatedCostUsd && bu.estimatedCostUsd > 0) return `~$${bu.estimatedCostUsd.toFixed(6)} (estimated)`
+  return 'n/a'
+}
+
 export async function handleSessionCommand(
   sessionId: string,
   command: ParsedSessionCommand,
@@ -116,55 +144,53 @@ export async function handleSessionCommand(
       const localUsage = await calcAndUpdateUsage(sessionId, state, (event, payload) => {
         emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
       })
-      const bu = state.bridgeUsage
+
+      // Resolve bridge usage: live state → DB fallback → local estimate
+      const bu: BridgeUsageState | undefined =
+        state.bridgeUsage ??
+        resolveBridgeUsageFromDb(getSession(sessionId)) ??
+        undefined
+
       if (bu) {
-        // Use upstream API-level token data from the bridge agent result
+        if (!state.bridgeUsage) state.bridgeUsage = bu  // cache DB fallback
         const model = bu.model || ctx.model || getSession(sessionId)?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
         const contextForDisplay = bu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
-        const contextPct = modelCtxLen > 0
-          ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%`
-          : 'N/A'
-        const cost = bu.actualCostUsd != null
-          ? `$${bu.actualCostUsd.toFixed(6)}`
-          : bu.estimatedCostUsd && bu.estimatedCostUsd > 0
-            ? `~$${bu.estimatedCostUsd.toFixed(6)} (estimated)`
-            : 'n/a'
-        const sessionRow = getSession(sessionId)
-        const sessionDuration = sessionRow
-          ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s`
-          : 'N/A'
-        const compressionCount = getCompressionSnapshot(sessionId) ? 1 : 0  // approximate
-        const note = bu.costStatus === 'unknown' && model
-          ? `Pricing unknown for ${model}`
-          : ''
+        const pct = modelCtxLen > 0 ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%` : 'N/A'
+        const cost = formatCost(bu)
+        const row = getSession(sessionId)
+        const dur = row ? `${Math.max(0, Math.floor((row.last_active || Date.now() / 1000) - (row.started_at || row.last_active || Date.now() / 1000)))}s` : 'N/A'
+        const comps = getCompressionSnapshot(sessionId) ? 1 : 0
+        const note = bu.costStatus === 'unknown' && model ? `Pricing unknown for ${model}` : ''
+
+        const lines = [
+          '📊 Session Token Usage',
+          '────────────────────────────────────────',
+          `Model:                     ${model}`,
+          `Input tokens:              ${bu.inputTokens.toLocaleString()}`,
+          `Cache read tokens:         ${bu.cacheReadTokens.toLocaleString()}`,
+          `Cache write tokens:        ${bu.cacheWriteTokens.toLocaleString()}`,
+          `Output tokens:             ${bu.outputTokens.toLocaleString()}`,
+          `Reasoning tokens:          ${bu.reasoningTokens.toLocaleString()}`,
+          `Prompt tokens (total):     ${bu.promptTokens ? bu.promptTokens.toLocaleString() : 'N/A'}`,
+          `Completion tokens:         ${bu.completionTokens ? bu.completionTokens.toLocaleString() : 'N/A'}`,
+          `Total tokens:              ${bu.totalTokens.toLocaleString()}`,
+          `API calls:                 ${bu.apiCalls || 'N/A'}`,
+          `Session duration:          ${dur}`,
+          `Cost status:               ${bu.costStatus || 'unknown'}`,
+          `Cost source:               ${bu.costSource || 'none'}`,
+          `Total cost:                ${cost}`,
+          '────────────────────────────────────────',
+          `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`,
+          `Messages:         ${state.messages.length}`,
+          `Compressions:     ${comps}`,
+          note,
+        ]
 
         emitCommand({
           action: 'usage',
           terminal: !state.isWorking,
-          message: [
-            '📊 Session Token Usage',
-            '────────────────────────────────────────',
-            `Model:                     ${model}`,
-            `Input tokens:              ${bu.inputTokens.toLocaleString()}`,
-            `Cache read tokens:         ${bu.cacheReadTokens.toLocaleString()}`,
-            `Cache write tokens:        ${bu.cacheWriteTokens.toLocaleString()}`,
-            `Output tokens:             ${bu.outputTokens.toLocaleString()}`,
-            `Reasoning tokens:          ${bu.reasoningTokens.toLocaleString()}`,
-            `Prompt tokens (total):     ${bu.promptTokens.toLocaleString()}`,
-            `Completion tokens:         ${bu.completionTokens.toLocaleString()}`,
-            `Total tokens:              ${bu.totalTokens.toLocaleString()}`,
-            `API calls:                 ${bu.apiCalls}`,
-            `Session duration:          ${sessionDuration}`,
-            `Cost status:               ${bu.costStatus || 'unknown'}`,
-            `Cost source:               ${bu.costSource || 'none'}`,
-            `Total cost:                ${cost}`,
-            '────────────────────────────────────────',
-            `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${contextPct})`,
-            `Messages:         ${state.messages.length}`,
-            `Compressions:     ${compressionCount}`,
-            note,
-          ].filter(line => line !== '').join('\n'),
+          message: lines.filter(l => l !== '').join('\n'),
           inputTokens: bu.inputTokens,
           outputTokens: bu.outputTokens,
           cacheReadTokens: bu.cacheReadTokens,
@@ -176,87 +202,6 @@ export async function handleSessionCommand(
           costStatus: bu.costStatus,
           actualCostUsd: bu.actualCostUsd,
           estimatedCostUsd: bu.estimatedCostUsd,
-        })
-        return
-      }
-      // Fallback: reconstruct from session DB row when bridge data was
-      // persisted by a previous run (e.g. after page reload).
-      const sessionRow = getSession(sessionId)
-      if (sessionRow && sessionRow.input_tokens > 0 && sessionRow.cost_status) {
-        const dbBu: BridgeUsageState = {
-          inputTokens: sessionRow.input_tokens,
-          outputTokens: sessionRow.output_tokens,
-          cacheReadTokens: sessionRow.cache_read_tokens,
-          cacheWriteTokens: sessionRow.cache_write_tokens,
-          reasoningTokens: sessionRow.reasoning_tokens,
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: sessionRow.input_tokens + sessionRow.output_tokens
-            + sessionRow.cache_read_tokens + sessionRow.cache_write_tokens,
-          apiCalls: 0,
-          model: sessionRow.model || undefined,
-          estimatedCostUsd: sessionRow.estimated_cost_usd || undefined,
-          actualCostUsd: sessionRow.actual_cost_usd ?? undefined,
-          costStatus: sessionRow.cost_status || undefined,
-          costSource: undefined,
-        }
-        state.bridgeUsage = dbBu
-        const model = dbBu.model || ctx.model || 'unknown'
-        const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
-        const contextForDisplay = dbBu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
-        const contextPct = modelCtxLen > 0
-          ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%`
-          : 'N/A'
-        const cost = dbBu.actualCostUsd != null
-          ? `$${dbBu.actualCostUsd.toFixed(6)}`
-          : dbBu.estimatedCostUsd && dbBu.estimatedCostUsd > 0
-            ? `~$${dbBu.estimatedCostUsd.toFixed(6)} (estimated)`
-            : 'n/a'
-        const sessionDuration = sessionRow
-          ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s`
-          : 'N/A'
-        const compressionCount = getCompressionSnapshot(sessionId) ? 1 : 0
-        const note = dbBu.costStatus === 'unknown' && model
-          ? `Pricing unknown for ${model}`
-          : ''
-
-        emitCommand({
-          action: 'usage',
-          terminal: !state.isWorking,
-          message: [
-            '📊 Session Token Usage',
-            '────────────────────────────────────────',
-            `Model:                     ${model}`,
-            `Input tokens:              ${dbBu.inputTokens.toLocaleString()}`,
-            `Cache read tokens:         ${dbBu.cacheReadTokens.toLocaleString()}`,
-            `Cache write tokens:        ${dbBu.cacheWriteTokens.toLocaleString()}`,
-            `Output tokens:             ${dbBu.outputTokens.toLocaleString()}`,
-            `Reasoning tokens:          ${dbBu.reasoningTokens.toLocaleString()}`,
-            `Prompt tokens (total):     N/A`,
-            `Completion tokens:         N/A`,
-            `Total tokens:              ${dbBu.totalTokens.toLocaleString()}`,
-            `API calls:                 N/A`,
-            `Session duration:          ${sessionDuration}`,
-            `Cost status:               ${dbBu.costStatus || 'unknown'}`,
-            `Cost source:               N/A`,
-            `Total cost:                ${cost}`,
-            '────────────────────────────────────────',
-            `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${contextPct})`,
-            `Messages:         ${state.messages.length}`,
-            `Compressions:     ${compressionCount}`,
-            note,
-          ].filter(line => line !== '').join('\n'),
-          inputTokens: dbBu.inputTokens,
-          outputTokens: dbBu.outputTokens,
-          cacheReadTokens: dbBu.cacheReadTokens,
-          cacheWriteTokens: dbBu.cacheWriteTokens,
-          reasoningTokens: dbBu.reasoningTokens,
-          totalTokens: dbBu.totalTokens,
-          contextTokens: contextForDisplay,
-          model,
-          costStatus: dbBu.costStatus,
-          actualCostUsd: dbBu.actualCostUsd,
-          estimatedCostUsd: dbBu.estimatedCostUsd,
         })
         return
       }
