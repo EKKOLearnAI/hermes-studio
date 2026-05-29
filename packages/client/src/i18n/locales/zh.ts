@@ -1302,8 +1302,6 @@ export default {
       notifyOnCompleteTestFailed: '测试通知发送失败',
       busyInputMode: '忙碌输入模式',
       busyInputModeHint: 'AI 处理中仍可输入',
-      avatarSize: '头像大小',
-      avatarSizeHint: '调整聊天消息中头像的大小（24–80px）',
       theme: '主题',
       themeHint: '选择浅色、暗色或跟随系统',
       themeLight: '浅色',
