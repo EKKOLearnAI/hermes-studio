@@ -361,11 +361,11 @@ function isDockerRuntime(): boolean {
 
 async function openNativeTerminal(shellCommand: string): Promise<string> {
   if (process.platform === 'win32') {
+    const escapedCommand = shellCommand.replace(/"/g, '""').replace(/\$/g, '`$')
     await execFileAsync('powershell.exe', [
       '-NoProfile',
       '-Command',
-      "Start-Process -FilePath powershell.exe -ArgumentList @('-NoExit', '-Command', $args[0])",
-      shellCommand,
+      `Start-Process -FilePath powershell.exe -ArgumentList @('-NoExit', '-Command', "${escapedCommand}")`,
     ], {
       encoding: 'utf-8',
       timeout: 8000,
@@ -520,14 +520,21 @@ function windowsCommandNeedsShell(command: string): boolean {
 async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
   if (process.platform !== 'win32') return command
   const paths = await findCommandPaths(command, env)
-  return paths[0] || command
+  // On Windows, prioritize paths with .cmd or .bat extensions since where may return
+  // both the unix-style script (without extension) and the Windows shim (.cmd)
+  const windowsPath = paths.find(path => windowsCommandNeedsShell(path))
+  return windowsPath || paths[0] || command
 }
 
 function commandExecution(command: string, args: string[]): { command: string; args: string[] } {
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
+    // For CMD /C, the command and args need to be passed as a single string
+    // The command path should be quoted if it contains spaces, but args are joined directly
+    const commandArg = / /.test(command) ? `"${command}"` : command
+    const argsString = args.map(arg => / /.test(arg) ? `"${arg}"` : arg).join(' ')
     return {
       command: 'cmd.exe',
-      args: ['/d', '/s', '/c', [cmdQuote(command), ...args.map(cmdQuote)].join(' ')],
+      args: ['/d', '/s', '/c', `${commandArg} ${argsString}`],
     }
   }
   return { command, args }
