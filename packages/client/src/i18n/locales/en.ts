@@ -1204,6 +1204,7 @@ export default {
       upload: 'Upload Image',
       random: 'Randomize',
       reset: 'Use Default',
+      size: 'Size',
       hint: 'PNG, JPEG, or WebP. Max 1MB.',
       invalidType: 'Please choose a PNG, JPEG, or WebP image',
       tooLarge: 'Avatar image must be 1MB or smaller',

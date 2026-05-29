@@ -1196,6 +1196,7 @@ export default {
       upload: '上传图片',
       random: '随机生成',
       reset: '恢复默认',
+      size: '大小',
       hint: '支持 PNG、JPEG、WebP，最大 1MB',
       invalidType: '请选择 PNG、JPEG 或 WebP 图片',
       tooLarge: '头像图片不能超过 1MB',

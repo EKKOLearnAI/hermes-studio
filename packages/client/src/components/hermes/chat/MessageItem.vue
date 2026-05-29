@@ -187,6 +187,10 @@ const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
 const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
 const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
+const assistantAvatarSize = computed(() => {
+  const avatar = assistantProfileAvatar.value;
+  return avatar?.avatar_size ?? 40;
+});
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -820,7 +824,8 @@ onBeforeUnmount(() => {
           class="msg-avatar"
           :name="assistantProfileName"
           :avatar="assistantProfileAvatar"
-          :size="40"
+          :size="assistantAvatarSize"
+          :style="{ width: assistantAvatarSize + 'px', height: assistantAvatarSize + 'px' }"
         />
         <div class="msg-content" :class="message.role">
           <div
@@ -1073,8 +1078,6 @@ onBeforeUnmount(() => {
     }
 
     .msg-avatar {
-      width: 40px;
-      height: 40px;
       flex-shrink: 0;
       margin-top: 2px;
     }

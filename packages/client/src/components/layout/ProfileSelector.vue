@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NModal, NSpin, useMessage } from 'naive-ui'
+import { NButton, NModal, NSlider, NSpin, useMessage } from 'naive-ui'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
   fetchProfileRuntimeStatusesWithMeta,
@@ -32,6 +32,13 @@ const showAvatarModal = ref(false)
 const editingProfile = ref<HermesProfile | null>(null)
 const avatarSaving = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// Avatar size slider
+const AVATAR_SIZE_MIN = 40
+const AVATAR_SIZE_MAX = 100
+const AVATAR_SIZE_DEFAULT = 40
+const avatarSize = ref<number>(AVATAR_SIZE_DEFAULT)
+let avatarSizeTimer: ReturnType<typeof setTimeout> | null = null
 const showThinkingModal = ref(false)
 const thinkingSaving = ref(false)
 const thinkingEnabledInput = ref(true)
@@ -152,6 +159,7 @@ function handleProfileModalShowChange(show: boolean) {
 
 function openAvatarModal(profile: HermesProfile) {
   editingProfile.value = profile
+  avatarSize.value = profile.avatar?.avatar_size ?? AVATAR_SIZE_DEFAULT
   showAvatarModal.value = true
 }
 
@@ -189,6 +197,29 @@ async function handleResetAvatar() {
   } finally {
     avatarSaving.value = false
   }
+}
+
+// Debounced avatar size save
+async function saveAvatarSizeDebounced() {
+  if (!editingProfile.value) return
+  if (avatarSizeTimer) clearTimeout(avatarSizeTimer)
+  avatarSizeTimer = setTimeout(async () => {
+    try {
+      await profilesStore.updateAvatar(editingProfile.value!.name, {
+        type: editingProfile.value!.avatar?.type ?? 'generated',
+        seed: editingProfile.value!.avatar?.seed,
+        dataUrl: editingProfile.value!.avatar?.dataUrl,
+        avatar_size: avatarSize.value,
+      })
+    } catch (err: any) {
+      message.error(err?.message || t('profiles.avatar.saveFailed'))
+    }
+  }, 500)
+}
+
+function handleAvatarSizeChange(val: number) {
+  avatarSize.value = val
+  saveAvatarSizeDebounced()
 }
 
 function triggerAvatarUpload() {
@@ -431,10 +462,15 @@ onMounted(() => {
       :style="{ width: '420px', maxWidth: 'calc(100vw - 32px)' }"
     >
       <div v-if="editingProfile" class="avatar-editor">
-        <ProfileAvatarView :name="editingProfile.name" :avatar="editingProfile.avatar" :size="72" />
+        <ProfileAvatarView :name="editingProfile.name" :avatar="editingProfile.avatar" :size="avatarSize" class="avatar-preview" />
         <div class="avatar-editor-meta">
           <div class="avatar-editor-name">{{ editingProfile.name }}</div>
           <div class="avatar-editor-hint">{{ t('profiles.avatar.hint') }}</div>
+        </div>
+        <div class="avatar-size-row">
+          <span class="avatar-size-label">{{ t('profiles.avatar.size') }}</span>
+          <NSlider :value="avatarSize" :min="AVATAR_SIZE_MIN" :max="AVATAR_SIZE_MAX" :step="2" class="avatar-size-slider" @update:value="handleAvatarSizeChange" />
+          <span class="avatar-size-value">{{ avatarSize }}px</span>
         </div>
         <input
           ref="fileInputRef"
@@ -777,6 +813,36 @@ onMounted(() => {
   font-size: 12px;
   color: $text-muted;
   text-align: center;
+}
+
+.avatar-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0 16px;
+}
+
+.avatar-size-label {
+  font-size: 13px;
+  color: $text-primary;
+  white-space: nowrap;
+}
+
+.avatar-size-slider {
+  flex: 1;
+}
+
+.avatar-size-value {
+  font-size: 13px;
+  color: $text-muted;
+  white-space: nowrap;
+  min-width: 40px;
+  text-align: right;
+}
+
+.avatar-preview {
+  transition: width 0.15s ease, height 0.15s ease;
 }
 
 .avatar-file-input {

@@ -25,6 +25,7 @@ interface ProfileAvatarMeta {
   seed?: string
   file?: string
   mime?: string
+  avatar_size?: number
   updatedAt?: number
 }
 
@@ -32,6 +33,7 @@ interface ProfileAvatarResponse {
   type: 'generated' | 'image'
   seed?: string
   dataUrl?: string
+  avatar_size?: number
   updatedAt?: number
 }
 
@@ -206,6 +208,7 @@ function readProfileAvatar(name: string): ProfileAvatarResponse | null {
       return {
         type: 'generated',
         seed: typeof meta.seed === 'string' ? meta.seed : name,
+        avatar_size: meta.avatar_size,
         updatedAt: meta.updatedAt,
       }
     }
@@ -216,6 +219,7 @@ function readProfileAvatar(name: string): ProfileAvatarResponse | null {
       return {
         type: 'image',
         dataUrl: `data:${meta.mime};base64,${data}`,
+        avatar_size: meta.avatar_size,
         updatedAt: meta.updatedAt,
       }
     }
@@ -521,15 +525,31 @@ export async function updateAvatar(ctx: any) {
     ctx.body = { error: `Profile name '${name}' is reserved` }
     return
   }
-  const body = ctx.request.body as { type?: string; seed?: string; dataUrl?: string }
+  const body = ctx.request.body as { type?: string; seed?: string; dataUrl?: string; avatar_size?: number }
   try {
     const dir = profileMetadataDir(name)
     await mkdir(dir, { recursive: true })
     const updatedAt = Date.now()
 
+    // If only avatar_size is provided (no type change), update existing meta
+    if (body.avatar_size !== undefined && !body.type) {
+      const metaPath = profileAvatarMetaPath(name)
+      let meta: ProfileAvatarMeta = { type: 'generated', seed: name, updatedAt }
+      if (existsSync(metaPath)) {
+        try {
+          meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as ProfileAvatarMeta
+        } catch {}
+      }
+      meta.avatar_size = body.avatar_size
+      meta.updatedAt = updatedAt
+      await writeFile(metaPath, JSON.stringify(meta, null, 2) + '\n', { mode: 0o600 })
+      ctx.body = { avatar: readProfileAvatar(name) }
+      return
+    }
+
     if (body.type === 'generated') {
       const seed = String(body.seed || name).trim() || name
-      const meta: ProfileAvatarMeta = { type: 'generated', seed, updatedAt }
+      const meta: ProfileAvatarMeta = { type: 'generated', seed, avatar_size: body.avatar_size, updatedAt }
       rmSync(profileAvatarImagePath(name), { force: true })
       await writeFile(profileAvatarMetaPath(name), JSON.stringify(meta, null, 2) + '\n', { mode: 0o600 })
       ctx.body = { avatar: readProfileAvatar(name) }
@@ -538,7 +558,7 @@ export async function updateAvatar(ctx: any) {
 
     if (body.type === 'image' && typeof body.dataUrl === 'string') {
       const { mime, buffer } = parseAvatarDataUrl(body.dataUrl)
-      const meta: ProfileAvatarMeta = { type: 'image', file: 'avatar.bin', mime, updatedAt }
+      const meta: ProfileAvatarMeta = { type: 'image', file: 'avatar.bin', mime, avatar_size: body.avatar_size, updatedAt }
       await writeFile(profileAvatarImagePath(name), buffer, { mode: 0o600 })
       await writeFile(profileAvatarMetaPath(name), JSON.stringify(meta, null, 2) + '\n', { mode: 0o600 })
       ctx.body = { avatar: readProfileAvatar(name) }
