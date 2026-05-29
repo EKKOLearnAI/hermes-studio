@@ -164,12 +164,15 @@ function getNpmBin() {
 }
 
 function normalizeScopeSegment(value: string | undefined, fallback: string, label: string): string {
-  const segment = String(value || '').trim() || fallback
+  // Replace invalid filename characters with underscores
+  // Windows invalid chars: < > : " / \ | ? *
+  // Additional problematic chars: control characters
+  const sanitizedValue = String(value || '').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+  const segment = sanitizedValue || fallback
+
   if (
     segment === '.' ||
     segment === '..' ||
-    segment.includes('/') ||
-    segment.includes('\\') ||
     segment.includes('\0')
   ) {
     const err = new Error(`Invalid ${label}`)
