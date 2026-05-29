@@ -66,12 +66,20 @@ function extractAnswerSummary(text: string): string | null {
 
 const outlineItems = computed<OutlineItem[]>(() => {
   const items: OutlineItem[] = []
-  const filteredMessages = props.messages.filter(m => m.role === 'user' || m.role === 'assistant')
+  // Find first user message to skip leading system/command init messages
+  const firstUserIdx = props.messages.findIndex(m =>
+    m.role === 'user' || (m.role === 'command' && m.systemType === 'command')
+  )
+  const visibleMessages = props.messages.slice(Math.max(0, firstUserIdx))
+  // Only include user and assistant messages for outline
+  const filteredMessages = visibleMessages.filter(m =>
+    m.role === 'user' || m.role === 'assistant' || (m.role === 'command' && m.systemType === 'command')
+  )
 
   let i = 0
   while (i < filteredMessages.length) {
     const msg = filteredMessages[i]
-    if (msg.role === 'user') {
+    if (msg.role === 'user' || msg.role === 'command') {
       items.push({
         id: `question-${msg.id}`,
         type: 'question',

@@ -119,7 +119,10 @@ const emptyState = computed(() => {
 
 const displayMessages = computed(() => {
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return chatStore.messages.filter((m) => {
+  // Skip leading command/system messages before first user to avoid init noise
+  const firstUserIdx = chatStore.messages.findIndex(m => m.role === 'user');
+
+  return chatStore.messages.filter((m, idx) => {
     if (m.role === "tool") {
       return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
     }
@@ -130,6 +133,10 @@ const displayMessages = computed(() => {
       !!m.reasoning?.trim() &&
       currentToolCalls.value.length === 0
     ) {
+      return false;
+    }
+    // Skip command messages before the first user message
+    if (m.role === 'command' && firstUserIdx > 0 && idx < firstUserIdx) {
       return false;
     }
     return true;
