@@ -8,6 +8,8 @@ import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
+import { getModelContextLength } from '../model-context'
+import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 
 type CommandName =
   | 'usage'
@@ -111,15 +113,79 @@ export async function handleSessionCommand(
 
   switch (command.name) {
     case 'usage': {
-      const usage = await calcAndUpdateUsage(sessionId, state, (event, payload) => {
+      const localUsage = await calcAndUpdateUsage(sessionId, state, (event, payload) => {
         emitToSession(ctx.nsp, ctx.socket, sessionId, event, payload)
       })
+      const bu = state.bridgeUsage
+      if (bu) {
+        // Use upstream API-level token data from the bridge agent result
+        const model = bu.model || ctx.model || getSession(sessionId)?.model || 'unknown'
+        const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
+        const contextForDisplay = state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
+        const contextPct = modelCtxLen > 0
+          ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%`
+          : 'N/A'
+        const cost = bu.actualCostUsd != null
+          ? `$${bu.actualCostUsd.toFixed(6)}`
+          : bu.estimatedCostUsd && bu.estimatedCostUsd > 0
+            ? `~$${bu.estimatedCostUsd.toFixed(6)} (estimated)`
+            : 'n/a'
+        const sessionRow = getSession(sessionId)
+        const sessionDuration = sessionRow
+          ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s`
+          : 'N/A'
+        const compressionCount = getCompressionSnapshot(sessionId) ? 1 : 0  // approximate
+        const note = bu.costStatus === 'unknown' && model
+          ? `Pricing unknown for ${model}`
+          : ''
+
+        emitCommand({
+          action: 'usage',
+          terminal: !state.isWorking,
+          message: [
+            '📊 Session Token Usage',
+            '────────────────────────────────────────',
+            `Model:                     ${model}`,
+            `Input tokens:              ${bu.inputTokens.toLocaleString()}`,
+            `Cache read tokens:         ${bu.cacheReadTokens.toLocaleString()}`,
+            `Cache write tokens:        ${bu.cacheWriteTokens.toLocaleString()}`,
+            `Output tokens:             ${bu.outputTokens.toLocaleString()}`,
+            `Reasoning tokens:          ${bu.reasoningTokens.toLocaleString()}`,
+            `Prompt tokens (total):     ${bu.promptTokens.toLocaleString()}`,
+            `Completion tokens:         ${bu.completionTokens.toLocaleString()}`,
+            `Total tokens:              ${bu.totalTokens.toLocaleString()}`,
+            `API calls:                 ${bu.apiCalls}`,
+            `Session duration:          ${sessionDuration}`,
+            `Cost status:               ${bu.costStatus || 'unknown'}`,
+            `Cost source:               ${bu.costSource || 'none'}`,
+            `Total cost:                ${cost}`,
+            '────────────────────────────────────────',
+            `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${contextPct})`,
+            `Messages:         ${state.messages.length}`,
+            `Compressions:     ${compressionCount}`,
+            note,
+          ].filter(line => line !== '').join('\n'),
+          inputTokens: bu.inputTokens,
+          outputTokens: bu.outputTokens,
+          cacheReadTokens: bu.cacheReadTokens,
+          cacheWriteTokens: bu.cacheWriteTokens,
+          reasoningTokens: bu.reasoningTokens,
+          totalTokens: bu.totalTokens,
+          contextTokens: contextForDisplay,
+          model,
+          costStatus: bu.costStatus,
+          actualCostUsd: bu.actualCostUsd,
+          estimatedCostUsd: bu.estimatedCostUsd,
+        })
+        return
+      }
+      // Fallback: local tiktoken estimate when bridge agent data not yet available
       emitCommand({
         action: 'usage',
         terminal: !state.isWorking,
-        message: `Usage: input ${usage.inputTokens}, output ${usage.outputTokens}, total ${usage.inputTokens + usage.outputTokens} tokens.`,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
+        message: `Usage: input ${localUsage.inputTokens}, output ${localUsage.outputTokens}, total ${localUsage.inputTokens + localUsage.outputTokens} tokens.`,
+        inputTokens: localUsage.inputTokens,
+        outputTokens: localUsage.outputTokens,
       })
       return
     }

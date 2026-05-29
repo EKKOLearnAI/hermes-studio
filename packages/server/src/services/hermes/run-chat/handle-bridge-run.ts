@@ -26,7 +26,7 @@ import {
   recordBridgeToolCompleted,
 } from './bridge-message'
 import { summarizeToolArguments } from './response-utils'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ContentBlock, QueuedRun, SessionState, BridgeUsageState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
@@ -104,6 +104,28 @@ function finiteToken(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : undefined
+}
+
+function extractBridgeUsage(result: unknown): BridgeUsageState | undefined {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined
+  const r = result as Record<string, unknown>
+  const inputTokens = finiteToken(r.input_tokens)
+  if (inputTokens == null) return undefined
+  return {
+    inputTokens,
+    outputTokens: finiteToken(r.output_tokens) ?? 0,
+    cacheReadTokens: finiteToken(r.cache_read_tokens) ?? 0,
+    cacheWriteTokens: finiteToken(r.cache_write_tokens) ?? 0,
+    reasoningTokens: finiteToken(r.reasoning_tokens) ?? 0,
+    promptTokens: finiteToken(r.prompt_tokens) ?? 0,
+    completionTokens: finiteToken(r.completion_tokens) ?? 0,
+    totalTokens: finiteToken(r.total_tokens) ?? 0,
+    apiCalls: finiteToken(r.api_calls) ?? 0,
+    model: typeof r.model === 'string' ? r.model : undefined,
+    estimatedCostUsd: typeof r.estimated_cost_usd === 'number' ? r.estimated_cost_usd : undefined,
+    costStatus: typeof r.cost_status === 'string' ? r.cost_status : undefined,
+    costSource: typeof r.cost_source === 'string' ? r.cost_source : undefined,
+  }
 }
 
 function cacheBridgeContext(state: SessionState, data: Record<string, unknown> | AgentBridgeContextEstimate) {
@@ -453,6 +475,7 @@ export async function handleBridgeRun(
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
       contextTokens: errContextTokens,
+      apiUsage: state.bridgeUsage,
       queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
@@ -904,6 +927,10 @@ async function applyBridgeChunkAsync(
     outputTokens: usage.outputTokens,
     profile: state.profile,
   })
+  // Extract upstream API token usage from bridge result (hermes agent's
+  // conversation_loop.py already includes input_tokens, output_tokens,
+  // cache_*, reasoning_*, total_tokens, api_calls, and cost fields).
+  state.bridgeUsage = extractBridgeUsage(chunk.result)
   const terminalError = bridgeTerminalError(chunk)
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   state.isWorking = hadQueuedRunBeforeGoalEvaluation
@@ -923,6 +950,7 @@ async function applyBridgeChunkAsync(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     contextTokens,
+    apiUsage: state.bridgeUsage,
     queue_remaining: state.queue.length,
   }
   emit(eventName, payload)

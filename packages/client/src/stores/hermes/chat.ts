@@ -87,6 +87,18 @@ export interface Session {
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
+  apiUsage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    reasoningTokens?: number
+    totalTokens?: number
+    model?: string
+    costStatus?: string
+    actualCostUsd?: number
+    estimatedCostUsd?: number
+  }
 }
 
 interface CompressionState {
@@ -983,6 +995,21 @@ export const useChatStore = defineStore('chat', () => {
       target.inputTokens = (evt as any).inputTokens
       target.outputTokens = (evt as any).outputTokens
       if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+      // Save full upstream API usage data when available (from bridge agent result)
+      if ((evt as any).totalTokens != null) {
+        target.apiUsage = {
+          inputTokens: (evt as any).inputTokens,
+          outputTokens: (evt as any).outputTokens,
+          cacheReadTokens: (evt as any).cacheReadTokens,
+          cacheWriteTokens: (evt as any).cacheWriteTokens,
+          reasoningTokens: (evt as any).reasoningTokens,
+          totalTokens: (evt as any).totalTokens,
+          model: (evt as any).model,
+          costStatus: (evt as any).costStatus,
+          actualCostUsd: (evt as any).actualCostUsd,
+          estimatedCostUsd: (evt as any).estimatedCostUsd,
+        }
+      }
     }
 
     if (action === 'destroy') {
@@ -1837,8 +1864,16 @@ export const useChatStore = defineStore('chat', () => {
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
-                  target.inputTokens = (evt as any).inputTokens
-                  target.outputTokens = (evt as any).outputTokens
+                  // Prefer upstream API-level usage when available (bridge mode)
+                  const apiUsage = (evt as any).apiUsage
+                  if (apiUsage) {
+                    target.inputTokens = apiUsage.inputTokens
+                    target.outputTokens = apiUsage.outputTokens
+                    target.apiUsage = apiUsage
+                  } else {
+                    target.inputTokens = (evt as any).inputTokens
+                    target.outputTokens = (evt as any).outputTokens
+                  }
                   if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
                 }
               }
@@ -2316,8 +2351,16 @@ export const useChatStore = defineStore('chat', () => {
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
-              target.inputTokens = (evt as any).inputTokens
-              target.outputTokens = (evt as any).outputTokens
+              // Prefer upstream API-level usage when available (bridge mode)
+              const apiUsage = (evt as any).apiUsage
+              if (apiUsage) {
+                target.inputTokens = apiUsage.inputTokens
+                target.outputTokens = apiUsage.outputTokens
+                target.apiUsage = apiUsage
+              } else {
+                target.inputTokens = (evt as any).inputTokens
+                target.outputTokens = (evt as any).outputTokens
+              }
               if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
             }
           }

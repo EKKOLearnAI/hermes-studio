@@ -57,6 +57,7 @@ export interface SessionState {
   outputTokens?: number
   contextTokens?: number
   bridgeContext?: BridgeContextState
+  bridgeUsage?: BridgeUsageState
   isAborting?: boolean
   queue: QueuedRun[]
   responseRun?: ResponseRunState
@@ -95,6 +96,22 @@ export interface BridgeContextState {
 }
 
 export type ChatRunSource = 'api_server' | 'cli'
+
+export interface BridgeUsageState {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  apiCalls: number
+  model?: string
+  estimatedCostUsd?: number
+  costStatus?: string
+  costSource?: string
+}
 
 export interface BridgeCompressionResult {
   messages: ChatMessage[]
