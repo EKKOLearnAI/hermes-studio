@@ -12,9 +12,6 @@ import { getModelContextLength } from './hermes/model-context'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
-const CLAUDE_PROXY_HAIKU_MODEL = 'claude-haiku-4-5'
-const CLAUDE_PROXY_SONNET_MODEL = 'claude-sonnet-4-6'
-const CLAUDE_PROXY_OPUS_MODEL = 'claude-opus-4-7'
 const CODING_AGENT_HOME_DIR = 'coding-agent'
 const CODEX_MODEL_CATALOG_FILE = 'codex-model-catalog.json'
 const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be precise, safe, and helpful.'
@@ -899,16 +896,21 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
     const claudeApiKey = proxyTarget?.token || apiKey
+    const modelName = displayNameForModel(model)
     const settings = {
+      model,
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
         ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: CLAUDE_PROXY_HAIKU_MODEL,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: model,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: CLAUDE_PROXY_SONNET_MODEL,
-        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: model,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: CLAUDE_PROXY_OPUS_MODEL,
-        ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: model,
+        ANTHROPIC_MODEL: model,
+        ANTHROPIC_CUSTOM_MODEL_OPTION: model,
+        ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: modelName,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: modelName,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: modelName,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: modelName,
       },
     }
     await writeScopedFile('settings', `${JSON.stringify(settings, null, 2)}\n`)

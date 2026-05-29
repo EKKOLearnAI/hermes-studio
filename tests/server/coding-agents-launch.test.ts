@@ -108,17 +108,21 @@ describe('coding agent launch preparation', () => {
     expect(result.shellCommand).not.toContain('--model')
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    expect(settings.model).toBe('cognitivecomputations/dolphin-mistral-24b-venice-edition:free')
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     expect(settings.env).toMatchObject({
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-7',
-      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_CUSTOM_MODEL_OPTION: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
     })
-    expect(settings.env).not.toHaveProperty('ANTHROPIC_MODEL')
+    expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toBe('claude-sonnet-4-6')
   })
 
   it('keeps Claude Code protocol overrides behind the local proxy', async () => {
