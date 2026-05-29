@@ -251,11 +251,15 @@ watch(
 )
 
 const totalTokens = computed(() => {
-  // Prefer upstream API input_tokens when available (bridge mode).
-  // It already includes system prompt + tools + messages — the
-  // actual context window consumption reported by the model provider.
-  const apiInput = chatStore.activeSession?.apiUsage?.inputTokens
-  if (typeof apiInput === 'number' && apiInput > 0) return apiInput
+  // When upstream API data is available, compute total prompt tokens
+  // (input + cache_read + cache_write) — this is the actual context
+  // window consumption. input_tokens alone can be 0 when the entire
+  // prompt is served from cache.
+  const api = chatStore.activeSession?.apiUsage
+  if (api) {
+    const promptTokens = (api.inputTokens || 0) + (api.cacheReadTokens || 0) + (api.cacheWriteTokens || 0)
+    if (promptTokens > 0) return promptTokens
+  }
   const context = chatStore.activeSession?.contextTokens
   if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
