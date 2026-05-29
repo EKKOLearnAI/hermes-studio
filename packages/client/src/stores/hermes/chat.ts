@@ -994,7 +994,13 @@ export const useChatStore = defineStore('chat', () => {
     if (action === 'usage' && target) {
       target.inputTokens = (evt as any).inputTokens
       target.outputTokens = (evt as any).outputTokens
-      if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+      // Use API input_tokens for the progress bar when available;
+      // it already includes system prompt + tools + messages.
+      if ((evt as any).totalTokens != null) {
+        target.contextTokens = (evt as any).inputTokens
+      } else if ((evt as any).contextTokens != null) {
+        target.contextTokens = (evt as any).contextTokens
+      }
       // Save full upstream API usage data when available (from bridge agent result)
       if ((evt as any).totalTokens != null) {
         target.apiUsage = {
@@ -1646,7 +1652,7 @@ export const useChatStore = defineStore('chat', () => {
               })
               if ((evt as any).contextTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
-                if (target) target.contextTokens = (evt as any).contextTokens
+                if (target && !target.apiUsage) target.contextTokens = (evt as any).contextTokens
               }
               // Auto-clear after 5s
               setTimeout(() => {
@@ -1874,7 +1880,14 @@ export const useChatStore = defineStore('chat', () => {
                     target.inputTokens = (evt as any).inputTokens
                     target.outputTokens = (evt as any).outputTokens
                   }
-                  if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+                  // When API-level usage is available, use input_tokens as
+                  // contextTokens (it already includes system prompt + tools
+                  // + messages — the actual context window consumption).
+                  if (apiUsage) {
+                    target.contextTokens = apiUsage.inputTokens
+                  } else if ((evt as any).contextTokens != null) {
+                    target.contextTokens = (evt as any).contextTokens
+                  }
                 }
               }
               // Belt-and-suspenders: some providers may deliver the final
@@ -1991,9 +2004,17 @@ export const useChatStore = defineStore('chat', () => {
             case 'usage.updated': {
               const target = sessions.value.find(s => s.id === sid)
               if (target) {
-                target.inputTokens = (evt as any).inputTokens
-                target.outputTokens = (evt as any).outputTokens
-                if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+                // Only update from server estimates when upstream API data
+                // isn't already available (avoid downgrading real → estimated).
+                if (!target.apiUsage) {
+                  target.inputTokens = (evt as any).inputTokens
+                  target.outputTokens = (evt as any).outputTokens
+                }
+                if (target.apiUsage) {
+                  target.contextTokens = target.apiUsage.inputTokens
+                } else if ((evt as any).contextTokens != null) {
+                  target.contextTokens = (evt as any).contextTokens
+                }
               }
               break
             }
@@ -2138,7 +2159,7 @@ export const useChatStore = defineStore('chat', () => {
           })
           if ((evt as any).contextTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
-            if (target) target.contextTokens = (evt as any).contextTokens
+            if (target && !target.apiUsage) target.contextTokens = (evt as any).contextTokens
           }
           setTimeout(() => {
             const state = compressionStates.value.get(sid)
@@ -2146,6 +2167,11 @@ export const useChatStore = defineStore('chat', () => {
               setCompressionState(sid, null)
             }
           }, 5000)
+          // Fall through to check if run completes (some compression events
+          // also carry terminal run status)
+          break
+        }
+        case 'compression.completed':
           break
         }
 
@@ -2361,7 +2387,14 @@ export const useChatStore = defineStore('chat', () => {
                 target.inputTokens = (evt as any).inputTokens
                 target.outputTokens = (evt as any).outputTokens
               }
-              if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+              // When API-level usage is available, use input_tokens as
+              // contextTokens (it already includes system prompt + tools
+              // + messages — the actual context window consumption).
+              if (apiUsage) {
+                target.contextTokens = apiUsage.inputTokens
+              } else if ((evt as any).contextTokens != null) {
+                target.contextTokens = (evt as any).contextTokens
+              }
             }
           }
           // Check if backend provided parsed content (from stringified array format)
@@ -2462,9 +2495,17 @@ export const useChatStore = defineStore('chat', () => {
         case 'usage.updated': {
           const target = sessions.value.find(s => s.id === sid)
           if (target) {
-            target.inputTokens = (evt as any).inputTokens
-            target.outputTokens = (evt as any).outputTokens
-            if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+            // Only update from server estimates when upstream API data
+            // isn't already available (avoid downgrading real → estimated).
+            if (!target.apiUsage) {
+              target.inputTokens = (evt as any).inputTokens
+              target.outputTokens = (evt as any).outputTokens
+            }
+            if (target.apiUsage) {
+              target.contextTokens = target.apiUsage.inputTokens
+            } else if ((evt as any).contextTokens != null) {
+              target.contextTokens = (evt as any).contextTokens
+            }
           }
           break
         }
