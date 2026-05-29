@@ -2031,6 +2031,7 @@ class BridgeServer:
         self.pool = AgentPool()
         self._stop = threading.Event()
         self._last_gc = time.time()
+        self._init_mcp_discovery()
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()
@@ -2193,7 +2194,340 @@ class BridgeServer:
             self._stop.set()
             return {"status": "shutting_down"}
 
+        # ───── MCP Management (forwarded from broker) ─────
+        if action.startswith("mcp_"):
+            return self._handle_mcp_action(action, req, req.get("profile"))
+
         raise ValueError(f"unknown action: {action}")
+
+    # ───── MCP Management Methods (for BridgeServer worker process) ─────
+
+    def _init_mcp_discovery(self):
+        """Run MCP discovery on worker startup in a background thread."""
+        profile = _worker_profile() or "default"
+        def _bg():
+            try:
+                from tools.mcp_tool import discover_mcp_tools
+                original = _apply_profile_env(profile)
+                try:
+                    discover_mcp_tools()
+                finally:
+                    _restore_profile_env(original)
+            except Exception as e:
+                print(f"[mcp-init-discovery] failed: {e}", file=sys.stderr, flush=True)
+        threading.Thread(target=_bg, daemon=True, name="mcp-init-discovery").start()
+
+    def _read_mcp_config(self, profile=None):
+        """Read config.yaml for the given profile."""
+        import yaml
+        config_path = _profile_home(profile) / "config.yaml"
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+
+    def _save_mcp_config(self, cfg, profile=None):
+        """Save config.yaml for the given profile using atomic write."""
+        import yaml
+        from utils import atomic_yaml_write
+        config_path = _profile_home(profile) / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            atomic_yaml_write(config_path, cfg, sort_keys=False)
+        except Exception as e:
+            raise RuntimeError(f"Failed to save config to {config_path}: {e}")
+
+    @staticmethod
+    def _run_mcp_discovery_bg(discover_fn, profile: str | None = None):
+        """Run MCP discovery in a background thread to avoid blocking."""
+        def _bg():
+            original = _apply_profile_env(profile)
+            try:
+                discover_fn()
+            except Exception:
+                pass
+            finally:
+                _restore_profile_env(original)
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _handle_mcp_action(self, action: str, req: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
+        """Handle MCP management actions in worker process."""
+        try:
+            from tools.mcp_tool import discover_mcp_tools, register_mcp_servers, _servers, _lock
+        except ImportError:
+            return {"error": "MCP tool module not available", "ok": False}
+
+        # Use worker profile if not specified
+        if profile is None:
+            profile = _worker_profile() or "default"
+
+        if action == "mcp_list":
+            servers = []
+            total_tools = 0
+
+            config = self._read_mcp_config(profile)
+            mcp_configs = {}
+            if config:
+                mcp_configs = config.get("mcp_servers", {}) or {}
+            profile_server_names = set(mcp_configs.keys())
+
+            with _lock:
+                server_snapshot = list(_servers.items())
+            for name, task in server_snapshot:
+                if name not in profile_server_names:
+                    continue
+                # Raw tools from server (unfiltered)
+                raw_tool_names = []
+                try:
+                    for mcp_tool in getattr(task, "_tools", []):
+                        if hasattr(mcp_tool, "name"):
+                            raw_tool_names.append(mcp_tool.name)
+                except Exception:
+                    pass
+                # Registered tools (filtered by include/exclude)
+                registered = list(getattr(task, "_registered_tool_names", None) or [])
+                if not registered:
+                    registered = list(raw_tool_names)
+                t = getattr(task, "_task", None)
+                connected = bool(t and not t.done())
+                err = getattr(task, "_error", None)
+                cfg = getattr(task, "_config", {})
+                transport = "http" if cfg.get("url") else "stdio"
+                servers.append({
+                    "name": name,
+                    "transport": transport,
+                    "connected": connected,
+                    "tools": len(raw_tool_names),
+                    "tools_registered": len(registered),
+                    "tool_names": raw_tool_names,
+                    "tool_names_registered": registered,
+                    "error": str(err) if err else None,
+                    "command": cfg.get("command"),
+                    "args": cfg.get("args"),
+                    "url": cfg.get("url"),
+                    "env": cfg.get("env"),
+                    "headers": cfg.get("headers"),
+                    "tools_config": cfg.get("tools"),
+                    "prompts": cfg.get("prompts"),
+                    "resources": cfg.get("resources"),
+                    "enabled": cfg.get("enabled", True),
+                })
+                total_tools += len(registered)
+
+            if config:
+                existing = {s["name"] for s in servers}
+                for name, cfg in mcp_configs.items():
+                    if name not in existing:
+                        transport = "http" if isinstance(cfg, dict) and cfg.get("url") else "stdio"
+                        servers.append({
+                            "name": name,
+                            "transport": transport,
+                            "connected": False,
+                            "tools": 0,
+                            "tools_registered": 0,
+                            "tool_names": [],
+                            "tool_names_registered": [],
+                            "error": None,
+                            "command": cfg.get("command") if isinstance(cfg, dict) else None,
+                            "args": cfg.get("args") if isinstance(cfg, dict) else None,
+                            "url": cfg.get("url") if isinstance(cfg, dict) else None,
+                            "env": cfg.get("env") if isinstance(cfg, dict) else None,
+                            "headers": cfg.get("headers") if isinstance(cfg, dict) else None,
+                            "tools_config": cfg.get("tools") if isinstance(cfg, dict) else None,
+                            "prompts": cfg.get("prompts") if isinstance(cfg, dict) else None,
+                            "resources": cfg.get("resources") if isinstance(cfg, dict) else None,
+                            "enabled": cfg.get("enabled", True) if isinstance(cfg, dict) else True,
+                        })
+
+            return {"servers": servers, "total_tools": total_tools, "ok": True}
+
+        if action == "mcp_server_add":
+            name = str(req.get("name") or "").strip()
+            config = req.get("config", {})
+            if not name or not isinstance(config, dict):
+                return {"error": "name and config are required", "ok": False}
+
+            cfg = self._read_mcp_config(profile)
+            if not cfg:
+                return {"error": "config.yaml not found", "ok": False}
+
+            mcp_servers = cfg.setdefault("mcp_servers", {})
+            mcp_servers[name] = config
+
+            self._save_mcp_config(cfg, profile)
+            self._run_mcp_discovery_bg(discover_mcp_tools, profile)
+
+            return {"ok": True, "name": name}
+
+        if action == "mcp_server_update":
+            name = str(req.get("name") or "").strip()
+            config = req.get("config", {})
+            if not name or not isinstance(config, dict):
+                return {"error": "name and config are required", "ok": False}
+
+            cfg = self._read_mcp_config(profile)
+            if not cfg:
+                return {"error": "config.yaml not found", "ok": False}
+
+            mcp_servers = cfg.setdefault("mcp_servers", {})
+            if name not in mcp_servers:
+                return {"error": f"server '{name}' not found in config", "ok": False}
+
+            existing = mcp_servers[name]
+            if isinstance(existing, dict) and "transport" not in config:
+                existing.update(config)
+            else:
+                mcp_servers[name] = config
+
+            self._save_mcp_config(cfg, profile)
+
+            with _lock:
+                if name in _servers:
+                    try:
+                        _servers[name].shutdown()
+                    except Exception:
+                        pass
+                    _servers.pop(name, None)
+
+            self._run_mcp_discovery_bg(discover_mcp_tools, profile)
+
+            return {"ok": True}
+
+        if action == "mcp_server_remove":
+            name = str(req.get("name") or "").strip()
+            if not name:
+                return {"error": "name is required", "ok": False}
+
+            with _lock:
+                if name in _servers:
+                    try:
+                        _servers[name].shutdown()
+                    except Exception:
+                        pass
+                    _servers.pop(name, None)
+
+            cfg = self._read_mcp_config(profile)
+            if cfg:
+                mcp_servers = cfg.get("mcp_servers", {})
+                if isinstance(mcp_servers, dict) and name in mcp_servers:
+                    del mcp_servers[name]
+                    self._save_mcp_config(cfg, profile)
+
+            return {"ok": True}
+
+        if action == "mcp_server_test":
+            name = str(req.get("name") or "").strip()
+            if not name:
+                return {"error": "name is required", "ok": False}
+
+            with _lock:
+                task = _servers.get(name)
+            if not task:
+                return {"error": f"server '{name}' is not connected", "ok": False}
+
+            tool_names = []
+            try:
+                for mcp_tool in getattr(task, "_tools", []):
+                    if hasattr(mcp_tool, "name"):
+                        tool_names.append(mcp_tool.name)
+            except Exception as e:
+                return {"error": f"failed to list tools: {e}", "ok": False}
+
+            return {"ok": True, "tools": tool_names}
+
+        if action == "mcp_tools_list":
+            server_filter = str(req.get("server") or "").strip() or None
+            results = []
+
+            config = self._read_mcp_config(profile)
+            mcp_configs = {}
+            if config:
+                mcp_configs = config.get("mcp_servers", {}) or {}
+            profile_server_names = set(mcp_configs.keys())
+
+            with _lock:
+                server_snapshot = list(_servers.items())
+            for sname, task in server_snapshot:
+                if sname not in profile_server_names:
+                    continue
+                if server_filter and sname != server_filter:
+                    continue
+                registered = set(getattr(task, "_registered_tool_names", None) or [])
+                tools = []
+                # Build include/exclude filter from config
+                srv_cfg = mcp_configs.get(sname, {}) if isinstance(mcp_configs.get(sname), dict) else {}
+                tools_filter = srv_cfg.get("tools") or {}
+                include_set = set(tools_filter.get("include") or [])
+                exclude_set = set(tools_filter.get("exclude") or [])
+                def _should_include(tn):
+                    if include_set:
+                        return tn in include_set
+                    if exclude_set:
+                        return tn not in exclude_set
+                    return True
+                try:
+                    for mcp_tool in getattr(task, "_tools", []):
+                        tname = getattr(mcp_tool, "name", "?")
+                        if not _should_include(tname):
+                            continue
+                        tools.append({
+                            "name": tname,
+                            "description": getattr(mcp_tool, "description", ""),
+                            "input_schema": getattr(mcp_tool, "inputSchema", {}),
+                        })
+                except Exception as e:
+                    results.append({"server": sname, "tools": [], "error": str(e)})
+                    continue
+                results.append({"server": sname, "tools": tools})
+
+            return {"ok": True, "results": results}
+
+        if action == "mcp_reload":
+            target = str(req.get("server") or "").strip() or None
+
+            config = self._read_mcp_config(profile)
+            mcp_configs = {}
+            if config:
+                mcp_configs = config.get("mcp_servers", {}) or {}
+            profile_server_names = set(mcp_configs.keys())
+
+            if target and target not in mcp_configs:
+                return {"error": "server '%s' not found in config" % target, "ok": False}
+
+            with _lock:
+                if target:
+                    if target in profile_server_names and target in _servers:
+                        try:
+                            _servers[target].shutdown()
+                        except Exception:
+                            pass
+                        _servers.pop(target, None)
+                else:
+                    for sname in list(profile_server_names):
+                        if sname in _servers:
+                            try:
+                                _servers[sname].shutdown()
+                            except Exception:
+                                pass
+                            _servers.pop(sname, None)
+
+            try:
+                original = _apply_profile_env(profile)
+                try:
+                    if target:
+                        server_config = {target: mcp_configs.get(target, {})}
+                        register_mcp_servers(server_config)
+                    else:
+                        discover_mcp_tools()
+                finally:
+                    _restore_profile_env(original)
+            except Exception as e:
+                return {"error": f"reload failed: {e}", "ok": False}
+
+            return {"ok": True, "message": "MCP servers reloaded"}
+
+        return {"error": f"unknown MCP action: {action}", "ok": False}
 
     def _make_server_socket(self) -> socket.socket:
         return _make_listen_socket(self.endpoint)
@@ -2725,9 +3059,13 @@ class BridgeBroker:
         forwarded = dict(req)
         forwarded["profile"] = profile
         forwarded.pop("worker_key", None)
-        resp = worker.request(forwarded, self._worker_request_timeout(req))
-        self._record_response_routes(profile, key, resp)
-        return resp
+        try:
+            resp = worker.request(forwarded, self._worker_request_timeout(req))
+            self._record_response_routes(profile, key, resp)
+            return resp
+        except RuntimeError as e:
+            # Worker returned ok=false or connection error — return error response
+            return {"ok": False, "error": str(e)}
 
     def _worker_request_timeout(self, req: dict[str, Any]) -> float:
         try:
@@ -2932,6 +3270,11 @@ class BridgeBroker:
         if action == "shutdown":
             self.stop()
             return {"status": "shutting_down"}
+
+        # ───── MCP Management ─────
+        if action.startswith("mcp_"):
+            profile = self._normalize_profile(req.get("profile"))
+            return self._forward(profile, req)
 
         raise ValueError(f"unknown action: {action}")
 

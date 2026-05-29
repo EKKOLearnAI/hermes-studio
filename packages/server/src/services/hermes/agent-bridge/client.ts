@@ -5,6 +5,7 @@ import { URL } from 'url'
 import { join } from 'path'
 import { bridgeLogger } from '../../logger'
 import { getActiveProfileName, getProfileDir } from '../hermes-profile'
+import type { McpActionResponse } from '../mcp'
 
 function resolveDefaultAgentBridgeEndpoint(): string {
   if (process.env.VITEST) {
@@ -584,6 +585,36 @@ export class AgentBridgeClient {
 
   shutdown(): Promise<AgentBridgeResponse> {
     return this.request({ action: 'shutdown' }, { serialize: true })
+  }
+
+  // ───── MCP Management ─────
+
+  mcpList(profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_list', ...(profile ? { profile } : {}) })
+  }
+
+  mcpAdd(name: string, config: Record<string, unknown>, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_server_add', name, config, ...(profile ? { profile } : {}) })
+  }
+
+  mcpUpdate(name: string, config: Record<string, unknown>, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_server_update', name, config, ...(profile ? { profile } : {}) })
+  }
+
+  mcpRemove(name: string, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_server_remove', name, ...(profile ? { profile } : {}) })
+  }
+
+  mcpTest(name: string, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_server_test', name, ...(profile ? { profile } : {}) })
+  }
+
+  mcpTools(server?: string, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}) })
+  }
+
+  mcpReload(server?: string, profile?: string): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_reload', ...(server ? { server } : {}), ...(profile ? { profile } : {}) })
   }
 }
 
