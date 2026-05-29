@@ -84,6 +84,9 @@ function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsa
   // handle-bridge-run.ts; input_tokens can legitimately be 0 when
   // the entire prompt is served from cache, so we don't check it here.
   if (!row || !row.cost_status) return null
+  // promptTokens / completionTokens / apiCalls / costSource are not
+  // stored in the sessions table — hardcoded to 0/undefined here.
+  // They display as 'N/A' in /usage output via truthiness checks.
   return {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
@@ -156,13 +159,20 @@ export async function handleSessionCommand(
         undefined
 
       if (bu) {
-        if (!state.bridgeUsage) state.bridgeUsage = bu  // cache DB fallback
+        // Cache the reconstructed usage on state so future /usage calls
+        // within this run skip the DB lookup. Safe because handleBridgeRun
+        // resets bridgeUsage to undefined at the start of every new run.
+        if (!state.bridgeUsage) state.bridgeUsage = bu
         const model = bu.model || ctx.model || sessionRow?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
         const contextForDisplay = bu.promptTokens || bu.inputTokens || state.contextTokens || (localUsage.inputTokens + localUsage.outputTokens)
         const pct = modelCtxLen > 0 ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%` : 'N/A'
         const cost = formatCost(bu)
-        const dur = sessionRow ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s` : 'N/A'
+        const started = sessionRow?.started_at
+        const ended = sessionRow?.last_active || Date.now() / 1000
+        const dur = (sessionRow && started)
+          ? `${Math.max(0, Math.floor(ended - started))}s`
+          : 'N/A'
         const comps = getCompressionSnapshot(sessionId) ? 1 : 0
         const note = bu.costStatus === 'unknown' && model ? `Pricing unknown for ${model}` : ''
 

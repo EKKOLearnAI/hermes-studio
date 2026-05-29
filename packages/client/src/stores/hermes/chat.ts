@@ -101,6 +101,19 @@ export interface Session {
   }
 }
 
+/** Apply token usage from a run.* event, preferring upstream API data */
+function applyApiUsage(target: Session, evt: Record<string, unknown>): void {
+  const apiUsage = (evt as any).apiUsage
+  if (apiUsage) {
+    target.inputTokens = apiUsage.inputTokens
+    target.outputTokens = apiUsage.outputTokens
+    target.apiUsage = apiUsage
+  } else if ((evt as any).inputTokens != null) {
+    target.inputTokens = (evt as any).inputTokens
+    target.outputTokens = (evt as any).outputTokens
+  }
+}
+
 interface CompressionState {
   compressing: boolean
   messageCount: number
@@ -1861,19 +1874,10 @@ export const useChatStore = defineStore('chat', () => {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
               // Server-computed usage (local countTokens, snapshot-aware)
-              if ((evt as any).inputTokens != null) {
+              if ((evt as any).inputTokens != null || (evt as any).apiUsage) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
-                  // Prefer upstream API-level usage when available (bridge mode)
-                  const apiUsage = (evt as any).apiUsage
-                  if (apiUsage) {
-                    target.inputTokens = apiUsage.inputTokens
-                    target.outputTokens = apiUsage.outputTokens
-                    target.apiUsage = apiUsage
-                  } else {
-                    target.inputTokens = (evt as any).inputTokens
-                    target.outputTokens = (evt as any).outputTokens
-                  }
+                  applyApiUsage(target, evt)
                   if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
                 }
               }
@@ -1965,11 +1969,10 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'run.failed': {
               clearAgentEventMessages(sid)
-              if ((evt as any).inputTokens != null) {
+              if ((evt as any).inputTokens != null || (evt as any).apiUsage) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
-                  target.inputTokens = (evt as any).inputTokens
-                  target.outputTokens = (evt as any).outputTokens
+                  applyApiUsage(target, evt)
                   if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
                 }
               }
@@ -2348,19 +2351,10 @@ export const useChatStore = defineStore('chat', () => {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
           }
           // Server-computed usage (local countTokens, snapshot-aware)
-          if ((evt as any).inputTokens != null) {
+          if ((evt as any).inputTokens != null || (evt as any).apiUsage) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
-              // Prefer upstream API-level usage when available (bridge mode)
-              const apiUsage = (evt as any).apiUsage
-              if (apiUsage) {
-                target.inputTokens = apiUsage.inputTokens
-                target.outputTokens = apiUsage.outputTokens
-                target.apiUsage = apiUsage
-              } else {
-                target.inputTokens = (evt as any).inputTokens
-                target.outputTokens = (evt as any).outputTokens
-              }
+              applyApiUsage(target, evt)
               if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
             }
           }
@@ -2432,11 +2426,10 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'run.failed': {
           clearAgentEventMessages(sid)
-          if ((evt as any).inputTokens != null) {
+          if ((evt as any).inputTokens != null || (evt as any).apiUsage) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
-              target.inputTokens = (evt as any).inputTokens
-              target.outputTokens = (evt as any).outputTokens
+              applyApiUsage(target, evt)
               if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
             }
           }
