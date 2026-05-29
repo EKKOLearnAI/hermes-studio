@@ -155,7 +155,7 @@ export async function handleSessionCommand(
         if (!state.bridgeUsage) state.bridgeUsage = bu  // cache DB fallback
         const model = bu.model || ctx.model || getSession(sessionId)?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
-        const contextForDisplay = bu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
+        const contextForDisplay = bu.promptTokens || bu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
         const pct = modelCtxLen > 0 ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%` : 'N/A'
         const cost = formatCost(bu)
         const row = getSession(sessionId)
