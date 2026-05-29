@@ -1202,7 +1202,7 @@ export class AgentClients {
     async processMentions(roomId: string, msg: MentionMessage): Promise<string[]> {
         const agents = this.getAgents(roomId)
         const mentioned = resolveMentionTargets(agents, msg.content, msg.senderId)
-        if (mentioned.length === 0) return
+        if (mentioned.length === 0) return []
 
         logger.debug(`[AgentClients] ${mentioned.map(a => a.name).join(', ')} mentioned by ${msg.senderName}`)
 

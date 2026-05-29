@@ -99,6 +99,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms', async (ctx) => {
     storage.saveRoom(roomId, name, inviteCode, compression)
 
     let lastDefaultAgentId: string | null = null
+    const addedAgents = []
     const agentResults = []
     for (const a of agents || []) {
         const agentId = generateId()
@@ -155,6 +156,7 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/clone', async (ctx) =
     })
 
     const agentIdMap = new Map<string, string>()
+    const addedAgents = []
     const agentResults = []
     for (const sourceAgent of storage.getRoomAgents(sourceRoom.id)) {
         const agentId = generateId()
