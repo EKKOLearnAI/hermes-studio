@@ -121,7 +121,7 @@ export async function handleSessionCommand(
         // Use upstream API-level token data from the bridge agent result
         const model = bu.model || ctx.model || getSession(sessionId)?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
-        const contextForDisplay = state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
+        const contextForDisplay = bu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
         const contextPct = modelCtxLen > 0
           ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%`
           : 'N/A'
