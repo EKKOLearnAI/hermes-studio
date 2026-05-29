@@ -2,7 +2,7 @@ import { execFile } from 'child_process'
 import { existsSync, realpathSync } from 'fs'
 import { mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { delimiter, dirname, join } from 'path'
+import { delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
 import { registerClaudeCodeProxyTarget, type ApiMode } from './claude-code-proxy'
@@ -309,6 +309,10 @@ function powerShellQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
+function cmdQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
 function buildLaunchShellCommand(input: {
   workspaceDir: string
   env: Record<string, string>
@@ -508,6 +512,27 @@ async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promis
   }
 }
 
+function windowsCommandNeedsShell(command: string): boolean {
+  const extension = extname(command).toLowerCase()
+  return extension === '.cmd' || extension === '.bat'
+}
+
+async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
+  if (process.platform !== 'win32') return command
+  const paths = await findCommandPaths(command, env)
+  return paths[0] || command
+}
+
+function commandExecution(command: string, args: string[]): { command: string; args: string[] } {
+  if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', [cmdQuote(command), ...args.map(cmdQuote)].join(' ')],
+    }
+  }
+  return { command, args }
+}
+
 function packageParts(packageName: string): string[] {
   return packageName.split('/').filter(Boolean)
 }
@@ -601,11 +626,14 @@ export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConf
 
 export async function getCodingAgentStatus(definition: CodingAgentDefinition): Promise<CodingAgentToolStatus> {
   try {
-    const { stdout, stderr } = await execFileAsync(definition.command, ['--version'], {
+    const env = await commandEnv()
+    const resolvedCommand = await resolveCommandForExecution(definition.command, env)
+    const execution = commandExecution(resolvedCommand, ['--version'])
+    const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
       encoding: 'utf-8',
       timeout: 8000,
       windowsHide: true,
-      env: await commandEnv(),
+      env,
     })
     const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
     return {
