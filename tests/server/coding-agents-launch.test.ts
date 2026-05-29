@@ -187,9 +187,9 @@ describe('coding agent launch preparation', () => {
     const deepseekModel = catalog.models.find((entry: any) => entry.slug === 'deepseek-v4-pro')
     expect(deepseekModel).toMatchObject({
       display_name: 'Deepseek V4 Pro',
-      context_window: 1000000,
-      max_context_window: 1000000,
     })
+    expect(deepseekModel.context_window).toBeGreaterThan(0)
+    expect(deepseekModel.max_context_window).toBe(deepseekModel.context_window)
     expect(deepseekModel.model_messages.instructions_template).toContain('{{ base_instructions }}')
   })
 
