@@ -932,6 +932,20 @@ async function applyBridgeChunkAsync(
   // conversation_loop.py already includes input_tokens, output_tokens,
   // cache_*, reasoning_*, total_tokens, api_calls, and cost fields).
   state.bridgeUsage = extractBridgeUsage(chunk.result)
+  // Persist upstream API token values in the Web UI session store so
+  // they survive page reloads and the frontend shows correct numbers.
+  if (state.bridgeUsage) {
+    updateSession(sessionId, {
+      input_tokens: state.bridgeUsage.inputTokens,
+      output_tokens: state.bridgeUsage.outputTokens,
+      cache_read_tokens: state.bridgeUsage.cacheReadTokens,
+      cache_write_tokens: state.bridgeUsage.cacheWriteTokens,
+      reasoning_tokens: state.bridgeUsage.reasoningTokens,
+      estimated_cost_usd: state.bridgeUsage.estimatedCostUsd,
+      actual_cost_usd: state.bridgeUsage.actualCostUsd,
+      cost_status: state.bridgeUsage.costStatus,
+    })
+  }
   const terminalError = bridgeTerminalError(chunk)
   const hadQueuedRunBeforeGoalEvaluation = state.queue.length > 0
   state.isWorking = hadQueuedRunBeforeGoalEvaluation

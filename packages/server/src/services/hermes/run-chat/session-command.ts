@@ -179,7 +179,84 @@ export async function handleSessionCommand(
         })
         return
       }
-      // Fallback: local tiktoken estimate when bridge agent data not yet available
+      // Fallback: reconstruct from session DB row when bridge data was
+      // persisted by a previous run (e.g. after page reload).
+      const sessionRow = getSession(sessionId)
+      if (sessionRow && sessionRow.input_tokens > 0 && sessionRow.cost_status) {
+        const dbBu = {
+          inputTokens: sessionRow.input_tokens,
+          outputTokens: sessionRow.output_tokens,
+          cacheReadTokens: sessionRow.cache_read_tokens,
+          cacheWriteTokens: sessionRow.cache_write_tokens,
+          reasoningTokens: sessionRow.reasoning_tokens,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: sessionRow.input_tokens + sessionRow.output_tokens
+            + sessionRow.cache_read_tokens + sessionRow.cache_write_tokens,
+          apiCalls: 0,
+          model: sessionRow.model || undefined,
+          estimatedCostUsd: sessionRow.estimated_cost_usd || undefined,
+          actualCostUsd: sessionRow.actual_cost_usd ?? undefined,
+          costStatus: sessionRow.cost_status || undefined,
+          costSource: undefined,
+        }
+        state.bridgeUsage = dbBu
+        const model = dbBu.model || ctx.model || 'unknown'
+        const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
+        const contextForDisplay = dbBu.inputTokens ?? state.contextTokens ?? (localUsage.inputTokens + localUsage.outputTokens)
+        const contextPct = modelCtxLen > 0
+          ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%`
+          : 'N/A'
+        const cost = dbBu.actualCostUsd != null
+          ? `$${dbBu.actualCostUsd.toFixed(6)}`
+          : dbBu.estimatedCostUsd && dbBu.estimatedCostUsd > 0
+            ? `~$${dbBu.estimatedCostUsd.toFixed(6)} (estimated)`
+            : 'n/a'
+        const sessionDuration = sessionRow
+          ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s`
+          : 'N/A'
+        const compressionCount = getCompressionSnapshot(sessionId) ? 1 : 0
+        const note = dbBu.costStatus === 'unknown' && model
+          ? `Pricing unknown for ${model}`
+          : ''
+
+        emitCommand({
+          action: 'usage',
+          terminal: !state.isWorking,
+          message: [
+            '📊 Session Token Usage',
+            '────────────────────────────────────────',
+            `Model:                     ${model}`,
+            `Input tokens:              ${dbBu.inputTokens.toLocaleString()}`,
+            `Cache read tokens:         ${dbBu.cacheReadTokens.toLocaleString()}`,
+            `Cache write tokens:        ${dbBu.cacheWriteTokens.toLocaleString()}`,
+            `Output tokens:             ${dbBu.outputTokens.toLocaleString()}`,
+            `Reasoning tokens:          ${dbBu.reasoningTokens.toLocaleString()}`,
+            `Total tokens:              ${dbBu.totalTokens.toLocaleString()}`,
+            `Session duration:          ${sessionDuration}`,
+            `Cost status:               ${dbBu.costStatus || 'unknown'}`,
+            `Total cost:                ${cost}`,
+            '────────────────────────────────────────',
+            `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${contextPct})`,
+            `Messages:         ${state.messages.length}`,
+            `Compressions:     ${compressionCount}`,
+            note,
+          ].filter(line => line !== '').join('\n'),
+          inputTokens: dbBu.inputTokens,
+          outputTokens: dbBu.outputTokens,
+          cacheReadTokens: dbBu.cacheReadTokens,
+          cacheWriteTokens: dbBu.cacheWriteTokens,
+          reasoningTokens: dbBu.reasoningTokens,
+          totalTokens: dbBu.totalTokens,
+          contextTokens: contextForDisplay,
+          model,
+          costStatus: dbBu.costStatus,
+          actualCostUsd: dbBu.actualCostUsd,
+          estimatedCostUsd: dbBu.estimatedCostUsd,
+        })
+        return
+      }
+      // Last resort: local tiktoken estimate
       emitCommand({
         action: 'usage',
         terminal: !state.isWorking,
