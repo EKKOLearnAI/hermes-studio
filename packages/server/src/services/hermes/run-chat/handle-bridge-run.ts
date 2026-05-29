@@ -123,6 +123,7 @@ function extractBridgeUsage(result: unknown): BridgeUsageState | undefined {
     apiCalls: finiteToken(r.api_calls) ?? 0,
     model: typeof r.model === 'string' ? r.model : undefined,
     estimatedCostUsd: typeof r.estimated_cost_usd === 'number' ? r.estimated_cost_usd : undefined,
+    actualCostUsd: typeof r.actual_cost_usd === 'number' ? r.actual_cost_usd : undefined,
     costStatus: typeof r.cost_status === 'string' ? r.cost_status : undefined,
     costSource: typeof r.cost_source === 'string' ? r.cost_source : undefined,
   }
