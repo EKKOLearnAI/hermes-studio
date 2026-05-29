@@ -118,6 +118,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/FilesView.vue'),
     },
     {
+      path: '/hermes/coding-agents',
+      name: 'hermes.codingAgents',
+      component: () => import('@/views/hermes/CodingAgentsView.vue'),
+    },
+    {
       path: '/hermes/version-preview',
       name: 'hermes.versionPreview',
       component: () => import('@/views/hermes/VersionPreviewView.vue'),
