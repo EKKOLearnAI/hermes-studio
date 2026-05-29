@@ -142,6 +142,12 @@ function normalizeMentionDepth(depth: unknown): number {
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
+function maxAgentMentionDepth(): number {
+    const value = Number(process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
+    if (!Number.isFinite(value) || value <= 0) return 4
+    return Math.min(10, Math.floor(value))
+}
+
 function groupRunOrder(id: string): { baseId: string; phase: number } {
     const value = String(id || '')
     const partMatch = value.match(/^(.*)_part_(\d+)(?:_(toolcall|toolresult)_.+)?$/)
@@ -965,10 +971,14 @@ export class GroupChatServer {
         ack?.({ id: savedMsg.id })
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
-        const shouldRouteMentions = savedMsg.role === 'user'
+        const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const shouldRouteMentions = savedMsg.role === 'user' ||
+            (isAgentReply && mentionDepth < maxAgentMentionDepth())
 
         if (shouldRouteMentions) {
-            // Server-side @mention routing — parse user mentions and invoke agents directly.
+            // Server-side @mention routing — parse mentions and invoke agents directly.
+            // Agent replies are allowed to mention other agents, but mentionDepth
+            // bounds chained agent-to-agent handoffs so one prompt cannot loop forever.
             this.agentClients.processMentions(roomId, {
                 content: contentToText(savedMsg.content),
                 input: Array.isArray(data.content) ? data.content : undefined,

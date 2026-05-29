@@ -72,6 +72,12 @@ export function groupContextTokensWithFixedOverhead(
     return Math.floor(fixedContextTokens) + estimateGroupHistoryMessageTokens(history)
 }
 
+export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown>): string | null {
+    if (String(event.event || '') !== 'reasoning.delta') return null
+    const text = String(event.text || '')
+    return text ? text : null
+}
+
 interface MemberData {
     id: string
     name: string
@@ -698,10 +704,12 @@ class AgentClient {
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
                 })
-            } else if (eventType === 'reasoning.delta' || eventType === 'thinking.delta') {
-                const text = String((ev as any)?.text || '')
-                reasoning += text
-                this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text)
+            } else {
+                const text = groupBridgeReasoningDeltaFromEvent(ev as Record<string, unknown>)
+                if (text) {
+                    reasoning += text
+                    this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text)
+                }
             }
         }
         return reasoning
