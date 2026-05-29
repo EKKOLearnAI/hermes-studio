@@ -398,6 +398,7 @@ onMounted(() => {
       <NAlert v-if="loadError" type="error" class="status-alert">
         {{ loadError }}
       </NAlert>
+      <p class="content-description">{{ t('codingAgents.notice') }}</p>
 
       <div class="agent-blocks">
         <section v-for="block in agentBlocks" :key="block.tool" class="agent-block">
@@ -627,6 +628,13 @@ onMounted(() => {
   overflow-y: auto;
   padding: 20px;
   background: $bg-secondary;
+}
+
+.content-description {
+  margin: 0 0 14px;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .agent-blocks {
