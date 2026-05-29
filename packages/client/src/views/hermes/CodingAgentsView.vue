@@ -1,22 +1,37 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NAlert, NButton, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
+  deleteCodingAgent,
   fetchCodingAgentsStatus,
   installCodingAgent,
+  readCodingAgentConfigFile,
+  writeCodingAgentConfigFile,
   type CodingAgentId,
   type CodingAgentToolStatus,
 } from '@/api/coding-agents'
-import { copyToClipboard } from '@/utils/clipboard'
 
-type CodingAgentCommand = {
+type CodingAgentBlock = {
   id: CodingAgentId
   tool: 'Claude Code' | 'Codex'
   provider: 'Anthropic' | 'OpenAI'
-  kindKey: string
-  command: string
-  noteKey: string
+}
+
+type ConfigFileEntry = {
+  key: string
+  path: string
+  language: string
+}
+
+type ConfigEditorState = {
+  selectedKey: string
+  content: string
+  originalContent: string
+  loading: boolean
+  saving: boolean
+  absolutePath?: string
+  exists?: boolean
 }
 
 const { t } = useI18n()
@@ -28,98 +43,58 @@ const installing = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
 })
+const deleting = ref<Record<CodingAgentId, boolean>>({
+  'claude-code': false,
+  codex: false,
+})
 
-const agentLogos: Record<CodingAgentCommand['tool'], string> = {
+const agentLogos: Record<CodingAgentBlock['tool'], string> = {
   'Claude Code': '/coding-agents/claude-code.svg',
   Codex: '/coding-agents/codex-openai.png',
 }
 
-const agentBlocks: Array<{
-  id: CodingAgentId
-  tool: CodingAgentCommand['tool']
-  provider: CodingAgentCommand['provider']
-  descriptionKey: string
-}> = [
+const agentBlocks: CodingAgentBlock[] = [
   {
     id: 'claude-code',
     tool: 'Claude Code',
     provider: 'Anthropic',
-    descriptionKey: 'codingAgents.claudeDescription',
   },
   {
     id: 'codex',
     tool: 'Codex',
     provider: 'OpenAI',
-    descriptionKey: 'codingAgents.codexDescription',
   },
 ]
 
-const commands: CodingAgentCommand[] = [
-  {
-    id: 'claude-code',
-    tool: 'Claude Code',
-    provider: 'Anthropic',
-    kindKey: 'codingAgents.kinds.install',
-    command: 'npm install -g @anthropic-ai/claude-code',
-    noteKey: 'codingAgents.notes.claudeInstall',
+const configFiles: Record<CodingAgentId, ConfigFileEntry[]> = {
+  'claude-code': [
+    { key: 'settings', path: '~/.claude/settings.json', language: 'json' },
+    { key: 'mcp', path: '~/.claude.json', language: 'json' },
+    { key: 'prompt', path: '~/.claude/CLAUDE.md', language: 'markdown' },
+  ],
+  codex: [
+    { key: 'auth', path: '~/.codex/auth.json', language: 'json' },
+    { key: 'config', path: '~/.codex/config.toml', language: 'ini' },
+    { key: 'agents', path: '~/.codex/AGENTS.md', language: 'markdown' },
+  ],
+}
+
+const configEditorStates = ref<Record<CodingAgentId, ConfigEditorState>>({
+  'claude-code': {
+    selectedKey: 'settings',
+    content: '',
+    originalContent: '',
+    loading: false,
+    saving: false,
   },
-  {
-    id: 'codex',
-    tool: 'Codex',
-    provider: 'OpenAI',
-    kindKey: 'codingAgents.kinds.install',
-    command: 'npm install -g @openai/codex',
-    noteKey: 'codingAgents.notes.codexInstall',
+  codex: {
+    selectedKey: 'config',
+    content: '',
+    originalContent: '',
+    loading: false,
+    saving: false,
   },
-  {
-    id: 'claude-code',
-    tool: 'Claude Code',
-    provider: 'Anthropic',
-    kindKey: 'codingAgents.kinds.auth',
-    command: 'claude auth status --text',
-    noteKey: 'codingAgents.notes.claudeAuth',
-  },
-  {
-    id: 'codex',
-    tool: 'Codex',
-    provider: 'OpenAI',
-    kindKey: 'codingAgents.kinds.auth',
-    command: 'hermes auth add openai-codex',
-    noteKey: 'codingAgents.notes.codexAuth',
-  },
-  {
-    id: 'claude-code',
-    tool: 'Claude Code',
-    provider: 'Anthropic',
-    kindKey: 'codingAgents.kinds.health',
-    command: 'claude doctor',
-    noteKey: 'codingAgents.notes.claudeHealth',
-  },
-  {
-    id: 'codex',
-    tool: 'Codex',
-    provider: 'OpenAI',
-    kindKey: 'codingAgents.kinds.health',
-    command: 'codex --version',
-    noteKey: 'codingAgents.notes.codexHealth',
-  },
-  {
-    id: 'claude-code',
-    tool: 'Claude Code',
-    provider: 'Anthropic',
-    kindKey: 'codingAgents.kinds.run',
-    command: "claude -p 'Review this repository and report the top risks' --max-turns 10",
-    noteKey: 'codingAgents.notes.claudeRun',
-  },
-  {
-    id: 'codex',
-    tool: 'Codex',
-    provider: 'OpenAI',
-    kindKey: 'codingAgents.kinds.run',
-    command: "codex exec 'Review this repository and report the top risks'",
-    noteKey: 'codingAgents.notes.codexRun',
-  },
-]
+})
 
 const statusById = computed(() => {
   return tools.value.reduce((acc, tool) => {
@@ -128,16 +103,21 @@ const statusById = computed(() => {
   }, {} as Partial<Record<CodingAgentId, CodingAgentToolStatus>>)
 })
 
-function providerTagType(provider: CodingAgentCommand['provider']) {
-  return provider === 'OpenAI' ? 'info' : 'success'
-}
-
-function commandsFor(tool: CodingAgentCommand['tool']) {
-  return commands.filter(item => item.tool === tool)
-}
-
 function statusFor(id: CodingAgentId) {
   return statusById.value[id]
+}
+
+function configFilesFor(id: CodingAgentId) {
+  return configFiles[id]
+}
+
+function selectedConfigFile(id: CodingAgentId) {
+  return configFiles[id].find(file => file.key === configEditorStates.value[id].selectedKey) || configFiles[id][0]
+}
+
+function hasConfigUnsavedChanges(id: CodingAgentId) {
+  const state = configEditorStates.value[id]
+  return state.content !== state.originalContent
 }
 
 async function loadStatus() {
@@ -150,6 +130,45 @@ async function loadStatus() {
     loadError.value = err?.message || t('codingAgents.loadFailed')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadConfigFile(agentId: CodingAgentId, file: ConfigFileEntry) {
+  const state = configEditorStates.value[agentId]
+  state.selectedKey = file.key
+  state.loading = true
+  try {
+    const result = await readCodingAgentConfigFile(agentId, file.key)
+    state.content = result.content
+    state.originalContent = result.content
+    state.absolutePath = result.absolutePath
+    state.exists = result.exists
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.configLoadFailed'))
+  } finally {
+    state.loading = false
+  }
+}
+
+async function saveConfigFile(agentId: CodingAgentId) {
+  const state = configEditorStates.value[agentId]
+  const file = selectedConfigFile(agentId)
+  if (!file) return
+  state.saving = true
+  try {
+    const result = await writeCodingAgentConfigFile(
+      agentId,
+      file.key,
+      state.content,
+    )
+    state.originalContent = result.content
+    state.absolutePath = result.absolutePath
+    state.exists = result.exists
+    message.success(t('files.saved'))
+  } catch (err: any) {
+    message.error(err?.message || t('files.saveFailed'))
+  } finally {
+    state.saving = false
   }
 }
 
@@ -170,16 +189,28 @@ async function handleInstall(id: CodingAgentId) {
   }
 }
 
-async function copyCommand(command: string) {
-  const ok = await copyToClipboard(command)
-  if (ok) {
-    message.success(t('codingAgents.commandCopied'))
-  } else {
-    message.error(t('codingAgents.commandCopyFailed'))
+async function handleDelete(id: CodingAgentId) {
+  deleting.value[id] = true
+  try {
+    const result = await deleteCodingAgent(id)
+    tools.value = result.tools
+    if (result.success) {
+      message.success(t('codingAgents.deleteSuccess'))
+    } else {
+      message.error(result.message || t('codingAgents.deleteFailed'))
+    }
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.deleteFailed'))
+  } finally {
+    deleting.value[id] = false
   }
 }
 
-onMounted(loadStatus)
+onMounted(() => {
+  void loadStatus()
+  void loadConfigFile('claude-code', configFiles['claude-code'][0])
+  void loadConfigFile('codex', configFiles.codex[1])
+})
 </script>
 
 <template>
@@ -202,47 +233,94 @@ onMounted(loadStatus)
             <img class="agent-logo" :src="agentLogos[block.tool]" alt="" />
             <div>
               <h3>{{ block.tool }}</h3>
-              <p>{{ t(block.descriptionKey) }}</p>
+              <NTag class="provider-tag" size="small">{{ block.provider }}</NTag>
             </div>
-            <NTag size="small" :type="providerTagType(block.provider)">{{ block.provider }}</NTag>
           </header>
 
           <div class="agent-install-state">
-            <NTag v-if="loading && !statusFor(block.id)" size="small">
-              {{ t('codingAgents.checking') }}
-            </NTag>
-            <template v-else-if="statusFor(block.id)?.installed">
-              <NTag size="small" type="success">{{ t('codingAgents.installed') }}</NTag>
-              <span class="version-text">
-                {{ statusFor(block.id)?.version || statusFor(block.id)?.rawVersion }}
-              </span>
-            </template>
-            <template v-else>
-              <NTag size="small" type="warning">{{ t('codingAgents.notInstalled') }}</NTag>
-              <NButton
-                size="small"
-                type="primary"
-                secondary
-                :loading="installing[block.id]"
-                @click="handleInstall(block.id)"
-              >
-                {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
-              </NButton>
-            </template>
+            <div class="install-state-main">
+              <div class="install-state-title">{{ t('codingAgents.installStatus') }}</div>
+              <div class="install-state-value">
+                <NTag v-if="loading && !statusFor(block.id)" size="small">
+                  {{ t('codingAgents.checking') }}
+                </NTag>
+                <template v-else-if="statusFor(block.id)?.installed">
+                  <NTag size="small" type="success">{{ t('codingAgents.installed') }}</NTag>
+                  <span class="version-text">
+                    {{ statusFor(block.id)?.version || statusFor(block.id)?.rawVersion }}
+                  </span>
+                </template>
+                <NTag v-else size="small" type="warning">{{ t('codingAgents.notInstalled') }}</NTag>
+              </div>
+            </div>
+            <NButton
+              v-if="statusFor(block.id)?.installed"
+              size="small"
+              type="error"
+              secondary
+              :loading="deleting[block.id]"
+              @click="handleDelete(block.id)"
+            >
+              {{ deleting[block.id] ? t('codingAgents.deleting') : t('codingAgents.deleteNow') }}
+            </NButton>
+            <NButton
+              v-else
+              size="small"
+              type="primary"
+              secondary
+              :loading="installing[block.id]"
+              :disabled="loading && !statusFor(block.id)"
+              @click="handleInstall(block.id)"
+            >
+              {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
+            </NButton>
           </div>
 
-          <div class="command-list">
-            <div v-for="item in commandsFor(block.tool)" :key="item.kindKey" class="command-row">
-              <div class="command-meta">
-                <NTag size="small" round>{{ t(item.kindKey) }}</NTag>
-                <span>{{ t(item.noteKey) }}</span>
-              </div>
-              <div class="command-action">
-                <code class="command-cell">{{ item.command }}</code>
-                <NButton size="tiny" secondary @click="copyCommand(item.command)">
-                  {{ t('codingAgents.copyCommand') }}
+          <div class="config-file-section">
+            <div class="config-file-title">{{ t('codingAgents.configFiles') }}</div>
+            <div class="config-file-list">
+              <button
+                v-for="file in configFilesFor(block.id)"
+                :key="file.key"
+                class="config-file-cell"
+                :class="{ active: configEditorStates[block.id].selectedKey === file.key }"
+                type="button"
+                @click="loadConfigFile(block.id, file)"
+              >
+                {{ file.path }}
+              </button>
+            </div>
+          </div>
+
+          <div class="inline-config-editor">
+            <div class="config-editor-meta">
+              <span class="config-editor-path">
+                {{ configEditorStates[block.id].absolutePath || selectedConfigFile(block.id)?.path }}
+              </span>
+              <NTag v-if="configEditorStates[block.id].exists === false" size="small" type="warning">
+                {{ t('codingAgents.configFileNotCreated') }}
+              </NTag>
+            </div>
+            <NSpin :show="configEditorStates[block.id].loading">
+              <NInput
+                v-model:value="configEditorStates[block.id].content"
+                type="textarea"
+                class="config-textarea"
+                :disabled="configEditorStates[block.id].loading"
+              />
+            </NSpin>
+            <div class="config-editor-actions">
+              <NSpace justify="end">
+                <NButton
+                  size="small"
+                  type="primary"
+                  :loading="configEditorStates[block.id].saving"
+                  :disabled="configEditorStates[block.id].loading || !hasConfigUnsavedChanges(block.id)"
+                  @click="saveConfigFile(block.id)"
+                >
+                  {{ t('files.saveFile') }}
                 </NButton>
-              </div>
+              </NSpace>
             </div>
           </div>
         </section>
@@ -287,23 +365,20 @@ onMounted(loadStatus)
 .agent-block-header {
   padding: 14px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: flex-start;
   gap: 12px;
   border-bottom: 1px solid $border-light;
 
   h3 {
-    margin: 0 0 6px;
+    margin: 0;
     font-size: 16px;
     line-height: 1.2;
   }
+}
 
-  p {
-    margin: 0;
-    color: $text-secondary;
-    font-size: 13px;
-    line-height: 1.45;
-  }
+.provider-tag {
+  margin-top: 8px;
 }
 
 .agent-logo {
@@ -316,12 +391,33 @@ onMounted(loadStatus)
 }
 
 .agent-install-state {
-  min-height: 42px;
+  min-height: 58px;
   padding: 10px 14px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid $border-light;
+}
+
+.install-state-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.install-state-title {
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.install-state-value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .version-text {
@@ -334,55 +430,92 @@ onMounted(loadStatus)
   white-space: nowrap;
 }
 
-.command-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.command-row {
+.config-file-section {
   padding: 12px 14px;
-  display: grid;
-  grid-template-columns: minmax(160px, 0.7fr) minmax(0, 1.3fr);
-  gap: 12px;
   border-bottom: 1px solid $border-light;
-
-  &:last-child {
-    border-bottom: none;
-  }
 }
 
-.command-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 7px;
+.config-file-title {
+  margin-bottom: 8px;
   color: $text-secondary;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
-.command-action {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+.config-file-list {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.command-cell {
-  display: inline-block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.config-file-cell {
+  border: none;
   color: $text-secondary;
   background: $code-bg;
   padding: 3px 6px;
   border-radius: 6px;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-card-hover;
+  }
+
+  &.active {
+    color: $text-primary;
+    background: $bg-card-hover;
+    box-shadow: inset 0 0 0 1px $border-color;
+  }
+}
+
+.config-editor-meta {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.config-editor-path {
+  min-width: 0;
+  color: $text-secondary;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-config-editor {
+  padding: 12px 14px 14px;
+}
+
+.config-textarea {
+  width: 100%;
+  height: 300px;
+
+  :deep(.n-input-wrapper),
+  :deep(.n-input__textarea) {
+    height: 100%;
+  }
+
+  :deep(.n-input__textarea-el) {
+    height: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.config-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
 }
 
 @media (max-width: 760px) {
-  .agent-blocks,
-  .command-row,
-  .command-action {
+  .agent-blocks {
     grid-template-columns: 1fr;
   }
 
