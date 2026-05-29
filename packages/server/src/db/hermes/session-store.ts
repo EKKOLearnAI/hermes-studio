@@ -177,6 +177,7 @@ export function updateSession(id: string, data: Partial<Omit<HermesSessionRow, '
     if (key === 'id' || key === 'profile') continue
     // Skip last_active and ended_at - handle them separately below
     if (key === 'last_active' || key === 'ended_at') continue
+    if (val === undefined) continue
     fields.push(`"${key}" = ?`)
     values.push(val)
   }
