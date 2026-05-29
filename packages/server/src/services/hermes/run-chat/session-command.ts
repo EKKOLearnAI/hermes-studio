@@ -7,7 +7,7 @@ import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeH
 import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ContentBlock, QueuedRun, SessionState, BridgeUsageState } from './types'
 import { getModelContextLength } from '../model-context'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 
@@ -183,7 +183,7 @@ export async function handleSessionCommand(
       // persisted by a previous run (e.g. after page reload).
       const sessionRow = getSession(sessionId)
       if (sessionRow && sessionRow.input_tokens > 0 && sessionRow.cost_status) {
-        const dbBu = {
+        const dbBu: BridgeUsageState = {
           inputTokens: sessionRow.input_tokens,
           outputTokens: sessionRow.output_tokens,
           cacheReadTokens: sessionRow.cache_read_tokens,
@@ -232,9 +232,13 @@ export async function handleSessionCommand(
             `Cache write tokens:        ${dbBu.cacheWriteTokens.toLocaleString()}`,
             `Output tokens:             ${dbBu.outputTokens.toLocaleString()}`,
             `Reasoning tokens:          ${dbBu.reasoningTokens.toLocaleString()}`,
+            `Prompt tokens (total):     N/A`,
+            `Completion tokens:         N/A`,
             `Total tokens:              ${dbBu.totalTokens.toLocaleString()}`,
+            `API calls:                 N/A`,
             `Session duration:          ${sessionDuration}`,
             `Cost status:               ${dbBu.costStatus || 'unknown'}`,
+            `Cost source:               N/A`,
             `Total cost:                ${cost}`,
             '────────────────────────────────────────',
             `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${contextPct})`,
