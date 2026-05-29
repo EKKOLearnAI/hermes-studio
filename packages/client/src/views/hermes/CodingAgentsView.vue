@@ -1,16 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NAlert, NButton, NInput, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   deleteCodingAgent,
   fetchCodingAgentsStatus,
   installCodingAgent,
+  launchCodingAgentNativeTerminal,
+  prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
   writeCodingAgentConfigFile,
+  type CodingAgentApiMode,
   type CodingAgentId,
+  type CodingAgentLaunchMode,
+  type CodingAgentLaunchResult,
   type CodingAgentToolStatus,
 } from '@/api/coding-agents'
+import { fetchAvailableModelsForProfile, type AvailableModelGroup } from '@/api/hermes/system'
+import { useProfilesStore } from '@/stores/hermes/profiles'
+import TerminalPanel from '@/components/hermes/chat/TerminalPanel.vue'
 
 type CodingAgentBlock = {
   id: CodingAgentId
@@ -36,6 +44,7 @@ type ConfigEditorState = {
 
 const { t } = useI18n()
 const message = useMessage()
+const profilesStore = useProfilesStore()
 const loading = ref(false)
 const loadError = ref('')
 const tools = ref<CodingAgentToolStatus[]>([])
@@ -47,6 +56,20 @@ const deleting = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
 })
+const launchModalVisible = ref(false)
+const launchLoading = ref(false)
+const launchPreparing = ref(false)
+const nativeLaunchPreparing = ref(false)
+const launchAgentId = ref<CodingAgentId>('claude-code')
+const launchProviders = ref<AvailableModelGroup[]>([])
+const launchMode = ref<CodingAgentLaunchMode>('scoped')
+const launchProvider = ref('')
+const launchModel = ref('')
+const launchApiMode = ref<CodingAgentApiMode>('codex_responses')
+const launchResult = ref<CodingAgentLaunchResult | null>(null)
+const terminalVisible = ref(false)
+const terminalCommand = ref('')
+const terminalKey = ref(0)
 
 const agentLogos: Record<CodingAgentBlock['tool'], string> = {
   'Claude Code': '/coding-agents/claude-code.svg',
@@ -102,6 +125,46 @@ const statusById = computed(() => {
     return acc
   }, {} as Partial<Record<CodingAgentId, CodingAgentToolStatus>>)
 })
+
+const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
+
+const launchProviderOptions = computed(() => launchProviders.value.map(provider => ({
+  label: provider.label && provider.label !== provider.provider
+    ? `${provider.label} (${provider.provider})`
+    : provider.provider,
+  value: provider.provider,
+})))
+
+const selectedLaunchProvider = computed(() => (
+  launchProviders.value.find(provider => provider.provider === launchProvider.value) || null
+))
+
+const launchModelOptions = computed(() => (
+  selectedLaunchProvider.value?.models.map(model => ({ label: model, value: model })) || []
+))
+
+const launchProtocolOptions = computed(() => [
+  { label: t('codingAgents.protocolOpenAiChat'), value: 'chat_completions' },
+  { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
+  { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
+])
+
+const launchModeOptions = computed(() => [
+  { label: t('codingAgents.launchModeGlobal'), value: 'global' },
+  { label: t('codingAgents.launchModeScoped'), value: 'scoped' },
+])
+
+const launchModeThemeOverrides = {
+  buttonColorActive: '#111827',
+  buttonTextColorActive: '#fff',
+  buttonBorderColorActive: '#111827',
+  buttonBoxShadow: 'inset 0 0 0 1px var(--border-color)',
+  buttonBoxShadowHover: 'inset 0 0 0 1px #111827',
+}
+
+const useGlobalLaunchConfig = computed(() => (
+  launchAgentId.value === 'claude-code' && launchMode.value === 'global'
+))
 
 function statusFor(id: CodingAgentId) {
   return statusById.value[id]
@@ -169,6 +232,115 @@ async function saveConfigFile(agentId: CodingAgentId) {
     message.error(err?.message || t('files.saveFailed'))
   } finally {
     state.saving = false
+  }
+}
+
+function resetLaunchSelection() {
+  const firstProvider = launchProviders.value[0]
+  launchProvider.value = firstProvider?.provider || ''
+  launchModel.value = firstProvider?.models[0] || ''
+  launchApiMode.value = defaultLaunchApiMode(firstProvider)
+}
+
+function handleLaunchProviderChange(value: string) {
+  const provider = launchProviders.value.find(item => item.provider === value)
+  launchModel.value = provider?.models[0] || ''
+  launchApiMode.value = defaultLaunchApiMode(provider)
+}
+
+function defaultLaunchApiMode(provider?: AvailableModelGroup | null): CodingAgentApiMode {
+  const providerKey = String(provider?.provider || '').toLowerCase()
+  const baseUrl = String(provider?.base_url || '').toLowerCase()
+  if (
+    providerKey.includes('claude') ||
+    providerKey === 'anthropic' ||
+    baseUrl.includes('anthropic') ||
+    baseUrl.includes('/anthropic')
+  ) {
+    return 'anthropic_messages'
+  }
+  if (
+    providerKey === 'deepseek' ||
+    providerKey === 'lmstudio' ||
+    baseUrl.includes('deepseek') ||
+    baseUrl.includes('127.0.0.1') ||
+    baseUrl.includes('localhost')
+  ) {
+    return 'chat_completions'
+  }
+  return 'codex_responses'
+}
+
+async function openLaunchModal(agentId: CodingAgentId) {
+  launchAgentId.value = agentId
+  launchMode.value = 'scoped'
+  launchModalVisible.value = true
+  launchResult.value = null
+  launchLoading.value = true
+  try {
+    const result = await fetchAvailableModelsForProfile(activeProfileName.value)
+    launchProviders.value = result.groups || []
+    resetLaunchSelection()
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.loadProvidersFailed'))
+  } finally {
+    launchLoading.value = false
+  }
+}
+
+function currentLaunchRequest() {
+  if (useGlobalLaunchConfig.value) {
+    return {
+      mode: 'global' as const,
+      profile: activeProfileName.value,
+    }
+  }
+  const provider = selectedLaunchProvider.value
+  return {
+    mode: 'scoped' as const,
+    profile: activeProfileName.value,
+    provider: launchProvider.value,
+    model: launchModel.value,
+    baseUrl: provider?.base_url || '',
+    apiKey: provider?.api_key || '',
+    ...(launchAgentId.value === 'claude-code' ? { apiMode: launchApiMode.value } : {}),
+  }
+}
+
+async function launchBuiltInTerminal() {
+  if (!useGlobalLaunchConfig.value && (!launchProvider.value || !launchModel.value)) {
+    message.error(t('codingAgents.selectProviderModel'))
+    return
+  }
+  launchPreparing.value = true
+  try {
+    launchResult.value = await prepareCodingAgentLaunch(launchAgentId.value, currentLaunchRequest())
+    terminalCommand.value = launchResult.value.shellCommand
+    terminalKey.value += 1
+    launchModalVisible.value = false
+    terminalVisible.value = true
+    message.success(t('codingAgents.launchPrepared'))
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.launchPrepareFailed'))
+  } finally {
+    launchPreparing.value = false
+  }
+}
+
+async function launchNativeTerminal() {
+  if (!useGlobalLaunchConfig.value && (!launchProvider.value || !launchModel.value)) {
+    message.error(t('codingAgents.selectProviderModel'))
+    return
+  }
+  nativeLaunchPreparing.value = true
+  try {
+    await launchCodingAgentNativeTerminal(launchAgentId.value, currentLaunchRequest())
+    launchModalVisible.value = false
+    message.success(t('codingAgents.nativeLaunchStarted'))
+  } catch (err: any) {
+    message.error(err?.message || t('codingAgents.nativeLaunchFailed'))
+  } finally {
+    nativeLaunchPreparing.value = false
   }
 }
 
@@ -295,7 +467,7 @@ onMounted(() => {
           <div class="inline-config-editor">
             <div class="config-editor-meta">
               <span class="config-editor-path">
-                {{ configEditorStates[block.id].absolutePath || selectedConfigFile(block.id)?.path }}
+                {{ selectedConfigFile(block.id)?.path }}
               </span>
               <NTag v-if="configEditorStates[block.id].exists === false" size="small" type="warning">
                 {{ t('codingAgents.configFileNotCreated') }}
@@ -320,12 +492,124 @@ onMounted(() => {
                 >
                   {{ t('files.saveFile') }}
                 </NButton>
+                <NButton
+                  size="small"
+                  type="primary"
+                  :disabled="!statusFor(block.id)?.installed"
+                  @click="openLaunchModal(block.id)"
+                >
+                  {{ t('codingAgents.launch') }}
+                </NButton>
               </NSpace>
             </div>
           </div>
         </section>
       </div>
     </div>
+
+    <NModal
+      v-model:show="launchModalVisible"
+      preset="card"
+      class="launch-modal"
+      :style="{ width: '620px', maxWidth: 'calc(100vw - 32px)' }"
+      :title="t('codingAgents.launchTitle')"
+      :bordered="false"
+    >
+      <NSpin :show="launchLoading">
+        <NForm label-placement="top">
+          <NFormItem :label="t('codingAgents.profileScope')">
+            <NTag size="small">{{ activeProfileName }}</NTag>
+          </NFormItem>
+          <NFormItem v-if="launchAgentId === 'claude-code'" :label="t('codingAgents.launchModeScope')">
+            <NRadioGroup
+              v-model:value="launchMode"
+              name="coding-agent-launch-mode"
+              :theme-overrides="launchModeThemeOverrides"
+            >
+              <NRadioButton
+                v-for="option in launchModeOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </NRadioButton>
+            </NRadioGroup>
+          </NFormItem>
+          <NFormItem v-if="!useGlobalLaunchConfig" :label="t('codingAgents.providerScope')">
+            <NSelect
+              v-model:value="launchProvider"
+              :options="launchProviderOptions"
+              :placeholder="t('codingAgents.providerPlaceholder')"
+              filterable
+              @update:value="handleLaunchProviderChange"
+            />
+          </NFormItem>
+          <NFormItem v-if="!useGlobalLaunchConfig" :label="t('codingAgents.modelScope')">
+            <NSelect
+              v-model:value="launchModel"
+              :options="launchModelOptions"
+              :placeholder="t('codingAgents.modelPlaceholder')"
+              filterable
+            />
+          </NFormItem>
+          <NFormItem v-if="launchAgentId === 'claude-code' && !useGlobalLaunchConfig" :label="t('codingAgents.protocolScope')">
+            <NSelect
+              v-model:value="launchApiMode"
+              :options="launchProtocolOptions"
+            />
+          </NFormItem>
+        </NForm>
+      </NSpin>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton
+            secondary
+            :loading="launchPreparing"
+            :disabled="nativeLaunchPreparing"
+            @click="launchBuiltInTerminal"
+          >
+            {{ t('codingAgents.builtInTerminal') }}
+          </NButton>
+          <NButton
+            type="primary"
+            :loading="nativeLaunchPreparing"
+            :disabled="launchPreparing"
+            @click="launchNativeTerminal"
+          >
+            {{ t('codingAgents.nativeTerminal') }}
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <Teleport to="body">
+      <div v-if="terminalVisible" class="drawer-overlay" @click="terminalVisible = false"></div>
+      <div :class="['drawer-panel', { show: terminalVisible }]">
+        <div class="drawer-header">
+          <div class="drawer-tabs">
+            <button class="tab-button active" type="button">
+              {{ t('codingAgents.terminalTitle') }}
+            </button>
+          </div>
+          <button class="close-button" type="button" @click="terminalVisible = false">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="drawer-content">
+          <div class="drawer-pane">
+            <TerminalPanel
+              :key="terminalKey"
+              :visible="terminalVisible"
+              :initial-command="terminalCommand"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -514,6 +798,140 @@ onMounted(() => {
   padding-top: 12px;
 }
 
+.launch-modal {
+  max-width: 620px;
+}
+
+.launch-result {
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+  background: $bg-secondary;
+
+  code {
+    display: block;
+    margin-bottom: 10px;
+    color: $text-primary;
+    word-break: break-all;
+  }
+
+  pre {
+    margin: 0;
+    padding: 10px;
+    border-radius: $radius-sm;
+    background: $code-bg;
+    color: $text-primary;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+}
+
+.launch-result-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: $text-secondary;
+}
+
+.drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: min(-1180px, -88vw);
+  width: min(1180px, 88vw);
+  height: calc(100 * var(--vh));
+  max-height: calc(100 * var(--vh));
+  background: $bg-card;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  transition: right 0.3s ease;
+
+  &.show {
+    right: 0;
+  }
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid $border-color;
+  flex-shrink: 0;
+}
+
+.drawer-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.tab-button {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: $text-secondary;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+  border-radius: $radius-sm;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(var(--accent-primary-rgb), 0.05);
+  }
+
+  &.active {
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.1);
+  }
+}
+
+.close-button {
+  padding: 8px;
+  border: none;
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  color: $text-secondary;
+  cursor: pointer;
+  border-radius: $radius-sm;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(var(--accent-primary-rgb), 0.15);
+  }
+}
+
+.drawer-content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+
+.drawer-pane {
+  height: 100%;
+  overflow: auto;
+}
+
 @media (max-width: 760px) {
   .agent-blocks {
     grid-template-columns: 1fr;
@@ -521,6 +939,15 @@ onMounted(() => {
 
   .coding-agents-content {
     padding: 14px;
+  }
+
+  .drawer-panel {
+    width: 100%;
+    right: -100%;
+
+    &.show {
+      right: 0;
+    }
   }
 }
 </style>

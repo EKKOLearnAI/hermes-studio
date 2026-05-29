@@ -12,6 +12,58 @@ CC Switch keeps provider, MCP, prompt, and skill state in its own storage, then 
 - Provider records store a `settings_config` JSON payload.
 - Switching providers writes only the target app's live config files.
 
+## One-Click Configuration Flow
+
+CC Switch's "one-click" experience is provider-driven, not a raw config-file editor.
+
+User flow:
+
+1. User opens Add Provider.
+2. User selects either an app-specific provider or a unified provider.
+3. Preset fills provider name, endpoint, protocol, model defaults, and routing requirements.
+4. User enters only the API key and optional notes.
+5. Provider is saved into `~/.cc-switch/cc-switch.db`.
+6. User clicks Enable on a provider card.
+7. CC Switch generates the target app's live config from the stored provider.
+8. CC Switch validates, backs up, and atomically writes the live config files.
+9. UI marks the provider as current.
+
+Important details from the docs:
+
+- Presets avoid manual JSON/TOML editing.
+- Claude/Codex/Gemini can use app-specific providers.
+- Unified providers can share one API key and endpoint across Claude Code, Codex, and Gemini.
+- Codex Chat Completions presets automatically enable local routing and model mapping because Codex natively expects Responses API and GPT-style models.
+- Claude Code and Gemini generally take effect immediately after switching.
+- Codex usually requires restarting the terminal/Codex process after switching.
+
+Implementation path in CC Switch:
+
+- Tauri command: `commands/provider.rs::switch_provider`
+- Service switch path: `ProviderService::switch(...)`
+- Live projection: `services/provider/live.rs::write_live_with_common_config`
+- Per-app live write: `services/provider/live.rs::write_live_snapshot`
+- Codex write logic: `codex_config.rs::write_codex_live_for_provider`
+- Global sync: `services/provider/live.rs::sync_current_to_live`
+
+Design implication for Hermes:
+
+- Keep the current raw config editor as an advanced/debug path only.
+- Add a normal "preset + API key + apply" path for Claude Code and Codex.
+- Store provider presets separately from the live files.
+- Add a backend apply endpoint that validates JSON/TOML, creates backups, and atomically writes target files.
+- For third-party Codex providers, prefer writing API keys into `config.toml` as `experimental_bearer_token` instead of overwriting `~/.codex/auth.json`, preserving the user's official ChatGPT/Codex login cache.
+
+Hermes multi-user adjustment:
+
+- Do not write `~/.claude` or `~/.codex` by default in the Web UI.
+- Store generated/editable CLI configs under the Web UI home, scoped under the `coding-agent` namespace.
+- Generated model/config directory shape: `~/.hermes-web-ui/coding-agent/model/{profile}/{provider}/{agent}/`.
+- Workspace directory shape: `~/.hermes-web-ui/coding-agent/workspace/{profile}/{provider}/`.
+- Example: `~/.hermes-web-ui/coding-agent/model/default/custom:glm/claude-code/`.
+- Claude Code can be launched with `--settings {root}/settings.json` and optional scoped MCP/prompt paths.
+- Codex can be launched with `CODEX_HOME={root}` so `config.toml`, `auth.json`, and `AGENTS.md` are isolated per profile/provider.
+
 ## Claude Code
 
 Default config directory:
@@ -206,4 +258,3 @@ Shared provider live write path:
 
 - `/Users/ekko/Downloads/cc-switch-main/src-tauri/src/services/provider/live.rs`
 - `/Users/ekko/Downloads/cc-switch-main/src-tauri/src/services/proxy.rs`
-

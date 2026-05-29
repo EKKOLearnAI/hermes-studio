@@ -7,6 +7,7 @@ import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
 import { codingAgentRoutes } from './coding-agents'
+import { claudeCodeProxyRoutes } from './claude-code-proxy'
 
 // Hermes route modules
 import { sessionRoutes } from './hermes/sessions'
@@ -44,6 +45,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
+  app.use(claudeCodeProxyRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))

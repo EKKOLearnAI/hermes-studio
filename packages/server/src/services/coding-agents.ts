@@ -4,8 +4,16 @@ import { mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
+import { getWebUiHome } from '../config'
+import { registerClaudeCodeProxyTarget, type ApiMode } from './claude-code-proxy'
+import { PROVIDER_PRESETS } from '../shared/providers'
 
 const execFileAsync = promisify(execFile)
+const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
+const CLAUDE_PROXY_HAIKU_MODEL = 'claude-haiku-4-5'
+const CLAUDE_PROXY_SONNET_MODEL = 'claude-sonnet-4-6'
+const CLAUDE_PROXY_OPUS_MODEL = 'claude-opus-4-7'
+const CODING_AGENT_HOME_DIR = 'coding-agent'
 
 export type CodingAgentId = 'claude-code' | 'codex'
 
@@ -41,10 +49,46 @@ export interface CodingAgentConfigFileDefinition {
   language: string
 }
 
+export interface CodingAgentConfigScope {
+  profile?: string
+  provider?: string
+}
+
 export interface CodingAgentConfigFileContent extends CodingAgentConfigFileDefinition {
   content: string
   exists: boolean
   size: number
+  profile: string
+  provider: string
+  rootDir: string
+}
+
+export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
+  mode?: 'scoped' | 'global'
+  model?: string
+  baseUrl?: string
+  apiKey?: string
+  apiMode?: ApiMode
+}
+
+export interface CodingAgentLaunchResult {
+  agentId: CodingAgentId
+  mode: 'scoped' | 'global'
+  profile: string
+  provider: string
+  model: string
+  rootDir: string
+  workspaceDir: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  shellCommand: string
+  files: Array<{ key: string; path: string; absolutePath: string }>
+}
+
+export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
+  nativeTerminal: true
+  terminal: string
 }
 
 const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
@@ -64,16 +108,16 @@ const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
   },
 ]
 
-const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'>>> = {
+const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'> & { scopedPath: string }>> = {
   'claude-code': [
-    { key: 'settings', path: '~/.claude/settings.json', language: 'json' },
-    { key: 'mcp', path: '~/.claude.json', language: 'json' },
-    { key: 'prompt', path: '~/.claude/CLAUDE.md', language: 'markdown' },
+    { key: 'settings', path: '~/.claude/settings.json', scopedPath: 'settings.json', language: 'json' },
+    { key: 'mcp', path: '~/.claude.json', scopedPath: 'mcp.json', language: 'json' },
+    { key: 'prompt', path: '~/.claude/CLAUDE.md', scopedPath: 'CLAUDE.md', language: 'markdown' },
   ],
   codex: [
-    { key: 'auth', path: '~/.codex/auth.json', language: 'json' },
-    { key: 'config', path: '~/.codex/config.toml', language: 'ini' },
-    { key: 'agents', path: '~/.codex/AGENTS.md', language: 'markdown' },
+    { key: 'auth', path: '~/.codex/auth.json', scopedPath: 'auth.json', language: 'json' },
+    { key: 'config', path: '~/.codex/config.toml', scopedPath: 'config.toml', language: 'ini' },
+    { key: 'agents', path: '~/.codex/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
 }
 
@@ -118,20 +162,174 @@ function getNpmBin() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
+function normalizeScopeSegment(value: string | undefined, fallback: string, label: string): string {
+  const segment = String(value || '').trim() || fallback
+  if (
+    segment === '.' ||
+    segment === '..' ||
+    segment.includes('/') ||
+    segment.includes('\\') ||
+    segment.includes('\0')
+  ) {
+    const err = new Error(`Invalid ${label}`)
+    ;(err as any).status = 400
+    throw err
+  }
+  if (segment.length > 128) {
+    const err = new Error(`${label} is too long`)
+    ;(err as any).status = 400
+    throw err
+  }
+  return segment
+}
+
+function normalizeConfigScope(scope: CodingAgentConfigScope = {}): Required<CodingAgentConfigScope> {
+  return {
+    profile: normalizeScopeSegment(scope.profile, 'default', 'profile'),
+    provider: normalizeScopeSegment(scope.provider, 'default', 'provider'),
+  }
+}
+
+function normalizeLaunchApiMode(value: unknown, fallback: ApiMode): ApiMode {
+  if (!value) return fallback
+  const mode = String(value).trim() as ApiMode
+  if (!LAUNCH_API_MODES.has(mode)) {
+    const err = new Error('Invalid API protocol')
+    ;(err as any).status = 400
+    throw err
+  }
+  return mode
+}
+
+function getScopedConfigRoot(id: CodingAgentId, scope: Required<CodingAgentConfigScope>): string {
+  return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'model', scope.profile, scope.provider, id)
+}
+
+function getScopedWorkspaceRoot(scope: Required<CodingAgentConfigScope>): string {
+  return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'workspace', scope.profile, scope.provider)
+}
+
 function expandHomePath(path: string): string {
   if (path === '~') return homedir()
   if (path.startsWith('~/')) return join(homedir(), path.slice(2))
   return path
 }
 
-function getConfigFileDefinition(id: string, key: string): CodingAgentConfigFileDefinition | null {
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) return value
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function appleScriptString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+async function commandExists(command: string): Promise<boolean> {
+  try {
+    await execFileAsync(process.platform === 'win32' ? 'where' : 'which', [command], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      windowsHide: true,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isDockerRuntime(): boolean {
+  return existsSync('/.dockerenv') || process.env.container === 'docker'
+}
+
+async function openNativeTerminal(shellCommand: string): Promise<string> {
+  if (process.platform === 'darwin') {
+    await execFileAsync('osascript', [
+      '-e',
+      `tell application "Terminal" to do script ${appleScriptString(shellCommand)}`,
+      '-e',
+      'tell application "Terminal" to activate',
+    ], {
+      encoding: 'utf-8',
+      timeout: 8000,
+      windowsHide: true,
+    })
+    return 'Terminal.app'
+  }
+
+  if (process.platform === 'linux') {
+    if (isDockerRuntime()) {
+      const err = new Error('Native terminal is not available inside Docker')
+      ;(err as any).status = 400
+      throw err
+    }
+    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+      const err = new Error('Native terminal requires a Linux desktop session')
+      ;(err as any).status = 400
+      throw err
+    }
+
+    const candidates: Array<{ command: string; args: string[] }> = [
+      { command: 'xdg-terminal-exec', args: ['bash', '-lc', shellCommand] },
+      { command: 'gnome-terminal', args: ['--', 'bash', '-lc', shellCommand] },
+      { command: 'konsole', args: ['-e', 'bash', '-lc', shellCommand] },
+      { command: 'xfce4-terminal', args: ['--command', `bash -lc ${shellQuote(shellCommand)}`] },
+      { command: 'kitty', args: ['bash', '-lc', shellCommand] },
+      { command: 'alacritty', args: ['-e', 'bash', '-lc', shellCommand] },
+      { command: 'xterm', args: ['-e', 'bash', '-lc', shellCommand] },
+    ]
+
+    const errors: string[] = []
+    for (const candidate of candidates) {
+      if (!(await commandExists(candidate.command))) continue
+      try {
+        await execFileAsync(candidate.command, candidate.args, {
+          encoding: 'utf-8',
+          timeout: 8000,
+          windowsHide: true,
+        })
+        return candidate.command
+      } catch (err: any) {
+        errors.push(`${candidate.command}: ${normalizeError(err)}`)
+      }
+    }
+
+    const err = new Error(errors[0] || 'No supported Linux terminal command was found')
+    ;(err as any).status = 400
+    throw err
+  }
+
+  const err = new Error('Native terminal launch is not supported on this platform')
+  ;(err as any).status = 400
+  throw err
+}
+
+function getLiveConfigFileDefinition(id: string, key: string): CodingAgentConfigFileDefinition | null {
   const tool = getCodingAgentDefinition(id)
   if (!tool) return null
   const definition = CONFIG_FILE_DEFINITIONS[tool.id].find(file => file.key === key)
   if (!definition) return null
   return {
-    ...definition,
+    key: definition.key,
+    path: definition.path,
+    language: definition.language,
     absolutePath: expandHomePath(definition.path),
+  }
+}
+
+function getScopedConfigFileDefinition(id: string, key: string, scopeInput: CodingAgentConfigScope = {}): (CodingAgentConfigFileDefinition & Required<CodingAgentConfigScope> & { rootDir: string }) | null {
+  const tool = getCodingAgentDefinition(id)
+  if (!tool) return null
+  const definition = CONFIG_FILE_DEFINITIONS[tool.id].find(file => file.key === key)
+  if (!definition) return null
+  const scope = normalizeConfigScope(scopeInput)
+  const rootDir = getScopedConfigRoot(tool.id, scope)
+  return {
+    key: definition.key,
+    path: definition.path,
+    language: definition.language,
+    ...scope,
+    rootDir,
+    absolutePath: join(rootDir, definition.scopedPath),
   }
 }
 
@@ -266,7 +464,9 @@ export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConf
   const tool = getCodingAgentDefinition(id)
   if (!tool) return []
   return CONFIG_FILE_DEFINITIONS[tool.id].map(file => ({
-    ...file,
+    key: file.key,
+    path: file.path,
+    language: file.language,
     absolutePath: expandHomePath(file.path),
   }))
 }
@@ -395,13 +595,14 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
   }
 }
 
-export async function readCodingAgentConfigFile(id: string, key: string): Promise<CodingAgentConfigFileContent> {
-  const definition = getConfigFileDefinition(id, key)
+export async function readCodingAgentConfigFile(id: string, key: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
+  const definition = getLiveConfigFileDefinition(id, key)
   if (!definition) {
     const err = new Error('Unknown coding agent config file')
     ;(err as any).status = 404
     throw err
   }
+  const normalizedScope = normalizeConfigScope(scope)
 
   try {
     const info = await stat(definition.absolutePath)
@@ -417,6 +618,8 @@ export async function readCodingAgentConfigFile(id: string, key: string): Promis
     }
     return {
       ...definition,
+      ...normalizedScope,
+      rootDir: dirname(definition.absolutePath),
       content: await readFile(definition.absolutePath, 'utf-8'),
       exists: true,
       size: info.size,
@@ -425,6 +628,8 @@ export async function readCodingAgentConfigFile(id: string, key: string): Promis
     if (err?.code !== 'ENOENT') throw err
     return {
       ...definition,
+      ...normalizedScope,
+      rootDir: dirname(definition.absolutePath),
       content: '',
       exists: false,
       size: 0,
@@ -432,13 +637,14 @@ export async function readCodingAgentConfigFile(id: string, key: string): Promis
   }
 }
 
-export async function writeCodingAgentConfigFile(id: string, key: string, content: string): Promise<CodingAgentConfigFileContent> {
-  const definition = getConfigFileDefinition(id, key)
+export async function writeCodingAgentConfigFile(id: string, key: string, content: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
+  const definition = getLiveConfigFileDefinition(id, key)
   if (!definition) {
     const err = new Error('Unknown coding agent config file')
     ;(err as any).status = 404
     throw err
   }
+  const normalizedScope = normalizeConfigScope(scope)
 
   const buffer = Buffer.from(content || '', 'utf-8')
   if (buffer.length > MAX_CONFIG_FILE_SIZE) {
@@ -451,8 +657,155 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
   await writeFile(definition.absolutePath, buffer)
   return {
     ...definition,
+    ...normalizedScope,
+    rootDir: dirname(definition.absolutePath),
     content,
     exists: true,
     size: buffer.length,
+  }
+}
+
+export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentLaunchResult> {
+  const tool = getCodingAgentDefinition(id)
+  if (!tool) {
+    const err = new Error('Unknown coding agent')
+    ;(err as any).status = 400
+    throw err
+  }
+
+  const mode = input.mode === 'global' ? 'global' : 'scoped'
+  if (mode === 'global') {
+    if (tool.id !== 'claude-code') {
+      const err = new Error('Global launch is only supported for Claude Code')
+      ;(err as any).status = 400
+      throw err
+    }
+    const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
+    const workspaceDir = getScopedWorkspaceRoot(scope)
+    await mkdir(workspaceDir, { recursive: true })
+    const shellCommand = `cd ${shellQuote(workspaceDir)} && ${tool.command}`
+    return {
+      agentId: tool.id,
+      mode,
+      profile: scope.profile,
+      provider: scope.provider,
+      model: '',
+      rootDir: workspaceDir,
+      workspaceDir,
+      command: tool.command,
+      args: [],
+      env: {},
+      shellCommand,
+      files: [],
+    }
+  }
+
+  const provider = normalizeScopeSegment(input.provider, 'default', 'provider')
+  const scope = normalizeConfigScope({ profile: input.profile, provider })
+  const model = String(input.model || '').trim()
+  if (!model) {
+    const err = new Error('Model is required')
+    ;(err as any).status = 400
+    throw err
+  }
+
+  const baseUrl = String(input.baseUrl || '').trim()
+  const apiKey = String(input.apiKey || '').trim()
+  const preset = PROVIDER_PRESETS.find(item => item.value === provider)
+  const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
+  const rootDir = getScopedConfigRoot(tool.id, scope)
+  const workspaceDir = getScopedWorkspaceRoot(scope)
+  await mkdir(rootDir, { recursive: true })
+  await mkdir(workspaceDir, { recursive: true })
+
+  const files: Array<{ key: string; path: string; absolutePath: string }> = []
+  const writeScopedFile = async (key: string, content: string) => {
+    const definition = getScopedConfigFileDefinition(tool.id, key, scope)
+    if (!definition) return
+    await mkdir(dirname(definition.absolutePath), { recursive: true })
+    await writeFile(definition.absolutePath, content, 'utf-8')
+    files.push({ key, path: definition.path, absolutePath: definition.absolutePath })
+  }
+
+  let args: string[] = []
+  let env: Record<string, string> = {}
+
+  if (tool.id === 'claude-code') {
+    const proxyTarget = baseUrl && apiKey
+      ? registerClaudeCodeProxyTarget({ provider, model, baseUrl, apiKey, apiMode })
+      : null
+    const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
+    const claudeApiKey = proxyTarget?.token || apiKey
+    const settings = {
+      env: {
+        ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
+        ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: CLAUDE_PROXY_HAIKU_MODEL,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: model,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: CLAUDE_PROXY_SONNET_MODEL,
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: model,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: CLAUDE_PROXY_OPUS_MODEL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: model,
+      },
+    }
+    await writeScopedFile('settings', `${JSON.stringify(settings, null, 2)}\n`)
+    await writeScopedFile('mcp', `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`)
+
+    const settingsPath = join(rootDir, 'settings.json')
+    const mcpPath = join(rootDir, 'mcp.json')
+    args = ['--settings', settingsPath, '--mcp-config', mcpPath]
+  } else {
+    const providerId = 'custom'
+    const configToml = [
+      `model_provider = ${JSON.stringify(providerId)}`,
+      `model = ${JSON.stringify(model)}`,
+      'disable_response_storage = true',
+      '',
+      `[model_providers.${providerId}]`,
+      `name = ${JSON.stringify(provider)}`,
+      ...(baseUrl ? [`base_url = ${JSON.stringify(baseUrl)}`] : []),
+      'wire_api = "responses"',
+      'requires_openai_auth = true',
+      ...(apiKey ? [`experimental_bearer_token = ${JSON.stringify(apiKey)}`] : []),
+      '',
+    ].join('\n')
+    await writeScopedFile('config', configToml)
+    await writeScopedFile('auth', `${JSON.stringify({}, null, 2)}\n`)
+
+    env = { CODEX_HOME: rootDir }
+    args = ['--model', model]
+  }
+
+  const envPrefix = Object.entries(env).map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ')
+  const runCommand = [
+    envPrefix,
+    tool.command,
+    ...args.map(shellQuote),
+  ].filter(Boolean).join(' ')
+  const shellCommand = `cd ${shellQuote(workspaceDir)} && ${runCommand}`
+
+  return {
+    agentId: tool.id,
+    mode,
+    profile: scope.profile,
+    provider: scope.provider,
+    model,
+    rootDir,
+    workspaceDir,
+    command: tool.command,
+    args,
+    env,
+    shellCommand,
+    files,
+  }
+}
+
+export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {
+  const launch = await prepareCodingAgentLaunch(id, input)
+  const terminal = await openNativeTerminal(launch.shellCommand)
+  return {
+    ...launch,
+    nativeTerminal: true,
+    terminal,
   }
 }
