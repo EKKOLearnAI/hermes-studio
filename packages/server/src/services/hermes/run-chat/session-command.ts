@@ -190,7 +190,7 @@ export async function handleSessionCommand(
         emitCommand({
           action: 'usage',
           terminal: !state.isWorking,
-          message: lines.filter(l => l !== '').join('\n'),
+          message: lines.filter(l => l !== '').join('\x0a'),
           inputTokens: bu.inputTokens,
           outputTokens: bu.outputTokens,
           cacheReadTokens: bu.cacheReadTokens,
