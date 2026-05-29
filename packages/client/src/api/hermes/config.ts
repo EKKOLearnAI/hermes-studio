@@ -12,6 +12,7 @@ export interface DisplayConfig {
   inline_diffs?: boolean
   show_cost?: boolean
   skin?: string
+  avatar_size?: number
 }
 
 export interface AgentConfig {

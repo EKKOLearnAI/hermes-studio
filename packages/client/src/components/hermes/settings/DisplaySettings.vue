@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NButton, NSwitch, NSelect, useMessage } from 'naive-ui'
+import { NButton, NSwitch, NSelect, NSlider, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useTheme, type BrightnessMode } from '@/composables/useTheme'
@@ -16,6 +16,16 @@ const themeOptions = [
   { label: t('settings.display.themeDark'), value: 'dark' },
   { label: t('settings.display.themeSystem'), value: 'system' },
 ]
+
+const AVATAR_SIZE_MIN = 24
+const AVATAR_SIZE_MAX = 80
+const AVATAR_SIZE_DEFAULT = 40
+
+const avatarSize = settingsStore.display.avatar_size ?? AVATAR_SIZE_DEFAULT
+
+function handleAvatarSizeChange(val: number) {
+  save({ avatar_size: val })
+}
 
 async function save(values: Record<string, any>) {
   try {
@@ -108,6 +118,12 @@ async function testCompletionNotification() {
         </NButton>
       </div>
     </SettingRow>
+    <SettingRow :label="t('settings.display.avatarSize')" :hint="t('settings.display.avatarSizeHint')">
+      <div class="avatar-size-control">
+        <NSlider :value="avatarSize" :min="AVATAR_SIZE_MIN" :max="AVATAR_SIZE_MAX" :step="2" class="avatar-size-slider" @update:value="handleAvatarSizeChange" />
+        <span class="avatar-size-value">{avatarSize}px</span>
+      </div>
+    </SettingRow>
   </section>
 </template>
 
@@ -122,5 +138,25 @@ async function testCompletionNotification() {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+
+.avatar-size-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 200px;
+}
+
+.avatar-size-slider {
+  flex: 1;
+}
+
+.avatar-size-value {
+  font-size: 13px;
+  color: var(--n-text-color);
+  white-space: nowrap;
+  min-width: 40px;
+  text-align: right;
+}
 }
 </style>

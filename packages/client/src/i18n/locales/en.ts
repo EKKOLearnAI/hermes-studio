@@ -1310,6 +1310,8 @@ export default {
       notifyOnCompleteTestFailed: 'Failed to send test notification',
       busyInputMode: 'Busy Input Mode',
       busyInputModeHint: 'Allow input while AI is processing',
+      avatarSize: 'Avatar Size',
+      avatarSizeHint: 'Adjust the size of profile avatars in chat messages (24–80px)',
       theme: 'Theme',
       themeHint: 'Choose light, dark, or follow system preference',
       themeLight: 'Light',
