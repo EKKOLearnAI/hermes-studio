@@ -109,6 +109,7 @@ export interface BridgeUsageState {
   apiCalls: number
   model?: string
   estimatedCostUsd?: number
+  actualCostUsd?: number
   costStatus?: string
   costSource?: string
 }
