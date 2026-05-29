@@ -7,6 +7,7 @@ export interface HermesProfile {
   gatewayStatus?: string
   alias: string
   avatar?: ProfileAvatar | null
+  thinkingAnimation?: ProfileThinkingAnimation | null
 }
 
 export interface HermesProfileDetail {
@@ -18,6 +19,7 @@ export interface HermesProfileDetail {
   hasEnv: boolean
   hasSoulMd: boolean
   avatar?: ProfileAvatar | null
+  thinkingAnimation?: ProfileThinkingAnimation | null
 }
 
 export interface ProfileAvatar {
@@ -25,6 +27,14 @@ export interface ProfileAvatar {
   seed?: string
   dataUrl?: string
   updatedAt?: number
+}
+
+export interface ProfileThinkingAnimation {
+  url?: string
+  enableThinking?: boolean
+  updatedAt?: number
+  items?: Array<{ url: string; name?: string }>
+  activeIndex?: number
 }
 
 export interface ProfileRuntimeStatus {
@@ -226,3 +236,16 @@ export async function importProfile(file: File): Promise<boolean> {
     return false
   }
 }
+
+export async function updateProfileThinkingAnimation(name: string, animation: ProfileThinkingAnimation): Promise<ProfileThinkingAnimation> {
+  const res = await request<{ animation: ProfileThinkingAnimation }>(`/api/hermes/profiles/${encodeURIComponent(name)}/thinking-animation`, {
+    method: 'PUT',
+    body: JSON.stringify(animation),
+  })
+  return res.animation
+}
+
+export async function deleteProfileThinkingAnimation(name: string): Promise<void> {
+  await request(`/api/hermes/profiles/${encodeURIComponent(name)}/thinking-animation`, { method: 'DELETE' })
+}
+

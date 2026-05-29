@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as profilesApi from '@/api/hermes/profiles'
-import type { HermesProfile, HermesProfileDetail } from '@/api/hermes/profiles'
+import type { HermesProfile, HermesProfileDetail, ProfileThinkingAnimation } from '@/api/hermes/profiles'
 import { useAppStore } from './app'
 
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
@@ -97,6 +97,33 @@ export const useProfilesStore = defineStore('profiles', () => {
     }
   }
 
+  async function updateThinkingAnimation(name: string, animation: ProfileThinkingAnimation) {
+    const saved = await profilesApi.updateProfileThinkingAnimation(name, animation)
+    profiles.value = profiles.value.map(profile => (
+      profile.name === name ? { ...profile, thinkingAnimation: saved } : profile
+    ))
+    if (detailMap.value[name]) {
+      detailMap.value[name] = { ...detailMap.value[name], thinkingAnimation: saved }
+    }
+    if (activeProfile.value?.name === name) {
+      activeProfile.value = { ...activeProfile.value, thinkingAnimation: saved }
+    }
+    return saved
+  }
+
+  async function deleteThinkingAnimation(name: string) {
+    await profilesApi.deleteProfileThinkingAnimation(name)
+    profiles.value = profiles.value.map(profile => (
+      profile.name === name ? { ...profile, thinkingAnimation: null } : profile
+    ))
+    if (detailMap.value[name]) {
+      detailMap.value[name] = { ...detailMap.value[name], thinkingAnimation: null }
+    }
+    if (activeProfile.value?.name === name) {
+      activeProfile.value = { ...activeProfile.value, thinkingAnimation: null }
+    }
+  }
+
   async function createProfile(name: string, clone?: boolean) {
     const res = await profilesApi.createProfile(name, clone)
     if (res.success) await fetchProfiles()
@@ -187,6 +214,8 @@ export const useProfilesStore = defineStore('profiles', () => {
     importProfile,
     updateAvatar,
     deleteAvatar,
+    updateThinkingAnimation,
+    deleteThinkingAnimation,
     clearAllSessionCaches,
   }
 })

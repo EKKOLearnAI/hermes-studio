@@ -180,6 +180,23 @@ function profileAvatarImagePath(name: string, file = 'avatar.bin'): string {
   return join(profileMetadataDir(name), file)
 }
 
+function profileThinkingAnimationPath(name: string): string {
+  return join(profileMetadataDir(name), 'thinking-animation.json')
+}
+
+interface ProfileThinkingAnimationItem {
+  url: string
+  name?: string
+}
+
+interface ProfileThinkingAnimationMeta {
+  url?: string
+  enableThinking?: boolean
+  updatedAt: number
+  items?: ProfileThinkingAnimationItem[]
+  activeIndex?: number
+}
+
 function readProfileAvatar(name: string): ProfileAvatarResponse | null {
   const metaPath = profileAvatarMetaPath(name)
   if (!existsSync(metaPath)) return null
@@ -208,10 +225,42 @@ function readProfileAvatar(name: string): ProfileAvatarResponse | null {
   return null
 }
 
-function attachProfileAvatars<T extends HermesProfile>(profiles: T[]): Array<T & { avatar: ProfileAvatarResponse | null }> {
+function readProfileThinkingAnimation(name: string): { url?: string; enableThinking?: boolean; items?: ProfileThinkingAnimationItem[]; activeIndex?: number } | null {
+  const metaPath = profileThinkingAnimationPath(name)
+  if (!existsSync(metaPath)) return null
+  try {
+    const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as ProfileThinkingAnimationMeta
+    // 兼容旧数据：如果只有 url 没有 items，迁移到数组格式
+    if (meta.url && !meta.items) {
+      return {
+        url: meta.url,
+        enableThinking: meta.enableThinking,
+        items: [{ url: meta.url }],
+        activeIndex: 0,
+      }
+    }
+    // 新格式：从 items + activeIndex 推导 url
+    let url = meta.url
+    if (meta.items && meta.activeIndex !== undefined && meta.activeIndex >= 0 && meta.activeIndex < meta.items.length) {
+      url = meta.items[meta.activeIndex].url
+    }
+    return {
+      url,
+      enableThinking: meta.enableThinking,
+      items: meta.items,
+      activeIndex: meta.activeIndex,
+    }
+  } catch (err) {
+    logger.warn(err, '[profiles] failed to read thinking animation for profile "%s"', name)
+  }
+  return null
+}
+
+function attachProfileAvatars<T extends HermesProfile>(profiles: T[]): Array<T & { avatar: ProfileAvatarResponse | null; thinkingAnimation: { url?: string; enableThinking?: boolean; items?: ProfileThinkingAnimationItem[]; activeIndex?: number } | null }> {
   return profiles.map(profile => ({
     ...profile,
     avatar: readProfileAvatar(profile.name),
+    thinkingAnimation: readProfileThinkingAnimation(profile.name),
   }))
 }
 
@@ -457,7 +506,7 @@ export async function get(ctx: any) {
   if (denyProfile(ctx, name)) return
   try {
     const profile = await hermesCli.getProfile(name)
-    ctx.body = { profile: { ...profile, avatar: readProfileAvatar(profile.name) } }
+    ctx.body = { profile: { ...profile, avatar: readProfileAvatar(profile.name), thinkingAnimation: readProfileThinkingAnimation(profile.name) } }
   } catch (err: any) {
     ctx.status = err.message.includes('not found') ? 404 : 500
     ctx.body = { error: err.message }
@@ -509,6 +558,79 @@ export async function deleteAvatar(ctx: any) {
   if (denyProfile(ctx, name)) return
   try {
     removeProfileMetadata(name)
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function updateThinkingAnimation(ctx: any) {
+  const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
+  if (isForbiddenProfileName(name)) {
+    ctx.status = 400
+    ctx.body = { error: `Profile name '${name}' is reserved` }
+    return
+  }
+  const body = ctx.request.body as { url?: string; enableThinking?: boolean; items?: ProfileThinkingAnimationItem[]; activeIndex?: number }
+  try {
+    const dir = profileMetadataDir(name)
+    await mkdir(dir, { recursive: true })
+
+    // 读取现有数据
+    let existing: ProfileThinkingAnimationMeta = { updatedAt: Date.now() }
+    const metaPath = profileThinkingAnimationPath(name)
+    if (existsSync(metaPath)) {
+      try {
+        existing = JSON.parse(readFileSync(metaPath, 'utf-8')) as ProfileThinkingAnimationMeta
+      } catch {}
+    }
+
+    // 兼容旧数据：如果只有 url 没有 items，迁移
+    if (existing.url && !existing.items) {
+      existing.items = [{ url: existing.url }]
+      existing.activeIndex = 0
+    }
+
+    // 如果传了 items，使用新的 items（前端批量保存）
+    if (body.items !== undefined) {
+      existing.items = body.items
+      existing.activeIndex = body.activeIndex ?? 0
+      // 从 activeIndex 推导 url
+      if (existing.items.length > 0 && existing.activeIndex !== undefined && existing.activeIndex >= 0 && existing.activeIndex < existing.items.length) {
+        existing.url = existing.items[existing.activeIndex].url
+      } else if (existing.items.length > 0) {
+        existing.url = existing.items[0].url
+        existing.activeIndex = 0
+      } else {
+        existing.url = undefined
+        existing.activeIndex = undefined
+      }
+    } else if (body.url !== undefined) {
+      // 兼容旧调用：直接设置 url
+      existing.url = body.url
+    }
+
+    if (body.enableThinking !== undefined) {
+      existing.enableThinking = body.enableThinking
+    }
+
+    existing.updatedAt = Date.now()
+    await writeFile(metaPath, JSON.stringify(existing, null, 2) + '\n', { mode: 0o600 })
+    ctx.body = { thinkingAnimation: readProfileThinkingAnimation(name) }
+  } catch (err: any) {
+    ctx.status = 400
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function deleteThinkingAnimation(ctx: any) {
+  const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
+  try {
+    const metaPath = profileThinkingAnimationPath(name)
+    rmSync(metaPath, { force: true })
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500

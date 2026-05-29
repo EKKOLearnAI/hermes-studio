@@ -12,6 +12,8 @@ profileRoutes.post('/api/hermes/profiles/:name/restart', ctrl.restartProfileRunt
 profileRoutes.post('/api/hermes/profiles/:name/gateway/restart', ctrl.restartGatewayForProfile)
 profileRoutes.put('/api/hermes/profiles/:name/avatar', ctrl.updateAvatar)
 profileRoutes.delete('/api/hermes/profiles/:name/avatar', ctrl.deleteAvatar)
+profileRoutes.put('/api/hermes/profiles/:name/thinking-animation', ctrl.updateThinkingAnimation)
+profileRoutes.delete('/api/hermes/profiles/:name/thinking-animation', ctrl.deleteThinkingAnimation)
 profileRoutes.get('/api/hermes/profiles/:name', ctrl.get)
 profileRoutes.delete('/api/hermes/profiles/:name', ctrl.remove)
 profileRoutes.post('/api/hermes/profiles/:name/rename', ctrl.rename)

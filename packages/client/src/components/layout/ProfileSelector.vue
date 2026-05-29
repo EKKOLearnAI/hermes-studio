@@ -8,6 +8,7 @@ import {
   restartProfileRuntime,
   type HermesProfile,
   type ProfileAvatar,
+  type ProfileThinkingAnimation,
   type ProfileRuntimeStatus,
 } from '@/api/hermes/profiles'
 import ProfileAvatarView from '@/components/hermes/profiles/ProfileAvatar.vue'
@@ -31,6 +32,72 @@ const showAvatarModal = ref(false)
 const editingProfile = ref<HermesProfile | null>(null)
 const avatarSaving = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const showThinkingModal = ref(false)
+const thinkingSaving = ref(false)
+const thinkingEnabledInput = ref(true)
+const thinkingFileInputRef = ref<HTMLInputElement | null>(null)
+const thinkingItems = ref<Array<{ url: string; name?: string }>>([])
+const thinkingActiveIndex = ref<number>(0)
+
+const thinkingActiveUrl = computed(() => {
+  if (thinkingItems.value.length === 0) return ''
+  const idx = thinkingActiveIndex.value
+  if (idx >= 0 && idx < thinkingItems.value.length) return thinkingItems.value[idx].url
+  return ''
+})
+
+const MAX_THINKING_ITEMS = 5
+
+function openThinkingModal(profile: HermesProfile) {
+  editingProfile.value = profile
+  const ta = profile.thinkingAnimation
+  thinkingEnabledInput.value = ta?.enableThinking ?? true
+  if (ta?.items && ta.items.length > 0) {
+    thinkingItems.value = ta.items
+    thinkingActiveIndex.value = ta.activeIndex ?? 0
+  } else if (ta?.url) {
+    thinkingItems.value = [{ url: ta.url }]
+    thinkingActiveIndex.value = 0
+  } else {
+    thinkingItems.value = []
+    thinkingActiveIndex.value = 0
+  }
+  showThinkingModal.value = true
+}
+
+function selectThinkingItem(index: number) {
+  if (index >= 0 && index < thinkingItems.value.length) {
+    thinkingActiveIndex.value = index
+  }
+}
+
+function deleteThinkingItem(index: number) {
+  thinkingItems.value.splice(index, 1)
+  if (thinkingActiveIndex.value >= thinkingItems.value.length) {
+    thinkingActiveIndex.value = Math.max(0, thinkingItems.value.length - 1)
+  } else if (thinkingActiveIndex.value < 0) {
+    thinkingActiveIndex.value = 0
+  }
+}
+
+async function saveThinkingAnimation() {
+  if (!editingProfile.value) return
+  thinkingSaving.value = true
+  try {
+    const animation: ProfileThinkingAnimation = {
+      enableThinking: thinkingEnabledInput.value,
+      items: thinkingItems.value,
+      activeIndex: thinkingItems.value.length > 0 ? thinkingActiveIndex.value : undefined,
+    }
+    await profilesStore.updateThinkingAnimation(editingProfile.value.name, animation)
+    message.success(t('profiles.thinkingAnimation.saveSuccess'))
+    showThinkingModal.value = false
+  } catch (err: any) {
+    message.error(err?.message || t('profiles.thinkingAnimation.saveFailed'))
+  } finally {
+    thinkingSaving.value = false
+  }
+}
 const gatewayRestarting = ref<Record<string, boolean>>({})
 const profileRestarting = ref<Record<string, boolean>>({})
 const profileSwitching = ref<Record<string, boolean>>({})
@@ -148,6 +215,37 @@ async function handleAvatarFileChange(event: Event) {
     reader.readAsDataURL(file)
   })
   await saveAvatar({ type: 'image', dataUrl })
+}
+
+function triggerThinkingUpload() {
+  thinkingFileInputRef.value?.click()
+}
+
+async function handleThinkingFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm'].includes(file.type)) {
+    message.warning(t('profiles.thinkingAnimation.invalidType'))
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    message.warning(t('profiles.thinkingAnimation.tooLarge'))
+    return
+  }
+  if (thinkingItems.value.length >= MAX_THINKING_ITEMS) {
+    message.warning(t('profiles.thinkingAnimation.maxReached', { max: MAX_THINKING_ITEMS }))
+    return
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+  thinkingItems.value.push({ url: dataUrl, name: file.name })
+  thinkingActiveIndex.value = thinkingItems.value.length - 1
 }
 
 function gatewayStatusText(running?: boolean) {
@@ -290,6 +388,13 @@ onMounted(() => {
               <NButton
                 size="small"
                 type="primary"
+                @click="openThinkingModal(profile)"
+              >
+                {{ t('profiles.thinkingAnimation.customize') }}
+              </NButton>
+              <NButton
+                size="small"
+                type="primary"
                 :loading="gatewayRestarting[profile.name]"
                 @click="handleRestartGateway(profile.name)"
               >
@@ -349,6 +454,72 @@ onMounted(() => {
             {{ t('profiles.avatar.reset') }}
           </NButton>
         </div>
+      </div>
+    </NModal>
+
+    <NModal
+      v-model:show="showThinkingModal"
+      preset="card"
+      :title="t('profiles.thinkingAnimation.title')"
+      :bordered="false"
+      :style="{ width: '700px', maxWidth: 'calc(100vw - 32px)' }"
+    >
+      <div v-if="editingProfile" class="thinking-editor">
+        <div class="thinking-editor-layout">
+          <div class="thinking-editor-main">
+            <div class="thinking-editor-preview">
+              <img
+                v-if="thinkingActiveUrl"
+                :src="thinkingActiveUrl"
+                alt="Preview"
+                class="thinking-preview-img"
+              >
+              <div v-else class="thinking-preview-placeholder">
+                {{ t('profiles.thinkingAnimation.noPreview') }}
+              </div>
+            </div>
+            <div class="thinking-editor-meta">
+              <div class="thinking-editor-name">{{ editingProfile.name }}</div>
+              <div class="thinking-editor-hint">{{ t('profiles.thinkingAnimation.hint') }}</div>
+            </div>
+            <div class="thinking-editor-enabled">
+              <label class="thinking-enabled-label">
+                <input type="checkbox" v-model="thinkingEnabledInput">
+                <span>{{ t('profiles.thinkingAnimation.enableThinking') }}</span>
+              </label>
+            </div>
+            <div class="thinking-editor-actions">
+              <NButton type="primary" :loading="thinkingSaving" @click="triggerThinkingUpload" :disabled="thinkingItems.length >= MAX_THINKING_ITEMS">
+                {{ t('profiles.thinkingAnimation.upload') }} ({{ thinkingItems.length }}/{{ MAX_THINKING_ITEMS }})
+              </NButton>
+              <NButton type="primary" :loading="thinkingSaving" @click="saveThinkingAnimation">
+                {{ t('profiles.thinkingAnimation.save') }}
+              </NButton>
+            </div>
+          </div>
+          <div class="thinking-editor-sidebar" v-if="thinkingItems.length > 0">
+            <div class="thinking-sidebar-title">{{ t('profiles.thinkingAnimation.savedItems', { count: thinkingItems.length }) }}</div>
+            <div class="thinking-sidebar-list">
+              <div
+                v-for="(item, idx) in thinkingItems"
+                :key="idx"
+                class="thinking-sidebar-item"
+                :class="{ active: idx === thinkingActiveIndex }"
+                @click="selectThinkingItem(idx)"
+              >
+                <img :src="item.url" :alt="item.name || ''" class="thinking-thumb">
+                <div class="thinking-thumb-delete" @click.stop="deleteThinkingItem(idx)" title="{{ t('profiles.thinkingAnimation.delete') }}">×</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <input
+          ref="thinkingFileInputRef"
+          class="thinking-file-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+          @change="handleThinkingFileChange"
+        >
       </div>
     </NModal>
   </div>
@@ -641,5 +812,199 @@ onMounted(() => {
       --n-padding: 0 9px !important;
     }
   }
+}
+
+/* Thinking animation editor */
+.thinking-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thinking-editor-layout {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.thinking-editor-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.thinking-editor-sidebar {
+  width: 120px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thinking-sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: $text-muted;
+  text-align: center;
+}
+
+.thinking-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.thinking-sidebar-item {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  border-radius: 6px;
+  border: 2px solid $border-color;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s;
+
+  &.active {
+    border-color: $accent-muted;
+  }
+
+  &:hover {
+    border-color: $accent-muted;
+  }
+}
+
+.thinking-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: $bg-secondary;
+}
+
+.thinking-thumb-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+
+  .thinking-sidebar-item:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    background: rgba(255, 0, 0, 0.7);
+  }
+}
+
+.thinking-editor-preview {
+  width: 100%;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: $bg-secondary;
+  overflow: hidden;
+}
+
+.thinking-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.thinking-preview-placeholder {
+  font-size: 13px;
+  color: $text-muted;
+}
+
+.thinking-editor-meta {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thinking-editor-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: $text-primary;
+}
+
+.thinking-editor-hint {
+  font-size: 12px;
+  color: $text-muted;
+}
+
+.thinking-editor-enabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.thinking-enabled-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: $text-primary;
+  user-select: none;
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+}
+
+.thinking-file-input {
+  display: none;
+}
+
+.thinking-editor-url {
+  width: 100%;
+}
+
+.thinking-url-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid $border-color;
+  border-radius: 6px;
+  background: $bg-input;
+  color: $text-primary;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+
+  &:focus {
+    border-color: $accent-muted;
+  }
+
+  &::placeholder {
+    color: $text-muted;
+  }
+}
+
+.thinking-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 </style>
