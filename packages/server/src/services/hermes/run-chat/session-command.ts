@@ -80,7 +80,10 @@ export function isSessionCommand(input: string | ContentBlock[]): boolean {
 // ─── /usage helpers ────────────────────────────────────────
 
 function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsageState | null {
-  if (!row || !row.input_tokens || !row.cost_status) return null
+  // cost_status is only populated by our updateSession() call in
+  // handle-bridge-run.ts; input_tokens can legitimately be 0 when
+  // the entire prompt is served from cache, so we don't check it here.
+  if (!row || !row.cost_status) return null
   return {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
@@ -92,7 +95,7 @@ function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsa
     totalTokens: row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_write_tokens,
     apiCalls: 0,
     model: row.model || undefined,
-    estimatedCostUsd: row.estimated_cost_usd || undefined,
+    estimatedCostUsd: row.estimated_cost_usd ?? undefined,
     actualCostUsd: row.actual_cost_usd ?? undefined,
     costStatus: row.cost_status || undefined,
     costSource: undefined,
@@ -146,20 +149,20 @@ export async function handleSessionCommand(
       })
 
       // Resolve bridge usage: live state → DB fallback → local estimate
+      const sessionRow = getSession(sessionId)
       const bu: BridgeUsageState | undefined =
         state.bridgeUsage ??
-        resolveBridgeUsageFromDb(getSession(sessionId)) ??
+        resolveBridgeUsageFromDb(sessionRow) ??
         undefined
 
       if (bu) {
         if (!state.bridgeUsage) state.bridgeUsage = bu  // cache DB fallback
-        const model = bu.model || ctx.model || getSession(sessionId)?.model || 'unknown'
+        const model = bu.model || ctx.model || sessionRow?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
         const contextForDisplay = bu.promptTokens || bu.inputTokens || state.contextTokens || (localUsage.inputTokens + localUsage.outputTokens)
         const pct = modelCtxLen > 0 ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%` : 'N/A'
         const cost = formatCost(bu)
-        const row = getSession(sessionId)
-        const dur = row ? `${Math.max(0, Math.floor((row.last_active || Date.now() / 1000) - (row.started_at || row.last_active || Date.now() / 1000)))}s` : 'N/A'
+        const dur = sessionRow ? `${Math.max(0, Math.floor((sessionRow.last_active || Date.now() / 1000) - (sessionRow.started_at || sessionRow.last_active || Date.now() / 1000)))}s` : 'N/A'
         const comps = getCompressionSnapshot(sessionId) ? 1 : 0
         const note = bu.costStatus === 'unknown' && model ? `Pricing unknown for ${model}` : ''
 
