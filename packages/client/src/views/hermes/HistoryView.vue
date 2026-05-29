@@ -160,8 +160,10 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
 
 function onHistoryOutlineMessagesLoaded(messages: any[]) {
   if (historySession.value) {
-    const firstUserIdx = messages.findIndex(m => m.role === 'user');
-    const clean = firstUserIdx > 0 ? messages.slice(firstUserIdx) : messages;
+    const firstMeaningfulIdx = messages.findIndex(m =>
+      m.role === 'user' || (m.role === 'command' && m.systemType === 'command')
+    );
+    const clean = firstMeaningfulIdx > 0 ? messages.slice(firstMeaningfulIdx) : messages;
     historySession.value.messages = clean;
   }
 }

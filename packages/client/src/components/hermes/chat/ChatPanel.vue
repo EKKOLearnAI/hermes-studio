@@ -85,7 +85,8 @@ function handleOutlineNavigate(target: { messageId: string; anchorId: string }) 
 
 function onOutlineMessagesLoaded(messages: any[]) {
   if (chatStore.activeSession) {
-    // Skip leading messages before first user message (command/system)
+    // Skip leading init messages before first user.
+    // CRON sessions in history don't use this handler.
     const firstUserIdx = messages.findIndex(m => m.role === 'user');
     const clean = firstUserIdx > 0 ? messages.slice(firstUserIdx) : messages;
     chatStore.activeSession.messages = clean;
