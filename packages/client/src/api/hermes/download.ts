@@ -1,4 +1,4 @@
-import { getApiKey, getBaseUrlValue } from '../client'
+import { getActiveProfileName, getApiKey, getBaseUrlValue } from '../client'
 
 /**
  * Construct a download URL with auth token as query parameter.
@@ -27,6 +27,8 @@ export function getDownloadUrl(filePath: string, fileName?: string): string {
     const decodedName = decodeURIComponent(fileName)
     params.set('name', decodedName)
   }
+  const profileName = getActiveProfileName()
+  if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)
   return `${base}/api/hermes/download?${params.toString()}`
@@ -52,4 +54,18 @@ export async function downloadFile(filePath: string, fileName?: string): Promise
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(blobUrl)
+}
+
+/**
+ * Get preview file content.
+ * Throws with error message on failure.
+ */
+export async function fetchFileText(filePath: string, fileName?: string): Promise<string> {
+  const url = getDownloadUrl(filePath, fileName)
+  const res = await fetch(url)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(body.error || `Preview failed: ${res.status}`)
+  }
+  return res.text()
 }

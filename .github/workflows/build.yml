@@ -1,10 +1,20 @@
 name: Build
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
       - base
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -17,10 +27,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 23
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty
 
       - name: Test with coverage
         run: npm run test:coverage

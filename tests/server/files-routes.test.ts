@@ -33,10 +33,12 @@ describe('file routes path metadata', () => {
 
     const { fileRoutes } = await import('../../packages/server/src/routes/hermes/files')
     const layer = fileRoutes.stack.find((entry: any) => entry.path === '/api/hermes/files/list')
-    const ctx: any = { query: { path: 'logs' }, body: null }
+    const ctx: any = { query: { path: 'logs' }, state: { profile: { name: 'research' } }, body: null }
 
     await layer.stack[0](ctx)
 
+    expect(createFileProviderMock).toHaveBeenCalledWith('research')
+    expect(resolveHermesPathMock).toHaveBeenCalledWith('logs', 'research')
     expect(provider.listDir).toHaveBeenCalledWith('/home/agent/.hermes/logs')
     expect(ctx.body).toEqual({
       path: 'logs',
@@ -65,10 +67,12 @@ describe('file routes path metadata', () => {
 
     const { fileRoutes } = await import('../../packages/server/src/routes/hermes/files')
     const layer = fileRoutes.stack.find((entry: any) => entry.path === '/api/hermes/files/stat')
-    const ctx: any = { query: { path: 'logs/app.log' }, body: null }
+    const ctx: any = { query: { path: 'logs/app.log' }, state: { profile: { name: 'research' } }, body: null }
 
     await layer.stack[0](ctx)
 
+    expect(createFileProviderMock).toHaveBeenCalledWith('research')
+    expect(resolveHermesPathMock).toHaveBeenCalledWith('logs/app.log', 'research')
     expect(ctx.body).toEqual({
       name: 'app.log',
       path: 'logs/app.log',

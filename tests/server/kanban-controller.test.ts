@@ -28,6 +28,7 @@ const mockSearchSessions = vi.hoisted(() => vi.fn())
 const mockGetSessionDetail = vi.hoisted(() => vi.fn())
 const mockGetExactSessionDetail = vi.hoisted(() => vi.fn())
 const mockFindLatestExactSessionId = vi.hoisted(() => vi.fn())
+const mockListUserProfiles = vi.hoisted(() => vi.fn())
 
 vi.mock('fs/promises', () => ({
   readFile: mockReadFile,
@@ -75,6 +76,10 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   findLatestExactSessionIdWithProfile: mockFindLatestExactSessionId,
 }))
 
+vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+  listUserProfiles: mockListUserProfiles,
+}))
+
 import * as ctrl from '../../packages/server/src/controllers/hermes/kanban'
 
 function ctx(overrides: Record<string, any> = {}) {
@@ -91,6 +96,7 @@ function ctx(overrides: Record<string, any> = {}) {
 describe('kanban controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }])
   })
 
   it('lists boards and tasks with explicit/default board context', async () => {
@@ -127,6 +133,85 @@ describe('kanban controller', () => {
     const defaultCtx = ctx({ query: { status: 'ready' } })
     await ctrl.list(defaultCtx)
     expect(mockListTasks).toHaveBeenLastCalledWith({ board: 'default', status: 'ready', assignee: undefined, tenant: undefined, includeArchived: false })
+  })
+
+  it('filters kanban tasks, stats, and assignees to the user-bound profiles', async () => {
+    const tasks = [
+      { id: 'task-1', assignee: 'research', status: 'todo' },
+      { id: 'task-2', assignee: 'travel', status: 'done' },
+      { id: 'task-3', assignee: null, status: 'blocked' },
+    ]
+    mockListTasks.mockResolvedValue(tasks)
+    mockGetAssignees.mockResolvedValue([
+      { name: 'research', on_disk: true, counts: { todo: 1 } },
+      { name: 'travel', on_disk: true, counts: { done: 1 } },
+      { name: 'default', on_disk: true, counts: { blocked: 1 } },
+    ])
+
+    const state = { user: { id: 7, role: 'admin' }, profile: { name: 'research' } }
+    const listCtx = ctx({ state, query: { board: 'default', includeArchived: 'true' } })
+    await ctrl.list(listCtx)
+    expect(listCtx.body).toEqual({ tasks: [tasks[0]] })
+
+    const statsCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.stats(statsCtx)
+    expect(statsCtx.body).toEqual({ stats: { by_status: { todo: 1 }, by_assignee: { research: 1 }, total: 1 } })
+
+    const assigneesCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.assignees(assigneesCtx)
+    expect(assigneesCtx.body).toEqual({ assignees: [{ name: 'research', on_disk: true, counts: { todo: 1 } }] })
+  })
+
+  it('loads kanban data for every profile bound to the user instead of only the active header profile', async () => {
+    mockListUserProfiles.mockReturnValue([{ profile_name: 'research' }, { profile_name: 'travel' }])
+    const tasks = [
+      { id: 'task-1', assignee: 'research', status: 'todo' },
+      { id: 'task-2', assignee: 'travel', status: 'done' },
+      { id: 'task-3', assignee: 'default', status: 'blocked' },
+    ]
+    mockListTasks.mockResolvedValue(tasks)
+    mockGetAssignees.mockResolvedValue([
+      { name: 'research', on_disk: true, counts: { todo: 1 } },
+    ])
+
+    const state = { user: { id: 7, role: 'admin' }, profile: { name: 'research' } }
+    const listCtx = ctx({ state, query: { board: 'default', includeArchived: 'true' } })
+    await ctrl.list(listCtx)
+    expect(listCtx.body).toEqual({ tasks: [tasks[0], tasks[1]] })
+
+    const statsCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.stats(statsCtx)
+    expect(statsCtx.body).toEqual({
+      stats: {
+        by_status: { todo: 1, done: 1 },
+        by_assignee: { research: 1, travel: 1 },
+        total: 2,
+      },
+    })
+
+    const assigneesCtx = ctx({ state, query: { board: 'default' } })
+    await ctrl.assignees(assigneesCtx)
+    expect(assigneesCtx.body).toEqual({
+      assignees: [
+        { name: 'research', on_disk: true, counts: { todo: 1 } },
+        { name: 'travel', on_disk: true, counts: null },
+      ],
+    })
+  })
+
+  it('defaults created kanban tasks to the requested profile and rejects unauthorized assignees', async () => {
+    mockCreateTask.mockResolvedValue({ id: 'task-1', assignee: 'research' })
+    const state = { user: { id: 7, role: 'admin' }, profile: { name: 'research' } }
+
+    const createCtx = ctx({ state, query: { board: 'default' }, request: { body: { title: 'Ship it' } } })
+    await ctrl.create(createCtx)
+    expect(mockCreateTask).toHaveBeenCalledWith('Ship it', { board: 'default', body: undefined, assignee: 'research', priority: undefined, tenant: undefined })
+    expect(createCtx.body).toEqual({ task: { id: 'task-1', assignee: 'research' } })
+
+    const assignCtx = ctx({ state, query: { board: 'default' }, params: { id: 'task-1' }, request: { body: { profile: 'travel' } } })
+    await ctrl.assign(assignCtx)
+    expect(assignCtx.status).toBe(403)
+    expect(mockAssignTask).not.toHaveBeenCalled()
   })
 
   it('proxies comment/log/diagnostics with explicit board context', async () => {

@@ -16,6 +16,8 @@ prerequisites:
 
 Use this skill when the user wants to animate a local image into a short video with xAI Grok Imagine.
 
+Do not use any built-in image or video generation tool as a fallback. If the Hermes Web UI endpoint returns `401`, `403`, connection failure, or any other error, stop and report the Hermes Web UI error to the user.
+
 ## Workflow
 
 Call the local Hermes Web UI media endpoint. Pass a local image path; the server will check for xAI credentials, read the file, convert it to a base64 data URI, call xAI, poll until completion, and optionally save the generated mp4.
@@ -36,7 +38,7 @@ When Hermes Web UI is running from the provided Docker Compose setup, the defaul
 
 Authentication:
 
-The endpoint is protected by Hermes Web UI auth. Always send the Web UI bearer token.
+The endpoint is protected by Hermes Web UI auth. Always send the Hermes Web UI server bearer token. This token is accepted only by Hermes Web UI media generation endpoints for agent skills; it is not a general Web UI login token.
 
 Resolve the token in this order:
 
@@ -44,6 +46,20 @@ Resolve the token in this order:
 2. `${HERMES_WEB_UI_HOME}/.token`, if `HERMES_WEB_UI_HOME` is set.
 3. `${HERMES_WEBUI_STATE_DIR}/.token`, if `HERMES_WEBUI_STATE_DIR` is set.
 4. `~/.hermes-web-ui/.token`.
+
+Profile selection:
+
+Use the current Hermes profile from the run instructions by sending `X-Hermes-Profile`.
+
+If the run instructions include `[Current Hermes profile: <name>]`, include:
+
+```bash
+-H "X-Hermes-Profile: <name>"
+```
+
+Replace `<name>` with the exact profile name from the run instructions. Never send a placeholder value such as `<name>` or `<current-hermes-profile>`.
+
+If no current profile is provided, omit the header and let the server fall back to the current Hermes active profile.
 
 Required JSON fields:
 

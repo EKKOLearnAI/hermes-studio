@@ -1,24 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useChatStore, type Session } from '@/stores/hermes/chat'
+import { useRoute, useRouter } from 'vue-router'
+import { type Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
-import { NButton, NTooltip, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NPopconfirm, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
-import { deleteSession, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 
-const chatStore = useChatStore()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore()
 const message = useMessage()
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+
+const routeSessionId = computed(() => {
+  const value = route.params.sessionId
+  return typeof value === 'string' && value.trim() ? value : null
+})
+
+const routeProfile = computed(() => {
+  const value = route.query.profile
+  return typeof value === 'string' && value.trim() ? value : null
+})
+
+const effectiveHistoryProfile = computed(() => profilesStore.activeProfileName || routeProfile.value || null)
 
 // Hermes history sessions (exclude api_server)
 const hermesSessions = ref<SessionSummary[]>([])
@@ -28,17 +42,37 @@ const hermesSessionsLoaded = ref(false)
 const historySessionId = ref<string | null>(null)
 const historySession = ref<Session | null>(null)
 const showOutline = ref(false)
+const historyMessageListRef = ref<InstanceType<typeof HistoryMessageList> | null>(null)
+const isBatchMode = ref(false)
+const isBatchDeleting = ref(false)
+const showBatchDeleteConfirm = ref(false)
+const selectedSessionKeys = ref<Set<string>>(new Set())
+const contextSessionId = ref<string | null>(null)
+const showContextMenu = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
+let hermesSessionsRequestId = 0
+
+const HISTORY_PAGE_SIZE = 300
+
+function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
+  historyMessageListRef.value?.scrollToAnchor(target.messageId, target.anchorId)
+}
 
 async function loadHermesSessions() {
-  if (hermesSessionsLoading.value) return
+  const requestId = ++hermesSessionsRequestId
   hermesSessionsLoading.value = true
   try {
-    hermesSessions.value = await fetchHermesSessions()
+    const sessions = await fetchHermesSessions(undefined, undefined, effectiveHistoryProfile.value)
+    if (requestId !== hermesSessionsRequestId) return
+    hermesSessions.value = sessions
     hermesSessionsLoaded.value = true
   } catch (err) {
     console.error('Failed to load Hermes sessions:', err)
   } finally {
-    hermesSessionsLoading.value = false
+    if (requestId === hermesSessionsRequestId) {
+      hermesSessionsLoading.value = false
+    }
   }
 }
 
@@ -49,53 +83,124 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null
 const isMobile = ref(false)
 
-async function handleSessionClick(sessionId: string) {
-  // First, fetch the Hermes session detail
-  const sessionDetail = await fetchHermesSession(sessionId)
-  if (!sessionDetail) {
-    message.error(t('chat.sessionNotFound'))
-    return
+function findHistorySession(sessionId: string): SessionSummary | undefined {
+  return hermesSessions.value.find(session => session.id === sessionId)
+}
+
+const contextSessionSummary = computed(() =>
+  contextSessionId.value ? findHistorySession(contextSessionId.value) || null : null,
+)
+
+const contextSessionPinned = computed(() =>
+  contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
+)
+
+const contextMenuOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    {
+      label: t('chat.importToWebUi'),
+      key: 'import-webui',
+      disabled: Boolean(contextSessionSummary.value?.webui_imported),
+    },
+    { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
+    { label: t('chat.copySessionLink'), key: 'copy-link' },
+    { label: t('chat.copySessionId'), key: 'copy-id' },
+  ]
+  return options
+})
+
+function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
+  return messages.map(m => {
+    const msg: Session['messages'][number] = {
+      id: String(m.id),
+      role: m.role,
+      content: m.content || '',
+      timestamp: m.timestamp * 1000,
+      reasoning: m.reasoning || undefined,
+      systemType: m.role === 'command' ? 'command' : undefined,
+    }
+
+    if (m.role === 'tool') {
+      msg.toolName = m.tool_name || undefined
+      msg.toolCallId = m.tool_call_id || undefined
+      msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
+        ? JSON.stringify(m.tool_calls[0].function.arguments)
+        : undefined
+      msg.toolStatus = 'done'
+      msg.toolResult = m.content || undefined
+      msg.content = ''
+    }
+
+    return msg
+  })
+}
+
+function sessionFromSummary(summary: SessionSummary, messages: Session['messages'] = []): Session {
+  return {
+    id: summary.id,
+    profile: summary.profile || undefined,
+    title: summary.title || '',
+    source: summary.source,
+    createdAt: summary.started_at * 1000,
+    updatedAt: (summary.last_active || summary.ended_at || summary.started_at) * 1000,
+    model: summary.model,
+    provider: summary.provider,
+    messageCount: summary.message_count,
+    messageTotal: summary.message_count,
+    loadedMessageCount: messages.length,
+    hasMoreBefore: false,
+    inputTokens: summary.input_tokens,
+    outputTokens: summary.output_tokens,
+    endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
+    lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
+    workspace: summary.workspace || undefined,
+    messages,
   }
+}
 
-  // Convert SessionDetail to Session format and add to chatStore
-  const sessionData: Session = {
-    id: sessionDetail.id,
-    title: sessionDetail.title || '',
-    source: sessionDetail.source,
-    createdAt: sessionDetail.started_at * 1000,
-    updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
-    model: sessionDetail.model,
-    messageCount: sessionDetail.message_count,
-    inputTokens: sessionDetail.input_tokens,
-    outputTokens: sessionDetail.output_tokens,
-    endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
-    lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
-    workspace: sessionDetail.workspace || undefined,
-    messages: sessionDetail.messages.map(m => {
-      const msg: any = {
-        id: String(m.id),
-        sessionId: m.session_id,
-        role: m.role,
-        content: m.content || '',
-        timestamp: m.timestamp * 1000,
-      }
+async function loadHistorySession(sessionId: string, profile?: string | null) {
+  const summary = findHistorySession(sessionId)
+  const sessionProfile = profile || summary?.profile || null
+  const page = await fetchSessionMessagesPage(sessionId, 0, HISTORY_PAGE_SIZE, sessionProfile)
+  let sessionData: Session | null = null
 
-      // Preserve tool-related fields
-      if (m.role === 'tool') {
-        msg.toolName = m.tool_name
-        msg.toolArgs = m.tool_calls?.[0]?.function?.arguments
-          ? JSON.stringify(m.tool_calls[0].function.arguments)
-          : undefined
-        msg.toolStatus = 'done'
-      }
+  if (page) {
+    const base = summary || page.session
+    sessionData = sessionFromSummary(base, mapHistoryMessages(page.messages))
+    sessionData.profile = summary?.profile || sessionProfile || undefined
+    sessionData.messageCount = page.total
+    sessionData.messageTotal = page.total
+    sessionData.loadedMessageCount = page.messages.length
+    sessionData.hasMoreBefore = page.hasMore
+  } else {
+    // Some imported/legacy Hermes sessions may only exist in Hermes state.db.
+    // Keep the old full-detail path as a compatibility fallback.
+    const sessionDetail = await fetchHermesSession(sessionId, sessionProfile)
+    if (!sessionDetail) {
+      message.error(t('chat.sessionNotFound'))
+      return
+    }
 
-      // Preserve reasoning field
-      if (m.reasoning) {
-        msg.reasoning = m.reasoning
-      }
-
-      return msg
-    }),
+    sessionData = {
+      id: sessionDetail.id,
+      profile: sessionDetail.profile || sessionProfile || undefined,
+      title: sessionDetail.title || '',
+      source: sessionDetail.source,
+      createdAt: sessionDetail.started_at * 1000,
+      updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
+      model: sessionDetail.model,
+      provider: sessionDetail.provider,
+      messageCount: sessionDetail.message_count,
+      messageTotal: sessionDetail.message_count,
+      loadedMessageCount: sessionDetail.messages.length,
+      hasMoreBefore: false,
+      inputTokens: sessionDetail.input_tokens,
+      outputTokens: sessionDetail.output_tokens,
+      endedAt: sessionDetail.ended_at ? sessionDetail.ended_at * 1000 : undefined,
+      lastActiveAt: sessionDetail.last_active ? sessionDetail.last_active * 1000 : undefined,
+      workspace: sessionDetail.workspace || undefined,
+      messages: mapHistoryMessages(sessionDetail.messages),
+    }
   }
 
   // Set history page's own session state (independent from chatStore)
@@ -103,6 +208,83 @@ async function handleSessionClick(sessionId: string) {
   historySession.value = sessionData
 
   if (mobileQuery?.matches) showSessions.value = false
+}
+
+async function loadOlderHistoryMessages(sessionId: string): Promise<boolean> {
+  const target = historySession.value
+  if (!target || target.id !== sessionId || target.isLoadingOlderMessages || !target.hasMoreBefore) return false
+  const offset = target.loadedMessageCount || 0
+  target.isLoadingOlderMessages = true
+  try {
+    const page = await fetchSessionMessagesPage(sessionId, offset, HISTORY_PAGE_SIZE, target.profile)
+    if (!page || page.messages.length === 0) {
+      target.hasMoreBefore = false
+      return false
+    }
+
+    const existingIds = new Set(target.messages.map(message => message.id))
+    const olderMessages = mapHistoryMessages(page.messages).filter(message => !existingIds.has(message.id))
+    target.messages = [...olderMessages, ...target.messages]
+    target.loadedMessageCount = offset + page.messages.length
+    target.messageTotal = page.total
+    target.messageCount = page.total
+    target.hasMoreBefore = page.hasMore
+    return olderMessages.length > 0
+  } catch (err) {
+    console.error('Failed to load older history messages:', err)
+    return false
+  } finally {
+    target.isLoadingOlderMessages = false
+  }
+}
+
+async function handleSessionClick(sessionId: string, profile?: string | null) {
+  await router.push({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  })
+}
+
+async function openDefaultHistorySession(replace = false) {
+  const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
+  const firstSession = firstCliSession || hermesSessions.value[0]
+  if (!firstSession) {
+    historySessionId.value = null
+    historySession.value = null
+    if (routeSessionId.value) await router.replace({ name: 'hermes.history' })
+    return
+  }
+
+  if (collapsedGroups.value.has(firstSession.source)) {
+    collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== firstSession.source))
+  }
+
+  const location = {
+    name: 'hermes.historySession',
+    params: { sessionId: firstSession.id },
+    query: firstSession.profile ? { profile: firstSession.profile } : undefined,
+  }
+  if (replace) await router.replace(location)
+  else await router.push(location)
+}
+
+async function syncRouteSession() {
+  const sessionId = routeSessionId.value
+  if (!sessionId) return
+
+  if (!hermesSessions.value.some(s => s.id === sessionId)) {
+    historySessionId.value = null
+    historySession.value = null
+    await router.replace({ name: 'hermes.history' })
+    return
+  }
+
+  const sessionProfile = routeProfile.value || findHistorySession(sessionId)?.profile || null
+  const currentProfile = historySession.value?.profile || null
+  if (historySessionId.value !== sessionId || currentProfile !== sessionProfile) {
+    await loadHistorySession(sessionId, sessionProfile)
+  }
 }
 
 function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
@@ -116,6 +298,7 @@ onMounted(async () => {
   appStore.loadModels()
   await profilesStore.fetchProfiles()
   await loadHermesSessions()
+  await syncRouteSession()
 
   mobileQuery = window.matchMedia('(max-width: 768px)')
   handleMobileChange(mobileQuery)
@@ -126,13 +309,35 @@ onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
 })
 
+watch([routeSessionId, routeProfile], async ([sessionId]) => {
+  if (!sessionId) {
+    historySessionId.value = null
+    historySession.value = null
+    return
+  }
+  if (!hermesSessionsLoaded.value) return
+  if (routeProfile.value && !hermesSessions.value.some(s => s.profile === routeProfile.value)) {
+    await loadHermesSessions()
+  }
+  await syncRouteSession()
+})
+
+watch(() => profilesStore.activeProfileName, async () => {
+  if (!hermesSessionsLoaded.value) return
+  if (profilesStore.switching) return
+  historySessionId.value = null
+  historySession.value = null
+  await loadHermesSessions()
+  await openDefaultHistorySession(true)
+})
+
 const collapsedGroups = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem('hermes_collapsed_groups') || '[]')))
 
 // Convert SessionSummary to Session format
 function sessionSummaryToSession(summary: SessionSummary): Session {
   return {
     id: summary.id,
-    profile: summary.profile,
+    profile: summary.profile || undefined,
     title: summary.title || '',
     source: summary.source,
     createdAt: summary.started_at * 1000,
@@ -152,6 +357,58 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
 // Computed sessions from Hermes API
 const historySessions = computed<Session[]>(() =>
   hermesSessions.value.map(sessionSummaryToSession)
+)
+
+function sessionSelectionKey(session: Pick<Session, 'id' | 'profile'>): string {
+  return `${session.profile || 'default'}\u0000${session.id}`
+}
+
+function toggleBatchMode() {
+  if (isBatchDeleting.value) return
+  isBatchMode.value = !isBatchMode.value
+  if (!isBatchMode.value) {
+    selectedSessionKeys.value.clear()
+    showBatchDeleteConfirm.value = false
+  }
+}
+
+function toggleSessionSelection(session: Session) {
+  if (isBatchDeleting.value) return
+  const key = sessionSelectionKey(session)
+  if (selectedSessionKeys.value.has(key)) {
+    selectedSessionKeys.value.delete(key)
+  } else {
+    selectedSessionKeys.value.add(key)
+  }
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+  if (selectedSessionKeys.value.size === 0) {
+    showBatchDeleteConfirm.value = false
+  }
+}
+
+function isSessionSelected(session: Session): boolean {
+  return selectedSessionKeys.value.has(sessionSelectionKey(session))
+}
+
+function toggleSelectAllSessions() {
+  if (isBatchDeleting.value) return
+  if (allSessionsSelected.value) {
+    selectedSessionKeys.value.clear()
+    selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+    showBatchDeleteConfirm.value = false
+    return
+  }
+  selectedSessionKeys.value.clear()
+  for (const session of historySessions.value) {
+    selectedSessionKeys.value.add(sessionSelectionKey(session))
+  }
+  selectedSessionKeys.value = new Set(selectedSessionKeys.value)
+}
+
+const selectedCount = computed(() => selectedSessionKeys.value.size)
+const canSelectAll = computed(() => historySessions.value.length > 0)
+const allSessionsSelected = computed(() =>
+  historySessions.value.length > 0 && selectedSessionKeys.value.size === historySessions.value.length
 )
 
 // Source sort order: api_server first, cron last, others alphabetical
@@ -212,7 +469,7 @@ function toggleGroup(source: string) {
     const group = groupedSessions.value.find(g => g.source === source)
     if (group?.sessions.length) {
       // Auto-select and load first session when expanding group
-      handleSessionClick(group.sessions[0].id)
+      void handleSessionClick(group.sessions[0].id, group.sessions[0].profile)
     }
   }
   localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -220,7 +477,7 @@ function toggleGroup(source: string) {
 
 watch(groupedSessions, groups => {
   if (localStorage.getItem('hermes_collapsed_groups') !== null) {
-    const activeSource = chatStore.activeSession?.source
+    const activeSource = historySession.value?.source
     if (activeSource && collapsedGroups.value.has(activeSource)) {
       collapsedGroups.value = new Set([...collapsedGroups.value].filter(source => source !== activeSource))
       localStorage.setItem('hermes_collapsed_groups', JSON.stringify([...collapsedGroups.value]))
@@ -234,23 +491,10 @@ watch(groupedSessions, groups => {
   }
 }, { once: true })
 
-// Auto-load first CLI session when Hermes sessions are loaded
+// Auto-load the first CLI session when Hermes sessions are loaded.
 watch(hermesSessionsLoaded, (loaded) => {
-  if (loaded && hermesSessions.value.length > 0) {
-    // Only auto-load if no session is currently active
-    if (!historySessionId.value || !hermesSessions.value.find(s => s.id === historySessionId.value)) {
-      // Find first CLI session.
-      const firstCliSession = hermesSessions.value.find(s => s.source === 'cli')
-      if (firstCliSession) {
-        // Ensure the CLI group is expanded
-        if (collapsedGroups.value.has(firstCliSession.source)) {
-          collapsedGroups.value = new Set([...collapsedGroups.value].filter(s => s !== firstCliSession.source))
-        }
-        // Load session details
-        handleSessionClick(firstCliSession.id)
-      }
-      // If no CLI session exists, don't auto-load any session
-    }
+  if (loaded && hermesSessions.value.length > 0 && !routeSessionId.value) {
+    void openDefaultHistorySession(false)
   }
 }, { once: true })
 
@@ -271,8 +515,75 @@ async function copySessionId(id?: string) {
   }
 }
 
-async function handleDeleteSession(id: string) {
-  const ok = await deleteSession(id)
+function historySessionProfile(sessionId: string): string | null {
+  return historySession.value?.id === sessionId
+    ? historySession.value.profile || null
+    : findHistorySession(sessionId)?.profile || null
+}
+
+function buildHistorySessionUrl(sessionId: string, profile?: string | null) {
+  const href = router.resolve({
+    name: 'hermes.historySession',
+    params: { sessionId },
+    query: profile ? { profile } : undefined,
+  }).href
+  return `${window.location.origin}${window.location.pathname}${href}`
+}
+
+async function copySessionLink(id?: string) {
+  const sessionId = id || historySessionId.value
+  if (sessionId) {
+    const ok = await copyToClipboard(buildHistorySessionUrl(sessionId, historySessionProfile(sessionId)))
+    if (ok) message.success(t('common.copied'))
+    else message.error(t('common.copied') + ' ✗')
+  }
+}
+
+function handleContextMenu(e: MouseEvent, sessionId: string) {
+  e.preventDefault()
+  contextSessionId.value = sessionId
+  showContextMenu.value = true
+  contextMenuX.value = e.clientX
+  contextMenuY.value = e.clientY
+}
+
+function handleClickOutside() {
+  showContextMenu.value = false
+}
+
+async function handleImportToWebUi(sessionId: string) {
+  const summary = findHistorySession(sessionId)
+  try {
+    const result = await importHermesSession(sessionId, summary?.profile || null)
+    if (result.ok) {
+      message.success(t(result.imported ? 'chat.importSessionSuccess' : 'chat.importSessionAlreadyExists'))
+      await loadHermesSessions()
+      return
+    }
+  } catch {
+    // Fall through to the shared failure message.
+  }
+  message.error(t('chat.importSessionFailed'))
+}
+
+async function handleContextMenuSelect(key: string) {
+  showContextMenu.value = false
+  if (!contextSessionId.value) return
+  if (key === 'pin') {
+    sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
+  } else if (key === 'copy-link') {
+    await copySessionLink(contextSessionId.value)
+  } else if (key === 'copy-id') {
+    await copySessionId(contextSessionId.value)
+  } else if (key === 'import-webui') {
+    await handleImportToWebUi(contextSessionId.value)
+  }
+}
+
+async function handleDeleteSession(id: string, profile?: string | null) {
+  const summary = findHistorySession(id)
+  const sessionProfile = profile || summary?.profile || null
+  const ok = await deleteSession(id, sessionProfile)
   if (!ok) {
     message.error(t('common.deleteFailed'))
     return
@@ -285,10 +596,63 @@ async function handleDeleteSession(id: string) {
     historySessionId.value = null
     historySession.value = null
     const next = historySessions.value[0]
-    if (next) await handleSessionClick(next.id)
+    if (next) await handleSessionClick(next.id, next.profile)
+    else await router.replace({ name: 'hermes.history' })
   }
 
   message.success(t('chat.sessionDeleted'))
+}
+
+async function handleBatchDelete() {
+  if (selectedSessionKeys.value.size === 0 || isBatchDeleting.value) return
+
+  const sessionsByKey = new Map(historySessions.value.map(session => [sessionSelectionKey(session), session]))
+  const targets = Array.from(selectedSessionKeys.value)
+    .map(key => sessionsByKey.get(key))
+    .filter((session): session is Session => Boolean(session))
+    .map(session => ({ id: session.id, profile: session.profile || null }))
+  if (targets.length === 0) return
+
+  const activeWasSelected = historySession.value
+    ? selectedSessionKeys.value.has(sessionSelectionKey(historySession.value))
+    : false
+
+  isBatchDeleting.value = true
+  try {
+    const result = await batchDeleteSessions(targets)
+    if (result.deleted > 0) {
+      for (const target of targets) {
+        sessionBrowserPrefsStore.removePinned(target.id)
+      }
+
+      await loadHermesSessions()
+
+      if (activeWasSelected || (historySessionId.value && !findHistorySession(historySessionId.value))) {
+        historySessionId.value = null
+        historySession.value = null
+        await openDefaultHistorySession(true)
+      }
+
+      message.success(t('chat.batchDeleteSuccess', { count: result.deleted }))
+      if (result.failed > 0) {
+        message.warning(t('chat.batchDeletePartial', { failed: result.failed }))
+      }
+    } else {
+      message.error(t('chat.batchDeleteFailed'))
+    }
+  } catch {
+    message.error(t('chat.batchDeleteFailed'))
+  } finally {
+    isBatchDeleting.value = false
+    showBatchDeleteConfirm.value = false
+    isBatchMode.value = false
+    selectedSessionKeys.value.clear()
+  }
+}
+
+function handleBatchDeleteConfirm() {
+  void handleBatchDelete()
+  return false
 }
 
 </script>
@@ -303,6 +667,66 @@ async function handleDeleteSession(id: string) {
           <button class="session-close-btn" @click="showSessions = false">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
+          <NButton
+            v-if="!isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="hermesSessions.length === 0"
+            :title="t('chat.toggleBatchMode')"
+            @click="toggleBatchMode"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="!canSelectAll || isBatchDeleting"
+            :title="allSessionsSelected ? t('common.cancel') : t('chat.selectAll')"
+            @click="toggleSelectAllSessions"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </template>
+          </NButton>
+          <NPopconfirm
+            v-if="isBatchMode && selectedCount > 0"
+            v-model:show="showBatchDeleteConfirm"
+            :positive-button-props="{ loading: isBatchDeleting, disabled: isBatchDeleting }"
+            :negative-button-props="{ disabled: isBatchDeleting }"
+            @positive-click="handleBatchDeleteConfirm"
+          >
+            <template #trigger>
+              <NButton quaternary size="tiny" type="error" :loading="isBatchDeleting" :disabled="isBatchDeleting">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.confirmBatchDelete', { count: selectedCount }) }}
+          </NPopconfirm>
+          <NButton
+            v-if="isBatchMode"
+            quaternary
+            size="tiny"
+            :disabled="isBatchDeleting"
+            @click="toggleBatchMode"
+          >
+            <template #icon>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </template>
+          </NButton>
         </div>
       </div>
       <div v-if="showSessions" class="session-scope-note">
@@ -325,9 +749,13 @@ async function handleDeleteSession(id: string) {
             :pinned="true"
             :can-delete="true"
             :streaming="false"
+            :selectable="isBatchMode"
+            :selected="isSessionSelected(s)"
             :show-profile="false"
-            @select="handleSessionClick(s.id)"
-            @delete="handleDeleteSession(s.id)"
+            @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
+            @contextmenu="handleContextMenu($event, s.id)"
+            @delete="handleDeleteSession(s.id, s.profile)"
+            @toggle-select="toggleSessionSelection(s)"
           />
         </template>
 
@@ -346,14 +774,29 @@ async function handleDeleteSession(id: string) {
               :pinned="false"
               :can-delete="true"
               :streaming="false"
+              :selectable="isBatchMode"
+              :selected="isSessionSelected(s)"
               :show-profile="false"
-              @select="handleSessionClick(s.id)"
-              @delete="handleDeleteSession(s.id)"
+              @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
+              @contextmenu="handleContextMenu($event, s.id)"
+              @delete="handleDeleteSession(s.id, s.profile)"
+              @toggle-select="toggleSessionSelection(s)"
             />
           </template>
         </template>
       </div>
     </aside>
+
+    <NDropdown
+      placement="bottom-start"
+      trigger="manual"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      :options="contextMenuOptions"
+      :show="showContextMenu"
+      @select="handleContextMenuSelect"
+      @clickoutside="handleClickOutside"
+    />
 
     <div class="chat-main">
       <header class="chat-header">
@@ -393,9 +836,17 @@ async function handleDeleteSession(id: string) {
 
       <div class="history-content-wrapper">
         <div class="history-main-content">
-          <HistoryMessageList :session="historySession" />
+          <HistoryMessageList
+            ref="historyMessageListRef"
+            :session="historySession"
+            :load-older="loadOlderHistoryMessages"
+          />
         </div>
-        <OutlinePanel v-if="showOutline && historySession" :messages="historySession.messages || []" />
+        <OutlinePanel
+          v-if="showOutline && historySession"
+          :messages="historySession.messages || []"
+          @navigate="handleOutlineNavigate"
+        />
       </div>
     </div>
   </div>

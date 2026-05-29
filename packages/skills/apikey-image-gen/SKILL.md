@@ -1,6 +1,6 @@
 ---
 name: apikey-image-gen
-description: "Generate or edit images through Hermes Web UI using the active profile's fun-codex provider from config.yaml."
+description: "Generate or edit images through Hermes Web UI using the selected/requested profile's fun-codex provider from config.yaml."
 version: 1.0.0
 author: Ekko
 license: MIT
@@ -16,7 +16,9 @@ prerequisites:
 
 Use this skill when the user wants to generate an image, generate an image from a reference image, or edit an existing image.
 
-Always call Hermes Web UI's media endpoint. Do not call `api.apikey.fun` directly, and do not ask the user for an API key. The server reads the active profile's `config.yaml` and uses the `custom_providers` entry named `fun-codex`:
+Always call Hermes Web UI's media endpoint. Do not call `api.apikey.fun` directly, and do not ask the user for an API key. The server reads the selected/requested profile's `config.yaml` and uses the `custom_providers` entry named `fun-codex`:
+
+Do not use any built-in image generation tool as a fallback. If the Hermes Web UI endpoint returns `401`, `403`, connection failure, or any other error, stop and report the Hermes Web UI error to the user.
 
 ```yaml
 custom_providers:
@@ -43,7 +45,7 @@ When Hermes Web UI is running from Docker Compose, the default external URL is `
 
 Authentication:
 
-Send the Hermes Web UI bearer token.
+Send the Hermes Web UI server bearer token. This token is accepted only by Hermes Web UI media generation endpoints for agent skills; it is not a general Web UI login token.
 
 Resolve the token in this order:
 
@@ -51,6 +53,20 @@ Resolve the token in this order:
 2. `${HERMES_WEB_UI_HOME}/.token`, if `HERMES_WEB_UI_HOME` is set.
 3. `${HERMES_WEBUI_STATE_DIR}/.token`, if `HERMES_WEBUI_STATE_DIR` is set.
 4. `~/.hermes-web-ui/.token`.
+
+Profile selection:
+
+Use the current Hermes profile from the run instructions by sending `X-Hermes-Profile`.
+
+If the run instructions include `[Current Hermes profile: <name>]`, include:
+
+```bash
+-H "X-Hermes-Profile: <name>"
+```
+
+Replace `<name>` with the exact profile name from the run instructions. Never send a placeholder value such as `<name>` or `<current-hermes-profile>`.
+
+If no current profile is provided, omit the header and let the server fall back to the current Hermes active profile.
 
 ## Modes
 
@@ -163,4 +179,4 @@ Successful responses include:
 }
 ```
 
-If the response code is `missing_fun_codex_provider`, tell the user to configure `fun-codex` in the active profile's `config.yaml`.
+If the response code is `missing_fun_codex_provider`, tell the user to configure `fun-codex` in the selected/requested profile's `config.yaml`.

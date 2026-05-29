@@ -3,12 +3,14 @@ import { NButton } from 'naive-ui'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUsageStore } from '@/stores/hermes/usage'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import StatCards from '@/components/hermes/usage/StatCards.vue'
 import ModelBreakdown from '@/components/hermes/usage/ModelBreakdown.vue'
 import DailyTrend from '@/components/hermes/usage/DailyTrend.vue'
 
 const { t } = useI18n()
 const usageStore = useUsageStore()
+const profilesStore = useProfilesStore()
 
 const periodOptions = [
   { label: '7d', days: 7 },
@@ -19,13 +21,20 @@ const periodOptions = [
 
 const selectedPeriod = ref(30)
 
-function loadUsage(days = selectedPeriod.value) {
+async function ensureProfileSelection() {
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles()
+  }
+}
+
+async function loadUsage(days = selectedPeriod.value) {
   selectedPeriod.value = days
-  usageStore.loadSessions(days)
+  await ensureProfileSelection()
+  await usageStore.loadSessions(days)
 }
 
 onMounted(() => {
-  loadUsage(30)
+  void loadUsage(30)
 })
 </script>
 

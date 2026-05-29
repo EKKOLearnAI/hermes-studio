@@ -175,6 +175,12 @@ export class ContextEngine {
             logger.debug(`[ContextEngine] [Path A] OVER threshold — starting INCREMENTAL compression of ${newMessages.length} msgs...`)
             logger.debug(`[ContextEngine] [Path A] CONTEXT BEFORE COMPRESSION: summary(${snapshot.summary.length} chars) + ${newMessages.length} new msgs`)
             meta.compressed = true
+            input.onProgress?.({
+                status: 'compressing',
+                path: 'snapshot',
+                messageCount: newMessages.length,
+                tokenCount: totalTokens,
+            })
 
             const t0 = Date.now()
             const result = await this.summarize(
@@ -233,6 +239,12 @@ export class ContextEngine {
         logger.debug(`[ContextEngine] [Path B] OVER threshold — starting FULL compression of ${total} msgs...`)
         logger.debug(`[ContextEngine] [Path B] CONTEXT BEFORE COMPRESSION: ${total} msgs, ~${totalTokens} tokens`)
         meta.compressed = true
+        input.onProgress?.({
+            status: 'compressing',
+            path: 'full',
+            messageCount: total,
+            tokenCount: totalTokens,
+        })
 
         const t0 = Date.now()
         const result = await this.summarize(

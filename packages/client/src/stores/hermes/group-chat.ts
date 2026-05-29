@@ -126,6 +126,23 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const contextStatuses = ref<Map<string, { agentName: string; status: string }>>(new Map())
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
+    const totalMessages = ref(0)
+    const loadedMessageCount = ref(0)
+    const hasMoreBefore = ref(false)
+    const isLoadingOlderMessages = ref(false)
+
+    function resetMessagePaging() {
+        totalMessages.value = 0
+        loadedMessageCount.value = 0
+        hasMoreBefore.value = false
+        isLoadingOlderMessages.value = false
+    }
+
+    function applyMessagePaging(res: { messages: ChatMessage[]; total?: number; hasMore?: boolean }) {
+        loadedMessageCount.value = res.messages.length
+        totalMessages.value = res.total ?? res.messages.length
+        hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
+    }
 
     function setAutoPlaySpeech(enabled: boolean) {
         autoPlaySpeechEnabled.value = enabled
@@ -233,6 +250,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                     messages.value = [...messages.value]
                 } else {
                     messages.value.push(resolvedMsg)
+                    loadedMessageCount.value += 1
+                    totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
                 }
                 if (autoPlaySpeechEnabled.value && resolvedMsg.role === 'assistant' && resolvedMsg.content?.trim()) {
                     setTimeout(() => playMessageSpeech(resolvedMsg.id, resolvedMsg.content), 300)
@@ -267,6 +286,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 messages.value = [...messages.value]
             } else {
                 messages.value.push(msg)
+                loadedMessageCount.value += 1
+                totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
             }
         })
 
@@ -401,6 +422,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (room) room.totalTokens = data.totalTokens
             if (data.roomId === currentRoomId.value) {
                 messages.value = []
+                resetMessagePaging()
                 typingUsers.value.clear()
                 contextStatuses.value.clear()
                 pendingApprovals.value.clear()
@@ -413,6 +435,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         connected.value = false
         currentRoomId.value = null
         messages.value = []
+        resetMessagePaging()
         members.value = []
         agents.value = []
         roomName.value = ''
@@ -437,6 +460,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             currentRoomId.value = res.room.id
             roomName.value = res.room.name
             messages.value = res.messages
+            applyMessagePaging(res)
             agents.value = res.agents
             members.value = res.members || []
 
@@ -493,6 +517,28 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    async function loadOlderMessages(): Promise<boolean> {
+        const roomId = currentRoomId.value
+        if (!roomId || isLoadingOlderMessages.value || !hasMoreBefore.value) return false
+        const offset = loadedMessageCount.value
+        isLoadingOlderMessages.value = true
+        try {
+            const res = await getRoomDetail(roomId, { offset, limit: 300 })
+            const existingIds = new Set(messages.value.map(message => message.id))
+            const olderMessages = res.messages.filter(message => !existingIds.has(message.id))
+            messages.value = [...olderMessages, ...messages.value]
+            loadedMessageCount.value = offset + res.messages.length
+            totalMessages.value = res.total ?? totalMessages.value
+            hasMoreBefore.value = res.hasMore ?? loadedMessageCount.value < totalMessages.value
+            return olderMessages.length > 0
+        } catch (err: any) {
+            error.value = err.message
+            return false
+        } finally {
+            isLoadingOlderMessages.value = false
+        }
+    }
+
     async function sendMessage(content: string, attachments?: Attachment[]) {
         const socket = getSocket()
         if (!socket || !currentRoomId.value) return
@@ -515,6 +561,8 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 role: 'user',
                 attachments: attachments.map(att => ({ ...att, url: urlMap.get(att.name) || att.url, file: undefined })),
             })
+            loadedMessageCount.value += 1
+            totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
         }
 
         return new Promise<void>((resolve, reject) => {
@@ -572,6 +620,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             if (currentRoomId.value === roomId) {
                 currentRoomId.value = null
                 messages.value = []
+                resetMessagePaging()
                 members.value = []
                 agents.value = []
                 roomName.value = ''
@@ -598,6 +647,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         try {
             const res = await clearRoomContext(currentRoomId.value)
             messages.value = []
+            resetMessagePaging()
             typingUsers.value.clear()
             contextStatuses.value.clear()
             const idx = rooms.value.findIndex(r => r.id === currentRoomId.value)
@@ -719,6 +769,10 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         pendingApprovals,
         activePendingApproval,
         autoPlaySpeechEnabled,
+        totalMessages,
+        loadedMessageCount,
+        hasMoreBefore,
+        isLoadingOlderMessages,
         userId,
         userName,
         // Computed
@@ -732,6 +786,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         setUserInfo,
         setAutoPlaySpeech,
         joinRoom,
+        loadOlderMessages,
         sendMessage,
         loadRooms,
         emitTyping,

@@ -16,7 +16,6 @@ import { homedir } from 'os'
  * - UPLOAD_DIR: Upload directory override. Default: join(HERMES_WEB_UI_HOME, 'upload').
  *
  * Auth:
- * - AUTH_DISABLED: Set to 1 or true to disable Web UI auth.
  * - AUTH_TOKEN: Explicit bearer token. If unset, Web UI stores an auto-generated token under HERMES_WEB_UI_HOME.
  *
  * Runtime behavior:

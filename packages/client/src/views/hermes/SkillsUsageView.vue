@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NButton } from 'naive-ui'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
   fetchSkillUsageStats,
   type SkillUsageDailyRow,
@@ -10,6 +11,7 @@ import {
 } from '@/api/hermes/skills'
 
 const { t } = useI18n()
+const profilesStore = useProfilesStore()
 const periodOptions = [7, 30, 90, 365]
 const maxVisibleChartSkills = 6
 const skillPalette = [
@@ -125,6 +127,9 @@ function hideTooltip(day: SkillUsageDailyRow) {
 
 async function loadStats(days = selectedDays.value, force = false) {
   selectedDays.value = days
+  if (!profilesStore.activeProfileName || profilesStore.profiles.length === 0) {
+    await profilesStore.fetchProfiles()
+  }
   const seq = ++requestSeq
   latestRequestByPeriod[days] = seq
   loading.value = true

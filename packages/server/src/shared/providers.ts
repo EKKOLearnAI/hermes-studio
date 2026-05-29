@@ -34,6 +34,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     base_url: 'https://api.apikey.fun',
     api_mode: "anthropic_messages",
     models: [
+      'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
       'claude-sonnet-4-6',
@@ -41,11 +42,20 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'LM Studio',
+    value: 'lmstudio',
+    builtin: true,
+    base_url: 'http://127.0.0.1:1234/v1',
+    api_mode: 'chat_completions',
+    models: [],
+  },
+  {
     label: 'Anthropic',
     value: 'anthropic',
     builtin: true,
     base_url: 'https://api.anthropic.com',
     models: [
+      'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
       'claude-sonnet-4-6',

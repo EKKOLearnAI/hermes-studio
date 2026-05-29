@@ -7,7 +7,7 @@ const APP_HOME = config.appHome
 const LOCK_FILE = join(APP_HOME, '.login-lock.json')
 
 // Per-IP settings
-const IP_MAX_FAILURES = 3
+const IP_MAX_FAILURES = 10
 const IP_FAILURE_WINDOW_MS = 15 * 60_000 // 15 minutes
 const IP_LOCK_DURATION_MS = 60 * 60_000 // 1 hour
 const IP_MAP_MAX_SIZE = 10000

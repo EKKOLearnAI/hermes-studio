@@ -1,5 +1,6 @@
 import Router from '@koa/router'
 import * as ctrl from '../../controllers/hermes/profiles'
+import { requireSuperAdmin } from '../../middleware/user-auth'
 
 export const profileRoutes = new Router()
 
@@ -14,6 +15,6 @@ profileRoutes.delete('/api/hermes/profiles/:name/avatar', ctrl.deleteAvatar)
 profileRoutes.get('/api/hermes/profiles/:name', ctrl.get)
 profileRoutes.delete('/api/hermes/profiles/:name', ctrl.remove)
 profileRoutes.post('/api/hermes/profiles/:name/rename', ctrl.rename)
-profileRoutes.put('/api/hermes/profiles/active', ctrl.switchProfile)
+profileRoutes.put('/api/hermes/profiles/active', requireSuperAdmin, ctrl.switchProfile)
 profileRoutes.post('/api/hermes/profiles/:name/export', ctrl.exportProfile)
 profileRoutes.post('/api/hermes/profiles/import', ctrl.importProfile)

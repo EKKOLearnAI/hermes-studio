@@ -101,7 +101,7 @@ test('uses the newly selected profile for the next chat-run socket after profile
   await page.getByTestId('profile-selector-select').click()
   await expect(page.getByRole('dialog').filter({ hasText: 'research' })).toBeVisible()
   const reloadPromise = page.waitForEvent('framenavigated', frame => frame === page.mainFrame())
-  await page.locator('.profile-runtime-item').filter({ hasText: /^research/ }).getByRole('button', { name: 'Switch Profile' }).click()
+  await page.locator('.profile-runtime-item').filter({ hasText: /^research/ }).getByRole('button', { name: 'Switch Frontend Profile' }).click()
   await reloadPromise
   await page.waitForLoadState('domcontentloaded')
   await expect(page.getByTestId('profile-selector-select').filter({ hasText: 'research' })).toBeVisible()
@@ -115,9 +115,7 @@ test('uses the newly selected profile for the next chat-run socket after profile
   expect(run.input).toBe('Use the active research profile')
   expect(await page.evaluate(() => window.localStorage.getItem('hermes_active_profile_name'))).toBe('research')
 
-  const switchRequest = api.requests.find((request) => request.pathname === '/api/hermes/profiles/active')
-  expect(switchRequest?.method).toBe('PUT')
-  expect(switchRequest?.postData).toBe(JSON.stringify({ name: 'research' }))
+  expect(api.requests.some((request) => request.pathname === '/api/hermes/profiles/active')).toBe(false)
   expect(api.unexpectedRequests).toEqual([])
 })
 
@@ -144,6 +142,22 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
   expect(second.runCount).toBe(2)
   expect(second.run.session_id).toBe(first.run.session_id)
   expect(second.run.input).toBe('Second queued contract')
+  await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
+
+  await page.evaluate(({ sid, queueId }) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.peer_user_message', {
+      event: 'run.peer_user_message',
+      session_id: sid,
+      message: {
+        id: queueId,
+        role: 'user',
+        content: 'Second queued contract',
+        timestamp: Date.now() / 1000,
+      },
+    })
+  }, { sid: first.run.session_id, queueId: second.run.queue_id })
+  await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
 
   await page.evaluate((sid) => {
     const socket = (window as any).__PW_CHAT_SOCKET__.latest
@@ -154,6 +168,29 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
       output: 'First answer',
       queue_remaining: 1,
     })
+  }, first.run.session_id)
+
+  await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(0)
+
+  await page.evaluate(({ sid, queueId }) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.queued', {
+      event: 'run.queued',
+      session_id: sid,
+      queue_length: 0,
+      dequeued_queue_id: queueId,
+      queued_messages: [],
+    })
+    socket.__trigger('run.peer_user_message', {
+      event: 'run.peer_user_message',
+      session_id: sid,
+      message: {
+        id: queueId,
+        role: 'user',
+        content: 'Second queued contract',
+        timestamp: Date.now() / 1000,
+      },
+    })
     socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-2', queue_length: 0 })
     socket.__trigger('message.delta', { event: 'message.delta', session_id: sid, run_id: 'run-2', delta: 'Second answer' })
     socket.__trigger('run.completed', {
@@ -163,7 +200,7 @@ test('keeps queued runs on one socket and does not duplicate streamed handlers',
       output: 'Second answer',
       queue_remaining: 0,
     })
-  }, first.run.session_id)
+  }, { sid: first.run.session_id, queueId: second.run.queue_id })
 
   await expect(page.locator('p').filter({ hasText: /^First answer$/ })).toHaveCount(1)
   await expect(page.locator('p').filter({ hasText: /^Second queued contract$/ })).toHaveCount(1)

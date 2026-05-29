@@ -7,6 +7,7 @@ services:
     container_name: ${WEBUI_CONTAINER_NAME:-hermes-webui}
     ports:
       - "${PORT:-6060}:${PORT:-6060}"
+      - "${PREVIEW_FRONTEND_PORT:-8651}:8651"
       - "${XAI_OAUTH_PORT:-56121}:56121"
     volumes:
       - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes
@@ -18,7 +19,6 @@ services:
       - HERMES_WEB_UI_MANAGED_GATEWAY=1
       - HERMES_WEB_UI_XAI_CALLBACK_BIND_HOST=0.0.0.0
       - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      - AUTH_DISABLED=${AUTH_DISABLED:-false}
       - HERMES_ALLOW_ROOT_GATEWAY=1
     restart: unless-stopped
     stdin_open: true

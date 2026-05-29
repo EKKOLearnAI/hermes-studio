@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NSelect, NButton, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useKanbanStore } from '@/stores/hermes/kanban'
+import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
 
 const emit = defineEmits<{
   close: []
@@ -26,10 +27,8 @@ const priorityOptions = computed(() => [
 ])
 
 const assigneeOptions = computed(() => {
-  return kanbanStore.assignees.map(a => {
-    const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
-    return { label: `${a.name} · ${t('kanban.stats.tasks')}: ${total}`, value: a.name }
-  })
+  return withDefaultAssignee(kanbanStore.assignees, kanbanStore.stats?.by_assignee || {})
+    .map(a => ({ label: a.name, value: a.name }))
 })
 
 async function handleSubmit() {

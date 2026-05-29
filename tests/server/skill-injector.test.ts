@@ -61,4 +61,41 @@ describe('HermesSkillInjector', () => {
     await expect(readFile(join(hermesHome, 'skills', 'new-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# New Skill\n')
     await expect(readFile(join(hermesHome, 'skills', 'existing-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Bundled Existing\n')
   })
+
+  it('syncs bundled skills into default and named profiles only touching bundled names', async () => {
+    const source = await tempDir('hermes-skill-source-')
+    const hermesHome = await tempDir('hermes-skill-home-')
+    process.env.HERMES_HOME = hermesHome
+
+    await mkdir(join(source, 'webui-skill'), { recursive: true })
+    await writeFile(join(source, 'webui-skill', 'SKILL.md'), '# WebUI Skill\n', 'utf-8')
+
+    await mkdir(join(hermesHome, 'skills', 'webui-skill'), { recursive: true })
+    await writeFile(join(hermesHome, 'skills', 'webui-skill', 'SKILL.md'), '# Old WebUI Skill\n', 'utf-8')
+    await mkdir(join(hermesHome, 'skills', 'local-skill'), { recursive: true })
+    await writeFile(join(hermesHome, 'skills', 'local-skill', 'SKILL.md'), '# Local Skill\n', 'utf-8')
+
+    await mkdir(join(hermesHome, 'profiles', 'alpha', 'skills'), { recursive: true })
+    await mkdir(join(hermesHome, 'profiles', 'beta', 'skills', 'webui-skill'), { recursive: true })
+    await writeFile(join(hermesHome, 'profiles', 'beta', 'skills', 'webui-skill', 'SKILL.md'), '# Old Profile Skill\n', 'utf-8')
+    await mkdir(join(hermesHome, 'profiles', 'beta', 'skills', 'profile-local'), { recursive: true })
+    await writeFile(join(hermesHome, 'profiles', 'beta', 'skills', 'profile-local', 'SKILL.md'), '# Profile Local\n', 'utf-8')
+
+    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const result = await new HermesSkillInjector(source).injectMissingSkills()
+
+    expect(result.targets.map(target => target.targetDir)).toEqual([
+      join(hermesHome, 'skills'),
+      join(hermesHome, 'profiles', 'alpha', 'skills'),
+      join(hermesHome, 'profiles', 'beta', 'skills'),
+    ])
+    expect(result.injected).toEqual(['webui-skill'])
+    expect(result.updated).toEqual(['webui-skill', 'webui-skill'])
+
+    await expect(readFile(join(hermesHome, 'skills', 'webui-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# WebUI Skill\n')
+    await expect(readFile(join(hermesHome, 'profiles', 'alpha', 'skills', 'webui-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# WebUI Skill\n')
+    await expect(readFile(join(hermesHome, 'profiles', 'beta', 'skills', 'webui-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# WebUI Skill\n')
+    await expect(readFile(join(hermesHome, 'skills', 'local-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Local Skill\n')
+    await expect(readFile(join(hermesHome, 'profiles', 'beta', 'skills', 'profile-local', 'SKILL.md'), 'utf-8')).resolves.toBe('# Profile Local\n')
+  })
 })

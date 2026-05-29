@@ -2,7 +2,7 @@ import { readFile, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getActiveAuthPath, getProfileDir } from './hermes/hermes-profile'
+import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getProfileDir } from './hermes/hermes-profile'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
 
@@ -10,31 +10,32 @@ import { safeFileStore } from './safe-file-store'
 export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_env: string }> = {
   'fun-codex': { api_key_env: '', base_url_env: '' },
   'fun-claude': { api_key_env: '', base_url_env: '' },
-  openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: '' },
+  lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
+  openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: 'OPENROUTER_BASE_URL' },
   'glm-coding-plan': { api_key_env: '', base_url_env: '' },
-  zai: { api_key_env: 'GLM_API_KEY', base_url_env: '' },
+  zai: { api_key_env: 'GLM_API_KEY', base_url_env: 'GLM_BASE_URL' },
   'kimi-coding-cn': { api_key_env: 'KIMI_CN_API_KEY', base_url_env: '' },
-  moonshot: { api_key_env: 'MOONSHOT_API_KEY', base_url_env: '' },
-  minimax: { api_key_env: 'MINIMAX_API_KEY', base_url_env: '' },
-  'minimax-cn': { api_key_env: 'MINIMAX_CN_API_KEY', base_url_env: '' },
-  deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: '' },
-  alibaba: { api_key_env: 'DASHSCOPE_API_KEY', base_url_env: '' },
+  moonshot: { api_key_env: 'MOONSHOT_API_KEY', base_url_env: 'KIMI_BASE_URL' },
+  minimax: { api_key_env: 'MINIMAX_API_KEY', base_url_env: 'MINIMAX_BASE_URL' },
+  'minimax-cn': { api_key_env: 'MINIMAX_CN_API_KEY', base_url_env: 'MINIMAX_CN_BASE_URL' },
+  deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
+  alibaba: { api_key_env: 'DASHSCOPE_API_KEY', base_url_env: 'DASHSCOPE_BASE_URL' },
   'alibaba-coding-plan': { api_key_env: 'ALIBABA_CODING_PLAN_API_KEY', base_url_env: 'ALIBABA_CODING_PLAN_BASE_URL' },
-  anthropic: { api_key_env: 'ANTHROPIC_API_KEY', base_url_env: '' },
-  xai: { api_key_env: 'XAI_API_KEY', base_url_env: '' },
+  anthropic: { api_key_env: 'ANTHROPIC_API_KEY', base_url_env: 'ANTHROPIC_BASE_URL' },
+  xai: { api_key_env: 'XAI_API_KEY', base_url_env: 'XAI_BASE_URL' },
   'xai-oauth': { api_key_env: '', base_url_env: '' },
-  xiaomi: { api_key_env: 'XIAOMI_API_KEY', base_url_env: '' },
+  xiaomi: { api_key_env: 'XIAOMI_API_KEY', base_url_env: 'XIAOMI_BASE_URL' },
   'xiaomi-token-plan': { api_key_env: '', base_url_env: '' },
-  gemini: { api_key_env: 'GEMINI_API_KEY', base_url_env: '' },
-  kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: '' },
-  'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: '' },
+  gemini: { api_key_env: 'GEMINI_API_KEY', base_url_env: 'GEMINI_BASE_URL' },
+  kilocode: { api_key_env: 'KILO_API_KEY', base_url_env: 'KILOCODE_BASE_URL' },
+  'ai-gateway': { api_key_env: 'AI_GATEWAY_API_KEY', base_url_env: 'AI_GATEWAY_BASE_URL' },
   cliproxyapi: { api_key_env: '', base_url_env: '' },
-  'opencode-zen': { api_key_env: 'OPENCODE_ZEN_API_KEY', base_url_env: '' },
-  'opencode-go': { api_key_env: 'OPENCODE_GO_API_KEY', base_url_env: '' },
-  huggingface: { api_key_env: 'HF_TOKEN', base_url_env: '' },
-  arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: '' },
-  stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: '' },
-  'ollama-cloud': { api_key_env: 'OLLAMA_API_KEY', base_url_env: '' },
+  'opencode-zen': { api_key_env: 'OPENCODE_ZEN_API_KEY', base_url_env: 'OPENCODE_ZEN_BASE_URL' },
+  'opencode-go': { api_key_env: 'OPENCODE_GO_API_KEY', base_url_env: 'OPENCODE_GO_BASE_URL' },
+  huggingface: { api_key_env: 'HF_TOKEN', base_url_env: 'HF_BASE_URL' },
+  arcee: { api_key_env: 'ARCEE_API_KEY', base_url_env: 'ARCEE_BASE_URL' },
+  stepfun: { api_key_env: 'STEPFUN_API_KEY', base_url_env: 'STEPFUN_BASE_URL' },
+  'ollama-cloud': { api_key_env: 'OLLAMA_API_KEY', base_url_env: 'OLLAMA_BASE_URL' },
   nous: { api_key_env: '', base_url_env: '' },
   'openai-codex': { api_key_env: '', base_url_env: '' },
   copilot: { api_key_env: '', base_url_env: '' },
@@ -43,7 +44,7 @@ export const PROVIDER_ENV_MAP: Record<string, { api_key_env: string; base_url_en
 
 // --- Types ---
 
-export type SkillSource = 'builtin' | 'hub' | 'local'
+export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
 
 export interface SkillInfo {
   name: string
@@ -71,13 +72,15 @@ export interface ModelGroup {
 // --- Config YAML helpers ---
 
 const configPath = () => getActiveConfigPath()
+const configPathForProfile = (profile: string) => join(getProfileDir(profile), 'config.yaml')
+const envPathForProfile = (profile: string) => join(getProfileDir(profile), '.env')
 
 export async function readConfigYaml(): Promise<Record<string, any>> {
   return safeFileStore.readYaml(configPath())
 }
 
 export async function readConfigYamlForProfile(profile: string): Promise<Record<string, any>> {
-  return safeFileStore.readYaml(join(getProfileDir(profile), 'config.yaml'))
+  return safeFileStore.readYaml(configPathForProfile(profile))
 }
 
 export async function writeConfigYaml(config: Record<string, any>): Promise<void> {
@@ -88,6 +91,13 @@ export async function updateConfigYaml<T = void>(
   updater: (config: Record<string, any>) => Record<string, any> | { data: Record<string, any>; result: T; write?: boolean } | Promise<Record<string, any> | { data: Record<string, any>; result: T; write?: boolean }>,
 ): Promise<T | undefined> {
   return safeFileStore.updateYaml(configPath(), updater, { backup: true })
+}
+
+export async function updateConfigYamlForProfile<T = void>(
+  profile: string,
+  updater: (config: Record<string, any>) => Record<string, any> | { data: Record<string, any>; result: T; write?: boolean } | Promise<Record<string, any> | { data: Record<string, any>; result: T; write?: boolean }>,
+): Promise<T | undefined> {
+  return safeFileStore.updateYaml(configPathForProfile(profile), updater, { backup: true })
 }
 
 export function stripLegacyApiServerGatewayConfig(config: Record<string, any>): { config: Record<string, any>; changed: boolean } {
@@ -112,9 +122,8 @@ function assertValidEnvKey(key: string): void {
   }
 }
 
-export async function saveEnvValue(key: string, value: string): Promise<void> {
+async function saveEnvValueAtPath(envPath: string, key: string, value: string): Promise<void> {
   assertValidEnvKey(key)
-  const envPath = getActiveEnvPath()
   await safeFileStore.updateText(envPath, (raw) => {
     const remove = !value
     const lines = raw.split('\n')
@@ -141,6 +150,14 @@ export async function saveEnvValue(key: string, value: string): Promise<void> {
     return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '') + '\n'
   })
   try { await chmod(envPath, 0o600) } catch { /* ignore */ }
+}
+
+export async function saveEnvValue(key: string, value: string): Promise<void> {
+  await saveEnvValueAtPath(getActiveEnvPath(), key, value)
+}
+
+export async function saveEnvValueForProfile(profile: string, key: string, value: string): Promise<void> {
+  await saveEnvValueAtPath(envPathForProfile(profile), key, value)
 }
 
 // --- File helpers ---

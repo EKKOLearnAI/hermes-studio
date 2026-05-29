@@ -49,10 +49,10 @@
 - 按最新消息时间排序会话列表
 - Markdown 渲染，支持语法高亮和代码复制
 - 工具调用详情展开（参数 / 结果）
-- 文件上传支持
-- 文件下载支持 — 支持下载用户上传的文件和 Agent 生成的文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
+- 按 Profile 隔离的文件上传
+- 文件下载支持 — 按解析后的路径下载用户上传文件和 Agent 生成文件，兼容 local、Docker、SSH、Singularity 等多种 terminal backend
 - 会话搜索 — Ctrl+K 搜索 Web UI 本地会话库；不包含只读 Hermes 历史会话
-- 全局模型选择器 — 自动从 `~/.hermes/auth.json` 凭证池发现可用模型
+- 按账号授权 Profile 汇总模型选择器 — 只展示当前账号可访问的 Hermes Profile 中可用的模型
 - 每个会话显示模型标签和上下文 Token 用量
 
 ### 平台渠道
@@ -102,12 +102,14 @@
 - 创建、重命名、删除、切换 Hermes 配置文件（Profile）
 - 克隆现有配置文件或从归档导入（`.tar.gz`）
 - 导出配置文件用于备份或分享
-- 配置文件级别的配置和缓存隔离
+- 按 Profile 隔离配置、缓存、上传、会话、任务、用量、记忆、技能、插件、Provider 和模型可见性
+- 账号绑定 Profile 权限：超级管理员可以管理全部 Profile；普通管理员只能查看和使用分配给自己的 Profile
 
 ### 文件浏览器
 
 - 浏览远程后端文件（local、Docker、SSH、Singularity）
 - 上传、下载、重命名、复制、移动和删除文件
+- 上传文件保存到当前选择/请求的 Hermes Profile 目录下；下载按真实路径解析，支持下载上传目录外的 Agent 产物
 - 创建目录
 - 查看文件内容，支持语法高亮
 
@@ -137,8 +139,24 @@
 ### 认证
 
 - 基于 Token 的认证（首次运行自动生成或通过 `AUTH_TOKEN` 环境变量设置）
-- 可选的用户名/密码登录 — 通过初始 Token 认证后在设置页面设置
-- 可通过 `AUTH_DISABLED=1` 禁用认证
+- 用户名/密码登录，并在设置页提供账户管理
+- 默认登录名/密码为 `admin` / `123456`；登录后会提示尽快修改默认账户和密码
+- 超级管理员可以管理用户和 Profile 绑定；普通管理员只能管理自己的账户信息
+
+CLI 维护命令：
+
+```bash
+# 删除持久化的登录 IP 锁记录
+hermes-web-ui clear-login-locks
+
+# 删除登录锁并重启正在运行的 Web UI 进程
+hermes-web-ui clear-login-locks --restart
+
+# 创建或重置默认超级管理员登录名/密码为 admin / 123456
+hermes-web-ui reset-default-login
+```
+
+`clear-login-locks` 会删除 `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`。如果服务正在运行，需要重启服务才能清理内存中的锁定状态。`reset-default-login` 会更新 Web UI 账户数据库；如果已存在 `admin` 用户，则会把密码重置为 `123456`，并启用为超级管理员账户。
 
 ### 设置
 
@@ -219,23 +237,55 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 ## Web UI 环境变量
 
-这些变量只用于配置 Hermes Web UI 自身。Provider API Key 和 Hermes Agent 相关设置仍通过 Hermes profile 管理。
+这些变量用于配置 Hermes Web UI、本地 Hermes runtime 集成以及开发/预览辅助能力。Provider API Key 和 Hermes Agent 相关设置通常仍通过 Hermes profile 管理；这里列出的变量是进程级覆盖项。
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `PORT` | `8648` | Web UI 监听端口。 |
 | `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
-| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传目录。 |
+| `HERMES_WEBUI_STATE_DIR` | 未设置 | `HERMES_WEB_UI_HOME` 的兼容别名。 |
+| `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传根目录。文件会保存在按 Profile 隔离的子目录下。 |
 | `CORS_ORIGINS` | `*` | Koa CORS origin 配置。 |
-| `AUTH_DISABLED` | 未设置 | 设置为 `1` 或 `true` 可关闭 Web UI 认证。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
-| `PROFILE` | `default` | 初始 Hermes profile 名称。 |
+| `AUTH_JWT_SECRET` | `AUTH_TOKEN` | 用户名/密码会话的 JWT 签名密钥覆盖。 |
+| `PROFILE` | `default` | 启动/默认 Hermes profile。运行时请求使用前端当前选择且当前账号有权限访问的 Profile。 |
 | `LOG_LEVEL` | `info` | Server 日志级别。 |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | 最大文件下载大小。 |
 | `MAX_EDIT_SIZE` | `10MB` | 最大可编辑文件大小。 |
 | `WORKSPACE_BASE` | `/opt/data/workspace` | Workspace 浏览根目录。 |
+| `HERMES_HOME` | 平台默认值 | Hermes 数据目录。Windows 使用 `%LOCALAPPDATA%\hermes`；macOS/Linux 使用 `~/.hermes`。 |
+| `HERMES_BIN` | `hermes` | 自定义 Hermes CLI 二进制路径。 |
+| `HERMES_AGENT_ROOT` | 自动发现 | 包含 `run_agent.py` 的 Hermes Agent 源码目录。 |
+| `HERMES_AGENT_BRIDGE_PYTHON` | 自动发现 | 用于启动 agent bridge 的 Python 解释器。 |
+| `HERMES_AGENT_BRIDGE_UV` | 自动发现 | 可用时用于启动 agent bridge 的 `uv` 可执行文件。 |
+| `UV` | 自动发现 | `uv` 可执行文件 fallback。 |
+| `PYTHON` | 自动发现 | agent bridge 的 Python 可执行文件 fallback。 |
+| `HERMES_AGENT_BRIDGE_ENDPOINT` | 平台默认值 | Agent bridge broker endpoint。Windows 默认 `tcp://127.0.0.1:18765`；macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock`。 |
+| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Node 请求 bridge broker 的响应超时。 |
+| `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | 连接 bridge socket 失败时的短重试窗口。 |
+| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | 等待 Python bridge ready 的超时。 |
+| `HERMES_AGENT_BRIDGE_AUTO_RESTART` | 开启 | bridge broker 意外退出后是否自动重启；设为 `0`、`false`、`no` 或 `off` 可关闭。 |
+| `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | `1000` | bridge 自动重启退避的基础延迟。 |
+| `HERMES_AGENT_BRIDGE_PLATFORM` | `cli` | 传给 Hermes Agent 的 platform 标识。 |
+| `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` | 平台默认值 | Profile worker transport。设为 `tcp` 使用 loopback TCP；设为 `ipc`/`unix` 使用 Unix domain socket；默认 Windows TCP、macOS/Linux IPC。 |
+| `HERMES_AGENT_BRIDGE_WORKER_PORT_BASE` | `18780` | TCP worker endpoint 起始端口。 |
+| `HERMES_BRIDGE_PROVIDER` | profile/默认值 | bridge 运行时的 provider 覆盖。 |
+| `HERMES_BRIDGE_TOOLSETS` | profile/默认值 | bridge 运行时的 toolset 覆盖。 |
+| `HERMES_BRIDGE_MAX_TURNS` | profile/默认值 | bridge 运行时的最大轮数覆盖。 |
+| `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | 控制传给 Hermes Agent 的 bridge platform hint suppression。 |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkolearnai.com` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
+| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | bridge 运行发送给 OpenRouter 的 attribution title。 |
+| `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
+| `HERMES_WEB_UI_MANAGED_GATEWAY` | 由平台/运行环境决定 | 强制启用旧 gateway 进程托管；设为 `1`、`true`、`yes` 或 `on` 开启。 |
+| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | 生产环境默认开启 | Web UI 关闭时是否同时停止托管的 gateway 进程；设为 `0` 或 `false` 可让 gateway 分离运行。 |
+| `GATEWAY_HOST` | `127.0.0.1` | 旧 gateway 兼容配置中写入 profile 的默认 gateway host。 |
+| `HERMES_WEB_UI_PREVIEW_REPO` | package repository | Version Preview 使用的 GitHub 仓库。 |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | 平台默认值 | Version Preview broker transport。设为 `tcp` 可让预览环境在 macOS/Linux 上也使用 loopback TCP；未设置时会跟随 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp`。 |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | 隔离的预览 endpoint | 直接覆盖 Version Preview 的 broker endpoint。 |
+| `HERMES_WEB_UI_BACKEND_PORT` | `8648` | Vite dev proxy 使用的后端端口。 |
+| `HERMES_WEB_UI_FRONTEND_PORT` | `8649` | 前端 Vite dev server 端口。 |
 
 ### CLI 命令
 
@@ -272,8 +322,8 @@ npm install
 npm run dev
 ```
 
-- 前端：http://localhost:5173
-- BFF 服务器：http://localhost:8648
+- 前端：http://localhost:8649
+- BFF 服务器：http://localhost:8647
 
 ```bash
 npm run build   # 构建输出到 dist/
@@ -289,14 +339,14 @@ npm run build   # 构建输出到 dist/
         Hermes agent bridge → Hermes Agent runtime
                 ↓
            Hermes CLI / profiles
-           ~/.hermes/config.yaml  (渠道行为配置)
-           ~/.hermes/auth.json    (凭证池)
+           profile config.yaml    (渠道/Provider 配置)
+           profile auth.json      (凭证池)
            腾讯 iLink API         (微信扫码登录)
 ```
 
 前端采用 **多 Agent 可扩展架构** — 所有 Hermes 相关代码都按命名空间组织在 `hermes/` 目录下（API、组件、视图、Store），可以方便地并行接入新的 Agent。
 
-BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、文件上传与下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
+BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、分账户分 Profile 管理、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
 
 ## 技术栈
 

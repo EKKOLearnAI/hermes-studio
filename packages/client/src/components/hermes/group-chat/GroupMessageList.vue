@@ -4,27 +4,30 @@ import { useI18n } from 'vue-i18n'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import GroupMessageItem from './GroupMessageItem.vue'
+import VirtualMessageList from '../chat/VirtualMessageList.vue'
 
 const store = useGroupChatStore()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
-const listRef = ref<HTMLDivElement>()
+const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
 const isNearBottom = ref(true)
 const displayMessages = computed(() => store.sortedMessages.filter(msg => msg.role !== 'tool' || toolTraceVisible.value || msg.toolStatus === 'running'))
 
 function checkNearBottom(): void {
-    if (!listRef.value) return
-    const { scrollTop, scrollHeight, clientHeight } = listRef.value
-    isNearBottom.value = scrollHeight - scrollTop - clientHeight < 200
+    isNearBottom.value = listRef.value?.isNearBottom(200) ?? true
 }
 
 function scrollToBottom(): void {
-    if (!listRef.value) return
-    listRef.value.scrollTop = listRef.value.scrollHeight
+    listRef.value?.scrollToBottom()
 }
 
-function handleScroll(): void {
-    checkNearBottom()
+async function handleTopReach(): Promise<void> {
+    if (!store.hasMoreBefore || store.isLoadingOlderMessages) return
+    const snapshot = listRef.value?.captureScrollPosition() ?? null
+    const loaded = await store.loadOlderMessages()
+    if (!loaded) return
+    await nextTick()
+    listRef.value?.restoreScrollPosition(snapshot)
 }
 
 watch(() => store.messages.length, async () => {
@@ -38,38 +41,41 @@ defineExpose({ scrollToBottom })
 </script>
 
 <template>
-    <div ref="listRef" class="message-list" @scroll="handleScroll">
-        <div v-if="displayMessages.length === 0" class="empty-state">
+    <VirtualMessageList
+        ref="listRef"
+        :messages="displayMessages"
+        :estimated-item-height="170"
+        :row-gap="12"
+        padding="16px 20px"
+        @scroll="checkNearBottom"
+        @top-reach="handleTopReach"
+    >
+        <template #empty>
+            <div class="empty-state">
             <img src="/logo.png" alt="Hermes" class="empty-logo" />
             <p>{{ t("chat.emptyState") }}</p>
         </div>
-        <GroupMessageItem
-            v-for="msg in displayMessages"
-            :key="msg.id"
-            :message="msg"
-            :agents="store.agents"
-            :current-user-id="store.userId"
-        />
-    </div>
+        </template>
+        <template #before>
+            <div
+                v-if="store.hasMoreBefore || store.isLoadingOlderMessages"
+                class="history-loader"
+            >
+                <span v-if="store.isLoadingOlderMessages" class="history-loader-spinner"></span>
+            </div>
+        </template>
+        <template #item="{ message: msg }">
+            <GroupMessageItem
+                :message="msg"
+                :agents="store.agents"
+                :current-user-id="store.userId"
+            />
+        </template>
+    </VirtualMessageList>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
-
-.message-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background-color: $bg-card;
-    position: relative;
-
-    .dark & {
-        background-color: #333333;
-    }
-}
 
 .empty-state {
     flex: 1;
@@ -88,6 +94,34 @@ defineExpose({ scrollToBottom })
 
     p {
         font-size: 14px;
+    }
+}
+
+.history-loader {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.history-loader-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(0, 0, 0, 0.16);
+    border-top-color: $accent-primary;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+
+    .dark & {
+        border-color: rgba(255, 255, 255, 0.18);
+        border-top-color: $accent-primary;
+    }
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
     }
 }
 </style>

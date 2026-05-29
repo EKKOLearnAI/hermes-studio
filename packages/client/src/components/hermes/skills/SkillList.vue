@@ -289,6 +289,10 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
     background: #66bb6a;
 }
 
+.dot-external {
+    background: #f59e0b;
+}
+
 .skill-info {
     flex: 1;
     min-width: 0;

@@ -4,6 +4,20 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+const agentBridgeMocks = vi.hoisted(() => ({
+  destroyAll: vi.fn(),
+  destroyProfile: vi.fn(),
+}))
+
+const skillInjectorMocks = vi.hoisted(() => ({
+  injectMissingSkills: vi.fn(),
+  resolveTargetDirForProfile: vi.fn(),
+}))
+
+const sessionDeleterMocks = vi.hoisted(() => ({
+  switchProfile: vi.fn(),
+}))
+
 // Mock hermes-cli
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   listProfiles: vi.fn(),
@@ -20,6 +34,27 @@ vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   importProfile: vi.fn(),
 }))
 
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: vi.fn(() => ({
+    destroyAll: agentBridgeMocks.destroyAll,
+    destroyProfile: agentBridgeMocks.destroyProfile,
+  })),
+}))
+
+vi.mock('../../packages/server/src/services/hermes/skill-injector', () => {
+  const HermesSkillInjector = vi.fn(() => ({
+    injectMissingSkills: skillInjectorMocks.injectMissingSkills,
+  })) as any
+  HermesSkillInjector.resolveTargetDirForProfile = skillInjectorMocks.resolveTargetDirForProfile
+  return { HermesSkillInjector }
+})
+
+vi.mock('../../packages/server/src/services/hermes/session-deleter', () => ({
+  SessionDeleter: {
+    getInstance: vi.fn(() => sessionDeleterMocks),
+  },
+}))
+
 import * as hermesCli from '../../packages/server/src/services/hermes/hermes-cli'
 
 describe('Profile Routes', () => {
@@ -29,6 +64,9 @@ describe('Profile Routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    agentBridgeMocks.destroyProfile.mockResolvedValue({ destroyed: 0 })
+    skillInjectorMocks.injectMissingSkills.mockResolvedValue({ targets: [] })
+    skillInjectorMocks.resolveTargetDirForProfile.mockImplementation((name: string) => join('/tmp/hermes-skills', name))
   })
 
   afterEach(async () => {
@@ -118,6 +156,43 @@ describe('Profile Routes', () => {
       expect(ctx.status).toBe(500)
       expect(ctx.body).toEqual({ error: 'Failed to delete profile' })
       expect(existsSync(profileDir)).toBe(true)
+    })
+  })
+
+  describe('Hermes CLI active profile switch', () => {
+    it('only destroys bridge sessions for the target profile', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-switch-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      const profileDir = join(hermesHome, 'profiles', 'work')
+      await mkdir(profileDir, { recursive: true })
+      await writeFile(join(profileDir, 'config.yaml'), 'model:\n  default: gpt-test\n', 'utf-8')
+      await writeFile(join(hermesHome, 'active_profile'), 'work\n', 'utf-8')
+      vi.mocked(hermesCli.useProfile).mockResolvedValue('Switched to work')
+      vi.mocked(hermesCli.getProfile).mockResolvedValue({
+        name: 'work',
+        path: profileDir,
+        model: 'gpt-test',
+        provider: 'test',
+        skills: 0,
+        hasEnv: false,
+        hasSoulMd: false,
+      } as any)
+      agentBridgeMocks.destroyProfile.mockResolvedValue({ destroyed: 2 })
+      const { switchProfile } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        request: { body: { name: 'work' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await switchProfile(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ success: true, active: 'work' })
+      expect(agentBridgeMocks.destroyProfile).toHaveBeenCalledWith('work')
+      expect(agentBridgeMocks.destroyAll).not.toHaveBeenCalled()
+      expect(sessionDeleterMocks.switchProfile).toHaveBeenCalledWith('work')
     })
   })
 

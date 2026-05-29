@@ -2,10 +2,13 @@
 import { computed } from 'vue'
 import { NTooltip } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import type { KanbanTask } from '@/api/hermes/kanban'
+import type { ProfileAvatar as ProfileAvatarData } from '@/api/hermes/profiles'
 
 const props = defineProps<{
   task: KanbanTask
+  assigneeAvatar?: ProfileAvatarData | null
 }>()
 
 const emit = defineEmits<{
@@ -34,12 +37,21 @@ const priorityText = computed(() => {
 </script>
 
 <template>
-  <div class="kanban-task-card" @click="emit('click', task.id)">
+  <div class="kanban-task-card" :class="`status-${task.status}`" @click="emit('click', task.id)">
     <div class="card-title">{{ task.title }}</div>
     <div class="card-meta">
       <NTooltip v-if="task.assignee" trigger="hover">
         <template #trigger>
-          <span class="meta-tag assignee-tag">{{ task.assignee }}</span>
+          <span class="meta-tag assignee-tag">
+            <ProfileAvatar
+              class="assignee-profile-avatar"
+              :name="task.assignee"
+              :avatar="assigneeAvatar"
+              :size="18"
+              aria-hidden="true"
+            />
+            <span>{{ task.assignee }}</span>
+          </span>
         </template>
         {{ t('kanban.card.assigneeTooltip') }}
       </NTooltip>
@@ -54,15 +66,25 @@ const priorityText = computed(() => {
 @use '@/styles/variables' as *;
 
 .kanban-task-card {
+  --kanban-card-status-color: #64748b;
   background-color: $bg-card;
   border: 1px solid $border-color;
+  border-left: 3px solid var(--kanban-card-status-color);
   border-radius: $radius-md;
   padding: 12px;
   cursor: pointer;
   transition: border-color $transition-fast, box-shadow $transition-fast;
 
+  &.status-triage { --kanban-card-status-color: #94a3b8; }
+  &.status-todo { --kanban-card-status-color: #38bdf8; }
+  &.status-ready { --kanban-card-status-color: #f59e0b; }
+  &.status-running { --kanban-card-status-color: #8b5cf6; }
+  &.status-blocked { --kanban-card-status-color: #ef4444; }
+  &.status-done { --kanban-card-status-color: #22c55e; }
+  &.status-archived { --kanban-card-status-color: #64748b; }
+
   &:hover {
-    border-color: rgba(var(--accent-primary-rgb), 0.3);
+    border-color: var(--kanban-card-status-color);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   }
 }
@@ -91,8 +113,16 @@ const priorityText = computed(() => {
 }
 
 .assignee-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: rgba(var(--accent-primary-rgb), 0.1);
   color: $accent-primary;
+  padding-left: 2px;
+}
+
+.assignee-profile-avatar {
+  box-shadow: 0 0 0 1px rgba(var(--accent-primary-rgb), 0.28);
 }
 
 .priority-tag {

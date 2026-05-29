@@ -232,6 +232,54 @@ describe('App Store', () => {
     expect(store.displayModelName('unknown', 'deepseek')).toBe('unknown')
   })
 
+  it('selects the browser active profile default instead of the aggregate response default', async () => {
+    window.localStorage.setItem('hermes_active_profile_name', 'tester')
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'glm-5-turbo',
+      default_provider: 'custom:glm-coding-plan',
+      groups: [{
+        provider: 'custom:glm-coding-plan',
+        label: 'glm-coding-plan',
+        base_url: 'https://api.z.ai/api/anthropic',
+        models: ['glm-5-turbo', 'glm-5.1'],
+        api_key: '',
+      }],
+      allProviders: [],
+      profiles: [
+        {
+          profile: 'default',
+          default: 'glm-5-turbo',
+          default_provider: 'custom:glm-coding-plan',
+          groups: [{
+            provider: 'custom:glm-coding-plan',
+            label: 'glm-coding-plan',
+            base_url: 'https://api.z.ai/api/anthropic',
+            models: ['glm-5-turbo', 'glm-5.1'],
+            api_key: '',
+          }],
+        },
+        {
+          profile: 'tester',
+          default: 'claude-opus-4-6',
+          default_provider: 'custom:subrouter',
+          groups: [{
+            provider: 'custom:subrouter',
+            label: 'subrouter',
+            base_url: 'https://subrouter.ai/v1',
+            models: ['claude-opus-4-6', 'gpt-5.5'],
+            api_key: '',
+          }],
+        },
+      ],
+    })
+    const store = useAppStore()
+
+    await store.loadModels()
+
+    expect(store.selectedModel).toBe('claude-opus-4-6')
+    expect(store.selectedProvider).toBe('custom:subrouter')
+  })
+
   it('does not refetch available models within the cache window after an empty response', async () => {
     mockSystemApi.fetchAvailableModels.mockResolvedValue({
       default: '',

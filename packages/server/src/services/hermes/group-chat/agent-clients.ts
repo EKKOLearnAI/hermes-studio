@@ -3,7 +3,8 @@ import { randomBytes } from 'crypto'
 import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { updateUsage } from '../../../db/hermes/usage-store'
-import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
+import { countTokens } from '../../../lib/context-compressor'
+import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
 import type { ContentBlock } from '../run-chat/types'
 import {
@@ -41,6 +42,41 @@ type MentionMessage = {
     timestamp: number
     input?: string | ContentBlock[]
     mentionDepth?: number
+}
+
+type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
+
+interface BridgeContextCache {
+    fixedContextTokens: number
+    instructions?: string
+    systemPromptTokens?: number
+    toolTokens?: number
+    systemPromptChars?: number
+    toolCount?: number
+    toolNames?: string[]
+    profile?: string
+    model?: string
+    provider?: string
+}
+
+export function estimateGroupHistoryMessageTokens(history: Array<{ content?: unknown }>): number {
+    return history.reduce((sum, message) => sum + countTokens(String(message.content || '')), 0)
+}
+
+export function groupContextTokensWithFixedOverhead(
+    fixedContextTokens: number | null | undefined,
+    history: Array<{ content?: unknown }>,
+): number | undefined {
+    if (typeof fixedContextTokens !== 'number' || !Number.isFinite(fixedContextTokens) || fixedContextTokens < 0) {
+        return undefined
+    }
+    return Math.floor(fixedContextTokens) + estimateGroupHistoryMessageTokens(history)
+}
+
+export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown>): string | null {
+    if (String(event.event || '') !== 'reasoning.delta') return null
+    const text = String(event.text || '')
+    return text ? text : null
 }
 
 interface MemberData {
@@ -81,6 +117,7 @@ class AgentClient {
     private storage: any = null
     private pendingToolCallIds = new Map<string, string[]>()
     private pendingToolBaseIds = new Map<string, string>()
+    private bridgeContextCache = new Map<string, BridgeContextCache>()
 
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -153,6 +190,7 @@ class AgentClient {
             this.socket.disconnect()
             this.socket = null
             this.joinedRooms.clear()
+            this.bridgeContextCache.clear()
         }
     }
 
@@ -248,6 +286,89 @@ class AgentClient {
         return Array.from(this.joinedRooms)
     }
 
+    private finiteToken(value: unknown): number | undefined {
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0
+            ? Math.floor(value)
+            : undefined
+    }
+
+    private cacheBridgeContext(sessionId: string, data: Record<string, unknown> | AgentBridgeContextEstimate, instructions?: string): void {
+        const fixedContextTokens = this.finiteToken(data.fixed_context_tokens)
+        if (fixedContextTokens == null) return
+        this.bridgeContextCache.set(sessionId, {
+            fixedContextTokens,
+            instructions,
+            systemPromptTokens: this.finiteToken(data.system_prompt_tokens),
+            toolTokens: this.finiteToken(data.tool_tokens),
+            systemPromptChars: this.finiteToken(data.system_prompt_chars),
+            toolCount: this.finiteToken(data.tool_count),
+            toolNames: Array.isArray(data.tool_names) ? data.tool_names.map(String) : undefined,
+            profile: typeof data.profile === 'string' ? data.profile : undefined,
+            model: typeof data.model === 'string' ? data.model : undefined,
+            provider: typeof data.provider === 'string' ? data.provider : undefined,
+        })
+    }
+
+    private estimateHistoryMessageTokens(history: GroupEstimateMessage[]): number {
+        return estimateGroupHistoryMessageTokens(history)
+    }
+
+    private estimateWithCachedBridgeContext(sessionId: string, history: GroupEstimateMessage[], instructions?: string): number | undefined {
+        const cache = this.bridgeContextCache.get(sessionId)
+        if (!cache) return undefined
+        if (cache.instructions !== instructions) return undefined
+        return groupContextTokensWithFixedOverhead(cache.fixedContextTokens, history)
+    }
+
+    private async estimateGroupContextTokens(
+        roomId: string,
+        sessionId: string,
+        bridge: AgentBridgeClient,
+        history: GroupEstimateMessage[],
+        instructions: string | undefined,
+        phase: string,
+    ): Promise<number | undefined> {
+        const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions)
+        if (cachedTokens != null) {
+            logger.info({
+                roomId,
+                agentName: this.name,
+                profile: this.profile,
+                sessionId,
+                messages: history.length,
+                fixedContextTokens: this.bridgeContextCache.get(sessionId)?.fixedContextTokens,
+                messageTokens: cachedTokens - (this.bridgeContextCache.get(sessionId)?.fixedContextTokens || 0),
+                fullContextTokens: cachedTokens,
+                phase,
+                source: 'cache',
+            }, '[GroupChat] full context estimate')
+            return cachedTokens
+        }
+
+        const estimate = await bridge.contextEstimate(
+            sessionId,
+            history,
+            instructions,
+            this.profile,
+        )
+        this.cacheBridgeContext(sessionId, estimate, instructions)
+        const totalTokens = Number(estimate.token_count || 0)
+        logger.info({
+            roomId,
+            agentName: this.name,
+            profile: this.profile,
+            sessionId,
+            messages: estimate.message_count,
+            toolCount: estimate.tool_count,
+            systemPromptChars: estimate.system_prompt_chars,
+            fixedContextTokens: estimate.fixed_context_tokens,
+            fullContextTokens: estimate.token_count,
+            phase,
+            source: 'bridge',
+        }, '[GroupChat] full context estimate')
+        return Number.isFinite(totalTokens) && totalTokens > 0 ? Math.floor(totalTokens) : undefined
+    }
+
     private ensureConnected(): void {
         if (!this.socket?.connected) {
             throw new Error(`Agent "${this.name}" is not connected`)
@@ -288,7 +409,6 @@ class AgentClient {
             if (this.contextEngine && this.storage) {
                 try {
                     logger.debug(`[AgentClients] ${this.name}: building context...`)
-                    onStatus?.('compressing')
                     // Get room members with descriptions for context
                     const roomMembers: Array<{ userId: string; name: string; description: string }> = this.storage.getRoomMembers(roomId) || []
                     const memberNames = roomMembers.map((m: any) => m.name)
@@ -316,24 +436,21 @@ class AgentClient {
                         currentMessage: msg,
                         compression,
                         profile: this.profile,
+                        onProgress: (event: { status: 'compressing'; messageCount: number; tokenCount: number }) => {
+                            onStatus?.('compressing', {
+                                messageCount: event.messageCount,
+                                totalTokens: event.tokenCount,
+                            })
+                        },
                         contextTokenEstimator: async (history: Array<{ role: 'user' | 'assistant'; content: string }>, estimateInstructions: string) => {
-                            const estimate = await bridge.contextEstimate(
+                            return this.estimateGroupContextTokens(
+                                roomId,
                                 sessionId,
+                                bridge,
                                 history,
                                 estimateInstructions,
-                                this.profile,
+                                'build',
                             )
-                            logger.info({
-                                roomId,
-                                agentName: this.name,
-                                profile: this.profile,
-                                sessionId,
-                                messages: estimate.message_count,
-                                toolCount: estimate.tool_count,
-                                systemPromptChars: estimate.system_prompt_chars,
-                                fullContextTokens: estimate.token_count,
-                            }, '[GroupChat] full context estimate')
-                            return estimate.token_count
                         },
                     })
                     conversationHistory = ctx.conversationHistory
@@ -365,6 +482,11 @@ class AgentClient {
                     return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
                 })
                 : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
+            const runContext = [
+                `[Current Hermes profile: ${this.profile}]`,
+                'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
+            ].join('\n')
+            instructions = instructions ? `${runContext}\n${instructions}` : runContext
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
@@ -385,7 +507,7 @@ class AgentClient {
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 lastChunk = chunk
-                reasoningContent += await this.recordBridgeEvents(roomId, chunk, () => streamMessageId, async () => {
+                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, instructions, chunk, () => streamMessageId, async () => {
                     const toolBaseId = streamMessageId
                     if (currentContent.trim()) {
                         await this.sendMessage(roomId, currentContent, streamMessageId, {
@@ -465,28 +587,18 @@ class AgentClient {
         if (!this.storage?.getMessages) return
         try {
             const history = this.buildRoomEstimateHistory(roomId)
-            const estimate = await bridge.contextEstimate(
+            const cachedTokens = await this.estimateGroupContextTokens(
+                roomId,
                 sessionId,
+                bridge,
                 history,
                 instructions,
-                this.profile,
+                'final',
             )
-            const totalTokens = Number(estimate.token_count || 0)
-            if (!Number.isFinite(totalTokens) || totalTokens <= 0) return
-            const rounded = Math.floor(totalTokens)
+            if (cachedTokens == null || cachedTokens <= 0) return
+            const rounded = Math.floor(cachedTokens)
             this.storage.updateRoomTotalTokens?.(roomId, rounded)
             this.emitContextStatus(roomId, 'replying', { totalTokens: rounded })
-            logger.info({
-                roomId,
-                agentName: this.name,
-                profile: this.profile,
-                sessionId,
-                messages: estimate.message_count,
-                toolCount: estimate.tool_count,
-                systemPromptChars: estimate.system_prompt_chars,
-                fullContextTokens: rounded,
-                phase: 'final',
-            }, '[GroupChat] full context estimate')
         } catch (err: any) {
             logger.warn(`[GroupChat] failed to refresh final context estimate room=${roomId} agent=${this.name}: ${err.message}`)
         }
@@ -564,6 +676,8 @@ class AgentClient {
 
     private async recordBridgeEvents(
         roomId: string,
+        sessionId: string,
+        instructions: string | undefined,
         chunk: AgentBridgeOutput,
         getCurrentMessageId: () => string,
         beforeToolStarted: () => Promise<string>,
@@ -571,7 +685,9 @@ class AgentClient {
         let reasoning = ''
         for (const ev of chunk.events || []) {
             const eventType = String((ev as any)?.event || '')
-            if (eventType === 'tool.started') {
+            if (eventType === 'bridge.context.ready') {
+                this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions)
+            } else if (eventType === 'tool.started') {
                 const toolBaseId = await beforeToolStarted()
                 this.recordToolStarted(roomId, ev as Record<string, unknown>, toolBaseId)
             } else if (eventType === 'tool.completed') {
@@ -591,10 +707,12 @@ class AgentClient {
                     approval_id: (ev as any).approval_id,
                     choice: (ev as any).choice,
                 })
-            } else if (eventType === 'reasoning.delta' || eventType === 'thinking.delta') {
-                const text = String((ev as any)?.text || '')
-                reasoning += text
-                this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text)
+            } else {
+                const text = groupBridgeReasoningDeltaFromEvent(ev as Record<string, unknown>)
+                if (text) {
+                    reasoning += text
+                    this.emitMessageReasoningDelta(roomId, getCurrentMessageId(), text)
+                }
             }
         }
         return reasoning

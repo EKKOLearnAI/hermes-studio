@@ -1,6 +1,5 @@
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
-import { getToken } from '../../../services/auth'
 import { logger } from '../../../services/logger'
 import { getDb } from '../../../db'
 import { normalizeMessageContentForStorage, normalizeMessageContentForStorageRole } from '../../../db/hermes/message-content'
@@ -9,6 +8,7 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
+import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -72,6 +72,18 @@ interface RoomAgent {
     invited: number
 }
 
+interface RoomInfo {
+    id: string
+    name: string
+    inviteCode: string | null
+    triggerTokens: number
+    maxHistoryTokens: number
+    tailMessageCount: number
+    totalTokens: number
+    sessionSeed: string
+    defaultAgentId: string | null
+}
+
 interface Member {
     id: string
     userId: string
@@ -129,6 +141,12 @@ function normalizeMessageRole(role: unknown): string {
 function normalizeMentionDepth(depth: unknown): number {
     const value = Number(depth)
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function maxAgentMentionDepth(): number {
+    const value = Number(process.env.HERMES_GROUP_CHAT_MAX_AGENT_MENTION_DEPTH)
+    if (!Number.isFinite(value) || value <= 0) return 4
+    return Math.min(10, Math.floor(value))
 }
 
 function groupRunOrder(id: string): { baseId: string; phase: number } {
@@ -278,16 +296,29 @@ class ChatStorage {
 
     // ─── Rooms ────────────────────────────────────────────────
 
-    getRoom(roomId: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null } | undefined {
+    getRoom(roomId: string): RoomInfo | undefined {
         return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms WHERE id = ?').get(roomId) as any
     }
 
-    getRoomByInviteCode(code: string): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null } | undefined {
+    getRoomByInviteCode(code: string): RoomInfo | undefined {
         return this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms WHERE inviteCode = ?').get(code) as any
     }
 
-    getAllRooms(): { id: string; name: string; inviteCode: string | null; triggerTokens: number; maxHistoryTokens: number; tailMessageCount: number; totalTokens: number; sessionSeed: string; defaultAgentId: string | null }[] {
+    getAllRooms(): RoomInfo[] {
         return (this.db()?.prepare('SELECT id, name, inviteCode, triggerTokens, maxHistoryTokens, tailMessageCount, totalTokens, sessionSeed, defaultAgentId FROM gc_rooms ORDER BY id').all() || []) as any[]
+    }
+
+    getRoomsForProfiles(profiles: string[]): RoomInfo[] {
+        const uniqueProfiles = [...new Set(profiles.map(profile => profile.trim()).filter(Boolean))]
+        if (!uniqueProfiles.length) return []
+        const placeholders = uniqueProfiles.map(() => '?').join(', ')
+        return (this.db()?.prepare(
+            `SELECT DISTINCT r.id, r.name, r.inviteCode, r.triggerTokens, r.maxHistoryTokens, r.tailMessageCount, r.totalTokens, r.sessionSeed
+             FROM gc_rooms r
+             INNER JOIN gc_room_agents a ON a.roomId = r.id
+             WHERE a.profile IN (${placeholders})
+             ORDER BY r.id`
+        ).all(...uniqueProfiles) || []) as any[]
     }
 
     saveRoom(id: string, name: string, inviteCode?: string, config?: { triggerTokens?: number; maxHistoryTokens?: number; tailMessageCount?: number }): void {
@@ -370,14 +401,21 @@ class ChatStorage {
 
     // ─── Messages ─────────────────────────────────────────────
 
-    getMessages(roomId: string, limit = 500): ChatMessage[] {
+    getMessages(roomId: string, limit = 300, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ? ORDER BY timestamp DESC LIMIT ?'
-        ).all(roomId, limit) || []) as any[]
+            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?'
+        ).all(roomId, limit, offset) || []) as any[]
         return sortGroupMessages(rows.map(row => ({
             ...row,
             tool_calls: parseJsonArray(row.tool_calls),
         })))
+    }
+
+    getMessageCount(roomId: string): number {
+        const row = this.db()?.prepare(
+            'SELECT COUNT(*) as total FROM gc_messages WHERE roomId = ?'
+        ).get(roomId) as { total: number } | undefined
+        return row?.total || 0
     }
 
     getMessage(messageId: string): ChatMessage | null {
@@ -786,12 +824,16 @@ export class GroupChatServer {
     // ─── Auth ───────────────────────────────────────────────────
 
     private async authMiddleware(socket: Socket, next: (err?: Error) => void): Promise<void> {
-        const authToken = await getToken()
-        const token = socket.handshake.auth.token || socket.handshake.query.token || ''
-        if (authToken) {
-            if (token !== authToken) {
-                return next(new Error('Unauthorized'))
-            }
+        const auth = socket.handshake.auth as { source?: string; agentSocketSecret?: string; token?: string }
+        const isAgentSocket = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET
+        if (isAgentSocket) {
+            next()
+            return
+        }
+
+        const token = auth.token || socket.handshake.query.token || ''
+        if (await isAuthEnabled() && !await authenticateUserToken(String(token))) {
+            return next(new Error('Unauthorized'))
         }
         next()
     }
@@ -938,18 +980,30 @@ export class GroupChatServer {
         ack?.({ id: savedMsg.id })
 
         const mentionDepth = normalizeMentionDepth(data.mentionDepth)
-        const shouldRouteMentions = savedMsg.role === 'user'
+        const isAgentReply = savedMsg.role === 'assistant' && member?.source === 'agent'
+        const shouldRouteMentions = savedMsg.role === 'user' ||
+            (isAgentReply && mentionDepth < maxAgentMentionDepth())
 
         if (shouldRouteMentions) {
             const contentText = contentToText(savedMsg.content)
             const agents = this.storage.getRoomAgents(roomId)
             const senderNameLower = savedMsg.senderName.toLowerCase()
-
             const mentionedAgents = agents.filter(a => {
                 if (a.name.toLowerCase() === senderNameLower) return false
                 const escaped = a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
                 const pattern = new RegExp(`@${escaped}(?=$|\\s|[.,!?;:，。！？；：])`, 'i')
                 return pattern.test(contentText)
+            })
+
+            this.agentClients.processMentions(roomId, {
+                content: contentText,
+                input: Array.isArray(data.content) ? data.content : undefined,
+                senderName: savedMsg.senderName,
+                senderId: savedMsg.senderId,
+                timestamp: savedMsg.timestamp,
+                mentionDepth,
+            }).catch((err) => {
+                logger.error(`[GroupChat] processMentions error: ${err.message}`)
             })
 
             if (mentionedAgents.length > 0 && savedMsg.role === 'user') {
@@ -966,17 +1020,6 @@ export class GroupChatServer {
                     mentionDepth,
                 }).catch((err) => {
                     logger.error(`[GroupChat] routeToAgentShouldAnswer error: ${err.message}`)
-                })
-            } else if (mentionedAgents.length > 0) {
-                this.agentClients.processMentions(roomId, {
-                    content: contentText,
-                    input: Array.isArray(data.content) ? data.content : undefined,
-                    senderName: savedMsg.senderName,
-                    senderId: savedMsg.senderId,
-                    timestamp: savedMsg.timestamp,
-                    mentionDepth,
-                }).catch((err) => {
-                    logger.error(`[GroupChat] processMentions error: ${err.message}`)
                 })
             }
         }

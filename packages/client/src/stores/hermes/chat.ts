@@ -1,6 +1,7 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
-import { getApiKey } from '@/api/client'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { getActiveProfileName } from '@/api/client'
+import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAppStore } from './app'
@@ -56,6 +57,15 @@ export interface PendingApproval {
   requestedAt: number
 }
 
+export interface PendingClarify {
+  sessionId: string
+  clarifyId: string
+  question: string
+  choices: string[] | null
+  timeoutMs: number
+  requestedAt: number
+}
+
 export interface Session {
   id: string
   profile?: string
@@ -67,12 +77,25 @@ export interface Session {
   model?: string
   provider?: string
   messageCount?: number
+  messageTotal?: number
+  loadedMessageCount?: number
+  hasMoreBefore?: boolean
+  isLoadingOlderMessages?: boolean
   inputTokens?: number
   outputTokens?: number
   contextTokens?: number
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
+}
+
+interface CompressionState {
+  compressing: boolean
+  messageCount: number
+  beforeTokens: number
+  afterTokens: number
+  compressed: boolean | null
+  error?: string
 }
 
 function uid(): string {
@@ -101,10 +124,14 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
     if (att.file) formData.append('file', att.file, att.name)
   }
   const token = localStorage.getItem('hermes_api_key') || ''
+  const profileName = getActiveProfileName()
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (profileName) headers['X-Hermes-Profile'] = profileName
   const res = await fetch('/upload', {
     method: 'POST',
     body: formData,
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers,
   })
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   const data = await res.json() as { files: { name: string; path: string }[] }
@@ -258,6 +285,11 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     messageCount: s.message_count,
+    messageTotal: s.message_count,
+    loadedMessageCount: 0,
+    hasMoreBefore: false,
+    inputTokens: s.input_tokens,
+    outputTokens: s.output_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     workspace: s.workspace || null,
@@ -331,6 +363,14 @@ function setItemBestEffort(key: string, value: string) {
   }
 }
 
+function getItemBestEffort(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 function removeItem(key: string) {
   try {
     localStorage.removeItem(key)
@@ -343,6 +383,7 @@ function removeItem(key: string) {
 // File objects don't serialize and we only need name/type/size/url for display.
 
 export const useChatStore = defineStore('chat', () => {
+  const seenSessionCommandEvents = new WeakSet<RunEvent>()
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
   const focusMessageId = ref<string | null>(null)
@@ -354,10 +395,18 @@ export const useChatStore = defineStore('chat', () => {
   const queueLengths = ref<Map<string, number>>(new Map())
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
+  /** sessionId → queue ids that server reported as dequeued before the peer message arrived */
+  const dequeuedQueueIds = ref<Map<string, Set<string>>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
     return sid ? pendingApprovals.value.get(sid) || null : null
+  })
+
+  const pendingClarifies = ref<Map<string, PendingClarify>>(new Map())
+  const activePendingClarify = computed(() => {
+    const sid = activeSessionId.value
+    return sid ? pendingClarifies.value.get(sid) || null : null
   })
 
   // 自动播放语音开关
@@ -376,18 +425,20 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingMessages = ref(false)
   const isRunActive = computed(() => isStreaming.value)
 
-  // Compression state
-  const compressionState = ref<{
-    compressing: boolean
-    messageCount: number
-    beforeTokens: number
-    afterTokens: number
-    compressed: boolean | null
-    error?: string
-  } | null>(null)
+  // Compression state is scoped per session because sockets can stay joined to
+  // background sessions while another chat is active.
+  const compressionStates = ref<Map<string, CompressionState>>(new Map())
+  const compressionState = computed<CompressionState | null>(() => {
+    const sid = activeSessionId.value
+    return sid ? compressionStates.value.get(sid) || null : null
+  })
 
-  function setCompressionState(state: typeof compressionState.value) {
-    compressionState.value = state
+  function setCompressionState(sessionId: string | null | undefined, state: CompressionState | null) {
+    if (!sessionId) return
+    const next = new Map(compressionStates.value)
+    if (state) next.set(sessionId, state)
+    else next.delete(sessionId)
+    compressionStates.value = next
   }
 
   const abortState = ref<{
@@ -409,33 +460,46 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearActiveSession() {
+    const sid = activeSessionId.value
     activeSessionId.value = null
     activeSession.value = null
     focusMessageId.value = null
     setAbortState(null)
-    setCompressionState(null)
+    setCompressionState(sid, null)
     removeItem(storageKey())
   }
 
-  async function loadSessions(profile?: string | null) {
+  async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
     isLoadingSessions.value = true
     try {
       const list = await fetchSessions(undefined, undefined, profile || undefined)
       const fresh = list.map(mapHermesSession)
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
-      const msgsByIdBefore = new Map(sessions.value.map(s => [s.id, s.messages]))
+      const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
+        messages: s.messages,
+        contextTokens: s.contextTokens,
+      }]))
       for (const s of fresh) {
-        const prev = msgsByIdBefore.get(s.id)
-        if (prev && prev.length) s.messages = prev
+        const prev = runtimeByIdBefore.get(s.id)
+        if (prev?.messages?.length) s.messages = prev.messages
+        if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
       }
       sessions.value = fresh
 
-      // Restore last active session, fallback to most recent
-      const savedId = activeSessionId.value
-      const targetId = savedId && sessions.value.some(s => s.id === savedId)
-        ? savedId
-        : sessions.value[0]?.id
+      // Restore route-selected session first (tab-local source of truth),
+      // then current in-memory session, then persisted legacy/default choice,
+      // then fallback to the most recent session.
+      const currentId = activeSessionId.value
+      const legacyActiveKey = legacyStorageKey()
+      const storedId = getItemBestEffort(storageKey()) || (legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
+      const targetId = preferredSessionId && sessions.value.some(s => s.id === preferredSessionId)
+        ? preferredSessionId
+        : currentId && sessions.value.some(s => s.id === currentId)
+          ? currentId
+          : storedId && sessions.value.some(s => s.id === storedId)
+            ? storedId
+            : sessions.value[0]?.id
       if (targetId) {
         await switchSession(targetId)
       } else {
@@ -454,13 +518,18 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (!sid) return false
     try {
-      const detail = await fetchSession(sid)
-      if (!detail) return false
       const target = sessions.value.find(s => s.id === sid)
       if (!target) return false
+      const limit = Math.max(target.loadedMessageCount || 300, 300)
+      const detail = await fetchSessionMessagesPage(sid, 0, limit, activeSession.value?.profile)
+      if (!detail) return false
       const mapped = mapHermesMessages(detail.messages || [])
       target.messages = mapped
-      if (detail.title) target.title = detail.title
+      target.loadedMessageCount = detail.messages.length
+      target.messageTotal = detail.total
+      target.messageCount = detail.total
+      target.hasMoreBefore = detail.hasMore
+      if (detail.session.title) target.title = detail.session.title
       return true
     } catch (err) {
       console.error('Failed to refresh active session:', err)
@@ -528,6 +597,15 @@ export const useChatStore = defineStore('chat', () => {
         const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
         resumeSession(sessionId, (data) => {
           clearTimeout(timeout)
+          if (data.session_id !== sessionId || activeSessionId.value !== sessionId) {
+            resolve()
+            return
+          }
+          const target = sessions.value.find(s => s.id === sessionId)
+          if (!target) {
+            resolve()
+            return
+          }
           if (data.isWorking) {
             serverWorking.value.add(sessionId)
           } else {
@@ -538,30 +616,41 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             queueLengths.value.delete(sessionId)
           }
+          if (Array.isArray((data as any).queueMessages)) {
+            replaceQueuedUserMessages(sessionId, normalizeQueuedUserMessages((data as any).queueMessages))
+          } else if (!data.queueLength) {
+            replaceQueuedUserMessages(sessionId, [])
+          }
           if ((data as any).isAborting) {
             setAbortState({ aborting: true, synced: null })
           } else if (!data.isWorking) {
             setAbortState(null)
           }
-          if (data.inputTokens != null) activeSession.value!.inputTokens = data.inputTokens
-          if (data.outputTokens != null) activeSession.value!.outputTokens = data.outputTokens
-          if ((data as any).contextTokens != null) activeSession.value!.contextTokens = (data as any).contextTokens
+          if (!data.isWorking) setCompressionState(sessionId, null)
+          if (data.inputTokens != null) target.inputTokens = data.inputTokens
+          if (data.outputTokens != null) target.outputTokens = data.outputTokens
+          if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
           if (data.messages?.length) {
-            activeSession.value!.messages = mapHermesMessages(data.messages as any[])
+            target.messages = mapHermesMessages(data.messages as any[])
+            target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+            target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
+            target.messageCount = target.messageTotal
+            target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
           }
-          if (!activeSession.value!.title) {
-            const firstUser = activeSession.value!.messages.find(m => m.role === 'user')
+          if (!target.title) {
+            const firstUser = target.messages.find(m => m.role === 'user')
             if (firstUser) {
               const t = firstUser.content.slice(0, 40)
-              activeSession.value!.title = t + (firstUser.content.length > 40 ? '...' : '')
+              target.title = t + (firstUser.content.length > 40 ? '...' : '')
             }
           }
+          activeSession.value = target
           // Process replayed events (compression state etc.)
           if (data.events?.length) {
             for (const evt of data.events) {
               const e = evt.data as any
               if (e.event === 'compression.started') {
-                setCompressionState({
+                setCompressionState(sessionId, {
                   compressing: true,
                   messageCount: e.message_count || 0,
                   beforeTokens: e.token_count || 0,
@@ -569,14 +658,16 @@ export const useChatStore = defineStore('chat', () => {
                   compressed: null,
                 })
               } else if (e.event === 'compression.completed') {
-                setCompressionState({
+                const afterTokens = e.contextTokens || e.afterTokens || 0
+                setCompressionState(sessionId, {
                   compressing: false,
                   messageCount: e.totalMessages || 0,
                   beforeTokens: e.beforeTokens || 0,
-                  afterTokens: e.afterTokens || 0,
+                  afterTokens,
                   compressed: e.compressed ?? false,
                   error: e.error,
                 })
+                if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
                 setAbortState({ aborting: true, synced: null })
               } else if (e.event === 'abort.completed') {
@@ -585,6 +676,10 @@ export const useChatStore = defineStore('chat', () => {
                 setPendingApproval({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'approval.resolved') {
                 clearPendingApproval({ ...e, session_id: sessionId } as RunEvent)
+              } else if (e.event === 'clarify.requested') {
+                setPendingClarify({ ...e, session_id: sessionId } as RunEvent)
+              } else if (e.event === 'clarify.resolved') {
+                clearPendingClarify({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'run.failed') {
                 addAgentErrorMessage(sessionId, e.error)
                 serverWorking.value.delete(sessionId)
@@ -629,11 +724,13 @@ export const useChatStore = defineStore('chat', () => {
                     toolResult: output,
                   })
                 }
+              } else if (String(e.event || '').startsWith('subagent.')) {
+                handleSubagentEvent(sessionId, e as RunEvent)
               }
             }
           }
           resolve()
-        })
+        }, activeSession.value?.profile)
       })
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
@@ -642,17 +739,50 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // Resume in-flight run event listeners if needed
-    resumeServerWorkingRun(sessionId)
+    if (activeSessionId.value === sessionId) {
+      resumeServerWorkingRun(sessionId)
+    }
   }
 
-  function newChat(options: { profile?: string; model?: string; provider?: string } = {}) {
+  async function loadOlderMessages(sessionId = activeSessionId.value): Promise<boolean> {
+    if (!sessionId) return false
+    const target = sessions.value.find(s => s.id === sessionId)
+    if (!target || target.isLoadingOlderMessages || !target.hasMoreBefore) return false
+    const offset = target.loadedMessageCount || 0
+    const limit = 300
+    target.isLoadingOlderMessages = true
+    try {
+      const page = await fetchSessionMessagesPage(sessionId, offset, limit, target.profile)
+      if (!page || page.messages.length === 0) {
+        target.hasMoreBefore = false
+        return false
+      }
+
+      const existingIds = new Set(target.messages.map(message => message.id))
+      const olderMessages = mapHermesMessages(page.messages).filter(message => !existingIds.has(message.id))
+      target.messages = [...olderMessages, ...target.messages]
+      target.loadedMessageCount = offset + page.messages.length
+      target.messageTotal = page.total
+      target.messageCount = page.total
+      target.hasMoreBefore = page.hasMore
+      return olderMessages.length > 0
+    } catch (err) {
+      console.error('Failed to load older session messages:', err)
+      return false
+    } finally {
+      target.isLoadingOlderMessages = false
+    }
+  }
+
+  function newChat(options: { profile?: string; model?: string; provider?: string } = {}): Session {
     const appStore = useAppStore()
     const session = createSession({
       profile: options.profile,
       model: options.model || appStore.selectedModel || undefined,
       provider: options.provider || appStore.selectedProvider || '',
     })
-    switchSession(session.id)
+    void switchSession(session.id)
+    return session
   }
 
   async function switchSessionModel(modelId: string, provider?: string, sessionId?: string): Promise<boolean> {
@@ -673,7 +803,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function deleteSession(sessionId: string) {
-    await deleteSessionApi(sessionId)
+    const target = sessions.value.find(s => s.id === sessionId)
+    await deleteSessionApi(sessionId, target?.profile)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     if (activeSessionId.value === sessionId) {
       if (sessions.value.length > 0) {
@@ -715,6 +846,77 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function clearAgentEventMessages(sessionId: string) {
+    const s = sessions.value.find(s => s.id === sessionId)
+    if (!s) return
+    s.messages = s.messages.filter(m => m.commandAction !== 'agent.event')
+  }
+
+  function handleSubagentEvent(sessionId: string, evt: RunEvent) {
+    const eventName = String(evt.event || '')
+    if (!eventName.startsWith('subagent.')) return
+
+    const subagentId = String((evt as any).subagent_id || `${(evt as any).task_index ?? 0}`)
+    const toolCallId = `subagent:${evt.run_id || 'run'}:${subagentId}`
+    const taskIndex = Number((evt as any).task_index ?? 0)
+    const taskCount = Number((evt as any).task_count ?? 1)
+    const label = `${taskIndex + 1}/${Math.max(1, taskCount || 1)}`
+    const toolName = String((evt as any).tool || (evt as any).name || '')
+    const toolCount = Number((evt as any).tool_count || 0)
+    const goal = String((evt as any).goal || '').trim()
+    const text = String(evt.text || evt.preview || '').trim()
+    const summary = String((evt as any).summary || '').trim()
+    const duration = Number((evt as any).duration_seconds ?? (evt as any).duration)
+
+    let preview = text || summary || goal
+    if (eventName === 'subagent.start') {
+      preview = `subagent ${label} started${goal ? `: ${goal}` : ''}`
+    } else if (eventName === 'subagent.tool') {
+      const prefix = `subagent ${label}${toolCount ? ` turn ${toolCount}` : ''}`
+      preview = `${prefix}${toolName ? `: ${toolName}` : ''}${text ? ` - ${text}` : ''}`
+    } else if (eventName === 'subagent.progress') {
+      preview = `subagent ${label}: ${text || 'working'}`
+    } else if (eventName === 'subagent.complete') {
+      const status = String((evt as any).status || 'completed')
+      preview = `subagent ${label} ${status}${summary ? `: ${summary}` : ''}`
+    }
+
+    const msgs = getSessionMsgs(sessionId)
+    const existing = msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
+    const toolStatus = eventName === 'subagent.complete'
+      ? ((evt as any).status && String((evt as any).status) !== 'completed' ? 'error' : 'done')
+      : 'running'
+    const update: Partial<Message> = {
+      toolName: 'delegate_task',
+      toolCallId,
+      toolPreview: preview.slice(0, 220),
+      toolStatus,
+      toolDuration: Number.isFinite(duration) ? duration : undefined,
+      toolResult: eventName === 'subagent.complete'
+        ? JSON.stringify({
+            status: (evt as any).status || 'completed',
+            summary: summary || text,
+            api_calls: (evt as any).api_calls,
+            input_tokens: (evt as any).input_tokens,
+            output_tokens: (evt as any).output_tokens,
+          }, null, 2)
+        : undefined,
+    }
+
+    if (existing) {
+      updateMessage(sessionId, existing.id, update)
+      return
+    }
+
+    addMessage(sessionId, {
+      id: uid(),
+      role: 'tool',
+      content: '',
+      timestamp: Date.now(),
+      ...update,
+    })
+  }
+
   function addAgentErrorMessage(sessionId: string, error?: string | null) {
     const content = error ? `Error: ${error}` : 'Run failed'
     const msgs = getSessionMsgs(sessionId)
@@ -739,12 +941,19 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function handleSessionCommandEvent(evt: RunEvent) {
+    if (seenSessionCommandEvents.has(evt)) return
+    seenSessionCommandEvents.add(evt)
+
     const sid = evt.session_id
     if (!sid) return
     const target = sessions.value.find(s => s.id === sid)
     const action = (evt as any).action as string | undefined
+    const command = String((evt as any).command || '').toLowerCase()
+    if ((evt as any).started === true && (evt as any).terminal === false) {
+      serverWorking.value.add(sid)
+    }
 
-    if (action === 'clear') {
+    if (action === 'clear' && command === 'clear') {
       if (target) target.messages = []
       queuedUserMessages.value.delete(sid)
       queueLengths.value.delete(sid)
@@ -803,25 +1012,201 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function handleAgentEvent(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const text = String((evt as any).text || (evt as any).message || '').trim()
+    if (!text) return
+
+    const msgs = getSessionMsgs(sid)
+    const last = msgs[msgs.length - 1]
+    const commandData = { ...(evt as any) }
+    if (last?.role === 'system' && last.commandAction === 'agent.event') {
+      if (last.content === text) return
+      updateMessage(sid, last.id, {
+        content: text,
+        timestamp: Date.now(),
+        commandData,
+      })
+      return
+    }
+
+    addMessage(sid, {
+      id: uid(),
+      role: 'system',
+      content: text,
+      timestamp: Date.now(),
+      systemType: 'command',
+      commandAction: 'agent.event',
+      commandData,
+    })
+  }
+
   function enqueueUserMessage(sessionId: string, message: Message) {
     const queue = queuedUserMessages.value.get(sessionId) || []
-    queue.push({ ...message, queued: true })
-    queuedUserMessages.value.set(sessionId, queue)
+    if (queue.some(item => item.id === message.id)) return
+    const nextMap = new Map(queuedUserMessages.value)
+    nextMap.set(sessionId, [...queue, { ...message, queued: true }])
+    queuedUserMessages.value = nextMap
+  }
+
+  function updateQueuedUserMessage(sessionId: string, messageId: string, patch: Partial<Message>) {
+    const queue = queuedUserMessages.value.get(sessionId)
+    if (!queue?.length) return
+    const next = queue.map(message => message.id === messageId
+      ? { ...message, ...patch, queued: true }
+      : message)
+    const nextMap = new Map(queuedUserMessages.value)
+    nextMap.set(sessionId, next)
+    queuedUserMessages.value = nextMap
+  }
+
+  function dropQueuedUserMessage(sessionId: string, messageId: string): boolean {
+    const queue = queuedUserMessages.value.get(sessionId)
+    if (!queue?.length) return false
+    const next = queue.filter(message => message.id !== messageId)
+    if (next.length === queue.length) return false
+    const nextMap = new Map(queuedUserMessages.value)
+    if (next.length > 0) {
+      nextMap.set(sessionId, next)
+      queueLengths.value.set(sessionId, next.length)
+    } else {
+      nextMap.delete(sessionId)
+      queueLengths.value.delete(sessionId)
+    }
+    queuedUserMessages.value = nextMap
+    return true
   }
 
   function removeQueuedMessage(sessionId: string, messageId: string) {
-    const queue = queuedUserMessages.value.get(sessionId)
-    if (!queue?.length) return
-    const next = queue.filter(message => message.id !== messageId)
-    if (next.length > 0) {
-      queuedUserMessages.value.set(sessionId, next)
-    } else {
-      queuedUserMessages.value.delete(sessionId)
-    }
-    queueLengths.value.set(sessionId, next.length)
+    if (!dropQueuedUserMessage(sessionId, messageId)) return
     getChatRunSocket()?.emit('cancel_queued_run', {
       session_id: sessionId,
       queue_id: messageId,
+    })
+  }
+
+  function normalizeQueuedUserMessages(rawMessages: unknown): Message[] {
+    if (!Array.isArray(rawMessages)) return []
+    return rawMessages.flatMap((raw) => {
+      const peer = raw as NonNullable<RunEvent['queued_messages']>[number]
+      const content = typeof peer?.content === 'string' ? peer.content : ''
+      const messageId = peer?.id != null ? String(peer.id) : ''
+      if (!messageId || !content.trim()) return []
+      const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+        ? Math.round(peer.timestamp * 1000)
+        : Date.now()
+      const role = peer?.role === 'command' ? 'command' : 'user'
+      return [{
+        id: messageId,
+        role,
+        content,
+        timestamp,
+        queued: true,
+        systemType: role === 'command' ? 'command' as const : undefined,
+      }]
+    })
+  }
+
+  function replaceQueuedUserMessages(sessionId: string, messages: Message[]) {
+    const existingById = new Map((queuedUserMessages.value.get(sessionId) || []).map(message => [message.id, message]))
+    const merged = messages.map(message => ({
+      ...(existingById.get(message.id) || {}),
+      ...message,
+      attachments: existingById.get(message.id)?.attachments || message.attachments,
+      queued: true,
+    }))
+    const nextMap = new Map(queuedUserMessages.value)
+    if (merged.length > 0) {
+      nextMap.set(sessionId, merged)
+    } else {
+      nextMap.delete(sessionId)
+    }
+    queuedUserMessages.value = nextMap
+  }
+
+  function markDequeuedQueueId(sessionId: string, messageId: string) {
+    const nextMap = new Map(dequeuedQueueIds.value)
+    const ids = new Set(nextMap.get(sessionId) || [])
+    ids.add(messageId)
+    nextMap.set(sessionId, ids)
+    dequeuedQueueIds.value = nextMap
+  }
+
+  function consumeDequeuedQueueId(sessionId: string, messageId: string): boolean {
+    const ids = dequeuedQueueIds.value.get(sessionId)
+    if (!ids?.has(messageId)) return false
+    const nextIds = new Set(ids)
+    nextIds.delete(messageId)
+    const nextMap = new Map(dequeuedQueueIds.value)
+    if (nextIds.size > 0) nextMap.set(sessionId, nextIds)
+    else nextMap.delete(sessionId)
+    dequeuedQueueIds.value = nextMap
+    return true
+  }
+
+  function handleRunQueuedEvent(sessionId: string, evt: RunEvent) {
+    const queueLength = Number((evt as any).queue_length || 0)
+    if (queueLength > 0) {
+      queueLengths.value.set(sessionId, queueLength)
+    } else {
+      queueLengths.value.delete(sessionId)
+    }
+
+    const dequeuedId = (evt as any).dequeued_queue_id != null
+      ? String((evt as any).dequeued_queue_id)
+      : ''
+    if (dequeuedId) {
+      const existingQueue = queuedUserMessages.value.get(sessionId) || []
+      const dequeued = existingQueue.find(message => message.id === dequeuedId)
+      if (Array.isArray((evt as any).queued_messages)) {
+        const queued = normalizeQueuedUserMessages((evt as any).queued_messages)
+        replaceQueuedUserMessages(sessionId, queued)
+      } else {
+        const nextQueue = existingQueue.filter(message => message.id !== dequeuedId)
+        replaceQueuedUserMessages(sessionId, nextQueue)
+      }
+      if (dequeued && !getSessionMsgs(sessionId).some(message => message.id === dequeued.id)) {
+        addMessage(sessionId, { ...dequeued, queued: false })
+        updateSessionTitle(sessionId)
+      } else if (!dequeued) {
+        markDequeuedQueueId(sessionId, dequeuedId)
+      }
+      return
+    }
+
+    if (Array.isArray((evt as any).queued_messages)) {
+      const queued = normalizeQueuedUserMessages((evt as any).queued_messages)
+      replaceQueuedUserMessages(sessionId, queued)
+      return
+    }
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    if (!messageId || !content.trim()) return
+
+    if ((queuedUserMessages.value.get(sessionId) || []).some(msg => msg.id === messageId)) return
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+    const msgs = getSessionMsgs(sessionId)
+    const existingIndex = msgs.findIndex(msg => msg.id === messageId && msg.role === 'user')
+    const existing = existingIndex >= 0 ? msgs[existingIndex] : null
+    if (existingIndex >= 0) {
+      msgs.splice(existingIndex, 1)
+    }
+
+    enqueueUserMessage(sessionId, {
+      ...(existing || {}),
+      id: messageId,
+      role: peer?.role === 'command' ? 'command' : 'user',
+      content,
+      timestamp: existing?.timestamp || timestamp,
+      attachments: existing?.attachments,
+      queued: true,
+      systemType: peer?.role === 'command' ? 'command' : existing?.systemType,
     })
   }
 
@@ -856,25 +1241,63 @@ export const useChatStore = defineStore('chat', () => {
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
+  function setPendingClarify(evt: RunEvent) {
+    const sid = evt.session_id
+    const clarifyId = (evt as any).clarify_id as string | undefined
+    if (!sid || !clarifyId) return
+    pendingClarifies.value.set(sid, {
+      sessionId: sid,
+      clarifyId,
+      question: String((evt as any).question || ''),
+      choices: Array.isArray((evt as any).choices) ? (evt as any).choices : null,
+      timeoutMs: Number((evt as any).timeout_ms) || 300000,
+      requestedAt: Date.now(),
+    })
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+  function clearPendingClarify(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    const current = pendingClarifies.value.get(sid)
+    if (!current) return
+    const clarifyId = (evt as any).clarify_id
+    if (clarifyId && current.clarifyId !== clarifyId) return
+    pendingClarifies.value.delete(sid)
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+  function clearPendingInteractions(sessionId: string) {
+    let changed = false
+    if (pendingApprovals.value.has(sessionId)) {
+      pendingApprovals.value.delete(sessionId)
+      changed = true
+    }
+    if (pendingClarifies.value.has(sessionId)) {
+      pendingClarifies.value.delete(sessionId)
+      changed = true
+    }
+    if (changed) {
+      pendingApprovals.value = new Map(pendingApprovals.value)
+      pendingClarifies.value = new Map(pendingClarifies.value)
+    }
+  }
+
+  function respondToClarify(response: string) {
+    const pending = activePendingClarify.value
+    if (!pending) return
+    respondClarify(pending.sessionId, pending.clarifyId, response)
+    pendingClarifies.value.delete(pending.sessionId)
+    pendingClarifies.value = new Map(pendingClarifies.value)
+  }
+
+
   function respondApproval(choice: PendingApproval['choices'][number]) {
     const pending = activePendingApproval.value
     if (!pending) return
     respondToolApproval(pending.sessionId, pending.approvalId, choice)
     pendingApprovals.value.delete(pending.sessionId)
     pendingApprovals.value = new Map(pendingApprovals.value)
-  }
-
-  function showNextQueuedUserMessage(sessionId: string) {
-    const queue = queuedUserMessages.value.get(sessionId)
-    if (!queue?.length) return
-    const next = queue.shift()!
-    if (queue.length > 0) {
-      queuedUserMessages.value.set(sessionId, queue)
-    } else {
-      queuedUserMessages.value.delete(sessionId)
-    }
-    addMessage(sessionId, { ...next, queued: false })
-    updateSessionTitle(sessionId)
   }
 
   function updateSessionTitle(sessionId: string) {
@@ -921,8 +1344,10 @@ export const useChatStore = defineStore('chat', () => {
       : false
     const isBridgeSlashCommand = content.trim().startsWith('/')
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
+    const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(content.trim())
+    const isBridgeGoalCommand = isBridgeSlashCommand && /^\/goal(?:\s|$)/i.test(content.trim())
     const wasLiveBeforeSend = isSessionLive(sid)
-    const shouldQueue = wasLiveBeforeSend && !isBridgeSlashCommand
+    const shouldQueue = wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand)
 
     const userMsg: Message = {
       id: uid(),
@@ -934,11 +1359,15 @@ export const useChatStore = defineStore('chat', () => {
       systemType: isBridgeSlashCommand ? 'command' : undefined,
     }
 
-    if (!shouldQueue) {
+    if (shouldQueue) {
+      enqueueUserMessage(sid, userMsg)
+    } else {
       addMessage(sid, userMsg)
       updateSessionTitle(sid)
+      serverWorking.value.add(sid)
     }
 
+    let runSubmitted = false
     try {
 
       // Build input in Anthropic format
@@ -948,16 +1377,15 @@ export const useChatStore = defineStore('chat', () => {
         const uploaded = await uploadFiles(attachments)
 
         // Update attachment URLs on the user message for display
-        const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
-          const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
-          return [f.name, token ? `${base}&token=${encodeURIComponent(token)}` : base]
+          return [f.name, getDownloadUrl(f.path, f.name)]
         }))
         if (shouldQueue && userMsg.attachments) {
           userMsg.attachments = userMsg.attachments.map(a => {
             const dl = urlMap.get(a.name)
             return dl ? { ...a, url: dl } : a
           })
+          updateQueuedUserMessage(sid, userMsg.id, { attachments: userMsg.attachments })
         } else {
           const msgs = getSessionMsgs(sid)
           const lastUser = msgs.findLast(m => m.id === userMsg.id)
@@ -983,7 +1411,7 @@ export const useChatStore = defineStore('chat', () => {
       const runPayload = {
         input,
         session_id: sid,
-        profile: shouldSendInitialSessionConfig ? activeSession.value?.profile || undefined : undefined,
+        profile: activeSession.value?.profile || useProfilesStore().activeProfileName || undefined,
         model: shouldSendInitialSessionConfig ? sessionModel || undefined : undefined,
         provider: shouldSendInitialSessionConfig ? sessionProvider || undefined : undefined,
         model_groups: appStore.modelGroups.map(group => ({
@@ -995,10 +1423,6 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
-      }
-
-      if (shouldQueue) {
-        enqueueUserMessage(sid, userMsg)
       }
 
       // Helper to clean up this session's stream state
@@ -1017,10 +1441,6 @@ export const useChatStore = defineStore('chat', () => {
       let runHadToolActivity = false
       let activeAssistantMessageId: string | null = null
 
-      const startNextQueuedUser = () => {
-        showNextQueuedUserMessage(sid)
-      }
-
       const closeStreamingAssistant = () => {
         const msgs = getSessionMsgs(sid)
         msgs.forEach(m => {
@@ -1031,6 +1451,116 @@ export const useChatStore = defineStore('chat', () => {
         activeAssistantMessageId = null
       }
 
+      const applyReconnectResume = (data: ResumeSessionPayload) => {
+        if (data.session_id !== sid) return
+        const target = sessions.value.find(s => s.id === sid)
+        if (!target) return
+
+        if (data.isWorking) serverWorking.value.add(sid)
+        else serverWorking.value.delete(sid)
+
+        if (data.queueLength && data.queueLength > 0) {
+          queueLengths.value.set(sid, data.queueLength)
+        } else {
+          queueLengths.value.delete(sid)
+        }
+
+        if (Array.isArray(data.queueMessages)) {
+          replaceQueuedUserMessages(sid, normalizeQueuedUserMessages(data.queueMessages))
+        } else if (!data.queueLength) {
+          replaceQueuedUserMessages(sid, [])
+        }
+
+        if (data.isAborting) {
+          setAbortState({ aborting: true, synced: null })
+        } else if (!data.isWorking) {
+          setAbortState(null)
+        }
+        if (!data.isWorking) setCompressionState(sid, null)
+
+        if (data.inputTokens != null) target.inputTokens = data.inputTokens
+        if (data.outputTokens != null) target.outputTokens = data.outputTokens
+        if (data.contextTokens != null) target.contextTokens = data.contextTokens
+
+        if (Array.isArray(data.messages)) {
+          target.messages = mapHermesMessages(data.messages as any[])
+          target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+          target.messageTotal = data.messageTotal ?? target.messageCount ?? target.loadedMessageCount
+          target.messageCount = target.messageTotal
+          target.hasMoreBefore = data.hasMoreBefore ?? target.loadedMessageCount < target.messageTotal
+          const lastAssistant = [...target.messages].reverse().find(m => m.role === 'assistant')
+          if (data.isWorking && lastAssistant) {
+            lastAssistant.isStreaming = true
+            activeAssistantMessageId = lastAssistant.id
+            if (lastAssistant.reasoning) noteReasoningStart(lastAssistant.id)
+          } else {
+            activeAssistantMessageId = null
+          }
+        }
+
+        if (data.events?.length) {
+          for (const evt of data.events) {
+            const e = evt.data as RunEvent
+            switch (e.event) {
+              case 'compression.started':
+                setCompressionState(sid, {
+                  compressing: true,
+                  messageCount: (e as any).message_count || 0,
+                  beforeTokens: (e as any).token_count || 0,
+                  afterTokens: 0,
+                  compressed: null,
+                })
+                break
+              case 'compression.completed': {
+                const afterTokens = (e as any).contextTokens || (e as any).afterTokens || 0
+                setCompressionState(sid, {
+                  compressing: false,
+                  messageCount: (e as any).totalMessages || 0,
+                  beforeTokens: (e as any).beforeTokens || 0,
+                  afterTokens,
+                  compressed: (e as any).compressed ?? false,
+                  error: (e as any).error,
+                })
+                if ((e as any).contextTokens != null) target.contextTokens = (e as any).contextTokens
+                break
+              }
+              case 'abort.started':
+                setAbortState({ aborting: true, synced: null })
+                break
+              case 'abort.completed':
+                setAbortState({ aborting: false, synced: (e as any).synced ?? false })
+                break
+              case 'approval.requested':
+                setPendingApproval({ ...e, session_id: sid })
+                break
+              case 'approval.resolved':
+                clearPendingApproval({ ...e, session_id: sid })
+                break
+              case 'clarify.requested':
+                setPendingClarify({ ...e, session_id: sid })
+                break
+              case 'clarify.resolved':
+                clearPendingClarify({ ...e, session_id: sid })
+                break
+              case 'run.failed':
+                addAgentErrorMessage(sid, e.error)
+                break
+              case 'agent.event':
+                handleAgentEvent(e)
+                break
+            }
+          }
+        }
+
+        if (activeSessionId.value === sid) activeSession.value = target
+        if (!data.isWorking && !(data.queueLength && data.queueLength > 0)) {
+          clearAgentEventMessages(sid)
+          cleanup()
+          activeAssistantMessageId = null
+          updateSessionTitle(sid)
+        }
+      }
+
       // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
       const ctrl = startRunViaSocket(
         runPayload,
@@ -1038,12 +1568,12 @@ export const useChatStore = defineStore('chat', () => {
         (evt: RunEvent) => {
           switch (evt.event) {
             case 'run.started':
+              clearAgentEventMessages(sid)
               setAbortState(null)
-              setCompressionState(null)
+              setCompressionState(sid, null)
               runProducedAssistantText = false
               runHadToolActivity = false
               closeStreamingAssistant()
-              startNextQueuedUser()
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
               } else {
@@ -1052,7 +1582,7 @@ export const useChatStore = defineStore('chat', () => {
               break
 
             case 'run.queued': {
-              queueLengths.value.set(sid, (evt as any).queue_length || 0)
+              handleRunQueuedEvent(sid, evt)
               break
             }
 
@@ -1061,8 +1591,13 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'agent.event': {
+              handleAgentEvent(evt)
+              break
+            }
+
             case 'compression.started': {
-              setCompressionState({
+              setCompressionState(sid, {
                 compressing: true,
                 messageCount: (evt as any).message_count || 0,
                 beforeTokens: (evt as any).token_count || 0,
@@ -1073,18 +1608,24 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'compression.completed': {
-              setCompressionState({
+              const afterTokens = (evt as any).contextTokens || (evt as any).afterTokens || 0
+              setCompressionState(sid, {
                 compressing: false,
                 messageCount: (evt as any).totalMessages || 0,
                 beforeTokens: (evt as any).beforeTokens || 0,
-                afterTokens: (evt as any).afterTokens || 0,
+                afterTokens,
                 compressed: (evt as any).compressed ?? false,
                 error: (evt as any).error,
               })
+              if ((evt as any).contextTokens != null) {
+                const target = sessions.value.find(s => s.id === sid)
+                if (target) target.contextTokens = (evt as any).contextTokens
+              }
               // Auto-clear after 5s
               setTimeout(() => {
-                if (compressionState.value && !compressionState.value.compressing) {
-                  setCompressionState(null)
+                const state = compressionStates.value.get(sid)
+                if (state && !state.compressing) {
+                  setCompressionState(sid, null)
                 }
               }, 5000)
               break
@@ -1097,6 +1638,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'abort.completed': {
               setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+              clearPendingInteractions(sid)
               if ((evt as any).queue_length > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_length)
                 setAbortState(null)
@@ -1253,6 +1795,15 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'subagent.start':
+            case 'subagent.tool':
+            case 'subagent.progress':
+            case 'subagent.complete': {
+              runHadToolActivity = true
+              handleSubagentEvent(sid, evt)
+              break
+            }
+
             case 'approval.requested': {
               setPendingApproval(evt)
               break
@@ -1263,7 +1814,18 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'clarify.requested': {
+              setPendingClarify(evt)
+              break
+            }
+
+            case 'clarify.resolved': {
+              clearPendingClarify(evt)
+              break
+            }
+
             case 'run.completed': {
+              clearAgentEventMessages(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1367,6 +1929,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              clearAgentEventMessages(sid)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
@@ -1424,12 +1987,20 @@ export const useChatStore = defineStore('chat', () => {
           cleanup()
         },
         undefined,
+        { onReconnectResume: applyReconnectResume },
       )
+      runSubmitted = true
 
-      if (!isBridgeSlashCommand || isBridgeCompressCommand) {
+      if (!isBridgeSlashCommand || isBridgeCompressCommand || isBridgePlanCommand || isBridgeGoalCommand) {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {
+      if (shouldQueue && !runSubmitted) {
+        dropQueuedUserMessage(sid, userMsg.id)
+      }
+      if (!shouldQueue && !runSubmitted) {
+        serverWorking.value.delete(sid)
+      }
       addMessage(sid, {
         id: uid(),
         role: 'system',
@@ -1444,11 +2015,11 @@ export const useChatStore = defineStore('chat', () => {
    * Emits 'resume' to join the session room on the server,
    * then sets up event listeners to receive ongoing events.
    */
-  function resumeServerWorkingRun(sid: string) {
+  function resumeServerWorkingRun(sid: string, force = false) {
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
     // Only set up listeners if the server reported an active run during resume.
-    if (!serverWorking.value.has(sid)) return
+    if (!force && !serverWorking.value.has(sid)) return
 
     let closed = false
     let runProducedAssistantText = false
@@ -1462,10 +2033,6 @@ export const useChatStore = defineStore('chat', () => {
       serverWorking.value.delete(sid)
       // Unregister from global session handlers
       unregisterSessionHandlers(sid)
-    }
-
-    const startNextQueuedUser = () => {
-      showNextQueuedUserMessage(sid)
     }
 
     const closeStreamingAssistant = () => {
@@ -1485,7 +2052,7 @@ export const useChatStore = defineStore('chat', () => {
       if (evt.session_id && evt.session_id !== sid) return
       switch (evt.event) {
         case 'run.queued': {
-          queueLengths.value.set(sid, (evt as any).queue_length || 0)
+          handleRunQueuedEvent(sid, evt)
           break
         }
 
@@ -1494,13 +2061,18 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'agent.event': {
+          handleAgentEvent(evt)
+          break
+        }
+
         case 'run.started':
+          clearAgentEventMessages(sid)
           setAbortState(null)
-          setCompressionState(null)
+          setCompressionState(sid, null)
           runProducedAssistantText = false
           runHadToolActivity = false
           closeStreamingAssistant()
-          startNextQueuedUser()
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)
           } else {
@@ -1509,7 +2081,7 @@ export const useChatStore = defineStore('chat', () => {
           break
 
         case 'compression.started': {
-          setCompressionState({
+          setCompressionState(sid, {
             compressing: true,
             messageCount: (evt as any).message_count || 0,
             beforeTokens: (evt as any).token_count || 0,
@@ -1520,17 +2092,23 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'compression.completed': {
-          setCompressionState({
+          const afterTokens = (evt as any).contextTokens || (evt as any).afterTokens || 0
+          setCompressionState(sid, {
             compressing: false,
             messageCount: (evt as any).totalMessages || 0,
             beforeTokens: (evt as any).beforeTokens || 0,
-            afterTokens: (evt as any).afterTokens || 0,
+            afterTokens,
             compressed: (evt as any).compressed ?? false,
             error: (evt as any).error,
           })
+          if ((evt as any).contextTokens != null) {
+            const target = sessions.value.find(s => s.id === sid)
+            if (target) target.contextTokens = (evt as any).contextTokens
+          }
           setTimeout(() => {
-            if (compressionState.value && !compressionState.value.compressing) {
-              setCompressionState(null)
+            const state = compressionStates.value.get(sid)
+            if (state && !state.compressing) {
+              setCompressionState(sid, null)
             }
           }, 5000)
           break
@@ -1543,6 +2121,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'abort.completed': {
           setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
+          clearPendingInteractions(sid)
           if ((evt as any).queue_length > 0) {
             queueLengths.value.set(sid, (evt as any).queue_length)
             setAbortState(null)
@@ -1689,6 +2268,15 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'subagent.start':
+        case 'subagent.tool':
+        case 'subagent.progress':
+        case 'subagent.complete': {
+          runHadToolActivity = true
+          handleSubagentEvent(sid, evt)
+          break
+        }
+
         case 'approval.requested': {
           setPendingApproval(evt)
           break
@@ -1699,7 +2287,18 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'clarify.requested': {
+          setPendingClarify(evt)
+          break
+        }
+
+        case 'clarify.resolved': {
+          clearPendingClarify(evt)
+          break
+        }
+
         case 'run.completed': {
+          clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
           if (hasQueue) {
             queueLengths.value.set(sid, (evt as any).queue_remaining)
@@ -1789,6 +2388,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          clearAgentEventMessages(sid)
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
@@ -1836,6 +2436,7 @@ export const useChatStore = defineStore('chat', () => {
       onReasoningAvailable: (evt) => handleEvent(evt),
       onToolStarted: (evt) => handleEvent(evt),
       onToolCompleted: (evt) => handleEvent(evt),
+      onSubagentEvent: (evt) => handleEvent(evt),
       onRunStarted: (evt) => handleEvent(evt),
       onRunCompleted: (evt) => handleEvent(evt),
       onRunFailed: (evt) => handleEvent(evt),
@@ -1844,8 +2445,11 @@ export const useChatStore = defineStore('chat', () => {
       onAbortStarted: (evt) => handleEvent(evt),
       onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
+      onAgentEvent: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onRunQueued: (evt) => handleEvent(evt),
+      onClarifyRequested: (evt) => handleEvent(evt),
+      onClarifyResolved: (evt) => handleEvent(evt),
     })
 
     // No need to emit resume here — switchSession already did it.
@@ -1860,10 +2464,70 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function handlePeerUserMessage(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid || activeSessionId.value !== sid || !activeSession.value) return
+
+    const peer = evt.message
+    const content = typeof peer?.content === 'string' ? peer.content : ''
+    if (!content.trim()) return
+
+    const messageId = peer?.id != null ? String(peer.id) : ''
+    const msgs = getSessionMsgs(sid)
+    if (messageId && msgs.some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
+    if (messageId && (queuedUserMessages.value.get(sid) || []).some(msg => msg.id === messageId)) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+      return
+    }
+
+    const timestamp = typeof peer?.timestamp === 'number' && Number.isFinite(peer.timestamp)
+      ? Math.round(peer.timestamp * 1000)
+      : Date.now()
+
+    const message: Message = {
+      id: messageId || uid(),
+      role: peer?.role === 'command' ? 'command' : 'user',
+      content,
+      timestamp,
+      queued: !!peer?.queued,
+      systemType: peer?.role === 'command' ? 'command' : undefined,
+    }
+    const wasDequeued = messageId ? consumeDequeuedQueueId(sid, messageId) : false
+    if (peer?.queued || (!wasDequeued && isSessionLive(sid))) {
+      enqueueUserMessage(sid, message)
+    } else {
+      addMessage(sid, message)
+      updateSessionTitle(sid)
+    }
+    serverWorking.value.add(sid)
+    resumeServerWorkingRun(sid, true)
+  }
+
+  onPeerUserMessage(handlePeerUserMessage)
+
+  function handleGlobalSessionCommand(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid || activeSessionId.value !== sid || !activeSession.value) return
+    const shouldAttachToStartedRun = (evt as any).started === true && (evt as any).terminal === false
+    handleSessionCommandEvent(evt)
+    if (shouldAttachToStartedRun) {
+      serverWorking.value.add(sid)
+      resumeServerWorkingRun(sid, true)
+    }
+  }
+
+  onSessionCommand(handleGlobalSessionCommand)
+
   function stopStreaming() {
     const sid = activeSessionId.value
     if (!sid) return
     if (isAborting.value) return
+    clearPendingInteractions(sid)
     const ctrl = streamStates.value.get(sid)
     if (ctrl) {
       setAbortState({ aborting: true, synced: null })
@@ -1901,11 +2565,16 @@ export const useChatStore = defineStore('chat', () => {
             } else if (!data.isWorking) {
               setAbortState(null)
             }
+            if (!data.isWorking) setCompressionState(sid, null)
             if (data.messages?.length && activeSession.value) {
               activeSession.value.messages = mapHermesMessages(data.messages as any[])
+              activeSession.value.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
+              activeSession.value.messageTotal = data.messageTotal ?? activeSession.value.messageCount ?? activeSession.value.loadedMessageCount
+              activeSession.value.messageCount = activeSession.value.messageTotal
+              activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
             }
             resumeServerWorkingRun(sid)
-          })
+          }, activeSession.value?.profile)
         }
       }
     })
@@ -1994,6 +2663,7 @@ export const useChatStore = defineStore('chat', () => {
     queuedUserMessages,
     pendingApprovals,
     activePendingApproval,
+    activePendingClarify,
     removeQueuedMessage,
     isLoadingSessions,
     sessionsLoaded,
@@ -2002,6 +2672,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     newCliSession,
     switchSession,
+    loadOlderMessages,
     switchSessionModel,
     addOrUpdateSession,
     clearProviderFromSessions,
@@ -2009,6 +2680,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     stopStreaming,
     respondApproval,
+    respondToClarify,
     loadSessions,
     refreshActiveSession,
     getThinkingObservation,

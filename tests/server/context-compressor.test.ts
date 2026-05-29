@@ -153,6 +153,48 @@ describe('ChatContextCompressor', () => {
     expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', 'compressed summary', 6, 10)
   })
 
+  it('routes summarization through the provided worker key and destroys only the temporary agent session', async () => {
+    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { headMessageCount: 0, tailMessageCount: 1, summaryBudget: 1000 },
+    })
+    const messages = [
+      { role: 'user', content: 'old context' },
+      { role: 'assistant', content: 'old response' },
+      { role: 'user', content: 'tail' },
+    ]
+    getCompressionSnapshotMock.mockReturnValue(null)
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: 'compressed summary' },
+    })
+
+    await compressor.compress(messages, 'http://upstream', undefined, 's1', {
+      profile: 'default',
+      workerKey: 'default:compression:s1',
+    })
+
+    expect(bridgeRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'chat',
+      profile: 'default',
+      worker_key: 'default:compression:s1',
+      message: 'Generate the context checkpoint summary now.',
+      wait: true,
+    }), expect.any(Object))
+    const request = bridgeRequestMock.mock.calls[0][0]
+    expect(request.conversation_history[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      content: expect.stringContaining('TURNS TO SUMMARIZE:'),
+    }))
+    const compressSessionId = bridgeRequestMock.mock.calls[0][0].session_id
+    expect(String(compressSessionId)).toMatch(/^compress_/)
+    expect(bridgeDestroyMock).toHaveBeenCalledWith(
+      compressSessionId,
+      'default',
+      'default:compression:s1',
+    )
+  })
+
   it('does not pre-prune tool results before sending them to the summarizer', async () => {
     const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
     const compressor = new ChatContextCompressor({
@@ -435,6 +477,16 @@ describe('ChatContextCompressor', () => {
     const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
 
     expect(bridgeRequestMock).toHaveBeenCalledTimes(1)
+    const request = bridgeRequestMock.mock.calls[0][0]
+    expect(request.message).toBe('Generate the context checkpoint summary now.')
+    expect(request.conversation_history.slice(0, 3)).toEqual([
+      { role: 'user', content: '[Previous summary]\nprevious summary' },
+      { role: 'assistant', content: 'Understood, I will update the summary.' },
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('NEW TURNS TO INCORPORATE:'),
+      }),
+    ])
     expect(result.messages.map(m => m.content)).toEqual([
       'head 0',
       'head 1',

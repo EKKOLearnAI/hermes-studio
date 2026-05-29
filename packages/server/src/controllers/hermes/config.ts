@@ -1,8 +1,8 @@
 import { readFile } from 'fs/promises'
-import { getActiveConfigPath, getActiveEnvPath, getActiveProfileName } from '../../services/hermes/hermes-profile'
-import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
-import { restartGateway } from '../../services/hermes/hermes-cli'
-import { saveEnvValue } from '../../services/config-helpers'
+import { join } from 'path'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+import { restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
+import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 
@@ -12,8 +12,12 @@ const PLATFORM_SECTIONS = new Set([
   'approvals',
 ])
 
-const configPath = () => getActiveConfigPath()
-const envPath = () => getActiveEnvPath()
+function requestedProfile(ctx: any): string {
+  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+const configPath = (profile: string) => join(getProfileDir(profile), 'config.yaml')
+const envPath = (profile: string) => join(getProfileDir(profile), '.env')
 
 const envPlatformMap: Record<string, [string, string]> = {
   TELEGRAM_BOT_TOKEN: ['telegram', 'token'],
@@ -26,6 +30,7 @@ const envPlatformMap: Record<string, [string, string]> = {
   DINGTALK_CLIENT_ID: ['dingtalk', 'extra.client_id'],
   DINGTALK_CLIENT_SECRET: ['dingtalk', 'extra.client_secret'],
   DINGTALK_APP_KEY: ['dingtalk', 'extra.app_key'],
+  DINGTALK_CARD_TEMPLATE_ID: ['dingtalk', 'extra.card_template_id'],
   DINGTALK_ALLOWED_USERS: ['dingtalk', 'allowed_users'],
   DINGTALK_ALLOW_ALL_USERS: ['dingtalk', 'allow_all_users'],
   QQ_APP_ID: ['qqbot', 'extra.app_id'],
@@ -79,18 +84,9 @@ function deepMerge(target: Record<string, any>, source: Record<string, any>): Re
   return target
 }
 
-async function destroyBridgeProfile(profile: string): Promise<void> {
+async function readEnvPlatforms(profile: string): Promise<Record<string, any>> {
   try {
-    const result = await new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 }).destroyProfile(profile)
-    logger.info('[config] destroyed bridge sessions after gateway restart profile=%s destroyed=%s', profile, result.destroyed)
-  } catch (err) {
-    logger.warn(err, '[config] failed to destroy bridge sessions after gateway restart profile=%s', profile)
-  }
-}
-
-async function readEnvPlatforms(): Promise<Record<string, any>> {
-  try {
-    const raw = await readFile(envPath(), 'utf-8')
+    const raw = await readFile(envPath(profile), 'utf-8')
     const env = parseEnv(raw)
     const platforms: Record<string, any> = {}
     for (const [envKey, [platform, cfgPath]] of Object.entries(envPlatformMap)) {
@@ -105,14 +101,15 @@ async function readEnvPlatforms(): Promise<Record<string, any>> {
   } catch { return {} }
 }
 
-async function readConfig(): Promise<Record<string, any>> {
-  return safeFileStore.readYaml(configPath())
+async function readConfig(profile: string): Promise<Record<string, any>> {
+  return safeFileStore.readYaml(configPath(profile))
 }
 
 export async function getConfig(ctx: any) {
   try {
-    const config = await readConfig()
-    const envPlatforms = await readEnvPlatforms()
+    const profile = requestedProfile(ctx)
+    const config = await readConfig(profile)
+    const envPlatforms = await readEnvPlatforms(profile)
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
       for (const [platform, vals] of Object.entries(envPlatforms)) {
@@ -142,7 +139,8 @@ export async function updateConfig(ctx: any) {
     ctx.status = 400; ctx.body = { error: 'Missing section or values' }; return
   }
   try {
-    await safeFileStore.updateYaml(configPath(), (config) => {
+    const profile = requestedProfile(ctx)
+    await safeFileStore.updateYaml(configPath(profile), (config) => {
       config[section] = deepMerge(config[section] || {}, values)
       return config
     }, {
@@ -152,14 +150,12 @@ export async function updateConfig(ctx: any) {
       },
     })
 
-    // Platform adapters still run through Hermes gateway; restart it so channel
-    // config changes (Feishu/Weixin/etc.) are applied, then refresh bridge sessions.
+    // Platform adapters run through Hermes gateway; restart it so channel
+    // config changes (Feishu/Weixin/etc.) are applied.
     if (restart !== false && PLATFORM_SECTIONS.has(section)) {
-      const activeProfile = getActiveProfileName()
       try {
-        const restartResult = await restartGateway()
-        logger.info('[config] gateway restarted after config update section=%s profile=%s result=%s', section, activeProfile, restartResult)
-        await destroyBridgeProfile(activeProfile)
+        const restartResult = await restartGatewayForProfile(profile)
+        logger.info('[config] gateway restarted after config update section=%s profile=%s result=%j', section, profile, restartResult)
       } catch (err) {
         logger.error(err, 'Gateway restart failed')
         ctx.status = 500
@@ -180,6 +176,7 @@ export async function updateCredentials(ctx: any) {
     ctx.status = 400; ctx.body = { error: 'Missing platform or values' }; return
   }
   try {
+    const profile = requestedProfile(ctx)
     const envMap = platformEnvMap[platform]
     if (!envMap) {
       ctx.status = 400; ctx.body = { error: `Unknown platform: ${platform}` }; return
@@ -190,12 +187,12 @@ export async function updateCredentials(ctx: any) {
         for (const [subKey, subVal] of Object.entries(val as Record<string, any>)) { flatValues[`extra.${subKey}`] = subVal }
       } else { flatValues[key] = val }
     }
-    await safeFileStore.updateYaml(configPath(), async (config) => {
+    await safeFileStore.updateYaml(configPath(profile), async (config) => {
       for (const [cfgPath, val] of Object.entries(flatValues)) {
         const envVar = envMap[cfgPath]
         if (!envVar) continue
         if (val === undefined || val === null || val === '') {
-          await saveEnvValue(envVar, '')
+          await saveEnvValueForProfile(profile, envVar, '')
           const parts = cfgPath.split('.')
           let obj: any = config.platforms?.[platform]
           if (obj) {
@@ -209,7 +206,7 @@ export async function updateCredentials(ctx: any) {
             if (Object.keys(obj).length === 0) { if (!config.platforms) config.platforms = {}; delete config.platforms[platform] }
           }
         } else {
-          await saveEnvValue(envVar, String(val))
+          await saveEnvValueForProfile(profile, envVar, String(val))
         }
       }
       return config
@@ -220,13 +217,11 @@ export async function updateCredentials(ctx: any) {
       },
     })
 
-    // Platform adapters still run through Hermes gateway; restart it so channel
-    // credentials are applied, then refresh bridge sessions.
-    const activeProfile = getActiveProfileName()
+    // Platform adapters run through Hermes gateway; restart it so channel
+    // credentials are applied.
     try {
-      const restartResult = await restartGateway()
-      logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%s', platform, activeProfile, restartResult)
-      await destroyBridgeProfile(activeProfile)
+      const restartResult = await restartGatewayForProfile(profile)
+      logger.info('[config] gateway restarted after credentials update platform=%s profile=%s result=%j', platform, profile, restartResult)
     } catch (err) {
       logger.error(err, 'Gateway restart failed')
       ctx.status = 500

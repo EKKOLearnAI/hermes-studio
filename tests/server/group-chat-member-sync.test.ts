@@ -224,15 +224,61 @@ describe('Group Chat member/agent identity sync', () => {
     })
   })
 
-  it('routes @mentions only from user messages, not agent replies', () => {
+  it('filters room list to rooms containing one of the regular admin profiles', async () => {
+    const allRooms = [
+      { id: 'room-default', name: 'Default', inviteCode: null },
+      { id: 'room-private', name: 'Private', inviteCode: null },
+    ]
+    const visibleRooms = [allRooms[0]]
+    const storage = {
+      getAllRooms: vi.fn(() => allRooms),
+      getRoomsForProfiles: vi.fn(() => visibleRooms),
+    }
+    setGroupChatServer({ getStorage: () => storage } as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const ctx: any = {
+      state: { user: { id: 2, username: 'ops', role: 'admin', profiles: ['default', 'research'] } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(storage.getRoomsForProfiles).toHaveBeenCalledWith(['default', 'research'])
+    expect(storage.getAllRooms).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ rooms: visibleRooms })
+  })
+
+  it('keeps room list unrestricted for super admins', async () => {
+    const rooms = [{ id: 'room-1', name: 'All', inviteCode: null }]
+    const storage = {
+      getAllRooms: vi.fn(() => rooms),
+      getRoomsForProfiles: vi.fn(() => []),
+    }
+    setGroupChatServer({ getStorage: () => storage } as any)
+
+    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const ctx: any = {
+      state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
+      status: 200,
+      body: undefined,
+    }
+    await handler(ctx, async () => {})
+
+    expect(storage.getAllRooms).toHaveBeenCalledOnce()
+    expect(storage.getRoomsForProfiles).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ rooms })
+  })
+
+  it('routes @mentions from users and bounded agent replies', () => {
     const server = Object.create(GroupChatServer.prototype) as any
     const emit = vi.fn()
     server.rooms = new Map([
       ['room-1', {
         hasOnlineMember: vi.fn(() => true),
         getOnlineMemberBySocketId: vi.fn((socketId: string) => socketId === 'agent-socket'
-          ? { userId: 'agent-1', name: '丫鬟' }
-          : { userId: 'human-1', name: 'Human' }),
+          ? { userId: 'agent-1', name: '丫鬟', source: 'agent' }
+          : { userId: 'human-1', name: 'Human', source: 'human' }),
       }],
     ])
     server.socketUserMap = new Map([
@@ -251,9 +297,23 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleMessage({ id: 'human-socket' }, { roomId: 'room-1', content: '@all hi', role: 'user' }, vi.fn())
     expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
+    expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
+      content: '@all hi',
+      senderId: 'human-1',
+      mentionDepth: 0,
+    }))
 
     server.agentClients.processMentions.mockClear()
     server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all agent says hi', role: 'assistant', mentionDepth: 1 }, vi.fn())
+    expect(server.agentClients.processMentions).toHaveBeenCalledTimes(1)
+    expect(server.agentClients.processMentions).toHaveBeenLastCalledWith('room-1', expect.objectContaining({
+      content: '@all agent says hi',
+      senderId: 'agent-1',
+      mentionDepth: 1,
+    }))
+
+    server.agentClients.processMentions.mockClear()
+    server.handleMessage({ id: 'agent-socket' }, { roomId: 'room-1', content: '@all too deep', role: 'assistant', mentionDepth: 4 }, vi.fn())
     expect(server.agentClients.processMentions).not.toHaveBeenCalled()
   })
 })

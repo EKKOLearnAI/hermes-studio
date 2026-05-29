@@ -4,12 +4,106 @@ import { resolve, normalize } from 'path'
 import { homedir } from 'os'
 import * as kanbanCli from '../../services/hermes/hermes-kanban'
 import { isPathWithin } from '../../services/hermes/hermes-path'
+import { listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import {
   searchSessionSummariesWithProfile,
   getSessionDetailFromDbWithProfile,
   getExactSessionDetailFromDbWithProfile,
   findLatestExactSessionIdWithProfile,
 } from '../../db/hermes/sessions-db'
+import { listUserProfiles } from '../../db/hermes/users-store'
+
+const DEFAULT_PROFILE = 'default'
+
+function profileName(value: string | null | undefined): string {
+  return value?.trim() || DEFAULT_PROFILE
+}
+
+function requestedProfile(ctx: Context): string | null {
+  return ctx.state?.profile?.name || null
+}
+
+function allowedProfileSet(ctx: Context): Set<string> | null {
+  const user = ctx.state?.user
+  if (!user || user.role === 'super_admin') return null
+  return new Set(listUserProfiles(user.id).map(profile => profile.profile_name))
+}
+
+function visibleProfileSet(ctx: Context): Set<string> | null {
+  return allowedProfileSet(ctx)
+}
+
+function canUseProfile(ctx: Context, profile: string | null | undefined): boolean {
+  const allowed = allowedProfileSet(ctx)
+  return !allowed || allowed.has(profileName(profile))
+}
+
+function denyProfileAccess(ctx: Context, profile: string | null | undefined): boolean {
+  if (canUseProfile(ctx, profile)) return false
+  ctx.status = 403
+  ctx.body = { error: `Profile "${profileName(profile)}" is not available for this user` }
+  return true
+}
+
+function taskAssigneeProfile(task: { assignee: string | null }): string {
+  return profileName(task.assignee)
+}
+
+function filterTasksByVisibleProfiles(ctx: Context, tasks: kanbanCli.KanbanTask[]): kanbanCli.KanbanTask[] {
+  const visible = visibleProfileSet(ctx)
+  if (!visible) return tasks
+  return tasks.filter(task => visible.has(taskAssigneeProfile(task)))
+}
+
+function statsForTasks(tasks: kanbanCli.KanbanTask[]): kanbanCli.KanbanStats {
+  const by_status: Record<string, number> = {}
+  const by_assignee: Record<string, number> = {}
+  for (const task of tasks) {
+    by_status[task.status] = (by_status[task.status] || 0) + 1
+    const assignee = taskAssigneeProfile(task)
+    by_assignee[assignee] = (by_assignee[assignee] || 0) + 1
+  }
+  return { by_status, by_assignee, total: tasks.length }
+}
+
+function assignableProfileNames(ctx: Context): Set<string> | null {
+  const user = ctx.state?.user
+  if (!user) return null
+  if (user.role === 'super_admin') return new Set(listProfileNamesFromDisk())
+  return new Set(listUserProfiles(user.id).map(profile => profile.profile_name))
+}
+
+function assigneesForUser(ctx: Context, assignees: kanbanCli.KanbanAssignee[]): kanbanCli.KanbanAssignee[] {
+  const assignable = assignableProfileNames(ctx)
+  if (!assignable) return assignees
+
+  const byName = new Map<string, kanbanCli.KanbanAssignee>()
+  for (const assignee of assignees) {
+    const name = profileName(assignee.name)
+    if (assignable.has(name)) byName.set(name, { ...assignee, name })
+  }
+  for (const name of [...assignable].sort()) {
+    if (!byName.has(name)) byName.set(name, { name, on_disk: true, counts: null })
+  }
+  return [...byName.values()]
+}
+
+async function getVisibleTasksForBoard(ctx: Context, board: string, opts: {
+  status?: string
+  assignee?: string
+  tenant?: string
+  includeArchived?: boolean
+} = {}): Promise<kanbanCli.KanbanTask[]> {
+  if (opts.assignee && denyProfileAccess(ctx, opts.assignee)) return []
+  const tasks = await kanbanCli.listTasks({
+    board,
+    status: opts.status,
+    assignee: opts.assignee,
+    tenant: opts.tenant,
+    includeArchived: opts.includeArchived,
+  })
+  return filterTasksByVisibleProfiles(ctx, tasks)
+}
 
 function getLatestRunProfile(detail: { runs: Array<{ profile: string | null }> }): string | null {
   return [...detail.runs].reverse().find(run => run.profile)?.profile || null
@@ -211,7 +305,8 @@ export async function list(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const tasks = await kanbanCli.listTasks({ board, status, assignee, tenant, includeArchived })
+    const tasks = await getVisibleTasksForBoard(ctx, board, { status, assignee, tenant, includeArchived })
+    if (ctx.status === 403) return
     ctx.body = { tasks }
   } catch (err: any) {
     ctx.status = 500
@@ -225,6 +320,11 @@ export async function get(ctx: Context) {
   try {
     const detail = await kanbanCli.getTask(ctx.params.id, { board })
     if (!detail) {
+      ctx.status = 404
+      ctx.body = { error: 'Task not found' }
+      return
+    }
+    if (!filterTasksByVisibleProfiles(ctx, [detail.task]).length) {
       ctx.status = 404
       ctx.body = { error: 'Task not found' }
       return
@@ -291,10 +391,12 @@ export async function create(ctx: Context) {
   const priority = optionalInteger(payload.priority, 'priority')
   const tenant = optionalString(payload.tenant, 'tenant')
   if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error)) return
+  const targetAssignee = assignee.value || requestedProfile(ctx) || undefined
+  if (targetAssignee && denyProfileAccess(ctx, targetAssignee)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const task = await kanbanCli.createTask(title.value!, { board, body: body.value, assignee: assignee.value, priority: priority.value, tenant: tenant.value })
+    const task = await kanbanCli.createTask(title.value!, { board, body: body.value, assignee: targetAssignee, priority: priority.value, tenant: tenant.value })
     ctx.body = { task }
   } catch (err: any) {
     ctx.status = 500
@@ -357,6 +459,7 @@ export async function assign(ctx: Context) {
   if (rejectBadRequest(ctx, bodyResult.error)) return
   const profile = requiredNonEmptyString(bodyResult.body.profile, 'profile')
   if (rejectBadRequest(ctx, profile.error)) return
+  if (denyProfileAccess(ctx, profile.value)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
@@ -426,6 +529,7 @@ export async function bulkUpdateTasks(ctx: Context) {
   const summary = optionalString(body.summary, 'summary')
   const reason = optionalString(body.reason, 'reason')
   if (rejectBadRequest(ctx, ids.error || status.error || assignee.error || archive.error || summary.error || reason.error)) return
+  if (assignee.value && denyProfileAccess(ctx, assignee.value)) return
   if (!archive.value && status.value === undefined && !hasOwn(body, 'assignee')) {
     ctx.status = 400
     ctx.body = { error: 'at least one bulk action is required' }
@@ -516,6 +620,7 @@ export async function reassign(ctx: Context) {
   const reclaim = optionalBoolean(body.reclaim, 'reclaim')
   const reason = optionalString(body.reason, 'reason')
   if (rejectBadRequest(ctx, profile.error || reclaim.error || reason.error)) return
+  if (denyProfileAccess(ctx, profile.value)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
@@ -566,7 +671,10 @@ export async function stats(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const stats = await kanbanCli.getStats({ board })
+    const visible = visibleProfileSet(ctx)
+    const stats = visible
+      ? statsForTasks(await getVisibleTasksForBoard(ctx, board, { includeArchived: true }))
+      : await kanbanCli.getStats({ board })
     ctx.body = { stats }
   } catch (err: any) {
     ctx.status = 500
@@ -578,7 +686,7 @@ export async function assignees(ctx: Context) {
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const assignees = await kanbanCli.getAssignees({ board })
+    const assignees = assigneesForUser(ctx, await kanbanCli.getAssignees({ board }))
     ctx.body = { assignees }
   } catch (err: any) {
     ctx.status = 500
@@ -628,6 +736,7 @@ export async function searchSessions(ctx: Context) {
     ctx.body = { error: 'task_id and profile are required' }
     return
   }
+  if (denyProfileAccess(ctx, profile)) return
   try {
     if (!q) {
       const exactSessionId = await findLatestExactSessionIdWithProfile(task_id, profile)

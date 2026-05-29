@@ -387,6 +387,9 @@ watch(
         <SettingRow :label="t('platform.clientSecret')" :hint="t('platform.clientSecretHint')">
           <NInput :value="credentialDraft('dingtalk').extra?.client_secret || ''" :loading="isSavingPlatform('dingtalk')" clearable size="small" class="input-lg" placeholder="Client Secret" @update:value="v => setCredentialDraft('dingtalk', { extra: { ...credentialDraft('dingtalk').extra, client_secret: v } })" />
         </SettingRow>
+        <SettingRow :label="t('platform.cardTemplateId')" :hint="t('platform.cardTemplateIdHint')">
+          <NInput :value="credentialDraft('dingtalk').extra?.card_template_id || ''" :loading="isSavingPlatform('dingtalk')" clearable size="small" class="input-lg" placeholder="AI Card Template ID" @update:value="v => setCredentialDraft('dingtalk', { extra: { ...credentialDraft('dingtalk').extra, card_template_id: v } })" />
+        </SettingRow>
         <SettingRow :label="t('platform.allowAllUsers')" :hint="t('platform.allowAllUsersHint')">
           <NSwitch :value="boolValue(credentialDraft('dingtalk').allow_all_users)" :loading="isSavingPlatform('dingtalk')" @update:value="v => setCredentialDraft('dingtalk', { allow_all_users: v })" />
         </SettingRow>

@@ -207,6 +207,7 @@ describe('ContextEngine.buildContext', () => {
         const messages = makeMessages(3)
         mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
         const contextTokenEstimator = vi.fn().mockResolvedValue(19_379)
+        const onProgress = vi.fn()
 
         const result = await engine.buildContext({
             roomId: 'room-1',
@@ -221,6 +222,7 @@ describe('ContextEngine.buildContext', () => {
             apiKey: null,
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator,
+            onProgress,
         })
 
         expect(result.meta.compressed).toBe(false)
@@ -231,11 +233,13 @@ describe('ContextEngine.buildContext', () => {
             expect.stringContaining('"Claude"'),
         )
         expect(mockSummarize).not.toHaveBeenCalled()
+        expect(onProgress).not.toHaveBeenCalled()
     })
 
     it('uses full context token estimates to trigger group compression', async () => {
         const messages = makeMessages(20)
         mockFetcher.getMessages = vi.fn().mockReturnValue(messages)
+        const onProgress = vi.fn()
 
         const result = await engine.buildContext({
             roomId: 'room-1',
@@ -250,12 +254,19 @@ describe('ContextEngine.buildContext', () => {
             apiKey: null,
             currentMessage: messages[messages.length - 1],
             contextTokenEstimator: vi.fn().mockResolvedValue(120_000),
+            onProgress,
         })
 
         expect(result.meta.compressed).toBe(true)
         expect(result.meta.contextTokenEstimate).toBe(120_000)
         expect(mockSummarize).toHaveBeenCalledTimes(1)
         expect(mockFetcher.saveContextSnapshot).toHaveBeenCalledTimes(1)
+        expect(onProgress).toHaveBeenCalledWith({
+            status: 'compressing',
+            path: 'full',
+            messageCount: 20,
+            tokenCount: 120_000,
+        })
     })
 
     it('throws when group prompt and tools exceed threshold with too little history to compress', async () => {
@@ -413,6 +424,7 @@ describe('ContextEngine.buildContext', () => {
         const updatedMessages = [...messages.slice(0, 9), middleInsert, ...messages.slice(9)]
         mockFetcher.getMessages = vi.fn().mockReturnValue(updatedMessages)
 
+        const onProgress = vi.fn()
         // Second call — incremental update
         await engine.buildContext({
             roomId: 'room-1', agentId: 'agent-1', agentName: 'Claude',
@@ -420,12 +432,17 @@ describe('ContextEngine.buildContext', () => {
             memberNames: [], members: [], upstream: 'http://localhost:8642', apiKey: null,
             currentMessage: updatedMessages[updatedMessages.length - 1],
             compression: { triggerTokens: 10 },
+            onProgress,
         })
 
         expect(mockSummarize).toHaveBeenCalledTimes(2)
         // Second call: has previousSummary
         const secondCallArgs = mockSummarize.mock.calls[1]
         expect(secondCallArgs[6]).toBe('Summary of conversation.')
+        expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+            status: 'compressing',
+            path: 'snapshot',
+        }))
     })
 
     it('falls back to no-summary on LLM failure', async () => {

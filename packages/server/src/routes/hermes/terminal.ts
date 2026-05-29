@@ -5,7 +5,7 @@ import { dirname, join, isAbsolute, resolve as resolvePath } from 'path'
 import { homedir } from 'os'
 import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
 import { getTerminalConfig, type TerminalConfig } from '../../services/hermes/file-provider'
-import { getToken } from '../../services/auth'
+import { authenticateUserToken, isAuthEnabled } from '../../middleware/user-auth'
 import { logger } from '../../services/logger'
 
 let pty: any = null
@@ -151,10 +151,9 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
       }
 
       // Auth check
-      const authToken = await getToken()
-      if (authToken) {
+      if (await isAuthEnabled()) {
         const token = url.searchParams.get('token') || ''
-        if (token !== authToken) {
+        if (!await authenticateUserToken(token)) {
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
           socket.destroy()
           return

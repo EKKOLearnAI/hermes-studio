@@ -199,10 +199,13 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
         return
     }
 
-    const messages = chatServer.getStorage().getMessages(ctx.params.roomId)
+    const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
+    const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 300) : 300
+    const messages = chatServer.getStorage().getMessages(ctx.params.roomId, limit, offset)
+    const total = chatServer.getStorage().getMessageCount(ctx.params.roomId)
     const agents = chatServer.getStorage().getRoomAgents(ctx.params.roomId)
     const members = chatServer.getStorage().getRoomMembers(ctx.params.roomId)
-    ctx.body = { room, messages, agents, members }
+    ctx.body = { room, messages, agents, members, total, offset, limit, hasMore: offset + messages.length < total }
 })
 
 // List rooms
@@ -213,7 +216,11 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms', async (ctx) => {
         return
     }
 
-    const rooms = chatServer.getStorage().getAllRooms()
+    const user = ctx.state.user
+    const storage = chatServer.getStorage()
+    const rooms = !user || user.role === 'super_admin'
+        ? storage.getAllRooms()
+        : storage.getRoomsForProfiles(user.profiles || [])
     ctx.body = { rooms }
 })
 

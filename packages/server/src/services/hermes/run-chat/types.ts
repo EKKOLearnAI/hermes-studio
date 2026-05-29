@@ -28,16 +28,25 @@ export interface SessionMessage {
 export interface QueuedRun {
   queue_id: string
   input: string | ContentBlock[]
+  displayInput?: string | ContentBlock[] | null
+  displayRole?: 'user' | 'command'
+  storageMessage?: string
   model?: string
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   instructions?: string
   profile: string
   source?: ChatRunSource
+  originSocketId?: string
+  goalContinuation?: boolean
 }
 
 export interface SessionState {
   messages: SessionMessage[]
+  messageTotal?: number
+  messageLoadedCount?: number
+  messagePageLimit?: number
+  hasMoreBefore?: boolean
   isWorking: boolean
   events: Array<{ event: string; data: any }>
   abortController?: AbortController
@@ -47,6 +56,7 @@ export interface SessionState {
   inputTokens?: number
   outputTokens?: number
   contextTokens?: number
+  bridgeContext?: BridgeContextState
   isAborting?: boolean
   queue: QueuedRun[]
   responseRun?: ResponseRunState
@@ -70,6 +80,18 @@ export interface ResponseRunState {
   responseId?: string
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
+}
+
+export interface BridgeContextState {
+  fixedContextTokens?: number
+  systemPromptTokens?: number
+  toolTokens?: number
+  systemPromptChars?: number
+  toolCount?: number
+  toolNames?: string[]
+  profile?: string
+  model?: string
+  provider?: string
 }
 
 export type ChatRunSource = 'api_server' | 'cli'

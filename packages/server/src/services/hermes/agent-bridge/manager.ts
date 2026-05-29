@@ -9,6 +9,11 @@ import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
 const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
 const MAX_AGENT_BRIDGE_RESTART_DELAY_MS = 30000
+const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
+  HERMES_OPENROUTER_APP_REFERER: 'https://ekkolearnai.com',
+  HERMES_OPENROUTER_APP_TITLE: 'Hermes Web UI',
+  HERMES_OPENROUTER_APP_CATEGORIES: 'cli-agent,personal-agent',
+} as const
 
 export interface AgentBridgeManagerOptions {
   endpoint?: string
@@ -25,11 +30,34 @@ export interface BridgeCommand {
   hermesHome: string
 }
 
+export interface AgentBridgeManagerRuntimeState {
+  endpoint: string
+  running: boolean
+  ready: boolean
+  pid?: number
+  starting: boolean
+  stopping: boolean
+  restartScheduled: boolean
+  restartAttempts: number
+}
+
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
   const value = Number(raw)
   return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string | undefined, agentRoot: string | undefined): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HERMES_AGENT_BRIDGE_ENDPOINT: endpoint,
+    HERMES_HOME: hermesHome,
+    HERMES_OPENROUTER_APP_REFERER: process.env.HERMES_OPENROUTER_APP_REFERER || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_REFERER,
+    HERMES_OPENROUTER_APP_TITLE: process.env.HERMES_OPENROUTER_APP_TITLE || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_TITLE,
+    HERMES_OPENROUTER_APP_CATEGORIES: process.env.HERMES_OPENROUTER_APP_CATEGORIES || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_CATEGORIES,
+    ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
+  }
 }
 
 function pathCandidates(agentRoot?: string): string[] {
@@ -308,6 +336,19 @@ export class AgentBridgeManager {
     return !!this.child && !this.child.killed && this.ready
   }
 
+  getRuntimeState(): AgentBridgeManagerRuntimeState {
+    return {
+      endpoint: this.endpoint,
+      running: this.running,
+      ready: this.ready,
+      pid: this.child?.pid,
+      starting: !!this.starting,
+      stopping: this.stopping,
+      restartScheduled: !!this.restartTimer,
+      restartAttempts: this.restartAttempts,
+    }
+  }
+
   async start(): Promise<void> {
     if (this.running) return
     if (this.starting) return this.starting
@@ -334,12 +375,7 @@ export class AgentBridgeManager {
     if (agentRoot) args.push('--agent-root', agentRoot)
     if (hermesHome) args.push('--hermes-home', hermesHome)
 
-    const env = {
-      ...process.env,
-      HERMES_AGENT_BRIDGE_ENDPOINT: this.endpoint,
-      HERMES_HOME: hermesHome,
-      ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
-    }
+    const env = buildAgentBridgeProcessEnv(this.endpoint, hermesHome, agentRoot)
 
     logger.info('[agent-bridge] starting: %s %s', command.command, args.join(' '))
     const child = spawn(command.command, args, {

@@ -37,10 +37,6 @@
       "description": "Hermes file browser"
     },
     {
-      "name": "Gateways",
-      "description": "Gateway process management"
-    },
-    {
       "name": "Group Chat",
       "description": "Group chat management"
     },
@@ -231,6 +227,32 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get me",
+        "description": "GET /api/auth/me",
+        "operationId": "currentUser",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }
@@ -875,6 +897,53 @@
         }
       }
     },
+    "/api/hermes/custom-model": {
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Update custom-model",
+        "description": "PUT /api/hermes/custom-model",
+        "operationId": "addCustomModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Delete custom-model",
+        "description": "DELETE /api/hermes/custom-model",
+        "operationId": "removeCustomModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/download": {
       "get": {
         "tags": [
@@ -1114,110 +1183,6 @@
         "summary": "Update write",
         "description": "PUT /api/hermes/files/write",
         "operationId": "updateWrite",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/hermes/gateways": {
-      "get": {
-        "tags": [
-          "Gateways"
-        ],
-        "summary": "List gateways",
-        "description": "GET /api/hermes/gateways",
-        "operationId": "list",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/hermes/gateways/{name}/health": {
-      "get": {
-        "tags": [
-          "Gateways"
-        ],
-        "summary": "Get health",
-        "description": "GET /api/hermes/gateways/:name/health",
-        "operationId": "health",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/hermes/gateways/{name}/start": {
-      "post": {
-        "tags": [
-          "Gateways"
-        ],
-        "summary": "Create start",
-        "description": "POST /api/hermes/gateways/:name/start",
-        "operationId": "start",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/hermes/gateways/{name}/stop": {
-      "post": {
-        "tags": [
-          "Gateways"
-        ],
-        "summary": "Create stop",
-        "description": "POST /api/hermes/gateways/:name/stop",
-        "operationId": "stop",
         "security": [
           {
             "BearerAuth": []
@@ -2065,32 +2030,6 @@
         }
       }
     },
-    "/api/hermes/profiles/active": {
-      "put": {
-        "tags": [
-          "Profiles"
-        ],
-        "summary": "Update active",
-        "description": "PUT /api/hermes/profiles/active",
-        "operationId": "switchProfile",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
     "/api/hermes/profiles/import": {
       "post": {
         "tags": [
@@ -2113,6 +2052,32 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/profiles/runtime-statuses": {
+      "get": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Get runtime-statuses",
+        "description": "GET /api/hermes/profiles/runtime-statuses",
+        "operationId": "runtimeStatuses",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }
@@ -2164,6 +2129,53 @@
         }
       }
     },
+    "/api/hermes/profiles/{name}/avatar": {
+      "put": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Update avatar",
+        "description": "PUT /api/hermes/profiles/:name/avatar",
+        "operationId": "updateAvatar",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Delete avatar",
+        "description": "DELETE /api/hermes/profiles/:name/avatar",
+        "operationId": "deleteAvatar",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/profiles/{name}/export": {
       "post": {
         "tags": [
@@ -2190,6 +2202,32 @@
         }
       }
     },
+    "/api/hermes/profiles/{name}/gateway/restart": {
+      "post": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Create restart",
+        "description": "POST /api/hermes/profiles/:name/gateway/restart",
+        "operationId": "restartGatewayForProfile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/profiles/{name}/rename": {
       "post": {
         "tags": [
@@ -2198,6 +2236,84 @@
         "summary": "Rename rename",
         "description": "POST /api/hermes/profiles/:name/rename",
         "operationId": "rename",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/profiles/{name}/restart": {
+      "post": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Create restart",
+        "description": "POST /api/hermes/profiles/:name/restart",
+        "operationId": "restartProfileRuntime",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/profiles/{name}/runtime-status": {
+      "get": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Get runtime-status",
+        "description": "GET /api/hermes/profiles/:name/runtime-status",
+        "operationId": "runtimeStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/provider-models": {
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Create provider-models",
+        "description": "POST /api/hermes/provider-models",
+        "operationId": "fetchProviderModelList",
         "security": [
           {
             "BearerAuth": []
@@ -2571,6 +2687,32 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/{id}/model": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create model",
+        "description": "POST /api/hermes/sessions/:id/model",
+        "operationId": "setModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

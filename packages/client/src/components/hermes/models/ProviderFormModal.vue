@@ -64,6 +64,10 @@ const alibabaCodingRegion = ref<'intl' | 'cn'>('intl')
 const presetOptions = computed(() =>
   modelsStore.allProviders.map(g => ({ label: g.label, value: g.provider })),
 )
+const selectedPresetProvider = computed(() =>
+  selectedPreset.value ? modelsStore.allProviders.find(g => g.provider === selectedPreset.value) : null,
+)
+const canEditPresetBaseUrl = computed(() => !!selectedPresetProvider.value?.base_url_env)
 
 const FUN_LINK_MAP: Record<string, string> = {
   'fun-codex': 'https://apikey.fun/register?aff=LIBAPI',
@@ -85,7 +89,7 @@ watch(selectedPreset, (val) => {
   formData.value.model = ''
   alibabaCodingRegion.value = 'intl'
   if (val) {
-    const group = modelsStore.allProviders.find(g => g.provider === val)
+    const group = selectedPresetProvider.value
     if (group) {
       formData.value.name = group.label
       formData.value.base_url = group.base_url
@@ -371,7 +375,7 @@ function handleClose() {
         <NInput
           v-model:value="formData.base_url"
           :placeholder="t('models.baseUrlPlaceholder')"
-          :disabled="providerType === 'preset'"
+          :disabled="providerType === 'preset' && !canEditPresetBaseUrl"
         />
       </NFormItem>
 

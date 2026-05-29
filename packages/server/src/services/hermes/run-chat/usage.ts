@@ -78,3 +78,60 @@ export async function calcAndUpdateUsage(
     return { inputTokens: 0, outputTokens: 0 }
   }
 }
+
+export function updateContextTokenUsage(
+  sid: string,
+  state: SessionState,
+  emit: (event: string, payload: any) => void,
+  contextTokens: number | null | undefined,
+  usage?: { inputTokens: number; outputTokens: number },
+): number | undefined {
+  if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens) || contextTokens < 0) {
+    return state.contextTokens
+  }
+  const normalizedContextTokens = Math.floor(contextTokens)
+  state.contextTokens = normalizedContextTokens
+  emit('usage.updated', {
+    event: 'usage.updated',
+    session_id: sid,
+    inputTokens: usage?.inputTokens ?? state.inputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? state.outputTokens ?? 0,
+    contextTokens: normalizedContextTokens,
+  })
+  return normalizedContextTokens
+}
+
+export function getCachedBridgeContextOverhead(state: SessionState): number | undefined {
+  const fixedContextTokens = state.bridgeContext?.fixedContextTokens
+  if (typeof fixedContextTokens !== 'number' || !Number.isFinite(fixedContextTokens) || fixedContextTokens < 0) {
+    return undefined
+  }
+  return Math.floor(fixedContextTokens)
+}
+
+export function contextTokensWithCachedOverhead(state: SessionState, messageTokens: number): number {
+  const normalizedMessageTokens = Math.max(0, Math.floor(messageTokens))
+  const fixedContextTokens = getCachedBridgeContextOverhead(state)
+  return fixedContextTokens == null
+    ? normalizedMessageTokens
+    : fixedContextTokens + normalizedMessageTokens
+}
+
+export function updateMessageContextTokenUsage(
+  sid: string,
+  state: SessionState,
+  emit: (event: string, payload: any) => void,
+  messageTokens: number | null | undefined,
+  usage?: { inputTokens: number; outputTokens: number },
+): number | undefined {
+  if (typeof messageTokens !== 'number' || !Number.isFinite(messageTokens) || messageTokens < 0) {
+    return state.contextTokens
+  }
+  return updateContextTokenUsage(
+    sid,
+    state,
+    emit,
+    contextTokensWithCachedOverhead(state, messageTokens),
+    usage,
+  )
+}
