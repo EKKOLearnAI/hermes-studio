@@ -163,7 +163,7 @@ const launchModeThemeOverrides = {
 }
 
 const useGlobalLaunchConfig = computed(() => (
-  launchAgentId.value === 'claude-code' && launchMode.value === 'global'
+  launchMode.value === 'global'
 ))
 
 function statusFor(id: CodingAgentId) {
@@ -303,7 +303,7 @@ function currentLaunchRequest() {
     model: launchModel.value,
     baseUrl: provider?.base_url || '',
     apiKey: provider?.api_key || '',
-    ...(launchAgentId.value === 'claude-code' ? { apiMode: launchApiMode.value } : {}),
+    apiMode: launchApiMode.value,
   }
 }
 
@@ -520,7 +520,7 @@ onMounted(() => {
           <NFormItem :label="t('codingAgents.profileScope')">
             <NTag size="small">{{ activeProfileName }}</NTag>
           </NFormItem>
-          <NFormItem v-if="launchAgentId === 'claude-code'" :label="t('codingAgents.launchModeScope')">
+          <NFormItem :label="t('codingAgents.launchModeScope')">
             <NRadioGroup
               v-model:value="launchMode"
               name="coding-agent-launch-mode"
@@ -552,7 +552,7 @@ onMounted(() => {
               filterable
             />
           </NFormItem>
-          <NFormItem v-if="launchAgentId === 'claude-code' && !useGlobalLaunchConfig" :label="t('codingAgents.protocolScope')">
+          <NFormItem v-if="!useGlobalLaunchConfig" :label="t('codingAgents.protocolScope')">
             <NSelect
               v-model:value="launchApiMode"
               :options="launchProtocolOptions"

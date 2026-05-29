@@ -6,7 +6,9 @@ import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
 import { registerClaudeCodeProxyTarget, type ApiMode } from './claude-code-proxy'
+import { registerCodexProxyTarget } from './codex-proxy'
 import { PROVIDER_PRESETS } from '../shared/providers'
+import { getModelContextLength } from './hermes/model-context'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -14,6 +16,8 @@ const CLAUDE_PROXY_HAIKU_MODEL = 'claude-haiku-4-5'
 const CLAUDE_PROXY_SONNET_MODEL = 'claude-sonnet-4-6'
 const CLAUDE_PROXY_OPUS_MODEL = 'claude-opus-4-7'
 const CODING_AGENT_HOME_DIR = 'coding-agent'
+const CODEX_MODEL_CATALOG_FILE = 'codex-model-catalog.json'
+const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be precise, safe, and helpful.'
 
 export type CodingAgentId = 'claude-code' | 'codex'
 
@@ -209,6 +213,87 @@ function getScopedWorkspaceRoot(scope: Required<CodingAgentConfigScope>): string
   return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'workspace', scope.profile, scope.provider)
 }
 
+function displayNameForModel(model: string): string {
+  const trimmed = model.trim()
+  if (!trimmed) return 'Model'
+  const leaf = trimmed.split('/').filter(Boolean).pop() || trimmed
+  return leaf
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+}
+
+function codexCatalogEntry(input: {
+  model: string
+  displayName: string
+  contextWindow: number
+  priority: number
+}) {
+  return {
+    slug: input.model,
+    display_name: input.displayName,
+    description: input.displayName,
+    default_reasoning_level: 'medium',
+    supported_reasoning_levels: [
+      { effort: 'low', description: 'Fast responses with lighter reasoning' },
+      { effort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+      { effort: 'high', description: 'Greater reasoning depth for complex problems' },
+      { effort: 'xhigh', description: 'Extra high reasoning depth for complex problems' },
+    ],
+    shell_type: 'shell_command',
+    visibility: 'list',
+    supported_in_api: true,
+    priority: 1000 + input.priority,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    default_service_tier: null,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: CODEX_CATALOG_BASE_INSTRUCTIONS,
+    model_messages: {
+      instructions_template: '{{ base_instructions }}\n\n{{ personality }}',
+      instructions_variables: {
+        base_instructions: CODEX_CATALOG_BASE_INSTRUCTIONS,
+        personality: '',
+        personality_default: '',
+        personality_friendly: '',
+        personality_pragmatic: '',
+      },
+    },
+    supports_reasoning_summaries: true,
+    default_reasoning_summary: 'none',
+    support_verbosity: true,
+    default_verbosity: 'low',
+    apply_patch_tool_type: 'freeform',
+    web_search_tool_type: 'text_and_image',
+    truncation_policy: { mode: 'tokens', limit: 10_000 },
+    supports_parallel_tool_calls: true,
+    supports_image_detail_original: true,
+    context_window: input.contextWindow,
+    max_context_window: input.contextWindow,
+    effective_context_window_percent: 95,
+    experimental_supported_tools: [],
+    input_modalities: ['text'],
+    supports_search_tool: true,
+  }
+}
+
+function buildCodexModelCatalog(input: {
+  profile: string
+  provider: string
+  model: string
+  presetModels: string[]
+}) {
+  const models = [...new Set([input.model, ...input.presetModels].map(item => item.trim()).filter(Boolean))]
+  return {
+    models: models.map((model, index) => codexCatalogEntry({
+      model,
+      displayName: displayNameForModel(model),
+      contextWindow: getModelContextLength({ profile: input.profile, provider: input.provider, model }),
+      priority: index,
+    })),
+  }
+}
+
 function expandHomePath(path: string): string {
   if (path === '~') return homedir()
   if (path.startsWith('~/')) return join(homedir(), path.slice(2))
@@ -218,6 +303,35 @@ function expandHomePath(path: string): string {
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) return value
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function powerShellQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+function buildLaunchShellCommand(input: {
+  workspaceDir: string
+  env: Record<string, string>
+  command: string
+  args: string[]
+}): string {
+  if (process.platform === 'win32') {
+    const envAssignments = Object.entries(input.env)
+      .map(([key, value]) => `$env:${key} = ${powerShellQuote(value)}`)
+    return [
+      `Set-Location -LiteralPath ${powerShellQuote(input.workspaceDir)}`,
+      ...envAssignments,
+      `& ${powerShellQuote(input.command)} ${input.args.map(powerShellQuote).join(' ')}`.trim(),
+    ].join('; ')
+  }
+
+  const envPrefix = Object.entries(input.env).map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ')
+  const runCommand = [
+    envPrefix,
+    input.command,
+    ...input.args.map(shellQuote),
+  ].filter(Boolean).join(' ')
+  return `cd ${shellQuote(input.workspaceDir)} && ${runCommand}`
 }
 
 function appleScriptString(value: string): string {
@@ -242,6 +356,20 @@ function isDockerRuntime(): boolean {
 }
 
 async function openNativeTerminal(shellCommand: string): Promise<string> {
+  if (process.platform === 'win32') {
+    await execFileAsync('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      "Start-Process -FilePath powershell.exe -ArgumentList @('-NoExit', '-Command', $args[0])",
+      shellCommand,
+    ], {
+      encoding: 'utf-8',
+      timeout: 8000,
+      windowsHide: true,
+    })
+    return 'PowerShell'
+  }
+
   if (process.platform === 'darwin') {
     await execFileAsync('osascript', [
       '-e',
@@ -675,15 +803,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
   const mode = input.mode === 'global' ? 'global' : 'scoped'
   if (mode === 'global') {
-    if (tool.id !== 'claude-code') {
-      const err = new Error('Global launch is only supported for Claude Code')
-      ;(err as any).status = 400
-      throw err
-    }
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = getScopedWorkspaceRoot(scope)
     await mkdir(workspaceDir, { recursive: true })
-    const shellCommand = `cd ${shellQuote(workspaceDir)} && ${tool.command}`
+    const shellCommand = buildLaunchShellCommand({
+      workspaceDir,
+      env: {},
+      command: tool.command,
+      args: [],
+    })
     return {
       agentId: tool.id,
       mode,
@@ -755,20 +883,40 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const mcpPath = join(rootDir, 'mcp.json')
     args = ['--settings', settingsPath, '--mcp-config', mcpPath]
   } else {
+    if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {
+      const err = new Error('Codex launch only supports OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages providers')
+      ;(err as any).status = 400
+      throw err
+    }
+    const proxyTarget = apiMode !== 'codex_responses' && baseUrl && apiKey
+      ? registerCodexProxyTarget({ profile: scope.profile, provider, model, baseUrl, apiKey, apiMode })
+      : null
+    const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
+    const codexApiKey = proxyTarget?.token || apiKey
     const providerId = 'custom'
+    const catalogPath = join(rootDir, CODEX_MODEL_CATALOG_FILE)
     const configToml = [
+      `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
       `model = ${JSON.stringify(model)}`,
       'disable_response_storage = true',
       '',
       `[model_providers.${providerId}]`,
       `name = ${JSON.stringify(provider)}`,
-      ...(baseUrl ? [`base_url = ${JSON.stringify(baseUrl)}`] : []),
+      ...(codexBaseUrl ? [`base_url = ${JSON.stringify(codexBaseUrl)}`] : []),
       'wire_api = "responses"',
-      'requires_openai_auth = true',
-      ...(apiKey ? [`experimental_bearer_token = ${JSON.stringify(apiKey)}`] : []),
+      'requires_openai_auth = false',
+      ...(codexApiKey ? [`experimental_bearer_token = ${JSON.stringify(codexApiKey)}`] : []),
       '',
     ].join('\n')
+    const catalog = buildCodexModelCatalog({
+      profile: scope.profile,
+      provider,
+      model,
+      presetModels: Array.isArray(preset?.models) ? preset.models : [],
+    })
+    await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf-8')
+    files.push({ key: 'model_catalog', path: CODEX_MODEL_CATALOG_FILE, absolutePath: catalogPath })
     await writeScopedFile('config', configToml)
     await writeScopedFile('auth', `${JSON.stringify({}, null, 2)}\n`)
 
@@ -776,13 +924,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     args = ['--model', model]
   }
 
-  const envPrefix = Object.entries(env).map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ')
-  const runCommand = [
-    envPrefix,
-    tool.command,
-    ...args.map(shellQuote),
-  ].filter(Boolean).join(' ')
-  const shellCommand = `cd ${shellQuote(workspaceDir)} && ${runCommand}`
+  const shellCommand = buildLaunchShellCommand({
+    workspaceDir,
+    env,
+    command: tool.command,
+    args,
+  })
 
   return {
     agentId: tool.id,

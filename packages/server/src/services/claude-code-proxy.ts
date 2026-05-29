@@ -27,12 +27,12 @@ const CLAUDE_PROXY_VISIBLE_MODELS = [
   'claude-opus-4-7',
 ]
 
-function targetKey(provider: string, model: string): string {
-  return `${provider}\0${model}`
+function targetKey(provider: string, model: string, apiMode: ApiMode, baseUrl: string): string {
+  return `${provider}\0${model}\0${apiMode}\0${baseUrl}`
 }
 
-function routeKeyFor(provider: string, model: string): string {
-  return Buffer.from(targetKey(provider, model), 'utf-8').toString('base64url')
+function routeKeyFor(provider: string, model: string, apiMode: ApiMode, baseUrl: string): string {
+  return Buffer.from(targetKey(provider, model, apiMode, baseUrl), 'utf-8').toString('base64url')
 }
 
 function localProxyBaseUrl(routeKey: string): string {
@@ -42,17 +42,19 @@ function localProxyBaseUrl(routeKey: string): string {
 export function registerClaudeCodeProxyTarget(input: ClaudeCodeProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {
   const provider = input.provider.trim()
   const model = input.model.trim()
-  const key = targetKey(provider, model)
+  const baseUrl = input.baseUrl.replace(/\/+$/, '')
+  const apiMode = input.apiMode || 'chat_completions'
+  const key = targetKey(provider, model, apiMode, baseUrl)
   const existing = targets.get(key)
-  const routeKey = existing?.routeKey || routeKeyFor(provider, model)
+  const routeKey = existing?.routeKey || routeKeyFor(provider, model, apiMode, baseUrl)
   const token = existing?.token || `hwui_${randomBytes(24).toString('base64url')}`
 
   targets.set(key, {
     ...input,
     provider,
     model,
-    baseUrl: input.baseUrl.replace(/\/+$/, ''),
-    apiMode: input.apiMode || 'chat_completions',
+    baseUrl,
+    apiMode,
     key,
     routeKey,
     token,

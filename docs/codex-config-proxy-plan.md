@@ -42,7 +42,7 @@ disable_response_storage = true
 name = "provider-id"
 base_url = "https://provider.example/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 experimental_bearer_token = "provider-api-key"
 ```
 
@@ -133,7 +133,7 @@ disable_response_storage = true
 name = "provider-id"
 base_url = "http://127.0.0.1:{serverPort}/api/codex-proxy/{routeKey}/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 experimental_bearer_token = "hwui_generated_route_token"
 ```
 
