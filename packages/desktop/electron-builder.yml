@@ -1,0 +1,71 @@
+appId: com.hermesagent.desktop
+productName: Hermes Desktop
+copyright: Copyright © 2026
+
+directories:
+  output: release
+  buildResources: build
+
+# Don't auto-prune our root node_modules; we curate `files` and `extraResources` ourselves.
+buildDependenciesFromSource: false
+nodeGypRebuild: false
+npmRebuild: false
+
+files:
+  - "dist/**/*"
+  - "package.json"
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme,LICENSE,LICENSE.txt,license,*.d.ts}"
+  - "!**/node_modules/.bin"
+  - "!**/{.DS_Store,.git,.gitignore,.eslintrc*,.prettierrc*,*.map,tsconfig.json}"
+
+# Web UI source (built dist) and bundled Python live outside the asar.
+# This package lives at packages/desktop, so ../.. is the hermes-web-ui repo root.
+extraResources:
+  - from: "../.."
+    to: "webui"
+    filter:
+      - "package.json"
+      - "dist/**"
+      - "node_modules/**"
+      # Drop other-platform node-pty prebuilds (saves ~45MB)
+      - "!node_modules/node-pty/prebuilds/!(${platform}-${arch})/**"
+      - "!node_modules/node-pty/build/**"
+      - "!packages/desktop/**"
+      - "!**/{.git,.github,docs,tests,playwright.config.ts,*.md,README*,scripts,*.map}"
+  - from: "resources/python/${os}-${arch}"
+    to: "python"
+    filter:
+      - "**/*"
+
+asarUnpack:
+  - "**/*.node"
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  identity: null
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64]   # fpm has no arm64 binary; deb only on x64
+  category: Development
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false

@@ -48,6 +48,12 @@
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
+    "desktop:install": "npm ci --prefix packages/desktop --no-audit --no-fund",
+    "desktop:prepare-python": "npm --prefix packages/desktop run prepare:python",
+    "build:desktop": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --publish never",
+    "build:desktop:mac": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --mac --publish never",
+    "build:desktop:win": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --win --publish never",
+    "build:desktop:linux": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "claude": "claude --dangerously-skip-permissions"
   },
