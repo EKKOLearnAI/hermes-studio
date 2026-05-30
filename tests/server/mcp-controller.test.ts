@@ -151,6 +151,53 @@ describe('MCP Controller', () => {
       await updateServer(ctx)
       expect(ctx.status).toBe(400)
     })
+
+    it('sends tools.include config for include mode', async () => {
+      mcpUpdateMock.mockResolvedValue({ ok: true })
+      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const ctx = createCtx({
+        params: { name: 'github' },
+        request: { body: { config: { command: 'npx', args: ['-y', 'server'], tools: { include: ['read_file', 'write_file'] } } } },
+      })
+      await updateServer(ctx)
+      expect(mcpUpdateMock).toHaveBeenCalledWith('github', {
+        command: 'npx',
+        args: ['-y', 'server'],
+        tools: { include: ['read_file', 'write_file'] },
+      }, 'test-profile')
+      expect(ctx.body).toEqual({ ok: true })
+    })
+
+    it('sends tools.exclude config for exclude mode', async () => {
+      mcpUpdateMock.mockResolvedValue({ ok: true })
+      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const ctx = createCtx({
+        params: { name: 'github' },
+        request: { body: { config: { command: 'npx', args: ['-y', 'server'], tools: { exclude: ['delete_file'] } } } },
+      })
+      await updateServer(ctx)
+      expect(mcpUpdateMock).toHaveBeenCalledWith('github', {
+        command: 'npx',
+        args: ['-y', 'server'],
+        tools: { exclude: ['delete_file'] },
+      }, 'test-profile')
+      expect(ctx.body).toEqual({ ok: true })
+    })
+
+    it('sends config without tools field for all mode', async () => {
+      mcpUpdateMock.mockResolvedValue({ ok: true })
+      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const ctx = createCtx({
+        params: { name: 'github' },
+        request: { body: { config: { command: 'npx', args: ['-y', 'server'] } } },
+      })
+      await updateServer(ctx)
+      expect(mcpUpdateMock).toHaveBeenCalledWith('github', {
+        command: 'npx',
+        args: ['-y', 'server'],
+      }, 'test-profile')
+      expect(ctx.body).toEqual({ ok: true })
+    })
   })
 
   describe('removeServer', () => {
@@ -180,7 +227,7 @@ describe('MCP Controller', () => {
       const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
       const ctx = createCtx({ query: {} })
       await listTools(ctx)
-      expect(mcpToolsMock).toHaveBeenCalledWith(undefined, 'test-profile')
+      expect(mcpToolsMock).toHaveBeenCalledWith(undefined, 'test-profile', undefined)
       expect(ctx.body).toEqual(SAMPLE_TOOLS_RESPONSE)
     })
 
@@ -189,7 +236,15 @@ describe('MCP Controller', () => {
       const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
       const ctx = createCtx({ query: { server: 'github' } })
       await listTools(ctx)
-      expect(mcpToolsMock).toHaveBeenCalledWith('github', 'test-profile')
+      expect(mcpToolsMock).toHaveBeenCalledWith('github', 'test-profile', undefined)
+    })
+
+    it('passes raw=true to get unfiltered tools', async () => {
+      mcpToolsMock.mockResolvedValue(SAMPLE_TOOLS_RESPONSE)
+      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const ctx = createCtx({ query: { server: 'github', raw: '1' } })
+      await listTools(ctx)
+      expect(mcpToolsMock).toHaveBeenCalledWith('github', 'test-profile', true)
     })
 
     it('returns 503 on bridge error', async () => {

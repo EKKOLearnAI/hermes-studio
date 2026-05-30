@@ -15,6 +15,7 @@ const emit = defineEmits<{
   reload: [name: string]
   remove: [server: McpServerInfo]
   toggleEnabled: [server: McpServerInfo]
+  manageTools: [server: McpServerInfo]
 }>()
 
 const { t } = useI18n()
@@ -80,6 +81,7 @@ const MAX_VISIBLE_TOOLS = 20
     <div class="card-footer">
       <div class="card-actions">
         <NButton size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
+        <NButton size="tiny" quaternary :disabled="!server.connected" @click="emit('manageTools', server)">{{ t('mcp.manageTools') }}</NButton>
         <NButton size="tiny" quaternary @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
         <NButton size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
         <NPopconfirm @positive-click="emit('remove', server)">

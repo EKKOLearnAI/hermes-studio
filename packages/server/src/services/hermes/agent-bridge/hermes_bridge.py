@@ -2576,6 +2576,7 @@ class BridgeServer:
 
     def _mcp_tools_list(self, req: dict, profile: str, _servers, _lock) -> dict[str, Any]:
         server_filter = str(req.get("server") or "").strip() or None
+        raw_mode = bool(req.get("raw"))  # Return unfiltered tools for visibility management
         results = []
 
         config = self._read_mcp_config(profile)
@@ -2596,6 +2597,8 @@ class BridgeServer:
             include_set = set(tools_filter.get("include") or [])
             exclude_set = set(tools_filter.get("exclude") or [])
             def _should_include(tn):
+                if raw_mode:
+                    return True  # Skip filter in raw mode
                 if include_set:
                     return tn in include_set
                 if exclude_set:
