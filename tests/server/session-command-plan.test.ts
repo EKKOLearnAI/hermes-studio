@@ -59,6 +59,7 @@ function makeContext(state: any, commandResult: Record<string, unknown> = {
   const runQueuedItem = vi.fn()
   const bridge = {
     command: vi.fn(async () => commandResult),
+    mcpReload: vi.fn(async () => ({ ok: true, message: 'MCP servers reloaded' })),
     status: vi.fn(async () => ({
       exists: true,
       running: false,
@@ -301,6 +302,32 @@ describe('plan session command', () => {
         running: true,
         currentRunId: 'run-123',
       }),
+    }))
+  })
+
+  it('rejects MCP reload while the session is running', async () => {
+    const state = { messages: [], isWorking: true, events: [], queue: [] }
+    const { bridge, namespaceEmit, runQueuedItem, sessionMap, socket, nsp } = makeContext(state)
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const command = parseSessionCommand('/reload-mcp github')!
+
+    await handleSessionCommand('session-1', command, {
+      nsp: nsp as any,
+      socket: socket as any,
+      sessionMap,
+      bridge: bridge as any,
+      profile: 'default',
+      runQueuedItem,
+    })
+
+    expect(bridge.mcpReload).not.toHaveBeenCalled()
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'reload-mcp',
+      ok: false,
+      action: 'reload-mcp',
+      terminal: false,
+      message: 'MCP reload can only run while the session is idle. Wait for the current run to finish or abort it first.',
     }))
   })
 })

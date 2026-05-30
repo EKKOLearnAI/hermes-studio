@@ -42,6 +42,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   fetchProviderModels: mockFetchProviderModels,
   buildModelGroups: mockBuildModelGroups,
   PROVIDER_ENV_MAP: {
+    'fun-codex': { api_key_env: '', base_url_env: '' },
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
     lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
     'xai-oauth': { api_key_env: '', base_url_env: '' },
@@ -57,28 +58,39 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
   }),
   PROVIDER_PRESETS: [
     {
+      value: 'fun-codex',
+      label: 'Codex-apikey.fun',
+      base_url: 'https://api.apikey.fun/v1',
+      models: ['gpt-5.5'],
+      builtin: true,
+    },
+    {
       value: 'deepseek',
       label: 'DeepSeek',
       base_url: 'https://api.deepseek.com/v1',
       models: ['deepseek-chat', 'deepseek-reasoner'],
+      builtin: true,
     },
     {
       value: 'openrouter',
       label: 'OpenRouter',
       base_url: 'https://openrouter.ai/api/v1',
       models: ['openrouter/auto'],
+      builtin: true,
     },
     {
       value: 'lmstudio',
       label: 'LM Studio',
       base_url: 'http://127.0.0.1:1234/v1',
       models: [],
+      builtin: true,
     },
     {
       value: 'xai-oauth',
       label: 'xAI Grok OAuth (SuperGrok Subscription)',
       base_url: 'https://api.x.ai/v1',
       models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
+      builtin: true,
     },
   ],
 }))
@@ -277,11 +289,37 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.allProviders).toEqual(expect.arrayContaining([
       expect.objectContaining({
         provider: 'deepseek',
+        builtin: true,
         base_url_env: 'DEEPSEEK_BASE_URL',
       }),
       expect.not.objectContaining({
         provider: 'xai-oauth',
         base_url_env: expect.any(String),
+      }),
+    ]))
+  })
+
+  it('marks custom-prefixed providers as builtin when their provider key matches a preset', async () => {
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'gpt-5.5', provider: 'custom:fun-codex' },
+      custom_providers: [
+        {
+          name: 'fun-codex',
+          base_url: 'https://proxy.example.com/v1',
+          model: 'gpt-5.5',
+          api_key: 'sk-test',
+        },
+      ],
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'custom:fun-codex',
+        builtin: true,
       }),
     ]))
   })

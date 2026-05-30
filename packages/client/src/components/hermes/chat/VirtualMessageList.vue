@@ -313,9 +313,6 @@ defineExpose({
       @resize="handleResize"
       @visible="syncViewport"
     >
-      <template #empty>
-        <slot name="empty" />
-      </template>
       <template #before>
         <slot v-if="messages.length > 0" name="before" />
       </template>
@@ -333,6 +330,9 @@ defineExpose({
         <slot v-if="messages.length > 0" name="after" />
       </template>
     </DynamicScroller>
+    <div v-if="messages.length === 0 && $slots.empty" class="virtual-message-list-empty">
+      <slot name="empty" />
+    </div>
   </div>
 </template>
 
@@ -343,6 +343,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   display: flex;
+  position: relative;
 }
 
 .virtual-message-list {
@@ -360,5 +361,21 @@ defineExpose({
 .virtual-row {
   box-sizing: border-box;
   padding-bottom: var(--virtual-row-gap);
+}
+
+.virtual-message-list-empty {
+  position: absolute;
+  inset: var(--virtual-list-padding);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.virtual-message-list-empty :deep(.empty-state) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 </style>
