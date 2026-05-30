@@ -32,7 +32,6 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.dmg
               packages/desktop/release/*.dmg.blockmap
-              packages/desktop/release/latest*.yml
           - label: macOS x64
             runner: macos-15-intel
             target_os: darwin
@@ -41,7 +40,6 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.dmg
               packages/desktop/release/*.dmg.blockmap
-              packages/desktop/release/latest*.yml
           - label: Windows x64
             runner: windows-latest
             target_os: win32
@@ -50,7 +48,6 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.exe
               packages/desktop/release/*.exe.blockmap
-              packages/desktop/release/latest*.yml
           - label: Linux x64
             runner: ubuntu-22.04
             target_os: linux
@@ -59,7 +56,6 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.AppImage
               packages/desktop/release/*.deb
-              packages/desktop/release/latest*.yml
           - label: Linux arm64
             runner: ubuntu-22.04-arm
             target_os: linux
@@ -67,7 +63,6 @@ jobs:
             electron_target: "--linux AppImage --arm64"
             artifact_files: |
               packages/desktop/release/*.AppImage
-              packages/desktop/release/latest*.yml
 
     steps:
       - name: Checkout repository
