@@ -1,13 +1,16 @@
-import { ChildProcess, spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from 'node:fs'
+import { ChildProcess, execFile, spawn } from 'node:child_process'
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, readdirSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { homedir } from 'node:os'
 import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { promisify } from 'node:util'
 import { app } from 'electron'
 import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
 
 const DEFAULT_PORT = 8748
 const READY_TIMEOUT_MS = 30_000
+const execFileAsync = promisify(execFile)
 
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
@@ -40,6 +43,93 @@ function ensureNativeModules() {
     if (existsSync(helper)) chmodSync(helper, 0o755)
   } catch {
     /* ignore */
+  }
+}
+
+const COMMON_USER_BIN_DIRS = process.platform === 'win32'
+  ? []
+  : [
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+    ]
+const PATH_MARKER_START = '__HERMES_DESKTOP_PATH_START__'
+const PATH_MARKER_END = '__HERMES_DESKTOP_PATH_END__'
+
+function mergePathEntries(...paths: Array<string | undefined | null>): string {
+  const seen = new Set<string>()
+  const entries: string[] = []
+  for (const rawPath of paths) {
+    if (!rawPath) continue
+    for (const entry of rawPath.split(delimiter)) {
+      const trimmed = entry.trim()
+      if (!trimmed) continue
+      const key = process.platform === 'win32' ? trimmed.toLowerCase() : trimmed
+      if (seen.has(key)) continue
+      seen.add(key)
+      entries.push(trimmed)
+    }
+  }
+  return entries.join(delimiter)
+}
+
+function extractMarkedPath(output: string): string | null {
+  const start = output.lastIndexOf(PATH_MARKER_START)
+  const end = output.lastIndexOf(PATH_MARKER_END)
+  if (start < 0 || end <= start) return null
+  const value = output.slice(start + PATH_MARKER_START.length, end).trim()
+  return value || null
+}
+
+function compareNodeVersionDesc(left: string, right: string): number {
+  const leftParts = left.replace(/^v/, '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  const rightParts = right.replace(/^v/, '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const diff = (rightParts[index] || 0) - (leftParts[index] || 0)
+    if (diff !== 0) return diff
+  }
+  return right.localeCompare(left)
+}
+
+function getNvmNodeBinPaths(): string {
+  if (process.platform === 'win32') return ''
+
+  const nvmDir = process.env.NVM_DIR?.trim() || join(homedir(), '.nvm')
+  const versionsDir = join(nvmDir, 'versions', 'node')
+  if (!existsSync(versionsDir)) return ''
+
+  try {
+    return readdirSync(versionsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort(compareNodeVersionDesc)
+      .map(version => join(versionsDir, version, 'bin'))
+      .filter(binDir => existsSync(binDir))
+      .join(delimiter)
+  } catch {
+    return ''
+  }
+}
+
+async function getLoginShellPath(): Promise<string | null> {
+  if (process.platform === 'win32') return null
+
+  const shell = process.env.SHELL?.trim() || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
+  if (!existsSync(shell)) return null
+
+  try {
+    const { stdout } = await execFileAsync(shell, ['-l', '-c', `printf '\\n${PATH_MARKER_START}%s${PATH_MARKER_END}\\n' "$PATH"`], {
+      encoding: 'utf-8',
+      timeout: 1500,
+      windowsHide: true,
+      env: process.env,
+    })
+    return extractMarkedPath(stdout) || stdout.trim() || null
+  } catch {
+    return null
   }
 }
 
@@ -111,6 +201,15 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     : join(pythonDir(), 'bin', 'python3')
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
+  const loginShellPath = await getLoginShellPath()
+  const nvmNodeBinPaths = getNvmNodeBinPaths()
+  const runtimePath = mergePathEntries(
+    dirname(hermesBin()),
+    loginShellPath,
+    nvmNodeBinPaths,
+    process.env.PATH,
+    COMMON_USER_BIN_DIRS.join(delimiter),
+  )
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -150,7 +249,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     AUTH_TOKEN: token,
     PORT: String(port),
     // Prepend bundled Python's bin to PATH so any incidental `python` resolution lands on ours
-    PATH: [dirname(hermesBin()), process.env.PATH].filter(Boolean).join(delimiter),
+    PATH: runtimePath,
   }
 
   serverProc = spawn(process.execPath, [entry], {

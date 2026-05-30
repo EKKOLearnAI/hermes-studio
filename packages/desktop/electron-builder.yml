@@ -31,7 +31,8 @@ extraResources:
       - "!node_modules/node-pty/prebuilds/!(${platform}-${arch})/**"
       - "!node_modules/node-pty/build/**"
       - "!packages/desktop/**"
-      - "!**/{.git,.github,docs,tests,playwright.config.ts,*.md,README*,scripts,*.map}"
+      - "!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}"
+      - "!node_modules/**/*.md"
   - from: "resources/python/${os}-${arch}"
     to: "python"
     filter:

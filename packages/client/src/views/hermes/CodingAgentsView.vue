@@ -307,6 +307,23 @@ function currentLaunchRequest() {
   }
 }
 
+function codingAgentMessage(code?: string, fallback?: string, fallbackKey = 'codingAgents.installFailed'): string {
+  if (code === 'node_environment_missing') return t('codingAgents.nodeEnvironmentMissing')
+  return fallback || t(fallbackKey)
+}
+
+function parseErrorPayload(err: any): { message?: string; code?: string } | null {
+  const messageText = String(err?.message || '')
+  const jsonStart = messageText.indexOf('{')
+  if (jsonStart < 0) return null
+  try {
+    const parsed = JSON.parse(messageText.slice(jsonStart))
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 async function launchBuiltInTerminal() {
   if (!useGlobalLaunchConfig.value && (!launchProvider.value || !launchModel.value)) {
     message.error(t('codingAgents.selectProviderModel'))
@@ -352,10 +369,11 @@ async function handleInstall(id: CodingAgentId) {
     if (result.success) {
       message.success(t('codingAgents.installSuccess'))
     } else {
-      message.error(result.message || t('codingAgents.installFailed'))
+      message.error(codingAgentMessage(result.code, result.message, 'codingAgents.installFailed'))
     }
   } catch (err: any) {
-    message.error(err?.message || t('codingAgents.installFailed'))
+    const payload = parseErrorPayload(err)
+    message.error(codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.installFailed'))
   } finally {
     installing.value[id] = false
   }
@@ -369,10 +387,11 @@ async function handleDelete(id: CodingAgentId) {
     if (result.success) {
       message.success(t('codingAgents.deleteSuccess'))
     } else {
-      message.error(result.message || t('codingAgents.deleteFailed'))
+      message.error(codingAgentMessage(result.code, result.message, 'codingAgents.deleteFailed'))
     }
   } catch (err: any) {
-    message.error(err?.message || t('codingAgents.deleteFailed'))
+    const payload = parseErrorPayload(err)
+    message.error(codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.deleteFailed'))
   } finally {
     deleting.value[id] = false
   }

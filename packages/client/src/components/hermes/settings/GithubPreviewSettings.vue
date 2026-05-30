@@ -42,6 +42,23 @@ function applyErrorStatus(err: any) {
   } catch {}
 }
 
+function errorCodeMessage(code?: string, fallback?: string): string {
+  if (code === 'node_environment_missing') return t('githubPreview.nodeEnvironmentMissing')
+  return fallback || t('githubPreview.actionFailed')
+}
+
+function parseErrorPayload(err: any): { message?: string; code?: string } | null {
+  const messageText = String(err?.message || '')
+  const jsonStart = messageText.indexOf('{')
+  if (jsonStart < 0) return null
+  try {
+    const parsed = JSON.parse(messageText.slice(jsonStart))
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 async function loadStatus() {
   status.value = await fetchPreviewStatus()
   if (!selectedTag.value && status.value.current_tag) {
@@ -71,19 +88,20 @@ async function handleRefresh() {
   }
 }
 
-async function runAction(action: string, fn: () => Promise<PreviewStatus & { success?: boolean; message?: string }>, successKey: string) {
+async function runAction(action: string, fn: () => Promise<PreviewStatus & { success?: boolean; message?: string; code?: string }>, successKey: string) {
   actionLoading.value = action
   try {
     const res = await fn()
     status.value = res
     if (res.success === false) {
-      message.warning(res.message || t('githubPreview.actionFailed'))
+      message.warning(errorCodeMessage(res.code, res.message))
       return
     }
     message.success(t(successKey))
   } catch (err: any) {
     applyErrorStatus(err)
-    message.error(err?.message || t('githubPreview.actionFailed'))
+    const payload = parseErrorPayload(err)
+    message.error(errorCodeMessage(payload?.code, payload?.message || err?.message))
   } finally {
     actionLoading.value = ''
   }

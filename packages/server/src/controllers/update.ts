@@ -1,11 +1,12 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
-import { delimiter, dirname, join, resolve } from 'path'
+import { delimiter, dirname, extname, join, resolve } from 'path'
 import { getWebUiHome } from '../config'
 
 let updateInProgress = false
 let previewProcess: ChildProcess | null = null
+const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 
 const PREVIEW_DIR_NAME = 'hermes-web-ui-pereview'
 const PREVIEW_HOME_DIR_NAME = 'hermes-web-ui-pereview-home'
@@ -144,6 +145,96 @@ function getNpmBin() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
+function windowsCommandNeedsShell(command: string): boolean {
+  const extension = extname(command).toLowerCase()
+  return extension === '.cmd' || extension === '.bat'
+}
+
+function commandExecution(command: string, args: string[]): { command: string; args: string[] } {
+  if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
+    const commandArg = / /.test(command) ? `"${command}"` : command
+    const argsString = args.map(arg => / /.test(arg) ? `"${arg}"` : arg).join(' ')
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', `${commandArg} ${argsString}`],
+    }
+  }
+  return { command, args }
+}
+
+function nodeEnvironmentMissingError(): Error {
+  const err = new Error('Node/npm environment was not detected. Please install Node.js and try again.')
+  ;(err as any).code = NODE_ENVIRONMENT_MISSING_CODE
+  return err
+}
+
+function isNodeEnvironmentMissingError(err: any): boolean {
+  const text = [
+    err?.code,
+    err?.message,
+    err?.stderr?.toString?.(),
+    err?.stdout?.toString?.(),
+  ].filter(Boolean).join('\n').toLowerCase()
+  return text.includes('enoent') ||
+    text.includes('spawn npm') ||
+    text.includes('npm: command not found') ||
+    text.includes('npm not found') ||
+    text.includes('node: command not found') ||
+    text.includes('node not found')
+}
+
+function normalizeNodeToolError(err: any): { message: string; code?: string } {
+  if (isNodeEnvironmentMissingError(err)) {
+    return { message: nodeEnvironmentMissingError().message, code: NODE_ENVIRONMENT_MISSING_CODE }
+  }
+  return { message: err?.stderr?.toString() || err?.message || String(err) }
+}
+
+function findCommandPath(command: string, env: NodeJS.ProcessEnv): string | null {
+  try {
+    const lookupCommand = process.platform === 'win32' ? 'where' : 'which'
+    const stdout = execFileSync(lookupCommand, [command], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+      windowsHide: true,
+    })
+    return stdout.split(/\r?\n/).map((line: string) => line.trim()).find(Boolean) || null
+  } catch {
+    return null
+  }
+}
+
+function npmCliFromNpmBin(npmBin: string): { node: string; npmCli: string } | null {
+  const binDir = dirname(npmBin)
+  if (process.platform === 'win32') {
+    const node = join(binDir, 'node.exe')
+    const npmCli = join(binDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    return existsSync(node) && existsSync(npmCli) ? { node, npmCli } : null
+  }
+
+  const node = join(binDir, 'node')
+  const npmCli = join(dirname(binDir), 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  return existsSync(node) && existsSync(npmCli) ? { node, npmCli } : null
+}
+
+function npmExecution(args: string[], env: NodeJS.ProcessEnv): { command: string; args: string[] } {
+  const bundledNpmCli = getNpmCliPath()
+  if (bundledNpmCli) return { command: process.execPath, args: [bundledNpmCli, ...args] }
+
+  const npmBin = findCommandPath(getNpmBin(), env) || findCommandPath('npm', env)
+  if (!npmBin) throw nodeEnvironmentMissingError()
+
+  const npmCli = npmCliFromNpmBin(npmBin)
+  if (npmCli) return { command: npmCli.node, args: [npmCli.npmCli, ...args] }
+
+  const nodeBin = findCommandPath(process.platform === 'win32' ? 'node.exe' : 'node', env) || findCommandPath('node', env)
+  if (!nodeBin) throw nodeEnvironmentMissingError()
+
+  return commandExecution(npmBin, args)
+}
+
 function isTermuxRuntime() {
   const prefix = process.env.PREFIX || ''
   return prefix.includes('/com.termux/') ||
@@ -167,21 +258,20 @@ function getCurrentNodeEnv() {
 }
 
 function runNpm(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
-  const npmCli = getNpmCliPath()
-  const command = npmCli ? process.execPath : getNpmBin()
-  const commandArgs = npmCli ? [npmCli, ...args] : args
+  const env = {
+    ...getCurrentNodeEnv(),
+    ...options.env,
+  }
+  const execution = npmExecution(args, env)
   const label = options.logLabel || ''
 
-  if (label) appendPreviewActionLog(`${label}: ${command} ${commandArgs.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
+  if (label) appendPreviewActionLog(`${label}: ${execution.command} ${execution.args.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
   try {
-    const output = execFileSync(command, commandArgs, {
+    const output = execFileSync(execution.command, execution.args, {
       encoding: 'utf-8',
       timeout: options.timeout,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...getCurrentNodeEnv(),
-        ...options.env,
-      },
+      env,
       cwd: options.cwd,
       windowsHide: true,
     }).trim()
@@ -931,9 +1021,10 @@ export async function installPreview(ctx: any) {
     }
     ctx.body = previewPayload({ success: true, message: output })
   } catch (err: any) {
-    appendPreviewActionLog(`npm install failed: ${err.stderr?.toString() || err.message || String(err)}`)
+    const normalized = normalizeNodeToolError(err)
+    appendPreviewActionLog(`npm install failed: ${normalized.message}`)
     ctx.status = 500
-    ctx.body = previewPayload({ success: false, message: err.stderr?.toString() || err.message || String(err) })
+    ctx.body = previewPayload({ success: false, message: normalized.message, code: normalized.code })
   }
 }
 
@@ -973,29 +1064,28 @@ export async function startPreview(ctx: any) {
 
     await assertPreviewPortsAvailable()
 
-    const npmCli = getNpmCliPath()
-    const command = npmCli ? process.execPath : getNpmBin()
-    const commandArgs = npmCli ? [npmCli, 'run', 'dev'] : ['run', 'dev']
+    const env = {
+      ...getCurrentNodeEnv(),
+      NODE_ENV: 'development',
+      PORT: String(PREVIEW_BACKEND_PORT),
+      HERMES_WEB_UI_HOME: getPreviewHomeDir(),
+      HERMES_WEBUI_STATE_DIR: getPreviewHomeDir(),
+      HERMES_AGENT_BRIDGE_ENDPOINT: getPreviewAgentBridgeEndpoint(),
+      HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE),
+      AUTH_TOKEN: '',
+      HERMES_WEB_UI_BACKEND_PORT: String(PREVIEW_BACKEND_PORT),
+      HERMES_WEB_UI_FRONTEND_PORT: String(PREVIEW_FRONTEND_PORT),
+      VITE_HERMES_PREVIEW: '1',
+    }
+    const execution = npmExecution(['run', 'dev'], env)
     const logFd = openPreviewLogFile()
-    appendPreviewActionLog(`spawn preview process: ${command} ${commandArgs.join(' ')}`)
-    previewProcess = spawn(command, commandArgs, {
+    appendPreviewActionLog(`spawn preview process: ${execution.command} ${execution.args.join(' ')}`)
+    previewProcess = spawn(execution.command, execution.args, {
       cwd: getPreviewDir(),
       detached: true,
       stdio: ['ignore', logFd, logFd],
       windowsHide: true,
-      env: {
-        ...getCurrentNodeEnv(),
-        NODE_ENV: 'development',
-        PORT: String(PREVIEW_BACKEND_PORT),
-        HERMES_WEB_UI_HOME: getPreviewHomeDir(),
-        HERMES_WEBUI_STATE_DIR: getPreviewHomeDir(),
-        HERMES_AGENT_BRIDGE_ENDPOINT: getPreviewAgentBridgeEndpoint(),
-        HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE),
-        AUTH_TOKEN: '',
-        HERMES_WEB_UI_BACKEND_PORT: String(PREVIEW_BACKEND_PORT),
-        HERMES_WEB_UI_FRONTEND_PORT: String(PREVIEW_FRONTEND_PORT),
-        VITE_HERMES_PREVIEW: '1',
-      },
+      env,
     })
     closeSync(logFd)
     previewProcess.on('exit', () => {
@@ -1013,10 +1103,11 @@ export async function startPreview(ctx: any) {
     appendPreviewActionLog(`preview ready: ${PREVIEW_FRONTEND_URL}`)
     ctx.body = previewPayload({ success: true, message: 'Preview started' })
   } catch (err: any) {
-    appendPreviewActionLog(`npm run dev failed: ${err.stderr?.toString() || err.message || String(err)}`)
+    const normalized = normalizeNodeToolError(err)
+    appendPreviewActionLog(`npm run dev failed: ${normalized.message}`)
     await stopPreviewProcess()
     ctx.status = 500
-    ctx.body = previewPayload({ success: false, message: err.message || String(err) })
+    ctx.body = previewPayload({ success: false, message: normalized.message, code: normalized.code })
   }
 }
 

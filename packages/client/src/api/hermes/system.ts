@@ -35,6 +35,7 @@ export interface PreviewStatus {
 export interface PreviewActionResponse extends PreviewStatus {
   success: boolean
   message?: string
+  code?: string
 }
 
 // Config-based model types
