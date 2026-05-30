@@ -190,7 +190,9 @@ export async function handleSessionCommand(
           pad('Cache read tokens:',       bu.cacheReadTokens.toLocaleString()),
           pad('Cache write tokens:',      bu.cacheWriteTokens.toLocaleString()),
           pad('Output tokens:',           bu.outputTokens.toLocaleString()),
-          pad('Reasoning tokens:',        bu.reasoningTokens.toLocaleString()),
+        ]
+        if (bu.reasoningTokens > 0) lines.push(pad('↳ Reasoning (subset):', bu.reasoningTokens.toLocaleString()))
+        lines.push(
           pad('Prompt tokens (total):',   bu.promptTokens ? bu.promptTokens.toLocaleString() : 'N/A'),
           pad('Completion tokens:',       bu.completionTokens ? bu.completionTokens.toLocaleString() : 'N/A'),
           pad('Total tokens:',            bu.totalTokens.toLocaleString()),
@@ -203,7 +205,8 @@ export async function handleSessionCommand(
           pad('Current context:', `${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`),
           pad('Messages:',        String(state.messages.length)),
           pad('Compressions:',    String(comps)),
-        ]
+        )
+        if (bu.costStatus === 'unknown' && model) lines.push(`Note:             Pricing unknown for ${model}`)
 
         emitCommand({
           action: 'usage',
