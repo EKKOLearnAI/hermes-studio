@@ -801,6 +801,7 @@ export default {
       active: '活跃',
       activeTag: '当前',
       idle: '空闲',
+      checking: '检测中',
       running: '运行中',
       stopped: '已停止',
       restartGateway: '重启网关',

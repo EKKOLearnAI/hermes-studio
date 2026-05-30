@@ -801,6 +801,7 @@ export default {
       active: '使用中',
       activeTag: '目前',
       idle: '閒置',
+      checking: '檢測中',
       running: '執行中',
       stopped: '已停止',
       restartGateway: '重啟閘道',

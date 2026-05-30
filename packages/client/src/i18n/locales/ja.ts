@@ -706,6 +706,7 @@ export default {
       active: 'アクティブ',
       activeTag: '現在',
       idle: '待機中',
+      checking: '確認中',
       running: '実行中',
       stopped: '停止中',
       restartGateway: 'Gateway を再起動',

@@ -706,6 +706,7 @@ export default {
       active: '활성',
       activeTag: '현재',
       idle: '대기 중',
+      checking: '확인 중',
       running: '실행 중',
       stopped: '중지됨',
       restartGateway: 'Gateway 재시작',

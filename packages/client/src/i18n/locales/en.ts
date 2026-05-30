@@ -809,6 +809,7 @@ export default {
       active: 'Active',
       activeTag: 'Active',
       idle: 'Idle',
+      checking: 'Checking',
       running: 'Running',
       stopped: 'Stopped',
       restartGateway: 'Restart Gateway',
