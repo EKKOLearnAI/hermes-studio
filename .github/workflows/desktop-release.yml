@@ -29,26 +29,45 @@ jobs:
             target_os: darwin
             target_arch: arm64
             electron_target: "--mac dmg --arm64"
+            artifact_files: |
+              packages/desktop/release/*.dmg
+              packages/desktop/release/*.dmg.blockmap
+              packages/desktop/release/latest*.yml
           - label: macOS x64
             runner: macos-15-intel
             target_os: darwin
             target_arch: x64
             electron_target: "--mac dmg --x64"
+            artifact_files: |
+              packages/desktop/release/*.dmg
+              packages/desktop/release/*.dmg.blockmap
+              packages/desktop/release/latest*.yml
           - label: Windows x64
             runner: windows-latest
             target_os: win32
             target_arch: x64
             electron_target: "--win nsis --x64"
+            artifact_files: |
+              packages/desktop/release/*.exe
+              packages/desktop/release/*.exe.blockmap
+              packages/desktop/release/latest*.yml
           - label: Linux x64
             runner: ubuntu-22.04
             target_os: linux
             target_arch: x64
             electron_target: "--linux AppImage deb --x64"
+            artifact_files: |
+              packages/desktop/release/*.AppImage
+              packages/desktop/release/*.deb
+              packages/desktop/release/latest*.yml
           - label: Linux arm64
             runner: ubuntu-22.04-arm
             target_os: linux
             target_arch: arm64
             electron_target: "--linux AppImage --arm64"
+            artifact_files: |
+              packages/desktop/release/*.AppImage
+              packages/desktop/release/latest*.yml
 
     steps:
       - name: Checkout repository
@@ -102,11 +121,4 @@ jobs:
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           fail_on_unmatched_files: true
-          files: |
-            packages/desktop/release/*.dmg
-            packages/desktop/release/*.dmg.blockmap
-            packages/desktop/release/*.exe
-            packages/desktop/release/*.exe.blockmap
-            packages/desktop/release/*.AppImage
-            packages/desktop/release/*.deb
-            packages/desktop/release/latest*.yml
+          files: ${{ matrix.artifact_files }}
