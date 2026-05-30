@@ -128,6 +128,12 @@ const router = createRouter({
       component: () => import('@/views/hermes/VersionPreviewView.vue'),
       meta: { requiresSuperAdmin: true },
     },
+    {
+      path: '/hermes/mcp',
+      name: 'hermes.mcp',
+      component: () => import('@/views/hermes/McpManagerView.vue'),
+      meta: { requiresSuperAdmin: true },
+    },
   ],
 })
 
