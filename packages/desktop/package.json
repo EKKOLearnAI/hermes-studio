@@ -2,6 +2,7 @@
   "name": "hermes-desktop",
   "version": "0.6.5",
   "description": "Desktop distribution for Hermes Web UI with bundled Python runtime and hermes-agent",
+  "homepage": "https://ekkolearnai.com",
   "author": {
     "name": "Hermes Desktop Contributors",
     "email": "noreply@hermes-desktop.local"
