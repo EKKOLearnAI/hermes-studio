@@ -210,6 +210,9 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
+  const bundledPythonNoWindow = isWin
+    ? join(pythonDir(), 'pythonw.exe')
+    : bundledPython
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
@@ -230,6 +233,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
+    HERMES_AGENT_CLI_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent

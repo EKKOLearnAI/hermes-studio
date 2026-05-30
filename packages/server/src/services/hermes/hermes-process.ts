@@ -17,18 +17,20 @@ export function resolveHermesBin(customBin?: string): string {
   return customBin?.trim() || process.env.HERMES_BIN?.trim() || 'hermes'
 }
 
-function bundledPythonForWindows(hermesBin: string): string | null {
-  const envPython = process.env.HERMES_AGENT_BRIDGE_PYTHON?.trim()
+function bundledCliPythonForWindows(hermesBin: string): string | null {
+  const envPython = process.env.HERMES_AGENT_CLI_PYTHON?.trim()
   if (envPython) return envPython
 
   if (basename(hermesBin).toLowerCase() !== 'hermes.exe') return null
+  const pythonw = resolve(dirname(hermesBin), '..', 'pythonw.exe')
+  if (existsSync(pythonw)) return pythonw
   const python = resolve(dirname(hermesBin), '..', 'python.exe')
   return existsSync(python) ? python : null
 }
 
 export function resolveHermesInvocation(hermesBin = resolveHermesBin()): HermesInvocation {
   if (process.platform === 'win32') {
-    const python = bundledPythonForWindows(hermesBin)
+    const python = bundledCliPythonForWindows(hermesBin)
     if (python) return { command: python, argsPrefix: ['-m', 'hermes_cli.main'] }
   }
 
