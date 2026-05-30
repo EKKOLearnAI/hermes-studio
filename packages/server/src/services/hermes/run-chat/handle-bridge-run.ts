@@ -100,6 +100,42 @@ function flushPendingToolMarkupToAssistant(
   return pendingMarkup
 }
 
+function processBridgeTextDelta(
+  state: SessionState,
+  sessionId: string,
+  runMarker: string,
+  runId: string,
+  rawDelta: string,
+  emit: (event: string, payload: any) => void,
+): void {
+  const delta = filterBridgeToolCallMarkupDelta(state, rawDelta)
+  if (!delta) return
+  state.bridgeOutput = (state.bridgeOutput || '') + delta
+  state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + delta
+  const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+  if (last?.role === 'assistant' && last.finish_reason == null) {
+    last.content += delta
+    syncBridgeReasoningToMessage(last, state.bridgePendingReasoningContent)
+  } else {
+    state.messages.push({
+      id: state.messages.length + 1,
+      session_id: sessionId,
+      runMarker,
+      role: 'assistant',
+      content: delta,
+      reasoning: state.bridgePendingReasoningContent || null,
+      reasoning_content: state.bridgePendingReasoningContent || null,
+      timestamp: Math.floor(Date.now() / 1000),
+    })
+  }
+  emit('message.delta', {
+    event: 'message.delta',
+    run_id: runId,
+    delta,
+    output: state.bridgeOutput,
+  })
+}
+
 function finiteToken(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
@@ -572,8 +608,19 @@ async function applyBridgeChunkAsync(
 
   state.runId = chunk.run_id
 
+  // When the bridge emits text as ordered `stream.delta` events (interleaved
+  // with tool.started/tool.completed in the SAME events list), we process the
+  // text here in true order and must NOT also process the aggregated
+  // `chunk.delta` below (that would duplicate the text). This flag tracks it.
+  let sawStreamDeltaEvent = false
+
   for (const ev of chunk.events || []) {
     const evType = ev.event as string | undefined
+    if (evType === 'stream.delta') {
+      sawStreamDeltaEvent = true
+      processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
+      continue
+    }
     if (evType === 'bridge.context.ready') {
       cacheBridgeContext(state, ev)
       const usage = await calcAndUpdateUsage(sessionId, state, emit)
@@ -837,7 +884,11 @@ async function applyBridgeChunkAsync(
     }
   }
 
-  if (chunk.delta) {
+  // Only process the aggregated chunk.delta when the bridge did NOT emit
+  // ordered stream.delta events for this chunk. With ordered events, the text
+  // was already handled above in true interleaved order; processing it again
+  // here would duplicate it.
+  if (chunk.delta && !sawStreamDeltaEvent) {
     const delta = filterBridgeToolCallMarkupDelta(state, chunk.delta)
     if (delta) {
       state.bridgeOutput = (state.bridgeOutput || '') + delta

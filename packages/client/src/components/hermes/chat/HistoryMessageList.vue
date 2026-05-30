@@ -16,6 +16,7 @@ const chatStore = useChatStore();
 const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
+const pendingBottomSessionId = ref<string | null>(null);
 
 // Use provided session or fall back to chatStore's active session
 const activeSession = computed(() => props.session || chatStore.activeSession);
@@ -61,6 +62,7 @@ watch(
   () => activeSession.value?.id,
   (id) => {
     if (!id) return;
+    pendingBottomSessionId.value = id;
     if (chatStore.focusMessageId) {
       scrollToMessage(chatStore.focusMessageId);
       return;
@@ -92,9 +94,13 @@ watch(
   () => (activeSession.value?.messages || []).length,
   (length) => {
     if (length === 0) return
-    if (!isNearBottom()) return;
+    const id = activeSession.value?.id
+    const shouldForceBottom = !!id && pendingBottomSessionId.value === id
+    if (!shouldForceBottom && !isNearBottom()) return;
+    if (shouldForceBottom) pendingBottomSessionId.value = null
     scrollToBottom();
   },
+  { flush: "post" },
 );
 
 defineExpose({

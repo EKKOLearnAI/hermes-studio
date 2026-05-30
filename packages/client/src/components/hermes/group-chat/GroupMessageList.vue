@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
@@ -10,15 +10,19 @@ const store = useGroupChatStore()
 const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
-const isNearBottom = ref(true)
 const displayMessages = computed(() => store.sortedMessages.filter(msg => msg.role !== 'tool' || toolTraceVisible.value || msg.toolStatus === 'running'))
+let pendingInitialBottomRoomId: string | null = store.currentRoomId
 
-function checkNearBottom(): void {
-    isNearBottom.value = listRef.value?.isNearBottom(200) ?? true
+type BottomScrollOptions = number | {
+    frames?: number
+    keepAliveMs?: number
 }
 
-function scrollToBottom(): void {
-    listRef.value?.scrollToBottom()
+function scrollToBottom(options?: BottomScrollOptions): void {
+    const list = listRef.value as (InstanceType<typeof VirtualMessageList> & {
+        scrollToBottom: (options?: BottomScrollOptions) => void
+    }) | null
+    list?.scrollToBottom(options)
 }
 
 async function handleTopReach(): Promise<void> {
@@ -30,11 +34,33 @@ async function handleTopReach(): Promise<void> {
     listRef.value?.restoreScrollPosition(snapshot)
 }
 
-watch(() => store.messages.length, async () => {
+watch(() => store.currentRoomId, (roomId) => {
+    pendingInitialBottomRoomId = roomId
+})
+
+watch(() => displayMessages.value.map(msg => [
+    msg.id,
+    msg.content?.length ?? 0,
+    msg.reasoning?.length ?? 0,
+    msg.reasoning_content?.length ?? 0,
+    msg.toolStatus ?? '',
+].join(':')).join('|'), async () => {
+    const shouldForceInitialBottom = !!store.currentRoomId &&
+        pendingInitialBottomRoomId === store.currentRoomId &&
+        displayMessages.value.length > 0
+    const shouldScroll = shouldForceInitialBottom || (listRef.value?.isNearBottom(200) ?? true)
     await nextTick()
-    if (isNearBottom.value) {
-        scrollToBottom()
+    if (shouldScroll) {
+        scrollToBottom(shouldForceInitialBottom ? { frames: 5, keepAliveMs: 700 } : { frames: 1, keepAliveMs: 120 })
+        if (shouldForceInitialBottom) pendingInitialBottomRoomId = null
     }
+})
+
+onMounted(async () => {
+    if (!store.currentRoomId || displayMessages.value.length === 0) return
+    pendingInitialBottomRoomId = null
+    await nextTick()
+    scrollToBottom({ frames: 5, keepAliveMs: 700 })
 })
 
 defineExpose({ scrollToBottom })
@@ -47,7 +73,6 @@ defineExpose({ scrollToBottom })
         :estimated-item-height="170"
         :row-gap="12"
         padding="16px 20px"
-        @scroll="checkNearBottom"
         @top-reach="handleTopReach"
     >
         <template #empty>

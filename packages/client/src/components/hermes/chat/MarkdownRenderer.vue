@@ -241,6 +241,10 @@ function getScrollParent(el: HTMLElement | null): HTMLElement | null {
   return null
 }
 
+function isNearScrollBottom(el: HTMLElement, threshold = 200): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+}
+
 function cleanupMermaidRenderArtifacts(id: string): void {
   document.getElementById(id)?.remove()
   document.getElementById(`d${id}`)?.remove()
@@ -312,16 +316,16 @@ async function renderMermaidDiagrams(): Promise<void> {
       cleanupMermaidRenderArtifacts(id)
       if (unmounted || generation !== renderGeneration || !root.contains(element)) return
 
+      const scrollParent = getScrollParent(markdownBody.value)
+      const shouldKeepBottom = scrollParent ? isNearScrollBottom(scrollParent) : false
       element.removeAttribute('data-mermaid-pending')
       element.removeAttribute('data-mermaid-source')
       element.innerHTML = result.svg
-      // After mermaid renders, scroll the nearest scrollable ancestor to bottom
-      nextTick(() => {
-        const scrollParent = getScrollParent(markdownBody.value)
-        if (scrollParent) {
+      if (scrollParent && shouldKeepBottom) {
+        nextTick(() => {
           scrollParent.scrollTop = scrollParent.scrollHeight
-        }
-      })
+        })
+      }
     } catch {
       cleanupMermaidRenderArtifacts(`${componentId}-${generation}-${index}`)
       if (unmounted || generation !== renderGeneration || !root.contains(element)) return
