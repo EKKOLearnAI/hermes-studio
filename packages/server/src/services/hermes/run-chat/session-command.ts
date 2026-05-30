@@ -109,7 +109,8 @@ function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsa
 
 function formatCost(bu: BridgeUsageState): string {
   if (bu.actualCostUsd != null) return `$${bu.actualCostUsd.toFixed(6)}`
-  if (bu.estimatedCostUsd && bu.estimatedCostUsd > 0) return `~$${bu.estimatedCostUsd.toFixed(6)} (estimated)`
+  if (bu.estimatedCostUsd && bu.estimatedCostUsd > 0) return `~$${bu.estimatedCostUsd.toFixed(6)}`
+  if (bu.costStatus === 'included') return 'included'
   return 'n/a'
 }
 
@@ -178,31 +179,27 @@ export async function handleSessionCommand(
           ? `${Math.max(0, Math.floor(ended - started))}s`
           : 'N/A'
         const comps = getCompressionSnapshot(sessionId) ? 1 : 0
-        const note = bu.costStatus === 'unknown' && model ? `Pricing unknown for ${model}` : ''
 
         const lines = [
           '📊 Session Token Usage',
-          '────────────────────────────────────────',
-          `Model:                     ${model}`,
-          `Input tokens:              ${bu.inputTokens.toLocaleString()}`,
-          `Cache read tokens:         ${bu.cacheReadTokens.toLocaleString()}`,
-          `Cache write tokens:        ${bu.cacheWriteTokens.toLocaleString()}`,
-          `Output tokens:             ${bu.outputTokens.toLocaleString()}`,
-          `Reasoning tokens:          ${bu.reasoningTokens.toLocaleString()}`,
-          `Prompt tokens (total):     ${bu.promptTokens ? bu.promptTokens.toLocaleString() : 'N/A'}`,
-          `Completion tokens:         ${bu.completionTokens ? bu.completionTokens.toLocaleString() : 'N/A'}`,
-          `Total tokens:              ${bu.totalTokens.toLocaleString()}`,
-          `API calls:                 ${bu.apiCalls || 'N/A'}`,
-          `Session duration:          ${dur}`,
-          `Cost status:               ${bu.costStatus || 'unknown'}`,
-          `Cost source:               ${bu.costSource || 'none'}`,
-          `Total cost:                ${cost}`,
-          '────────────────────────────────────────',
-          `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`,
-          `Messages:         ${state.messages.length}`,
-          `Compressions:     ${comps}`,
-          note,
+          `Model:              ${model}`,
+          `Input tokens:       ${bu.inputTokens.toLocaleString()}`,
         ]
+        if (bu.cacheReadTokens > 0) lines.push(`Cache read tokens:  ${bu.cacheReadTokens.toLocaleString()}`)
+        if (bu.cacheWriteTokens > 0) lines.push(`Cache write tokens: ${bu.cacheWriteTokens.toLocaleString()}`)
+        lines.push(
+          `Output tokens:      ${bu.outputTokens.toLocaleString()}`,
+          `Reasoning tokens:   ${bu.reasoningTokens.toLocaleString()}`,
+          `Total tokens:       ${bu.totalTokens.toLocaleString()}`,
+          `API calls:          ${bu.apiCalls || 'N/A'}`,
+        )
+        if (dur !== 'N/A') lines.push(`Session duration:   ${dur}`)
+        lines.push(`Cost:               ${cost}`)
+
+        const ctxLine = `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`
+        const msgLine = `Messages:          ${state.messages.length}`
+        lines.push('', ctxLine, msgLine)
+        if (comps > 0) lines.push(`Compressions:      ${comps}`)
 
         emitCommand({
           action: 'usage',
