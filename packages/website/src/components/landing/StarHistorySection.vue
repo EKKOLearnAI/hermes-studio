@@ -39,19 +39,19 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" fill="currentColor" class="star-icon">
           <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
         </svg>
-        <span>Star</span>
+        <span>{{ t('starHistory.star') }}</span>
         <span v-if="stars !== null" class="star-count">{{ stars.toLocaleString() }}</span>
       </a>
 
       <img
         class="github-badge"
         src="https://img.shields.io/github/license/EKKOLearnAI/hermes-web-ui?style=flat-square"
-        alt="License"
+        :alt="t('starHistory.licenseAlt')"
       />
       <img
         class="github-badge"
         src="https://img.shields.io/github/v/release/EKKOLearnAI/hermes-web-ui?style=flat-square"
-        alt="Version"
+        :alt="t('starHistory.versionAlt')"
       />
     </div>
 
@@ -64,7 +64,7 @@ onMounted(async () => {
       >
         <img
           :src="chartSrc"
-          alt="Star History"
+          :alt="t('starHistory.chartAlt')"
           class="chart-img"
         />
       </a>

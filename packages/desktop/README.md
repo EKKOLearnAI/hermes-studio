@@ -2,6 +2,15 @@
 
 Electron desktop distribution for Hermes Studio.
 
+## Install
+
+Download the latest macOS, Windows, or Linux installer for your CPU
+architecture from the project
+[GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest).
+
+The desktop app bundles the Web UI runtime and launches it locally from the
+native shell app.
+
 ## Data directories
 
 Hermes Agent data is stored in the same platform-specific location as native

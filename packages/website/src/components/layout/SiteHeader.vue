@@ -30,8 +30,8 @@ function goHome() {
   <header class="site-header">
     <div class="header-inner">
       <div class="header-left" @click="goHome">
-        <img src="/logo.png" alt="Hermes" class="logo-icon" />
-        <span class="logo-text">Hermes Web UI</span>
+        <img src="/logo.png" :alt="t('brand.logoAlt')" class="logo-icon" />
+        <span class="logo-text">{{ t('brand.name') }}</span>
       </div>
 
       <nav class="header-nav">
@@ -50,10 +50,10 @@ function goHome() {
             <line x1="10" y1="14" x2="21" y2="3" />
           </svg>
         </a>
-        <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? '中文' : 'English'">
+        <button class="icon-btn" @click="switchLocale" :title="locale === 'en' ? t('ui.switchToChinese') : t('ui.switchToEnglish')">
           {{ locale === 'en' ? '中' : 'EN' }}
         </button>
-        <button class="icon-btn" @click="toggleTheme" :title="isDark ? 'Light' : 'Dark'">
+        <button class="icon-btn" @click="toggleTheme" :title="isDark ? t('ui.lightTheme') : t('ui.darkTheme')">
           <svg v-if="isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="5" />
             <line x1="12" y1="1" x2="12" y2="3" />
@@ -71,7 +71,7 @@ function goHome() {
         </button>
       </nav>
 
-      <button class="mobile-toggle" @click="mobileMenuOpen = !mobileMenuOpen">
+      <button class="mobile-toggle" @click="mobileMenuOpen = !mobileMenuOpen" :title="t('ui.menu')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="3" y1="6" x2="21" y2="6" />
           <line x1="3" y1="12" x2="21" y2="12" />
@@ -92,7 +92,7 @@ function goHome() {
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
             </svg>
-            {{ locale === 'en' ? '中文' : 'English' }}
+            {{ locale === 'en' ? t('ui.switchToChinese') : t('ui.switchToEnglish') }}
           </button>
           <button class="mobile-action-btn" @click="toggleTheme">
             <svg v-if="isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
@@ -109,7 +109,7 @@ function goHome() {
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
-            {{ isDark ? 'Light Mode' : 'Dark Mode' }}
+            {{ isDark ? t('ui.lightMode') : t('ui.darkMode') }}
           </button>
         </div>
       </div>

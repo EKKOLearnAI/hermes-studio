@@ -1,4 +1,19 @@
 export default {
+  brand: {
+    name: 'Hermes Web UI',
+    logoAlt: 'Hermes',
+  },
+  ui: {
+    copy: 'Copy',
+    copied: 'Copied!',
+    darkTheme: 'Dark',
+    lightTheme: 'Light',
+    darkMode: 'Dark Mode',
+    lightMode: 'Light Mode',
+    menu: 'Menu',
+    switchToChinese: 'Chinese',
+    switchToEnglish: 'English',
+  },
   nav: {
     home: 'Home',
     docs: 'Documentation',
@@ -75,9 +90,59 @@ export default {
     wechat: 'WeChat',
     wecom: 'WeCom',
   },
+  screenshots: {
+    localUrl: 'http://localhost:8648',
+    previous: 'Previous screenshot',
+    next: 'Next screenshot',
+    goTo: 'View screenshot {number}',
+    items: [
+      { src: '/image1.png', alt: 'AI chat with image generation' },
+      { src: '/image2.png', alt: 'Chat and file browser' },
+      { src: '/image3.png', alt: 'Multi-panel workspace' },
+      { src: '/image4.png', alt: 'Kanban board' },
+    ],
+  },
   install: {
     title: 'Quick Start',
-    desc: 'Get Hermes Web UI running in under a minute.',
+    desc: 'Download the desktop app or run Hermes Web UI yourself.',
+    desktop: {
+      title: 'Desktop',
+      download: 'Download',
+      allDownloads: 'View all release assets',
+      prereq: 'Desktop builds bundle the Web UI runtime.',
+      downloads: [
+        {
+          title: 'macOS Apple Silicon',
+          desc: 'Apple Silicon DMG',
+          assetSuffix: 'arm64.dmg',
+        },
+        {
+          title: 'macOS Intel',
+          desc: 'x64 DMG',
+          assetSuffix: 'x64.dmg',
+        },
+        {
+          title: 'Windows',
+          desc: 'x64 installer',
+          assetSuffix: 'x64.exe',
+        },
+        {
+          title: 'Linux x64 AppImage',
+          desc: 'x64 AppImage',
+          assetSuffix: 'x86_64.AppImage',
+        },
+        {
+          title: 'Linux x64 Debian',
+          desc: 'amd64 .deb package',
+          assetSuffix: 'amd64.deb',
+        },
+        {
+          title: 'Linux arm64',
+          desc: 'arm64 AppImage',
+          assetSuffix: 'arm64.AppImage',
+        },
+      ],
+    },
     npm: {
       title: 'npm',
       cmd1: 'npm install -g hermes-web-ui',
@@ -97,6 +162,10 @@ export default {
   starHistory: {
     title: 'Growing Community',
     desc: 'Star us on GitHub and join the community.',
+    star: 'Star',
+    licenseAlt: 'License',
+    versionAlt: 'Version',
+    chartAlt: 'Star History',
   },
   footer: {
     description: 'Self-hosted AI chat dashboard for Hermes Agent.',
@@ -104,6 +173,7 @@ export default {
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
   },
   docs: {
+    placeholder: 'Select a section from the sidebar to get started.',
     sidebar: {
       gettingStarted: 'Getting Started',
       configuration: 'Configuration',

@@ -4,12 +4,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能 Web 管理面板。<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能桌面应用和 Web 管理面板。<br/>
   管理 AI 聊天会话、监控用量与成本、配置平台渠道、<br/>
   管理定时任务、浏览技能 —— 全部在一个简洁响应式的 Web 界面中完成。
 </p>
 
 <p align="center">
+  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">下载 Hermes Studio 桌面版</a>
+  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -179,7 +181,21 @@ hermes-web-ui reset-default-login
 
 ## 快速开始
 
-### npm 安装（推荐）
+### 桌面应用（推荐）
+
+从 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest)
+下载最新的 **Hermes Studio** 桌面安装包。
+
+桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
+桌面应用内置 Web UI 运行时，Hermes Agent 数据会保存到原生 Hermes 目录：
+
+- Windows：`%LOCALAPPDATA%\hermes`（找不到时回退到 `%APPDATA%\hermes`）
+- macOS/Linux：`~/.hermes`
+
+桌面壳自身的 Web UI 状态会单独保存到 `~/.hermes-web-ui`，除非设置了
+`HERMES_WEB_UI_HOME`。
+
+### npm 安装
 
 ```bash
 npm install -g hermes-web-ui

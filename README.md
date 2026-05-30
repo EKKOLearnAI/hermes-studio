@@ -4,12 +4,14 @@
 </p>
 
 <p align="center">
-  A full-featured web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
+  A full-featured desktop app and web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
   Manage AI chat sessions, monitor usage & costs, configure platform channels,<br/>
   schedule cron jobs, browse skills — all from a clean, responsive web interface.
 </p>
 
 <p align="center">
+  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">Download Hermes Studio Desktop</a>
+  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -171,7 +173,22 @@ hermes-web-ui reset-default-login
 
 ## Quick Start
 
-### npm (Recommended)
+### Desktop App (Recommended)
+
+Download the latest **Hermes Studio** desktop installer from
+[GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest).
+
+Desktop builds are published for macOS, Windows, and Linux, with separate
+architecture assets where applicable. The desktop app bundles the Web UI
+runtime and stores Hermes Agent data in the native Hermes location:
+
+- Windows: `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes`)
+- macOS/Linux: `~/.hermes`
+
+The desktop wrapper stores its own Web UI state separately in
+`~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
+
+### npm
 
 ```bash
 npm install -g hermes-web-ui

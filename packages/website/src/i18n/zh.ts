@@ -1,4 +1,19 @@
 export default {
+  brand: {
+    name: 'Hermes Web UI',
+    logoAlt: 'Hermes',
+  },
+  ui: {
+    copy: '复制',
+    copied: '已复制',
+    darkTheme: '深色',
+    lightTheme: '浅色',
+    darkMode: '深色模式',
+    lightMode: '浅色模式',
+    menu: '菜单',
+    switchToChinese: '中文',
+    switchToEnglish: 'English',
+  },
   nav: {
     home: '首页',
     docs: '文档',
@@ -75,9 +90,59 @@ export default {
     wechat: '微信',
     wecom: '企业微信',
   },
+  screenshots: {
+    localUrl: 'http://localhost:8648',
+    previous: '上一张截图',
+    next: '下一张截图',
+    goTo: '查看第 {number} 张截图',
+    items: [
+      { src: '/image1.png', alt: '带图片生成的 AI 聊天界面' },
+      { src: '/image2.png', alt: '聊天和文件浏览器界面' },
+      { src: '/image3.png', alt: '多面板工作区界面' },
+      { src: '/image4.png', alt: '看板管理界面' },
+    ],
+  },
   install: {
     title: '快速开始',
-    desc: '一分钟内启动 Hermes Web UI。',
+    desc: '下载桌面应用，或自行运行 Hermes Web UI。',
+    desktop: {
+      title: '桌面版',
+      download: '下载',
+      allDownloads: '查看全部发布文件',
+      prereq: '桌面版已内置 Web UI 运行时。',
+      downloads: [
+        {
+          title: 'macOS Apple Silicon',
+          desc: 'Apple Silicon DMG',
+          assetSuffix: 'arm64.dmg',
+        },
+        {
+          title: 'macOS Intel',
+          desc: 'x64 DMG',
+          assetSuffix: 'x64.dmg',
+        },
+        {
+          title: 'Windows',
+          desc: 'x64 安装包',
+          assetSuffix: 'x64.exe',
+        },
+        {
+          title: 'Linux x64 AppImage',
+          desc: 'x64 AppImage',
+          assetSuffix: 'x86_64.AppImage',
+        },
+        {
+          title: 'Linux x64 Debian',
+          desc: 'amd64 .deb 安装包',
+          assetSuffix: 'amd64.deb',
+        },
+        {
+          title: 'Linux arm64',
+          desc: 'arm64 AppImage',
+          assetSuffix: 'arm64.AppImage',
+        },
+      ],
+    },
     npm: {
       title: 'npm',
       cmd1: 'npm install -g hermes-web-ui',
@@ -97,6 +162,10 @@ export default {
   starHistory: {
     title: '社区成长',
     desc: '在 GitHub 上给我们加星，加入社区。',
+    star: '加星',
+    licenseAlt: '许可证',
+    versionAlt: '版本',
+    chartAlt: 'Star 历史',
   },
   footer: {
     description: 'Hermes Agent 的自托管 AI 聊天仪表板。',
@@ -104,6 +173,7 @@ export default {
     madeWith: '使用 Vue 3、Naive UI 和 TypeScript 构建。',
   },
   docs: {
+    placeholder: '从侧边栏选择一个章节开始阅读。',
     sidebar: {
       gettingStarted: '快速开始',
       configuration: '配置说明',
