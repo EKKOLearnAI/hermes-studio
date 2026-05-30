@@ -42,39 +42,22 @@ jobs:
       - name: Build
         run: npm run build
 
+  # Smoke test only: verify desktop packaging still works on pull requests.
+  # Full multi-platform release artifacts are built by desktop-release.yml on release.
   desktop:
-    name: Desktop (${{ matrix.label }})
+    name: Desktop smoke test (${{ matrix.label }})
     needs: build
+    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: macOS arm64
-            runner: macos-14
-            target_os: darwin
-            target_arch: arm64
-            electron_target: "--mac dmg --arm64"
-          - label: macOS x64
-            runner: macos-15-intel
-            target_os: darwin
-            target_arch: x64
-            electron_target: "--mac dmg --x64"
-          - label: Windows x64
-            runner: windows-latest
-            target_os: win32
-            target_arch: x64
-            electron_target: "--win nsis --x64"
           - label: Linux x64
             runner: ubuntu-22.04
             target_os: linux
             target_arch: x64
             electron_target: "--linux AppImage deb --x64"
-          - label: Linux arm64
-            runner: ubuntu-22.04-arm
-            target_os: linux
-            target_arch: arm64
-            electron_target: "--linux AppImage --arm64"
 
     steps:
       - name: Checkout repository
@@ -120,10 +103,6 @@ jobs:
         with:
           name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: |
-            packages/desktop/release/*.dmg
-            packages/desktop/release/*.dmg.blockmap
-            packages/desktop/release/*.exe
-            packages/desktop/release/*.exe.blockmap
             packages/desktop/release/*.AppImage
             packages/desktop/release/*.deb
             packages/desktop/release/latest*.yml
