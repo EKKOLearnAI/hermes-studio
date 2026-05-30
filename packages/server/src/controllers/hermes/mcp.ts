@@ -97,7 +97,10 @@ export async function testServer(ctx: Context) {
 export async function listTools(ctx: Context) {
   try {
     const server = ctx.query.server as string | undefined
-    const payload = server ? { server } : {}
+    const raw = ctx.query.raw === '1' || ctx.query.raw === 'true'
+    const payload: Record<string, any> = {}
+    if (server) payload.server = server
+    if (raw) payload.raw = true
     ctx.body = await bridgeMcpAction('mcp_tools_list', payload, getProfile(ctx))
   } catch (err: any) {
     ctx.status = 503

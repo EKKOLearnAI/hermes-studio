@@ -52,8 +52,11 @@ export async function fetchMcpServers(): Promise<McpServersResponse> {
   return request<McpServersResponse>('/api/hermes/mcp/servers')
 }
 
-export async function fetchMcpTools(server?: string): Promise<McpToolsResponse> {
-  const query = server ? `?server=${encodeURIComponent(server)}` : ''
+export async function fetchMcpTools(server?: string, raw?: boolean): Promise<McpToolsResponse> {
+  const params = new URLSearchParams()
+  if (server) params.set('server', server)
+  if (raw) params.set('raw', '1')
+  const query = params.toString() ? `?${params.toString()}` : ''
   return request<McpToolsResponse>(`/api/hermes/mcp/tools${query}`)
 }
 
