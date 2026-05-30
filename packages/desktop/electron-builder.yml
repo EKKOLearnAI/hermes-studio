@@ -1,4 +1,4 @@
-appId: com.hermesagent.desktop
+appId: com.hermeswebui.studio
 productName: Hermes Studio
 copyright: Copyright © 2026
 
@@ -45,9 +45,9 @@ mac:
     - target: dmg
       arch: [arm64, x64]
   category: public.app-category.developer-tools
-  hardenedRuntime: false
+  hardenedRuntime: true
   gatekeeperAssess: false
-  identity: null
+  notarize: true
   artifactName: "${productName}-${version}-${arch}.${ext}"
 
 win:

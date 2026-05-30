@@ -89,6 +89,12 @@ jobs:
         run: npm --prefix packages/desktop run prepare:python
 
       - name: Build desktop artifact
+        env:
+          CSC_LINK: ${{ matrix.target_os == 'darwin' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.target_os == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.target_os == 'darwin' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.target_os == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.target_os == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
         run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} --publish never
 
       - name: Upload artifacts to release
