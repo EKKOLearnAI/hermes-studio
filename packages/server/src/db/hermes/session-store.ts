@@ -104,6 +104,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     estimated_cost_usd: Number(row.estimated_cost_usd || 0),
     actual_cost_usd: row.actual_cost_usd != null ? Number(row.actual_cost_usd) : null,
     cost_status: String(row.cost_status || ''),
+    last_prompt_tokens: Number(row.last_prompt_tokens || 0),
     preview: String(row.preview || ''),
     last_active: Number(row.last_active || 0),
     workspace: row.workspace != null ? String(row.workspace) : null,
@@ -149,7 +150,7 @@ export function createSession(data: {
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
       billing_provider: null, estimated_cost_usd: 0, actual_cost_usd: null,
-      cost_status: '', preview: '', last_active: now, workspace: data.workspace || null,
+      cost_status: '', last_prompt_tokens: 0, preview: '', last_active: now, workspace: data.workspace || null,
     }
   }
   const db = getDb()!
