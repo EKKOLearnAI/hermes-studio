@@ -56,7 +56,7 @@ function stripCredentialFlag(text: string): string {
 
 function installFetchPatch(): void {
   const origFetch = window.fetch.bind(window)
-  window.fetch = async (input, init) => {
+  const patchedFetch = (async (input, init) => {
     const res = await origFetch(input, init)
     try {
       const url = typeof input === 'string' ? input : (input as Request).url
@@ -73,7 +73,8 @@ function installFetchPatch(): void {
       }
     } catch { /* fall through */ }
     return res
-  }
+  }) as typeof window.fetch
+  window.fetch = patchedFetch
 
   const OrigXHR = window.XMLHttpRequest
   type XHRWithDesktop = XMLHttpRequest & { __hermesDesktopUrl?: string }
