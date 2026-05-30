@@ -1,8 +1,9 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
-import { delimiter, dirname, join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import { getWebUiHome } from '../config'
+import { getCurrentNodeEnv, getNpmExecution } from '../services/node-runtime'
 
 let updateInProgress = false
 let previewProcess: ChildProcess | null = null
@@ -105,45 +106,6 @@ function listPreviewTagsWithGit(): Array<{ name: string; sha: string }> {
     .reverse()
 }
 
-function getNodeBinDir() {
-  return dirname(process.execPath)
-}
-
-function getNodePrefix() {
-  return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
-}
-
-function getHomebrewPrefix() {
-  const match = process.execPath.match(/^(.*)\/Cellar\/[^/]+\/[^/]+\/bin\/node$/)
-  return match?.[1] || null
-}
-
-function getNpmCliCandidates() {
-  const prefix = getNodePrefix()
-  const homebrewPrefix = getHomebrewPrefix()
-
-  return process.platform === 'win32'
-    ? [
-        join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        join(getNodeBinDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-      ]
-    : [
-        join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        ...(homebrewPrefix ? [join(homebrewPrefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')] : []),
-      ]
-}
-
-function getNpmCliPath() {
-  const candidates = getNpmCliCandidates()
-  const npmCli = candidates.find(existsSync)
-
-  return npmCli || null
-}
-
-function getNpmBin() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
-}
-
 function isTermuxRuntime() {
   const prefix = process.env.PREFIX || ''
   return prefix.includes('/com.termux/') ||
@@ -158,23 +120,13 @@ function getGlobalPackageBin(root: string) {
   return join(root, 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
 }
 
-function getCurrentNodeEnv() {
-  return {
-    ...process.env,
-    PATH: [getNodeBinDir(), process.env.PATH].filter(Boolean).join(delimiter),
-    npm_node_execpath: process.execPath,
-  }
-}
-
 function runNpm(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
-  const npmCli = getNpmCliPath()
-  const command = npmCli ? process.execPath : getNpmBin()
-  const commandArgs = npmCli ? [npmCli, ...args] : args
+  const execution = getNpmExecution(args)
   const label = options.logLabel || ''
 
-  if (label) appendPreviewActionLog(`${label}: ${command} ${commandArgs.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
+  if (label) appendPreviewActionLog(`${label}: ${execution.command} ${execution.args.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
   try {
-    const output = execFileSync(command, commandArgs, {
+    const output = execFileSync(execution.command, execution.args, {
       encoding: 'utf-8',
       timeout: options.timeout,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -973,12 +925,10 @@ export async function startPreview(ctx: any) {
 
     await assertPreviewPortsAvailable()
 
-    const npmCli = getNpmCliPath()
-    const command = npmCli ? process.execPath : getNpmBin()
-    const commandArgs = npmCli ? [npmCli, 'run', 'dev'] : ['run', 'dev']
+    const execution = getNpmExecution(['run', 'dev'])
     const logFd = openPreviewLogFile()
-    appendPreviewActionLog(`spawn preview process: ${command} ${commandArgs.join(' ')}`)
-    previewProcess = spawn(command, commandArgs, {
+    appendPreviewActionLog(`spawn preview process: ${execution.command} ${execution.args.join(' ')}`)
+    previewProcess = spawn(execution.command, execution.args, {
       cwd: getPreviewDir(),
       detached: true,
       stdio: ['ignore', logFd, logFd],

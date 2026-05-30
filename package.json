@@ -68,6 +68,7 @@
     "katex": "^0.17.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
+    "npm": "^11.16.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   },

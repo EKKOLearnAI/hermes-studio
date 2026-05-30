@@ -9,6 +9,7 @@ import { registerClaudeCodeProxyTarget, type ApiMode } from './claude-code-proxy
 import { registerCodexProxyTarget } from './codex-proxy'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength } from './hermes/model-context'
+import { getCurrentNodeEnv, getNpmExecution } from './node-runtime'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -126,42 +127,6 @@ const installingTools = new Set<CodingAgentId>()
 const deletingTools = new Set<CodingAgentId>()
 let cachedGlobalNpmBin: string | null | undefined
 const MAX_CONFIG_FILE_SIZE = parseInt(process.env.MAX_EDIT_SIZE || '', 10) || 10 * 1024 * 1024
-
-function getNodeBinDir() {
-  return dirname(process.execPath)
-}
-
-function getNodePrefix() {
-  return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
-}
-
-function getHomebrewPrefix() {
-  const match = process.execPath.match(/^(.*)\/Cellar\/[^/]+\/[^/]+\/bin\/node$/)
-  return match?.[1] || null
-}
-
-function getNpmCliCandidates() {
-  const prefix = getNodePrefix()
-  const homebrewPrefix = getHomebrewPrefix()
-
-  return process.platform === 'win32'
-    ? [
-        join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        join(getNodeBinDir(), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-      ]
-    : [
-        join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        ...(homebrewPrefix ? [join(homebrewPrefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')] : []),
-      ]
-}
-
-function getNpmCliPath() {
-  return getNpmCliCandidates().find(existsSync) || null
-}
-
-function getNpmBin() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm'
-}
 
 function normalizeScopeSegment(value: string | undefined, fallback: string, label: string): string {
   // Replace invalid filename characters with underscores
@@ -465,19 +430,9 @@ function getScopedConfigFileDefinition(id: string, key: string, scopeInput: Codi
   }
 }
 
-function getCurrentNodeEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PATH: [getNodeBinDir(), process.env.PATH].filter(Boolean).join(delimiter),
-    npm_node_execpath: process.execPath,
-  }
-}
-
 async function runNpm(args: string[], options: { timeout?: number; env?: NodeJS.ProcessEnv } = {}) {
-  const npmCli = getNpmCliPath()
-  const command = npmCli ? process.execPath : getNpmBin()
-  const commandArgs = npmCli ? [npmCli, ...args] : args
-  return execFileAsync(command, commandArgs, {
+  const execution = getNpmExecution(args)
+  return execFileAsync(execution.command, execution.args, {
     encoding: 'utf-8',
     timeout: options.timeout,
     windowsHide: true,
@@ -518,8 +473,8 @@ function windowsCommandNeedsShell(command: string): boolean {
 }
 
 async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
-  if (process.platform !== 'win32') return command
   const paths = await findCommandPaths(command, env)
+  if (process.platform !== 'win32') return paths[0] || command
   // On Windows, prioritize paths with .cmd or .bat extensions since where may return
   // both the unix-style script (without extension) and the Windows shim (.cmd)
   const windowsPath = paths.find(path => windowsCommandNeedsShell(path))
@@ -556,8 +511,12 @@ function getPrefixFromPackagePath(path: string, packageName: string): string | n
   }
 
   const libIndex = nodeModulesIndex - 1
-  if (parts[libIndex] !== 'lib') return null
-  const prefixParts = parts.slice(0, libIndex)
+  const prefixParts = parts[libIndex] === 'lib'
+    ? parts.slice(0, libIndex)
+    : process.platform === 'win32'
+      ? parts.slice(0, nodeModulesIndex)
+      : []
+  if (prefixParts.length === 0 && parts[libIndex] !== 'lib') return null
   if (prefixParts.length === 0) return process.platform === 'win32' ? null : '/'
   return `${normalized.startsWith('/') ? '/' : ''}${prefixParts.join('/')}`
 }
@@ -836,6 +795,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     throw err
   }
 
+  const launchEnvForCommands = await commandEnv()
+  const launchCommand = await resolveCommandForExecution(tool.command, launchEnvForCommands)
+  const baseLaunchEnv: Record<string, string> = {}
+  if (typeof launchEnvForCommands.PATH === 'string' && launchEnvForCommands.PATH) {
+    baseLaunchEnv.PATH = launchEnvForCommands.PATH
+  }
   const mode = input.mode === 'global' ? 'global' : 'scoped'
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
@@ -843,8 +808,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await mkdir(workspaceDir, { recursive: true })
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
-      env: {},
-      command: tool.command,
+      env: baseLaunchEnv,
+      command: launchCommand,
       args: [],
     })
     return {
@@ -855,9 +820,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       model: '',
       rootDir: workspaceDir,
       workspaceDir,
-      command: tool.command,
+      command: launchCommand,
       args: [],
-      env: {},
+      env: baseLaunchEnv,
       shellCommand,
       files: [],
     }
@@ -891,7 +856,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   }
 
   let args: string[] = []
-  let env: Record<string, string> = {}
+  let env: Record<string, string> = { ...baseLaunchEnv }
 
   if (tool.id === 'claude-code') {
     const proxyTarget = baseUrl && apiKey
@@ -960,14 +925,14 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await writeScopedFile('config', configToml)
     await writeScopedFile('auth', `${JSON.stringify({}, null, 2)}\n`)
 
-    env = { CODEX_HOME: rootDir }
+    env = { ...baseLaunchEnv, CODEX_HOME: rootDir }
     args = ['--model', model]
   }
 
   const shellCommand = buildLaunchShellCommand({
     workspaceDir,
     env,
-    command: tool.command,
+    command: launchCommand,
     args,
   })
 
@@ -979,7 +944,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     model,
     rootDir,
     workspaceDir,
-    command: tool.command,
+    command: launchCommand,
     args,
     env,
     shellCommand,
