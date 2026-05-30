@@ -102,14 +102,51 @@ jobs:
           TARGET_ARCH: ${{ matrix.target_arch }}
         run: npm --prefix packages/desktop run prepare:python
 
-      - name: Build desktop artifact
+      - name: Configure macOS signing
+        if: matrix.target_os == 'darwin'
+        shell: bash
         env:
-          CSC_LINK: ${{ matrix.target_os == 'darwin' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.target_os == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ matrix.target_os == 'darwin' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.target_os == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.target_os == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
-        run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} --publish never
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          MAC_APPLE_ID: ${{ secrets.APPLE_ID }}
+          MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          MAC_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          write_env() {
+            local name="$1"
+            local value="$2"
+            if [ -n "$value" ]; then
+              {
+                echo "$name<<EOF"
+                echo "$value"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+            fi
+          }
+
+          if [ -z "${MAC_CSC_LINK:-}" ]; then
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "MAC_BUILD_EXTRA_ARGS=--config.mac.notarize=false" >> "$GITHUB_ENV"
+            echo "No macOS signing certificate configured; building unsigned and skipping notarization."
+            exit 0
+          fi
+
+          write_env "CSC_LINK" "$MAC_CSC_LINK"
+          write_env "CSC_KEY_PASSWORD" "$MAC_CSC_KEY_PASSWORD"
+
+          if [ -n "${MAC_APPLE_ID:-}" ] && [ -n "${MAC_APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${MAC_APPLE_TEAM_ID:-}" ]; then
+            write_env "APPLE_ID" "$MAC_APPLE_ID"
+            write_env "APPLE_APP_SPECIFIC_PASSWORD" "$MAC_APPLE_APP_SPECIFIC_PASSWORD"
+            write_env "APPLE_TEAM_ID" "$MAC_APPLE_TEAM_ID"
+            echo "macOS signing and notarization are configured."
+          else
+            echo "MAC_BUILD_EXTRA_ARGS=--config.mac.notarize=false" >> "$GITHUB_ENV"
+            echo "macOS signing certificate configured; Apple notarization credentials incomplete, skipping notarization."
+          fi
+
+      - name: Build desktop artifact
+        shell: bash
+        run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
