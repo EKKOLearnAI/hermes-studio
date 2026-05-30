@@ -1554,7 +1554,20 @@ class AgentPool:
         with _profile_env(profile):
             def stream_callback(delta: str) -> None:
                 with self._lock:
-                    record.deltas.append(str(delta))
+                    text = str(delta)
+                    # Keep `deltas` for the aggregated `output`/resume snapshot,
+                    # AND record each text chunk as an ordered event in the SAME
+                    # `events` list used by tool.started/tool.completed. Text and
+                    # tool events were previously tracked in two parallel lists
+                    # with no relative ordering, so when the model interleaved
+                    # narration and tool calls ("text → tool → more text") the
+                    # consumer reordered them — processing all events before the
+                    # aggregated delta — which visibly split a word across the
+                    # tool boundary. Recording text as ordered events preserves
+                    # the true interleaving.
+                    record.deltas.append(text)
+                    if text:
+                        record.events.append({"event": "stream.delta", "delta": text})
 
             approval_session_token = None
             registered_gateway_approval_session = None
