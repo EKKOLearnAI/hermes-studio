@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockExecFileAsync = vi.hoisted(() => vi.fn())
+const mockSpawnHermes = vi.hoisted(() => vi.fn())
 const mockLoggerError = vi.hoisted(() => vi.fn())
 
-vi.mock('util', () => ({
-  promisify: () => mockExecFileAsync,
+vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
+  execHermes: (args: string[], options: unknown) => mockExecFileAsync('hermes', args, options),
+  spawnHermes: mockSpawnHermes,
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
