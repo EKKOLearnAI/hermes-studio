@@ -344,6 +344,7 @@ export class ChatRunSocket {
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
       contextTokens: state.contextTokens,
+      bridgeUsage: state.bridgeUsage,
       queueLength: state.queue?.length || 0,
       queueMessages: this.serializeQueuedMessages(state.queue || []),
     })
