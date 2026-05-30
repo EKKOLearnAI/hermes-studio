@@ -147,6 +147,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // macOS/Linux keep the standard ~/.hermes layout.
     HERMES_HOME: agentHome,
     HERMES_WEB_UI_HOME: home,
+    HERMES_WEBUI_STATE_DIR: home,
     AUTH_TOKEN: token,
     PORT: String(port),
     // Prepend bundled Python's bin to PATH so any incidental `python` resolution lands on ours

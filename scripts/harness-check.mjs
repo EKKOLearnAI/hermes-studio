@@ -42,12 +42,28 @@ for (const dir of [
   'packages/client/src',
   'packages/server/src',
   'packages/desktop',
+  'packages/desktop/build/icons',
   'tests/client',
   'tests/server',
   'tests/e2e',
   '.github/workflows',
 ]) {
   requireDir(dir)
+}
+
+for (const icon of [
+  'packages/desktop/build/icon.png',
+  'packages/desktop/build/icon.icns',
+  'packages/desktop/build/icon.ico',
+  'packages/desktop/build/icons/16x16.png',
+  'packages/desktop/build/icons/32x32.png',
+  'packages/desktop/build/icons/48x48.png',
+  'packages/desktop/build/icons/64x64.png',
+  'packages/desktop/build/icons/128x128.png',
+  'packages/desktop/build/icons/256x256.png',
+  'packages/desktop/build/icons/512x512.png',
+]) {
+  requireFile(icon)
 }
 
 const agents = await readText('AGENTS.md')
@@ -101,8 +117,13 @@ if (!buildWorkflow.includes('npm run harness:check')) {
 }
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')
+const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
 if (!desktopReleaseWorkflow.includes('files: ${{ matrix.artifact_files }}')) {
   fail('desktop-release.yml must upload matrix-specific artifact_files')
+}
+
+if (!electronBuilderConfig.includes('icon: build/icons')) {
+  fail('electron-builder.yml must configure the Linux icon set')
 }
 
 for (const target of ['target_os: darwin', 'target_os: win32', 'target_os: linux']) {

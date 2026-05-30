@@ -31,6 +31,7 @@ should not duplicate server persistence rules.
 - `HERMES_WEB_UI_HOME` and `HERMES_WEBUI_STATE_DIR` override Web UI state location.
 - Hermes Agent state lives under Hermes profile directories and must stay distinct from Web UI state.
 - Uploads default to `config.uploadDir`, which is derived from the Web UI home unless `UPLOAD_DIR` is set.
+- Runtime data directories must also live under the Web UI home, not beside built `dist` assets.
 - Profile-scoped Hermes data should use existing profile helpers instead of manually joining paths.
 
 ## Server Structure

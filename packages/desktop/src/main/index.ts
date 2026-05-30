@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
-import { hermesBinExists, hermesBin } from './paths'
+import { desktopIcon, hermesBinExists, hermesBin } from './paths'
 import { initAutoUpdater } from './updater'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
@@ -18,6 +18,7 @@ function createWindow() {
     title: 'Hermes Studio',
     backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
+    ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,

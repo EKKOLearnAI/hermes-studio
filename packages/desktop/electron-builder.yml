@@ -21,6 +21,10 @@ files:
 # Web UI source (built dist) and bundled Python live outside the asar.
 # This package lives at packages/desktop, so ../.. is the hermes-web-ui repo root.
 extraResources:
+  - from: "build"
+    to: "build"
+    filter:
+      - "icon.png"
   - from: "../.."
     to: "webui"
     filter:
@@ -57,6 +61,7 @@ win:
   artifactName: "${productName}-${version}-${arch}.${ext}"
 
 linux:
+  icon: build/icons
   target:
     - target: AppImage
       arch: [x64, arm64]
