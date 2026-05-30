@@ -1,5 +1,6 @@
 import { ChildProcess, spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { app } from 'electron'
@@ -50,6 +51,43 @@ export function getServerUrl(port = DEFAULT_PORT): string {
   return `http://127.0.0.1:${port}`
 }
 
+async function getFreeTcpPort(): Promise<number> {
+  return await new Promise((resolveFreePort, rejectFreePort) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', rejectFreePort)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      server.close(() => {
+        if (typeof address === 'object' && address?.port) {
+          resolveFreePort(address.port)
+        } else {
+          rejectFreePort(new Error('Unable to allocate local TCP port'))
+        }
+      })
+    })
+  })
+}
+
+async function canBindTcpPort(port: number): Promise<boolean> {
+  return await new Promise((resolveCanBind) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', () => resolveCanBind(false))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolveCanBind(true))
+    })
+  })
+}
+
+async function getFreeTcpPortInRange(min: number, max: number): Promise<number> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const port = min + (randomBytes(2).readUInt16BE(0) % (max - min + 1))
+    if (await canBindTcpPort(port)) return port
+  }
+  return getFreeTcpPort()
+}
+
 export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   ensureNativeModules()
   const token = ensureToken()
@@ -71,6 +109,8 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
+  const bridgePort = await getFreeTcpPort()
+  const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -85,10 +125,11 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
     // SIGKILL of the bridge child within ~150ms). TCP on 127.0.0.1 works
     // identically and avoids the issue cross-platform.
-    HERMES_AGENT_BRIDGE_ENDPOINT: 'tcp://127.0.0.1:18765',
+    HERMES_AGENT_BRIDGE_ENDPOINT: `tcp://127.0.0.1:${bridgePort}`,
     // Force TCP for worker endpoints too (upstream #1106). Same EDR/sandbox
     // reason as above — default ipc:// unix sockets in /tmp get killed.
     HERMES_AGENT_BRIDGE_WORKER_TRANSPORT: 'tcp',
+    HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(workerPortBase),
     // And for preview-mode bridges spawned by the in-app update controller.
     HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT: 'tcp',
     // Suppress the npm-registry update prompt (upstream #1105). hermes-web-ui
