@@ -946,6 +946,7 @@ async function applyBridgeChunkAsync(
       estimated_cost_usd: state.bridgeUsage.estimatedCostUsd,
       actual_cost_usd: state.bridgeUsage.actualCostUsd,
       cost_status: state.bridgeUsage.costStatus,
+      last_prompt_tokens: state.bridgeUsage.lastPromptTokens,
     })
   }
   const terminalError = bridgeTerminalError(chunk)

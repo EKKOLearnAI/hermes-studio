@@ -29,6 +29,7 @@ export interface HermesSessionRow {
   estimated_cost_usd: number
   actual_cost_usd: number | null
   cost_status: string
+  last_prompt_tokens: number
   preview: string
   last_active: number
   workspace: string | null

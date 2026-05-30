@@ -88,7 +88,6 @@ function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsa
   if (!row || !row.cost_status) return null
   // promptTokens / completionTokens / apiCalls / costSource are not
   // stored in the sessions table — hardcoded to 0/undefined here.
-  // They display as 'N/A' in /usage output via truthiness checks.
   return {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
@@ -99,6 +98,7 @@ function resolveBridgeUsageFromDb(row: ReturnType<typeof getSession>): BridgeUsa
     completionTokens: 0,
     totalTokens: row.input_tokens + row.output_tokens + row.cache_read_tokens + row.cache_write_tokens,
     apiCalls: 0,
+    lastPromptTokens: row.last_prompt_tokens || undefined,
     model: row.model || undefined,
     estimatedCostUsd: row.estimated_cost_usd ?? undefined,
     actualCostUsd: row.actual_cost_usd ?? undefined,

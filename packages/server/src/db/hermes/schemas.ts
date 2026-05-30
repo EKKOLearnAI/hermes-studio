@@ -50,6 +50,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   estimated_cost_usd: 'REAL NOT NULL DEFAULT 0',
   actual_cost_usd: 'REAL',
   cost_status: 'TEXT NOT NULL DEFAULT \'\'',
+  last_prompt_tokens: 'INTEGER NOT NULL DEFAULT 0',
   preview: 'TEXT NOT NULL DEFAULT \'\'',
   last_active: 'INTEGER NOT NULL',
   workspace: 'TEXT',
