@@ -65,6 +65,12 @@ def _positive_int(value: str | None) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _hidden_subprocess_kwargs() -> dict[str, int]:
+    if os.name != "nt":
+        return {}
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
 def _process_exists(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -76,6 +82,7 @@ def _process_exists(pid: int) -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                **_hidden_subprocess_kwargs(),
             )
             return str(pid) in (result.stdout or "")
         except Exception:
@@ -2778,6 +2785,7 @@ class WorkerProcess:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                **_hidden_subprocess_kwargs(),
             )
             self._pipe_stderr()
             self._wait_ready()
@@ -2950,6 +2958,7 @@ def _windows_listening_pids_on_port(port: int) -> list[int]:
             encoding=_platform_text_encoding(),
             errors="ignore",
             timeout=5,
+            **_hidden_subprocess_kwargs(),
         )
     except Exception:
         return []
@@ -2992,6 +3001,7 @@ def _kill_windows_endpoint_occupants(endpoint: str) -> None:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                **_hidden_subprocess_kwargs(),
             )
         except Exception as exc:
             print(
