@@ -504,11 +504,13 @@ export const useChatStore = defineStore('chat', () => {
       const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
         messages: s.messages,
         contextTokens: s.contextTokens,
+        apiUsage: s.apiUsage,
       }]))
       for (const s of fresh) {
         const prev = runtimeByIdBefore.get(s.id)
         if (prev?.messages?.length) s.messages = prev.messages
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
+        if (prev?.apiUsage) s.apiUsage = prev.apiUsage
       }
       sessions.value = fresh
 
