@@ -73,11 +73,7 @@ jobs:
         run: |
           SSH_USER="${WEBSITE_SSH_USER:-root}"
           SSH_PORT="${WEBSITE_SSH_PORT:-22}"
-          command -v rsync >/dev/null || {
-            sudo apt-get update
-            sudo apt-get install -y rsync
-          }
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/website_deploy_key -p ${SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            dist/website/ \
-            "$SSH_USER@154.3.33.232:/var/www/ekkolearnai.com/current/"
+          DEPLOY_DIR="/var/www/ekkolearnai.com/current"
+          SSH_CMD="ssh -i ~/.ssh/website_deploy_key -p ${SSH_PORT} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          $SSH_CMD "$SSH_USER@154.3.33.232" "mkdir -p '$DEPLOY_DIR' && find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
+          tar -C dist/website -czf - . | $SSH_CMD "$SSH_USER@154.3.33.232" "tar -xzf - -C '$DEPLOY_DIR'"
