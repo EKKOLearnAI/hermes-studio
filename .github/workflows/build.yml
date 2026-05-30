@@ -36,6 +36,9 @@ jobs:
           npm ci --ignore-scripts
           npm rebuild node-pty
 
+      - name: Check repository harness
+        run: npm run harness:check
+
       - name: Test with coverage
         run: npm run test:coverage
 
