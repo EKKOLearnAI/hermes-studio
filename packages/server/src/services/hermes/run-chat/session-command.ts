@@ -167,7 +167,7 @@ export async function handleSessionCommand(
         if (!state.bridgeUsage) state.bridgeUsage = bu
         const model = bu.model || ctx.model || sessionRow?.model || 'unknown'
         const modelCtxLen = getModelContextLength({ profile: ctx.profile, model })
-        const contextForDisplay = bu.promptTokens || bu.inputTokens || state.contextTokens || (localUsage.inputTokens + localUsage.outputTokens)
+        const contextForDisplay = bu.lastPromptTokens || bu.promptTokens || bu.inputTokens || state.contextTokens || (localUsage.inputTokens + localUsage.outputTokens)
         const pct = modelCtxLen > 0 ? `${((contextForDisplay / modelCtxLen) * 100).toFixed(0)}%` : 'N/A'
         const cost = formatCost(bu)
         const started = sessionRow?.started_at
