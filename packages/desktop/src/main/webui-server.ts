@@ -75,6 +75,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: 'production',
+    HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
