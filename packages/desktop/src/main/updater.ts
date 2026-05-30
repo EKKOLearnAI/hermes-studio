@@ -26,7 +26,7 @@ export function initAutoUpdater() {
     const { response } = await dialog.showMessageBox({
       type: 'info',
       title: 'Update ready',
-      message: `Hermes Desktop ${info.version} is ready to install.`,
+      message: `Hermes Studio ${info.version} is ready to install.`,
       detail: 'Restart now to apply the update, or it will be installed on next quit.',
       buttons: ['Restart now', 'Later'],
       defaultId: 0,

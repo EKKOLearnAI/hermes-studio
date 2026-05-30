@@ -1,6 +1,6 @@
-# Hermes Desktop
+# Hermes Studio
 
-Electron desktop distribution for Hermes Web UI.
+Electron desktop distribution for Hermes Studio.
 
 ## Data directories
 

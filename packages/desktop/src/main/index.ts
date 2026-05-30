@@ -15,7 +15,7 @@ function createWindow() {
     height: 820,
     minWidth: 960,
     minHeight: 600,
-    title: 'Hermes Desktop',
+    title: 'Hermes Studio',
     backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
     webPreferences: {
@@ -46,7 +46,7 @@ function createWindow() {
 }
 
 function splashHtml(): string {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Desktop</title>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
 <style>
   html,body{margin:0;height:100%;background:#1a1a1a;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
   .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:24px}
@@ -57,7 +57,7 @@ function splashHtml(): string {
   .label{font-size:14px;color:#999}
   h1{font-weight:500;margin:0;font-size:18px}
 </style></head><body><div class="wrap">
-<h1>Hermes Desktop</h1>
+<h1>Hermes Studio</h1>
 <div class="row"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
 <div class="label">Starting local services…</div>
 </div></body></html>`
