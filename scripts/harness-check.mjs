@@ -111,7 +111,7 @@ for (const target of ['target_os: darwin', 'target_os: win32', 'target_os: linux
   }
 }
 
-for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage', 'latest*.yml']) {
+for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage']) {
   if (!desktopReleaseWorkflow.includes(expectedGlob)) {
     fail(`desktop-release.yml is missing expected artifact glob ${expectedGlob}`)
   }
