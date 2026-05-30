@@ -195,6 +195,8 @@ describe('Group Chat member/agent identity sync', () => {
     const agentsBefore = [{ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 }]
     const storage = {
       getRoomAgent: vi.fn(() => agentsBefore[0]),
+      getRoom: vi.fn(() => ({ id: 'room-1', defaultAgentId: null })),
+      setDefaultAgent: vi.fn(),
       getRoomAgents: vi.fn(() => []),
       removeRoomMembersForAgent: vi.fn(),
       removeRoomAgent: vi.fn(),
@@ -289,9 +291,10 @@ describe('Group Chat member/agent identity sync', () => {
       ['human-1', { name: 'Human', description: '' }],
       ['agent-1', { name: '丫鬟', description: '' }],
     ])
-    server.agentClients = { processMentions: vi.fn(async () => undefined) }
+    server.agentClients = { processMentions: vi.fn(async () => undefined), routeToAgentShouldAnswer: vi.fn(async () => undefined) }
     server.storage = {
       saveMessageAndRefreshRoom: vi.fn((msg: any) => ({ message: msg, totalTokens: 123 })),
+      getRoomAgents: vi.fn(() => []),
     }
     server.nsp = { to: vi.fn(() => ({ emit })) }
 
