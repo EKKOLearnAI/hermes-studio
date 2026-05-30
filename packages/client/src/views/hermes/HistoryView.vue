@@ -117,7 +117,16 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
 })
 
 function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
-  return messages.map(m => {
+  // Filter out assistant messages with no content — they only carry tool_calls
+  // and mapHistoryMessages doesn't expand tool_calls like mapHermesMessages does.
+  const filtered = messages.filter(m => {
+    if (m.role === 'assistant') {
+      return m.content && m.content.trim() !== ''
+    }
+    return true
+  })
+
+  return filtered.map(m => {
     const msg: Session['messages'][number] = {
       id: String(m.id),
       role: m.role,
