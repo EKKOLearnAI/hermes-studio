@@ -180,26 +180,30 @@ export async function handleSessionCommand(
           : 'N/A'
         const comps = getCompressionSnapshot(sessionId) ? 1 : 0
 
+        const pad = (label: string, value: string) => `${label}${' '.repeat(Math.max(1, 30 - label.length))}${value}`
+
         const lines = [
           '📊 Session Token Usage',
-          `Model:              ${model}`,
-          `Input tokens:       ${bu.inputTokens.toLocaleString()}`,
+          '────────────────────────────────────────',
+          pad('Model:',                   model),
+          pad('Input tokens:',            bu.inputTokens.toLocaleString()),
+          pad('Cache read tokens:',       bu.cacheReadTokens.toLocaleString()),
+          pad('Cache write tokens:',      bu.cacheWriteTokens.toLocaleString()),
+          pad('Output tokens:',           bu.outputTokens.toLocaleString()),
+          pad('Reasoning tokens:',        bu.reasoningTokens.toLocaleString()),
+          pad('Prompt tokens (total):',   bu.promptTokens ? bu.promptTokens.toLocaleString() : 'N/A'),
+          pad('Completion tokens:',       bu.completionTokens ? bu.completionTokens.toLocaleString() : 'N/A'),
+          pad('Total tokens:',            bu.totalTokens.toLocaleString()),
+          pad('API calls:',               String(bu.apiCalls || 'N/A')),
+          pad('Session duration:',        dur),
+          pad('Cost status:',             bu.costStatus || 'unknown'),
+          pad('Cost source:',             bu.costSource || 'none'),
+          pad('Total cost:',              cost),
+          '────────────────────────────────────────',
+          pad('Current context:', `${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`),
+          pad('Messages:',        String(state.messages.length)),
+          pad('Compressions:',    String(comps)),
         ]
-        if (bu.cacheReadTokens > 0) lines.push(`Cache read tokens:  ${bu.cacheReadTokens.toLocaleString()}`)
-        if (bu.cacheWriteTokens > 0) lines.push(`Cache write tokens: ${bu.cacheWriteTokens.toLocaleString()}`)
-        lines.push(
-          `Output tokens:      ${bu.outputTokens.toLocaleString()}`,
-          `Reasoning tokens:   ${bu.reasoningTokens.toLocaleString()}`,
-          `Total tokens:       ${bu.totalTokens.toLocaleString()}`,
-          `API calls:          ${bu.apiCalls || 'N/A'}`,
-        )
-        if (dur !== 'N/A') lines.push(`Session duration:   ${dur}`)
-        lines.push(`Cost:               ${cost}`)
-
-        const ctxLine = `Current context:  ${contextForDisplay.toLocaleString()} / ${modelCtxLen.toLocaleString()} (${pct})`
-        const msgLine = `Messages:          ${state.messages.length}`
-        lines.push('', ctxLine, msgLine)
-        if (comps > 0) lines.push(`Compressions:      ${comps}`)
 
         emitCommand({
           action: 'usage',
