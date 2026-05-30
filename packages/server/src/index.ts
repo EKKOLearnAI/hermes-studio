@@ -7,7 +7,7 @@ import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
-import { config } from './config'
+import { config, shouldCreateWebUiDataDir } from './config'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -84,7 +84,9 @@ function safeNetworkInterfaces() {
 export async function bootstrap() {
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
-  await mkdir(config.dataDir, { recursive: true })
+  if (shouldCreateWebUiDataDir()) {
+    await mkdir(config.dataDir, { recursive: true })
+  }
 
   await initLoginLimiter()
   try {
