@@ -52,6 +52,11 @@ export interface ProfileRuntimeStatus {
   }
 }
 
+export interface ProfileRuntimeStatusesResponse {
+  profiles: ProfileRuntimeStatus[]
+  refreshing?: boolean
+}
+
 export async function fetchProfiles(): Promise<HermesProfile[]> {
   const res = await request<{ profiles: HermesProfile[] }>('/api/hermes/profiles')
   return res.profiles
@@ -66,8 +71,13 @@ export async function fetchProfileRuntimeStatus(name: string): Promise<ProfileRu
   return request<ProfileRuntimeStatus>(`/api/hermes/profiles/${encodeURIComponent(name)}/runtime-status`)
 }
 
+export async function fetchProfileRuntimeStatusesWithMeta(options: { refresh?: boolean } = {}): Promise<ProfileRuntimeStatusesResponse> {
+  const query = options.refresh === false ? '?refresh=0' : ''
+  return request<ProfileRuntimeStatusesResponse>(`/api/hermes/profiles/runtime-statuses${query}`)
+}
+
 export async function fetchProfileRuntimeStatuses(): Promise<ProfileRuntimeStatus[]> {
-  const res = await request<{ profiles: ProfileRuntimeStatus[] }>('/api/hermes/profiles/runtime-statuses')
+  const res = await fetchProfileRuntimeStatusesWithMeta()
   return res.profiles
 }
 

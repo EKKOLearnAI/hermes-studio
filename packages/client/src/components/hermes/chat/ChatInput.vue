@@ -44,6 +44,7 @@ const bridgeCommands = computed(() => [
   { name: 'compress', args: '', description: t('chat.slashCommands.compress') },
   { name: 'steer', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.steer') },
   { name: 'destroy', args: '', description: t('chat.slashCommands.destroy') },
+  { name: 'reload-mcp', args: '', description: t('chat.slashCommands.reloadMcp') },
 ])
 
 const slashActive = ref(false)

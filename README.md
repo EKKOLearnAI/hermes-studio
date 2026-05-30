@@ -180,23 +180,6 @@ hermes-web-ui start
 
 Open **http://localhost:8648**
 
-### One-line Setup (Auto-detect OS)
-
-Automatically installs Node.js (if missing) and hermes-web-ui on Debian/Ubuntu/macOS:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
-```
-
-### WSL
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
-hermes-web-ui start
-```
-
-> WSL uses the same Web UI daemon startup flow as other local installs; no separate gateway service is started by Web UI.
-
 ### Docker Compose
 
 Single-container deployment with integrated Hermes Agent:

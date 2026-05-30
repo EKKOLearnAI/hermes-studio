@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { NButton, NModal, NSpin, useMessage } from 'naive-ui'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import {
-  fetchProfileRuntimeStatuses,
+  fetchProfileRuntimeStatusesWithMeta,
   restartProfileGateway,
   restartProfileRuntime,
   type HermesProfile,
@@ -31,21 +31,43 @@ const gatewayRestarting = ref<Record<string, boolean>>({})
 const profileRestarting = ref<Record<string, boolean>>({})
 const profileSwitching = ref<Record<string, boolean>>({})
 const statusByProfile = computed(() => new Map(runtimeStatuses.value.map(status => [status.profile, status])))
+let runtimeRefreshToken = 0
 
-async function loadRuntimeStatuses() {
-  runtimeLoading.value = true
+async function loadRuntimeStatuses(options: { background?: boolean } = {}): Promise<boolean> {
+  const token = ++runtimeRefreshToken
+  if (!options.background) {
+    runtimeLoading.value = runtimeStatuses.value.length === 0
+  }
   try {
-    runtimeStatuses.value = await fetchProfileRuntimeStatuses()
+    const res = await fetchProfileRuntimeStatusesWithMeta({ refresh: !options.background })
+    if (token !== runtimeRefreshToken) return false
+    runtimeStatuses.value = res.profiles
+    return !!res.refreshing
   } catch {
     runtimeStatuses.value = []
+    return false
   } finally {
-    runtimeLoading.value = false
+    if (token === runtimeRefreshToken) {
+      runtimeLoading.value = false
+    }
   }
 }
 
 function openProfileModal() {
   showProfileModal.value = true
-  void loadRuntimeStatuses()
+  void loadRuntimeStatuses().then((refreshing) => {
+    if (refreshing) scheduleRuntimeStatusPoll()
+  })
+}
+
+function scheduleRuntimeStatusPoll(attempt = 0) {
+  if (attempt >= 12 || typeof window === 'undefined') return
+  window.setTimeout(() => {
+    if (!showProfileModal.value) return
+    void loadRuntimeStatuses({ background: true }).then((refreshing) => {
+      if (refreshing) scheduleRuntimeStatusPoll(attempt + 1)
+    })
+  }, attempt === 0 ? 700 : 1200)
 }
 
 function openAvatarModal(profile: HermesProfile) {
@@ -116,10 +138,12 @@ async function handleAvatarFileChange(event: Event) {
 }
 
 function gatewayStatusText(running?: boolean) {
+  if (running == null) return t('profiles.runtime.checking')
   return running ? t('profiles.runtime.running') : t('profiles.runtime.stopped')
 }
 
 function bridgeStatusText(running?: boolean) {
+  if (running == null) return t('profiles.runtime.checking')
   return running ? t('profiles.runtime.active') : t('profiles.runtime.idle')
 }
 

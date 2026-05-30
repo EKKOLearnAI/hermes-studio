@@ -713,4 +713,49 @@ assert captured["req"] == {"action": "chat"}, captured
 assert captured["timeout"] == 310, captured
 `)
   })
+
+  it('awaits MCP server shutdown without holding the MCP registry lock', () => {
+    runPython(String.raw`
+${harness}
+
+import asyncio
+
+lock = threading.Lock()
+servers = {}
+events = []
+
+class FakeMcpTask:
+    async def shutdown(self):
+        events.append("shutdown-started")
+        acquired = lock.acquire(blocking=False)
+        events.append(("lock-free-during-shutdown", acquired))
+        if acquired:
+            lock.release()
+        await asyncio.sleep(0)
+        events.append("shutdown-finished")
+
+task = FakeMcpTask()
+servers["github"] = task
+
+def run_on_mcp_loop(factory, timeout=30):
+    events.append(("timeout", timeout))
+    asyncio.run(factory())
+
+result = bridge.BridgeServer._shutdown_mcp_server(
+    "github",
+    servers,
+    lock,
+    run_on_mcp_loop,
+)
+
+assert result is True, result
+assert "github" not in servers, servers
+assert events == [
+    ("timeout", 15),
+    "shutdown-started",
+    ("lock-free-during-shutdown", True),
+    "shutdown-finished",
+], events
+`)
+  })
 })

@@ -35,6 +35,17 @@ interface ProfileAvatarResponse {
   updatedAt?: number
 }
 
+type RuntimeStatus = Awaited<ReturnType<typeof buildRuntimeStatus>>
+
+interface RuntimeStatusCacheEntry {
+  status: RuntimeStatus
+  updatedAt: number
+}
+
+const runtimeStatusCache = new Map<string, RuntimeStatusCacheEntry>()
+let runtimeStatusRefreshPromise: Promise<void> | null = null
+let runtimeStatusMinimumFreshAt = 0
+
 const RESERVED_PROFILE_NAMES = new Set([
   'hermes', 'default', 'test', 'tmp', 'root', 'sudo',
 ])
@@ -309,6 +320,44 @@ async function buildRuntimeStatus(profile: HermesProfile | string, bridgeState?:
   }
 }
 
+function setRuntimeStatusCache(status: RuntimeStatus, checkedAt = Date.now()): void {
+  runtimeStatusCache.set(status.profile, {
+    status,
+    updatedAt: checkedAt,
+  })
+}
+
+function listProfilesForStatusFast(): HermesProfile[] {
+  return filterVisibleProfiles(listProfilesFromDisk(getActiveProfileName()))
+}
+
+async function refreshRuntimeStatusCache(checkedAt: number): Promise<void> {
+  const profiles = await listProfilesForStatus()
+  const bridge = await readBridgeWorkers()
+  const statuses = await Promise.all(profiles.map(profile => buildRuntimeStatus(profile, bridge)))
+  statuses.forEach(status => setRuntimeStatusCache(status, checkedAt))
+}
+
+function startRuntimeStatusRefresh(): void {
+  const startedAt = Date.now()
+  runtimeStatusRefreshPromise = refreshRuntimeStatusCache(startedAt)
+    .catch((err) => {
+      logger.warn(err, '[profiles] failed to refresh runtime status cache')
+    })
+    .finally(() => {
+      runtimeStatusRefreshPromise = null
+      if (runtimeStatusMinimumFreshAt > startedAt) {
+        startRuntimeStatusRefresh()
+      }
+    })
+}
+
+function scheduleRuntimeStatusRefresh(): void {
+  runtimeStatusMinimumFreshAt = Math.max(runtimeStatusMinimumFreshAt, Date.now())
+  if (runtimeStatusRefreshPromise) return
+  startRuntimeStatusRefresh()
+}
+
 export async function list(ctx: any) {
   try {
     let profiles: HermesProfile[]
@@ -478,18 +527,35 @@ export async function runtimeStatus(ctx: any) {
   try {
     const profiles = await listProfilesForStatus()
     const profile = profiles.find(item => item.name === name)
-    ctx.body = await buildRuntimeStatus(profile || name)
+    const status = await buildRuntimeStatus(profile || name)
+    setRuntimeStatusCache(status)
+    ctx.body = status
   } catch {
-    ctx.body = await buildRuntimeStatus(name)
+    const status = await buildRuntimeStatus(name)
+    setRuntimeStatusCache(status)
+    ctx.body = status
   }
 }
 
 export async function runtimeStatuses(ctx: any) {
   try {
-    const profiles = filterProfilesForUser(ctx, await listProfilesForStatus())
-    const bridge = await readBridgeWorkers()
-    const statuses = await Promise.all(profiles.map(profile => buildRuntimeStatus(profile, bridge)))
-    ctx.body = { profiles: statuses }
+    const refreshParam = ctx.query?.refresh
+    const refreshRequested = refreshParam === undefined || (refreshParam !== '0' && refreshParam !== 'false')
+    if (refreshRequested) scheduleRuntimeStatusRefresh()
+
+    const profiles = filterProfilesForUser(ctx, listProfilesForStatusFast())
+    const statuses: RuntimeStatus[] = []
+    profiles.forEach(profile => {
+      const cached = runtimeStatusCache.get(profile.name)
+      if (cached && cached.updatedAt >= runtimeStatusMinimumFreshAt) {
+        statuses.push(cached.status)
+      }
+    })
+
+    ctx.body = {
+      profiles: statuses,
+      refreshing: !!runtimeStatusRefreshPromise,
+    }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -519,6 +585,17 @@ export async function restartGatewayForProfile(ctx: any) {
     try {
       const result = await bridgeCleanupClient().destroyProfile(name)
       logger.info('[profiles] destroyed bridge sessions after gateway restart profile=%s destroyed=%s', name, result.destroyed)
+      const cached = runtimeStatusCache.get(name)?.status
+      if (cached) {
+        setRuntimeStatusCache({
+          ...cached,
+          bridge: {
+            ...cached.bridge,
+            running: false,
+          },
+          gateway,
+        })
+      }
     } catch (err) {
       logger.warn(err, '[profiles] failed to destroy bridge sessions after gateway restart profile=%s', name)
     }
@@ -542,10 +619,12 @@ export async function restartProfileRuntime(ctx: any) {
     logger.info('[profiles] destroyed bridge sessions after profile restart profile=%s destroyed=%s', name, result.destroyed)
     const profiles = await listProfilesForStatus()
     const profile = profiles.find(item => item.name === name)
+    const status = await buildRuntimeStatus(profile || name)
+    setRuntimeStatusCache(status)
     ctx.body = {
       success: true,
       destroyed: result.destroyed,
-      status: await buildRuntimeStatus(profile || name),
+      status,
     }
   } catch (err: any) {
     ctx.status = 500

@@ -309,6 +309,86 @@ print(json.dumps({
     })
   })
 
+  it('discovers MCP tools in the active profile before creating an agent', async () => {
+    const profileHome = join(tempDir, 'profiles', 'work')
+    await mkdir(profileHome, { recursive: true })
+    await writeFile(join(profileHome, 'config.yaml'), 'model:\n  default: work-model\n', 'utf-8')
+    const expectedProfileHome = await realpath(profileHome)
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+events = []
+
+tools_pkg = types.ModuleType("tools")
+tools_pkg.__path__ = []
+sys.modules["tools"] = tools_pkg
+
+mcp_tool = types.ModuleType("tools.mcp_tool")
+def discover_mcp_tools():
+    events.append({"event": "discover", "home": os.environ.get("HERMES_HOME")})
+    return ["mcp_anysearch_search"]
+mcp_tool.discover_mcp_tools = discover_mcp_tools
+sys.modules["tools.mcp_tool"] = mcp_tool
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        events.append({
+            "event": "agent",
+            "home": os.environ.get("HERMES_HOME"),
+            "enabled_toolsets": kwargs.get("enabled_toolsets"),
+        })
+        self.tools = []
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "work-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: ["mcp-anysearch"]
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+session = pool.get_or_create("session-1", profile="work")
+
+print(json.dumps({
+    "events": events,
+    "mcp_tool_count": session.config.get("mcp_tool_count"),
+    "restored_home": os.environ.get("HERMES_HOME"),
+}))
+`)
+
+    expect(result).toEqual({
+      events: [
+        { event: 'discover', home: expectedProfileHome },
+        { event: 'agent', home: expectedProfileHome, enabled_toolsets: ['mcp-anysearch'] },
+      ],
+      mcp_tool_count: 1,
+      restored_home: tempDir,
+    })
+  })
+
   it('handles Windows netstat output decode failures without crashing', async () => {
     const result = await runBridgeProbe(`
 import importlib.util
