@@ -34,7 +34,7 @@ vi.mock('vue-router', async (importOriginal) => {
   return {
     ...actual,
     useRoute: () => ({ name: 'hermes.chat' }),
-    useRouter: () => ({ push: vi.fn() }),
+    useRouter: () => ({ push: vi.fn(), hasRoute: () => true }),
   }
 })
 
