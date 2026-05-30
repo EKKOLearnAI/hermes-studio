@@ -1,11 +1,11 @@
 {
-  "name": "hermes-desktop",
+  "name": "hermes-studio",
   "version": "0.6.5",
   "description": "Hermes Studio desktop distribution with bundled Python runtime and hermes-agent",
   "homepage": "https://ekkolearnai.com",
   "author": {
     "name": "Hermes Studio Contributors",
-    "email": "noreply@hermes-desktop.local"
+    "email": "noreply@hermes-studio.local"
   },
   "license": "MIT",
   "private": true,
