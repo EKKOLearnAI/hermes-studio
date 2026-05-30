@@ -1093,7 +1093,7 @@ export default {
     install: "安装依赖",
     start: "开启预览",
     stop: "停止",
-    note: "预览代码存放在 Web UI 数据目录下。正式环境仍使用 8648，预览开发环境使用前端 8651、后端 8650。",
+    note: "预览代码存放在 Web UI 数据目录下。正式环境仍使用 8748，预览开发环境使用前端 8651、后端 8650。",
     path: "预览路径",
     webuiHome: "预览数据目录",
     currentTag: "当前 Tag",

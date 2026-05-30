@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { app } from 'electron'
 import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
 
-const DEFAULT_PORT = 8648
+const DEFAULT_PORT = 8748
 const READY_TIMEOUT_MS = 30_000
 
 let serverProc: ChildProcess | null = null

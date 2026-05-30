@@ -1101,7 +1101,7 @@ export default {
     install: "Install Dependencies",
     start: "Start Preview",
     stop: "Stop",
-    note: "Preview code is stored under the Web UI data home. Production remains on port 8648; preview development runs on frontend 8651 and backend 8650.",
+    note: "Preview code is stored under the Web UI data home. Production remains on port 8748; preview development runs on frontend 8651 and backend 8650.",
     path: "Preview Path",
     webuiHome: "Preview Data Home",
     currentTag: "Current Tag",

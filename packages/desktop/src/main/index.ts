@@ -4,7 +4,7 @@ import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
 import { hermesBinExists, hermesBin } from './paths'
 import { initAutoUpdater } from './updater'
 
-const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8648
+const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 
 let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
