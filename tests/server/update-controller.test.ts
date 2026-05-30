@@ -40,13 +40,6 @@ function getNodePrefix() {
   return process.platform === 'win32' ? getNodeBinDir() : dirname(getNodeBinDir())
 }
 
-function getNpmCliPath() {
-  const prefix = getNodePrefix()
-  return process.platform === 'win32'
-    ? join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js')
-    : join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
-}
-
 function getGlobalCliScript(prefix: string) {
   return process.platform === 'win32'
     ? join(prefix, 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
@@ -76,7 +69,6 @@ describe('update controller', () => {
   it('updates and restarts through the running Node executable, not PATH shims', async () => {
     process.env.PORT = '9129'
     const nodeBinDir = getNodeBinDir()
-    const npmCli = getNpmCliPath()
     const globalPrefix = getNodePrefix()
     const cliScript = getGlobalCliScript(globalPrefix)
     const execFileSync = vi.fn((_command: string, args: string[]) => {
@@ -94,7 +86,21 @@ describe('update controller', () => {
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
+      [expect.stringContaining('npm-cli.js'), 'cache', 'clean', '--force'],
+      expect.objectContaining({
+        encoding: 'utf-8',
+        timeout: 2 * 60 * 1000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: expect.objectContaining({
+          npm_node_execpath: process.execPath,
+          PATH: expect.stringContaining(`${nodeBinDir}${delimiter}`),
+        }),
+      }),
+    )
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
+      process.execPath,
+      [expect.stringContaining('npm-cli.js'), 'install', '-g', 'hermes-web-ui@latest'],
       expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
@@ -112,7 +118,7 @@ describe('update controller', () => {
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
-      [npmCli, 'root', '-g'],
+      [expect.stringContaining('npm-cli.js'), 'root', '-g'],
       expect.objectContaining({
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],

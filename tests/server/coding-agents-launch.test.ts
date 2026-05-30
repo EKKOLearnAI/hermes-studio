@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/claude-code-proxy'
 import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/codex-proxy'
@@ -36,6 +36,16 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
   }
 }
 
+function expectInjectedPath(result: { env: Record<string, string>; shellCommand: string }) {
+  expect(result.env.PATH).toEqual(expect.any(String))
+  expect(result.env.PATH).toContain(dirname(process.execPath))
+  expect(result.shellCommand).toContain('&& PATH=')
+}
+
+function expectCommandName(command: string, name: string) {
+  expect(command).toMatch(new RegExp(`(^|[/\\\\])${name}(\\.cmd)?$`))
+}
+
 describe('coding agent launch preparation', () => {
   it('launches Claude Code with the global config when requested', async () => {
     const home = makeHome()
@@ -53,12 +63,13 @@ describe('coding agent launch preparation', () => {
       model: '',
       rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
-      command: 'claude',
       args: [],
-      env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude`,
       files: [],
     })
+    expectCommandName(result.command, 'claude')
+    expectInjectedPath(result)
+    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && PATH=`)
+    expect(result.shellCommand).toMatch(/(^|[/\s\\])claude(\.cmd)?(\s|$)/)
   })
 
   it('launches Codex with the global config when requested', async () => {
@@ -77,12 +88,13 @@ describe('coding agent launch preparation', () => {
       model: '',
       rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
-      command: 'codex',
       args: [],
-      env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && codex`,
       files: [],
     })
+    expectCommandName(result.command, 'codex')
+    expectInjectedPath(result)
+    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && PATH=`)
+    expect(result.shellCommand).toMatch(/(^|[/\s\\])codex(\.cmd)?(\s|$)/)
   })
 
   it('launches Claude Code with scoped settings instead of a CLI --model override', async () => {
@@ -104,7 +116,9 @@ describe('coding agent launch preparation', () => {
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
     ])
-    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} && claude`)
+    expectInjectedPath(result)
+    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} && PATH=`)
+    expect(result.shellCommand).toMatch(/(^|[/\s\\])claude(\.cmd)? --settings /)
     expect(result.shellCommand).not.toContain('--model')
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
@@ -156,7 +170,10 @@ describe('coding agent launch preparation', () => {
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'codex'))
     expect(result.workspaceDir).toBe(join(home, 'coding-agent', 'workspace', 'default', 'openrouter'))
     expect(result.args).toEqual(['--model', 'openai/gpt-oss-20b:free'])
-    expect(result.env).toEqual({ CODEX_HOME: result.rootDir })
+    expect(result.env).toMatchObject({
+      CODEX_HOME: result.rootDir,
+      PATH: expect.stringContaining(dirname(process.execPath)),
+    })
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     expect(config).toContain('requires_openai_auth = false')
