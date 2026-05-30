@@ -1025,11 +1025,19 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (action === 'usage' && target) {
-      target.inputTokens = (evt as any).inputTokens
-      target.outputTokens = (evt as any).outputTokens
-      if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
-      // Save full upstream API usage data when available (from bridge agent result)
-      if ((evt as any).totalTokens != null) {
+      // Only apply values from live bridge data (signaled by lastPromptTokens).
+      // DB fallback carries cumulative/inflated session_* counters — not safe
+      // for the progress bar or context display.
+      const isLive = (evt as any).lastPromptTokens != null
+      if (isLive) {
+        target.inputTokens = (evt as any).inputTokens
+        target.outputTokens = (evt as any).outputTokens
+        if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+      }
+      // Only build apiUsage from live bridge data (signaled by lastPromptTokens).
+      // DB fallback lacks lastPromptTokens and carries cumulative/inflated values
+      // from the previous turn's session_* counters — not safe for progress bar.
+      if (isLive) {
         target.apiUsage = {
           inputTokens: (evt as any).inputTokens,
           outputTokens: (evt as any).outputTokens,
