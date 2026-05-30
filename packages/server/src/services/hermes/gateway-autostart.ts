@@ -1,15 +1,12 @@
-import { execFile } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { promisify } from 'util'
 import { stripLegacyApiServerGatewayConfig } from '../config-helpers'
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
 import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
-
-const execFileAsync = promisify(execFile)
+import { execHermesWithBin } from './hermes-process'
 
 const RESERVED_PROFILE_NAMES = new Set([
   'hermes', 'test', 'tmp', 'root', 'sudo',
@@ -115,7 +112,7 @@ export function parseGatewayStatusesFromProfileListOutput(stdout: string, profil
 }
 
 async function listGatewayStatusesFromProfileList(hermesBin: string): Promise<Map<string, string>> {
-  const { stdout } = await execFileAsync(hermesBin, ['profile', 'list'], {
+  const { stdout } = await execHermesWithBin(hermesBin, ['profile', 'list'], {
     timeout: 10000,
     windowsHide: true,
   })
@@ -132,7 +129,7 @@ export async function isGatewayRunningForProfile(hermesBin: string, profileDir: 
   if (gatewayStateLooksRunningForProfile(profileDir)) return true
 
   try {
-    const { stdout, stderr } = await execFileAsync(hermesBin, ['gateway', 'status'], {
+    const { stdout, stderr } = await execHermesWithBin(hermesBin, ['gateway', 'status'], {
       timeout: 10000,
       windowsHide: true,
       env: {
@@ -170,7 +167,7 @@ async function waitForGatewayRunning(hermesBin: string, profile: string, profile
 
 async function stopGatewayForProfile(hermesBin: string, profile: string, profileDir: string): Promise<void> {
   try {
-    await execFileAsync(hermesBin, ['gateway', 'stop'], {
+    await execHermesWithBin(hermesBin, ['gateway', 'stop'], {
       timeout: 30000,
       windowsHide: true,
       env: {
@@ -202,7 +199,7 @@ export async function startGatewayForProfile(
   }
 
   try {
-    await execFileAsync(hermesBin, ['gateway', 'start'], {
+    await execHermesWithBin(hermesBin, ['gateway', 'start'], {
       timeout: 30000,
       windowsHide: true,
       env: {

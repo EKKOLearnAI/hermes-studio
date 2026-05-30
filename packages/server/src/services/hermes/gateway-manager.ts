@@ -27,7 +27,7 @@
  *   - 停止时先尝试 `hermes gateway stop`，再根据 PID / 监听端口清理进程
  */
 
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { join } from 'path'
 import { readFileSync, existsSync, readdirSync, unlinkSync } from 'fs'
 import { execFile } from 'child_process'
@@ -36,6 +36,7 @@ import { createServer } from 'net'
 import yaml from 'js-yaml'
 import { logger } from '../logger'
 import { detectHermesHome, getHermesBin } from './hermes-path'
+import { execHermesWithBin, spawnHermesWithBin } from './hermes-process'
 
 const execFileAsync = promisify(execFile)
 
@@ -430,7 +431,7 @@ export class GatewayManager {
   /** 列出所有已知 profile 名称（通过 hermes CLI 或文件系统扫描） */
   async listProfiles(): Promise<string[]> {
     try {
-      const { stdout } = await execFileAsync(HERMES_BIN, ['profile', 'list'], {
+      const { stdout } = await execHermesWithBin(HERMES_BIN, ['profile', 'list'], {
         timeout: 10000,
         windowsHide: true,
       })
@@ -573,7 +574,7 @@ export class GatewayManager {
     return new Promise((resolve, reject) => {
       const env = buildGatewayProcessEnv(name, hermesHome)
       const detachGateway = shouldDetachGatewayProcess()
-      const child = spawn(HERMES_BIN, ['gateway', 'run', '--replace'], {
+      const child = spawnHermesWithBin(HERMES_BIN, ['gateway', 'run', '--replace'], {
         stdio: 'ignore',
         detached: detachGateway,
         windowsHide: true,
@@ -680,7 +681,7 @@ export class GatewayManager {
   private async stopViaHermesCli(name: string): Promise<void> {
     const hermesHome = this.profileDir(name)
     try {
-      const { stdout, stderr } = await execFileAsync(HERMES_BIN, ['gateway', 'stop'], {
+      const { stdout, stderr } = await execHermesWithBin(HERMES_BIN, ['gateway', 'stop'], {
         timeout: 15000,
         windowsHide: true,
         env: buildGatewayProcessEnv(name, hermesHome),
@@ -838,7 +839,7 @@ export class GatewayManager {
     if (currentProfile !== 'default') {
       logger.info('Current profile is "%s", switching to "default" for gateway startup', currentProfile)
       try {
-        await execFileAsync(HERMES_BIN, ['profile', 'use', 'default'], {
+        await execHermesWithBin(HERMES_BIN, ['profile', 'use', 'default'], {
           timeout: 10000,
           windowsHide: true,
         })

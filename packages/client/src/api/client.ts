@@ -2,8 +2,14 @@ import router from '@/router'
 
 const DEFAULT_BASE_URL = ''
 
+function isDesktopShell(): boolean {
+  return typeof window !== 'undefined' &&
+    (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true
+}
+
 function getBaseUrl(): string {
   if (import.meta.env.VITE_HERMES_PREVIEW === '1') return DEFAULT_BASE_URL
+  if (isDesktopShell()) return DEFAULT_BASE_URL
   return localStorage.getItem('hermes_server_url') || DEFAULT_BASE_URL
 }
 

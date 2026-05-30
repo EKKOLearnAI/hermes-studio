@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -38,6 +38,7 @@
     "dev:client": "cross-env HERMES_WEB_UI_BACKEND_PORT=8647 vite --host --port 8649 --strictPort",
     "dev:server": "nodemon",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
+    "harness:check": "node scripts/harness-check.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
@@ -48,6 +49,12 @@
     "dev:website": "vite --config vite.config.website.ts",
     "build:website": "vite build --config vite.config.website.ts",
     "preview:website": "vite preview --config vite.config.website.ts",
+    "desktop:install": "npm ci --prefix packages/desktop --no-audit --no-fund",
+    "desktop:prepare-python": "npm --prefix packages/desktop run prepare:python",
+    "build:desktop": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --publish never",
+    "build:desktop:mac": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --mac --publish never",
+    "build:desktop:win": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --win --publish never",
+    "build:desktop:linux": "npm run build && npm run desktop:install && npm run desktop:prepare-python && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
     "claude": "claude --dangerously-skip-permissions"
   },

@@ -36,8 +36,78 @@ jobs:
           npm ci --ignore-scripts
           npm rebuild node-pty
 
+      - name: Check repository harness
+        run: npm run harness:check
+
       - name: Test with coverage
         run: npm run test:coverage
 
       - name: Build
         run: npm run build
+
+  # Smoke test only: verify desktop packaging still works on pull requests.
+  # Full multi-platform release artifacts are built by desktop-release.yml on release.
+  desktop:
+    name: Desktop smoke test (${{ matrix.label }})
+    needs: build
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-22.04
+            target_os: linux
+            target_arch: x64
+            electron_target: "--linux AppImage deb --x64"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/desktop/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install web UI dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty
+
+      - name: Build web UI
+        run: npm run build
+
+      - name: Keep production web UI dependencies only
+        run: npm prune --omit=dev --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        run: npm ci --prefix packages/desktop --no-audit --no-fund
+
+      - name: Prepare bundled Python
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+        run: npm --prefix packages/desktop run prepare:python
+
+      - name: Build desktop artifact
+        run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} --publish never
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          path: |
+            packages/desktop/release/*.AppImage
+            packages/desktop/release/*.deb
+            packages/desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 7

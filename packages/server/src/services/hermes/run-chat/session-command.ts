@@ -22,6 +22,7 @@ type CommandName =
   | 'compress'
   | 'steer'
   | 'destroy'
+  | 'reload-mcp'
 
 interface ParsedSessionCommand {
   name: CommandName
@@ -57,6 +58,7 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   steer: 'steer',
   destroy: 'destroy',
   destory: 'destroy',
+  'reload-mcp': 'reload-mcp',
 }
 
 export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessionCommand | null {
@@ -472,6 +474,35 @@ export async function handleSessionCommand(
       }
       await ctx.bridge.steer(sessionId, command.args)
       emitCommand({ action: 'steer', terminal: false, message: 'Steer instruction sent.' })
+      return
+    }
+
+    case 'reload-mcp': {
+      if (state.isWorking) {
+        emitCommand({
+          ok: false,
+          action: 'reload-mcp',
+          terminal: false,
+          message: 'MCP reload can only run while the session is idle. Wait for the current run to finish or abort it first.',
+        })
+        return
+      }
+      try {
+        const server = command.args || undefined
+        const result = await ctx.bridge.mcpReload(server, ctx.profile)
+        emitCommand({
+          action: 'reload-mcp',
+          message: `MCP reloaded successfully.${server ? ` Server: ${server}` : ' All servers.'}`,
+          result,
+        })
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: 'reload-mcp',
+          terminal: !state.isWorking,
+          message: `MCP reload failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
       return
     }
 

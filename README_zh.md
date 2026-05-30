@@ -188,23 +188,6 @@ hermes-web-ui start
 
 打开 **http://localhost:8648**
 
-### 一键安装（自动检测系统）
-
-自动安装 Node.js（如未安装）和 hermes-web-ui，支持 Debian/Ubuntu/macOS：
-
-```bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
-```
-
-### WSL
-
-```bash
-bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
-hermes-web-ui start
-```
-
-> WSL 使用与其他本地安装相同的 Web UI 后台启动流程；Web UI 不再单独启动 gateway 服务。
-
 ### Docker Compose
 
 单容器部署，内置 Hermes Agent 运行时：

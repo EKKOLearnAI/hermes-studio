@@ -19,7 +19,16 @@ function dismissalKey(userId: number): string {
   return `hermes_default_credentials_prompt_dismissed_${userId}`;
 }
 
+function isDesktopShell(): boolean {
+  return (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true;
+}
+
 async function checkDefaultCredentials() {
+  if (isDesktopShell()) {
+    show.value = false;
+    return;
+  }
+
   if (route.name === "login") {
     show.value = false;
     return;

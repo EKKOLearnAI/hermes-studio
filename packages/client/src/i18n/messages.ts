@@ -37,7 +37,7 @@ const rawMessages: Record<string, LocaleMessages> = { en, zh, 'zh-TW': zhTW, ja,
 
 export const messages: Record<string, LocaleMessages> = {}
 for (const [locale, msg] of Object.entries(rawMessages)) {
-  messages[locale] = locale === 'en' ? msg : mergeMessagesWithFallback(en, msg)
+  messages[locale] = locale === 'en' ? msg : mergeMessagesWithFallback({ ...en }, { ...msg })
 }
 
 export { en }

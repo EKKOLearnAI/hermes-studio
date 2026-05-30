@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
@@ -47,7 +47,7 @@ function loadAuthJson(authPath: string): AuthJson {
 
 function saveAuthJson(authPath: string, data: AuthJson): void {
   data.updated_at = new Date().toISOString()
-  const dir = authPath.substring(0, authPath.lastIndexOf('/'))
+  const dir = dirname(authPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(authPath, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
@@ -55,7 +55,7 @@ function saveAuthJson(authPath: string, data: AuthJson): void {
 function saveCodexCliTokens(accessToken: string, refreshToken: string): void {
   const codexHome = process.env.CODEX_HOME || CODEX_HOME
   const codexAuthPath = join(codexHome, 'auth.json')
-  const dir = codexAuthPath.substring(0, codexAuthPath.lastIndexOf('/'))
+  const dir = dirname(codexAuthPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(codexAuthPath, JSON.stringify({ tokens: { access_token: accessToken, refresh_token: refreshToken }, last_refresh: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 })
 }

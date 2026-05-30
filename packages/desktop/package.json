@@ -1,0 +1,36 @@
+{
+  "name": "hermes-studio",
+  "version": "0.6.6",
+  "description": "Hermes Studio desktop distribution with bundled Python runtime and hermes-agent",
+  "homepage": "https://ekkolearnai.com",
+  "author": {
+    "name": "Hermes Studio Contributors",
+    "email": "noreply@hermes-studio.local"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.json",
+    "build": "npm run build:main",
+    "fetch:python": "node scripts/fetch-python.mjs",
+    "install:hermes": "node scripts/install-hermes.mjs",
+    "patch:hermes": "node scripts/apply-hermes-patches.mjs",
+    "prepare:python": "npm run fetch:python && npm run install:hermes && npm run patch:hermes && npm run prune:python",
+    "prune:python": "node scripts/prune-python.mjs",
+    "dev": "npm run build:main && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "electron": "^42.3.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "~5.6.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

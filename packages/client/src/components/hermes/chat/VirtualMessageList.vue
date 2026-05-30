@@ -20,6 +20,10 @@ type AnchorTarget = {
   anchorId: string;
   align: AnchorAlign;
 }
+type BottomScrollOptions = number | {
+  frames?: number;
+  keepAliveMs?: number;
+}
 
 const props = withDefaults(defineProps<{
   messages: VirtualItem[];
@@ -54,6 +58,8 @@ const scrollTop = ref(0);
 const viewportHeight = ref(0);
 let keepBottomUntil = 0;
 let bottomFrame: number | null = null;
+let bottomFrameRemaining = 0;
+let bottomFrameAttempts = 0;
 let anchorFrame: number | null = null;
 let anchorToken = 0;
 let activeAnchorTarget: AnchorTarget | null = null;
@@ -94,35 +100,54 @@ function isNearBottom(threshold = 200): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
-function scrollToBottom() {
-  keepBottomUntil = Date.now() + 700;
+function scrollToBottom(options: BottomScrollOptions = {}) {
+  const frames = typeof options === "number" ? options : options.frames ?? 5;
+  const keepAliveMs = typeof options === "number" ? 700 : options.keepAliveMs ?? 700;
+  keepBottomUntil = Date.now() + keepAliveMs;
   nextTick(() => {
-    scheduleScrollToBottom(3);
+    scheduleScrollToBottom(frames);
   });
 }
 
-function setScrollToBottomNow() {
+function setScrollToBottomNow(): boolean {
   const el = getScrollerElement();
   scrollerRef.value?.scrollToBottom();
   if (el) {
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    syncViewport();
+    return true;
   }
-  syncViewport();
+  return false;
 }
 
 function scheduleScrollToBottom(frames = 1) {
-  if (bottomFrame != null) cancelAnimationFrame(bottomFrame);
+  bottomFrameRemaining = Math.max(bottomFrameRemaining, frames);
+  if (bottomFrame != null) return;
 
-  const step = (remaining: number) => {
-    setScrollToBottomNow();
-    if (remaining <= 1) {
+  const step = () => {
+    const scrolled = setScrollToBottomNow();
+    if (scrolled) {
+      bottomFrameAttempts = 0;
+      bottomFrameRemaining -= 1;
+    } else {
+      bottomFrameAttempts += 1;
+    }
+    if (bottomFrameRemaining <= 0) {
       bottomFrame = null;
+      bottomFrameRemaining = 0;
+      bottomFrameAttempts = 0;
       return;
     }
-    bottomFrame = requestAnimationFrame(() => step(remaining - 1));
+    if (bottomFrameAttempts > 30) {
+      bottomFrame = null;
+      bottomFrameRemaining = 0;
+      bottomFrameAttempts = 0;
+      return;
+    }
+    bottomFrame = requestAnimationFrame(step);
   };
 
-  bottomFrame = requestAnimationFrame(() => step(frames));
+  bottomFrame = requestAnimationFrame(step);
 }
 
 function findTargetElement(messageId: string, anchorId: string): HTMLElement | null {
@@ -275,6 +300,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (bottomFrame != null) cancelAnimationFrame(bottomFrame);
+  bottomFrameRemaining = 0;
+  bottomFrameAttempts = 0;
   if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
   resizeObserver?.disconnect();
 });
@@ -313,9 +340,6 @@ defineExpose({
       @resize="handleResize"
       @visible="syncViewport"
     >
-      <template #empty>
-        <slot name="empty" />
-      </template>
       <template #before>
         <slot v-if="messages.length > 0" name="before" />
       </template>
@@ -333,6 +357,9 @@ defineExpose({
         <slot v-if="messages.length > 0" name="after" />
       </template>
     </DynamicScroller>
+    <div v-if="messages.length === 0 && $slots.empty" class="virtual-message-list-empty">
+      <slot name="empty" />
+    </div>
   </div>
 </template>
 
@@ -343,6 +370,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   display: flex;
+  position: relative;
 }
 
 .virtual-message-list {
@@ -360,5 +388,21 @@ defineExpose({
 .virtual-row {
   box-sizing: border-box;
   padding-bottom: var(--virtual-row-gap);
+}
+
+.virtual-message-list-empty {
+  position: absolute;
+  inset: var(--virtual-list-padding);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.virtual-message-list-empty :deep(.empty-state) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 </style>
