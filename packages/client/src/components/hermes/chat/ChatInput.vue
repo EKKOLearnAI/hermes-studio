@@ -251,12 +251,12 @@ watch(
 )
 
 const totalTokens = computed(() => {
-  // When upstream API data is available, compute total prompt tokens
-  // (input + cache_read + cache_write) — this is the actual context
-  // window consumption. input_tokens alone can be 0 when the entire
-  // prompt is served from cache.
+  // When upstream API data is available, prefer last_prompt_tokens
+  // (the single-call prompt cost) over the cumulative session accumulator,
+  // which double-counts the shared context across multiple tool calls.
   const api = chatStore.activeSession?.apiUsage
   if (api) {
+    if (api.lastPromptTokens && api.lastPromptTokens > 0) return api.lastPromptTokens
     const promptTokens = (api.inputTokens || 0) + (api.cacheReadTokens || 0) + (api.cacheWriteTokens || 0)
     if (promptTokens > 0) return promptTokens
   }

@@ -94,6 +94,7 @@ export interface Session {
     cacheWriteTokens?: number
     reasoningTokens?: number
     totalTokens?: number
+    lastPromptTokens?: number
     model?: string
     costStatus?: string
     actualCostUsd?: number
@@ -667,6 +668,7 @@ export const useChatStore = defineStore('chat', () => {
               cacheWriteTokens: bu.cacheWriteTokens,
               reasoningTokens: bu.reasoningTokens,
               totalTokens: bu.totalTokens,
+              lastPromptTokens: bu.lastPromptTokens,
               model: bu.model,
               costStatus: bu.costStatus,
               actualCostUsd: bu.actualCostUsd,
@@ -1035,6 +1037,7 @@ export const useChatStore = defineStore('chat', () => {
           cacheWriteTokens: (evt as any).cacheWriteTokens,
           reasoningTokens: (evt as any).reasoningTokens,
           totalTokens: (evt as any).totalTokens,
+          lastPromptTokens: (evt as any).lastPromptTokens,
           model: (evt as any).model,
           costStatus: (evt as any).costStatus,
           actualCostUsd: (evt as any).actualCostUsd,

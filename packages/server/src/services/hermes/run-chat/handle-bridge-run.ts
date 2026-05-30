@@ -121,6 +121,7 @@ function extractBridgeUsage(result: unknown): BridgeUsageState | undefined {
     completionTokens: finiteToken(r.completion_tokens) ?? 0,
     totalTokens: finiteToken(r.total_tokens) ?? 0,
     apiCalls: finiteToken(r.api_calls) ?? 0,
+    lastPromptTokens: finiteToken(r.last_prompt_tokens),
     model: typeof r.model === 'string' ? r.model : undefined,
     estimatedCostUsd: typeof r.estimated_cost_usd === 'number' ? r.estimated_cost_usd : undefined,
     actualCostUsd: typeof r.actual_cost_usd === 'number' ? r.actual_cost_usd : undefined,

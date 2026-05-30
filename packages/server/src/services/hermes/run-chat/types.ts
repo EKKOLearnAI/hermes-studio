@@ -107,6 +107,8 @@ export interface BridgeUsageState {
   completionTokens: number
   totalTokens: number
   apiCalls: number
+  /** Raw prompt_tokens of the last API call (not cumulative across tool calls) */
+  lastPromptTokens?: number
   model?: string
   estimatedCostUsd?: number
   actualCostUsd?: number

@@ -210,6 +210,7 @@ export async function handleSessionCommand(
           cacheWriteTokens: bu.cacheWriteTokens,
           reasoningTokens: bu.reasoningTokens,
           totalTokens: bu.totalTokens,
+          lastPromptTokens: bu.lastPromptTokens,
           contextTokens: contextForDisplay,
           model,
           costStatus: bu.costStatus,
