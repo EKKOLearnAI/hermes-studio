@@ -286,6 +286,43 @@ def _json_line_bytes(value: Any) -> bytes:
     return payload.encode("utf-8")
 
 
+def _bridge_log(event: str, payload: dict[str, Any]) -> None:
+    try:
+        body = {"event": event, **payload}
+        print(
+            "[hermes_bridge] " + json.dumps(_sanitize_surrogates(body), ensure_ascii=False, default=_json_default),
+            file=sys.stderr,
+            flush=True,
+        )
+    except Exception:
+        print(f"[hermes_bridge] {event}", file=sys.stderr, flush=True)
+
+
+def _tool_names_from_definitions(tools: Any) -> list[str]:
+    if not isinstance(tools, list):
+        return []
+    names: list[str] = []
+    for tool in tools:
+        name = ""
+        if isinstance(tool, dict):
+            function = tool.get("function")
+            if isinstance(function, dict):
+                name = str(function.get("name") or "")
+            if not name:
+                name = str(tool.get("name") or "")
+        else:
+            name = str(getattr(tool, "name", "") or "")
+        if name:
+            names.append(name)
+    return names
+
+
+def _mcp_tool_names_from_names(tool_names: Any) -> list[str]:
+    if not isinstance(tool_names, list):
+        return []
+    return sorted(str(name) for name in tool_names if str(name).startswith("mcp_"))
+
+
 def _agent_root() -> Path | None:
     return _find_agent_root(os.environ.get("HERMES_AGENT_ROOT"))
 
@@ -627,6 +664,78 @@ def _load_enabled_toolsets() -> list[str] | None:
         return None
 
 
+def _discover_bridge_mcp_tools() -> list[str]:
+    _ensure_agent_imports()
+    try:
+        from tools.mcp_tool import discover_mcp_tools
+
+        tools = discover_mcp_tools()
+        return list(tools) if isinstance(tools, list) else []
+    except Exception as exc:
+        print(
+            f"[hermes_bridge] MCP tool discovery failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return []
+
+
+def _log_worker_startup_context(profile: str | None) -> None:
+    profile_name = profile or _worker_profile() or "default"
+    try:
+        cfg = _load_cfg()
+        enabled_toolsets = _load_enabled_toolsets()
+        discovered_mcp_tools = _discover_bridge_mcp_tools()
+        tool_names: list[str] = []
+        tool_error: str | None = None
+        try:
+            from model_tools import get_tool_definitions
+
+            tool_names = _tool_names_from_definitions(
+                get_tool_definitions(
+                    enabled_toolsets=enabled_toolsets,
+                    quiet_mode=True,
+                )
+            )
+        except Exception as exc:
+            tool_error = str(exc)
+
+        mcp_servers = cfg.get("mcp_servers") if isinstance(cfg.get("mcp_servers"), dict) else {}
+        enabled_mcp_servers: list[str] = []
+        disabled_mcp_servers: list[str] = []
+        for name, server_cfg in mcp_servers.items():
+            enabled = True
+            if isinstance(server_cfg, dict):
+                enabled = str(server_cfg.get("enabled", True)).strip().lower() not in {"0", "false", "no", "off"}
+            (enabled_mcp_servers if enabled else disabled_mcp_servers).append(str(name))
+
+        _bridge_log("bridge.worker.initialized", {
+            "profile": profile_name,
+            "platform": _bridge_platform(),
+            "hermes_home": str(_hermes_home()),
+            "base_hermes_home": str(_base_hermes_home()),
+            "config_path": str(_hermes_home() / "config.yaml"),
+            "model": _resolve_model(cfg),
+            "enabled_toolsets": enabled_toolsets,
+            "tool_count": len(tool_names),
+            "tool_names": tool_names,
+            "tool_error": tool_error,
+            "mcp_server_count": len(mcp_servers),
+            "mcp_servers": sorted(str(name) for name in mcp_servers),
+            "enabled_mcp_servers": sorted(enabled_mcp_servers),
+            "disabled_mcp_servers": sorted(disabled_mcp_servers),
+            "mcp_discovered_tool_count": len(discovered_mcp_tools),
+            "mcp_discovered_tool_names": discovered_mcp_tools,
+            "mcp_tool_count": len(_mcp_tool_names_from_names(tool_names)),
+            "mcp_tool_names": _mcp_tool_names_from_names(tool_names),
+        })
+    except Exception as exc:
+        _bridge_log("bridge.worker.initialized", {
+            "profile": profile_name,
+            "error": str(exc),
+        })
+
+
 def _load_reasoning_config() -> dict[str, Any] | None:
     _ensure_agent_imports()
     try:
@@ -766,6 +875,7 @@ class AgentPool:
 
             with _profile_env(profile):
                 _refresh_worker_profile_env()
+                discovered_mcp_tools = _discover_bridge_mcp_tools()
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
                 runtime = _resolve_runtime(resolved_model, requested_provider or None)
@@ -801,6 +911,7 @@ class AgentPool:
                 )
                 agent.compression_enabled = False
                 self._install_compression_hook(agent, session_id)
+                mcp_tool_names = self._mcp_tool_names(self._agent_tool_names(getattr(agent, "tools", None) or []))
 
                 session = AgentSession(
                     session_id=session_id,
@@ -816,6 +927,8 @@ class AgentPool:
                         "platform": _bridge_platform(),
                         "resumed": False,
                         "resumed_message_count": 0,
+                        "mcp_tool_count": len(discovered_mcp_tools),
+                        "active_mcp_tool_count": len(mcp_tool_names),
                         "db_error": self._db.error,
                     },
                 )
@@ -908,22 +1021,10 @@ class AgentPool:
         return str(system_message or "")
 
     def _agent_tool_names(self, tools: Any) -> list[str]:
-        if not isinstance(tools, list):
-            return []
-        names: list[str] = []
-        for tool in tools:
-            name = ""
-            if isinstance(tool, dict):
-                function = tool.get("function")
-                if isinstance(function, dict):
-                    name = str(function.get("name") or "")
-                if not name:
-                    name = str(tool.get("name") or "")
-            else:
-                name = str(getattr(tool, "name", "") or "")
-            if name:
-                names.append(name)
-        return names
+        return _tool_names_from_definitions(tools)
+
+    def _mcp_tool_names(self, tool_names: Any) -> list[str]:
+        return _mcp_tool_names_from_names(tool_names)
 
     def _estimate_context_info(self, agent: Any, messages: Any, system_message: Any = None) -> dict[str, Any]:
         try:
@@ -935,6 +1036,7 @@ class AgentPool:
         tools = getattr(agent, "tools", None) or []
         message_list = messages if isinstance(messages, list) else []
         try:
+            tool_names = self._agent_tool_names(tools)
             token_count = estimate_request_tokens_rough(message_list, system_prompt=prompt, tools=tools or None)
             fixed_context_tokens = estimate_request_tokens_rough([], system_prompt=prompt, tools=tools or None)
             system_prompt_tokens = estimate_request_tokens_rough([], system_prompt=prompt, tools=None)
@@ -946,7 +1048,9 @@ class AgentPool:
                 "tool_tokens": tool_tokens,
                 "message_count": len(message_list),
                 "tool_count": len(tools) if isinstance(tools, list) else 0,
-                "tool_names": self._agent_tool_names(tools),
+                "tool_names": tool_names,
+                "mcp_tool_count": len(self._mcp_tool_names(tool_names)),
+                "mcp_tool_names": self._mcp_tool_names(tool_names),
                 "system_prompt_chars": len(prompt),
             }
         except Exception:
@@ -3034,6 +3138,7 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_agent_imports()
     if args.worker_profile:
         _set_worker_profile_env(str(args.worker_profile or "default"))
+        _log_worker_startup_context(str(args.worker_profile or "default"))
         BridgeServer(args.endpoint).serve_forever()
     else:
         BridgeBroker(args.endpoint, args.agent_root, args.hermes_home).serve_forever()
