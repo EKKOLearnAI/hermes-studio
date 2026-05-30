@@ -2135,7 +2135,6 @@ class BridgeServer:
         self.pool = AgentPool()
         self._stop = threading.Event()
         self._last_gc = time.time()
-        self._init_mcp_discovery()
 
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()
@@ -2306,21 +2305,6 @@ class BridgeServer:
 
     # ───── MCP Management Methods (for BridgeServer worker process) ─────
 
-    def _init_mcp_discovery(self):
-        """Run MCP discovery on worker startup in a background thread."""
-        profile = _worker_profile() or "default"
-        def _bg():
-            try:
-                from tools.mcp_tool import discover_mcp_tools
-                original = _apply_profile_env(profile)
-                try:
-                    discover_mcp_tools()
-                finally:
-                    _restore_profile_env(original)
-            except Exception as e:
-                print(f"[mcp-init-discovery] failed: {e}", file=sys.stderr, flush=True)
-        threading.Thread(target=_bg, daemon=True, name="mcp-init-discovery").start()
-
     def _read_mcp_config(self, profile=None):
         """Read config.yaml for the given profile."""
         import yaml
@@ -2358,7 +2342,7 @@ class BridgeServer:
     def _handle_mcp_action(self, action: str, req: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
         """Handle MCP management actions in worker process."""
         try:
-            from tools.mcp_tool import discover_mcp_tools, register_mcp_servers, _servers, _lock
+            from tools.mcp_tool import discover_mcp_tools, register_mcp_servers, _run_on_mcp_loop, _servers, _lock
         except ImportError:
             return {"error": "MCP tool module not available", "ok": False}
 
@@ -2368,11 +2352,11 @@ class BridgeServer:
         dispatch = {
             "mcp_list":            lambda: self._mcp_list(profile, _servers, _lock),
             "mcp_server_add":      lambda: self._mcp_server_add(req, profile, discover_mcp_tools),
-            "mcp_server_update":   lambda: self._mcp_server_update(req, profile, _servers, _lock, discover_mcp_tools),
-            "mcp_server_remove":   lambda: self._mcp_server_remove(req, profile, _servers, _lock),
+            "mcp_server_update":   lambda: self._mcp_server_update(req, profile, _servers, _lock, _run_on_mcp_loop, discover_mcp_tools),
+            "mcp_server_remove":   lambda: self._mcp_server_remove(req, profile, _servers, _lock, _run_on_mcp_loop),
             "mcp_server_test":     lambda: self._mcp_server_test(req, _servers, _lock),
             "mcp_tools_list":      lambda: self._mcp_tools_list(req, profile, _servers, _lock),
-            "mcp_reload":          lambda: self._mcp_reload(req, profile, _servers, _lock, discover_mcp_tools, register_mcp_servers),
+            "mcp_reload":          lambda: self._mcp_reload(req, profile, _servers, _lock, _run_on_mcp_loop, discover_mcp_tools, register_mcp_servers),
         }
         handler = dispatch.get(action)
         if handler:
@@ -2489,7 +2473,31 @@ class BridgeServer:
 
         return {"ok": True, "name": name}
 
-    def _mcp_server_update(self, req: dict, profile: str, _servers, _lock, discover_mcp_tools) -> dict[str, Any]:
+    @staticmethod
+    def _shutdown_mcp_server(name: str, _servers, _lock, run_on_mcp_loop) -> bool:
+        with _lock:
+            task = _servers.get(name)
+        if task is None:
+            return False
+
+        try:
+            run_on_mcp_loop(lambda: task.shutdown(), timeout=15)
+        except Exception as e:
+            print(f"[mcp-server-shutdown] failed for {name}: {e}", file=sys.stderr, flush=True)
+        finally:
+            with _lock:
+                if _servers.get(name) is task:
+                    _servers.pop(name, None)
+        return True
+
+    def _shutdown_mcp_servers(self, names: list[str], _servers, _lock, run_on_mcp_loop) -> int:
+        stopped = 0
+        for name in names:
+            if self._shutdown_mcp_server(name, _servers, _lock, run_on_mcp_loop):
+                stopped += 1
+        return stopped
+
+    def _mcp_server_update(self, req: dict, profile: str, _servers, _lock, run_on_mcp_loop, discover_mcp_tools) -> dict[str, Any]:
         name = str(req.get("name") or "").strip()
         config = req.get("config", {})
         if not name or not isinstance(config, dict):
@@ -2510,19 +2518,13 @@ class BridgeServer:
 
         self._save_mcp_config(cfg, profile)
 
-        with _lock:
-            if name in _servers:
-                try:
-                    _servers[name].shutdown()
-                except Exception:
-                    pass
-                _servers.pop(name, None)
+        self._shutdown_mcp_server(name, _servers, _lock, run_on_mcp_loop)
 
         self._run_mcp_discovery_bg(discover_mcp_tools, profile)
 
         return {"ok": True}
 
-    def _mcp_server_remove(self, req: dict, profile: str, _servers, _lock) -> dict[str, Any]:
+    def _mcp_server_remove(self, req: dict, profile: str, _servers, _lock, run_on_mcp_loop) -> dict[str, Any]:
         name = str(req.get("name") or "").strip()
         if not name:
             return {"error": "name is required", "ok": False}
@@ -2535,13 +2537,7 @@ class BridgeServer:
                 del mcp_servers[name]
                 self._save_mcp_config(cfg, profile)
 
-        with _lock:
-            if name in _servers:
-                try:
-                    _servers[name].shutdown()
-                except Exception:
-                    pass
-                _servers.pop(name, None)
+        self._shutdown_mcp_server(name, _servers, _lock, run_on_mcp_loop)
 
         return {"ok": True}
 
@@ -2609,7 +2605,7 @@ class BridgeServer:
 
         return {"ok": True, "results": results}
 
-    def _mcp_reload(self, req: dict, profile: str, _servers, _lock,
+    def _mcp_reload(self, req: dict, profile: str, _servers, _lock, run_on_mcp_loop,
                     discover_mcp_tools, register_mcp_servers) -> dict[str, Any]:
         target = str(req.get("server") or "").strip() or None
 
@@ -2620,22 +2616,10 @@ class BridgeServer:
         if target and target not in mcp_configs:
             return {"error": "server \'%s\' not found in config" % target, "ok": False}
 
-        with _lock:
-            if target:
-                if target in profile_server_names and target in _servers:
-                    try:
-                        _servers[target].shutdown()
-                    except Exception:
-                        pass
-                    _servers.pop(target, None)
-            else:
-                for sname in list(profile_server_names):
-                    if sname in _servers:
-                        try:
-                            _servers[sname].shutdown()
-                        except Exception:
-                            pass
-                        _servers.pop(sname, None)
+        if target:
+            self._shutdown_mcp_server(target, _servers, _lock, run_on_mcp_loop)
+        else:
+            self._shutdown_mcp_servers(list(profile_server_names), _servers, _lock, run_on_mcp_loop)
 
         # Run discovery in background to avoid blocking the request
         if target:

@@ -485,14 +485,18 @@ void loadServers()
 
 .page-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 21px 20px;
   border-bottom: 1px solid $border-color;
 }
 
 .header-title {
-  font-size: 18px;
+  margin: 0;
+  color: $text-primary;
+  font-size: 16px;
   font-weight: 600;
 }
 

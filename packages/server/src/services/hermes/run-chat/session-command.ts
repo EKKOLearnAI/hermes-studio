@@ -478,6 +478,15 @@ export async function handleSessionCommand(
     }
 
     case 'reload-mcp': {
+      if (state.isWorking) {
+        emitCommand({
+          ok: false,
+          action: 'reload-mcp',
+          terminal: false,
+          message: 'MCP reload can only run while the session is idle. Wait for the current run to finish or abort it first.',
+        })
+        return
+      }
       try {
         const server = command.args || undefined
         const result = await ctx.bridge.mcpReload(server, ctx.profile)
