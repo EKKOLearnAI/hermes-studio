@@ -2,6 +2,17 @@
 
 Electron desktop distribution for Hermes Web UI.
 
+## Data directories
+
+Hermes Agent data is stored in the same platform-specific location as native
+Hermes installs:
+
+- Windows: `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes`)
+- macOS/Linux: `~/.hermes`
+
+The desktop wrapper's own Web UI state is stored separately in
+`~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
+
 ## China mirror environment
 
 These mirrors are optional and are not required in CI:

@@ -44,6 +44,18 @@ export function webUiHome(): string {
   return process.env.HERMES_WEB_UI_HOME?.trim() || resolve(homedir(), '.hermes-web-ui')
 }
 
+export function hermesHome(): string {
+  const override = process.env.HERMES_HOME?.trim()
+  if (override) return resolve(override)
+
+  if (isWin) {
+    const localAppData = process.env.LOCALAPPDATA?.trim() || process.env.APPDATA?.trim()
+    if (localAppData) return resolve(localAppData, 'hermes')
+  }
+
+  return resolve(homedir(), '.hermes')
+}
+
 export function tokenFile(): string {
   return join(webUiHome(), '.token')
 }

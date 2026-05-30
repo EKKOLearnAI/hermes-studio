@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from 'n
 import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { app } from 'electron'
-import { webuiServerEntry, webuiDir, hermesBin, webUiHome, tokenFile, pythonDir } from './paths'
+import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
 
 const DEFAULT_PORT = 8648
 const READY_TIMEOUT_MS = 30_000
@@ -59,7 +59,9 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   }
 
   const home = webUiHome()
+  const agentHome = hermesHome()
   mkdirSync(home, { recursive: true })
+  mkdirSync(agentHome, { recursive: true })
 
   // Tell agent-bridge to use the bundled Python directly. Otherwise the
   // bridge auto-detects Python from HERMES_BIN's shebang — which on our
@@ -97,8 +99,12 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // default. Otherwise the gateway silently drops every inbound platform
     // message (DingTalk/Slack/Telegram) with a startup warning. Users can
     // still override by setting GATEWAY_ALLOW_ALL_USERS=false in their
-    // ~/.hermes/.env or by configuring per-platform allowlists.
+    // HERMES_HOME/.env or by configuring per-platform allowlists.
     GATEWAY_ALLOW_ALL_USERS: process.env.GATEWAY_ALLOW_ALL_USERS ?? 'true',
+    // Keep the bundled Hermes Agent, bridge, gateway, and Web UI path helpers
+    // on the same data directory. Native Windows uses %LOCALAPPDATA%\hermes;
+    // macOS/Linux keep the standard ~/.hermes layout.
+    HERMES_HOME: agentHome,
     HERMES_WEB_UI_HOME: home,
     AUTH_TOKEN: token,
     PORT: String(port),
