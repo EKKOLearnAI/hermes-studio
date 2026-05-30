@@ -13,6 +13,7 @@ const ROOT = resolve(__dirname, '..')
 const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
 const HERMES_VERSION = process.env.HERMES_VERSION || '0.15.2'
+const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[mcp]==${HERMES_VERSION}`
 
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
@@ -33,22 +34,31 @@ function hasUv() {
 
 let r
 if (hasUv()) {
-  console.log(`→ Installing hermes-agent==${HERMES_VERSION} via uv`)
+  console.log(`→ Installing ${HERMES_PACKAGE} via uv`)
   r = spawnSync('uv', [
     'pip', 'install',
     '--python', pyBin,
-    `hermes-agent==${HERMES_VERSION}`,
+    HERMES_PACKAGE,
   ], { stdio: 'inherit' })
 } else {
-  console.log(`→ Installing hermes-agent==${HERMES_VERSION} via pip`)
+  console.log(`→ Installing ${HERMES_PACKAGE} via pip`)
   r = spawnSync(pyBin, [
     '-m', 'pip', 'install',
-    `hermes-agent==${HERMES_VERSION}`,
+    HERMES_PACKAGE,
     '--no-warn-script-location',
     '--disable-pip-version-check',
   ], { stdio: 'inherit' })
 }
 if (r.status !== 0) process.exit(r.status ?? 1)
+
+r = spawnSync(pyBin, [
+  '-c',
+  'import mcp; import tools.mcp_tool as t; assert t._MCP_AVAILABLE',
+], { stdio: 'inherit' })
+if (r.status !== 0) {
+  console.error('MCP Python SDK sanity check failed')
+  process.exit(r.status ?? 1)
+}
 
 const hermesBin = TARGET_OS === 'win32'
   ? resolve(PY_DIR, 'Scripts', 'hermes.exe')
