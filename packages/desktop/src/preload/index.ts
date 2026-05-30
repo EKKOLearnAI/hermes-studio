@@ -117,8 +117,9 @@ function installFetchPatch(): void {
   }
 }
 
+installFetchPatch()
+
 window.addEventListener('DOMContentLoaded', async () => {
-  installFetchPatch()
   try {
     const token = await ipcRenderer.invoke('hermes-desktop:get-token')
     if (token) {
