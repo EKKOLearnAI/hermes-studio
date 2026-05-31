@@ -16,7 +16,8 @@ const profilesStore = useProfilesStore()
 const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
-const DRAFT_STORAGE_KEY = 'hermes_chat_input_draft_v1'
+const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
+type DraftMap = Record<string, string>
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -93,9 +94,43 @@ function startResize(e: MouseEvent) {
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
+function readDraftMap(): DraftMap {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function getActiveDraftSessionId() {
+  return chatStore.activeSessionId || chatStore.activeSession?.id || ''
+}
+
+function loadDraftForActiveSession() {
+  const sessionId = getActiveDraftSessionId()
+  inputText.value = sessionId ? readDraftMap()[sessionId] || '' : ''
+}
+
+function saveDraftForActiveSession(value: string) {
+  const sessionId = getActiveDraftSessionId()
+  if (!sessionId) return
+  const drafts = readDraftMap()
+  if (value) {
+    drafts[sessionId] = value
+  } else {
+    delete drafts[sessionId]
+  }
+  if (Object.keys(drafts).length > 0) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts))
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  }
+}
+
 // 从 localStorage 读取设置
 onMounted(() => {
-  inputText.value = localStorage.getItem(DRAFT_STORAGE_KEY) || ''
+  loadDraftForActiveSession()
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
@@ -112,11 +147,11 @@ watch(autoPlaySpeech, (value) => {
 })
 
 watch(inputText, (value) => {
-  if (value) {
-    localStorage.setItem(DRAFT_STORAGE_KEY, value)
-  } else {
-    localStorage.removeItem(DRAFT_STORAGE_KEY)
-  }
+  saveDraftForActiveSession(value)
+})
+
+watch(() => chatStore.activeSession?.id, () => {
+  loadDraftForActiveSession()
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
@@ -364,7 +399,7 @@ function handleSend() {
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
-  localStorage.removeItem(DRAFT_STORAGE_KEY)
+  saveDraftForActiveSession('')
   attachments.value = []
   slashActive.value = false
 
