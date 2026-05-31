@@ -18,11 +18,21 @@ const releaseTag = `v${releaseVersion}`
 const releaseBaseUrl = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases'
 const releaseUrl = `${releaseBaseUrl}/tag/${releaseTag}`
 const releaseDownloadUrl = `${releaseBaseUrl}/download/${releaseTag}`
+const downloadProxyPrefix = 'https://gh-proxy.com/'
+
+function desktopDownloadUrl(assetSuffix: string) {
+  return `${releaseDownloadUrl}/Hermes.Studio-${releaseVersion}-${assetSuffix}`
+}
+
 const desktopDownloads = computed(() =>
-  (tm('install.desktop.downloads') as DesktopDownload[]).map((item) => ({
-    ...item,
-    href: `${releaseDownloadUrl}/Hermes.Studio-${releaseVersion}-${item.assetSuffix}`,
-  })),
+  (tm('install.desktop.downloads') as DesktopDownload[]).map((item) => {
+    const href = desktopDownloadUrl(item.assetSuffix)
+    return {
+      ...item,
+      href,
+      proxyHref: `${downloadProxyPrefix}${href}`,
+    }
+  }),
 )
 
 function copyText(text: string) {
@@ -50,20 +60,34 @@ function copyText(text: string) {
     <div class="install-content reveal reveal-delay-1">
       <template v-if="activeTab === 'desktop'">
         <div class="download-list">
-          <a
+          <div
             v-for="item in desktopDownloads"
-            :key="item.href"
+            :key="item.assetSuffix"
             class="download-row"
-            :href="item.href"
-            target="_blank"
-            rel="noopener"
           >
             <span>
               <strong>{{ item.title }}</strong>
               <small>{{ item.desc }}</small>
             </span>
-            <span class="download-action">{{ t('install.desktop.download') }}</span>
-          </a>
+            <span class="download-actions">
+              <a
+                class="download-action"
+                :href="item.href"
+                target="_blank"
+                rel="noopener"
+              >
+                {{ t('install.desktop.overseasDownload') }}
+              </a>
+              <a
+                class="download-action"
+                :href="item.proxyHref"
+                target="_blank"
+                rel="noopener"
+              >
+                {{ t('install.desktop.chinaDownload') }}
+              </a>
+            </span>
+          </div>
         </div>
         <a
           class="all-downloads"
@@ -173,7 +197,6 @@ function copyText(text: string) {
   padding: 14px 0;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
-  text-decoration: none;
 
   &:first-child {
     padding-top: 0;
@@ -200,15 +223,42 @@ function copyText(text: string) {
   }
 }
 
-.download-action {
+.download-actions {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.download-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border-color);
   border-radius: $radius-sm;
   padding: 7px 12px;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
   transition: border-color $transition-fast;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .download-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .download-actions {
+    width: 100%;
+  }
+
+  .download-action {
+    flex: 1;
+  }
 }
 
 .all-downloads {

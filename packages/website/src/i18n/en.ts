@@ -108,6 +108,8 @@ export default {
     desktop: {
       title: 'Desktop',
       download: 'Download',
+      overseasDownload: 'Global download',
+      chinaDownload: 'China download',
       allDownloads: 'View all release assets',
       prereq: 'Desktop builds bundle the Web UI runtime.',
       downloads: [
