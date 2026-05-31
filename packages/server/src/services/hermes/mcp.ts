@@ -54,7 +54,7 @@ export async function bridgeMcpAction(
       break
     }
     case 'mcp_tools_list':
-      raw = await client.mcpTools(payload.server as string | undefined, profile)
+      raw = await client.mcpTools(payload.server as string | undefined, profile, payload.raw as boolean | undefined)
       break
     case 'mcp_reload':
       raw = await client.mcpReload(payload.server as string | undefined, profile)

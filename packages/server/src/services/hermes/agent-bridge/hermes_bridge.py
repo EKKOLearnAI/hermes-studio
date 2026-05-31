@@ -2427,16 +2427,18 @@ class BridgeServer:
             cfg = getattr(task, "_config", {})
             # Build filtered tool_details (name + description) for card display
             srv_cfg = mcp_configs.get(name, {}) if isinstance(mcp_configs.get(name), dict) else {}
-            tools_filter = srv_cfg.get("tools") or {}
+            tools_filter = srv_cfg.get("tools") if isinstance(srv_cfg.get("tools"), dict) else {}
+            has_include_filter = "include" in tools_filter
+            has_exclude_filter = "exclude" in tools_filter
             include_set = set(tools_filter.get("include") or [])
             exclude_set = set(tools_filter.get("exclude") or [])
             tool_details = []
             try:
                 for mcp_tool in getattr(task, "_tools", []):
                     tname = getattr(mcp_tool, "name", "?")
-                    if include_set and tname not in include_set:
+                    if has_include_filter and tname not in include_set:
                         continue
-                    if exclude_set and tname in exclude_set:
+                    if has_exclude_filter and tname in exclude_set:
                         continue
                     tool_details.append({
                         "name": tname,
@@ -2576,6 +2578,7 @@ class BridgeServer:
 
     def _mcp_tools_list(self, req: dict, profile: str, _servers, _lock) -> dict[str, Any]:
         server_filter = str(req.get("server") or "").strip() or None
+        raw_mode = bool(req.get("raw"))  # Return unfiltered tools for visibility management
         results = []
 
         config = self._read_mcp_config(profile)
@@ -2592,13 +2595,17 @@ class BridgeServer:
             registered = set(getattr(task, "_registered_tool_names", None) or [])
             tools = []
             srv_cfg = mcp_configs.get(sname, {}) if isinstance(mcp_configs.get(sname), dict) else {}
-            tools_filter = srv_cfg.get("tools") or {}
+            tools_filter = srv_cfg.get("tools") if isinstance(srv_cfg.get("tools"), dict) else {}
+            has_include_filter = "include" in tools_filter
+            has_exclude_filter = "exclude" in tools_filter
             include_set = set(tools_filter.get("include") or [])
             exclude_set = set(tools_filter.get("exclude") or [])
             def _should_include(tn):
-                if include_set:
+                if raw_mode:
+                    return True  # Skip filter in raw mode
+                if has_include_filter:
                     return tn in include_set
-                if exclude_set:
+                if has_exclude_filter:
                     return tn not in exclude_set
                 return True
             try:
