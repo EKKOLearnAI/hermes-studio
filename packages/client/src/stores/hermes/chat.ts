@@ -658,9 +658,11 @@ export const useChatStore = defineStore('chat', () => {
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
-          // Rebuild apiUsage from bridge data sent by server on resume
+          // Rebuild apiUsage from bridge data sent by server on resume.
+          // Only when lastPromptTokens is available — stale bridgeUsage
+          // without it carries cumulative session_* values.
           const bu = (data as any).bridgeUsage
-          if (bu) {
+          if (bu && bu.lastPromptTokens != null) {
             target.apiUsage = {
               inputTokens: bu.inputTokens,
               outputTokens: bu.outputTokens,
