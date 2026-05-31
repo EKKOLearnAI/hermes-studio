@@ -1138,7 +1138,7 @@ export default {
     nodeEnvironmentMissing: "Node/npm was not detected. Please install Node.js and try again.",
     prepareSuccess: "Preview code is ready",
     installSuccess: "Dependencies installed",
-    startSuccess: "Preview started",
+    startSuccess: "Preview completed",
     stopSuccess: "Preview stopped",
   },
 

@@ -1036,7 +1036,7 @@ jobTriggered: 'Job ausgelost',
     nodeEnvironmentMissing: "Node/npm wurde nicht erkannt. Bitte installiere Node.js und versuche es erneut.",
     prepareSuccess: "Vorschaucode ist bereit",
     installSuccess: "Abhängigkeiten installiert",
-    startSuccess: "Vorschau gestartet",
+    startSuccess: "Vorschau abgeschlossen",
     stopSuccess: "Vorschau gestoppt",
   },
 

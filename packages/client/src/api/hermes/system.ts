@@ -28,12 +28,20 @@ export interface PreviewStatus {
   webui_home: string
   action_log_path: string
   dev_log_path: string
+  active_action: string | null
+  active_action_started_at: string | null
+  last_action: string | null
+  last_action_completed_at: string | null
+  last_action_success: boolean | null
+  last_action_message: string
+  last_action_code: string
   action_log: string
   dev_log: string
 }
 
 export interface PreviewActionResponse extends PreviewStatus {
   success: boolean
+  accepted?: boolean
   message?: string
   code?: string
 }

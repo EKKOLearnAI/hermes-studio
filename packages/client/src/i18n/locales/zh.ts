@@ -1130,7 +1130,7 @@ export default {
     nodeEnvironmentMissing: "未检测到可用的 Node/npm 环境，请先安装 Node.js 后重试。",
     prepareSuccess: "预览代码已准备好",
     installSuccess: "依赖安装完成",
-    startSuccess: "预览已启动",
+    startSuccess: "预览已完成",
     stopSuccess: "预览已停止",
   },
 

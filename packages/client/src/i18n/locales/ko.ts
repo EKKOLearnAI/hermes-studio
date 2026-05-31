@@ -1036,7 +1036,7 @@ export default {
     nodeEnvironmentMissing: "Node/npm 환경을 찾을 수 없습니다. Node.js를 설치한 뒤 다시 시도하세요.",
     prepareSuccess: "미리보기 코드가 준비되었습니다",
     installSuccess: "의존성이 설치되었습니다",
-    startSuccess: "미리보기가 시작되었습니다",
+    startSuccess: "미리보기가 완료되었습니다",
     stopSuccess: "미리보기가 중지되었습니다",
   },
 

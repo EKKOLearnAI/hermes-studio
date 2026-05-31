@@ -1036,7 +1036,7 @@ jobTriggered: 'Job ejecutado',
     nodeEnvironmentMissing: "No se detectó Node/npm. Instala Node.js y vuelve a intentarlo.",
     prepareSuccess: "Código de vista previa listo",
     installSuccess: "Dependencias instaladas",
-    startSuccess: "Vista previa iniciada",
+    startSuccess: "Vista previa completada",
     stopSuccess: "Vista previa detenida",
   },
 

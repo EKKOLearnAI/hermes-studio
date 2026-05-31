@@ -1,11 +1,10 @@
-import { execFileSync, spawn, type ChildProcess } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
 import { delimiter, dirname, extname, join, resolve } from 'path'
 import { getWebUiHome } from '../config'
 
 let updateInProgress = false
-let previewProcess: ChildProcess | null = null
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 
 const PREVIEW_DIR_NAME = 'hermes-web-ui-pereview'
@@ -19,6 +18,52 @@ const PREVIEW_AGENT_BRIDGE_TRANSPORT_ENV = 'HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_T
 const PREVIEW_FRONTEND_URL = `http://localhost:${PREVIEW_FRONTEND_PORT}`
 const PREVIEW_TAG_REF_PATTERN = /^[A-Za-z0-9._/-]+$/
 const PREVIEW_MAIN_REF = 'main'
+const PREVIEW_TAGS_CACHE_MS = 5 * 60 * 1000
+
+type PreviewTagRef = { name: string; sha: string }
+type PreviewTagsCache = { expiresAt: number; tags: PreviewTagRef[] }
+type PreviewActionResult = { success: boolean; message?: string; code?: string }
+
+class PreviewRuntimeState {
+  process: ChildProcess | null = null
+  tagsCache: PreviewTagsCache | null = null
+  activeAction: string | null = null
+  activeActionStartedAt: string | null = null
+  lastAction: string | null = null
+  lastActionCompletedAt: string | null = null
+  lastActionResult: PreviewActionResult | null = null
+
+  getCachedTags(): PreviewTagRef[] | null {
+    return this.tagsCache && this.tagsCache.expiresAt > Date.now()
+      ? this.tagsCache.tags
+      : null
+  }
+
+  setTags(tags: PreviewTagRef[]) {
+    this.tagsCache = { tags, expiresAt: Date.now() + PREVIEW_TAGS_CACHE_MS }
+  }
+
+  beginAction(action: string): boolean {
+    if (this.activeAction) return false
+    this.activeAction = action
+    this.activeActionStartedAt = new Date().toISOString()
+    this.lastAction = null
+    this.lastActionCompletedAt = null
+    this.lastActionResult = null
+    return true
+  }
+
+  endAction(action: string, result: PreviewActionResult) {
+    if (this.activeAction !== action) return
+    this.activeAction = null
+    this.activeActionStartedAt = null
+    this.lastAction = action
+    this.lastActionCompletedAt = new Date().toISOString()
+    this.lastActionResult = result
+  }
+}
+
+const previewState = new PreviewRuntimeState()
 
 interface PackageInfo {
   name: string
@@ -92,8 +137,7 @@ function getPreviewGithubRepoParts(): { owner: string; repo: string } {
   return { owner: match[1], repo: match[2] }
 }
 
-function listPreviewTagsWithGit(): Array<{ name: string; sha: string }> {
-  const output = runGit(['ls-remote', '--tags', '--refs', getPreviewRepoGitUrl()])
+function parsePreviewTagRefs(output: string): PreviewTagRef[] {
   return output
     .split(/\r?\n/)
     .map(line => line.trim())
@@ -104,6 +148,38 @@ function listPreviewTagsWithGit(): Array<{ name: string; sha: string }> {
     })
     .filter(tag => tag.name)
     .reverse()
+}
+
+function execFileText(
+  command: string,
+  args: string[],
+  options: { cwd?: string; timeout?: number; env?: NodeJS.ProcessEnv; maxBuffer?: number } = {},
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, {
+      cwd: options.cwd,
+      encoding: 'utf-8',
+      timeout: options.timeout,
+      env: options.env,
+      windowsHide: true,
+      maxBuffer: options.maxBuffer || 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        ;(error as any).stdout = stdout
+        ;(error as any).stderr = stderr
+        reject(error)
+        return
+      }
+      resolve(String(stdout || '').trim())
+    })
+  })
+}
+
+async function listPreviewTagsWithGitAsync(): Promise<PreviewTagRef[]> {
+  const output = await execFileText('git', ['ls-remote', '--tags', '--refs', getPreviewRepoGitUrl()], {
+    timeout: 8_000,
+  })
+  return parsePreviewTagRefs(output)
 }
 
 function getNodeBinDir() {
@@ -292,6 +368,39 @@ function runNpm(args: string[], options: { timeout?: number; cwd?: string; logLa
   }
 }
 
+async function runNpmAsync(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
+  const env = {
+    ...getCurrentNodeEnv(),
+    ...options.env,
+  }
+  const execution = npmExecution(args, env)
+  const label = options.logLabel || ''
+
+  if (label) appendPreviewActionLog(`${label}: ${execution.command} ${execution.args.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
+  try {
+    const output = await execFileText(execution.command, execution.args, {
+      cwd: options.cwd,
+      timeout: options.timeout,
+      env,
+      maxBuffer: 16 * 1024 * 1024,
+    })
+    if (label) {
+      if (output) appendPreviewActionLog(`${label} output:\n${output}`)
+      appendPreviewActionLog(`${label} completed`)
+    }
+    return output
+  } catch (err: any) {
+    if (label) {
+      const stderr = err.stderr?.toString() || ''
+      const stdout = err.stdout?.toString() || ''
+      appendPreviewActionLog(`${label} failed`)
+      if (stdout) appendPreviewActionLog(`${label} stdout:\n${stdout}`)
+      if (stderr) appendPreviewActionLog(`${label} stderr:\n${stderr}`)
+    }
+    throw err
+  }
+}
+
 function getPreviewDir() {
   return join(getWebUiHome(), PREVIEW_DIR_NAME)
 }
@@ -384,6 +493,13 @@ function previewPayload(extra: Record<string, any> = {}) {
   return {
     ...extra,
     ...getPreviewStatus(),
+    active_action: previewState.activeAction,
+    active_action_started_at: previewState.activeActionStartedAt,
+    last_action: previewState.lastAction,
+    last_action_completed_at: previewState.lastActionCompletedAt,
+    last_action_success: previewState.lastActionResult?.success ?? null,
+    last_action_message: previewState.lastActionResult?.message || '',
+    last_action_code: previewState.lastActionResult?.code || '',
     action_log: readLogTail(getPreviewActionLogPath()),
     dev_log: readLogTail(getPreviewLogPath()),
   }
@@ -396,7 +512,7 @@ function getPreviewStatus() {
   const hasPackage = existsSync(packagePath)
   const installed = hasPackage && getMissingPreviewDependencyBins().length === 0
   const runtimePids = getPreviewListeningPids()
-  const running = Boolean(previewProcess?.pid && !previewProcess.killed) || runtimePids.length > 0
+  const running = Boolean(previewState.process?.pid && !previewState.process.killed) || runtimePids.length > 0
   const currentTag = getCurrentPreviewTag()
 
   return {
@@ -405,7 +521,7 @@ function getPreviewStatus() {
     has_package: hasPackage,
     installed,
     running,
-    pid: running ? previewProcess?.pid || runtimePids[0] || null : null,
+    pid: running ? previewState.process?.pid || runtimePids[0] || null : null,
     current_tag: currentTag,
     frontend_url: PREVIEW_FRONTEND_URL,
     agent_bridge_endpoint: getPreviewAgentBridgeEndpoint(),
@@ -501,7 +617,7 @@ async function waitForPreviewReady(timeoutMs = 30_000) {
   let lastError = ''
 
   while (Date.now() < deadline) {
-    if (!previewProcess || previewProcess.killed) {
+    if (!previewState.process || previewState.process.killed) {
       throw new Error(`Preview process exited before it became ready. Check log: ${getPreviewLogPath()}`)
     }
 
@@ -528,13 +644,13 @@ function openPreviewLogFile() {
 }
 
 async function stopPreviewProcess() {
-  const child = previewProcess
+  const child = previewState.process
   const pids = new Set<number>()
   if (child?.pid && !child.killed) pids.add(child.pid)
   for (const pid of getPreviewListeningPids()) pids.add(pid)
 
   if (!pids.size) {
-    previewProcess = null
+    previewState.process = null
     return
   }
 
@@ -567,7 +683,7 @@ async function stopPreviewProcess() {
     }
   }
 
-  previewProcess = null
+  previewState.process = null
   await sleep(800)
 }
 
@@ -591,18 +707,15 @@ function getPreviewBinPath(name: string) {
   return join(getPreviewDir(), 'node_modules', '.bin', process.platform === 'win32' ? `${name}.cmd` : name)
 }
 
-function getPreviewNodePtyError() {
+async function getPreviewNodePtyErrorAsync() {
   if (!existsSync(join(getPreviewDir(), 'node_modules', 'node-pty'))) {
     return 'node-pty'
   }
 
   try {
-    execFileSync(process.execPath, ['-e', "require('node-pty')"], {
+    await execFileText(process.execPath, ['-e', "require('node-pty')"], {
       cwd: getPreviewDir(),
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
-      windowsHide: true,
     })
     return ''
   } catch (err: any) {
@@ -616,7 +729,15 @@ function getMissingPreviewDependencyBins() {
   }
 
   const missing = ['concurrently', 'vite', 'nodemon'].filter(name => !existsSync(getPreviewBinPath(name)))
-  const nodePtyError = getPreviewNodePtyError()
+  if (!existsSync(join(getPreviewDir(), 'node_modules', 'node-pty'))) missing.push('node-pty')
+  return missing
+}
+
+async function getMissingPreviewDependencyBinsAsync() {
+  const missing = getMissingPreviewDependencyBins()
+  if (missing.includes('node_modules') || missing.includes('node-pty')) return missing
+
+  const nodePtyError = await getPreviewNodePtyErrorAsync()
   if (nodePtyError) missing.push(nodePtyError)
   return missing
 }
@@ -720,23 +841,11 @@ function assertTagRef(tag: unknown): string {
   return value
 }
 
-function runGit(args: string[], cwd?: string) {
-  return execFileSync('git', args, {
+async function runGitAsync(args: string[], cwd?: string) {
+  return execFileText('git', args, {
     cwd,
-    encoding: 'utf-8',
     timeout: 5 * 60 * 1000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  }).trim()
-}
-
-function isGitAvailable() {
-  try {
-    runGit(['--version'])
-    return true
-  } catch {
-    return false
-  }
+  })
 }
 
 function networkErrorMessage(err: any): string {
@@ -746,6 +855,47 @@ function networkErrorMessage(err: any): string {
 
 function errorMessage(err: any): string {
   return err.stderr?.toString() || err.message || String(err)
+}
+
+function queuePreviewAction(
+  action: string,
+  work: () => Promise<PreviewActionResult | void>,
+  normalizeError: (err: any) => { message: string; code?: string } = err => ({ message: errorMessage(err) }),
+  onError?: (err: any) => Promise<void>,
+): boolean {
+  if (!previewState.beginAction(action)) return false
+
+  void (async () => {
+    try {
+      const result = await work()
+      const normalized = result || { success: true }
+      previewState.endAction(action, normalized)
+      appendPreviewActionLog(`${action} completed${normalized.success === false ? ': failed' : ''}`)
+    } catch (err: any) {
+      if (onError) {
+        try { await onError(err) } catch {}
+      }
+      const normalized = normalizeError(err)
+      appendPreviewActionLog(`${action} failed: ${normalized.message}`)
+      previewState.endAction(action, {
+        success: false,
+        message: normalized.message,
+        code: normalized.code,
+      })
+    }
+  })()
+
+  return true
+}
+
+function previewActionAlreadyRunning(ctx: any) {
+  ctx.status = 409
+  ctx.body = previewPayload({ success: false, message: `Preview action already running: ${previewState.activeAction}` })
+}
+
+function previewActionAccepted(ctx: any) {
+  ctx.status = 202
+  ctx.body = previewPayload({ success: true, accepted: true })
 }
 
 async function downloadGithubZip(ref: string, targetDir: string, type: 'tag' | 'branch' = 'tag') {
@@ -772,32 +922,27 @@ async function downloadGithubZip(ref: string, targetDir: string, type: 'tag' | '
   try {
     appendPreviewActionLog(`extract archive: ${archivePath}`)
     if (process.platform === 'win32') {
-      execFileSync('powershell.exe', [
+      await execFileText('powershell.exe', [
         '-NoProfile',
         '-Command',
         `Expand-Archive -LiteralPath ${JSON.stringify(archivePath)} -DestinationPath ${JSON.stringify(tmpRoot)} -Force`,
-      ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 5 * 60 * 1000 })
+      ], { timeout: 5 * 60 * 1000 })
     } else {
-      execFileSync('tar', ['-xzf', archivePath, '-C', tmpRoot], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 5 * 60 * 1000 })
+      await execFileText('tar', ['-xzf', archivePath, '-C', tmpRoot], { timeout: 5 * 60 * 1000 })
     }
 
-    const entries = execFileSync(process.platform === 'win32' ? 'cmd.exe' : 'ls', process.platform === 'win32' ? ['/c', 'dir', '/b', tmpRoot] : [tmpRoot], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
+    const entries = (await execFileText(process.platform === 'win32' ? 'cmd.exe' : 'ls', process.platform === 'win32' ? ['/c', 'dir', '/b', tmpRoot] : [tmpRoot], {
       timeout: 30_000,
-      windowsHide: true,
-    }).trim().split(/\r?\n/).filter(Boolean)
+    })).trim().split(/\r?\n/).filter(Boolean)
     const extracted = entries.length === 1 ? join(tmpRoot, entries[0]) : tmpRoot
     appendPreviewActionLog(`replace preview directory: ${targetDir}`)
     rmSync(targetDir, { recursive: true, force: true })
     mkdirSync(dirname(targetDir), { recursive: true })
     if (process.platform !== 'win32') mkdirSync(targetDir, { recursive: true })
-    execFileSync(process.platform === 'win32' ? 'cmd.exe' : 'cp', process.platform === 'win32'
+    await execFileText(process.platform === 'win32' ? 'cmd.exe' : 'cp', process.platform === 'win32'
       ? ['/c', 'move', extracted, targetDir]
       : ['-R', `${extracted}/.`, targetDir], {
-      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 5 * 60 * 1000,
-      windowsHide: true,
     })
     appendPreviewActionLog('archive preview code ready')
   } finally {
@@ -813,9 +958,8 @@ async function clonePreview(ref: string) {
   mkdirSync(dirname(previewDir), { recursive: true })
 
   try {
-    if (!isGitAvailable()) throw new Error('git is not available')
     appendPreviewActionLog(`git clone --branch ${ref} --depth 1 ${getPreviewRepoGitUrl()} ${previewDir}`)
-    runGit(['clone', '--branch', ref, '--depth', '1', getPreviewRepoGitUrl(), previewDir])
+    await runGitAsync(['clone', '--branch', ref, '--depth', '1', getPreviewRepoGitUrl(), previewDir])
     appendPreviewActionLog('git clone completed')
   } catch {
     appendPreviewActionLog('git clone unavailable or failed, falling back to GitHub zip')
@@ -829,12 +973,12 @@ async function checkoutPreview(ref: string) {
   appendPreviewActionLog(`checkout preview tag: ${ref}`)
   if (!existsSync(previewDir)) {
     await clonePreview(ref)
-  } else if (existsSync(join(previewDir, '.git')) && isGitAvailable()) {
+  } else if (existsSync(join(previewDir, '.git'))) {
     try {
       appendPreviewActionLog('git fetch --tags --force')
-      runGit(['fetch', '--tags', '--force'], previewDir)
+      await runGitAsync(['fetch', '--tags', '--force'], previewDir)
       appendPreviewActionLog(`git checkout --force ${ref}`)
-      runGit(['checkout', '--force', ref], previewDir)
+      await runGitAsync(['checkout', '--force', ref], previewDir)
     } catch (err: any) {
       appendPreviewActionLog(`git checkout failed, replacing with GitHub zip: ${err.stderr?.toString() || err.message || String(err)}`)
       rmSync(previewDir, { recursive: true, force: true })
@@ -944,13 +1088,21 @@ export async function previewStatus(ctx: any) {
 }
 
 export async function previewTags(ctx: any) {
+  const cachedTags = previewState.getCachedTags()
+  if (cachedTags) {
+    ctx.body = { tags: cachedTags }
+    return
+  }
+
   try {
-    if (isGitAvailable()) {
-      appendPreviewActionLog('load tags with git ls-remote')
-      ctx.body = { tags: [{ name: PREVIEW_MAIN_REF, sha: '' }, ...listPreviewTagsWithGit()] }
-      return
-    }
-  } catch {}
+    appendPreviewActionLog('load tags with git ls-remote')
+    const tags = [{ name: PREVIEW_MAIN_REF, sha: '' }, ...await listPreviewTagsWithGitAsync()]
+    previewState.setTags(tags)
+    ctx.body = { tags }
+    return
+  } catch (gitErr: any) {
+    appendPreviewActionLog(`load tags with git failed: ${gitErr.message || String(gitErr)}`)
+  }
 
   try {
     appendPreviewActionLog('load tags with GitHub API')
@@ -963,14 +1115,14 @@ export async function previewTags(ctx: any) {
     }
 
     const tags = await res.json() as Array<{ name?: string; commit?: { sha?: string } }>
-    ctx.body = {
-      tags: [
-        { name: PREVIEW_MAIN_REF, sha: '' },
-        ...tags
-        .filter(tag => typeof tag.name === 'string' && tag.name.trim())
-        .map(tag => ({ name: tag.name, sha: tag.commit?.sha || '' })),
-      ],
-    }
+    const parsedTags = [
+      { name: PREVIEW_MAIN_REF, sha: '' },
+      ...tags
+      .filter((tag): tag is { name: string; commit?: { sha?: string } } => typeof tag.name === 'string' && Boolean(tag.name.trim()))
+      .map(tag => ({ name: tag.name, sha: tag.commit?.sha || '' })),
+    ]
+    previewState.setTags(parsedTags)
+    ctx.body = { tags: parsedTags }
   } catch (apiErr: any) {
     appendPreviewActionLog(`load tags failed: ${apiErr.message || String(apiErr)}`)
     ctx.status = 502
@@ -981,10 +1133,17 @@ export async function previewTags(ctx: any) {
 export async function preparePreview(ctx: any) {
   try {
     const tag = assertTagRef((ctx.request.body as any)?.tag)
-    appendPreviewActionLog(`prepare requested: ${tag}`)
-    await stopPreviewProcess()
-    await checkoutPreview(tag)
-    ctx.body = previewPayload({ success: true })
+    const queued = queuePreviewAction('prepare', async () => {
+      appendPreviewActionLog(`prepare requested: ${tag}`)
+      await stopPreviewProcess()
+      await checkoutPreview(tag)
+      return { success: true }
+    })
+    if (!queued) {
+      previewActionAlreadyRunning(ctx)
+      return
+    }
+    previewActionAccepted(ctx)
   } catch (err: any) {
     appendPreviewActionLog(`prepare failed: ${errorMessage(err)}`)
     ctx.status = 500
@@ -993,18 +1152,18 @@ export async function preparePreview(ctx: any) {
 }
 
 export async function installPreview(ctx: any) {
-  try {
+  const queued = queuePreviewAction('install', async () => {
     appendPreviewActionLog('npm install requested')
     await stopPreviewProcess()
     assertPreviewPackage()
-    const output = runNpm(['install', '--include=dev', '--ignore-scripts'], {
+    const output = await runNpmAsync(['install', '--include=dev', '--ignore-scripts'], {
       cwd: getPreviewDir(),
       timeout: 15 * 60 * 1000,
       logLabel: 'npm install --include=dev --ignore-scripts',
       env: getPreviewInstallEnv(),
     })
     if (existsSync(join(getPreviewDir(), 'node_modules', 'node-pty'))) {
-      runNpm(['rebuild', 'node-pty'], {
+      await runNpmAsync(['rebuild', 'node-pty'], {
         cwd: getPreviewDir(),
         timeout: 5 * 60 * 1000,
         logLabel: 'npm rebuild node-pty',
@@ -1012,100 +1171,105 @@ export async function installPreview(ctx: any) {
       })
     }
     appendPreviewActionLog(`verify preview dependencies in: ${getPreviewDir()}`)
-    const missing = getMissingPreviewDependencyBins()
+    const missing = await getMissingPreviewDependencyBinsAsync()
     if (missing.length) {
       const message = `npm install completed but preview dependencies are still missing: ${missing.join(', ')}`
       appendPreviewActionLog(message)
-      ctx.body = previewPayload({ success: false, message })
-      return
+      return { success: false, message }
     }
-    ctx.body = previewPayload({ success: true, message: output })
-  } catch (err: any) {
-    const normalized = normalizeNodeToolError(err)
-    appendPreviewActionLog(`npm install failed: ${normalized.message}`)
-    ctx.status = 500
-    ctx.body = previewPayload({ success: false, message: normalized.message, code: normalized.code })
+    return { success: true, message: output }
+  }, normalizeNodeToolError)
+  if (!queued) {
+    previewActionAlreadyRunning(ctx)
+    return
   }
+  previewActionAccepted(ctx)
 }
 
 export async function startPreview(ctx: any) {
   try {
     const tag = (ctx.request.body as any)?.tag
     const requestedTag = typeof tag === 'string' && tag.trim() ? assertTagRef(tag) : ''
-    appendPreviewActionLog(`npm run dev requested${requestedTag ? ` for ${requestedTag}` : ''}`)
-    if (requestedTag && requestedTag !== getCurrentPreviewTag() && previewProcess?.pid && !previewProcess.killed) {
-      await stopPreviewProcess()
-    }
-
-    if (requestedTag) {
-      const currentTag = getCurrentPreviewTag()
-      if (requestedTag === currentTag && existsSync(getPreviewPackagePath())) {
-        appendPreviewActionLog(`skip checkout, preview tag already prepared: ${requestedTag}`)
-        appendPreviewActionLog('apply preview runtime port patch')
-        applyPreviewRuntimePatch()
-      } else {
-        await checkoutPreview(requestedTag)
+    const queued = queuePreviewAction('start', async () => {
+      appendPreviewActionLog(`npm run dev requested${requestedTag ? ` for ${requestedTag}` : ''}`)
+      if (requestedTag && requestedTag !== getCurrentPreviewTag() && previewState.process?.pid && !previewState.process.killed) {
+        await stopPreviewProcess()
       }
-    }
-    assertPreviewPackage()
-    const missingDependencies = getMissingPreviewDependencyBins()
-    if (missingDependencies.length) {
-      const message = `Preview dependencies are not installed. Missing: ${missingDependencies.join(', ')}. Run npm install first.`
-      appendPreviewActionLog(`start blocked: ${message}`)
-      ctx.body = previewPayload({ success: false, message })
+
+      if (requestedTag) {
+        const currentTag = getCurrentPreviewTag()
+        if (requestedTag === currentTag && existsSync(getPreviewPackagePath())) {
+          appendPreviewActionLog(`skip checkout, preview tag already prepared: ${requestedTag}`)
+          appendPreviewActionLog('apply preview runtime port patch')
+          applyPreviewRuntimePatch()
+        } else {
+          await checkoutPreview(requestedTag)
+        }
+      }
+      assertPreviewPackage()
+      const missingDependencies = await getMissingPreviewDependencyBinsAsync()
+      if (missingDependencies.length) {
+        const message = `Preview dependencies are not installed. Missing: ${missingDependencies.join(', ')}. Run npm install first.`
+        appendPreviewActionLog(`start blocked: ${message}`)
+        return { success: false, message }
+      }
+
+      if (previewState.process?.pid && !previewState.process.killed) {
+        appendPreviewActionLog('preview is already running')
+        return { success: true, message: 'Preview is already running' }
+      }
+
+      await assertPreviewPortsAvailable()
+
+      const env = {
+        ...getCurrentNodeEnv(),
+        NODE_ENV: 'development',
+        PORT: String(PREVIEW_BACKEND_PORT),
+        HERMES_WEB_UI_HOME: getPreviewHomeDir(),
+        HERMES_WEBUI_STATE_DIR: getPreviewHomeDir(),
+        HERMES_AGENT_BRIDGE_ENDPOINT: getPreviewAgentBridgeEndpoint(),
+        HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE),
+        AUTH_TOKEN: '',
+        HERMES_WEB_UI_BACKEND_PORT: String(PREVIEW_BACKEND_PORT),
+        HERMES_WEB_UI_FRONTEND_PORT: String(PREVIEW_FRONTEND_PORT),
+        VITE_HERMES_PREVIEW: '1',
+      }
+      const execution = npmExecution(['run', 'dev'], env)
+      const logFd = openPreviewLogFile()
+      appendPreviewActionLog(`spawn preview process: ${execution.command} ${execution.args.join(' ')}`)
+      previewState.process = spawn(execution.command, execution.args, {
+        cwd: getPreviewDir(),
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        windowsHide: true,
+        env,
+      })
+      closeSync(logFd)
+      previewState.process.on('exit', () => {
+        appendPreviewActionLog('preview process exited')
+        previewState.process = null
+      })
+      previewState.process.on('error', (err) => {
+        console.error('[preview] failed:', err)
+        previewState.process = null
+      })
+      previewState.process.unref()
+
+      await waitForPreviewReady()
+
+      appendPreviewActionLog(`preview ready: ${PREVIEW_FRONTEND_URL}`)
+      return { success: true, message: 'Preview started' }
+    }, normalizeNodeToolError, async () => {
+      await stopPreviewProcess()
+    })
+    if (!queued) {
+      previewActionAlreadyRunning(ctx)
       return
     }
-
-    if (previewProcess?.pid && !previewProcess.killed) {
-      appendPreviewActionLog('preview is already running')
-      ctx.body = previewPayload({ success: true, message: 'Preview is already running' })
-      return
-    }
-
-    await assertPreviewPortsAvailable()
-
-    const env = {
-      ...getCurrentNodeEnv(),
-      NODE_ENV: 'development',
-      PORT: String(PREVIEW_BACKEND_PORT),
-      HERMES_WEB_UI_HOME: getPreviewHomeDir(),
-      HERMES_WEBUI_STATE_DIR: getPreviewHomeDir(),
-      HERMES_AGENT_BRIDGE_ENDPOINT: getPreviewAgentBridgeEndpoint(),
-      HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(PREVIEW_AGENT_BRIDGE_WORKER_PORT_BASE),
-      AUTH_TOKEN: '',
-      HERMES_WEB_UI_BACKEND_PORT: String(PREVIEW_BACKEND_PORT),
-      HERMES_WEB_UI_FRONTEND_PORT: String(PREVIEW_FRONTEND_PORT),
-      VITE_HERMES_PREVIEW: '1',
-    }
-    const execution = npmExecution(['run', 'dev'], env)
-    const logFd = openPreviewLogFile()
-    appendPreviewActionLog(`spawn preview process: ${execution.command} ${execution.args.join(' ')}`)
-    previewProcess = spawn(execution.command, execution.args, {
-      cwd: getPreviewDir(),
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      windowsHide: true,
-      env,
-    })
-    closeSync(logFd)
-    previewProcess.on('exit', () => {
-      appendPreviewActionLog('preview process exited')
-      previewProcess = null
-    })
-    previewProcess.on('error', (err) => {
-      console.error('[preview] failed:', err)
-      previewProcess = null
-    })
-    previewProcess.unref()
-
-    await waitForPreviewReady()
-
-    appendPreviewActionLog(`preview ready: ${PREVIEW_FRONTEND_URL}`)
-    ctx.body = previewPayload({ success: true, message: 'Preview started' })
+    previewActionAccepted(ctx)
   } catch (err: any) {
     const normalized = normalizeNodeToolError(err)
     appendPreviewActionLog(`npm run dev failed: ${normalized.message}`)
-    await stopPreviewProcess()
     ctx.status = 500
     ctx.body = previewPayload({ success: false, message: normalized.message, code: normalized.code })
   }

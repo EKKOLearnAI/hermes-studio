@@ -1130,7 +1130,7 @@ export default {
     nodeEnvironmentMissing: "未偵測到可用的 Node/npm 環境，請先安裝 Node.js 後重試。",
     prepareSuccess: "預覽程式碼已準備好",
     installSuccess: "依賴安裝完成",
-    startSuccess: "預覽已啟動",
+    startSuccess: "預覽已完成",
     stopSuccess: "預覽已停止",
   },
 

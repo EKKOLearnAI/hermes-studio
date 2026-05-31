@@ -1036,7 +1036,7 @@ export default {
     nodeEnvironmentMissing: "Node/npm が検出されませんでした。Node.js をインストールしてから再試行してください。",
     prepareSuccess: "プレビューコードの準備が完了しました",
     installSuccess: "依存関係をインストールしました",
-    startSuccess: "プレビューを起動しました",
+    startSuccess: "プレビューが完了しました",
     stopSuccess: "プレビューを停止しました",
   },
 

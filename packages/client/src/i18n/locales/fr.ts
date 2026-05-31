@@ -1036,7 +1036,7 @@ jobTriggered: 'Job declenche',
     nodeEnvironmentMissing: "Node/npm n’a pas été détecté. Installez Node.js puis réessayez.",
     prepareSuccess: "Code de prévisualisation prêt",
     installSuccess: "Dépendances installées",
-    startSuccess: "Prévisualisation démarrée",
+    startSuccess: "Prévisualisation terminée",
     stopSuccess: "Prévisualisation arrêtée",
   },
 
