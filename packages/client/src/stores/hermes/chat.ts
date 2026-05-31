@@ -1552,6 +1552,23 @@ export const useChatStore = defineStore('chat', () => {
         if (data.inputTokens != null) target.inputTokens = data.inputTokens
         if (data.outputTokens != null) target.outputTokens = data.outputTokens
         if (data.contextTokens != null) target.contextTokens = data.contextTokens
+        // Rebuild apiUsage from bridge data on reconnect resume
+        const bu = (data as any).bridgeUsage
+        if (bu && bu.lastPromptTokens != null) {
+          target.apiUsage = {
+            inputTokens: bu.inputTokens,
+            outputTokens: bu.outputTokens,
+            cacheReadTokens: bu.cacheReadTokens,
+            cacheWriteTokens: bu.cacheWriteTokens,
+            reasoningTokens: bu.reasoningTokens,
+            totalTokens: bu.totalTokens,
+            lastPromptTokens: bu.lastPromptTokens,
+            model: bu.model,
+            costStatus: bu.costStatus,
+            actualCostUsd: bu.actualCostUsd,
+            estimatedCostUsd: bu.estimatedCostUsd,
+          }
+        }
 
         if (Array.isArray(data.messages)) {
           target.messages = mapHermesMessages(data.messages as any[])
