@@ -4,6 +4,7 @@
  */
 
 import {
+  getSession,
   getSessionDetail,
 } from '../../../db/hermes/session-store'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
@@ -66,11 +67,18 @@ export async function calcAndUpdateUsage(
     }
     state.inputTokens = inputTokens
     state.outputTokens = outputTokens
+    const session = getSession(sid)
+    const cacheReadTokens = Number(session?.cache_read_tokens || 0)
+    const cacheWriteTokens = Number(session?.cache_write_tokens || 0)
+    state.cacheReadTokens = cacheReadTokens
+    state.cacheWriteTokens = cacheWriteTokens
     emit('usage.updated', {
       event: 'usage.updated',
       session_id: sid,
       inputTokens,
       outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
     })
     return { inputTokens, outputTokens }
   } catch (err: any) {
@@ -96,6 +104,8 @@ export function updateContextTokenUsage(
     session_id: sid,
     inputTokens: usage?.inputTokens ?? state.inputTokens ?? 0,
     outputTokens: usage?.outputTokens ?? state.outputTokens ?? 0,
+    cacheReadTokens: state.cacheReadTokens ?? 0,
+    cacheWriteTokens: state.cacheWriteTokens ?? 0,
     contextTokens: normalizedContextTokens,
   })
   return normalizedContextTokens

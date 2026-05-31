@@ -55,6 +55,8 @@ export interface SessionState {
   profile?: string
   inputTokens?: number
   outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   contextTokens?: number
   bridgeContext?: BridgeContextState
   isAborting?: boolean

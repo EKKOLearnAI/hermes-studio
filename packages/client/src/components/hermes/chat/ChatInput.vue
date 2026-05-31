@@ -256,7 +256,8 @@ const totalTokens = computed(() => {
   if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
-  return input + output
+  const cacheRead = chatStore.activeSession?.cacheReadTokens ?? 0
+  return input + cacheRead + output
 })
 
 const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))

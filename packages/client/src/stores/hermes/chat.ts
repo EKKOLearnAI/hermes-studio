@@ -83,6 +83,8 @@ export interface Session {
   isLoadingOlderMessages?: boolean
   inputTokens?: number
   outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   contextTokens?: number
   endedAt?: number | null
   lastActiveAt?: number
@@ -290,10 +292,29 @@ function mapHermesSession(s: SessionSummary): Session {
     hasMoreBefore: false,
     inputTokens: s.input_tokens,
     outputTokens: s.output_tokens,
+    cacheReadTokens: s.cache_read_tokens,
+    cacheWriteTokens: s.cache_write_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     workspace: s.workspace || null,
   }
+}
+
+function updateSessionUsage(
+  session: Session,
+  usage: {
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+    contextTokens?: number
+  },
+) {
+  if (usage.inputTokens != null) session.inputTokens = usage.inputTokens
+  if (usage.outputTokens != null) session.outputTokens = usage.outputTokens
+  if (usage.cacheReadTokens != null) session.cacheReadTokens = usage.cacheReadTokens
+  if (usage.cacheWriteTokens != null) session.cacheWriteTokens = usage.cacheWriteTokens
+  if (usage.contextTokens != null) session.contextTokens = usage.contextTokens
 }
 
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
@@ -627,9 +648,13 @@ export const useChatStore = defineStore('chat', () => {
             setAbortState(null)
           }
           if (!data.isWorking) setCompressionState(sessionId, null)
-          if (data.inputTokens != null) target.inputTokens = data.inputTokens
-          if (data.outputTokens != null) target.outputTokens = data.outputTokens
-          if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
+          updateSessionUsage(target, {
+            inputTokens: data.inputTokens,
+            outputTokens: data.outputTokens,
+            cacheReadTokens: (data as any).cacheReadTokens,
+            cacheWriteTokens: (data as any).cacheWriteTokens,
+            contextTokens: (data as any).contextTokens,
+          })
           if (data.messages?.length) {
             target.messages = mapHermesMessages(data.messages as any[])
             target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
@@ -980,9 +1005,13 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (action === 'usage' && target) {
-      target.inputTokens = (evt as any).inputTokens
-      target.outputTokens = (evt as any).outputTokens
-      if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+      updateSessionUsage(target, {
+        inputTokens: (evt as any).inputTokens,
+        outputTokens: (evt as any).outputTokens,
+        cacheReadTokens: (evt as any).cacheReadTokens,
+        cacheWriteTokens: (evt as any).cacheWriteTokens,
+        contextTokens: (evt as any).contextTokens,
+      })
     }
 
     if (action === 'destroy') {
@@ -1478,9 +1507,13 @@ export const useChatStore = defineStore('chat', () => {
         }
         if (!data.isWorking) setCompressionState(sid, null)
 
-        if (data.inputTokens != null) target.inputTokens = data.inputTokens
-        if (data.outputTokens != null) target.outputTokens = data.outputTokens
-        if (data.contextTokens != null) target.contextTokens = data.contextTokens
+        updateSessionUsage(target, {
+          inputTokens: data.inputTokens,
+          outputTokens: data.outputTokens,
+          cacheReadTokens: (data as any).cacheReadTokens,
+          cacheWriteTokens: (data as any).cacheWriteTokens,
+          contextTokens: data.contextTokens,
+        })
 
         if (Array.isArray(data.messages)) {
           target.messages = mapHermesMessages(data.messages as any[])
@@ -1837,9 +1870,13 @@ export const useChatStore = defineStore('chat', () => {
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
-                  target.inputTokens = (evt as any).inputTokens
-                  target.outputTokens = (evt as any).outputTokens
-                  if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+                  updateSessionUsage(target, {
+                    inputTokens: (evt as any).inputTokens,
+                    outputTokens: (evt as any).outputTokens,
+                    cacheReadTokens: (evt as any).cacheReadTokens,
+                    cacheWriteTokens: (evt as any).cacheWriteTokens,
+                    contextTokens: (evt as any).contextTokens,
+                  })
                 }
               }
               // Belt-and-suspenders: some providers may deliver the final
@@ -1933,9 +1970,13 @@ export const useChatStore = defineStore('chat', () => {
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
-                  target.inputTokens = (evt as any).inputTokens
-                  target.outputTokens = (evt as any).outputTokens
-                  if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+                  updateSessionUsage(target, {
+                    inputTokens: (evt as any).inputTokens,
+                    outputTokens: (evt as any).outputTokens,
+                    cacheReadTokens: (evt as any).cacheReadTokens,
+                    cacheWriteTokens: (evt as any).cacheWriteTokens,
+                    contextTokens: (evt as any).contextTokens,
+                  })
                 }
               }
               addAgentErrorMessage(sid, evt.error)
@@ -1956,9 +1997,13 @@ export const useChatStore = defineStore('chat', () => {
             case 'usage.updated': {
               const target = sessions.value.find(s => s.id === sid)
               if (target) {
-                target.inputTokens = (evt as any).inputTokens
-                target.outputTokens = (evt as any).outputTokens
-                if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+                updateSessionUsage(target, {
+                  inputTokens: (evt as any).inputTokens,
+                  outputTokens: (evt as any).outputTokens,
+                  cacheReadTokens: (evt as any).cacheReadTokens,
+                  cacheWriteTokens: (evt as any).cacheWriteTokens,
+                  contextTokens: (evt as any).contextTokens,
+                })
               }
               break
             }
@@ -2316,9 +2361,13 @@ export const useChatStore = defineStore('chat', () => {
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
-              target.inputTokens = (evt as any).inputTokens
-              target.outputTokens = (evt as any).outputTokens
-              if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+              updateSessionUsage(target, {
+                inputTokens: (evt as any).inputTokens,
+                outputTokens: (evt as any).outputTokens,
+                cacheReadTokens: (evt as any).cacheReadTokens,
+                cacheWriteTokens: (evt as any).cacheWriteTokens,
+                contextTokens: (evt as any).contextTokens,
+              })
             }
           }
           // Check if backend provided parsed content (from stringified array format)
@@ -2392,9 +2441,13 @@ export const useChatStore = defineStore('chat', () => {
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
-              target.inputTokens = (evt as any).inputTokens
-              target.outputTokens = (evt as any).outputTokens
-              if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+              updateSessionUsage(target, {
+                inputTokens: (evt as any).inputTokens,
+                outputTokens: (evt as any).outputTokens,
+                cacheReadTokens: (evt as any).cacheReadTokens,
+                cacheWriteTokens: (evt as any).cacheWriteTokens,
+                contextTokens: (evt as any).contextTokens,
+              })
             }
           }
           const hasQueue = (evt as any).queue_remaining > 0
@@ -2419,9 +2472,13 @@ export const useChatStore = defineStore('chat', () => {
         case 'usage.updated': {
           const target = sessions.value.find(s => s.id === sid)
           if (target) {
-            target.inputTokens = (evt as any).inputTokens
-            target.outputTokens = (evt as any).outputTokens
-            if ((evt as any).contextTokens != null) target.contextTokens = (evt as any).contextTokens
+            updateSessionUsage(target, {
+              inputTokens: (evt as any).inputTokens,
+              outputTokens: (evt as any).outputTokens,
+              cacheReadTokens: (evt as any).cacheReadTokens,
+              cacheWriteTokens: (evt as any).cacheWriteTokens,
+              contextTokens: (evt as any).contextTokens,
+            })
           }
           break
         }
