@@ -16,6 +16,7 @@ const profilesStore = useProfilesStore()
 const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+const DRAFT_STORAGE_KEY = 'hermes_chat_input_draft_v1'
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -94,6 +95,7 @@ const autoPlaySpeech = ref(false)
 
 // 从 localStorage 读取设置
 onMounted(() => {
+  inputText.value = localStorage.getItem(DRAFT_STORAGE_KEY) || ''
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
@@ -107,6 +109,14 @@ watch(autoPlaySpeech, (value) => {
   localStorage.setItem('autoPlaySpeech', String(value))
   // 通知 chat store
   chatStore.setAutoPlaySpeech(value)
+})
+
+watch(inputText, (value) => {
+  if (value) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, value)
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  }
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
@@ -354,6 +364,7 @@ function handleSend() {
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
+  localStorage.removeItem(DRAFT_STORAGE_KEY)
   attachments.value = []
   slashActive.value = false
 
