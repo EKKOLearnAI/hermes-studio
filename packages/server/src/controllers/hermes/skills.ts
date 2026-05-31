@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { createHash } from 'crypto'
+import type { Dirent } from 'fs'
 import {
   readConfigYamlForProfile, updateConfigYamlForProfile,
   safeReadFile, extractDescription, listFilesRecursive,
@@ -138,7 +139,7 @@ function readUsageStats(usageContent: string | null): Map<string, UsageStats> {
 }
 
 async function findSkillDirByName(rootDir: string, skillName: string): Promise<string | null> {
-  let entries: import('fs').Dirent[]
+  let entries: Dirent[]
   try {
     entries = await readdir(rootDir, { withFileTypes: true })
   } catch {
@@ -188,6 +189,10 @@ async function resolveSkillDirFromConfig(
   return null
 }
 
+function isVisibleSkillEntry(entry: Dirent): boolean {
+  return !entry.name.startsWith('.') && (entry.isDirectory() || entry.isSymbolicLink())
+}
+
 /**
  * Scan for skills at different directory depths.
  *
@@ -202,7 +207,7 @@ async function resolveSkillDirFromConfig(
 async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, string>, hubNames: Set<string>, disabledList: string[], usageStats: Map<string, UsageStats>) {
   const allEntries = await readdir(skillsDir, { withFileTypes: true })
   const dirNames = allEntries
-    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+    .filter(isVisibleSkillEntry)
     .map(e => e.name)
 
   // Classify directories: categories vs. flat skills
@@ -214,7 +219,7 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
     const hasDesc = await safeReadFile(join(catDir, 'DESCRIPTION.md'))
     const hasSkillMd = await safeReadFile(join(catDir, 'SKILL.md'))
     const subEntries = await readdir(catDir, { withFileTypes: true })
-    const subDirs = subEntries.filter(se => se.isDirectory())
+    const subDirs = subEntries.filter(isVisibleSkillEntry)
 
     // Priority: SKILL.md at top level → flat skill
     //           DESCRIPTION.md or subdirs (without SKILL.md) → category
@@ -245,7 +250,7 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
       const entries = await readdir(dir, { withFileTypes: true })
       const results: any[] = []
       for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+        if (!isVisibleSkillEntry(entry)) continue
         const entryPath = join(dir, entry.name)
         const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
         if (skillMd) {
@@ -388,7 +393,7 @@ export async function list(ctx: any) {
     // Read archived skills from .archive/
     const archived: any[] = []
     const archiveDir = join(skillsDir, '.archive')
-    const archiveEntries = await readdir(archiveDir, { withFileTypes: true }).catch(() => [] as import('fs').Dirent[])
+    const archiveEntries = await readdir(archiveDir, { withFileTypes: true }).catch(() => [] as Dirent[])
     for (const entry of archiveEntries) {
       if (!entry.isDirectory()) continue
       const skillMd = await safeReadFile(join(archiveDir, entry.name, 'SKILL.md'))
