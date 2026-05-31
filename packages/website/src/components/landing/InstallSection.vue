@@ -17,12 +17,17 @@ const releaseVersion = __APP_VERSION__.replace(/^v/, '')
 const releaseTag = `v${releaseVersion}`
 const releaseBaseUrl = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases'
 const releaseUrl = `${releaseBaseUrl}/tag/${releaseTag}`
-const releaseDownloadUrl = `${releaseBaseUrl}/download/${releaseTag}`
+const githubDownloadUrl = `${releaseBaseUrl}/download/${releaseTag}`
+const cloudflareDownloadUrl = `https://download.ekkolearnai.com/${releaseTag}`
 const desktopDownloads = computed(() =>
-  (tm('install.desktop.downloads') as DesktopDownload[]).map((item) => ({
-    ...item,
-    href: `${releaseDownloadUrl}/Hermes.Studio-${releaseVersion}-${item.assetSuffix}`,
-  })),
+  (tm('install.desktop.downloads') as DesktopDownload[]).map((item) => {
+    const assetName = `Hermes.Studio-${releaseVersion}-${item.assetSuffix}`
+    return {
+      ...item,
+      githubHref: `${githubDownloadUrl}/${assetName}`,
+      cloudflareHref: `${cloudflareDownloadUrl}/${assetName}`,
+    }
+  }),
 )
 
 function copyText(text: string) {
@@ -50,20 +55,34 @@ function copyText(text: string) {
     <div class="install-content reveal reveal-delay-1">
       <template v-if="activeTab === 'desktop'">
         <div class="download-list">
-          <a
+          <div
             v-for="item in desktopDownloads"
-            :key="item.href"
+            :key="item.githubHref"
             class="download-row"
-            :href="item.href"
-            target="_blank"
-            rel="noopener"
           >
             <span>
               <strong>{{ item.title }}</strong>
               <small>{{ item.desc }}</small>
             </span>
-            <span class="download-action">{{ t('install.desktop.download') }}</span>
-          </a>
+            <span class="download-actions">
+              <a
+                class="download-action"
+                :href="item.githubHref"
+                target="_blank"
+                rel="noopener"
+              >
+                {{ t('install.desktop.githubDownload') }}
+              </a>
+              <a
+                class="download-action"
+                :href="item.cloudflareHref"
+                target="_blank"
+                rel="noopener"
+              >
+                {{ t('install.desktop.cloudflareDownload') }}
+              </a>
+            </span>
+          </div>
         </div>
         <a
           class="all-downloads"
@@ -175,12 +194,14 @@ function copyText(text: string) {
   color: var(--text-primary);
   text-decoration: none;
 
-  &:first-child {
-    padding-top: 0;
+  @media (max-width: $breakpoint-mobile) {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  &:hover .download-action {
-    border-color: var(--text-muted);
+  &:first-child {
+    padding-top: 0;
   }
 
   strong,
@@ -200,15 +221,38 @@ function copyText(text: string) {
   }
 }
 
-.download-action {
+.download-actions {
   flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+
+  @media (max-width: $breakpoint-mobile) {
+    width: 100%;
+    justify-content: stretch;
+  }
+}
+
+.download-action {
+  display: inline-flex;
+  justify-content: center;
   border: 1px solid var(--border-color);
   border-radius: $radius-sm;
   padding: 7px 12px;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
+  text-decoration: none;
   transition: border-color $transition-fast;
+
+  &:hover {
+    border-color: var(--text-muted);
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    flex: 1 1 0;
+  }
 }
 
 .all-downloads {

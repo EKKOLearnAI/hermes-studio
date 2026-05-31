@@ -108,6 +108,8 @@ export default {
     desktop: {
       title: '桌面版',
       download: '下载',
+      githubDownload: 'GitHub 下载',
+      cloudflareDownload: 'Cloudflare 下载',
       allDownloads: '查看全部发布文件',
       prereq: '桌面版已内置 Web UI 运行时。',
       downloads: [
