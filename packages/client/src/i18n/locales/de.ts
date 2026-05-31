@@ -1260,6 +1260,15 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_7_1: 'Die Desktop-App nutzt jetzt standardmäßig Port 8748, unterstützt Zugriff im lokalen Netzwerk und kann direkt im lokalen Browser geöffnet werden',
+    new_0_6_7_9: 'Desktop-Download-Links sind jetzt auf der offiziellen Website https://ekkolearnai.com/ verfügbar, aktuelle Installer bleiben außerdem über GitHub Releases verfügbar',
+    new_0_6_7_2: 'MCP-Tools sind vollständiger: Bridge Tool Discovery, MCP-Management-Lifecycle und Tool-Sichtbarkeit pro Modell im Manager wurden verbessert',
+    new_0_6_7_3: 'Nachrichtenlisten zentrieren leere Zustände korrekt, reduzieren Scroll-Jitter, zeigen beim Laden von History keine Live-Chat-Nachrichten mehr, behalten Scrollpositionen pro Session und blenden beim Session-Wechsel 1,5 Sekunden ein',
+    new_0_6_7_4: 'Bridge und Runtime sind stabiler durch erhaltene Text/tool-call-Reihenfolge, korrektes Profile runtime status loading, bessere Node/npm-Erkennung und übersprungene Produktionsdatenverzeichnis-Erstellung',
+    new_0_6_7_5: 'Desktop-Distribution umfasst Electron-Packaging, App-Naming, Preload-Builds, Release-Artifact-Uploads, Windows Hermes CLI Start, Linux-Icons und beschreibbare Datenpfade, macOS ohne Signing-Zertifikate und versteckte Windows-Startup-Subprozesse',
+    new_0_6_7_6: 'Die Website hat Download- und Deploy-Workflows, und Deploys funktionieren auch in Umgebungen ohne rsync',
+    new_0_6_7_7: 'Server- und Auth-Fixes nutzen dirname für Windows-Credential-Verzeichnisse und erhöhen das Avatar-Upload-Limit gegen 413-Fehler bei größeren Bildern',
+    new_0_6_7_8: 'Repository-Harness, Validierungsdokumente und Agent-Guides für Coding Agents wurden ergänzt, alte Setup-Script-Dokumente entfernt',
     new_0_6_4_1: 'CI wurde mit festem npm-Installationsverhalten und Docker-Smoke-Coverage für PRs gehärtet',
     new_0_6_4_2: 'Chat nutzt jetzt virtualisierte Pagination, damit lange Gespräche zuverlässiger scrollen und laden',
     new_0_6_4_3: 'Docker-Image-Publishing läuft jetzt nur noch für Releases statt für normale PR-Checks',

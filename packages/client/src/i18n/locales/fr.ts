@@ -1260,6 +1260,15 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_7_1: 'L application desktop utilise maintenant le port 8748 par défaut, prend en charge l accès LAN et peut être ouverte directement depuis un navigateur local',
+    new_0_6_7_9: 'Les liens de téléchargement desktop sont maintenant disponibles sur le site officiel https://ekkolearnai.com/, et les derniers installateurs restent disponibles via GitHub Releases',
+    new_0_6_7_2: 'Les outils MCP sont plus complets avec des corrections de découverte bridge, de cycle de vie MCP et des contrôles de visibilité par modèle dans le gestionnaire',
+    new_0_6_7_3: 'Les listes de messages centrent mieux les états vides, réduisent les sauts de scroll, évitent d afficher le chat actif pendant le chargement de History, conservent la position par session et ajoutent un fondu de 1,5 seconde au changement de session',
+    new_0_6_7_4: 'Bridge et runtime sont plus stables avec ordre texte/tool-call préservé, chargement du statut runtime de Profile corrigé, meilleure détection Node/npm et création du dossier de données production évitée',
+    new_0_6_7_5: 'La distribution Desktop couvre packaging Electron, nom d application, builds preload, uploads des artifacts, lancement Hermes CLI sous Windows, icônes Linux et chemins de données inscriptibles, macOS sans certificat de signature et sous-processus Windows masqués au démarrage',
+    new_0_6_7_6: 'Le site web ajoute les téléchargements et le workflow de déploiement, avec déploiement corrigé pour les environnements sans rsync',
+    new_0_6_7_7: 'Les corrections serveur et auth utilisent dirname pour les dossiers de credentials Windows et augmentent la limite d upload avatar afin d éviter les erreurs 413 sur les grandes images',
+    new_0_6_7_8: 'Le harness du dépôt, les docs de validation et les guides agent pour Coding Agents ont été ajoutés, tandis que les anciens docs de setup script ont été retirés',
     new_0_6_4_1: 'CI est renforcé avec une installation npm figée et une couverture Docker smoke pour les PR',
     new_0_6_4_2: 'Le chat utilise maintenant une pagination virtualisée pour rendre les longues conversations plus fiables au scroll et au chargement',
     new_0_6_4_3: 'La publication des images Docker ne s exécute désormais que pour les releases, pas pour les checks PR ordinaires',

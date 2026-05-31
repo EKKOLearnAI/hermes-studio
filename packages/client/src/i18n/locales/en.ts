@@ -1482,6 +1482,15 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_7_1: 'The desktop app now defaults to port 8748, supports LAN access, and can be opened directly from a local browser',
+    new_0_6_7_9: 'Desktop download links are now available on the official website at https://ekkolearnai.com/, and the latest installers remain available from GitHub Releases',
+    new_0_6_7_2: 'MCP tooling is more complete with bridge tool discovery fixes, MCP management lifecycle fixes, and per-model tool visibility controls in the manager',
+    new_0_6_7_3: 'Message lists now center empty states correctly, reduce scroll jitter, avoid leaking live chat messages into History while loading, preserve per-session scroll positions, and fade in over 1.5 seconds on session switches',
+    new_0_6_7_4: 'Bridge and runtime stability improved by preserving text/tool-call ordering, fixing Profile runtime status loading, improving Node/npm detection, and skipping production data directory creation',
+    new_0_6_7_5: 'Desktop distribution now covers Electron packaging, app naming, preload builds, release artifact uploads, Windows Hermes CLI launch, Linux icons and writable data paths, macOS unsigned release handling, and hidden Windows startup subprocesses',
+    new_0_6_7_6: 'The website now has downloads and deploy workflows, with deploys fixed for environments that do not provide rsync',
+    new_0_6_7_7: 'Server and auth fixes use dirname for Windows credential directories and raise the avatar upload body limit to avoid 413 errors on larger images',
+    new_0_6_7_8: 'Repository harness, validation docs, and agent guidance were added for coding agents, while stale setup script docs were removed',
     new_0_6_4_1: 'CI is hardened with pinned npm install behavior and PR Docker smoke coverage',
     new_0_6_4_2: 'Chat now uses virtualized pagination so long conversations scroll and load more reliably',
     new_0_6_4_3: 'Docker image publishing now runs only for releases instead of ordinary PR checks',

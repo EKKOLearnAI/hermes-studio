@@ -1260,6 +1260,15 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_7_1: 'La app de escritorio ahora usa el puerto 8748 por defecto, permite acceso desde la red local y puede abrirse directamente desde un navegador local',
+    new_0_6_7_9: 'Los enlaces de descarga de escritorio ya están disponibles en el sitio oficial https://ekkolearnai.com/, y los instaladores más recientes siguen disponibles en GitHub Releases',
+    new_0_6_7_2: 'Las herramientas MCP quedan más completas con arreglos de discovery en bridge, ciclo de vida de gestión MCP y controles de visibilidad por modelo en el gestor',
+    new_0_6_7_3: 'Las listas de mensajes centran mejor el estado vacío, reducen saltos de scroll, evitan mostrar mensajes del chat activo mientras carga History, preservan la posición por sesión y hacen fade-in de 1,5 segundos al cambiar de sesión',
+    new_0_6_7_4: 'Bridge y runtime son más estables al preservar el orden texto/tool-call, corregir la carga de estado runtime de Profile, mejorar detección Node/npm y evitar crear directorios de datos en producción',
+    new_0_6_7_5: 'La distribución Desktop cubre empaquetado Electron, nombre de app, builds preload, subida de artifacts, inicio Hermes CLI en Windows, iconos Linux y rutas de datos escribibles, macOS sin certificados de firma y subprocesos ocultos al iniciar en Windows',
+    new_0_6_7_6: 'El sitio web suma página de descargas y workflow de deploy, con deploy corregido en entornos sin rsync',
+    new_0_6_7_7: 'Arreglos de servidor y auth usan dirname para credenciales en Windows y suben el límite de avatar para evitar errores 413 con imágenes grandes',
+    new_0_6_7_8: 'Se agregan harness del repositorio, documentación de validación y guías de agentes para Coding Agents, y se eliminan docs antiguas de setup scripts',
     new_0_6_4_1: 'CI se refuerza con instalación npm fijada y cobertura Docker smoke para PRs',
     new_0_6_4_2: 'El chat ahora usa paginación virtualizada para que conversaciones largas se desplacen y carguen con más fiabilidad',
     new_0_6_4_3: 'La publicación de imágenes Docker ahora solo se ejecuta en releases, no en checks normales de PR',

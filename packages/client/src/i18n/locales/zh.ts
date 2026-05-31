@@ -1484,6 +1484,15 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_7_1: '桌面版默认使用 8748 端口，支持局域网内访问，也可以直接用本机浏览器打开 Web UI',
+    new_0_6_7_9: '桌面端下载入口已补充到官网 https://ekkolearnai.com/，也可以继续从 GitHub Releases 获取最新安装包',
+    new_0_6_7_2: 'MCP 工具链继续完善：修复 bridge 工具发现与 MCP 管理生命周期，并在管理页支持按模型控制工具可见性',
+    new_0_6_7_3: '消息列表体验优化：修复空状态居中、滚动抖动、历史会话加载串消息，并在切换会话时保留滚动位置与 1.5 秒淡入效果',
+    new_0_6_7_4: 'Bridge 与运行态更稳定：保持文本和 tool-call 顺序、修复 Profile runtime 状态加载、改进 Node/npm 检测，并避免生产环境自动创建数据目录',
+    new_0_6_7_5: 'Desktop 分发链路补齐 Electron 打包、应用命名、preload 构建、release artifact 上传、Windows Hermes CLI 启动、Linux 图标与可写数据路径、macOS 无证书跳过签名和 Windows 启动无窗口体验',
+    new_0_6_7_6: '官网发布支持下载页和部署工作流，并修复没有 rsync 的环境下部署失败的问题',
+    new_0_6_7_7: '服务端与认证修复：Windows 凭据目录使用 dirname 解析，头像上传 body 限制提高，避免大图触发 413',
+    new_0_6_7_8: '补充 coding agents 仓库 harness、验证文档和 agent 指南，同时移除过期 setup script 文档',
     new_0_6_4_1: 'CI 流程加固：PR 检查固定 npm 安装路径，并补齐 Docker smoke 校验',
     new_0_6_4_2: '聊天消息列表新增虚拟分页，长会话滚动和加载更稳定',
     new_0_6_4_3: 'Docker 镜像发布改为仅在 release 场景执行，避免普通 PR 触发发布流程',

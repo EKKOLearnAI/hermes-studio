@@ -1259,6 +1259,15 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_7_1: 'Desktop アプリは既定で port 8748 を使用し、LAN アクセスとローカルブラウザからの直接アクセスに対応しました',
+    new_0_6_7_9: 'Desktop のダウンロードリンクを公式サイト https://ekkolearnai.com/ に追加し、最新インストーラーは引き続き GitHub Releases からも取得できます',
+    new_0_6_7_2: 'MCP ツールは bridge の tool discovery 修正、MCP 管理ライフサイクル修正、管理画面のモデル別 tool visibility によりさらに整備されました',
+    new_0_6_7_3: 'メッセージ一覧は empty state の中央揃え、scroll jitter、History 読み込み中のライブチャット混入を修正し、セッション別スクロール位置保持と 1.5 秒のフェードインに対応しました',
+    new_0_6_7_4: 'Bridge と runtime は text/tool-call の順序保持、Profile runtime status loading 修正、Node/npm 検出改善、本番 data directory 作成スキップで安定しました',
+    new_0_6_7_5: 'Desktop 配布は Electron packaging、アプリ名、preload build、release artifact upload、Windows Hermes CLI 起動、Linux icon と書き込み可能 data path、macOS 未署名対応、Windows 起動時の非表示 subprocess に対応しました',
+    new_0_6_7_6: 'Web サイトに downloads と deploy workflow を追加し、rsync がない環境での deploy 失敗を修正しました',
+    new_0_6_7_7: 'Server と auth は Windows credential directory に dirname を使い、大きな avatar 画像で 413 にならないよう body limit を引き上げました',
+    new_0_6_7_8: 'Coding Agents 向けに repository harness、validation docs、agent guidance を追加し、古い setup script docs を削除しました',
     new_0_6_4_1: 'CI を強化し、npm install の挙動を固定して PR の Docker smoke チェックを追加しました',
     new_0_6_4_2: 'チャットに仮想ページングを追加し、長い会話のスクロールと読み込みをより安定させました',
     new_0_6_4_3: 'Docker イメージ公開は通常の PR チェックではなく release の場合のみ実行されます',

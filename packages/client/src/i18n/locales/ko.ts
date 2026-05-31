@@ -1259,6 +1259,15 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_7_1: 'Desktop 앱은 기본적으로 8748 포트를 사용하며 LAN 접근과 로컬 브라우저 직접 열기를 지원합니다',
+    new_0_6_7_9: 'Desktop 다운로드 링크가 공식 웹사이트 https://ekkolearnai.com/ 에 추가되었으며 최신 설치 파일은 GitHub Releases 에서도 계속 받을 수 있습니다',
+    new_0_6_7_2: 'MCP 도구는 bridge tool discovery 수정, MCP 관리 라이프사이클 수정, 관리자 화면의 모델별 tool visibility 제어로 더 완성되었습니다',
+    new_0_6_7_3: '메시지 목록은 빈 상태 중앙 정렬, 스크롤 튐, History 로딩 중 라이브 채팅 메시지 노출을 수정하고 세션별 스크롤 위치 보존과 1.5초 페이드인을 지원합니다',
+    new_0_6_7_4: 'Bridge 와 runtime 은 text/tool-call 순서 보존, Profile runtime status loading 수정, Node/npm 감지 개선, 운영 데이터 디렉터리 생성 생략으로 더 안정적입니다',
+    new_0_6_7_5: 'Desktop 배포는 Electron packaging, 앱 이름, preload build, release artifact upload, Windows Hermes CLI 시작, Linux 아이콘과 쓰기 가능한 데이터 경로, macOS 서명 인증서 없음 처리, Windows 시작 시 숨김 subprocess 를 포함합니다',
+    new_0_6_7_6: '웹사이트에 downloads 와 deploy workflow 를 추가하고 rsync 가 없는 환경의 deploy 실패를 수정했습니다',
+    new_0_6_7_7: 'Server 와 auth 는 Windows credential directory 에 dirname 을 사용하고 큰 avatar 이미지의 413 오류를 피하도록 body limit 를 높였습니다',
+    new_0_6_7_8: 'Coding Agents 를 위한 repository harness, validation docs, agent guidance 를 추가하고 오래된 setup script docs 를 제거했습니다',
     new_0_6_4_1: 'CI를 강화해 npm install 동작을 고정하고 PR Docker smoke 검사를 추가했습니다',
     new_0_6_4_2: '채팅에 가상 페이지네이션을 적용해 긴 대화의 스크롤과 로딩을 더 안정적으로 만들었습니다',
     new_0_6_4_3: 'Docker 이미지 배포는 일반 PR 검사 대신 release 에서만 실행됩니다',

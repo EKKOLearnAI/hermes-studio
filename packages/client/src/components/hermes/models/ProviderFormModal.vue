@@ -9,6 +9,7 @@ import CopilotLoginModal from './CopilotLoginModal.vue'
 import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
 import { fetchProviderModels } from '@/api/hermes/system'
+import { normalizeCustomProviderBaseUrl } from '@/utils/providerBaseUrl'
 
 const { t } = useI18n()
 
@@ -205,9 +206,13 @@ async function handleSave() {
       : null
 
     const contextLength = formData.value.context_length ?? undefined
+    const baseUrl = providerType.value === 'custom'
+      ? normalizeCustomProviderBaseUrl(formData.value.base_url)
+      : formData.value.base_url.trim()
+
     await modelsStore.addProvider({
       name: formData.value.name.trim(),
-      base_url: formData.value.base_url.trim(),
+      base_url: baseUrl,
       api_key: formData.value.api_key.trim(),
       model: formData.value.model,
       context_length: contextLength,
