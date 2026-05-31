@@ -85,6 +85,7 @@ export interface ResumeSessionPayload {
   inputTokens?: number
   outputTokens?: number
   contextTokens?: number
+  bridgeUsage?: any
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
 }
