@@ -172,6 +172,10 @@ export default {
     toolsSummaryInclude: '共 {total} 個工具，已選 {count} 個',
     toolsSummaryExclude: '共 {total} 個工具，已排除 {count} 個',
     toolsVisibilitySaved: '工具可見性已儲存',
+    toolsSelectAll: '全選',
+    toolsClearSelection: '取消全選',
+    toolsExcludeAll: '全部排除',
+    toolsClearExcluded: '清空排除',
   },
 
   sidebar: {

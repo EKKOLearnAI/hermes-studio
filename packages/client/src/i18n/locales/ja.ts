@@ -172,6 +172,10 @@ export default {
     toolsSummaryInclude: '合計 {total} ツール、{count} 選択済み',
     toolsSummaryExclude: '合計 {total} ツール、{count} 除外済み',
     toolsVisibilitySaved: 'ツール可視性が保存されました',
+    toolsSelectAll: 'すべて選択',
+    toolsClearSelection: '選択をクリア',
+    toolsExcludeAll: 'すべて除外',
+    toolsClearExcluded: '除外をクリア',
   },
 
   sidebar: {

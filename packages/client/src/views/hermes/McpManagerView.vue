@@ -204,15 +204,15 @@ async function loadServers() {
   try {
     const data = await fetchMcpServers()
     servers.value = data.servers ?? []
-    // Populate toolsByServer from embedded tool_details
+    // Populate toolsByServer from embedded tool_details, including empty filtered results.
+    const nextToolsByServer: Record<string, {name: string, description: string}[]> = {}
     for (const s of servers.value) {
-      if (s.tool_details?.length) {
-        toolsByServer.value[s.name] = s.tool_details.map(t => ({
-          name: t.name,
-          description: t.description || '',
-        }))
-      }
+      nextToolsByServer[s.name] = (s.tool_details || []).map(t => ({
+        name: t.name,
+        description: t.description || '',
+      }))
     }
+    toolsByServer.value = nextToolsByServer
     // Auto-retry with exponential backoff if enabled servers are still disconnected
     const hasPending = servers.value.some(s => s.raw_config.enabled !== false && !s.connected)
     if (hasPending && _autoRetryCount < MAX_AUTO_RETRIES) {
@@ -448,12 +448,20 @@ function handleToolCheck(tool: string, checked: boolean) {
   }
 }
 
+function selectAllTools() {
+  selectedTools.value = [...allTools.value]
+}
+
+function clearSelectedTools() {
+  selectedTools.value = []
+}
+
 async function saveToolsVisibility() {
   const server = toolsModalServer.value
   if (!server) return
-  
+
   const config = { ...server.raw_config }
-  
+
   if (toolsMode.value === 'all') {
     delete config.tools
   } else if (toolsMode.value === 'include') {
@@ -461,7 +469,7 @@ async function saveToolsVisibility() {
   } else {
     config.tools = { exclude: [...selectedTools.value] }
   }
-  
+
   try {
     const res = await mcpServerUpdate(server.name, config)
     if (res.ok) {
@@ -597,6 +605,14 @@ async function saveToolsVisibility() {
         <div class="tools-list-container">
           <div class="tools-list-header">
             <span>{{ t('mcp.toolsListHeader') }}</span>
+            <div v-if="toolsMode !== 'all'" class="tools-list-actions">
+              <NButton size="tiny" quaternary @click="selectAllTools">
+                {{ toolsMode === 'exclude' ? t('mcp.toolsExcludeAll') : t('mcp.toolsSelectAll') }}
+              </NButton>
+              <NButton size="tiny" quaternary @click="clearSelectedTools">
+                {{ toolsMode === 'exclude' ? t('mcp.toolsClearExcluded') : t('mcp.toolsClearSelection') }}
+              </NButton>
+            </div>
           </div>
           <NScrollbar style="max-height: 300px;">
             <div v-if="allTools.length" class="tools-checkbox-list">
@@ -832,6 +848,19 @@ async function saveToolsVisibility() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tools-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
 }
 
 .tools-checkbox-list {

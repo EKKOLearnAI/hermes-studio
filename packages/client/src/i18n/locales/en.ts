@@ -171,6 +171,10 @@ export default {
     toolsSummaryInclude: '{total} tools total, {count} selected',
     toolsSummaryExclude: '{total} tools total, {count} excluded',
     toolsVisibilitySaved: 'Tools visibility saved',
+    toolsSelectAll: 'Select all',
+    toolsClearSelection: 'Clear selection',
+    toolsExcludeAll: 'Exclude all',
+    toolsClearExcluded: 'Clear excluded',
   },
 
   // Sidebar

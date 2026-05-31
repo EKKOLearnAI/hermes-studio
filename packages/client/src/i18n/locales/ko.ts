@@ -172,6 +172,10 @@ export default {
     toolsSummaryInclude: '총 {total}개 도구, {count}개 선택됨',
     toolsSummaryExclude: '총 {total}개 도구, {count}개 제외됨',
     toolsVisibilitySaved: '도구 가시성이 저장되었습니다',
+    toolsSelectAll: '모두 선택',
+    toolsClearSelection: '선택 지우기',
+    toolsExcludeAll: '모두 제외',
+    toolsClearExcluded: '제외 항목 지우기',
   },
 
   sidebar: {
