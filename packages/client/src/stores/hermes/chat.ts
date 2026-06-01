@@ -54,6 +54,8 @@ export interface PendingApproval {
   description: string
   choices: Array<'once' | 'session' | 'always' | 'deny'>
   allowPermanent: boolean
+  securityLevel?: string
+  tool?: string
   requestedAt: number
 }
 
@@ -914,6 +916,25 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       timestamp: Date.now(),
       ...update,
+    })
+  }
+
+  function injectSystemMessage(content: string, options: { commandAction?: string; commandData?: Record<string, unknown>; systemType?: 'command' | 'error' } = {}) {
+    let sid = activeSessionId.value || activeSession.value?.id
+    if (!sid) {
+      const session = createSession()
+      sid = session.id
+      activeSessionId.value = session.id
+      activeSession.value = session
+    }
+    addMessage(sid, {
+      id: uid(),
+      role: 'system',
+      content,
+      timestamp: Date.now(),
+      systemType: options.systemType || 'command',
+      commandAction: options.commandAction,
+      commandData: options.commandData,
     })
   }
 
@@ -2676,6 +2697,7 @@ export const useChatStore = defineStore('chat', () => {
     switchSessionModel,
     addOrUpdateSession,
     clearProviderFromSessions,
+    injectSystemMessage,
     deleteSession,
     sendMessage,
     stopStreaming,
