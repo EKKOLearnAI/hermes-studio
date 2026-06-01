@@ -7,6 +7,7 @@ import { t } from './desktop-i18n'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
+const QUIT_EXISTING = process.argv.includes('--quit')
 
 let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
@@ -209,11 +210,20 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes('--quit')) {
+      quitApp()
+      return
+    }
     showMainWindow()
   })
 
   app.whenReady().then(() => {
+    if (QUIT_EXISTING) {
+      quitApp()
+      return
+    }
+
     // Drop the default File/Edit/View/Window menu on Windows/Linux. The web
     // UI provides its own in-page controls, so the native menu bar is just
     // visual clutter. macOS keeps a menu (system requirement) but Electron's
