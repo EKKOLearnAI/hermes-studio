@@ -180,7 +180,7 @@ a {
 .hamburger-btn {
   display: none;
   position: fixed;
-  top: 10px;
+  top: calc(10px + env(safe-area-inset-top, 0px));
   left: 12px;
   z-index: 99;
   width: 36px;
@@ -205,7 +205,7 @@ a {
   }
 
   .page-header {
-    padding: 16px 12px 16px 52px !important;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 12px 16px 52px !important;
   }
 
   .input-sm,

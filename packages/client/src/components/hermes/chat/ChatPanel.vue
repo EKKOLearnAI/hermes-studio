@@ -1959,7 +1959,7 @@ async function handleSessionModelCustomSubmit() {
 
 @media (max-width: $breakpoint-mobile) {
   .chat-header {
-    padding: 16px 12px 16px 52px;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 12px 16px 52px;
   }
 }
 
