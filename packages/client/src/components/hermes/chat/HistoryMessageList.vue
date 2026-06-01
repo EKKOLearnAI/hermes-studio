@@ -154,18 +154,33 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="listRef" class="message-list">
-    <div v-if="!activeSession || activeSession.messages.length === 0" class="empty-state">
-      <img src="/logo.png" alt="QuantHermes" class="empty-logo" />
-      <p>{{ t("chat.emptyState") }}</p>
-    </div>
-    <MessageItem
-      v-for="msg in displayMessages"
-      :key="msg.id"
-      :message="msg"
-      :highlight="chatStore.focusMessageId === msg.id"
-    />
-  </div>
+  <VirtualMessageList
+    :key="listInstanceKey"
+    ref="listRef"
+    :messages="displayMessages"
+    @top-reach="handleTopReach"
+  >
+    <template #empty>
+      <div class="empty-state">
+        <img src="/logo.png" alt="QuantHermes" class="empty-logo" />
+        <p>{{ t("chat.emptyState") }}</p>
+      </div>
+    </template>
+    <template #before>
+      <div
+        v-if="activeSession?.hasMoreBefore || activeSession?.isLoadingOlderMessages"
+        class="history-loader"
+      >
+        <span v-if="activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
+      </div>
+    </template>
+    <template #item="{ message: msg }">
+      <MessageItem
+        :message="msg"
+        :highlight="chatStore.focusMessageId === msg.id"
+      />
+    </template>
+  </VirtualMessageList>
 </template>
 
 <style scoped lang="scss">

@@ -44,6 +44,8 @@ function groupLabel(key: SidebarGroupKey) {
   return t(`sidebar.group${key}${appStore.sidebarCollapsed ? "Short" : ""}`);
 }
 
+const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
 function toggleGroup(key: string) {
   collapsedGroups[key] = !collapsedGroups[key];
   persistCollapsedGroups();
@@ -287,7 +289,7 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
-          <a class="nav-item" :href="`http://${window.location.hostname}:80`" target="_blank">
+          <a class="nav-item" :href="`http://${hostname}:80`" target="_blank">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="16" y="16" width="6" height="6" rx="1" />
               <path d="M32 22h-8" />

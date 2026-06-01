@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
 import { delimiter, dirname, extname, join, resolve } from 'path'
-import { getWebUiHome } from '../config'
+import { config, getWebUiHome } from '../config'
 
 let updateInProgress = false
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
@@ -1002,9 +1002,9 @@ function getGlobalRoot() {
 }
 
 function getGlobalCliScript() {
-  const packageName = getConfiguredUpdatePackageName()
-  const cliBin = getConfiguredUpdateCliBin()
-  const cli = getGlobalPackageBin(getGlobalRoot(), packageName, cliBin)
+  const packageName = config.update.packageName
+  const cliBin = config.update.cliBin
+  const cli = getGlobalPackageBin(getGlobalRoot())
   if (!existsSync(cli)) {
     throw new Error(`Updated package CLI not found: ${cli}`)
   }
@@ -1012,7 +1012,7 @@ function getGlobalCliScript() {
 }
 
 function runUpdateInstall() {
-  const packageName = getConfiguredUpdatePackageName()
+  const packageName = config.update.packageName
   return runNpm(
     ['install', '-g', `${packageName}@latest`, '--registry', config.update.registry],
     { timeout: 10 * 60 * 1000 },
@@ -1040,7 +1040,7 @@ export async function handleUpdate(ctx: any) {
     return
   }
 
-  if (!isUpdateConfigured()) {
+  if (!config.update.packageName || !config.update.registry || !config.update.cliBin) {
     ctx.status = 500
     ctx.body = {
       success: false,

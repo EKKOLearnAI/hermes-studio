@@ -67,11 +67,6 @@ defineExpose({ scrollToBottom })
 </script>
 
 <template>
-<<<<<<< integration/rebuild-from-upstream
-    <div ref="listRef" class="message-list" @scroll="handleScroll">
-        <div v-if="displayMessages.length === 0" class="empty-state">
-            <img src="/logo.png" alt="Quanthermes" class="empty-logo" />
-=======
     <VirtualMessageList
         ref="listRef"
         :messages="displayMessages"
@@ -82,10 +77,9 @@ defineExpose({ scrollToBottom })
     >
         <template #empty>
             <div class="empty-state">
-            <img src="/logo.png" alt="Hermes" class="empty-logo" />
->>>>>>> main
-            <p>{{ t("chat.emptyState") }}</p>
-        </div>
+                <img src="/logo.png" alt="Quanthermes" class="empty-logo" />
+                <p>{{ t("chat.emptyState") }}</p>
+            </div>
         </template>
         <template #before>
             <div
