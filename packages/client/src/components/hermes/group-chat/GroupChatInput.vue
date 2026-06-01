@@ -686,6 +686,10 @@ function isImage(type: string): boolean {
     min-height: 20px;
     overflow-y: auto;
 
+    @media (max-width: 768px) {
+        font-size: 16px;
+    }
+
     &::placeholder {
         color: $text-muted;
         white-space: nowrap;

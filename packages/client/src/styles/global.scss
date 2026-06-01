@@ -84,7 +84,16 @@ html.theme-transitioning *::after {
               box-shadow 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
 }
 
-html, body, #app {
+html, body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -203,5 +212,18 @@ a {
   .input-md,
   .input-lg {
     width: 100%;
+  }
+}
+
+// Prevent iOS Safari auto-zoom on input focus by ensuring font-size is at least 16px
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select,
+  .n-input,
+  .n-input__input-element,
+  .n-input__textarea-el,
+  .n-input__textarea-element {
+    font-size: 16px !important;
   }
 }
