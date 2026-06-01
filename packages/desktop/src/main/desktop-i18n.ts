@@ -24,6 +24,7 @@ type TranslationKey =
   | 'update.later'
   | 'update.failedTitle'
   | 'update.failedMessage'
+  | 'update.noUpdateInfoMessage'
   | 'update.packagedOnlyMessage'
   | 'common.ok'
 
@@ -52,6 +53,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': 'Later',
     'update.failedTitle': 'Update check failed',
     'update.failedMessage': 'Could not check for Hermes Studio updates.',
+    'update.noUpdateInfoMessage': 'Update information is not available for this platform yet.',
     'update.packagedOnlyMessage': 'Automatic updates are only available in the packaged desktop app.',
     'common.ok': 'OK',
   },
@@ -77,6 +79,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': '稍后',
     'update.failedTitle': '检查更新失败',
     'update.failedMessage': '无法检查 Hermes Studio 更新。',
+    'update.noUpdateInfoMessage': '当前平台的更新信息暂不可用。',
     'update.packagedOnlyMessage': '自动更新仅在打包后的桌面应用中可用。',
     'common.ok': '确定',
   },
@@ -102,6 +105,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': '稍後',
     'update.failedTitle': '檢查更新失敗',
     'update.failedMessage': '無法檢查 Hermes Studio 更新。',
+    'update.noUpdateInfoMessage': '目前平台的更新資訊暫不可用。',
     'update.packagedOnlyMessage': '自動更新僅可在打包後的桌面應用中使用。',
     'common.ok': '確定',
   },
@@ -127,6 +131,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': '後で',
     'update.failedTitle': 'アップデート確認に失敗しました',
     'update.failedMessage': 'Hermes Studio のアップデートを確認できませんでした。',
+    'update.noUpdateInfoMessage': 'このプラットフォームのアップデート情報はまだ利用できません。',
     'update.packagedOnlyMessage': '自動アップデートはパッケージ版デスクトップアプリでのみ利用できます。',
     'common.ok': 'OK',
   },
@@ -152,6 +157,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': '나중에',
     'update.failedTitle': '업데이트 확인 실패',
     'update.failedMessage': 'Hermes Studio 업데이트를 확인할 수 없습니다.',
+    'update.noUpdateInfoMessage': '이 플랫폼의 업데이트 정보를 아직 사용할 수 없습니다.',
     'update.packagedOnlyMessage': '자동 업데이트는 패키징된 데스크톱 앱에서만 사용할 수 있습니다.',
     'common.ok': '확인',
   },
@@ -177,6 +183,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': 'Plus tard',
     'update.failedTitle': 'Echec de la recherche de mise a jour',
     'update.failedMessage': 'Impossible de rechercher les mises a jour de Hermes Studio.',
+    'update.noUpdateInfoMessage': 'Les informations de mise a jour ne sont pas encore disponibles pour cette plateforme.',
     'update.packagedOnlyMessage': 'Les mises a jour automatiques ne sont disponibles que dans l application de bureau packagee.',
     'common.ok': 'OK',
   },
@@ -202,6 +209,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': 'Mas tarde',
     'update.failedTitle': 'Error al buscar actualizaciones',
     'update.failedMessage': 'No se pudieron buscar actualizaciones de Hermes Studio.',
+    'update.noUpdateInfoMessage': 'La informacion de actualizacion aun no esta disponible para esta plataforma.',
     'update.packagedOnlyMessage': 'Las actualizaciones automaticas solo estan disponibles en la app de escritorio empaquetada.',
     'common.ok': 'Aceptar',
   },
@@ -227,6 +235,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': 'Spater',
     'update.failedTitle': 'Update-Prufung fehlgeschlagen',
     'update.failedMessage': 'Updates fur Hermes Studio konnten nicht gepruft werden.',
+    'update.noUpdateInfoMessage': 'Update-Informationen sind fur diese Plattform noch nicht verfugbar.',
     'update.packagedOnlyMessage': 'Automatische Updates sind nur in der paketierten Desktop-App verfugbar.',
     'common.ok': 'OK',
   },
@@ -252,6 +261,7 @@ const translations: Record<DesktopLocale, Record<TranslationKey, string>> = {
     'update.later': 'Depois',
     'update.failedTitle': 'Falha ao verificar atualizacoes',
     'update.failedMessage': 'Nao foi possivel verificar atualizacoes do Hermes Studio.',
+    'update.noUpdateInfoMessage': 'As informacoes de atualizacao ainda nao estao disponiveis para esta plataforma.',
     'update.packagedOnlyMessage': 'Atualizacoes automaticas estao disponiveis apenas no app desktop empacotado.',
     'common.ok': 'OK',
   },

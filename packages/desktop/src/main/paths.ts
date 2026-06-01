@@ -45,6 +45,11 @@ export function desktopIcon(): string {
   return resolve(app.getAppPath(), 'build', 'icon.png')
 }
 
+export function desktopWindowsTrayIcon(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, 'build', 'icon.ico')
+  return resolve(app.getAppPath(), 'build', 'icon.ico')
+}
+
 export function desktopTrayTemplateIcon(): string {
   if (app.isPackaged) return resolve(process.resourcesPath, 'build', 'trayTemplate.png')
   return resolve(app.getAppPath(), 'build', 'trayTemplate.png')

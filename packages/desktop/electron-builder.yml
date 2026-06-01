@@ -29,6 +29,7 @@ extraResources:
     to: "build"
     filter:
       - "icon.png"
+      - "icon.ico"
       - "trayTemplate.png"
   - from: "../.."
     to: "webui"

@@ -13,6 +13,13 @@ interface GitHubRelease {
   tag_name?: string
 }
 
+class MissingUpdateInfoError extends Error {
+  constructor(public readonly url: string) {
+    super(`Update information is not available at ${url}`)
+    this.name = 'MissingUpdateInfoError'
+  }
+}
+
 interface AutoUpdaterOptions {
   beforeQuitAndInstall?: () => void
 }
@@ -31,14 +38,34 @@ async function getLatestReleaseTag(): Promise<string> {
   const release = await res.json() as GitHubRelease
   const tag = release.tag_name?.trim()
   if (!tag) throw new Error('Latest release response did not include a tag')
-  return tag.startsWith('v') ? tag : `v${tag}`
+  return tag
+}
+
+function updateManifestFile(): string {
+  if (process.platform === 'darwin') return 'latest-mac.yml'
+  if (process.platform === 'win32') return 'latest.yml'
+  return 'latest-linux.yml'
+}
+
+async function assertUpdateManifestExists(feedUrl: string): Promise<void> {
+  const manifestUrl = `${feedUrl}/${updateManifestFile()}`
+  const res = await fetch(manifestUrl, {
+    method: 'HEAD',
+    headers: {
+      'User-Agent': `Hermes-Studio/${app.getVersion()}`,
+    },
+  })
+  if (res.status === 404) throw new MissingUpdateInfoError(manifestUrl)
+  if (!res.ok) throw new Error(`Update feed returned ${res.status}`)
 }
 
 async function configureFeedFromLatestRelease(): Promise<void> {
   const tag = await getLatestReleaseTag()
+  const feedUrl = `${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}`
+  await assertUpdateManifestExists(feedUrl)
   autoUpdater.setFeedURL({
     provider: 'generic',
-    url: `${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}`,
+    url: feedUrl,
   })
 }
 
@@ -54,12 +81,11 @@ function showUpToDate(info?: UpdateInfo) {
 }
 
 function showUpdateCheckFailed(err: unknown) {
-  const detail = err instanceof Error ? err.message : String(err)
+  const isMissingUpdateInfo = err instanceof MissingUpdateInfoError
   dialog.showMessageBox({
-    type: 'error',
-    title: t('update.failedTitle'),
-    message: t('update.failedMessage'),
-    detail,
+    type: isMissingUpdateInfo ? 'info' : 'error',
+    title: isMissingUpdateInfo ? t('update.upToDateTitle') : t('update.failedTitle'),
+    message: isMissingUpdateInfo ? t('update.noUpdateInfoMessage') : t('update.failedMessage'),
     buttons: [t('common.ok')],
   }).catch(() => undefined)
 }
