@@ -6,7 +6,16 @@ import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
-import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
+import {
+  bundledBrowserExecutable,
+  webuiServerEntry,
+  webuiDir,
+  hermesBin,
+  webUiHome,
+  hermesHome,
+  tokenFile,
+  pythonDir,
+} from './paths'
 
 const DEFAULT_PORT = 8748
 const DEFAULT_READY_TIMEOUT_MS = 30_000
@@ -302,6 +311,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     process.env.PATH,
     COMMON_USER_BIN_DIRS.join(delimiter),
   )
+  const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -316,6 +326,8 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
     HERMES_AGENT_CLI_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
+    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(agentHome, 'agent-browser'),
+    ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
     PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent

@@ -147,6 +147,8 @@ if (!desktopReleaseWorkflow.includes('fail_on_unmatched_files: true')) {
 for (const phrase of [
   'websockets',
   'agent-browser@^0.26.0',
+  'AGENT_BROWSER_HOME',
+  'AGENT_BROWSER_EXECUTABLE_PATH',
   'PLAYWRIGHT_BROWSERS_PATH',
   'ms-playwright',
   'removeBrokenDashboardAuthPlugin',

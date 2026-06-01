@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir, platform, arch } from 'node:os'
 
@@ -29,6 +29,43 @@ export function webuiServerEntry(): string {
 export function pythonDir(): string {
   if (app.isPackaged) return resolve(process.resourcesPath, 'python')
   return resolve(app.getAppPath(), 'resources', 'python', `${osLabel}-${archLabel}`)
+}
+
+export function bundledAgentBrowserHome(): string {
+  return join(pythonDir(), 'agent-browser')
+}
+
+function browserExecutableNames(): Set<string> {
+  if (isWin) return new Set(['chrome.exe'])
+  if (platform() === 'darwin') return new Set(['Google Chrome for Testing', 'Google Chrome', 'Chromium', 'chrome'])
+  return new Set(['chrome', 'chromium', 'chromium-browser'])
+}
+
+export function bundledBrowserExecutable(): string | undefined {
+  const names = browserExecutableNames()
+  const stack = [join(bundledAgentBrowserHome(), 'browsers'), bundledAgentBrowserHome()].filter(existsSync)
+  const visited = new Set<string>()
+
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    if (!dir || visited.has(dir)) continue
+    visited.add(dir)
+
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      const path = join(dir, entry.name)
+      if (entry.isFile() && names.has(entry.name)) return path
+      if (entry.isDirectory()) stack.push(path)
+    }
+  }
+
+  return undefined
 }
 
 export function pythonBinDir(): string {

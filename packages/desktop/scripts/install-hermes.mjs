@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { platform as osPlatform, arch as osArch } from 'node:os'
@@ -58,6 +58,7 @@ const SKIP_BROWSER_RUNTIME = process.env.HERMES_SKIP_BROWSER_RUNTIME === '1'
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
 const NODE_PREFIX = resolve(PY_DIR, 'node')
+const AGENT_BROWSER_HOME = resolve(PY_DIR, 'agent-browser')
 const PLAYWRIGHT_BROWSERS_PATH = resolve(PY_DIR, 'ms-playwright')
 
 const pyBin = TARGET_OS === 'win32'
@@ -151,11 +152,48 @@ function browserRuntimeEnv() {
     : resolve(NODE_PREFIX, 'bin')
   const inheritedPath = process.env.PATH || process.env.Path || ''
   const pathKey = TARGET_OS === 'win32' ? 'Path' : 'PATH'
-  return {
+  const browserExecutable = findBundledBrowserExecutable()
+  const env = {
     ...process.env,
     [pathKey]: [nodePath, inheritedPath].filter(Boolean).join(TARGET_OS === 'win32' ? ';' : ':'),
+    AGENT_BROWSER_HOME,
     PLAYWRIGHT_BROWSERS_PATH,
   }
+  if (browserExecutable) env.AGENT_BROWSER_EXECUTABLE_PATH = browserExecutable
+  return env
+}
+
+function bundledBrowserExecutableNames() {
+  if (TARGET_OS === 'win32') return new Set(['chrome.exe'])
+  if (TARGET_OS === 'darwin') return new Set(['Google Chrome for Testing', 'Google Chrome', 'Chromium', 'chrome'])
+  return new Set(['chrome', 'chromium', 'chromium-browser'])
+}
+
+function findBundledBrowserExecutable() {
+  const names = bundledBrowserExecutableNames()
+  const stack = [join(AGENT_BROWSER_HOME, 'browsers'), AGENT_BROWSER_HOME].filter(existsSync)
+  const visited = new Set()
+
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    if (!dir || visited.has(dir)) continue
+    visited.add(dir)
+
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      const path = join(dir, entry.name)
+      if (entry.isFile() && names.has(entry.name)) return path
+      if (entry.isDirectory()) stack.push(path)
+    }
+  }
+
+  return null
 }
 
 function sitePackagesDir() {
@@ -221,8 +259,15 @@ function installBrowserRuntime() {
     process.exit(1)
   }
 
-  console.log(`→ Installing Chromium for bundled agent-browser at ${PLAYWRIGHT_BROWSERS_PATH}`)
+  console.log(`→ Installing Chromium for bundled agent-browser at ${AGENT_BROWSER_HOME}`)
   runInvocation(commandInvocation(ab), ['install'], { env: browserRuntimeEnv() })
+
+  const browserExecutable = findBundledBrowserExecutable()
+  if (!browserExecutable) {
+    console.error(`Bundled Chrome executable not found under ${AGENT_BROWSER_HOME} after agent-browser install`)
+    process.exit(1)
+  }
+  console.log(`✓ bundled Chrome executable available at ${browserExecutable}`)
 }
 
 installPythonPackages([HERMES_PACKAGE], 'hermes-agent')
