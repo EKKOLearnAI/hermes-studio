@@ -1,6 +1,31 @@
 # 工作日志
 
-## 2026-05-15
+## 2026-06-01
+
+### 任务背景
+
+- 检阅项目中的一键启动与部署脚本
+- 解决源码部署脚本在精简版 Linux 环境下中文显示支持不足的问题
+- 遵循“低侵入性”原则，仅对 Web UI 服务生效中文支持，不改变系统全局语言设置
+
+### 改进内容
+
+- **[deploy-source-armbian.sh](file:///g:/AIproject/longxia_keli/hermes-web-ui/scripts/deploy-source-armbian.sh)** 修改：
+  - 在 `install_base_packages` 函数中增加了 `fonts-wqy-zenhei` (文泉驿正黑)、`fonts-wqy-microhei` 和 `locales` 依赖包。
+  - 新增 `setup_locales` 函数，用于自动生成 `zh_CN.UTF-8` 语言环境，但不将其设为系统默认 `LANG`。
+  - 修改 `write_service_env` 函数，在生成的服务环境变量文件（默认 `/etc/default/hermes-web-ui`）中强制注入 `LANG=zh_CN.UTF-8` 和 `LC_ALL=zh_CN.UTF-8`。
+
+### 验证记录
+
+- 脚本语法检查：`bash -n scripts/deploy-source-armbian.sh` (本地环境限制，建议在目标 Linux 环境运行)
+- 逻辑验证：
+  - 确认中文字体包已加入安装列表。
+  - 确认 `locale-gen` 逻辑正确处理了 `/etc/locale.gen`。
+  - 确认 Web UI 服务的环境变量文件已包含中文 Locale 设置，确保后端 `node-pty` 和日志处理支持中文。
+
+### 风险评估
+
+- **低风险**：修改仅限于源码部署脚本，且中文环境变量仅作用于特定的 systemd 服务，不会干扰系统其他运维工具（如 apt, git）的英文输出。
 
 ### 任务背景
 

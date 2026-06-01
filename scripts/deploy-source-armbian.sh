@@ -164,7 +164,27 @@ install_base_packages() {
     python3-venv \
     build-essential \
     pkg-config \
-    xz-utils
+    xz-utils \
+    fonts-wqy-zenhei \
+    fonts-wqy-microhei \
+    locales
+}
+
+setup_locales() {
+  step "配置中文 Locale 支持"
+  if run locale -a | grep -i "zh_CN.utf8" >/dev/null 2>&1; then
+    info "zh_CN.UTF-8 已存在，跳过生成。"
+    return 0
+  fi
+
+  if [[ -f /etc/locale.gen ]]; then
+    run sed -i '/^#.*zh_CN.UTF-8 UTF-8/s/^#\s*//' /etc/locale.gen
+    run locale-gen zh_CN.UTF-8 || true
+    info "已尝试从 locale.gen 生成 zh_CN.UTF-8。"
+  else
+    warn "/etc/locale.gen 不存在，尝试直接生成。"
+    run locale-gen zh_CN.UTF-8 || true
+  fi
 }
 
 ensure_app_user() {
@@ -356,6 +376,9 @@ HERMES_HOME=${HERMES_HOME_DIR}
 HERMES_BIN=${hermes_bin}
 HERMES_AGENT_ROOT=${APP_USER_HOME}/.hermes/hermes-agent
 HERMES_WEB_UI_HOME=${APP_USER_HOME}/.hermes-web-ui
+# 支持中文显示与处理
+LANG=zh_CN.UTF-8
+LC_ALL=zh_CN.UTF-8
 EOF
 
   run chown root:root "${SERVICE_ENV_FILE}"
@@ -544,6 +567,7 @@ echo
 require_debian_like
 require_supported_arch
 install_base_packages
+setup_locales
 ensure_app_user
 resolve_repo_dir
 prepare_deploy_dirs
