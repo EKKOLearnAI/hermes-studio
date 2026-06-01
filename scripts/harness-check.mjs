@@ -118,6 +118,8 @@ if (!buildWorkflow.includes('npm run harness:check')) {
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')
 const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
+const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
+const desktopWebuiServer = await readText('packages/desktop/src/main/webui-server.ts')
 if (!desktopReleaseWorkflow.includes('files: ${{ matrix.artifact_files }}')) {
   fail('desktop-release.yml must upload matrix-specific artifact_files')
 }
@@ -140,6 +142,28 @@ for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage']) {
 
 if (!desktopReleaseWorkflow.includes('fail_on_unmatched_files: true')) {
   fail('desktop-release.yml must keep fail_on_unmatched_files: true')
+}
+
+for (const phrase of [
+  'websockets',
+  'agent-browser@^0.26.0',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'ms-playwright',
+  'removeBrokenDashboardAuthPlugin',
+]) {
+  if (!desktopInstallHermes.includes(phrase)) {
+    fail(`install-hermes.mjs must bundle Hermes browser runtime support: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'bundledNodeBin',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'ms-playwright',
+]) {
+  if (!desktopWebuiServer.includes(phrase)) {
+    fail(`desktop webui server must expose bundled browser runtime: ${phrase}`)
+  }
 }
 
 if (failures.length > 0) {
