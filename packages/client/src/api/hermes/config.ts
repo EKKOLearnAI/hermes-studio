@@ -19,6 +19,7 @@ export interface AgentConfig {
   restart_drain_timeout?: number
   service_tier?: string
   tool_use_enforcement?: string
+  reasoning_effort?: string
 }
 
 export interface MemoryConfig {
