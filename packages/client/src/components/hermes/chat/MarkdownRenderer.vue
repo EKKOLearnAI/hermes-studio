@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NDrawer, NDrawerContent, NSpin, useMessage } from 'naive-ui'
+import { NDrawer, NDrawerContent, NSpin, NDropdown, useMessage, type DropdownOption } from 'naive-ui'
 import type MarkdownIt from 'markdown-it'
 import MarkdownItConstructor from 'markdown-it'
 import katex from 'katex'
@@ -17,7 +17,7 @@ import {
   renderMermaidPlaceholder,
   SUPPORT_PREVIEW_FILE_TYPES,
 } from './mermaidRenderer'
-import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl, fetchFileText, openFileWithDefault, openInExplorer } from '@/api/hermes/download'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 const PREVIEW_AREA_WIDTH = 'min(800px, 100vw)'
@@ -69,6 +69,51 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const message = useMessage()
+
+// 文件右键菜单
+const fileMenuX = ref(0)
+const fileMenuY = ref(0)
+const showFileMenu = ref(false)
+const fileMenuPath = ref<string | null>(null)
+const fileMenuName = ref<string>('')
+
+const fileMenuOptions = computed<DropdownOption[]>(() => [
+  { label: t('download.openFile'), key: 'open-file' },
+  { label: t('download.showInFolder'), key: 'show-in-folder' },
+  { type: 'divider', key: 'd1' },
+  { label: t('download.downloadFile'), key: 'download' },
+])
+
+function handleFileContextMenu(e: MouseEvent, filePath: string, fileName: string) {
+  e.preventDefault()
+  e.stopPropagation()
+  fileMenuPath.value = filePath
+  fileMenuName.value = fileName
+  fileMenuX.value = e.clientX
+  fileMenuY.value = e.clientY
+  showFileMenu.value = true
+}
+
+async function handleFileMenuSelect(key: string) {
+  showFileMenu.value = false
+  const path = fileMenuPath.value
+  if (!path) return
+
+  if (key === 'open-file') {
+    const ok = await openFileWithDefault(path)
+    if (!ok) message.error(t('download.openFileFailed'))
+  } else if (key === 'show-in-folder') {
+    const ok = await openInExplorer(path)
+    if (!ok) message.error(t('download.showInFolderFailed'))
+  } else if (key === 'download') {
+    message.info(t('download.downloading'))
+    try {
+      await downloadFile(path, fileMenuName.value || undefined)
+    } catch (err: any) {
+      message.error(err.message || t('download.downloadFailed'))
+    }
+  }
+}
 
 const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
@@ -443,6 +488,32 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   }
 }
 
+function handleMarkdownContextMenu(event: MouseEvent): void {
+  const target = event.target as HTMLElement
+
+  // 文件卡片右键菜单
+  const fileCard = target.closest('.markdown-file-card') as HTMLElement | null
+  if (fileCard) {
+    const path = fileCard.getAttribute('data-path')
+    const fileName = fileCard.getAttribute('data-filename') || ''
+    if (path) {
+      handleFileContextMenu(event, path, fileName)
+    }
+    return
+  }
+
+  // 文件路径链接右键菜单
+  const link = target.closest('a') as HTMLAnchorElement | null
+  if (link) {
+    const href = link.getAttribute('href')
+    if (href && isLocalFilePath(href)) {
+      const linkText = link.textContent || ''
+      const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
+      handleFileContextMenu(event, normalizeLocalFilePath(href), fileName)
+    }
+  }
+}
+
 // Get file content and show preview area.
 async function previewTextFile(path: string, fileName: string): Promise<void> {
   textPreviewLoading.value = true
@@ -464,7 +535,7 @@ function closeTextPreview(): void {
 </script>
 
 <template>
-  <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick"></div>
+  <div ref="markdownBody" class="markdown-body" v-html="renderedHtml" @click="handleMarkdownClick" @contextmenu="handleMarkdownContextMenu"></div>
   <!-- File preview area -->
   <NDrawer
     v-model:show="textPreviewVisible"
@@ -492,6 +563,16 @@ function closeTextPreview(): void {
     <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
       <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
     </div>
+    <NDropdown
+      placement="bottom-start"
+      trigger="manual"
+      :x="fileMenuX"
+      :y="fileMenuY"
+      :options="fileMenuOptions"
+      :show="showFileMenu"
+      @select="handleFileMenuSelect"
+      @clickoutside="showFileMenu = false"
+    />
   </Teleport>
 </template>
 

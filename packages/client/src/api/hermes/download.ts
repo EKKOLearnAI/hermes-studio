@@ -1,4 +1,4 @@
-import { getActiveProfileName, getApiKey, getBaseUrlValue } from '../client'
+import { getActiveProfileName, getApiKey, getBaseUrlValue, request } from '../client'
 
 /**
  * Construct a download URL with auth token as query parameter.
@@ -68,4 +68,34 @@ export async function fetchFileText(filePath: string, fileName?: string): Promis
     throw new Error(body.error || `Preview failed: ${res.status}`)
   }
   return res.text()
+}
+
+/**
+ * 用系统默认应用打开文件
+ */
+export async function openFileWithDefault(filePath: string): Promise<boolean> {
+  try {
+    await request('/api/hermes/open-file', {
+      method: 'POST',
+      body: JSON.stringify({ path: filePath }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 在文件浏览器中打开文件所在目录并选中文件
+ */
+export async function openInExplorer(filePath: string): Promise<boolean> {
+  try {
+    await request('/api/hermes/open-in-explorer', {
+      method: 'POST',
+      body: JSON.stringify({ path: filePath }),
+    })
+    return true
+  } catch {
+    return false
+  }
 }

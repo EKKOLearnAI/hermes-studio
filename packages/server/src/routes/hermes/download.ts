@@ -1,5 +1,6 @@
 import Router from '@koa/router'
-import { basename, extname, isAbsolute } from 'path'
+import { basename, extname, isAbsolute, dirname } from 'path'
+import { execFile } from 'child_process'
 import {
   createFileProvider,
   localProvider,
@@ -116,5 +117,82 @@ downloadRoutes.get('/api/hermes/download', async (ctx) => {
     }
     ctx.status = statusMap[code] || 500
     ctx.body = { error: err.message, code }
+  }
+})
+
+/**
+ * 用系统默认应用打开文件
+ */
+downloadRoutes.post('/api/hermes/open-file', async (ctx) => {
+  const { path: filePath } = ctx.request.body as { path?: string }
+  if (!filePath) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing path parameter' }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath, profile)
+    const platform = process.platform
+
+    // Windows: start 命令，macOS: open，Linux: xdg-open
+    const cmd = platform === 'win32' ? 'cmd' : (platform === 'darwin' ? 'open' : 'xdg-open')
+    const args = platform === 'win32' ? ['/c', 'start', '', validPath] : [validPath]
+
+    execFile(cmd, args, (err) => {
+      if (err) {
+        console.error('[open-file] Failed to open file:', err.message)
+      }
+    })
+
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err.code === 'invalid_path' ? 400 : 500
+    ctx.body = { error: err.message }
+  }
+})
+
+/**
+ * 在文件浏览器中打开文件所在目录
+ */
+downloadRoutes.post('/api/hermes/open-in-explorer', async (ctx) => {
+  const { path: filePath } = ctx.request.body as { path?: string }
+  if (!filePath) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing path parameter' }
+    return
+  }
+
+  try {
+    const profile = requestedProfile(ctx)
+    const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath, profile)
+    const dir = dirname(validPath)
+    const platform = process.platform
+
+    // Windows: explorer /select 选中文件，macOS: open -R，Linux: xdg-open 目录
+    let cmd: string
+    let args: string[]
+    if (platform === 'win32') {
+      cmd = 'explorer'
+      args = ['/select,', validPath]
+    } else if (platform === 'darwin') {
+      cmd = 'open'
+      args = ['-R', validPath]
+    } else {
+      cmd = 'xdg-open'
+      args = [dir]
+    }
+
+    execFile(cmd, args, (err) => {
+      if (err) {
+        console.error('[open-in-explorer] Failed to open folder:', err.message)
+      }
+    })
+
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err.code === 'invalid_path' ? 400 : 500
+    ctx.body = { error: err.message }
   }
 })

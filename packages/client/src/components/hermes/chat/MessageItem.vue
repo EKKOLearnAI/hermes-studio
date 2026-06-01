@@ -2,8 +2,8 @@
 import type { Message, ContentBlock } from "@/stores/hermes/chat";
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { useMessage } from "naive-ui";
-import { downloadFile, getDownloadUrl } from "@/api/hermes/download";
+import { useMessage, NDropdown, type DropdownOption } from "naive-ui";
+import { downloadFile, getDownloadUrl, openFileWithDefault, openInExplorer } from "@/api/hermes/download";
 import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
@@ -31,6 +31,51 @@ const JSON_TRUNCATED_KEY = "__truncated__";
 const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
 const { t } = useI18n();
 const toast = useMessage();
+
+// 文件右键菜单
+const fileMenuX = ref(0);
+const fileMenuY = ref(0);
+const showFileMenu = ref(false);
+const fileMenuPath = ref<string | null>(null);
+const fileMenuName = ref<string>('');
+
+const fileMenuOptions = computed<DropdownOption[]>(() => [
+  { label: t('download.openFile'), key: 'open-file' },
+  { label: t('download.showInFolder'), key: 'show-in-folder' },
+  { type: 'divider', key: 'd1' },
+  { label: t('download.downloadFile'), key: 'download' },
+]);
+
+function handleFileContextMenu(e: MouseEvent, filePath: string, fileName: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  fileMenuPath.value = filePath;
+  fileMenuName.value = fileName;
+  fileMenuX.value = e.clientX;
+  fileMenuY.value = e.clientY;
+  showFileMenu.value = true;
+}
+
+async function handleFileMenuSelect(key: string) {
+  showFileMenu.value = false;
+  const path = fileMenuPath.value;
+  if (!path) return;
+
+  if (key === 'open-file') {
+    const ok = await openFileWithDefault(path);
+    if (!ok) toast.error(t('download.openFileFailed'));
+  } else if (key === 'show-in-folder') {
+    const ok = await openInExplorer(path);
+    if (!ok) toast.error(t('download.showInFolderFailed'));
+  } else if (key === 'download') {
+    toast.info(t('download.downloading'));
+    try {
+      await downloadFile(path, fileMenuName.value || undefined);
+    } catch (err: any) {
+      toast.error(err.message || t('download.downloadFailed'));
+    }
+  }
+}
 
 const isSystem = computed(() => props.message.role === "system");
 const isAgentError = computed(() => props.message.role === "assistant" && props.message.systemType === "error");
@@ -809,7 +854,13 @@ onBeforeUnmount(() => {
                   />
                 </template>
                 <template v-else>
-                  <div class="msg-attachment-file" @click="handleAttachmentDownload(att)" style="cursor: pointer;" :title="t('download.downloadFile')">
+                  <div
+                    class="msg-attachment-file"
+                    @click="handleAttachmentDownload(att)"
+                    @contextmenu="getFilePathFromContent(att.name) && !att.url?.startsWith('blob:') ? handleFileContextMenu($event, getFilePathFromContent(att.name)!, att.name) : undefined"
+                    style="cursor: pointer;"
+                    :title="t('download.downloadFile')"
+                  >
                     <svg
                       width="16"
                       height="16"
@@ -989,6 +1040,16 @@ onBeforeUnmount(() => {
     <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
       <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
     </div>
+    <NDropdown
+      placement="bottom-start"
+      trigger="manual"
+      :x="fileMenuX"
+      :y="fileMenuY"
+      :options="fileMenuOptions"
+      :show="showFileMenu"
+      @select="handleFileMenuSelect"
+      @clickoutside="showFileMenu = false"
+    />
   </Teleport>
 </template>
 
