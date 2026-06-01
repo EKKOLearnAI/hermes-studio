@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { createServer, type Server } from 'net'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -100,6 +100,7 @@ describe('agent bridge manager command resolution', () => {
     expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://ekkolearnai.com')
     expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Hermes Web UI')
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('cli-agent,personal-agent')
+    expect(env.PATH).toContain(join(homedir(), '.npm-global', 'bin'))
   })
 
   it('keeps explicit OpenRouter attribution env values when starting the bridge', async () => {
@@ -113,6 +114,7 @@ describe('agent bridge manager command resolution', () => {
     expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://example.invalid/app')
     expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Custom App')
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('custom-category')
+    expect(env.PATH).toContain(join(homedir(), '.npm-global', 'bin'))
   })
 
   it('uses an isolated default bridge endpoint while running under Vitest', async () => {
