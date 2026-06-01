@@ -48,6 +48,14 @@ extraResources:
     to: "python"
     filter:
       - "**/*"
+  - from: "resources/node/${os}-${arch}"
+    to: "node"
+    filter:
+      - "**/*"
+  - from: "resources/git/${os}-${arch}"
+    to: "git"
+    filter:
+      - "**/*"
 
 asarUnpack:
   - "**/*.node"

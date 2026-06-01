@@ -1,7 +1,18 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { delimiter, dirname } from 'node:path'
-import { bundledPython, hermesBin, hermesHome, pythonDir, webUiHome } from './paths'
+import { delimiter, dirname, join } from 'node:path'
+import {
+  bundledBrowserExecutable,
+  bundledGit,
+  bundledNode,
+  bundledPython,
+  gitPathDirs,
+  hermesBin,
+  hermesHome,
+  nodeBinDir,
+  pythonDir,
+  webUiHome,
+} from './paths'
 import { HERMES_CLI_ARG } from './cli-constants'
 
 export function parseHermesCliArgs(argv: string[] = process.argv): string[] | null {
@@ -22,7 +33,20 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
   mkdirSync(hermesHome(), { recursive: true })
 
   const binDir = dirname(command)
-  const pathValue = process.env.PATH ? `${binDir}${delimiter}${process.env.PATH}` : binDir
+  const bundledNodeBin = nodeBinDir()
+  const bundledAgentBrowserBin = process.platform === 'win32'
+    ? join(pythonDir(), 'node')
+    : join(pythonDir(), 'node', 'bin')
+  const inheritedPath = process.env.PATH || process.env.Path || ''
+  const pathValue = [
+    binDir,
+    bundledAgentBrowserBin,
+    bundledNodeBin,
+    gitPathDirs().join(delimiter),
+    inheritedPath,
+  ].filter(Boolean).join(delimiter)
+  const gitBin = bundledGit()
+  const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_DESKTOP: 'true',
@@ -30,6 +54,12 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython(),
     HERMES_AGENT_CLI_PYTHON: bundledPython(),
     HERMES_AGENT_ROOT: pythonDir(),
+    HERMES_AGENT_NODE: bundledNode(),
+    HERMES_AGENT_NODE_ROOT: process.platform === 'win32' ? bundledNodeBin : dirname(bundledNodeBin),
+    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(hermesHome(), 'agent-browser'),
+    ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
+    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
+    ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     HERMES_HOME: hermesHome(),
     HERMES_WEB_UI_HOME: webUiHome(),
     HERMES_WEBUI_STATE_DIR: webUiHome(),

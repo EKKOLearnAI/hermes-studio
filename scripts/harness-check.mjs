@@ -118,6 +118,7 @@ if (!buildWorkflow.includes('npm run harness:check')) {
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')
 const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
+const desktopPackageJson = await readText('packages/desktop/package.json')
 const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
 const desktopWebuiServer = await readText('packages/desktop/src/main/webui-server.ts')
 if (!desktopReleaseWorkflow.includes('files: ${{ matrix.artifact_files }}')) {
@@ -145,6 +146,25 @@ if (!desktopReleaseWorkflow.includes('fail_on_unmatched_files: true')) {
 }
 
 for (const phrase of [
+  'resources/node/${os}-${arch}',
+  'resources/git/${os}-${arch}',
+]) {
+  if (!electronBuilderConfig.includes(phrase)) {
+    fail(`electron-builder.yml must bundle desktop runtime resource: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  '"fetch:node"',
+  '"fetch:git"',
+  'npm run fetch:node && npm run fetch:git && npm run fetch:python',
+]) {
+  if (!desktopPackageJson.includes(phrase)) {
+    fail(`packages/desktop/package.json must prepare bundled Node/Git runtimes: ${phrase}`)
+  }
+}
+
+for (const phrase of [
   'websockets',
   'agent-browser@^0.26.0',
   'AGENT_BROWSER_HOME',
@@ -160,6 +180,8 @@ for (const phrase of [
 
 for (const phrase of [
   'bundledNodeBin',
+  'HERMES_AGENT_NODE',
+  'HERMES_AGENT_GIT',
   'PLAYWRIGHT_BROWSERS_PATH',
   'ms-playwright',
 ]) {

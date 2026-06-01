@@ -31,6 +31,41 @@ export function pythonDir(): string {
   return resolve(app.getAppPath(), 'resources', 'python', `${osLabel}-${archLabel}`)
 }
 
+export function nodeDir(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, 'node')
+  return resolve(app.getAppPath(), 'resources', 'node', `${osLabel}-${archLabel}`)
+}
+
+export function nodeBinDir(): string {
+  const dir = nodeDir()
+  return isWin ? dir : join(dir, 'bin')
+}
+
+export function bundledNode(): string {
+  return isWin ? join(nodeDir(), 'node.exe') : join(nodeBinDir(), 'node')
+}
+
+export function gitDir(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, 'git')
+  return resolve(app.getAppPath(), 'resources', 'git', `${osLabel}-${archLabel}`)
+}
+
+export function gitPathDirs(): string[] {
+  if (!isWin) return []
+  const dir = gitDir()
+  return [
+    join(dir, 'cmd'),
+    join(dir, 'mingw64', 'bin'),
+    join(dir, 'usr', 'bin'),
+  ].filter(existsSync)
+}
+
+export function bundledGit(): string | undefined {
+  if (!isWin) return undefined
+  const git = join(gitDir(), 'cmd', 'git.exe')
+  return existsSync(git) ? git : undefined
+}
+
 export function bundledAgentBrowserHome(): string {
   return join(pythonDir(), 'agent-browser')
 }

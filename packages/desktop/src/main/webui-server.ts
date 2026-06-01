@@ -8,11 +8,15 @@ import { promisify } from 'node:util'
 import { app } from 'electron'
 import {
   bundledBrowserExecutable,
+  bundledGit,
+  bundledNode,
+  gitPathDirs,
   webuiServerEntry,
   webuiDir,
   hermesBin,
   webUiHome,
   hermesHome,
+  nodeBinDir,
   tokenFile,
   pythonDir,
 } from './paths'
@@ -296,22 +300,28 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
-  const bundledNodeBin = isWin
+  const bundledAgentBrowserBin = isWin
     ? join(pythonDir(), 'node')
     : join(pythonDir(), 'node', 'bin')
+  const bundledNodeBin = nodeBinDir()
+  const bundledGitPath = gitPathDirs().join(delimiter)
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
   const nvmNodeBinPaths = getNvmNodeBinPaths()
   const runtimePath = mergePathEntries(
     dirname(hermesBin()),
+    bundledAgentBrowserBin,
     bundledNodeBin,
+    bundledGitPath,
     loginShellPath,
     nvmNodeBinPaths,
     process.env.PATH,
+    process.env.Path,
     COMMON_USER_BIN_DIRS.join(delimiter),
   )
   const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
+  const gitBin = bundledGit()
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -326,9 +336,12 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
     HERMES_AGENT_CLI_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
+    HERMES_AGENT_NODE: bundledNode(),
+    HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
     AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(agentHome, 'agent-browser'),
     ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
     PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
+    ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
     // SIGKILL of the bridge child within ~150ms). TCP on 127.0.0.1 works

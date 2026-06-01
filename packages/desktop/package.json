@@ -13,10 +13,12 @@
   "scripts": {
     "build:main": "tsc -p tsconfig.json",
     "build": "npm run build:main",
+    "fetch:node": "node scripts/fetch-node.mjs",
+    "fetch:git": "node scripts/fetch-git.mjs",
     "fetch:python": "node scripts/fetch-python.mjs",
     "install:hermes": "node scripts/install-hermes.mjs",
     "patch:hermes": "node scripts/apply-hermes-patches.mjs",
-    "prepare:python": "npm run fetch:python && npm run install:hermes && npm run patch:hermes && npm run prune:python",
+    "prepare:python": "npm run fetch:node && npm run fetch:git && npm run fetch:python && npm run install:hermes && npm run patch:hermes && npm run prune:python",
     "prune:python": "node scripts/prune-python.mjs",
     "dev": "npm run build:main && electron .",
     "dist": "npm run build && electron-builder",
