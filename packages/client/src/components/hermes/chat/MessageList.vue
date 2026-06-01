@@ -1,6 +1,18 @@
+<script lang="ts">
+type SessionScrollSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasNearBottom: boolean;
+}
+
+const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
+</script>
+
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
 import thinkingImageLight from "@/assets/thinking-light.gif";
@@ -12,7 +24,8 @@ const chatStore = useChatStore();
 const { t } = useI18n();
 const { isDark } = useTheme();
 const { toolTraceVisible } = useToolTraceVisibility();
-const listRef = ref<HTMLElement>();
+const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
+const pendingInitialScrollSessionId = ref<string | null>(null);
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -84,40 +97,79 @@ function queuedPreview(content: string): string {
 }
 
 function isNearBottom(threshold = 200): boolean {
-  const el = listRef.value;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  return listRef.value?.isNearBottom(threshold) ?? true;
 }
 
 function scrollToBottom() {
-  nextTick(() => {
-    if (listRef.value) {
-      listRef.value.scrollTop = listRef.value.scrollHeight;
-    }
-  });
+  listRef.value?.scrollToBottom();
 }
 
 function scrollToMessage(messageId: string) {
-  nextTick(() => {
-    const el = document.getElementById(`message-${messageId}`);
-    if (el) {
-      el.scrollIntoView({ block: 'center' });
-    }
-  });
+  listRef.value?.scrollToMessage(messageId);
 }
 
-// Scroll to bottom on session switch
+function scrollToAnchor(messageId: string, anchorId: string) {
+  listRef.value?.scrollToAnchor(messageId, anchorId);
+}
+
+function saveSessionScrollPosition(sessionId: string | null | undefined) {
+  if (!sessionId) return;
+  const snapshot = listRef.value?.captureViewportPosition() ?? null;
+  if (snapshot) sessionScrollPositions.set(sessionId, snapshot);
+}
+
+function applyInitialSessionScroll(sessionId: string) {
+  if (chatStore.activeSessionId !== sessionId) return;
+  if (chatStore.focusMessageId) {
+    pendingInitialScrollSessionId.value = null;
+    scrollToMessage(chatStore.focusMessageId);
+    return;
+  }
+
+  const snapshot = sessionScrollPositions.get(sessionId);
+  if (snapshot) {
+    pendingInitialScrollSessionId.value = null;
+    if (snapshot.wasNearBottom) {
+      scrollToBottom();
+    } else {
+      listRef.value?.restoreViewportPosition(snapshot);
+    }
+    return;
+  }
+
+  scrollToBottom();
+  if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
+}
+
+async function handleTopReach() {
+  const session = chatStore.activeSession;
+  if (!session?.hasMoreBefore || session.isLoadingOlderMessages) return;
+  const snapshot = listRef.value?.captureScrollPosition() ?? null;
+  const loaded = await chatStore.loadOlderMessages(session.id);
+  if (!loaded) return;
+  await nextTick();
+  listRef.value?.restoreScrollPosition(snapshot);
+}
+
 watch(
   () => chatStore.activeSessionId,
-  (id) => {
+  async (id, previousId) => {
+    saveSessionScrollPosition(previousId);
     if (!id) return;
-    if (chatStore.focusMessageId) {
-      nextTick(() => scrollToMessage(chatStore.focusMessageId!));
-      return;
-    }
-    nextTick(() => scrollToBottom());
+    pendingInitialScrollSessionId.value = id;
+    await nextTick();
+    applyInitialSessionScroll(id);
   },
   { immediate: true },
+);
+
+watch(
+  () => [chatStore.activeSessionId, chatStore.messages.length] as const,
+  ([id, length]) => {
+    if (!id || pendingInitialScrollSessionId.value !== id || length === 0) return;
+    applyInitialSessionScroll(id);
+  },
+  { flush: "post" },
 );
 
 watch(
@@ -140,6 +192,7 @@ watch(
 watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
+    if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
     if (chatStore.focusMessageId) {
       scrollToMessage(chatStore.focusMessageId);
       return;
@@ -149,6 +202,7 @@ watch(
   },
 );
 watch(currentToolCalls, () => {
+  if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
   if (chatStore.focusMessageId) {
     scrollToMessage(chatStore.focusMessageId);
     return;
@@ -156,21 +210,47 @@ watch(currentToolCalls, () => {
   if (!isNearBottom()) return;
   scrollToBottom();
 });
+
+onBeforeUnmount(() => {
+  saveSessionScrollPosition(chatStore.activeSessionId);
+});
+
+defineExpose({
+  scrollToBottom,
+  scrollToMessage,
+  scrollToAnchor,
+});
 </script>
 
 <template>
-  <div ref="listRef" class="message-list">
-    <div v-if="chatStore.messages.length === 0" class="empty-state">
-      <img src="/logo.png" alt="Quanthermes" class="empty-logo" />
-      <p>{{ t("chat.emptyState") }}</p>
-    </div>
-    <MessageItem
-      v-for="msg in displayMessages"
-      :key="msg.id"
-      :message="msg"
-      :highlight="chatStore.focusMessageId === msg.id"
-    />
-    <Transition name="fade">
+  <VirtualMessageList
+    :key="chatStore.activeSessionId || 'chat-empty'"
+    ref="listRef"
+    :messages="displayMessages"
+    @top-reach="handleTopReach"
+  >
+    <template #empty>
+      <div class="empty-state">
+        <img src="/logo.png" alt="Hermes" class="empty-logo" />
+        <p>{{ t("chat.emptyState") }}</p>
+      </div>
+    </template>
+    <template #before>
+      <div
+        v-if="chatStore.activeSession?.hasMoreBefore || chatStore.activeSession?.isLoadingOlderMessages"
+        class="history-loader"
+      >
+        <span v-if="chatStore.activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
+      </div>
+    </template>
+    <template #item="{ message: msg }">
+      <MessageItem
+        :message="msg"
+        :highlight="chatStore.focusMessageId === msg.id"
+      />
+    </template>
+    <template #after>
+      <Transition name="fade">
       <div v-if="chatStore.isRunActive || chatStore.abortState" class="streaming-indicator">
         <img
           :src="isDark ? thinkingImageDark : thinkingImageLight"
@@ -331,8 +411,8 @@ watch(currentToolCalls, () => {
           </div>
         </div>
       </div>
-    </Transition>
-    <Transition name="queue-float">
+      </Transition>
+      <Transition name="queue-float">
       <div v-if="queuedMessages.length > 0" class="queue-float-panel">
         <div class="queue-float-header">
           <span class="queue-orbit" aria-hidden="true">
@@ -363,36 +443,22 @@ watch(currentToolCalls, () => {
           </div>
         </div>
       </div>
-    </Transition>
-  </div>
+      </Transition>
+    </template>
+  </VirtualMessageList>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
-
-.message-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  background-color: $bg-card;
-  position: relative;
-
-  .dark & {
-    background-color: #333333;
-  }
-}
 
 .queue-float-panel {
   position: sticky;
   right: 16px;
   bottom: 16px;
   z-index: 4;
-  align-self: flex-end;
   width: min(340px, calc(100% - 16px));
-  margin-top: auto;
+  margin-top: 16px;
+  margin-left: auto;
   padding: 10px;
   border: 1px solid rgba(var(--accent-info-rgb), 0.22);
   border-radius: 16px;
@@ -603,6 +669,28 @@ watch(currentToolCalls, () => {
 
   p {
     font-size: 14px;
+  }
+}
+
+.history-loader {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.history-loader-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.16);
+  border-top-color: $accent-primary;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+
+  .dark & {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: $accent-primary;
   }
 }
 

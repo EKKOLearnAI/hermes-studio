@@ -39,7 +39,7 @@ function navigate(name: string) {
       <router-view />
       <DocContent v-if="route.meta.page" />
       <div v-else class="docs-placeholder">
-        <p>Select a section from the sidebar to get started.</p>
+        <p>{{ t('docs.placeholder') }}</p>
       </div>
     </div>
   </div>

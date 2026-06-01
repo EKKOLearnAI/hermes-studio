@@ -162,8 +162,15 @@ export async function listRooms(): Promise<{ rooms: RoomInfo[] }> {
     return request('/api/hermes/group-chat/rooms')
 }
 
-export async function getRoomDetail(roomId: string): Promise<{ room: RoomInfo; messages: ChatMessage[]; agents: RoomAgent[]; members: MemberInfo[] }> {
-    return request(`/api/hermes/group-chat/rooms/${roomId}`)
+export async function getRoomDetail(
+    roomId: string,
+    options: { offset?: number; limit?: number } = {},
+): Promise<{ room: RoomInfo; messages: ChatMessage[]; agents: RoomAgent[]; members: MemberInfo[]; total?: number; offset?: number; limit?: number; hasMore?: boolean }> {
+    const params = new URLSearchParams()
+    if (options.offset != null) params.set('offset', String(options.offset))
+    if (options.limit != null) params.set('limit', String(options.limit))
+    const query = params.toString()
+    return request(`/api/hermes/group-chat/rooms/${roomId}${query ? `?${query}` : ''}`)
 }
 
 export async function joinRoomByCode(code: string): Promise<{ room: RoomInfo }> {

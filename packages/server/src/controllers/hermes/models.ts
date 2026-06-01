@@ -99,6 +99,7 @@ function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
     base_url: p.base_url,
     models: models || p.models,
     api_key: '',
+    ...(p.builtin ? { builtin: true } : {}),
     ...(envMapping?.base_url_env ? { base_url_env: envMapping.base_url_env } : {}),
   }
 }
@@ -179,6 +180,15 @@ function envReader(envContent: string) {
 
 function providerKeyForCustom(name: string): string {
   return `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
+}
+
+function providerKeyWithoutCustomPrefix(providerKey: string): string {
+  return providerKey.startsWith('custom:') ? providerKey.slice('custom:'.length) : providerKey
+}
+
+function isBuiltinProviderKey(providerKey: string): boolean {
+  const normalized = providerKeyWithoutCustomPrefix(providerKey)
+  return PROVIDER_PRESETS.some((preset: any) => preset.value === normalized && preset.builtin === true)
 }
 
 function providerShouldFetchLiveModels(providerKey: string): boolean {
@@ -402,13 +412,13 @@ async function buildAvailableForProfile(
         const fetched = await cachedProviderModels(fetchCache, baseUrl, cp.api_key)
         if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
       }
-      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '' }
+      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
     }),
   )
   for (const result of customFetches) {
     if (result.status === 'fulfilled' && result.value?.models.length) {
-      const { providerKey, label, base_url, models, api_key } = result.value
-      addGroup(providerKey, label, base_url, models, api_key)
+      const { providerKey, label, base_url, models, api_key, builtin } = result.value
+      addGroup(providerKey, label, base_url, models, api_key, builtin)
     }
   }
 
@@ -655,7 +665,7 @@ export async function getAvailable(ctx: any) {
         if (cp.api_key) {
           try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
         }
-        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '' }
+        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
       }),
     )
 

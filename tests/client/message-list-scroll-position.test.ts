@@ -1,0 +1,131 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { defineComponent, nextTick } from 'vue'
+
+const mockScrollToBottom = vi.hoisted(() => vi.fn())
+const mockScrollToMessage = vi.hoisted(() => vi.fn())
+const mockScrollToAnchor = vi.hoisted(() => vi.fn())
+const mockCaptureViewportPosition = vi.hoisted(() => vi.fn())
+const mockRestoreViewportPosition = vi.hoisted(() => vi.fn())
+const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
+const mockRestoreScrollPosition = vi.hoisted(() => vi.fn())
+const mockIsNearBottom = vi.hoisted(() => vi.fn(() => true))
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string) => key,
+  }),
+}))
+
+vi.mock('@/composables/useTheme', () => ({
+  useTheme: () => ({ isDark: false }),
+}))
+
+vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
+  default: defineComponent({
+    name: 'VirtualMessageList',
+    props: {
+      messages: { type: Array, default: () => [] },
+    },
+    emits: ['top-reach'],
+    setup(_props, { expose }) {
+      expose({
+        isNearBottom: mockIsNearBottom,
+        scrollToBottom: mockScrollToBottom,
+        scrollToMessage: mockScrollToMessage,
+        scrollToAnchor: mockScrollToAnchor,
+        captureScrollPosition: mockCaptureScrollPosition,
+        restoreScrollPosition: mockRestoreScrollPosition,
+        captureViewportPosition: mockCaptureViewportPosition,
+        restoreViewportPosition: mockRestoreViewportPosition,
+      })
+    },
+    template: `
+      <div class="virtual-message-list-stub">
+        <slot name="item" v-for="message in messages" :key="message.id" :message="message" />
+      </div>
+    `,
+  }),
+}))
+
+vi.mock('@/components/hermes/chat/MessageItem.vue', () => ({
+  default: defineComponent({
+    name: 'MessageItem',
+    props: { message: { type: Object, required: true } },
+    template: '<div class="stub-message" :data-id="message.id">{{ message.content }}</div>',
+  }),
+}))
+
+import MessageList from '@/components/hermes/chat/MessageList.vue'
+import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
+
+function makeMessage(id: string): Message {
+  return { id, role: 'user', content: id, timestamp: Date.now() }
+}
+
+function makeSession(id: string): Session {
+  return {
+    id,
+    title: id,
+    messages: [makeMessage(`${id}-message`)],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+}
+
+async function flushSessionScroll() {
+  await nextTick()
+  await nextTick()
+}
+
+describe('MessageList session scroll position', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockIsNearBottom.mockReturnValue(true)
+  })
+
+  it('restores a previous session scroll position instead of forcing the bottom', async () => {
+    const chatStore = useChatStore()
+    chatStore.activeSessionId = 'scroll-session-a'
+    chatStore.activeSession = makeSession('scroll-session-a')
+
+    mount(MessageList, {
+      global: {
+        stubs: { Transition: false },
+      },
+    })
+    await flushSessionScroll()
+    vi.clearAllMocks()
+
+    const sessionASnapshot = {
+      scrollTop: 320,
+      scrollHeight: 1200,
+      clientHeight: 500,
+      wasNearBottom: false,
+    }
+    mockCaptureViewportPosition.mockReturnValue(sessionASnapshot)
+
+    chatStore.activeSessionId = 'scroll-session-b'
+    chatStore.activeSession = makeSession('scroll-session-b')
+    await flushSessionScroll()
+    expect(mockCaptureViewportPosition).toHaveBeenCalled()
+
+    vi.clearAllMocks()
+    mockCaptureViewportPosition.mockReturnValue({
+      scrollTop: 40,
+      scrollHeight: 1000,
+      clientHeight: 500,
+      wasNearBottom: false,
+    })
+
+    chatStore.activeSessionId = 'scroll-session-a'
+    chatStore.activeSession = makeSession('scroll-session-a')
+    await flushSessionScroll()
+
+    expect(mockRestoreViewportPosition).toHaveBeenCalledWith(sessionASnapshot)
+    expect(mockScrollToBottom).not.toHaveBeenCalled()
+  })
+})

@@ -38,6 +38,7 @@ const { t } = useI18n();
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
 const showOutline = ref(false);
+const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 
 const currentMode = ref<"chat" | "live">("chat");
 
@@ -70,6 +71,10 @@ function sessionHref(sessionId: string) {
 function openSessionInNewTab(sessionId: string) {
   if (typeof window === "undefined") return;
   window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
+}
+
+function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
+  messageListRef.value?.scrollToAnchor(target.messageId, target.anchorId);
 }
 
 async function handleSessionClick(sessionId: string) {
@@ -1201,9 +1206,13 @@ async function handleSessionModelCustomSubmit() {
       <template v-if="currentMode === 'chat'">
         <div class="chat-content-wrapper">
           <div class="chat-main-content">
-            <MessageList />
+            <MessageList ref="messageListRef" />
           </div>
-          <OutlinePanel v-if="showOutline" :messages="chatStore.messages" />
+          <OutlinePanel
+            v-if="showOutline"
+            :messages="chatStore.messages"
+            @navigate="handleOutlineNavigate"
+          />
         </div>
         <div v-if="visibleApproval" class="approval-bar">
           <div class="approval-icon" aria-hidden="true">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, type DropdownOption } from 'naive-ui'
@@ -317,12 +317,6 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
     }
 }
 
-// Auto-scroll on new messages
-const messageListRef = ref()
-watch(() => store.sortedMessages.length, async () => {
-    await nextTick()
-    messageListRef.value?.scrollToBottom()
-})
 </script>
 
 <template>
@@ -464,7 +458,7 @@ watch(() => store.sortedMessages.length, async () => {
             </div>
 
             <template v-if="hasRoom">
-                <GroupMessageList ref="messageListRef" />
+                <GroupMessageList />
                 <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
                     <div v-if="store.contextStatuses.size > 0" class="context-status-list">
                         <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">

@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
-import { createServer } from 'net'
+import { createConnection, createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
@@ -245,6 +245,10 @@ function isTcpEndpoint(endpoint: string): boolean {
   return endpoint.startsWith('tcp://')
 }
 
+function isDesktopRuntime(): boolean {
+  return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
+}
+
 async function canListenTcpEndpoint(endpoint: string): Promise<boolean> {
   const url = new URL(endpoint)
   const host = url.hostname || '127.0.0.1'
@@ -261,6 +265,26 @@ async function canListenTcpEndpoint(endpoint: string): Promise<boolean> {
     probe.listen(port, host, () => {
       probe.close(() => done(true))
     })
+  })
+}
+
+async function canConnectTcpEndpoint(endpoint: string): Promise<boolean> {
+  const url = new URL(endpoint)
+  const host = url.hostname || '127.0.0.1'
+  const port = Number(url.port)
+  if (!Number.isFinite(port) || port <= 0) return false
+
+  return await new Promise<boolean>((resolveConnected) => {
+    const socket = createConnection({ port, host })
+    const done = (connected: boolean) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolveConnected(connected)
+    }
+    socket.setTimeout(250)
+    socket.once('connect', () => done(true))
+    socket.once('timeout', () => done(false))
+    socket.once('error', () => done(false))
   })
 }
 
@@ -416,6 +440,16 @@ export class AgentBridgeManager {
         child.off('error', onError)
       }
 
+      const markReady = () => {
+        if (readyResolved) return
+        this.ready = true
+        this.restartAttempts = 0
+        readyResolved = true
+        cleanup()
+        child.stdout?.off('data', onStdout)
+        resolveReady()
+      }
+
       const onError = (err: Error) => {
         cleanup()
         child.stdout?.off('data', onStdout)
@@ -443,11 +477,7 @@ export class AgentBridgeManager {
             try {
               const parsed = JSON.parse(line)
               if (parsed?.event === 'ready') {
-                this.ready = true
-                this.restartAttempts = 0
-                readyResolved = true
-                cleanup()
-                resolveReady()
+                markReady()
                 return
               }
             } catch {}
@@ -458,6 +488,19 @@ export class AgentBridgeManager {
       child.once('error', onError)
       child.once('exit', onExitBeforeReady)
       child.stdout?.on('data', onStdout)
+
+      if (isDesktopRuntime() && isTcpEndpoint(this.endpoint)) {
+        const probe = async () => {
+          while (!readyResolved && !child.killed) {
+            if (await canConnectTcpEndpoint(this.endpoint)) {
+              markReady()
+              return
+            }
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+        }
+        probe().catch(onError)
+      }
     })
 
     logger.info('[agent-bridge] ready at %s', this.endpoint)

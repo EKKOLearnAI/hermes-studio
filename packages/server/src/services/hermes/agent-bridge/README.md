@@ -30,6 +30,13 @@ Override with:
 HERMES_AGENT_BRIDGE_ENDPOINT=tcp://127.0.0.1:8765 python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
 ```
 
+Profile workers use the same platform defaults: TCP on Windows and IPC on
+macOS/Linux. Override worker transport with:
+
+```bash
+HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp HERMES_AGENT_BRIDGE_WORKER_PORT_BASE=18780 python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
+```
+
 The service discovers Hermes Agent in this order:
 
 1. `--agent-root`

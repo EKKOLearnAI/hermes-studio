@@ -7,6 +7,7 @@ services:
     container_name: ${WEBUI_CONTAINER_NAME:-hermes-webui}
     ports:
       - "${PORT:-6060}:${PORT:-6060}"
+      - "${PREVIEW_FRONTEND_PORT:-8651}:8651"
       - "${XAI_OAUTH_PORT:-56121}:56121"
     volumes:
       - ${HERMES_DATA_DIR:-./hermes_data}:/home/agent/.hermes

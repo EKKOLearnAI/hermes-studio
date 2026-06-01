@@ -261,6 +261,37 @@ function killListeningPids(port, pids = getListeningPids(port)) {
   } catch {}
 }
 
+function stopPreviewRuntimeFromCli() {
+  const previewPorts = [
+    PREVIEW_BACKEND_PORT,
+    PREVIEW_FRONTEND_PORT,
+    ...(process.platform === 'win32' ? [PREVIEW_AGENT_BRIDGE_PORT] : []),
+  ]
+  const pids = [...new Set(previewPorts.flatMap(port => getListeningPids(port)))]
+  if (!pids.length) return 0
+
+  console.log(`  ⏹ Stopping preview runtime (PID(s): ${pids.join(' ')})...`)
+  for (const pid of pids) {
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+      } else {
+        execSync(`kill -TERM -${pid}`, { stdio: 'ignore' })
+      }
+    } catch {
+      try {
+        if (process.platform === 'win32') {
+          execFileSync('taskkill.exe', ['/PID', String(pid), '/F'], { stdio: 'ignore', windowsHide: true })
+        } else {
+          execSync(`kill -9 ${pid}`, { stdio: 'ignore' })
+        }
+      } catch {}
+    }
+  }
+
+  return pids.length
+}
+
 function recoverPidFromPort() {
   const port = getPortFromArgs() ?? DEFAULT_PORT
   for (const pid of getListeningPids(port)) {
@@ -419,6 +450,7 @@ function startDaemon(port) {
 }
 
 function stopDaemon() {
+  const stoppedPreviewPids = stopPreviewRuntimeFromCli()
   const pidFromFile = readPidFile()
   if (pidFromFile && !isRunning(pidFromFile)) {
     removePid()
@@ -428,7 +460,11 @@ function stopDaemon() {
 
   const pid = pidFromFile ?? recoverPidFromPort()
   if (!pid) {
-    console.log('  鉁?hermes-web-ui is not running')
+    if (stoppedPreviewPids) {
+      console.log(`  ✓ hermes-web-ui preview stopped`)
+      return
+    }
+    console.log('  ✗ hermes-web-ui is not running')
     process.exit(1)
   }
 

@@ -1,6 +1,18 @@
+<script lang="ts">
+type HistorySessionScrollSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasNearBottom: boolean;
+}
+
+const historySessionScrollPositions = new Map<string, HistorySessionScrollSnapshot>();
+</script>
+
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
@@ -8,15 +20,16 @@ import type { Session } from "@/stores/hermes/chat";
 
 const props = defineProps<{
   session?: Session | null; // Optional: use this session instead of chatStore.activeSession
+  loadOlder?: (sessionId: string) => Promise<boolean>;
 }>();
 
 const chatStore = useChatStore();
 const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
-const listRef = ref<HTMLElement>();
-
-// Use provided session or fall back to chatStore's active session
-const activeSession = computed(() => props.session || chatStore.activeSession);
+const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
+const pendingInitialScrollSessionId = ref<string | null>(null);
+const activeSession = computed(() => props.session || null);
+const listInstanceKey = computed(() => activeSession.value?.id ? `history-${activeSession.value.id}` : "history-empty");
 
 const displayMessages = computed(() =>
   (activeSession.value?.messages || []).filter((m) => {
@@ -29,38 +42,68 @@ const displayMessages = computed(() =>
 );
 
 function isNearBottom(threshold = 200): boolean {
-  const el = listRef.value;
-  if (!el) return true;
-  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  return listRef.value?.isNearBottom(threshold) ?? true;
 }
 
 function scrollToBottom() {
-  nextTick(() => {
-    if (listRef.value) {
-      listRef.value.scrollTop = listRef.value.scrollHeight;
-    }
-  });
+  listRef.value?.scrollToBottom();
 }
 
 function scrollToMessage(messageId: string) {
-  nextTick(() => {
-    const el = document.getElementById(`message-${messageId}`);
-    if (el) {
-      el.scrollIntoView({ block: 'center' });
-    }
-  });
+  listRef.value?.scrollToMessage(messageId);
 }
 
-// Scroll to bottom on session switch
-watch(
-  () => chatStore.activeSessionId,
-  (id) => {
-    if (!id) return;
-    if (chatStore.focusMessageId) {
-      nextTick(() => scrollToMessage(chatStore.focusMessageId!));
-      return;
+function scrollToAnchor(messageId: string, anchorId: string) {
+  listRef.value?.scrollToAnchor(messageId, anchorId);
+}
+
+function saveSessionScrollPosition(sessionId: string | null | undefined) {
+  if (!sessionId) return;
+  const snapshot = listRef.value?.captureViewportPosition() ?? null;
+  if (snapshot) historySessionScrollPositions.set(sessionId, snapshot);
+}
+
+function applyInitialSessionScroll(sessionId: string) {
+  if (activeSession.value?.id !== sessionId) return;
+  if (chatStore.focusMessageId) {
+    pendingInitialScrollSessionId.value = null;
+    scrollToMessage(chatStore.focusMessageId);
+    return;
+  }
+
+  const snapshot = historySessionScrollPositions.get(sessionId);
+  if (snapshot) {
+    pendingInitialScrollSessionId.value = null;
+    if (snapshot.wasNearBottom) {
+      scrollToBottom();
+    } else {
+      listRef.value?.restoreViewportPosition(snapshot);
     }
-    nextTick(() => scrollToBottom());
+    return;
+  }
+
+  scrollToBottom();
+  if ((activeSession.value?.messages.length || 0) > 0) pendingInitialScrollSessionId.value = null;
+}
+
+async function handleTopReach() {
+  const session = activeSession.value;
+  if (!session?.hasMoreBefore || session.isLoadingOlderMessages || !props.loadOlder) return;
+  const snapshot = listRef.value?.captureScrollPosition() ?? null;
+  const loaded = await props.loadOlder(session.id);
+  if (!loaded) return;
+  await nextTick();
+  listRef.value?.restoreScrollPosition(snapshot);
+}
+
+watch(
+  () => activeSession.value?.id,
+  async (id, previousId) => {
+    saveSessionScrollPosition(previousId);
+    if (!id) return;
+    pendingInitialScrollSessionId.value = id;
+    await nextTick();
+    applyInitialSessionScroll(id);
   },
   { immediate: true },
 );
@@ -77,6 +120,7 @@ watch(
 watch(
   () => (activeSession.value?.messages || [])[((activeSession.value?.messages || []).length - 1)]?.content,
   (content) => {
+    if (pendingInitialScrollSessionId.value === activeSession.value?.id) return;
     if (!content) return
     if (!isNearBottom()) return;
     scrollToBottom();
@@ -87,10 +131,26 @@ watch(
   () => (activeSession.value?.messages || []).length,
   (length) => {
     if (length === 0) return
+    const id = activeSession.value?.id
+    if (id && pendingInitialScrollSessionId.value === id) {
+      applyInitialSessionScroll(id);
+      return;
+    }
     if (!isNearBottom()) return;
     scrollToBottom();
   },
+  { flush: "post" },
 );
+
+onBeforeUnmount(() => {
+  saveSessionScrollPosition(activeSession.value?.id);
+});
+
+defineExpose({
+  scrollToBottom,
+  scrollToMessage,
+  scrollToAnchor,
+});
 </script>
 
 <template>
@@ -111,20 +171,6 @@ watch(
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
 
-.message-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  background-color: $bg-card;
-
-  .dark & {
-    background-color: #333333;
-  }
-}
-
 .empty-state {
   flex: 1;
   display: flex;
@@ -142,6 +188,34 @@ watch(
 
   p {
     font-size: 14px;
+  }
+}
+
+.history-loader {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.history-loader-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.16);
+  border-top-color: $accent-primary;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+
+  .dark & {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: $accent-primary;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

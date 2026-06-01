@@ -1,5 +1,6 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
+import { stopPreviewRuntime } from '../controllers/update'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
   let isShuttingDown = false
@@ -15,6 +16,13 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     console.log(`[shutdown] Received signal: ${signal}`)
 
     try {
+      try {
+        await stopPreviewRuntime()
+        logger.info('Preview runtime stopped')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop preview runtime (non-fatal)')
+      }
+
       if (agentBridgeManager) {
         try {
           await agentBridgeManager.stop()

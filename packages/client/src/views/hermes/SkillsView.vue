@@ -77,6 +77,9 @@ async function loadRecommendations() {
     const response = await fetch(recommendationsPath.value)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const text = await response.text()
+    if (/^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
+      throw new Error('Skill recommendations file was not found')
+    }
     if (requestSeq === recommendationsRequestSeq) {
       recommendations.value = text
     }

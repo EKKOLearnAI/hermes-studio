@@ -1,0 +1,45 @@
+name: NPM Lockfile Check
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/npm-lockfile-check.yml
+  pull_request:
+    branches:
+      - main
+      - base
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/npm-lockfile-check.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-lockfile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: npm ci --ignore-scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify package-lock.json is in sync
+        run: npm ci --ignore-scripts

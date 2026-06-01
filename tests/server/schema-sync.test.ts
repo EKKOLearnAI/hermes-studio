@@ -162,6 +162,22 @@ describe('Database Schema Synchronization', () => {
       expect(row).toBeTruthy()
       expect(row.session_id).toBe('test-1')
     })
+
+    it('adds created_at to legacy session_usage tables missing the column', async () => {
+      const { syncTable, USAGE_TABLE, USAGE_SCHEMA } = await import('../../packages/server/src/db/hermes/schemas')
+
+      const db = getTestDb()
+      db.exec(`CREATE TABLE "${USAGE_TABLE}" (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL)`)
+      db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id) VALUES (?)`).run('legacy-session')
+
+      syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
+
+      const cols = getTableColumns(db, USAGE_TABLE)
+      expect(cols.has('created_at')).toBe(true)
+
+      const row = db.prepare(`SELECT session_id, created_at FROM "${USAGE_TABLE}" WHERE session_id = ?`).get('legacy-session')
+      expect(row).toMatchObject({ session_id: 'legacy-session', created_at: 0 })
+    })
   })
 
   describe('Schema sync with single-column primary keys', () => {

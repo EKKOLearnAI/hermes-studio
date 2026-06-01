@@ -1,0 +1,207 @@
+name: Manual Desktop Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_os:
+        description: "Desktop target OS"
+        required: true
+        type: choice
+        default: win32
+        options:
+          - win32
+          - darwin
+          - linux
+      target_arch:
+        description: "Desktop target architecture"
+        required: true
+        type: choice
+        default: x64
+        options:
+          - x64
+          - arm64
+      release_tag:
+        description: "Optional release tag to attach artifacts to"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-manual-${{ github.event.inputs.target_os }}-${{ github.event.inputs.target_arch }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.target.outputs.label }}
+      runner: ${{ steps.target.outputs.runner }}
+      target_os: ${{ steps.target.outputs.target_os }}
+      target_arch: ${{ steps.target.outputs.target_arch }}
+      electron_target: ${{ steps.target.outputs.electron_target }}
+      artifact_name: ${{ steps.target.outputs.artifact_name }}
+      artifact_files: ${{ steps.target.outputs.artifact_files }}
+    steps:
+      - name: Select requested target
+        id: target
+        shell: bash
+        run: |
+          write_common_outputs() {
+            {
+              echo "label=$1"
+              echo "runner=$2"
+              echo "target_os=${{ github.event.inputs.target_os }}"
+              echo "target_arch=${{ github.event.inputs.target_arch }}"
+              echo "electron_target=$3"
+              echo "artifact_name=$4"
+              echo "artifact_files<<EOF"
+              shift 4
+              printf '%s\n' "$@"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          case "${{ github.event.inputs.target_os }}-${{ github.event.inputs.target_arch }}" in
+            win32-x64)
+              write_common_outputs "Windows x64" "windows-latest" "--win nsis --x64" "desktop-win32-x64" \
+                "packages/desktop/release/*.exe" \
+                "packages/desktop/release/*.exe.blockmap" \
+                "packages/desktop/release/latest*.yml"
+              ;;
+            darwin-arm64)
+              write_common_outputs "macOS arm64" "macos-14" "--mac dmg zip --arm64" "desktop-darwin-arm64" \
+                "packages/desktop/release/*.dmg" \
+                "packages/desktop/release/*.dmg.blockmap" \
+                "packages/desktop/release/*.zip" \
+                "packages/desktop/release/*.zip.blockmap" \
+                "packages/desktop/release/latest*.yml"
+              ;;
+            darwin-x64)
+              write_common_outputs "macOS x64" "macos-15-intel" "--mac dmg zip --x64" "desktop-darwin-x64" \
+                "packages/desktop/release/*.dmg" \
+                "packages/desktop/release/*.dmg.blockmap" \
+                "packages/desktop/release/*.zip" \
+                "packages/desktop/release/*.zip.blockmap" \
+                "packages/desktop/release/latest*.yml"
+              ;;
+            linux-x64)
+              write_common_outputs "Linux x64" "ubuntu-22.04" "--linux AppImage deb --x64" "desktop-linux-x64" \
+                "packages/desktop/release/*.AppImage" \
+                "packages/desktop/release/*.deb" \
+                "packages/desktop/release/latest*.yml"
+              ;;
+            linux-arm64)
+              write_common_outputs "Linux arm64" "ubuntu-22.04-arm" "--linux AppImage --arm64" "desktop-linux-arm64" \
+                "packages/desktop/release/*.AppImage" \
+                "packages/desktop/release/latest*.yml"
+              ;;
+            *)
+              echo "Unsupported desktop target: ${{ github.event.inputs.target_os }} ${{ github.event.inputs.target_arch }}" >&2
+              exit 1
+              ;;
+          esac
+
+  desktop:
+    name: Desktop (${{ needs.validate.outputs.label }})
+    needs: validate
+    runs-on: ${{ needs.validate.outputs.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            packages/desktop/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install web UI dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty
+
+      - name: Build web UI
+        run: npm run build
+
+      - name: Keep production web UI dependencies only
+        run: npm prune --omit=dev --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        run: npm ci --prefix packages/desktop --no-audit --no-fund
+
+      - name: Prepare bundled Python
+        env:
+          TARGET_OS: ${{ needs.validate.outputs.target_os }}
+          TARGET_ARCH: ${{ needs.validate.outputs.target_arch }}
+        run: npm --prefix packages/desktop run prepare:python
+
+      - name: Configure macOS signing
+        if: needs.validate.outputs.target_os == 'darwin'
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          MAC_APPLE_ID: ${{ secrets.APPLE_ID }}
+          MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          MAC_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          write_env() {
+            local name="$1"
+            local value="$2"
+            if [ -n "$value" ]; then
+              {
+                echo "$name<<EOF"
+                echo "$value"
+                echo "EOF"
+              } >> "$GITHUB_ENV"
+            fi
+          }
+
+          if [ -z "${MAC_CSC_LINK:-}" ]; then
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "MAC_BUILD_EXTRA_ARGS=--config.mac.notarize=false" >> "$GITHUB_ENV"
+            echo "No macOS signing certificate configured; building unsigned and skipping notarization."
+            exit 0
+          fi
+
+          write_env "CSC_LINK" "$MAC_CSC_LINK"
+          write_env "CSC_KEY_PASSWORD" "$MAC_CSC_KEY_PASSWORD"
+
+          if [ -n "${MAC_APPLE_ID:-}" ] && [ -n "${MAC_APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${MAC_APPLE_TEAM_ID:-}" ]; then
+            write_env "APPLE_ID" "$MAC_APPLE_ID"
+            write_env "APPLE_APP_SPECIFIC_PASSWORD" "$MAC_APPLE_APP_SPECIFIC_PASSWORD"
+            write_env "APPLE_TEAM_ID" "$MAC_APPLE_TEAM_ID"
+            echo "macOS signing and notarization are configured."
+          else
+            echo "MAC_BUILD_EXTRA_ARGS=--config.mac.notarize=false" >> "$GITHUB_ENV"
+            echo "macOS signing certificate configured; Apple notarization credentials incomplete, skipping notarization."
+          fi
+
+      - name: Build desktop artifact
+        shell: bash
+        run: npm --prefix packages/desktop run dist -- ${{ needs.validate.outputs.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ needs.validate.outputs.artifact_files }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload artifacts to release
+        if: github.event.inputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          fail_on_unmatched_files: true
+          files: ${{ needs.validate.outputs.artifact_files }}

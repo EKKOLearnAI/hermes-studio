@@ -7,7 +7,7 @@ import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
-import { config } from './config'
+import { config, shouldCreateWebUiDataDir } from './config'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -18,7 +18,7 @@ import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
-import { startAgentBridgeManager } from './services/hermes/agent-bridge'
+import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
@@ -81,10 +81,34 @@ function safeNetworkInterfaces() {
   }
 }
 
+function startRuntimeServicesAfterListen(): void {
+  void (async () => {
+    try {
+      await ensureProfileGatewaysRunning()
+      console.log('[bootstrap] profile gateways checked')
+    } catch (err) {
+      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+    }
+  })()
+
+  void (async () => {
+    try {
+      agentBridgeManager = await startAgentBridgeManager()
+      console.log('[bootstrap] agent bridge started')
+    } catch (err) {
+      logger.warn(err, '[bootstrap] agent bridge failed to start')
+      console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+    }
+  })()
+}
+
 export async function bootstrap() {
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
-  await mkdir(config.dataDir, { recursive: true })
+  if (shouldCreateWebUiDataDir()) {
+    await mkdir(config.dataDir, { recursive: true })
+  }
 
   await initLoginLimiter()
   try {
@@ -107,23 +131,7 @@ export async function bootstrap() {
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
   }
 
-  try {
-    await ensureProfileGatewaysRunning()
-    console.log('[bootstrap] profile gateways checked')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-  }
-
   const app = new Koa()
-
-  try {
-    agentBridgeManager = await startAgentBridgeManager()
-    console.log('[bootstrap] agent bridge started')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] agent bridge failed to start')
-    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
-  }
   await new Promise(resolve => setTimeout(resolve, 1000))
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
@@ -133,7 +141,10 @@ export async function bootstrap() {
   console.log('[bootstrap] all stores initialized')
 
   app.use(cors({ origin: config.corsOrigins }))
-  app.use(bodyParser())
+  // Raise JSON/text limits above the default 1mb: profile avatars are posted
+  // as base64 data URLs (up to ~1MB raw → ~1.37MB base64), which otherwise
+  // tripped a 413 in the body parser before reaching the handler.
+  app.use(bodyParser({ encoding: 'utf-8', jsonLimit: '4mb', textLimit: '4mb' }))
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)
@@ -195,6 +206,9 @@ export async function bootstrap() {
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+
+  agentBridgeManager = getAgentBridgeManager()
+  startRuntimeServicesAfterListen()
 
   // Restore group chat agents after server is ready.
   groupChatServer.restoreWhenReady()

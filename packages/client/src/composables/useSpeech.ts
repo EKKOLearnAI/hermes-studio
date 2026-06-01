@@ -1,5 +1,6 @@
 import { ref, computed, onUnmounted } from 'vue'
 import { generateSpeech, playAudioBlob } from '@/api/hermes/tts'
+import { getApiKey } from '@/api/client'
 
 export interface SpeechOptions {
   lang?: string      // 语言 'zh-CN', 'en-US' 等
@@ -286,6 +287,10 @@ export function useSpeech() {
     }
     if (opts.apiKey) {
       headers['Authorization'] = `Bearer ${opts.apiKey}`
+    } else if (opts.baseUrl.startsWith('/')) {
+      // 本地代理请求自动附加 JWT
+      const jwt = getApiKey()
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`
     }
 
     try {

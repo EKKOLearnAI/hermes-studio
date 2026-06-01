@@ -494,8 +494,12 @@ async function handleArchiveSelectedBoard() {
 @media (max-width: $breakpoint-mobile) {
   .page-header {
     padding: 16px 12px 16px 52px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
     flex-direction: column;
     align-items: flex-start;
+    background: $bg-primary;
     gap: 10px;
   }
 

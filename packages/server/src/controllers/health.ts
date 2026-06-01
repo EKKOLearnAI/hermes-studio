@@ -6,12 +6,41 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : ''
 
+/**
+ * Whether the periodic npm-registry version check is disabled.
+ *
+ * Useful when hermes-web-ui is bundled inside a packaged distribution
+ * (e.g. a desktop app) where the user can't `npm install -g hermes-web-ui@latest`
+ * to upgrade — the "update available" prompt would be misleading and
+ * the periodic outbound HTTP request to the npm registry is unnecessary.
+ *
+ * Set HERMES_WEB_UI_DISABLE_UPDATE_CHECK=true (or 1, on, yes) to disable.
+ */
+function isUpdateCheckDisabled(): boolean {
+  const raw = (process.env.HERMES_WEB_UI_DISABLE_UPDATE_CHECK || '').trim().toLowerCase()
+  return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes'
+}
+
 export async function checkLatestVersion(): Promise<void> {
-  return Promise.resolve()
+  if (isUpdateCheckDisabled()) return
+  try {
+    const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
+    const registryName = encodeURIComponent(packageName)
+    const res = await fetch(`https://registry.npmjs.org/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
+    if (res.ok) {
+      const data = await res.json() as { version: string }
+      cachedLatestVersion = data.version
+      if (LOCAL_VERSION && cachedLatestVersion !== LOCAL_VERSION) {
+        console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
+      }
+    }
+  } catch { /* ignore */ }
 }
 
 export function startVersionCheck(): void {
-  // Auto-update checks are intentionally disabled for the branded distribution.
+  if (isUpdateCheckDisabled()) return
+  setTimeout(checkLatestVersion, 5000)
+  setInterval(checkLatestVersion, 30 * 60 * 1000)
 }
 
 export async function healthCheck(ctx: any) {
@@ -23,10 +52,10 @@ export async function healthCheck(ctx: any) {
     version: hermesVersion,
     gateway: 'running',
     webui_version: LOCAL_VERSION,
-    webui_latest: '',
-    webui_update_enabled: false,
-    webui_update_source_label: '',
-    webui_update_available: false,
+    webui_latest: isUpdateCheckDisabled() ? '' : cachedLatestVersion,
+    webui_update_available: isUpdateCheckDisabled()
+      ? false
+      : Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
   }
 }

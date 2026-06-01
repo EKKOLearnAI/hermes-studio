@@ -436,6 +436,10 @@ chatRunServer.init()
 | 变量 | 说明 |
 |------|------|
 | `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge endpoint；Windows 默认 `tcp://127.0.0.1:18765`，macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock` |
+| `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` | profile worker endpoint transport；设为 `tcp` 使用 loopback TCP，设为 `ipc`/`unix` 使用 Unix domain socket；默认 Windows 使用 TCP，macOS/Linux 使用 IPC |
+| `HERMES_AGENT_BRIDGE_WORKER_PORT_BASE` | TCP worker endpoint 起始端口，默认 `18780`；仅在 worker transport 为 TCP 时生效 |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | Version Preview 的 bridge broker endpoint transport；设为 `tcp` 可让预览环境在 macOS/Linux 上也使用 loopback TCP；未设置时会跟随 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp` |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | 直接覆盖 Version Preview 的 bridge broker endpoint；用于需要完全自定义预览 bridge 地址的部署 |
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 `120000` ms |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | Node 连接 bridge socket 失败时的短重试窗口，默认 `5000` ms |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Node 等待 Python bridge ready 的超时，默认 `120000` ms |
@@ -449,7 +453,7 @@ chatRunServer.init()
 | `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数 |
 | `UV` | uv 可执行文件路径 fallback |
 
-正常使用不需要配置这些变量。Bridge 支持多个用户/多个 profile 的运行并存；Web UI 的 Hermes Profile 切换不会重启 bridge 或销毁其他正在运行的任务。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
+正常使用不需要配置这些变量。Bridge 支持多个用户/多个 profile 的运行并存；Web UI 的 Hermes Profile 切换不会重启 bridge 或销毁其他正在运行的任务。`HERMES_AGENT_BRIDGE_ENDPOINT` 控制 Node 与 Python bridge broker 的连接地址；`HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` 控制 broker 与每个 profile worker 的连接方式。macOS/Linux 默认仍使用 IPC；如果 Electron、沙盒或安全软件环境下 IPC 不稳定，可以设置 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp` 切到 loopback TCP。Version Preview 默认继续使用独立的 broker endpoint，也会为 TCP worker 使用独立端口段，避免和正式实例共享端口池；如需让 Preview 的 broker 在 macOS/Linux 上也走 TCP，可设置 `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT=tcp`，未设置时会跟随 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp`。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
 
 Windows 首次启动慢时可以临时放大：
 

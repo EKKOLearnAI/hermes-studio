@@ -62,6 +62,15 @@ export interface HermesSessionDetailRow extends HermesSessionRow {
   thread_session_count: number
 }
 
+export interface PaginatedHermesSessionDetailResult {
+  session: HermesSessionDetailRow
+  messages: HermesMessageRow[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+
 interface HermesSessionInternalRow extends HermesSessionRow {
   parent_session_id: string | null
 }
@@ -664,6 +673,52 @@ export async function getSessionDetailFromDbWithProfile(sessionId: string, profi
     `).all(...ids, ...ids) as Record<string, unknown>[]
     const messages = messageRows.map(mapMessageRow)
     return aggregateSessionDetail(chain, messages, sessionId)
+  } finally {
+    db.close()
+  }
+}
+
+export async function getSessionDetailPaginatedFromDbWithProfile(
+  sessionId: string,
+  profile: string,
+  offset = 0,
+  limit = 300,
+): Promise<PaginatedHermesSessionDetailResult | null> {
+  const db = await openSessionDb(profile)
+  try {
+    const idx = loadAllSessions(db)
+    const requested = idx.byId.get(sessionId) || null
+    if (!requested) return null
+
+    const chain = collectSessionChainForMatchedSession(requested, idx)
+    if (!chain.length) return null
+
+    const ids = chain.map(session => session.id)
+    const placeholders = ids.map(() => '?').join(', ')
+    const orderSql = chainOrderSql(ids)
+    const totalRow = db.prepare(`
+      SELECT COUNT(*) AS total
+      FROM messages
+      WHERE session_id IN (${placeholders})
+    `).get(...ids) as { total: number } | undefined
+    const total = Number(totalRow?.total || 0)
+
+    const messageRows = db.prepare(`
+      SELECT * FROM messages
+      WHERE session_id IN (${placeholders})
+      ORDER BY CASE session_id ${orderSql} ELSE ${ids.length} END DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all(...ids, ...ids, limit, offset) as Record<string, unknown>[]
+    const messages = messageRows.map(mapMessageRow).reverse()
+
+    return {
+      session: aggregateSessionDetail(chain, messages, sessionId),
+      messages,
+      total,
+      offset,
+      limit,
+      hasMore: offset + messages.length < total,
+    }
   } finally {
     db.close()
   }

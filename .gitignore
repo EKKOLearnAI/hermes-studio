@@ -7,7 +7,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-package-lock.json
 node_modules
 dist
 playwright-report
@@ -26,6 +25,10 @@ pnpm-workspace.yaml
 packages/server/data/
 packages/server/node_modules/
 .hermes-web-ui/
+packages/desktop/dist/
+packages/desktop/release/
+packages/desktop/resources/python/
+packages/desktop/node_modules/
 
 # Hermes config files (should be in user data directory, not project root)
 config.yaml
@@ -49,3 +52,4 @@ CLAUDE.md
 packages/client/src/**/*.js
 .runtime-hermes/state.db-wal
 
+.hermes/

@@ -94,6 +94,20 @@ describe('tool trace visibility', () => {
     ])
   })
 
+  it('does not fall back to the live chat session while history session data is loading', () => {
+    const chatStore = useChatStore()
+    chatStore.activeSessionId = 'session-1'
+    chatStore.activeSession = makeSession(sampleMessages)
+
+    const wrapper = mount(HistoryMessageList, {
+      global: {
+        stubs: { MessageItem: MessageItemStub },
+      },
+    })
+
+    expect(wrapper.findAll('.stub-message')).toHaveLength(0)
+  })
+
   it('hides named transcript traces when the toggle is off while keeping live tool stream visible', () => {
     useToolTraceVisibility().setToolTraceVisible(false)
 

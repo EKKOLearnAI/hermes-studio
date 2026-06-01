@@ -290,9 +290,9 @@ function buildWsUrl(): string {
     return `${wsProtocol}//${new URL(base).host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   }
 
-  // Dev mode: connect directly to backend port; Production: same host
-  const host = import.meta.env.DEV
-    ? formatHostForPort(location.hostname, 8648)
+  const directDevPort = import.meta.env.VITE_HERMES_DIRECT_WS_PORT;
+  const host = import.meta.env.DEV && directDevPort
+    ? formatHostForPort(location.hostname, Number(directDevPort))
     : location.host;
   return `${wsProtocol}//${host}/api/hermes/terminal${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }

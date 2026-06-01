@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { createServer, type Server } from 'http'
 import { request as httpsRequest, type RequestOptions } from 'https'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { dirname } from 'path'
 import { URL } from 'url'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
@@ -153,7 +154,7 @@ function loadAuthJson(authPath: string): AuthJson {
 
 function saveAuthJson(authPath: string, data: AuthJson): void {
   data.updated_at = new Date().toISOString()
-  const dir = authPath.substring(0, authPath.lastIndexOf('/'))
+  const dir = dirname(authPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(authPath, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
