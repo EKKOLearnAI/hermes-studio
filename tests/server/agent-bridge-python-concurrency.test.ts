@@ -9,11 +9,15 @@ function runPython(script: string): void {
       stdio: 'pipe',
     })
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message?: string }
+    const err = error as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string; status?: number; signal?: string }
+    const stdout = err.stdout ? String(err.stdout) : ''
+    const stderr = err.stderr ? String(err.stderr) : ''
     throw new Error([
       err.message || 'Python bridge concurrency script failed',
-      err.stdout ? `stdout:\n${err.stdout}` : '',
-      err.stderr ? `stderr:\n${err.stderr}` : '',
+      err.status != null ? `status: ${err.status}` : '',
+      err.signal ? `signal: ${err.signal}` : '',
+      stdout ? `stdout:\n${stdout}` : '',
+      stderr ? `stderr:\n${stderr}` : '',
     ].filter(Boolean).join('\n\n'))
   }
 }
@@ -457,16 +461,18 @@ assert "compress-temp" not in broker._session_worker_key
     runPython(String.raw`
 ${harness}
 
-prod_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
-preview_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-web-ui-preview/agent-bridge.sock")
-assert prod_endpoint != preview_endpoint
-assert prod_endpoint == bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+prod_namespace = "ipc:///tmp/" + "hermes-" + "agent-" + "bridge.sock"
+preview_namespace = "ipc:///tmp/hermes-web-ui-preview/" + "agent-bridge.sock"
+prod_endpoint = bridge._worker_endpoint("default", prod_namespace)
+preview_endpoint = bridge._worker_endpoint("default", preview_namespace)
+assert prod_endpoint != preview_endpoint, (prod_endpoint, preview_endpoint)
+assert prod_endpoint == bridge._worker_endpoint("default", prod_namespace), prod_endpoint
 
-prod_broker = bridge.BridgeBroker("ipc:///tmp/hermes-agent-bridge.sock")
-preview_broker = bridge.BridgeBroker("ipc:///tmp/hermes-web-ui-preview/agent-bridge.sock")
+prod_broker = bridge.BridgeBroker(prod_namespace)
+preview_broker = bridge.BridgeBroker(preview_namespace)
 prod_worker = prod_broker._worker_for_profile("default")
 preview_worker = preview_broker._worker_for_profile("default")
-assert prod_worker.endpoint != preview_worker.endpoint
+assert prod_worker.endpoint != preview_worker.endpoint, (prod_worker.endpoint, preview_worker.endpoint)
 `)
   })
 
@@ -477,25 +483,64 @@ ${harness}
 os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", None)
 os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", None)
 
-default_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+prod_namespace = "ipc:///tmp/" + "hermes-" + "agent-" + "bridge.sock"
+default_endpoint = bridge._worker_endpoint("default", prod_namespace)
 if os.name == "nt":
-    assert default_endpoint.startswith("tcp://127.0.0.1:")
+    assert default_endpoint.startswith("tcp://127.0.0.1:"), default_endpoint
 else:
-    assert default_endpoint.startswith("ipc://")
+    assert default_endpoint.startswith("ipc://"), default_endpoint
 
 os.environ["HERMES_AGENT_BRIDGE_WORKER_TRANSPORT"] = "tcp"
 os.environ["HERMES_AGENT_BRIDGE_WORKER_PORT_BASE"] = "19650"
-tcp_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
-assert tcp_endpoint.startswith("tcp://127.0.0.1:")
-assert int(tcp_endpoint.rsplit(":", 1)[1]) >= 19650
-assert int(tcp_endpoint.rsplit(":", 1)[1]) < 20650
+tcp_endpoint = bridge._worker_endpoint("default", prod_namespace)
+assert tcp_endpoint.startswith("tcp://127.0.0.1:"), tcp_endpoint
+assert int(tcp_endpoint.rsplit(":", 1)[1]) >= 19650, tcp_endpoint
+assert int(tcp_endpoint.rsplit(":", 1)[1]) < 20650, tcp_endpoint
 
 os.environ["HERMES_AGENT_BRIDGE_WORKER_TRANSPORT"] = "ipc"
-ipc_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
-assert ipc_endpoint.startswith("ipc://")
+ipc_endpoint = bridge._worker_endpoint("default", prod_namespace)
+assert ipc_endpoint.startswith("ipc://"), ipc_endpoint
 
 os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", None)
 os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", None)
+`)
+  })
+
+  it('marks a profile worker ready from endpoint ping when stdout ready is unavailable', () => {
+    runPython(String.raw`
+${harness}
+
+class QuietStdout:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        time.sleep(60)
+        raise StopIteration
+
+class FakeProcess:
+    pid = 43210
+    stdout = QuietStdout()
+
+    def poll(self):
+        return None
+
+worker = bridge.WorkerProcess("default", "default", "tcp://127.0.0.1:43210", None, None)
+worker.process = FakeProcess()
+worker.STARTUP_TIMEOUT_SECONDS = 1
+
+calls = []
+
+def fake_send_bridge_request(endpoint, req, timeout):
+    calls.append((endpoint, req, timeout))
+    return {"ok": True, "pong": True, "pid": 43210}
+
+bridge._send_bridge_request = fake_send_bridge_request
+worker._wait_ready()
+
+assert calls
+assert calls[0][0] == "tcp://127.0.0.1:43210"
+assert calls[0][1] == {"action": "ping"}
 `)
   })
 

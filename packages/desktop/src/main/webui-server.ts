@@ -258,7 +258,7 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
     HERMES_STUDIO_BIN: cliAlias.binPath,
-    HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
+    HERMES_AGENT_BRIDGE_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
     HERMES_AGENT_CLI_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`

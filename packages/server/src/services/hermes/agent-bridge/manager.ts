@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
-import { createServer } from 'net'
+import { createConnection, createServer, type Socket } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
@@ -299,6 +299,115 @@ async function waitForTcpEndpoint(endpoint: string, timeoutMs: number): Promise<
   return canListenTcpEndpoint(endpoint)
 }
 
+function connectBridgeSocket(endpoint: string, timeoutMs: number): Promise<Socket> {
+  return new Promise((resolveSocket, rejectSocket) => {
+    let socket: Socket
+    if (endpoint.startsWith('ipc://')) {
+      socket = createConnection(endpoint.slice('ipc://'.length))
+    } else if (endpoint.startsWith('tcp://')) {
+      const url = new URL(endpoint)
+      socket = createConnection({
+        host: url.hostname || '127.0.0.1',
+        port: Number(url.port),
+      })
+    } else {
+      rejectSocket(new Error(`unsupported agent bridge endpoint: ${endpoint}`))
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      cleanup()
+      socket.destroy()
+      rejectSocket(new Error(`agent bridge ping timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timeout)
+      socket.off('connect', onConnect)
+      socket.off('error', onError)
+    }
+    const onConnect = () => {
+      cleanup()
+      resolveSocket(socket)
+    }
+    const onError = (err: Error) => {
+      cleanup()
+      socket.destroy()
+      rejectSocket(err)
+    }
+    socket.once('connect', onConnect)
+    socket.once('error', onError)
+  })
+}
+
+function readBridgeSocketLine(socket: Socket, timeoutMs: number): Promise<string> {
+  return new Promise((resolveLine, rejectLine) => {
+    let buffer = ''
+    const timeout = setTimeout(() => {
+      cleanup()
+      socket.destroy()
+      rejectLine(new Error(`agent bridge ping response timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timeout)
+      socket.off('data', onData)
+      socket.off('error', onError)
+      socket.off('close', onClose)
+      socket.off('end', onEnd)
+    }
+    const finish = (line: string) => {
+      cleanup()
+      socket.end()
+      resolveLine(line)
+    }
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const newline = buffer.indexOf('\n')
+      if (newline >= 0) finish(buffer.slice(0, newline))
+    }
+    const onError = (err: Error) => {
+      cleanup()
+      socket.destroy()
+      rejectLine(err)
+    }
+    const onClose = () => {
+      if (!buffer.trim()) {
+        cleanup()
+        rejectLine(new Error('agent bridge ping socket closed without a response'))
+      }
+    }
+    const onEnd = () => {
+      const line = buffer.trim()
+      if (line) finish(line)
+    }
+    socket.on('data', onData)
+    socket.once('error', onError)
+    socket.once('close', onClose)
+    socket.once('end', onEnd)
+  })
+}
+
+async function pingBridgeEndpoint(endpoint: string, timeoutMs: number, expectedPid?: number): Promise<boolean> {
+  const socket = await connectBridgeSocket(endpoint, timeoutMs)
+  try {
+    socket.write(`${JSON.stringify({ action: 'ping' })}\n`)
+    const line = await readBridgeSocketLine(socket, timeoutMs)
+    const response = JSON.parse(line) as {
+      ok?: unknown
+      pong?: unknown
+      pid?: unknown
+      broker?: { pid?: unknown }
+    }
+    if (response.ok !== true || response.pong !== true) return false
+    if (expectedPid) {
+      const responsePid = Number(response.pid ?? response.broker?.pid)
+      return Number.isFinite(responsePid) && responsePid === expectedPid
+    }
+    return true
+  } finally {
+    socket.destroy()
+  }
+}
+
 async function killWindowsEndpointOccupants(endpoint: string): Promise<void> {
   const port = tcpEndpointPort(endpoint)
   if (!port) return
@@ -410,25 +519,54 @@ export class AgentBridgeManager {
         rejectReady(new Error(`agent bridge did not become ready within ${startupTimeoutMs}ms`))
       }, startupTimeoutMs)
 
+      let readyResolved = false
+      let pingInFlight = false
+      let pingInterval: NodeJS.Timeout | undefined
       const cleanup = () => {
         clearTimeout(timeout)
+        if (pingInterval) clearInterval(pingInterval)
         child.off('exit', onExitBeforeReady)
         child.off('error', onError)
+        child.stdout?.off('data', onStdout)
       }
 
       const onError = (err: Error) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(err)
       }
 
       const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(new Error(`agent bridge exited before ready code=${code} signal=${signal}`))
       }
 
-      let readyResolved = false
+      const markReady = () => {
+        if (readyResolved) return
+        this.ready = true
+        this.restartAttempts = 0
+        readyResolved = true
+        cleanup()
+        resolveReady()
+      }
+
+      const pollEndpointReady = () => {
+        if (readyResolved || pingInFlight) return
+        pingInFlight = true
+        pingBridgeEndpoint(this.endpoint, 1000, child.pid)
+          .then((ready) => {
+            if (ready) markReady()
+          })
+          .catch(() => {
+            /* keep waiting until stdout, ping, exit, or timeout decides */
+          })
+          .finally(() => {
+            pingInFlight = false
+          })
+      }
+
+      pingInterval = setInterval(pollEndpointReady, 250)
+      pollEndpointReady()
+
       const onStdout = (chunk: Buffer) => {
         const text = chunk.toString('utf8')
         buffered += text
@@ -443,11 +581,7 @@ export class AgentBridgeManager {
             try {
               const parsed = JSON.parse(line)
               if (parsed?.event === 'ready') {
-                this.ready = true
-                this.restartAttempts = 0
-                readyResolved = true
-                cleanup()
-                resolveReady()
+                markReady()
                 return
               }
             } catch {}

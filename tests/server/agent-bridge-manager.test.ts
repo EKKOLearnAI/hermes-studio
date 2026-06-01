@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { EventEmitter } from 'events'
 import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -16,11 +17,13 @@ describe('agent bridge manager command resolution', () => {
     delete process.env.HERMES_AGENT_BRIDGE_PYTHON
     delete process.env.HERMES_AGENT_BRIDGE_UV
     delete process.env.UV
+    vi.doUnmock('child_process')
   })
 
   afterEach(() => {
     process.env = { ...originalEnv }
     if (tempDir) rmSync(tempDir, { recursive: true, force: true })
+    vi.doUnmock('child_process')
   })
 
   it('uses the installed hermes command Python when no source root exists', async () => {
@@ -151,6 +154,69 @@ describe('agent bridge manager command resolution', () => {
       await ready
     } finally {
       await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve())
+    }
+  })
+
+  it('marks the bridge ready from endpoint ping when stdout ready is unavailable', async () => {
+    const homeDir = join(tempDir, 'home')
+    mkdirSync(homeDir, { recursive: true })
+
+    const server = createServer((socket) => {
+      socket.once('data', () => {
+        socket.end(`${JSON.stringify({ ok: true, pong: true, broker: { pid: 12345 } })}\n`)
+      })
+    })
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+    const address = server.address()
+    if (typeof address !== 'object' || !address?.port) {
+      throw new Error('test server did not bind to a TCP port')
+    }
+    const endpoint = `tcp://127.0.0.1:${address.port}`
+
+    const stdout = new EventEmitter()
+    const stderr = new EventEmitter()
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      killed: false,
+      pid: 12345,
+      kill: vi.fn(function kill(this: { killed: boolean }) {
+        this.killed = true
+        return true
+      }),
+    })
+    const actualChildProcess = await vi.importActual<typeof import('child_process')>('child_process')
+    const spawn = vi.fn(() => child)
+    vi.doMock('child_process', () => ({
+      ...actualChildProcess,
+      spawn,
+    }))
+    vi.resetModules()
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({
+        endpoint,
+        python: process.execPath,
+        hermesHome: homeDir,
+        startupTimeoutMs: 1000,
+      })
+
+      await manager.start()
+
+      expect(manager.getRuntimeState()).toMatchObject({
+        endpoint,
+        ready: true,
+        running: true,
+        pid: 12345,
+      })
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        expect.arrayContaining(['--endpoint', endpoint]),
+        expect.objectContaining({ windowsHide: true }),
+      )
+    } finally {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
     }
   })
 })

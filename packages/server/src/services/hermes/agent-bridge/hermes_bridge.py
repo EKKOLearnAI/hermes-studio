@@ -2741,6 +2741,8 @@ class BridgeServer:
 class WorkerProcess:
     STARTUP_TIMEOUT_SECONDS = 120
     REQUEST_TIMEOUT_SECONDS = 120
+    READY_PING_INTERVAL_SECONDS = 0.25
+    READY_PING_TIMEOUT_SECONDS = 0.25
 
     def __init__(self, key: str, profile: str, endpoint: str, agent_root: str | None, hermes_home: str | None) -> None:
         self.key = key or profile or "default"
@@ -2833,9 +2835,20 @@ class WorkerProcess:
 
         threading.Thread(target=read_stdout, daemon=True, name=f"hermes-bridge-worker-stdout-{self.key}").start()
         deadline = time.time() + self.STARTUP_TIMEOUT_SECONDS
+        next_ping_at = 0.0
         while time.time() < deadline:
             if proc.poll() is not None:
                 raise RuntimeError(f"profile worker {self.key} exited before ready")
+            now = time.time()
+            if now >= next_ping_at:
+                next_ping_at = now + self.READY_PING_INTERVAL_SECONDS
+                try:
+                    resp = _send_bridge_request(self.endpoint, {"action": "ping"}, self.READY_PING_TIMEOUT_SECONDS)
+                    if resp.get("pong") and resp.get("pid") == proc.pid:
+                        ready_event.set()
+                        return
+                except Exception:
+                    pass
             try:
                 line = lines.get(timeout=0.1)
             except queue.Empty:
@@ -2883,7 +2896,7 @@ class WorkerProcess:
 
 
 def _worker_endpoint(key: str, namespace: str | None = None) -> str:
-    namespace_key = f"{namespace or ''}\0{key}"
+    namespace_key = json.dumps([namespace or "", key], ensure_ascii=False, separators=(",", ":"))
     safe = hashlib.sha256(namespace_key.encode("utf-8")).hexdigest()[:16]
     transport = os.environ.get("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", "").strip().lower()
     use_tcp = transport == "tcp" or (transport not in {"ipc", "unix"} and os.name == "nt")
