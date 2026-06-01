@@ -160,9 +160,16 @@ const SESSION_SELECT = `
     ),
     ''
   ) AS preview,
-  COALESCE((SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id), s.started_at) AS last_active,
-  COALESCE(s.archived, 0) AS archived
+  COALESCE((SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id), s.started_at) AS last_active
 `
+
+function getArchivedColumnExpr(db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } }): string {
+  return tableHasColumn(db, 'sessions', 'archived') ? 'COALESCE(s.archived, 0) AS archived' : '0 AS archived'
+}
+
+function buildSessionSelect(db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } }): string {
+  return `${SESSION_SELECT},\n  ${getArchivedColumnExpr(db)}`
+}
 
 function containsCjk(text: string): boolean {
   for (const ch of text) {
@@ -246,6 +253,7 @@ function runLiteralContentSearch(
   query: string,
   limit: number,
 ): Record<string, unknown>[] {
+  const sessionSelect = buildSessionSelect(db)
   const loweredQuery = query.toLowerCase()
   const likePattern = buildLikePattern(loweredQuery)
   const sourceClause = source ? 'AND s.source = ?' : ''
@@ -253,7 +261,7 @@ function runLiteralContentSearch(
   const likeSql = `
     WITH base AS (
       SELECT
-        ${SESSION_SELECT},
+        ${sessionSelect},
         s.parent_session_id AS parent_session_id
       FROM sessions s
       WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -421,9 +429,10 @@ interface SessionIndex {
 }
 
 function loadAllSessions(db: { prepare: (sql: string) => { all: (...params: any[]) => Record<string, unknown>[] } }): SessionIndex {
+  const sessionSelect = buildSessionSelect(db)
   const rows = db.prepare(`
     SELECT
-      ${SESSION_SELECT},
+      ${sessionSelect},
       s.parent_session_id AS parent_session_id
     FROM sessions s
     WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -609,8 +618,9 @@ export async function getSessionMessagesFromDb(sessionId: string): Promise<{
 } | null> {
   const db = await openSessionDb()
   try {
+    const sessionSelect = buildSessionSelect(db)
     const sessionRow = db.prepare(`
-      SELECT ${SESSION_SELECT}
+      SELECT ${sessionSelect}
       FROM sessions s
       WHERE s.id = ?
     `).get(sessionId) as Record<string, unknown> | undefined
@@ -770,12 +780,13 @@ export async function findLatestExactSessionIdWithProfile(
   const taskJsonNeedle = `"task_id": "${trimmed}"`.toLowerCase()
 
   try {
+    const sessionSelect = buildSessionSelect(db)
     const sourceClause = source ? 'AND s.source = ?' : ''
     const sourceParams = source ? [source] : []
     const exactPromptSql = `
       WITH base AS (
         SELECT
-          ${SESSION_SELECT},
+          ${sessionSelect},
           s.parent_session_id AS parent_session_id
         FROM sessions s
         WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -795,7 +806,7 @@ export async function findLatestExactSessionIdWithProfile(
     const taskJsonSql = `
       WITH base AS (
         SELECT
-          ${SESSION_SELECT},
+          ${sessionSelect},
           s.parent_session_id AS parent_session_id
         FROM sessions s
         WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -814,7 +825,7 @@ export async function findLatestExactSessionIdWithProfile(
     const contentSql = `
       WITH base AS (
         SELECT
-          ${SESSION_SELECT},
+          ${sessionSelect},
           s.parent_session_id AS parent_session_id
         FROM sessions s
         WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -892,8 +903,13 @@ function tableHasColumn(
   tableName: string,
   columnName: string,
 ): boolean {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all()
-  return columns.some(column => String(column.name || '') === columnName)
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all()
+    if (!Array.isArray(columns)) return false
+    return columns.some(column => String(column.name || '') === columnName)
+  } catch {
+    return false
+  }
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> | null {
@@ -1278,9 +1294,12 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true })
 
   try {
+    const sessionSelect = buildSessionSelect(db)
     const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'", "s.id NOT LIKE 'compress_%'"]
     if (!includeArchived) {
-      clauses.push("(s.archived IS NULL OR s.archived = 0)")
+      if (tableHasColumn(db, 'sessions', 'archived')) {
+        clauses.push("(s.archived IS NULL OR s.archived = 0)")
+      }
     }
     const params: any[] = []
     if (source) {
@@ -1291,7 +1310,7 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
 
     const rawRows = db.prepare(`
       SELECT
-        ${SESSION_SELECT},
+        ${sessionSelect},
         s.parent_session_id AS parent_session_id
       FROM sessions s
       WHERE ${clauses.join(' AND ')}
@@ -1333,12 +1352,13 @@ export async function searchSessionSummariesWithProfile(
   const candidateLimit = searchCandidateLimit(limit)
 
   try {
+    const sessionSelect = buildSessionSelect(db)
     const sourceClause = source ? 'AND s.source = ?' : ''
     const sourceParams = source ? [source] : []
     const titleSql = `
       WITH base AS (
         SELECT
-          ${SESSION_SELECT},
+          ${sessionSelect},
           s.parent_session_id AS parent_session_id
         FROM sessions s
         WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -1362,7 +1382,7 @@ export async function searchSessionSummariesWithProfile(
     const contentSql = `
       WITH base AS (
         SELECT
-          ${SESSION_SELECT},
+          ${sessionSelect},
           s.parent_session_id AS parent_session_id
         FROM sessions s
         WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'
@@ -1441,11 +1461,12 @@ export async function searchSessionSummaries(
   let titleRows: Record<string, unknown>[] = []
 
   try {
+    const sessionSelect = buildSessionSelect(db)
     const sourceClause = source ? 'AND s.source = ?' : ''
     const sourceParams = source ? [source] : []
     const allSessionsBaseSql = `
       SELECT
-        ${SESSION_SELECT},
+        ${sessionSelect},
         s.parent_session_id AS parent_session_id
       FROM sessions s
       WHERE s.source != 'tool' AND s.id NOT LIKE 'compress_%'

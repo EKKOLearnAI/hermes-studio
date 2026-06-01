@@ -120,6 +120,12 @@ const profileFilterOptions = computed(() => [
 async function handleProfileFilterChange(value: string) {
   chatStore.sessionProfileFilter = value === "__all__" ? null : value;
   await chatStore.loadSessions(chatStore.sessionProfileFilter);
+
+  // 切换 profile 时清空归档列表，下次展开时重新加载
+  archivedSessions.value = [];
+  if (showArchivedSection.value) {
+    loadArchivedSessions();
+  }
 }
 
 function sortSessionsWithActiveFirst(items: Session[]): Session[] {
@@ -562,6 +568,9 @@ async function handleContextMenuSelect(key: string) {
     } else {
       const ok = await archiveSession(id);
       if (ok) {
+        // 保存归档会话的 ID，避免 pruneMissingSessions 清除其 pin 状态
+        const archivedSessionIds = [...archivedSessions.value.map(s => s.id), id];
+
         if (chatStore.activeSessionId === id) {
           // 当前活跃会话被归档，切换到下一个
           const remaining = chatStore.sessions.filter(s => s.id !== id);
@@ -570,6 +579,11 @@ async function handleContextMenuSelect(key: string) {
           }
         }
         await chatStore.loadSessions(chatStore.sessionProfileFilter);
+
+        // 手动触发 prune，包含归档会话 ID
+        const allSessionIds = [...chatStore.sessions.map(s => s.id), ...archivedSessionIds];
+        sessionBrowserPrefsStore.pruneMissingSessions(allSessionIds);
+
         if (showArchivedSection.value) loadArchivedSessions();
         message.success(t("chat.archived"));
       }

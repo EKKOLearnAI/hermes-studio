@@ -110,6 +110,7 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
     {
       label: t(contextSessionArchived.value ? 'chat.unarchive' : 'chat.archive'),
       key: 'archive',
+      disabled: !Boolean(contextSessionSummary.value?.webui_imported),
     },
     { label: t('chat.copySessionLink'), key: 'copy-link' },
     { label: t('chat.copySessionId'), key: 'copy-id' },

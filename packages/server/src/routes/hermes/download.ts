@@ -136,14 +136,30 @@ downloadRoutes.post('/api/hermes/open-file', async (ctx) => {
     const validPath = isAbsolute(filePath) ? validatePath(filePath) : resolveHermesPath(filePath, profile)
     const platform = process.platform
 
-    // Windows: start 命令，macOS: open，Linux: xdg-open
-    const cmd = platform === 'win32' ? 'cmd' : (platform === 'darwin' ? 'open' : 'xdg-open')
-    const args = platform === 'win32' ? ['/c', 'start', '', validPath] : [validPath]
+    // Windows: 使用 PowerShell Start-Process 避免 cmd 注入
+    // macOS: open，Linux: xdg-open
+    let cmd: string
+    let args: string[]
+    if (platform === 'win32') {
+      cmd = 'powershell.exe'
+      args = ['-NoProfile', '-Command', 'Start-Process', '-FilePath', validPath]
+    } else if (platform === 'darwin') {
+      cmd = 'open'
+      args = [validPath]
+    } else {
+      cmd = 'xdg-open'
+      args = [validPath]
+    }
 
-    execFile(cmd, args, (err) => {
-      if (err) {
-        console.error('[open-file] Failed to open file:', err.message)
-      }
+    await new Promise<void>((resolve, reject) => {
+      execFile(cmd, args, (err) => {
+        if (err) {
+          console.error('[open-file] Failed to open file:', err.message)
+          reject(new Error(`Failed to open file: ${err.message}`))
+        } else {
+          resolve()
+        }
+      })
     })
 
     ctx.body = { ok: true }
@@ -184,10 +200,15 @@ downloadRoutes.post('/api/hermes/open-in-explorer', async (ctx) => {
       args = [dir]
     }
 
-    execFile(cmd, args, (err) => {
-      if (err) {
-        console.error('[open-in-explorer] Failed to open folder:', err.message)
-      }
+    await new Promise<void>((resolve, reject) => {
+      execFile(cmd, args, (err) => {
+        if (err) {
+          console.error('[open-in-explorer] Failed to open folder:', err.message)
+          reject(new Error(`Failed to open folder: ${err.message}`))
+        } else {
+          resolve()
+        }
+      })
     })
 
     ctx.body = { ok: true }

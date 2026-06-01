@@ -29,7 +29,9 @@ async function loadRouteSession() {
   // 会话可能不在主列表中（如归档会话），尝试直接切换
   if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
     await chatStore.switchSession(routeSessionId.value)
-    if (chatStore.activeSessionId !== routeSessionId.value) {
+    // switchSession 会先设置 activeSessionId，需要检查 activeSession 是否真正加载成功
+    const loaded = chatStore.activeSession as { id: string } | null
+    if (!loaded || loaded.id !== routeSessionId.value) {
       await router.replace({ name: 'hermes.chat' })
     }
   }
