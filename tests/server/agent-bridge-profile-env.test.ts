@@ -106,6 +106,74 @@ print(json.dumps({
   })
 })
 
+describe('agent bridge Windows desktop subprocess defaults', () => {
+  it('adds CREATE_NO_WINDOW to nested subprocesses without replacing existing flags', async () => {
+    const result = await runBridgeProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+original_os_name = bridge.os.name
+original_popen = bridge.subprocess.Popen
+original_create_no_window = getattr(bridge.subprocess, "CREATE_NO_WINDOW", None)
+original_installed = getattr(bridge.subprocess, "_hermes_hidden_defaults_installed", None)
+
+class FakePopen:
+    calls = []
+
+    def __init__(self, *args, **kwargs):
+        FakePopen.calls.append({"args": args, "kwargs": kwargs})
+
+try:
+    bridge.os.name = "nt"
+    bridge.os.environ["HERMES_DESKTOP"] = "true"
+    bridge.subprocess.Popen = FakePopen
+    bridge.subprocess.CREATE_NO_WINDOW = 0x08000000
+    if hasattr(bridge.subprocess, "_hermes_hidden_defaults_installed"):
+        delattr(bridge.subprocess, "_hermes_hidden_defaults_installed")
+
+    bridge._install_windows_hidden_subprocess_defaults()
+    bridge.subprocess.Popen(["git", "status"], creationflags=0x00000200)
+    flags = FakePopen.calls[0]["kwargs"]["creationflags"]
+finally:
+    bridge.os.name = original_os_name
+    bridge.subprocess.Popen = original_popen
+    if original_create_no_window is None:
+        try:
+            delattr(bridge.subprocess, "CREATE_NO_WINDOW")
+        except AttributeError:
+            pass
+    else:
+        bridge.subprocess.CREATE_NO_WINDOW = original_create_no_window
+    if original_installed is None:
+        try:
+            delattr(bridge.subprocess, "_hermes_hidden_defaults_installed")
+        except AttributeError:
+            pass
+    else:
+        bridge.subprocess._hermes_hidden_defaults_installed = original_installed
+
+print(json.dumps({
+    "flags": flags,
+    "has_create_no_window": bool(flags & 0x08000000),
+    "kept_existing_flag": bool(flags & 0x00000200),
+}))
+`)
+
+    expect(result).toEqual({
+      flags: 0x08000200,
+      has_create_no_window: true,
+      kept_existing_flag: true,
+    })
+  })
+})
+
 describe('agent bridge profile environment', () => {
   it('runs agent calls with the requested profile HERMES_HOME and restores the bridge home', async () => {
     const profileHome = join(tempDir, 'profiles', 'work')

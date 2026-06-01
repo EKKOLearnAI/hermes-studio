@@ -28,16 +28,22 @@ function quitApp() {
   app.quit()
 }
 
+function loginItemOptions() {
+  return {
+    path: process.execPath,
+    args: ['--hidden'],
+  }
+}
+
 function getOpenAtLogin(): boolean {
-  return app.getLoginItemSettings().openAtLogin
+  return app.getLoginItemSettings(loginItemOptions()).openAtLogin
 }
 
 function setOpenAtLogin(openAtLogin: boolean) {
   app.setLoginItemSettings({
+    ...loginItemOptions(),
     openAtLogin,
     openAsHidden: true,
-    path: process.execPath,
-    args: ['--hidden'],
   })
 }
 

@@ -228,14 +228,12 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   // setup is a #!/bin/sh wrapper, not a python interpreter, so detection
   // resolves to /bin/sh and the bridge crashes (exit code 2) immediately.
   const isWin = process.platform === 'win32'
+  const bundledPython = isWin
+    ? join(pythonDir(), 'python.exe')
+    : join(pythonDir(), 'bin', 'python3')
   const bundledPythonNoWindow = isWin
     ? join(pythonDir(), 'pythonw.exe')
-    : join(pythonDir(), 'bin', 'python3')
-  const bundledPython = isWin && existsSync(bundledPythonNoWindow)
-    ? bundledPythonNoWindow
-    : isWin
-      ? join(pythonDir(), 'python.exe')
-      : join(pythonDir(), 'bin', 'python3')
+    : bundledPython
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
@@ -255,6 +253,9 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     NODE_ENV: 'production',
     HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
+    // The bridge and its per-profile workers need working stdout/stderr for
+    // ready handshakes. Use python.exe on Windows and hide windows at the
+    // process creation layer instead of switching the bridge to pythonw.exe.
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
     HERMES_AGENT_CLI_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
