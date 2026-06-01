@@ -2,8 +2,11 @@
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
-import { useProfilesStore } from "@/stores/hermes/profiles";
+import { useAuroraCommanderStore } from "@/stores/hermes/aurora-commander";
+import { useAuroraAppWindowStore } from "@/stores/hermes/aurora-app-window";
+import { useAuroraGovernanceStore } from "@/stores/hermes/aurora-governance";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
+import { isL4LockedTool } from "@/services/hermes/approval-gateway";
 import {
   NButton,
   NDropdown,
@@ -16,8 +19,8 @@ import {
   type DropdownOption,
 } from "naive-ui";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { getSourceLabel } from "@/shared/session-display";
 import { copyToClipboard } from "@/utils/clipboard";
 import FolderPicker from "./FolderPicker.vue";
 import ChatInput from "./ChatInput.vue";
@@ -25,28 +28,118 @@ import ConversationMonitorPane from "./ConversationMonitorPane.vue";
 import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
-import OutlinePanel from "./OutlinePanel.vue";
+import TerminalPanel from "./TerminalPanel.vue";
+import ApprovalModal from "./ApprovalModal.vue";
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
-const profilesStore = useProfilesStore();
+const auroraCommanderStore = useAuroraCommanderStore();
+const auroraAppWindowStore = useAuroraAppWindowStore();
+const auroraGovernanceStore = useAuroraGovernanceStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
-const router = useRouter();
 const message = useMessage();
 const { t } = useI18n();
 
 const showDrawer = ref(false);
 const drawerActiveTab = ref<"terminal" | "files">("files");
-const showOutline = ref(false);
-const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
+const showInlineTerminalChrome = false;
+const showInlineTerminal = ref(
+  typeof window === "undefined" ||
+    localStorage.getItem("hermes_inline_terminal_open") !== "0",
+);
+type MonitorTerminalKey = "pm2" | "hermes" | "openclaw";
+
+const activeMonitorTerminal = ref<MonitorTerminalKey>("pm2");
+const pm2StatusCommand = [
+  "export PATH=/Users/kk/.local/bin:/usr/local/bin:/opt/homebrew/bin:/Users/kk/.hermes/hermes-agent/venv/bin:$PATH",
+  "while true; do",
+  "  clear",
+  "  printf '\\n=== PM2 / Hermes monitor ===\\n'",
+  "  date",
+  "  printf '\\n[PM2 binary]\\n'",
+  "  command -v pm2 || { printf 'PM2 not found in PATH.\\n'; break; }",
+  "  printf '\\n[PM2 daemon]\\n'",
+  "  pm2 ping || true",
+  "  printf '\\n[PM2 process list]\\n'",
+  "  pm2 list || true",
+  "  printf '\\n[Memory sync PM2 job]\\n'",
+  "  if pm2 describe hermes-memory-sync >/dev/null 2>&1; then",
+  "    pm2 describe hermes-memory-sync | rg 'name|status|script path|exec cwd|cron restart|created at|unstable restarts' || true",
+  "  else",
+  "    printf 'hermes-memory-sync not installed yet. Add a private Git remote, then run npm run memory:sync:setup -- <repo-url> --install-pm2.\\n'",
+  "  fi",
+  "  printf '\\n[Hermes launchd owner]\\n'",
+  "  launchctl print gui/501/ai.hermes.web-ui-kk 2>&1 | rg 'state|pid|last exit|stdout|stderr|program|arguments' | head -8 || true",
+  "  printf '\\n[Recent Hermes logs: warning-filtered]\\n'",
+  "  if pm2 describe hermes-core >/dev/null 2>&1; then",
+  "    pm2 logs hermes-core --lines 8 --nostream || true",
+  "  else",
+  "    printf 'Aurora OS is currently managed by launchd; PM2 is available as a monitor.\\n'",
+  "    tail -n 180 /tmp/hermes-web-ui-kk.log /tmp/hermes-web-ui-kk.error.log 2>/dev/null | grep -Ev 'ExperimentalWarning|trace-warnings|warning was created|SQLite is an experimental' | tail -10 || true",
+  "  fi",
+  "  printf '\\n[refreshes every 5s; Ctrl+C stops this monitor]\\n'",
+  "  sleep 5",
+  "done",
+].join("\n");
+const hermesStatusCommand = [
+  "export PATH=/Users/kk/.local/bin:/usr/local/bin:/opt/homebrew/bin:/Users/kk/.hermes/hermes-agent/venv/bin:$PATH",
+  "printf '\\n=== Hermes status ===\\n'",
+  "date",
+  "printf '\\n[Web UI]\\n'",
+  "curl -s http://127.0.0.1:8648/health",
+  "printf '\\n\\n[Gateway]\\n'",
+  "curl -s http://127.0.0.1:8643/health",
+  "printf '\\n\\n[launchd]\\n'",
+  "launchctl print gui/501/ai.hermes.web-ui-kk | rg 'state|pid|last exit|stdout|stderr'",
+  "printf '\\n[MCP]\\n'",
+  "/Users/kk/.local/bin/hermes mcp list",
+].join("\n");
+const openClawStatusCommand = [
+  "export PATH=/Users/kk/.local/bin:/usr/local/bin:/opt/homebrew/bin:/Users/kk/.hermes/hermes-agent/venv/bin:$PATH",
+  "printf '\\n=== OpenClaw status ===\\n'",
+  "date",
+  "printf '\\n[LaunchAgent]\\n'",
+  "launchctl print gui/501/ai.openclaw.gateway 2>&1 | rg 'state|pid|last exit|stdout|stderr|program|arguments' || true",
+  "printf '\\n[Gateway status]\\n'",
+  "cd /Users/kk/Documents/Codex/Hermes-Quant-Workspace/openclaw && pnpm openclaw gateway status || true",
+  "printf '\\n[Gateway health]\\n'",
+  "cd /Users/kk/Documents/Codex/Hermes-Quant-Workspace/openclaw && pnpm openclaw gateway health || true",
+  "printf '\\n[Recent logs]\\n'",
+  "tail -80 /tmp/openclaw/openclaw-$(date +%F).log 2>/dev/null || printf 'No OpenClaw log yet.\\n'",
+].join("\n");
+
+const monitorTerminals = [
+  { key: "pm2" as const, label: "PM2", command: pm2StatusCommand },
+  { key: "hermes" as const, label: "H 狀態", command: hermesStatusCommand },
+  { key: "openclaw" as const, label: "OC 狀態", command: openClawStatusCommand },
+];
+
+const activeMonitorCommand = computed(
+  () =>
+    monitorTerminals.find((terminal) => terminal.key === activeMonitorTerminal.value)
+      ?.command || hermesStatusCommand,
+);
 
 const currentMode = ref<"chat" | "live">("chat");
+const showLegacyWorkbenchChrome = computed(
+  () => !appStore.legacyConsoleRetired && appStore.isAdvancedConsoleOpen,
+);
+const showLegacySessionChrome = computed(
+  () => currentMode.value === "chat" && showLegacyWorkbenchChrome.value,
+);
+
+watch(
+  showLegacyWorkbenchChrome,
+  (isVisible) => {
+    if (isVisible) return;
+    showDrawer.value = false;
+  },
+  { immediate: true },
+);
 
 // Batch selection mode
 const isBatchMode = ref(false);
-const selectedSessionKeys = ref<Set<string>>(new Set());
-const showBatchDeleteConfirm = ref(false);
-const isBatchDeleting = ref(false);
+const selectedSessionIds = ref<Set<string>>(new Set());
 
 // Initialize synchronously from the media query so first paint is correct.
 // On narrow viewports the session list is an absolute-positioned overlay
@@ -61,27 +154,8 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 
-function sessionHref(sessionId: string) {
-  return router.resolve({
-    name: "hermes.session",
-    params: { sessionId },
-  }).href;
-}
-
-function openSessionInNewTab(sessionId: string) {
-  if (typeof window === "undefined") return;
-  window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
-}
-
-function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
-  messageListRef.value?.scrollToAnchor(target.messageId, target.anchorId);
-}
-
-async function handleSessionClick(sessionId: string) {
-  await router.push({
-    name: "hermes.session",
-    params: { sessionId },
-  });
+function handleSessionClick(sessionId: string) {
+  chatStore.switchSession(sessionId);
   if (mobileQuery?.matches) showSessions.value = false;
 }
 
@@ -96,9 +170,6 @@ onMounted(() => {
   mobileQuery = window.matchMedia("(max-width: 768px)");
   handleMobileChange(mobileQuery);
   mobileQuery.addEventListener("change", handleMobileChange);
-  if (profilesStore.profiles.length === 0) {
-    void profilesStore.fetchProfiles();
-  }
 });
 
 onUnmounted(() => {
@@ -108,24 +179,28 @@ const showRenameModal = ref(false);
 const renameValue = ref("");
 const renameSessionId = ref<string | null>(null);
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null);
-const sessionProfileFilter = computed(() => chatStore.sessionProfileFilter);
-const profileFilterOptions = computed(() => [
-  { label: t("chat.allProfiles"), value: "__all__" },
-  ...profilesStore.profiles.map((profile) => ({
-    label: profile.name,
-    value: profile.name,
-  })),
-]);
+const collapsedGroups = ref<Set<string>>(
+  new Set(JSON.parse(localStorage.getItem("hermes_collapsed_groups") || "[]")),
+);
 
-async function handleProfileFilterChange(value: string) {
-  chatStore.sessionProfileFilter = value === "__all__" ? null : value;
-  await chatStore.loadSessions(chatStore.sessionProfileFilter);
+// Source sort order: api_server first, cron last, others alphabetical
+function sourceSortKey(source: string): number {
+  if (source === "api_server") return -1;
+  if (source === "cron") return 999;
+  return 0;
 }
 
 function sortSessionsWithActiveFirst(items: Session[]): Session[] {
   return [...items].sort((a, b) => {
     return (b.updatedAt || 0) - (a.updatedAt || 0);
   });
+}
+
+// Group sessions by source, with sort order
+interface SessionGroup {
+  source: string;
+  label: string;
+  sessions: Session[];
 }
 
 const pinnedSessions = computed(() =>
@@ -136,12 +211,80 @@ const pinnedSessions = computed(() =>
   ),
 );
 
-const unpinnedSessions = computed(() =>
-  sortSessionsWithActiveFirst(
-    chatStore.sessions.filter(
-      (session) => !sessionBrowserPrefsStore.isPinned(session.id),
-    ),
-  ),
+const groupedSessions = computed<SessionGroup[]>(() => {
+  const map = new Map<string, Session[]>();
+  for (const s of chatStore.sessions) {
+    if (sessionBrowserPrefsStore.isPinned(s.id)) continue;
+    const key = s.source || "";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(s);
+  }
+
+  const keys = [...map.keys()].sort((a, b) => {
+    const ka = sourceSortKey(a);
+    const kb = sourceSortKey(b);
+    if (ka !== kb) return ka - kb;
+    return a.localeCompare(b);
+  });
+
+  return keys.map((key) => ({
+    source: key,
+    label: key ? getChatSourceLabel(key) : t("chat.other"),
+    sessions: sortSessionsWithActiveFirst(map.get(key)!),
+  }));
+});
+
+function getChatSourceLabel(source?: string): string {
+  if (source === "cli") return "Bridge (beta)";
+  return getSourceLabel(source);
+}
+
+function toggleGroup(source: string) {
+  const isExpanded = !collapsedGroups.value.has(source);
+  if (isExpanded) {
+    collapsedGroups.value = new Set([...collapsedGroups.value, source]);
+  } else {
+    collapsedGroups.value = new Set(
+      groupedSessions.value.map((g) => g.source).filter((s) => s !== source),
+    );
+    const group = groupedSessions.value.find((g) => g.source === source);
+    if (group?.sessions.length) {
+      chatStore.switchSession(group.sessions[0].id);
+    }
+  }
+  localStorage.setItem(
+    "hermes_collapsed_groups",
+    JSON.stringify([...collapsedGroups.value]),
+  );
+}
+
+watch(
+  groupedSessions,
+  (groups) => {
+    if (localStorage.getItem("hermes_collapsed_groups") !== null) {
+      const activeSource = chatStore.activeSession?.source;
+      if (activeSource && collapsedGroups.value.has(activeSource)) {
+        collapsedGroups.value = new Set(
+          [...collapsedGroups.value].filter(
+            (source) => source !== activeSource,
+          ),
+        );
+        localStorage.setItem(
+          "hermes_collapsed_groups",
+          JSON.stringify([...collapsedGroups.value]),
+        );
+      }
+      return;
+    }
+    collapsedGroups.value = new Set(
+      groups.slice(1).map((group) => group.source),
+    );
+    localStorage.setItem(
+      "hermes_collapsed_groups",
+      JSON.stringify([...collapsedGroups.value]),
+    );
+  },
+  { once: true },
 );
 
 watch(
@@ -167,152 +310,211 @@ const headerTitle = computed(() =>
     : activeSessionTitle.value,
 );
 
+const activeSessionSource = computed(() =>
+  currentMode.value === "chat" ? chatStore.activeSession?.source || "" : "",
+);
+
 const activeApproval = computed(() => chatStore.activePendingApproval);
-const visibleApproval = computed(() => activeApproval.value);
-
-const activeClarify = computed(() => chatStore.activePendingClarify);
-const visibleClarify = computed(() => activeClarify.value);
-const clarifyResponse = ref('');
-
-function handleClarify(response?: string) {
-  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
-  chatStore.respondToClarify(finalResponse);
-  clarifyResponse.value = '';
-}
-
-const showNewChatModal = ref(false);
-const newChatProfile = ref<string>("default");
-const newChatProvider = ref<string>("");
-const newChatModel = ref<string>("");
-const newChatLoading = ref(false);
-
-function getModelGroupsForProfile(profile: string) {
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  return profileModels?.groups || [];
-}
-
-function getDefaultModelForProfile(profile: string) {
-  const groups = getModelGroupsForProfile(profile);
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
-  const providerGroup = defaultProvider
-    ? groups.find((group) => group.provider === defaultProvider)
-    : undefined;
-  const fallbackGroup = providerGroup || groups.find((group) => group.models.length > 0);
-  return {
-    provider: fallbackGroup?.provider || "",
-    model: fallbackGroup?.models.includes(defaultModel)
-      ? defaultModel
-      : fallbackGroup?.models[0] || "",
-  };
-}
-
-const newChatProfileOptions = computed(() =>
-  (profilesStore.profiles.length > 0 ? profilesStore.profiles : [{ name: "default" }]).map((profile) => ({
-    label: profile.name,
-    value: profile.name,
-  })),
+const inlineApproval = computed(() =>
+  isGovernanceApproval(activeApproval.value) ? null : activeApproval.value,
+);
+const activeGovernanceApprovalId = ref<string | null>(null);
+const launcherFocusMode = ref(true);
+let lastIntentSubmittedAt = 0;
+const hasActiveChatHistory = computed(() =>
+  chatStore.messages.length > 0 ||
+  (chatStore.activeSession?.messageCount ?? 0) > 0 ||
+  chatStore.isLoadingMessages,
+);
+const isIntentLauncherIdle = computed(() =>
+  currentMode.value === "chat" &&
+  !showLegacyWorkbenchChrome.value &&
+  !auroraCommanderStore.isVisible &&
+  !auroraAppWindowStore.isOpen &&
+  launcherFocusMode.value &&
+  !hasActiveChatHistory.value &&
+  !chatStore.isRunActive,
 );
 
-const newChatModelGroups = computed(() => {
-  return getModelGroupsForProfile(newChatProfile.value);
-});
-
-const newChatProviderOptions = computed(() =>
-  newChatModelGroups.value.map((group) => ({
-    label: group.label || group.provider,
-    value: group.provider,
-  })),
+watch(
+  () => chatStore.activeSessionId,
+  () => {
+    if (Date.now() - lastIntentSubmittedAt < 800) return;
+    launcherFocusMode.value = !hasActiveChatHistory.value;
+  },
 );
 
-const newChatModelOptions = computed(() => {
-  const group = newChatModelGroups.value.find(
-    (item) => item.provider === newChatProvider.value,
-  );
-  return (group?.models || []).map((model) => ({
-    label: appStore.displayModelName(model, group?.provider),
-    value: model,
-  }));
-});
+watch(
+  () => appStore.auroraDesktopRequestId,
+  (requestId, previousRequestId) => {
+    if (requestId === previousRequestId) return;
+    handleNewChat();
+  },
+);
 
-function syncNewChatModelSelection() {
-  const defaults = getDefaultModelForProfile(newChatProfile.value);
-  newChatProvider.value = defaults.provider;
-  newChatModel.value = defaults.model;
-}
-
-async function openNewChatModal() {
-  showNewChatModal.value = true;
-  newChatLoading.value = true;
-  try {
-    if (profilesStore.profiles.length === 0) await profilesStore.fetchProfiles();
-    if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
-      await appStore.loadModels();
+watch(
+  hasActiveChatHistory,
+  (hasHistory) => {
+    if (hasHistory) {
+      launcherFocusMode.value = false;
+      return;
     }
-    newChatProfile.value =
-      profilesStore.activeProfileName ||
-      profilesStore.profiles.find((profile) => profile.active)?.name ||
-      profilesStore.profiles[0]?.name ||
-      "default";
-    syncNewChatModelSelection();
-  } finally {
-    newChatLoading.value = false;
+    if (
+      currentMode.value === "chat" &&
+      !showLegacyWorkbenchChrome.value &&
+      !auroraAppWindowStore.isOpen &&
+      !chatStore.isRunActive
+    ) {
+      launcherFocusMode.value = true;
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => auroraCommanderStore.isVisible,
+  (isVisible) => {
+    if (isVisible || hasActiveChatHistory.value) return;
+    if (
+      currentMode.value === "chat" &&
+      !showLegacyWorkbenchChrome.value &&
+      !auroraAppWindowStore.isOpen &&
+      !chatStore.isRunActive
+    ) {
+      launcherFocusMode.value = true;
+    }
+  },
+);
+
+watch(
+  () => auroraAppWindowStore.isOpen,
+  (isOpen) => {
+    if (isOpen || hasActiveChatHistory.value) return;
+    if (
+      currentMode.value === "chat" &&
+      !showLegacyWorkbenchChrome.value &&
+      !auroraCommanderStore.isVisible &&
+      !chatStore.isRunActive
+    ) {
+      launcherFocusMode.value = true;
+    }
+  },
+);
+
+function handleIntentSubmitted() {
+  lastIntentSubmittedAt = Date.now();
+  launcherFocusMode.value = false;
+}
+
+function handleNewChat() {
+  chatStore.newChat();
+  launcherFocusMode.value = true;
+}
+
+function handleNewCliChat() {
+  const session = chatStore.newCliSession()
+  chatStore.switchSession(session.id)
+  launcherFocusMode.value = true;
+}
+
+function toggleInlineTerminal() {
+  showInlineTerminal.value = !showInlineTerminal.value;
+  localStorage.setItem(
+    "hermes_inline_terminal_open",
+    showInlineTerminal.value ? "1" : "0",
+  );
+}
+
+function selectMonitorTerminal(key: MonitorTerminalKey) {
+  activeMonitorTerminal.value = key;
+  localStorage.setItem("hermes_active_monitor_terminal", key);
+  if (!showInlineTerminal.value) {
+    showInlineTerminal.value = true;
+    localStorage.setItem("hermes_inline_terminal_open", "1");
   }
 }
 
-function handleNewChatProfileChange(value: string) {
-  newChatProfile.value = value;
-  syncNewChatModelSelection();
+function openDrawer(tab: "terminal" | "files" = "files") {
+  drawerActiveTab.value = tab;
+  showDrawer.value = true;
 }
 
-function handleNewChatProviderChange(value: string) {
-  newChatProvider.value = value;
-  newChatModel.value = newChatModelOptions.value[0]?.value || "";
-}
+const newChatOptions = computed(() => [
+  {
+    label: "API",
+    key: "api_server",
+  },
+  {
+    label: "Bridge (beta)",
+    key: "cli",
+  },
+]);
 
-async function confirmNewChat() {
-  const session = chatStore.newChat({
-    profile: newChatProfile.value,
-    provider: newChatProvider.value,
-    model: newChatModel.value,
-  });
-  await router.push({
-    name: "hermes.session",
-    params: { sessionId: session.id },
-  });
-  showNewChatModal.value = false;
+function handleNewChatSelect(key: string | number) {
+  if (key === "cli") {
+    handleNewCliChat();
+    return;
+  }
+  handleNewChat();
 }
 
 function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
 }
 
-function sessionProfile(sessionId: string): string | null {
-  return chatStore.sessions.find((session) => session.id === sessionId)?.profile || null;
+function isGovernanceApproval(approval: typeof activeApproval.value): boolean {
+  return approval?.securityLevel === "L4_Locked" || isL4LockedTool(approval?.tool);
 }
 
-function buildSessionUrl(sessionId: string, profile?: string | null): string {
-  const href = router.resolve({
-    name: "hermes.session",
-    params: { sessionId },
-    query: profile ? { profile } : undefined,
-  }).href;
-  return `${window.location.origin}${window.location.pathname}${href}`;
+function governanceApprovalContextKey(approvalId: string): string {
+  return `hermes-terminal:${approvalId}`;
 }
 
-async function copySessionLink(id?: string) {
-  const sessionId = id || chatStore.activeSessionId;
-  if (sessionId) {
-    const ok = await copyToClipboard(buildSessionUrl(sessionId, sessionProfile(sessionId)));
-    if (ok) message.success(t("common.copied"));
-    else message.error(t("common.copied") + " ✗");
-  }
+function cancelActiveGovernanceApproval() {
+  const approvalId = activeGovernanceApprovalId.value;
+  if (!approvalId) return;
+  auroraGovernanceStore.cancelConfirmation(governanceApprovalContextKey(approvalId));
+  activeGovernanceApprovalId.value = null;
 }
+
+watch(
+  activeApproval,
+  (approval) => {
+    if (!approval || !isGovernanceApproval(approval)) {
+      cancelActiveGovernanceApproval();
+      return;
+    }
+    if (activeGovernanceApprovalId.value === approval.approvalId) return;
+    cancelActiveGovernanceApproval();
+    activeGovernanceApprovalId.value = approval.approvalId;
+
+    void auroraGovernanceStore.requestConfirmation({
+      title: "Security Alert: Agent requests Terminal execution.",
+      description: approval.description || "L4_Locked terminal execution requires explicit approval.",
+      details: approval.command || "(empty command)",
+      confirmLabel: "Approve",
+      cancelLabel: "Reject",
+      source: "Hermes Terminal Approval",
+      contextKey: governanceApprovalContextKey(approval.approvalId),
+      auditInput: approval.command || approval.description || "L4 terminal approval requested",
+      toolId: approval.approvalId,
+      toolName: approval.tool || "terminal",
+      securityLevel: "L4_Locked",
+      payload: {
+        approvalId: approval.approvalId,
+        command: approval.command,
+        description: approval.description,
+        choices: approval.choices,
+        sessionId: approval.sessionId,
+      },
+    }).then((approved) => {
+      if (activeApproval.value?.approvalId !== approval.approvalId) return;
+      handleApproval(approved ? "once" : "deny");
+      activeGovernanceApprovalId.value = null;
+    });
+  },
+  { immediate: true },
+);
 
 async function copySessionId(id?: string) {
   const sessionId = id || chatStore.activeSessionId;
@@ -330,57 +532,40 @@ function handleDeleteSession(id: string) {
 }
 
 function toggleBatchMode() {
-  if (isBatchDeleting.value) return;
   isBatchMode.value = !isBatchMode.value;
   if (!isBatchMode.value) {
-    selectedSessionKeys.value.clear();
-    showBatchDeleteConfirm.value = false;
+    selectedSessionIds.value.clear();
   }
 }
 
-function sessionSelectionKey(session: Pick<Session, "id" | "profile">): string {
-  return `${session.profile || "default"}\u0000${session.id}`;
-}
-
-function toggleSessionSelection(session: Session) {
-  if (isBatchDeleting.value) return;
-  const key = sessionSelectionKey(session);
-  if (selectedSessionKeys.value.has(key)) {
-    selectedSessionKeys.value.delete(key);
+function toggleSessionSelection(id: string) {
+  if (selectedSessionIds.value.has(id)) {
+    selectedSessionIds.value.delete(id);
   } else {
-    selectedSessionKeys.value.add(key);
+    selectedSessionIds.value.add(id);
   }
-  selectedSessionKeys.value = new Set(selectedSessionKeys.value);
-  if (selectedSessionKeys.value.size === 0) {
-    showBatchDeleteConfirm.value = false;
-  }
+  selectedSessionIds.value = new Set(selectedSessionIds.value);
 }
 
-function isSessionSelected(session: Session): boolean {
-  return selectedSessionKeys.value.has(sessionSelectionKey(session));
+function isSessionSelected(id: string): boolean {
+  return selectedSessionIds.value.has(id);
 }
 
 async function handleBatchDelete() {
-  if (selectedSessionKeys.value.size === 0 || isBatchDeleting.value) return;
+  if (selectedSessionIds.value.size === 0) return;
 
-  const sessionsByKey = new Map(chatStore.sessions.map((session) => [sessionSelectionKey(session), session]));
-  const targets = Array.from(selectedSessionKeys.value)
-    .map((key) => sessionsByKey.get(key))
-    .filter((session): session is Session => Boolean(session))
-    .map((session) => ({ id: session.id, profile: session.profile || null }));
-  if (targets.length === 0) return;
-  isBatchDeleting.value = true;
+  const ids = Array.from(selectedSessionIds.value);
   try {
-    const result = await batchDeleteSessions(targets);
+    const result = await batchDeleteSessions(ids);
     if (result.deleted > 0) {
       // Remove from pinned sessions
-      for (const target of targets) {
-        sessionBrowserPrefsStore.removePinned(target.id);
+      for (const id of ids) {
+        sessionBrowserPrefsStore.removePinned(id);
       }
 
       // Remove deleted sessions from local store (without calling API again)
       // Use loadSessions to refresh from server instead of manual filtering
-      await chatStore.loadSessions(chatStore.sessionProfileFilter);
+      await chatStore.loadSessions();
 
       message.success(t("chat.batchDeleteSuccess", { count: result.deleted }));
       if (result.failed > 0) {
@@ -392,30 +577,22 @@ async function handleBatchDelete() {
   } catch (err: any) {
     message.error(t("chat.batchDeleteFailed"));
   } finally {
-    isBatchDeleting.value = false;
-    showBatchDeleteConfirm.value = false;
     isBatchMode.value = false;
-    selectedSessionKeys.value.clear();
+    selectedSessionIds.value.clear();
   }
-}
-
-function handleBatchDeleteConfirm() {
-  void handleBatchDelete();
-  return false;
 }
 
 function selectAllSessions() {
-  if (isBatchDeleting.value) return;
-  selectedSessionKeys.value.clear();
+  selectedSessionIds.value.clear();
   for (const session of chatStore.sessions) {
     if (session.id !== chatStore.activeSessionId) {
-      selectedSessionKeys.value.add(sessionSelectionKey(session));
+      selectedSessionIds.value.add(session.id);
     }
   }
-  selectedSessionKeys.value = new Set(selectedSessionKeys.value);
+  selectedSessionIds.value = new Set(selectedSessionIds.value);
 }
 
-const selectedCount = computed(() => selectedSessionKeys.value.size);
+const selectedCount = computed(() => selectedSessionIds.value.size);
 const canSelectAll = computed(() => {
   return chatStore.sessions.some(s => s.id !== chatStore.activeSessionId);
 });
@@ -466,8 +643,6 @@ const contextMenuOptions = computed(() => {
       },
     ],
   })
-  options.push({ label: t("chat.openSessionInNewTab"), key: "open-link" })
-  options.push({ label: t("chat.copySessionLink"), key: "copy-link" })
   options.push({ label: t("chat.copySessionId"), key: "copy-id" })
   return options
 });
@@ -499,12 +674,8 @@ async function handleContextMenuSelect(key: string) {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value);
     return;
   }
-  if (key === "copy-link") {
-    copySessionLink(contextSessionId.value);
-  } else if (key === "copy-id") {
+  if (key === "copy-id") {
     copySessionId(contextSessionId.value);
-  } else if (key === "open-link") {
-    openSessionInNewTab(contextSessionId.value);
   } else if (parseExportKey(key)) {
     const { mode, ext } = parseExportKey(key)!;
     const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
@@ -524,7 +695,7 @@ async function handleContextMenuSelect(key: string) {
     workspaceValue.value = session?.workspace || "";
     showWorkspaceModal.value = true;
   } else if (key === "model") {
-    await openSessionModelModal(contextSessionId.value);
+    openSessionModelModal(contextSessionId.value);
   } else if (key === "rename") {
     const session = chatStore.sessions.find(
       (s) => s.id === contextSessionId.value,
@@ -597,21 +768,12 @@ const sessionModelProvider = ref("");
 const sessionModelCustomInput = ref("");
 const sessionModelCustomProvider = ref("");
 
-const sessionModelProfile = computed<string | null>(() => {
-  const session = chatStore.sessions.find((s) => s.id === sessionModelSessionId.value);
-  return session?.profile || null;
-});
-
-const sessionModelBaseGroups = computed(() =>
-  sessionModelProfile.value ? getModelGroupsForProfile(sessionModelProfile.value) : [],
-);
-
 const sessionModelProviderOptions = computed(() =>
-  sessionModelBaseGroups.value.map((group) => ({ label: group.label, value: group.provider })),
+  appStore.modelGroups.map((group) => ({ label: group.label, value: group.provider })),
 );
 
 const sessionModelGroupsWithCustom = computed(() =>
-  sessionModelBaseGroups.value.map((group) => ({
+  appStore.modelGroups.map((group) => ({
     ...group,
     models: [
       ...group.models,
@@ -636,17 +798,11 @@ const filteredSessionModelGroups = computed(() => {
     .filter((group) => group.models.length > 0 || group.label.toLowerCase().includes(query));
 });
 
-async function openSessionModelModal(sessionId: string) {
-  if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
-    await appStore.loadModels();
-  }
+function openSessionModelModal(sessionId: string) {
   const session = chatStore.sessions.find((s) => s.id === sessionId);
-  const defaults = session?.profile
-    ? getDefaultModelForProfile(session.profile)
-    : { provider: "", model: "" };
   sessionModelSessionId.value = sessionId;
-  sessionModelValue.value = session?.model || defaults.model || "";
-  sessionModelProvider.value = session?.provider || defaults.provider || "";
+  sessionModelValue.value = session?.model || appStore.selectedModel || "";
+  sessionModelProvider.value = session?.provider || appStore.selectedProvider || "";
   sessionModelCustomProvider.value = sessionModelProvider.value;
   sessionModelSearch.value = "";
   sessionModelCustomInput.value = "";
@@ -675,7 +831,7 @@ function sessionModelAlias(model: string, provider: string) {
 }
 
 async function selectSessionModel(model: string, provider: string) {
-  const meta = sessionModelBaseGroups.value.find((group) => group.provider === provider)?.model_meta?.[model];
+  const meta = appStore.modelGroups.find((group) => group.provider === provider)?.model_meta?.[model];
   if (meta?.disabled || !sessionModelSessionId.value) return;
   const ok = await chatStore.switchSessionModel(model, provider, sessionModelSessionId.value);
   if (ok) {
@@ -697,15 +853,18 @@ async function handleSessionModelCustomSubmit() {
 </script>
 
 <template>
-  <div class="chat-panel">
+  <div
+    class="chat-panel"
+    :class="{ 'intent-launcher-mode': isIntentLauncherIdle, 'aurora-retired-mode': appStore.legacyConsoleRetired }"
+  >
     <div
-      v-if="currentMode === 'chat'"
+      v-if="showLegacySessionChrome"
       class="session-backdrop"
       :class="{ active: showSessions }"
       @click="showSessions = false"
     />
     <aside
-      v-if="currentMode === 'chat'"
+      v-if="showLegacySessionChrome"
       class="session-list"
       :class="{ collapsed: !showSessions }"
     >
@@ -753,7 +912,7 @@ async function handleSessionModelCustomSubmit() {
             quaternary
             size="tiny"
             @click="selectAllSessions"
-            :disabled="!canSelectAll || isBatchDeleting"
+            :disabled="!canSelectAll"
             :title="t('chat.selectAll')"
           >
             <template #icon>
@@ -772,13 +931,10 @@ async function handleSessionModelCustomSubmit() {
           </NButton>
           <NPopconfirm
             v-if="isBatchMode && selectedCount > 0"
-            v-model:show="showBatchDeleteConfirm"
-            :positive-button-props="{ loading: isBatchDeleting, disabled: isBatchDeleting }"
-            :negative-button-props="{ disabled: isBatchDeleting }"
-            @positive-click="handleBatchDeleteConfirm"
+            @positive-click="handleBatchDelete"
           >
             <template #trigger>
-              <NButton quaternary size="tiny" type="error" :loading="isBatchDeleting" :disabled="isBatchDeleting">
+              <NButton quaternary size="tiny" type="error">
                 <template #icon>
                   <svg
                     width="14"
@@ -801,7 +957,6 @@ async function handleSessionModelCustomSubmit() {
             quaternary
             size="tiny"
             @click="toggleBatchMode"
-            :disabled="isBatchDeleting"
           >
             <template #icon>
               <svg
@@ -817,31 +972,34 @@ async function handleSessionModelCustomSubmit() {
               </svg>
             </template>
           </NButton>
-          <NButton quaternary size="tiny" circle @click="openNewChatModal">
-            <template #icon>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </template>
-          </NButton>
+          <NDropdown
+            trigger="click"
+            :options="newChatOptions"
+            @select="handleNewChatSelect"
+          >
+            <NButton quaternary size="tiny" circle>
+              <template #icon>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </template>
+            </NButton>
+          </NDropdown>
         </div>
       </div>
-      <div v-if="showSessions" class="session-profile-filter">
-        <NSelect
-          :value="sessionProfileFilter || '__all__'"
-          :options="profileFilterOptions"
-          size="small"
-          :loading="profilesStore.loading"
-          @update:value="handleProfileFilterChange"
-        />
+      <div v-if="showSessions" class="session-scope-note">
+        <span>{{ t("chat.sessionScopeHint") }}</span>
+        <RouterLink class="session-scope-link" :to="{ name: 'hermes.history' }">
+          {{ t("chat.openHistory") }}
+        </RouterLink>
       </div>
       <div v-if="showSessions" class="session-items">
         <div
@@ -871,36 +1029,52 @@ async function handleSessionModelCustomSubmit() {
             "
             :streaming="chatStore.isSessionLive(s.id)"
             :selectable="isBatchMode"
-            :selected="isSessionSelected(s)"
-            :show-profile="true"
-            :to="sessionHref(s.id)"
+            :selected="isSessionSelected(s.id)"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
-            @toggle-select="toggleSessionSelection(s)"
+            @toggle-select="toggleSessionSelection(s.id)"
           />
         </template>
 
-        <SessionListItem
-          v-for="s in unpinnedSessions"
-          :key="s.id"
-          :session="s"
-          :active="s.id === chatStore.activeSessionId"
-          :pinned="false"
-          :can-delete="
-            s.id !== chatStore.activeSessionId ||
-            chatStore.sessions.length > 1
-          "
-          :streaming="chatStore.isSessionLive(s.id)"
-          :selectable="isBatchMode"
-          :selected="isSessionSelected(s)"
-          :show-profile="true"
-          :to="sessionHref(s.id)"
-          @select="handleSessionClick(s.id)"
-          @contextmenu="handleContextMenu($event, s.id)"
-          @delete="handleDeleteSession(s.id)"
-          @toggle-select="toggleSessionSelection(s)"
-        />
+        <template v-for="group in groupedSessions" :key="group.source">
+          <div class="session-group-header" @click="toggleGroup(group.source)">
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="group-chevron"
+              :class="{ collapsed: collapsedGroups.has(group.source) }"
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            <span class="session-group-label">{{ group.label }}</span>
+            <span class="session-group-count">{{ group.sessions.length }}</span>
+          </div>
+          <template v-if="!collapsedGroups.has(group.source)">
+            <SessionListItem
+              v-for="s in group.sessions"
+              :key="s.id"
+              :session="s"
+              :active="s.id === chatStore.activeSessionId"
+              :pinned="false"
+              :can-delete="
+                s.id !== chatStore.activeSessionId ||
+                chatStore.sessions.length > 1
+              "
+              :streaming="chatStore.isSessionLive(s.id)"
+              :selectable="isBatchMode"
+              :selected="isSessionSelected(s.id)"
+              @select="handleSessionClick(s.id)"
+              @contextmenu="handleContextMenu($event, s.id)"
+              @delete="handleDeleteSession(s.id)"
+              @toggle-select="toggleSessionSelection(s.id)"
+            />
+          </template>
+        </template>
       </div>
     </aside>
 
@@ -1041,61 +1215,17 @@ async function handleSessionModelCustomSubmit() {
       </div>
     </NModal>
 
-    <NModal
-      v-model:show="showNewChatModal"
-      preset="card"
-      :title="t('chat.newChat')"
-      :style="{ width: 'min(440px, calc(100vw - 32px))' }"
-      :mask-closable="true"
+    <div
+      class="chat-main"
+      :class="{ 'intent-launcher-idle': isIntentLauncherIdle }"
     >
-      <div class="new-chat-form">
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
-          <NSelect
-            :value="newChatProfile"
-            :options="newChatProfileOptions"
-            :loading="newChatLoading || profilesStore.loading"
-            @update:value="handleNewChatProfileChange"
-          />
-        </label>
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("models.provider") }}</span>
-          <NSelect
-            :value="newChatProvider"
-            :options="newChatProviderOptions"
-            :disabled="newChatLoading"
-            @update:value="handleNewChatProviderChange"
-          />
-        </label>
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("models.models") }}</span>
-          <NSelect
-            v-model:value="newChatModel"
-            :options="newChatModelOptions"
-            :disabled="newChatLoading || !newChatProvider"
-            filterable
-          />
-        </label>
-      </div>
-      <template #footer>
-        <div class="new-chat-actions">
-          <NButton @click="showNewChatModal = false">{{ t("common.cancel") }}</NButton>
-          <NButton
-            type="primary"
-            :disabled="!newChatProfile || !newChatProvider || !newChatModel"
-            @click="confirmNewChat"
-          >
-            {{ t("chat.newChat") }}
-          </NButton>
-        </div>
-      </template>
-    </NModal>
-
-    <div class="chat-main">
-      <header class="chat-header">
+      <header
+        v-if="showLegacyWorkbenchChrome"
+        class="chat-header"
+      >
         <div class="header-left">
           <NButton
-            v-if="currentMode === 'chat'"
+            v-if="showLegacySessionChrome"
             quaternary
             size="small"
             @click="showSessions = !showSessions"
@@ -1118,6 +1248,9 @@ async function handleSessionModelCustomSubmit() {
             </template>
           </NButton>
           <span class="header-session-title">{{ headerTitle }}</span>
+          <span v-if="activeSessionSource" class="source-badge">{{
+            getChatSourceLabel(activeSessionSource)
+          }}</span>
           <span
             v-if="chatStore.activeSession?.workspace"
             class="workspace-badge"
@@ -1132,30 +1265,6 @@ async function handleSessionModelCustomSubmit() {
         <div class="header-actions">
           <!-- chat/live mode toggle hidden -->
           <template v-if="currentMode === 'chat'">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  quaternary
-                  size="small"
-                  @click="showOutline = !showOutline"
-                  circle
-                >
-                  <template #icon>
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <path d="M3 12h18M3 6h18M3 18h18" />
-                    </svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("chat.outlineTitle") }}
-            </NTooltip>
             <NTooltip trigger="hover">
               <template #trigger>
                 <NButton
@@ -1183,154 +1292,43 @@ async function handleSessionModelCustomSubmit() {
               </template>
               {{ t("chat.copySessionId") }}
             </NTooltip>
-            <NButton size="small" :circle="isMobile" @click="openNewChatModal">
-              <template #icon>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </template>
-              <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
-            </NButton>
+            <NDropdown
+              trigger="click"
+              :options="newChatOptions"
+              @select="handleNewChatSelect"
+            >
+              <NButton size="small" :circle="isMobile">
+                <template #icon>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </template>
+                <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
+              </NButton>
+            </NDropdown>
           </template>
         </div>
       </header>
 
       <template v-if="currentMode === 'chat'">
-        <div class="chat-content-wrapper">
-          <div class="chat-main-content">
-            <MessageList ref="messageListRef" />
-          </div>
-          <OutlinePanel
-            v-if="showOutline"
-            :messages="chatStore.messages"
-            @navigate="handleOutlineNavigate"
-          />
-        </div>
-        <div v-if="visibleApproval" class="approval-bar">
-          <div class="approval-icon" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-              <path d="m9 12 2 2 4-4" />
-            </svg>
-          </div>
-          <div class="approval-content">
-            <div class="approval-main">
-              <div class="approval-kicker">{{ t("chat.approvalKicker") }}</div>
-              <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
-              <div class="approval-desc">{{ visibleApproval.description }}</div>
-              <code class="approval-command">{{ visibleApproval.command }}</code>
-            </div>
-            <div class="approval-actions">
-              <NButton
-                v-if="visibleApproval.choices.includes('once')"
-                size="small"
-                type="primary"
-                @click="handleApproval('once')"
-              >
-                {{ t("chat.approvalAllowOnce") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('session')"
-                size="small"
-                secondary
-                @click="handleApproval('session')"
-              >
-                {{ t("chat.approvalAllowSession") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('always')"
-                size="small"
-                secondary
-                @click="handleApproval('always')"
-              >
-                {{ t("chat.approvalAlways") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('deny')"
-                size="small"
-                type="error"
-                secondary
-                @click="handleApproval('deny')"
-              >
-                {{ t("chat.approvalDeny") }}
-              </NButton>
-            </div>
-          </div>
-        </div>
-        <div v-if="visibleClarify" class="clarify-bar">
-          <div class="clarify-icon" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-          </div>
-          <div class="clarify-content">
-            <div class="clarify-main">
-              <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
-              <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
-              <div class="clarify-desc">{{ visibleClarify.question }}</div>
-            </div>
-            <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
-              <NButton
-                v-for="choice in visibleClarify.choices"
-                :key="choice"
-                size="small"
-                type="primary"
-                @click="handleClarify(choice)"
-              >
-                {{ choice }}
-              </NButton>
-              <NButton
-                size="small"
-                type="error"
-                secondary
-                @click="handleClarify('')"
-              >
-                {{ t('chat.clarifyDismiss') }}
-              </NButton>
-            </div>
-            <div v-else class="clarify-actions clarify-actions-open">
-              <div class="clarify-input-row">
-                <NInput
-                  v-model:value="clarifyResponse"
-                  size="small"
-                  :placeholder="t('chat.clarifyPlaceholder')"
-                />
-                <NButton size="small" type="primary" @click="handleClarify()">
-                  {{ t('chat.clarifySubmit') }}
-                </NButton>
-              </div>
-            </div>
-          </div>
-        </div>
-        <ChatInput />
+        <MessageList v-if="!isIntentLauncherIdle" />
+        <ApprovalModal
+          :approval="inlineApproval"
+          @approve="handleApproval('once')"
+          @reject="handleApproval('deny')"
+        />
+        <ChatInput
+          :launcher="isIntentLauncherIdle"
+          @submitted="handleIntentSubmitted"
+        />
       </template>
       <ConversationMonitorPane
         v-else
@@ -1338,9 +1336,73 @@ async function handleSessionModelCustomSubmit() {
       />
     </div>
 
+    <aside
+      v-if="showInlineTerminalChrome && showLegacyWorkbenchChrome"
+      class="inline-terminal-panel"
+      :class="{ expanded: showInlineTerminal }"
+      :aria-hidden="!showInlineTerminal"
+    >
+      <div class="inline-terminal-content">
+        <div class="monitor-terminal-tabs" role="tablist" aria-label="Monitor terminals">
+          <button
+            v-for="terminal in monitorTerminals"
+            :key="terminal.key"
+            class="monitor-terminal-tab"
+            :class="{ active: activeMonitorTerminal === terminal.key }"
+            type="button"
+            role="tab"
+            :aria-selected="activeMonitorTerminal === terminal.key"
+            @click="selectMonitorTerminal(terminal.key)"
+          >
+            {{ terminal.label }}
+          </button>
+        </div>
+        <TerminalPanel
+          :key="activeMonitorTerminal"
+          :visible="showInlineTerminal"
+          :startup-command="activeMonitorCommand"
+        />
+      </div>
+    </aside>
+
+    <NTooltip
+      v-if="showInlineTerminalChrome && showLegacyWorkbenchChrome"
+      trigger="hover"
+    >
+      <template #trigger>
+        <button
+          class="inline-terminal-toggle"
+          :class="{ active: showInlineTerminal }"
+          type="button"
+          :aria-pressed="showInlineTerminal"
+          :aria-label="t('drawer.terminal')"
+          @click="toggleInlineTerminal"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m4 7 6 5-6 5" />
+            <path d="M12 19h8" />
+          </svg>
+        </button>
+      </template>
+      {{ t("drawer.terminal") }}
+    </NTooltip>
+
     <!-- Floating drawer button -->
-    <div class="drawer-button-wrapper">
-      <div class="drawer-button" @click="showDrawer = true">
+    <div
+      v-if="showLegacyWorkbenchChrome"
+      class="drawer-button-wrapper"
+      :class="{ hidden: showInlineTerminalChrome && showInlineTerminal }"
+    >
+      <div class="drawer-button" @click="openDrawer('files')" :title="t('drawer.files')">
         <svg
           width="20"
           height="20"
@@ -1356,7 +1418,11 @@ async function handleSessionModelCustomSubmit() {
       </div>
     </div>
 
-    <DrawerPanel v-model:show="showDrawer" :active-tab="drawerActiveTab" />
+    <DrawerPanel
+      v-if="showLegacyWorkbenchChrome"
+      v-model:show="showDrawer"
+      :active-tab="drawerActiveTab"
+    />
   </div>
 </template>
 
@@ -1364,9 +1430,32 @@ async function handleSessionModelCustomSubmit() {
 @use "@/styles/variables" as *;
 
 .chat-panel {
+  --inline-terminal-width: min(540px, 42vw);
+  --inline-terminal-toolbar-offset: 36px;
+
   display: flex;
   height: 100%;
   position: relative;
+  color: #182033;
+  background:
+    radial-gradient(900px 520px at 13% 8%, rgba(191, 225, 255, 0.44), transparent 62%),
+    radial-gradient(820px 520px at 90% 12%, rgba(232, 214, 255, 0.48), transparent 64%),
+    linear-gradient(145deg, #fbfdff 0%, #eff8ff 46%, #fbf5ff 100%);
+
+  &.intent-launcher-mode {
+    justify-content: center;
+    background: transparent;
+  }
+
+  &.aurora-retired-mode {
+    :deep(.message-list) {
+      padding-top: clamp(82px, 9vh, 116px);
+    }
+
+    &.intent-launcher-mode :deep(.message-list) {
+      padding-top: clamp(22px, 4vw, 48px);
+    }
+  }
 }
 
 .session-model-search {
@@ -1572,7 +1661,7 @@ async function handleSessionModelCustomSubmit() {
     left: 0;
     top: 0;
     height: 100%;
-    z-index: 120;
+    z-index: 10;
     background: $bg-card;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     width: 280px;
@@ -1593,7 +1682,7 @@ async function handleSessionModelCustomSubmit() {
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.4);
-    z-index: 110;
+    z-index: 9;
     opacity: 0;
     pointer-events: none;
     transition: opacity $transition-fast;
@@ -1656,32 +1745,27 @@ async function handleSessionModelCustomSubmit() {
   line-height: 22px;
 }
 
-.session-profile-filter {
-  margin: 0 8px 10px;
+.session-scope-note {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba($accent-primary, 0.16);
+  border-radius: $radius-sm;
+  background: rgba($accent-primary, 0.06);
+  color: $text-secondary;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
-.new-chat-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.new-chat-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.new-chat-label {
-  font-size: 12px;
-  color: $text-muted;
+.session-scope-link {
+  display: inline-block;
+  margin-left: 4px;
+  color: $accent-primary;
   font-weight: 500;
-}
+  text-decoration: none;
 
-.new-chat-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .session-group-header {
@@ -1746,7 +1830,6 @@ async function handleSessionModelCustomSubmit() {
   border-radius: $radius-sm;
   cursor: pointer;
   text-align: left;
-  text-decoration: none;
   color: $text-secondary;
   transition: all $transition-fast;
   margin-bottom: 2px;
@@ -1768,26 +1851,6 @@ async function handleSessionModelCustomSubmit() {
 
   &.active .session-item-title {
     color: $accent-primary;
-  }
-
-  &.missing-models {
-    color: #b42318;
-    background: rgba(220, 38, 38, 0.08);
-
-    .session-item-title,
-    .session-item-profile-name,
-    .session-item-time {
-      color: #b42318;
-    }
-
-    .session-item-model {
-      color: #b42318;
-      background: rgba(220, 38, 38, 0.12);
-    }
-
-    &:hover {
-      background: rgba(220, 38, 38, 0.12);
-    }
   }
 }
 
@@ -1888,29 +1951,142 @@ async function handleSessionModelCustomSubmit() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background: transparent;
+  transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+
+  &.intent-launcher-idle {
+    align-items: center;
+    justify-content: center;
+    padding: clamp(24px, 6vh, 76px) clamp(16px, 5vw, 72px);
+    background: transparent;
+  }
 }
 
-.chat-content-wrapper {
-  flex: 1;
-  display: flex;
+.inline-terminal-panel {
+  width: 0;
+  min-width: 0;
+  flex: 0 0 auto;
   overflow: hidden;
-  position: relative;
+  border-left: 0 solid transparent;
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(22px);
+  transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+
+  &.expanded {
+    width: var(--inline-terminal-width);
+    border-left: 1px solid $border-color;
+  }
 }
 
-.chat-main-content {
-  flex: 1;
+.inline-terminal-content {
+  width: var(--inline-terminal-width);
+  height: 100%;
+  min-width: 320px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  padding-top: var(--inline-terminal-toolbar-offset);
+  box-sizing: border-box;
+}
+
+.monitor-terminal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid $border-color;
+  background: rgba(255, 255, 255, 0.34);
+  flex-shrink: 0;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+.monitor-terminal-tab {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-secondary;
+  color: $text-secondary;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background $transition-fast,
+    border-color $transition-fast,
+    color $transition-fast;
+
+  &:hover {
+    color: $text-primary;
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
+  }
+
+  &.active {
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.1);
+    border-color: rgba(var(--accent-primary-rgb), 0.42);
+  }
+}
+
+.inline-terminal-content :deep(.terminal-panel-drawer) {
+  flex: 1;
+  min-height: 0;
+}
+
+.inline-terminal-toggle {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+  border-radius: 50%;
+  color: $text-secondary;
+  background: $bg-card;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    right $transition-normal,
+    color $transition-fast,
+    background $transition-fast,
+    border-color $transition-fast,
+    transform $transition-fast;
+
+  &:hover,
+  &.active {
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.1);
+    border-color: rgba(var(--accent-primary-rgb), 0.4);
+  }
+
+  &.active {
+    right: calc(var(--inline-terminal-width) + 16px);
+  }
+
+  &:hover {
+    transform: translateY(-50%) scale(1.06);
+  }
 }
 
 .chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 21px 20px;
-  border-bottom: 1px solid $border-color;
+  margin: 14px clamp(360px, 29vw, 470px) 0 126px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.16)),
+    rgba(255, 255, 255, 0.22);
+  box-shadow: 0 14px 42px rgba(91, 116, 180, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(24px);
   flex-shrink: 0;
 }
 
@@ -1959,7 +2135,8 @@ async function handleSessionModelCustomSubmit() {
 
 @media (max-width: $breakpoint-mobile) {
   .chat-header {
-    padding: 16px 12px 16px 52px;
+    margin: 14px 10px 0;
+    padding: 16px 12px 16px 104px;
   }
 }
 
@@ -1981,16 +2158,23 @@ async function handleSessionModelCustomSubmit() {
 .drawer-button-wrapper {
   position: absolute;
   right: 16px;
-  top: 50%;
+  top: calc(50% - 52px);
   transform: translateY(-50%);
   z-index: 100;
-  background: $bg-card;
+  background: rgba(255, 255, 255, 0.38);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  backdrop-filter: blur(18px);
   border-radius: 50%;
   box-shadow:
     0 0 10px rgba(255, 107, 107, 0.4),
     0 0 20px rgba(255, 107, 107, 0.2);
   animation: rainbow-glow 8s linear infinite;
   transition: all $transition-fast;
+
+  &.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 
   &:hover {
     animation-play-state: paused;
@@ -2004,7 +2188,7 @@ async function handleSessionModelCustomSubmit() {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: rgba(var(--accent-primary-rgb), 0.1);
+  background: rgba(var(--accent-primary-rgb), 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2106,95 +2290,6 @@ async function handleSessionModelCustomSubmit() {
   border-top: 1px solid $border-color;
 }
 
-
-.clarify-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0 16px 12px;
-  padding: 12px;
-  border: 1px solid $border-color;
-  border-radius: 8px;
-  background: $bg-card;
-  box-shadow: none;
-}
-
-.clarify-icon {
-  display: grid;
-  place-items: center;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
-  border-radius: 8px;
-}
-
-.clarify-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.clarify-main {
-  min-width: 0;
-}
-
-.clarify-kicker {
-  margin-bottom: 2px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-primary);
-}
-
-.clarify-title {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.3;
-  color: $text-primary;
-}
-
-.clarify-desc {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: $text-secondary;
-}
-
-.clarify-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid $border-color;
-}
-
-.clarify-input-row {
-  display: flex;
-  flex: 1;
-  width: 100%;
-  min-width: 0;
-  gap: 8px;
-  align-items: center;
-
-  :deep(.n-input) {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  :deep(.n-button) {
-    flex: 0 0 auto;
-  }
-}
-
-.clarify-actions-open {
-  display: flex;
-  width: 100%;
-}
 @media (max-width: 768px) {
   .approval-bar {
     margin: 0 10px 10px;
@@ -2215,35 +2310,6 @@ async function handleSessionModelCustomSubmit() {
   .approval-actions :deep(.n-button) {
     width: 100%;
   }
-
-  .clarify-bar {
-    margin: 0 10px 10px;
-    padding: 10px;
-  }
-
-  .clarify-icon {
-    flex-basis: 28px;
-    width: 28px;
-    height: 28px;
-  }
-
-  .clarify-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .clarify-actions-open {
-    display: flex;
-    grid-template-columns: none;
-  }
-
-  .clarify-actions :deep(.n-button) {
-    width: 100%;
-  }
-
-  .clarify-actions-open :deep(.n-button) {
-    width: auto;
-  }
 }
 
 @media (max-width: 420px) {
@@ -2253,23 +2319,6 @@ async function handleSessionModelCustomSubmit() {
 
   .approval-actions {
     grid-template-columns: 1fr;
-  }
-
-  .clarify-bar {
-    gap: 8px;
-  }
-
-  .clarify-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .clarify-input-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .clarify-actions-open :deep(.n-button) {
-    width: 100%;
   }
 }
 
@@ -2332,9 +2381,62 @@ async function handleSessionModelCustomSubmit() {
   }
 }
 
+:global(.dark) .chat-panel {
+  color: rgba(241, 245, 249, 0.94);
+  background:
+    radial-gradient(900px 520px at 13% 8%, rgba(59, 130, 246, 0.16), transparent 62%),
+    radial-gradient(820px 520px at 90% 12%, rgba(168, 85, 247, 0.18), transparent 64%),
+    linear-gradient(145deg, #0f172a 0%, #020617 100%);
+}
+
+:global(.dark) .chat-header,
+:global(.dark) .inline-terminal-panel,
+:global(.dark) .monitor-terminal-tabs,
+:global(.dark) .drawer-button-wrapper {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.035)),
+    rgba(15, 23, 42, 0.42);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 @media (max-width: $breakpoint-mobile) {
+  .chat-panel {
+    --inline-terminal-width: min(100%, 430px);
+  }
+
+  .inline-terminal-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.16);
+
+    &.expanded {
+      width: var(--inline-terminal-width);
+    }
+  }
+
+  .inline-terminal-toggle {
+    right: 12px;
+    width: 36px;
+    height: 36px;
+
+    &.active {
+      right: 12px;
+      top: 18px;
+      transform: none;
+    }
+
+    &.active:hover {
+      transform: scale(1.06);
+    }
+  }
+
   .drawer-button-wrapper {
     right: 12px;
+    top: calc(50% - 48px);
   }
 
   .drawer-button {

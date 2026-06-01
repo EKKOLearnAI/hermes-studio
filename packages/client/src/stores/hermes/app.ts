@@ -25,6 +25,10 @@ const MODELS_CACHE_TTL_MS = 30000
 
 export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
+  const isAdvancedConsoleOpen = ref(false)
+  const legacyConsoleRetired = ref(true)
+  const isAuroraStatusOpen = ref(false)
+  const auroraDesktopRequestId = ref(0)
   // Desktop-only collapsed state (icon-rail mode). Persisted to localStorage.
   const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1')
 
@@ -61,7 +65,7 @@ export const useAppStore = defineStore('app', () => {
       }
       return res.success
     } catch (err) {
-      console.error('Failed to update Hermes Web UI:', err)
+      console.error('Failed to update Aurora OS:', err)
       return false
     } finally {
       updating.value = false
@@ -312,6 +316,37 @@ export const useAppStore = defineStore('app', () => {
     sidebarOpen.value = false
   }
 
+  function setAdvancedConsoleOpen(open: boolean) {
+    if (open && legacyConsoleRetired.value) {
+      isAdvancedConsoleOpen.value = false
+      sidebarOpen.value = false
+      return
+    }
+    isAdvancedConsoleOpen.value = open
+    sidebarOpen.value = open
+  }
+
+  function toggleAdvancedConsole() {
+    if (legacyConsoleRetired.value) {
+      requestAuroraDesktop()
+      return
+    }
+    setAdvancedConsoleOpen(!isAdvancedConsoleOpen.value)
+  }
+
+  function requestAuroraDesktop() {
+    setAdvancedConsoleOpen(false)
+    auroraDesktopRequestId.value += 1
+  }
+
+  function setAuroraStatusOpen(open: boolean) {
+    isAuroraStatusOpen.value = open
+  }
+
+  function toggleAuroraStatus() {
+    setAuroraStatusOpen(!isAuroraStatusOpen.value)
+  }
+
   function toggleSidebarCollapsed() {
     sidebarCollapsed.value = !sidebarCollapsed.value
     try {
@@ -323,9 +358,18 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     sidebarOpen,
+    isAdvancedConsoleOpen,
+    legacyConsoleRetired,
+    isAuroraStatusOpen,
+    auroraDesktopRequestId,
     sidebarCollapsed,
     toggleSidebar,
     closeSidebar,
+    setAdvancedConsoleOpen,
+    toggleAdvancedConsole,
+    requestAuroraDesktop,
+    setAuroraStatusOpen,
+    toggleAuroraStatus,
     toggleSidebarCollapsed,
     connected,
     serverVersion,

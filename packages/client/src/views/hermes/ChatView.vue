@@ -1,48 +1,57 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import AuroraOperatingLayer from '@/components/hermes/aurora/AuroraOperatingLayer.vue'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
+import { isAuroraAppKind } from '@/services/hermes/aurora/route-app-bridge'
+import { useAuroraAppWindowStore } from '@/stores/hermes/aurora-app-window'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 
+const route = useRoute()
 const appStore = useAppStore()
 const chatStore = useChatStore()
+const appWindowStore = useAuroraAppWindowStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
-const route = useRoute()
-const router = useRouter()
+const lastRouteAppLaunchKey = ref('')
 
-const routeSessionId = computed(() => {
-  const value = route.params.sessionId
-  return typeof value === 'string' && value.trim() ? value : null
-})
+function queryText(value: unknown): string | undefined {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined
+  return typeof value === 'string' ? value : undefined
+}
 
-const routeProfile = computed(() => {
-  const value = route.query.profile
-  return typeof value === 'string' && value.trim() ? value : null
-})
+function openAuroraAppFromRoute() {
+  const appKind = queryText(route.query.app)
+  if (!isAuroraAppKind(appKind)) return
 
-const productTitle = 'Hermes Studio'
-const tabTitle = computed(() => {
-  if (route.name !== 'hermes.session') return productTitle
-  return chatStore.activeSession?.title?.trim() || productTitle
-})
+  const launchKey = `${appKind}:${route.fullPath}`
+  if (launchKey === lastRouteAppLaunchKey.value) return
+  lastRouteAppLaunchKey.value = launchKey
 
-watch(tabTitle, (value) => {
-  document.title = value
-}, { immediate: true })
+  appWindowStore.openApp(appKind, {
+    source: 'legacy-route-bridge',
+    legacyPath: queryText(route.query.legacyPath),
+  })
+}
 
-onUnmounted(() => {
-  document.title = productTitle
-})
+function isAuroraDesktopRoute() {
+  const appKind = queryText(route.query.app)
+  const hashPath = typeof window === 'undefined' ? '' : window.location.hash
+  const isAuroraPath =
+    route.path === '/aurora' ||
+    route.fullPath.startsWith('/aurora') ||
+    hashPath.startsWith('#/aurora')
+  return isAuroraPath && !isAuroraAppKind(appKind)
+}
 
-async function loadRouteSession() {
-  await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
-  if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
-    await router.replace({ name: 'hermes.chat' })
-  }
+async function requestAuroraDesktopFromRoute() {
+  if (!isAuroraDesktopRoute()) return
+  await nextTick()
+  appWindowStore.closeApp()
+  appStore.requestAuroraDesktop()
 }
 
 onMounted(async () => {
@@ -53,30 +62,25 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
-  await loadRouteSession()
+  await chatStore.loadSessions()
+  openAuroraAppFromRoute()
+  void requestAuroraDesktopFromRoute()
 })
 
-watch([routeSessionId, routeProfile], async ([sessionId]) => {
-  if (!chatStore.sessionsLoaded) return
-  if (!sessionId) {
-    await chatStore.loadSessions(chatStore.sessionProfileFilter)
-    return
-  }
-  if (chatStore.activeSessionId === sessionId) return
-
-  const exists = chatStore.sessions.some(session => session.id === sessionId)
-  if (!exists) {
-    await loadRouteSession()
-    return
-  }
-
-  await chatStore.switchSession(sessionId)
-})
+watch(
+  () => [route.path, route.query.app, route.fullPath],
+  () => {
+    openAuroraAppFromRoute()
+    void requestAuroraDesktopFromRoute()
+  },
+)
 </script>
 
 <template>
   <div class="chat-view">
-    <ChatPanel />
+    <AuroraOperatingLayer>
+      <ChatPanel />
+    </AuroraOperatingLayer>
   </div>
 </template>
 
