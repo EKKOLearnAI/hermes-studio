@@ -4,6 +4,7 @@ import { createConnection, createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
+import { augmentBridgePath } from './bridge-path'
 import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
@@ -49,7 +50,7 @@ function envPositiveInt(name: string): number | undefined {
 }
 
 export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string | undefined, agentRoot: string | undefined): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_AGENT_BRIDGE_ENDPOINT: endpoint,
     HERMES_HOME: hermesHome,
@@ -58,6 +59,9 @@ export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string 
     HERMES_OPENROUTER_APP_CATEGORIES: process.env.HERMES_OPENROUTER_APP_CATEGORIES || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_CATEGORIES,
     ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
   }
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+  env[pathKey] = augmentBridgePath(env)
+  return env
 }
 
 function pathCandidates(agentRoot?: string): string[] {
