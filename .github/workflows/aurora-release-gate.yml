@@ -1,0 +1,74 @@
+name: Aurora Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_candidate:
+        description: Release candidate label to validate
+        required: true
+        default: aurora-v0.1-rc
+      acknowledge_large_chunks:
+        description: Acknowledge known Vite large chunk warnings
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aurora-release-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: Validate ${{ inputs.release_candidate }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require warning acknowledgement
+        if: ${{ inputs.acknowledge_large_chunks != 'true' }}
+        run: |
+          echo "Aurora release gate requires acknowledge_large_chunks=true."
+          echo "Known Vite large chunk warnings must be reviewed before release."
+          exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 23
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Aurora release smoke
+        run: npm run test:aurora
+
+      - name: Build production artifacts
+        run: npm run build
+
+      - name: Upload Aurora Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-release-playwright-report-${{ inputs.release_candidate }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload build output
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-release-dist-${{ inputs.release_candidate }}
+          path: dist/
+          retention-days: 14

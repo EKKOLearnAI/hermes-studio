@@ -1,0 +1,70 @@
+name: Aurora Smoke
+
+on:
+  pull_request:
+    branches:
+      - main
+      - base
+    paths:
+      - '.github/workflows/aurora-smoke.yml'
+      - 'docs/aurora-*.md'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/client/src/**'
+      - 'packages/server/src/**'
+      - 'tests/client/aurora-*.test.ts'
+      - 'tests/e2e/aurora-os.spec.ts'
+  workflow_dispatch:
+    inputs:
+      full_e2e:
+        description: Run full Aurora Playwright browser smoke
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+  schedule:
+    - cron: '0 18 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  aurora-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 23
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Aurora unit smoke
+        run: npm run test:aurora:unit
+
+      - name: Run Vue type check
+        run: npx vue-tsc -b --pretty false
+
+      - name: Install Playwright browsers
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_e2e == 'true') }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Aurora browser smoke
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_e2e == 'true') }}
+        run: npx playwright test tests/e2e/aurora-os.spec.ts
+
+      - name: Upload Aurora Playwright report
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_e2e == 'true')) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-playwright-report
+          path: playwright-report/
+          retention-days: 7
