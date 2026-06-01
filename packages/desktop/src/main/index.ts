@@ -4,6 +4,8 @@ import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
 import { desktopIcon, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
+import { installHermesStudioCliShim } from './cli-shim'
+import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
@@ -206,10 +208,13 @@ async function bootstrap() {
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
 
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
+function runDesktopApp() {
+  const gotLock = app.requestSingleInstanceLock()
+  if (!gotLock) {
+    app.quit()
+    return
+  }
+
   app.on('second-instance', (_event, argv) => {
     if (argv.includes('--quit')) {
       quitApp()
@@ -229,6 +234,15 @@ if (!gotLock) {
     // visual clutter. macOS keeps a menu (system requirement) but Electron's
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    if (app.isPackaged) {
+      installHermesStudioCliShim().then(result => {
+        if (result.status === 'skipped') {
+          console.warn(`[cli-shim] ${result.reason}: ${result.shimPath}`)
+        }
+      }).catch(err => {
+        console.warn(`[cli-shim] failed to install hermes-studio command: ${err instanceof Error ? err.message : String(err)}`)
+      })
+    }
     createTray()
     createWindow()
     bootstrap()
@@ -261,4 +275,16 @@ if (!gotLock) {
     await stopWebUiServer().catch(() => undefined)
     app.exit(0)
   })
+}
+
+const hermesCliArgs = parseHermesCliArgs(process.argv)
+if (hermesCliArgs) {
+  runBundledHermesCli(hermesCliArgs)
+    .then(code => app.exit(code))
+    .catch(err => {
+      console.error(`Failed to run bundled Hermes CLI: ${err instanceof Error ? err.message : String(err)}`)
+      app.exit(1)
+    })
+} else {
+  runDesktopApp()
 }
