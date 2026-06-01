@@ -23,7 +23,21 @@ const ROOT = resolve(__dirname, '..')
 const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
 const HERMES_VERSION = process.env.HERMES_VERSION || '0.15.2'
-const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[mcp]==${HERMES_VERSION}`
+// Match the packaged runtime to the channel list exposed at /hermes/channels.
+// Telegram, Discord, and Slack are covered by "messaging"; Matrix, WeCom,
+// DingTalk, and Feishu have dedicated extras. WhatsApp, QQBot, and Weixin do
+// not expose dedicated hermes-agent extras; their deps are covered by base or
+// the channel extras below.
+const HERMES_EXTRAS = [
+  'mcp',
+  'messaging',
+  'slack',
+  'matrix',
+  'wecom',
+  'dingtalk',
+  'feishu',
+].join(',')
+const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[${HERMES_EXTRAS}]==${HERMES_VERSION}`
 const EXTRA_PYTHON_PACKAGES = splitPackageList(process.env.HERMES_EXTRA_PYTHON_PACKAGES || 'websockets')
 const BROWSER_PACKAGES = splitPackageList(
   process.env.HERMES_BROWSER_PACKAGES || 'agent-browser@^0.26.0 @askjo/camofox-browser@^1.5.2',
