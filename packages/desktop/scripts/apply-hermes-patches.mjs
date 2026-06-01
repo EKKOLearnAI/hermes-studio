@@ -33,6 +33,7 @@ const sitePkgs = process.env.HERMES_AGENT_SITE_PACKAGES ?? (
 )
 
 const dtPath = join(sitePkgs, 'gateway', 'platforms', 'dingtalk.py')
+const browserToolPath = join(sitePkgs, 'tools', 'browser_tool.py')
 const sitecustomizePath = join(sitePkgs, 'sitecustomize.py')
 if (!existsSync(dtPath)) {
   console.error(`dingtalk.py not found at ${dtPath} — is hermes-agent installed?`)
@@ -57,6 +58,21 @@ function patch(id, marker, find, replace) {
   src = src.replace(find, replace)
   console.log(`  ✓ ${id}`)
   applied++
+}
+
+function patchText(text, id, marker, find, replace) {
+  if (text.includes(marker)) {
+    console.log(`  · ${id}  (already applied)`)
+    skipped++
+    return text
+  }
+  if (!text.includes(find)) {
+    console.log(`  ✗ ${id}  (anchor not found — upstream changed?)`)
+    return text
+  }
+  applied++
+  console.log(`  ✓ ${id}`)
+  return text.replace(find, replace)
 }
 
 console.log(`Patching ${dtPath}`)
@@ -177,6 +193,63 @@ patch(
 
 if (src !== before) {
   writeFileSync(dtPath, src)
+}
+
+if (existsSync(browserToolPath)) {
+  console.log(`Patching ${browserToolPath}`)
+  let browserSrc = readFileSync(browserToolPath, 'utf-8')
+  const browserBefore = browserSrc
+
+  browserSrc = patchText(
+    browserSrc,
+    'browser-stdout-decode-fallback',
+    '# patch:browser-stdout-decode-fallback',
+    `from hermes_cli.config import cfg_get\n`,
+    `from hermes_cli.config import cfg_get
+
+# patch:browser-stdout-decode-fallback
+def _hermes_read_browser_output(path: str) -> str:
+    data = Path(path).read_bytes()
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    return data.decode("utf-8", errors="replace")
+`,
+  )
+
+  for (const [id, find, replace] of [
+    [
+      'browser-fallback-stdout-read',
+      `            with open(stdout_path, "r", encoding="utf-8") as f:
+                stdout = f.read().strip()`,
+      `            # patch:browser-fallback-stdout-read
+            stdout = _hermes_read_browser_output(stdout_path).strip()`,
+    ],
+    [
+      'browser-command-stdout-read',
+      `            with open(stdout_path, "r", encoding="utf-8") as f:
+                stdout = f.read()
+            with open(stderr_path, "r", encoding="utf-8") as f:
+                stderr = f.read()`,
+      `            # patch:browser-command-stdout-read
+            stdout = _hermes_read_browser_output(stdout_path)
+            stderr = _hermes_read_browser_output(stderr_path)`,
+    ],
+  ]) {
+    browserSrc = patchText(
+      browserSrc,
+      id,
+      `# patch:${id}`,
+      find,
+      replace,
+    )
+  }
+
+  if (browserSrc !== browserBefore) {
+    writeFileSync(browserToolPath, browserSrc)
+  }
 }
 
 const brotlicffiCompatMarker = '# patch:brotlicffi-error-compat'
