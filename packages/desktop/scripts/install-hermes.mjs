@@ -333,7 +333,7 @@ function installBrowserRuntime() {
   console.log(`→ Installing Chromium for bundled agent-browser at ${AGENT_BROWSER_HOME}`)
   runInvocation(commandInvocation(ab), ['install'], { env: browserRuntimeEnv() })
 
-  const browserExecutable = findBundledBrowserExecutable()
+  const browserExecutable = ensureBundledBrowserExecutable()
   if (!browserExecutable) {
     console.error(`Bundled Chrome executable not found under ${AGENT_BROWSER_HOME} after agent-browser install`)
     process.exit(1)
