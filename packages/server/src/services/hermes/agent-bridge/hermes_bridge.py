@@ -69,6 +69,8 @@ def _positive_int(value: str | None) -> int | None:
 def _hidden_subprocess_kwargs() -> dict[str, Any]:
     if os.name != "nt":
         return {}
+    if os.environ.get("HERMES_DESKTOP", "").strip().lower() != "true":
+        return {}
     create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000
     kwargs: dict[str, Any] = {"creationflags": create_no_window}
     try:
