@@ -4,15 +4,17 @@
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { resolve, dirname, join } from 'node:path'
+import { basename, resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { platform as osPlatform, arch as osArch } from 'node:os'
@@ -152,7 +154,7 @@ function browserRuntimeEnv() {
     : resolve(NODE_PREFIX, 'bin')
   const inheritedPath = process.env.PATH || process.env.Path || ''
   const pathKey = TARGET_OS === 'win32' ? 'Path' : 'PATH'
-  const browserExecutable = findBundledBrowserExecutable()
+  const browserExecutable = ensureBundledBrowserExecutable()
   const env = {
     ...process.env,
     [pathKey]: [nodePath, inheritedPath].filter(Boolean).join(TARGET_OS === 'win32' ? ';' : ':'),
@@ -169,9 +171,35 @@ function bundledBrowserExecutableNames() {
   return new Set(['chrome', 'chromium', 'chromium-browser'])
 }
 
-function findBundledBrowserExecutable() {
+function defaultAgentBrowserHome() {
+  const home = process.env.USERPROFILE || process.env.HOME
+  return home ? resolve(home, '.agent-browser') : null
+}
+
+function findBrowserInstallInHome(home) {
   const names = bundledBrowserExecutableNames()
-  const stack = [join(AGENT_BROWSER_HOME, 'browsers'), AGENT_BROWSER_HOME].filter(existsSync)
+  const browsersDir = join(home, 'browsers')
+  const bundleDirs = []
+
+  if (existsSync(browsersDir)) {
+    try {
+      for (const entry of readdirSync(browsersDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) bundleDirs.push(join(browsersDir, entry.name))
+      }
+    } catch {}
+  }
+
+  for (const bundleDir of bundleDirs) {
+    const executable = findBrowserExecutableUnder(bundleDir, names)
+    if (executable) return { executable, bundleDir }
+  }
+
+  const executable = findBrowserExecutableUnder(home, names)
+  return executable ? { executable, bundleDir: home } : null
+}
+
+function findBrowserExecutableUnder(root, names) {
+  const stack = [root].filter(existsSync)
   const visited = new Set()
 
   while (stack.length > 0) {
@@ -194,6 +222,29 @@ function findBundledBrowserExecutable() {
   }
 
   return null
+}
+
+function findBundledBrowserExecutable() {
+  return findBrowserInstallInHome(AGENT_BROWSER_HOME)?.executable ?? null
+}
+
+function ensureBundledBrowserExecutable() {
+  const bundled = findBrowserInstallInHome(AGENT_BROWSER_HOME)
+  if (bundled) return bundled.executable
+
+  const fallbackHome = defaultAgentBrowserHome()
+  if (!fallbackHome || fallbackHome === AGENT_BROWSER_HOME) return null
+
+  const fallback = findBrowserInstallInHome(fallbackHome)
+  if (!fallback) return null
+
+  const targetBrowsersDir = join(AGENT_BROWSER_HOME, 'browsers')
+  const targetBundleDir = join(targetBrowsersDir, basename(fallback.bundleDir))
+  mkdirSync(targetBrowsersDir, { recursive: true })
+  cpSync(fallback.bundleDir, targetBundleDir, { recursive: true, force: true, verbatimSymlinks: true })
+  console.log(`✓ copied Chrome bundle into ${targetBundleDir}`)
+
+  return findBundledBrowserExecutable()
 }
 
 function sitePackagesDir() {
