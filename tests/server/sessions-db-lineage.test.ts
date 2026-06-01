@@ -33,7 +33,8 @@ function createStateDb(path: string) {
       estimated_cost_usd REAL,
       actual_cost_usd REAL,
       cost_status TEXT,
-      parent_session_id TEXT
+      parent_session_id TEXT,
+      archived INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE messages (
