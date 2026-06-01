@@ -600,6 +600,8 @@ class FakeProcess:
 def fake_popen(args, **kwargs):
     created["args"] = args
     created["env"] = kwargs["env"]
+    created["encoding"] = kwargs.get("encoding")
+    created["errors"] = kwargs.get("errors")
     return FakeProcess()
 
 original_popen = bridge.subprocess.Popen
@@ -617,6 +619,8 @@ finally:
 
 assert created["env"]["HERMES_AGENT_BRIDGE_BROKER_PID"] == "4242"
 assert created["env"]["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] == "default"
+assert created["encoding"] == "utf-8"
+assert created["errors"] == "replace"
 
 stop_event = threading.Event()
 seen_pids = []
