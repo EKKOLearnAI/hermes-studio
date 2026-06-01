@@ -66,18 +66,40 @@ def _positive_int(value: str | None) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _hidden_subprocess_kwargs() -> dict[str, int]:
+def _hidden_subprocess_kwargs() -> dict[str, Any]:
     if os.name != "nt":
         return {}
-    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000
+    kwargs: dict[str, Any] = {"creationflags": create_no_window}
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        kwargs["startupinfo"] = startupinfo
+    except Exception:
+        pass
+    return kwargs
 
 
-def _add_hidden_creationflags(kwargs: dict[str, Any], create_no_window: int) -> None:
+def _add_hidden_process_options(kwargs: dict[str, Any], create_no_window: int) -> None:
     flags = kwargs.get("creationflags", 0) or 0
     try:
         kwargs["creationflags"] = int(flags) | create_no_window
     except Exception:
         kwargs["creationflags"] = create_no_window
+
+    startupinfo = kwargs.get("startupinfo")
+    if startupinfo is None:
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+        except Exception:
+            return
+        kwargs["startupinfo"] = startupinfo
+    try:
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    except Exception:
+        pass
 
 
 def _install_windows_hidden_subprocess_defaults() -> None:
@@ -102,15 +124,15 @@ def _install_windows_hidden_subprocess_defaults() -> None:
 
     class HiddenPopen(original_popen):  # type: ignore[misc, valid-type]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            _add_hidden_creationflags(kwargs, create_no_window)
+            _add_hidden_process_options(kwargs, create_no_window)
             super().__init__(*args, **kwargs)
 
     async def hidden_create_subprocess_exec(*args: Any, **kwargs: Any) -> Any:
-        _add_hidden_creationflags(kwargs, create_no_window)
+        _add_hidden_process_options(kwargs, create_no_window)
         return await original_create_subprocess_exec(*args, **kwargs)
 
     async def hidden_create_subprocess_shell(*args: Any, **kwargs: Any) -> Any:
-        _add_hidden_creationflags(kwargs, create_no_window)
+        _add_hidden_process_options(kwargs, create_no_window)
         return await original_create_subprocess_shell(*args, **kwargs)
 
     subprocess.Popen = HiddenPopen  # type: ignore[assignment]
