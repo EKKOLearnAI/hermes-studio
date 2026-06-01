@@ -145,6 +145,7 @@ async function openItem(item: SearchItem) {
       endedAt: item.ended_at != null ? Math.round(item.ended_at * 1000) : null,
       lastActiveAt: item.last_active != null ? Math.round(item.last_active * 1000) : undefined,
       workspace: item.workspace || null,
+      archived: item.archived,
     })
   }
   await chatStore.switchSession(item.id, messageId)
