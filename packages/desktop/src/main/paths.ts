@@ -72,11 +72,6 @@ export function hermesHome(): string {
   const override = process.env.HERMES_HOME?.trim()
   if (override) return resolve(override)
 
-  if (isWin) {
-    const localAppData = process.env.LOCALAPPDATA?.trim() || process.env.APPDATA?.trim()
-    if (localAppData) return resolve(localAppData, 'hermes')
-  }
-
   return resolve(homedir(), '.hermes')
 }
 

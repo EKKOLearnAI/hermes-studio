@@ -278,8 +278,8 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // HERMES_HOME/.env or by configuring per-platform allowlists.
     GATEWAY_ALLOW_ALL_USERS: process.env.GATEWAY_ALLOW_ALL_USERS ?? 'true',
     // Keep the bundled Hermes Agent, bridge, gateway, and Web UI path helpers
-    // on the same data directory. Native Windows uses %LOCALAPPDATA%\hermes;
-    // macOS/Linux keep the standard ~/.hermes layout.
+    // on the same Agent data directory. Desktop uses HERMES_HOME when set,
+    // otherwise the standard ~/.hermes layout on every platform.
     HERMES_HOME: agentHome,
     HERMES_WEB_UI_HOME: home,
     HERMES_WEBUI_STATE_DIR: home,
