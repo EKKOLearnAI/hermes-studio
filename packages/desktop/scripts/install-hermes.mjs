@@ -17,7 +17,7 @@ import {
 import { basename, resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { platform as osPlatform, arch as osArch } from 'node:os'
+import { platform as osPlatform, arch as osArch, homedir as osHomedir } from 'node:os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
@@ -171,9 +171,22 @@ function bundledBrowserExecutableNames() {
   return new Set(['chrome', 'chromium', 'chromium-browser'])
 }
 
-function defaultAgentBrowserHome() {
-  const home = process.env.USERPROFILE || process.env.HOME
-  return home ? resolve(home, '.agent-browser') : null
+function defaultAgentBrowserHomes() {
+  const candidates = [
+    process.env.USERPROFILE,
+    process.env.UserProfile,
+    process.env.HOME,
+    process.env.HOMEDRIVE && process.env.HOMEPATH
+      ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
+      : null,
+    osHomedir(),
+  ]
+  return Array.from(new Set(
+    candidates
+      .map(home => home?.trim())
+      .filter(Boolean)
+      .map(home => resolve(home, '.agent-browser')),
+  ))
 }
 
 function findBrowserInstallInHome(home) {
@@ -194,8 +207,7 @@ function findBrowserInstallInHome(home) {
     if (executable) return { executable, bundleDir }
   }
 
-  const executable = findBrowserExecutableUnder(home, names)
-  return executable ? { executable, bundleDir: home } : null
+  return null
 }
 
 function findBrowserExecutableUnder(root, names) {
@@ -232,19 +244,27 @@ function ensureBundledBrowserExecutable() {
   const bundled = findBrowserInstallInHome(AGENT_BROWSER_HOME)
   if (bundled) return bundled.executable
 
-  const fallbackHome = defaultAgentBrowserHome()
-  if (!fallbackHome || fallbackHome === AGENT_BROWSER_HOME) return null
+  const searchedHomes = []
+  for (const fallbackHome of defaultAgentBrowserHomes()) {
+    if (fallbackHome === AGENT_BROWSER_HOME) continue
+    searchedHomes.push(fallbackHome)
 
-  const fallback = findBrowserInstallInHome(fallbackHome)
-  if (!fallback) return null
+    const fallback = findBrowserInstallInHome(fallbackHome)
+    if (!fallback) continue
 
-  const targetBrowsersDir = join(AGENT_BROWSER_HOME, 'browsers')
-  const targetBundleDir = join(targetBrowsersDir, basename(fallback.bundleDir))
-  mkdirSync(targetBrowsersDir, { recursive: true })
-  cpSync(fallback.bundleDir, targetBundleDir, { recursive: true, force: true, verbatimSymlinks: true })
-  console.log(`✓ copied Chrome bundle into ${targetBundleDir}`)
+    const targetBrowsersDir = join(AGENT_BROWSER_HOME, 'browsers')
+    const targetBundleDir = join(targetBrowsersDir, basename(fallback.bundleDir))
+    mkdirSync(targetBrowsersDir, { recursive: true })
+    cpSync(fallback.bundleDir, targetBundleDir, { recursive: true, force: true, verbatimSymlinks: true })
+    console.log(`✓ copied Chrome bundle into ${targetBundleDir}`)
 
-  return findBundledBrowserExecutable()
+    return findBundledBrowserExecutable()
+  }
+
+  if (searchedHomes.length > 0) {
+    console.warn(`! no Chrome bundle found in fallback agent-browser homes: ${searchedHomes.join(', ')}`)
+  }
+  return null
 }
 
 function sitePackagesDir() {
