@@ -686,6 +686,7 @@ function isImage(type: string): boolean {
     min-height: 20px;
     overflow-y: auto;
 
+    // 移动端 ≥16px 防止 iOS/Android 弹出输入法时自动缩放
     @media (max-width: 768px) {
         font-size: 16px;
     }
