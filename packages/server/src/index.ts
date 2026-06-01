@@ -12,6 +12,7 @@ import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
 import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
+import { setupQuantLabStreamWebSocket } from './routes/hermes/quant-lab-stream'
 import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
@@ -206,12 +207,23 @@ export async function bootstrap() {
 
   // SPA fallback
   const distDir = resolve(__dirname, '..', 'client')
-  app.use(serve(distDir))
+  app.use(serve(distDir, {
+    setHeaders: (res, path) => {
+      if (path.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+        res.setHeader('Pragma', 'no-cache')
+        res.setHeader('Expires', '0')
+      }
+    },
+  }))
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
       ctx.path !== '/webhook') {
+      ctx.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+      ctx.set('Pragma', 'no-cache')
+      ctx.set('Expires', '0')
       await send(ctx, 'index.html', { root: distDir })
     }
   })
@@ -225,7 +237,8 @@ export async function bootstrap() {
 
   setupTerminalWebSocket(servers)
   setupKanbanEventsWebSocket(servers)
-  console.log('[bootstrap] terminal + kanban websocket setup')
+  setupQuantLabStreamWebSocket(servers)
+  console.log('[bootstrap] terminal + kanban + quant websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -247,7 +260,12 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
+      if (
+        url.pathname !== '/api/hermes/terminal' &&
+        url.pathname !== '/api/hermes/kanban/events' &&
+        url.pathname !== '/api/hermes/quant-lab/stream' &&
+        !url.pathname.startsWith('/socket.io/')
+      ) {
         socket.destroy()
       }
     })
