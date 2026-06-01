@@ -280,6 +280,7 @@ onUnmounted(() => {
               <div class="result-main">
                 <div class="result-title-row">
                   <span class="result-title">{{ getItemTitle(item) }}</span>
+                  <span v-if="item.archived" class="result-archived">{{ t('chat.archived') }}</span>
                   <span class="result-source">{{ formatSource(item.source) }}</span>
                 </div>
                 <div class="result-snippet">
@@ -403,6 +404,15 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   color: $text-muted;
+}
+
+.result-archived {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: $text-muted;
+  background: var(--bg-secondary, rgba(128, 128, 128, 0.1));
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .result-snippet {

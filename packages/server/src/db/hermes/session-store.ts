@@ -276,12 +276,11 @@ export function searchSessions(profile: string | null | undefined, query: string
   const lowered = trimmed.toLowerCase()
   const pattern = `%${lowered}%`
 
-  // Step 1: Find matching sessions
+  // Step 1: Find matching sessions (包括归档会话)
   const sessionRows = db.prepare(
     `SELECT * FROM ${SESSIONS_TABLE}
      WHERE 1 = 1
        ${profileFilter ? 'AND profile = ?' : ''}
-       AND (archived IS NULL OR archived = 0)
        AND (
        LOWER(title) LIKE ? OR LOWER(preview) LIKE ?
        OR id IN (SELECT DISTINCT session_id FROM ${MESSAGES_TABLE} WHERE LOWER(content) LIKE ? OR LOWER(COALESCE(tool_name, '')) LIKE ?)
