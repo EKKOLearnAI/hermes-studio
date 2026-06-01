@@ -1,0 +1,7 @@
+name: hello-local
+version: 0.1.0
+description: Minimal Hermes plugin that registers a /hello-local slash command.
+author: kk
+kind: standalone
+provides_tools: []
+provides_hooks: []

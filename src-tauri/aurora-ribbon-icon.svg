@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <radialGradient id="iconGlow" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.92" />
+      <stop offset="55%" stop-color="#dbeafe" stop-opacity="0.56" />
+      <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.08" />
+    </radialGradient>
+    <linearGradient id="auroraGrad1" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <linearGradient id="auroraGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9" />
+      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.8" />
+    </linearGradient>
+    <linearGradient id="auroraGrad3" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.3" />
+    </linearGradient>
+    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#6366f1" flood-opacity="0.28" />
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="104" height="104" rx="28" fill="url(#iconGlow)" />
+  <g transform="translate(10, 15)" filter="url(#softShadow)">
+    <path d="M45,15 C55,40 70,60 85,75 C95,85 85,95 75,90 C50,75 40,40 30,20 Z" fill="url(#auroraGrad3)" style="mix-blend-mode:multiply" />
+    <path d="M50,5 C40,20 15,65 5,85 C-5,100 15,95 25,85 C45,60 55,25 60,10 C62,5 55,-5 50,5 Z" fill="url(#auroraGrad1)" />
+    <path d="M20,60 C40,50 65,65 80,85 C85,95 100,90 95,80 C80,50 45,35 25,50 Z" fill="url(#auroraGrad2)" style="mix-blend-mode:screen" />
+  </g>
+  <path d="M90,15 C92,23 98,29 106,31 C98,33 92,39 90,47 C88,39 82,33 74,31 C82,29 88,23 90,15 Z" fill="#60a5fa" />
+</svg>

@@ -49,3 +49,10 @@ CLAUDE.md
 # Client source map artifacts
 packages/client/src/**/*.js
 .hermes/
+
+# Local runtime/state and generated app bundles
+.runtime/
+data/
+build/
+src-tauri/target/
+src-tauri/gen/schemas/

@@ -50,3 +50,15 @@ Use the smallest relevant check while iterating. Before a broad PR, run
 Improve the harness instead of repeating the same prompt. Add missing docs,
 tests, logs, scripts, or CI checks so the next agent can see and verify the
 constraint directly.
+
+## Local Hermes Web UI API
+
+
+When checking local Hermes Web UI APIs from terminal tools, do not call `http://127.0.0.1:8648/api/...` directly without auth. Use:
+
+```bash
+scripts/hermes-webui-api GET /api/hermes/quant-lab/snapshot
+scripts/hermes-quant-top10
+```
+
+These helpers read the local Web UI token from `.runtime/.hermes-web-ui/.token` and add the required `Authorization` header without printing the token.
