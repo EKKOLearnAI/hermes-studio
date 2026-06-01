@@ -107,7 +107,7 @@ print(json.dumps({
 })
 
 describe('agent bridge Windows desktop subprocess defaults', () => {
-  it('adds CREATE_NO_WINDOW to nested subprocesses without replacing existing flags', async () => {
+  it('adds CREATE_NO_WINDOW to sync and async nested subprocesses without replacing existing flags', async () => {
     const result = await runBridgeProbe(String.raw`
 import importlib.util
 import json
@@ -121,6 +121,8 @@ spec.loader.exec_module(bridge)
 
 original_os_name = bridge.os.name
 original_popen = bridge.subprocess.Popen
+original_async_exec = bridge.asyncio.create_subprocess_exec
+original_async_shell = bridge.asyncio.create_subprocess_shell
 original_create_no_window = getattr(bridge.subprocess, "CREATE_NO_WINDOW", None)
 original_installed = getattr(bridge.subprocess, "_hermes_hidden_defaults_installed", None)
 
@@ -130,10 +132,22 @@ class FakePopen:
     def __init__(self, *args, **kwargs):
         FakePopen.calls.append({"args": args, "kwargs": kwargs})
 
+async_calls = []
+
+async def fake_create_subprocess_exec(*args, **kwargs):
+    async_calls.append({"kind": "exec", "args": args, "kwargs": kwargs})
+    return {"kind": "exec"}
+
+async def fake_create_subprocess_shell(*args, **kwargs):
+    async_calls.append({"kind": "shell", "args": args, "kwargs": kwargs})
+    return {"kind": "shell"}
+
 try:
     bridge.os.name = "nt"
     bridge.os.environ["HERMES_DESKTOP"] = "true"
     bridge.subprocess.Popen = FakePopen
+    bridge.asyncio.create_subprocess_exec = fake_create_subprocess_exec
+    bridge.asyncio.create_subprocess_shell = fake_create_subprocess_shell
     bridge.subprocess.CREATE_NO_WINDOW = 0x08000000
     if hasattr(bridge.subprocess, "_hermes_hidden_defaults_installed"):
         delattr(bridge.subprocess, "_hermes_hidden_defaults_installed")
@@ -141,9 +155,15 @@ try:
     bridge._install_windows_hidden_subprocess_defaults()
     bridge.subprocess.Popen(["git", "status"], creationflags=0x00000200)
     flags = FakePopen.calls[0]["kwargs"]["creationflags"]
+    bridge.asyncio.run(bridge.asyncio.create_subprocess_exec("git", "status", creationflags=0x00000400))
+    bridge.asyncio.run(bridge.asyncio.create_subprocess_shell("git status"))
+    async_exec_flags = async_calls[0]["kwargs"]["creationflags"]
+    async_shell_flags = async_calls[1]["kwargs"]["creationflags"]
 finally:
     bridge.os.name = original_os_name
     bridge.subprocess.Popen = original_popen
+    bridge.asyncio.create_subprocess_exec = original_async_exec
+    bridge.asyncio.create_subprocess_shell = original_async_shell
     if original_create_no_window is None:
         try:
             delattr(bridge.subprocess, "CREATE_NO_WINDOW")
@@ -163,6 +183,11 @@ print(json.dumps({
     "flags": flags,
     "has_create_no_window": bool(flags & 0x08000000),
     "kept_existing_flag": bool(flags & 0x00000200),
+    "async_exec_flags": async_exec_flags,
+    "async_exec_has_create_no_window": bool(async_exec_flags & 0x08000000),
+    "async_exec_kept_existing_flag": bool(async_exec_flags & 0x00000400),
+    "async_shell_flags": async_shell_flags,
+    "async_shell_has_create_no_window": bool(async_shell_flags & 0x08000000),
 }))
 `)
 
@@ -170,6 +195,11 @@ print(json.dumps({
       flags: 0x08000200,
       has_create_no_window: true,
       kept_existing_flag: true,
+      async_exec_flags: 0x08000400,
+      async_exec_has_create_no_window: true,
+      async_exec_kept_existing_flag: true,
+      async_shell_flags: 0x08000000,
+      async_shell_has_create_no_window: true,
     })
   })
 })
