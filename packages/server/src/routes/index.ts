@@ -30,13 +30,21 @@ import { downloadRoutes } from './hermes/download'
 import { jobRoutes } from './hermes/jobs'
 import { cronHistoryRoutes } from './hermes/cron-history'
 import { kanbanRoutes } from './hermes/kanban'
+import { quantLabRoutes } from './hermes/quant-lab'
+import { lifeOsRoutes } from './hermes/life-os'
+import { nexusRoutes } from './hermes/nexus'
 import { ttsRoutes } from './hermes/tts'
 import { mediaRoutes } from './hermes/media'
+import { systemStatusRoutes } from './hermes/system-status'
 import { codeIntelligenceRoutes } from './hermes/code-intelligence'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
 import { mcpRoutes } from './hermes/mcp'
+import { auroraIntentAuditRoutes } from './aurora/intent-audit'
+import { auroraVibeRoutes } from './aurora/vibe-coding'
+import { auroraComputeLoadRoutes } from './aurora/compute-load'
+import { auroraExternalOpenRoutes } from './aurora/external-open'
 
 /**
  * Register all routes on the Koa app.
@@ -83,7 +91,15 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(mediaRoutes.routes())              // Must be before proxy
   app.use(performanceMonitorRoutes.routes())  // Must be before proxy
   app.use(mcpRoutes.routes())                   // MCP management
+  app.use(quantLabRoutes.routes())           // Must be before proxy
+  app.use(lifeOsRoutes.routes())             // Must be before proxy
+  app.use(nexusRoutes.routes())              // Must be before proxy
+  app.use(systemStatusRoutes.routes())        // Must be before proxy
   app.use(codeIntelligenceRoutes.routes())    // Must be before proxy
+  app.use(auroraIntentAuditRoutes.routes())   // Must be before proxy
+  app.use(auroraVibeRoutes.routes())          // Must be before proxy
+  app.use(auroraComputeLoadRoutes.routes())   // Must be before proxy
+  app.use(auroraExternalOpenRoutes.routes())  // Must be before proxy
   app.use(proxyRoutes.routes())
 
   // Proxy catch-all middleware (must be last)

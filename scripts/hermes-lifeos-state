@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /Users/kk/Documents/Codex/Hermes-Quant-Workspace/control/bin/hermes-lifeos-state "$@"

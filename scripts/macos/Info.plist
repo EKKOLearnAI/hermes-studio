@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh_TW</string>
+  <key>CFBundleDisplayName</key>
+  <string>Hermes</string>
+  <key>CFBundleExecutable</key>
+  <string>Hermes</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.hermes.webui.app</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Hermes</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.3</string>
+  <key>CFBundleVersion</key>
+  <string>4</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Hermes 需要在你授權後控制本機 App，以執行你要求的自動化工作。</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Hermes 只有在你要求處理行事曆時才會存取行事曆資料。</string>
+  <key>NSContactsUsageDescription</key>
+  <string>Hermes 只有在你要求處理聯絡人時才會存取聯絡人資料。</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Hermes 只有在你要求讀取或儲存桌面檔案時才會存取桌面資料夾。</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Hermes 只有在你要求讀取或儲存文件時才會存取文件資料夾。</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Hermes 只有在你要求讀取或儲存下載項目時才會存取下載資料夾。</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Hermes 需要連線到本機 Hermes Web UI 與 Agent 服務。</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>Hermes 只有在你要求處理提醒事項時才會存取提醒事項。</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
