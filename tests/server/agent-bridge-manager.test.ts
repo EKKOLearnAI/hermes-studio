@@ -122,6 +122,15 @@ describe('agent bridge manager command resolution', () => {
     expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('ipc:///tmp/hermes-agent-bridge.sock')
   })
 
+  it('honors the bridge connect retry environment override', async () => {
+    process.env.HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS = '120000'
+
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1' })
+
+    expect(client.connectRetryMs).toBe(120000)
+  })
+
   it('waits briefly for a restarting bridge socket before failing', async () => {
     const endpoint = process.platform === 'win32'
       ? `tcp://127.0.0.1:${32000 + (process.pid % 10000)}`

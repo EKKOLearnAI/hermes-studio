@@ -63,12 +63,23 @@ export function hermesHome(): string {
   const override = process.env.HERMES_HOME?.trim()
   if (override) return resolve(override)
 
+  const defaultHome = resolve(homedir(), '.hermes')
+
   if (isWin) {
-    const localAppData = process.env.LOCALAPPDATA?.trim() || process.env.APPDATA?.trim()
-    if (localAppData) return resolve(localAppData, 'hermes')
+    const candidates = [
+      process.env.LOCALAPPDATA,
+      process.env.APPDATA,
+    ]
+      .map(value => value?.trim())
+      .filter((value): value is string => !!value)
+      .map(value => resolve(value, 'hermes'))
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
   }
 
-  return resolve(homedir(), '.hermes')
+  return defaultHome
 }
 
 export function tokenFile(): string {
