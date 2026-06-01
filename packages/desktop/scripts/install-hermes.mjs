@@ -91,6 +91,21 @@ function optionalRun(command, args, options = {}) {
   return spawnSync(command, args, { stdio: 'inherit', ...options })
 }
 
+function commandInvocation(command) {
+  if (TARGET_OS === 'win32' && command.toLowerCase().endsWith('.cmd')) {
+    return { command: 'cmd.exe', argsPrefix: ['/d', '/s', '/c', command] }
+  }
+  return { command, argsPrefix: [] }
+}
+
+function runInvocation(invocation, args, options = {}) {
+  return run(invocation.command, [...invocation.argsPrefix, ...args], options)
+}
+
+function optionalRunInvocation(invocation, args, options = {}) {
+  return optionalRun(invocation.command, [...invocation.argsPrefix, ...args], options)
+}
+
 function installPythonPackages(packages, label) {
   if (packages.length === 0) return
   if (hasUv()) {
@@ -116,8 +131,9 @@ function npmCommand() {
     ? ['npm.cmd', 'npm.exe', 'npm']
     : ['npm']
   for (const candidate of candidates) {
-    const result = optionalRun(candidate, ['--version'], { stdio: 'ignore' })
-    if (result.status === 0) return candidate
+    const invocation = commandInvocation(candidate)
+    const result = optionalRunInvocation(invocation, ['--version'], { stdio: 'ignore' })
+    if (result.status === 0) return invocation
   }
   return null
 }
@@ -133,9 +149,11 @@ function browserRuntimeEnv() {
   const nodePath = TARGET_OS === 'win32'
     ? NODE_PREFIX
     : resolve(NODE_PREFIX, 'bin')
+  const inheritedPath = process.env.PATH || process.env.Path || ''
+  const pathKey = TARGET_OS === 'win32' ? 'Path' : 'PATH'
   return {
     ...process.env,
-    PATH: [nodePath, process.env.PATH].filter(Boolean).join(TARGET_OS === 'win32' ? ';' : ':'),
+    [pathKey]: [nodePath, inheritedPath].filter(Boolean).join(TARGET_OS === 'win32' ? ';' : ':'),
     PLAYWRIGHT_BROWSERS_PATH,
   }
 }
@@ -187,7 +205,7 @@ function installBrowserRuntime() {
   }
 
   console.log(`→ Installing browser runtime via npm prefix ${NODE_PREFIX}`)
-  run(npm, [
+  runInvocation(npm, [
     'install',
     '-g',
     '--prefix',
@@ -204,7 +222,7 @@ function installBrowserRuntime() {
   }
 
   console.log(`→ Installing Chromium for bundled agent-browser at ${PLAYWRIGHT_BROWSERS_PATH}`)
-  run(ab, ['install'], { env: browserRuntimeEnv() })
+  runInvocation(commandInvocation(ab), ['install'], { env: browserRuntimeEnv() })
 }
 
 installPythonPackages([HERMES_PACKAGE], 'hermes-agent')
