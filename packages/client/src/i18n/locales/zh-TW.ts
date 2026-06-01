@@ -369,6 +369,12 @@ export default {
     pin: '釘選',
     unpin: '取消釘選',
     pinned: '已釘選',
+    archive: '封存',
+    unarchive: '取消封存',
+    archived: '已封存',
+    unarchived: '已取消封存',
+    archivedSessions: '封存會話',
+    noArchivedSessions: '暫無封存會話',
     chatMode: '聊天',
     liveMode: '即時',
     liveSessions: '即時工作階段',
@@ -1483,6 +1489,10 @@ export default {
     contentDisplay: '內容展示',
     download: '下載',
     downloadFile: '下載檔案',
+    openFile: '用預設應用程式開啟',
+    openFileFailed: '開啟檔案失敗',
+    showInFolder: '在檔案總管中顯示',
+    showInFolderFailed: '開啟資料夾失敗',
   },
 
   // 更新日誌

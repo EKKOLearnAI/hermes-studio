@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSession, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
@@ -87,6 +87,7 @@ export interface Session {
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
+  archived?: number
 }
 
 interface CompressionState {
@@ -293,6 +294,7 @@ function mapHermesSession(s: SessionSummary): Session {
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     workspace: s.workspace || null,
+    archived: s.archived,
   }
 }
 
@@ -586,6 +588,40 @@ export const useChatStore = defineStore('chat', () => {
     const legacyActiveKey = legacyStorageKey()
     if (legacyActiveKey) removeItem(legacyActiveKey)
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
+
+    // 会话不在主列表中（如归档会话），尝试从 API 直接加载
+    if (!activeSession.value) {
+      try {
+        const detail = await fetchSession(sessionId)
+        if (detail) {
+          const session = mapHermesSession(detail)
+          session.messages = (detail.messages || []).map((m: HermesMessage) => ({
+            id: String(m.id),
+            role: m.role,
+            content: m.content || '',
+            timestamp: m.timestamp * 1000,
+            reasoning: m.reasoning || undefined,
+            systemType: m.role === 'command' ? 'command' : undefined,
+            ...(m.role === 'tool' ? {
+              toolName: m.tool_name || undefined,
+              toolCallId: m.tool_call_id || undefined,
+              toolArgs: m.tool_calls?.[0]?.function?.arguments
+                ? JSON.stringify(m.tool_calls[0].function.arguments)
+                : undefined,
+              toolStatus: 'done' as const,
+              toolResult: m.content || undefined,
+              content: '',
+            } : {}),
+          }))
+          session.loadedMessageCount = session.messages.length
+          session.hasMoreBefore = session.messages.length < (detail.message_count || 0)
+          sessions.value.push(session)
+          activeSession.value = session
+        }
+      } catch {
+        // 加载失败，保持 null
+      }
+    }
 
     if (!activeSession.value) return
 

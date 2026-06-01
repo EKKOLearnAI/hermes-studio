@@ -33,6 +33,7 @@ export interface HermesSessionRow {
   cost_status: string
   preview: string
   last_active: number
+  archived?: number
 }
 
 export interface HermesSessionSearchRow extends HermesSessionRow {
@@ -125,6 +126,7 @@ function mapRow(row: Record<string, unknown>): HermesSessionRow {
     cost_status: String(row.cost_status || ''),
     preview: String(row.preview || ''),
     last_active: normalizeNumber(row.last_active, startedAt),
+    archived: normalizeNumber(row.archived),
   }
 }
 
@@ -158,7 +160,8 @@ const SESSION_SELECT = `
     ),
     ''
   ) AS preview,
-  COALESCE((SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id), s.started_at) AS last_active
+  COALESCE((SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id), s.started_at) AS last_active,
+  COALESCE(s.archived, 0) AS archived
 `
 
 function containsCjk(text: string): boolean {
@@ -406,6 +409,7 @@ function projectSessionSummary(root: HermesSessionInternalRow, chain: HermesSess
     cost_status: latest.cost_status,
     preview: latest.preview || root.preview || firstPreview || '',
     last_active: latest.last_active || root.last_active,
+    archived: latest.archived ?? root.archived,
   }
 }
 
@@ -1264,7 +1268,7 @@ export async function getUsageStatsFromDb(
   }
 }
 
-export async function listSessionSummaries(source?: string, limit = 2000, profile?: string): Promise<HermesSessionRow[]> {
+export async function listSessionSummaries(source?: string, limit = 2000, profile?: string, includeArchived = false): Promise<HermesSessionRow[]> {
   if (!SQLITE_AVAILABLE) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
@@ -1275,6 +1279,9 @@ export async function listSessionSummaries(source?: string, limit = 2000, profil
 
   try {
     const clauses = ["s.parent_session_id IS NULL", "s.source != 'tool'", "s.id NOT LIKE 'compress_%'"]
+    if (!includeArchived) {
+      clauses.push("(s.archived IS NULL OR s.archived = 0)")
+    }
     const params: any[] = []
     if (source) {
       clauses.push('s.source = ?')

@@ -371,6 +371,12 @@ export default {
     pin: 'Pin',
     unpin: 'Unpin',
     pinned: 'Pinned',
+    archive: 'Archive',
+    unarchive: 'Unarchive',
+    archived: 'Session archived',
+    unarchived: 'Session unarchived',
+    archivedSessions: 'Archived Sessions',
+    noArchivedSessions: 'No archived sessions',
     chatMode: 'Chat',
     liveMode: 'Live',
     liveSessions: 'Live Sessions',
@@ -1478,6 +1484,10 @@ export default {
     contentDisplay: 'Content display',
     download: 'Download',
     downloadFile: 'Download file',
+    openFile: 'Open with default app',
+    openFileFailed: 'Failed to open file',
+    showInFolder: 'Show in folder',
+    showInFolderFailed: 'Failed to open folder',
   },
 
   // Changelog

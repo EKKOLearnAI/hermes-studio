@@ -371,6 +371,12 @@ export default {
     pin: '置顶',
     unpin: '取消置顶',
     pinned: '已置顶',
+    archive: '归档',
+    unarchive: '取消归档',
+    archived: '已归档',
+    unarchived: '已取消归档',
+    archivedSessions: '归档会话',
+    noArchivedSessions: '暂无归档会话',
     chatMode: '聊天',
     liveMode: '实时',
     liveSessions: '实时会话',
@@ -1480,6 +1486,10 @@ export default {
     contentDisplay: '内容展示',
     download: '下载',
     downloadFile: '下载文件',
+    openFile: '用默认应用打开',
+    openFileFailed: '打开文件失败',
+    showInFolder: '在文件夹中显示',
+    showInFolderFailed: '打开文件夹失败',
   },
 
   // 更新日志

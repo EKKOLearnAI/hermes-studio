@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
+import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession, archiveSession, unarchiveSession, fetchSessions } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -131,7 +131,7 @@ function sortSessionsWithActiveFirst(items: Session[]): Session[] {
 const pinnedSessions = computed(() =>
   sortSessionsWithActiveFirst(
     chatStore.sessions.filter((session) =>
-      sessionBrowserPrefsStore.isPinned(session.id),
+      sessionBrowserPrefsStore.isPinned(session.id) && !session.archived,
     ),
   ),
 );
@@ -139,10 +139,49 @@ const pinnedSessions = computed(() =>
 const unpinnedSessions = computed(() =>
   sortSessionsWithActiveFirst(
     chatStore.sessions.filter(
-      (session) => !sessionBrowserPrefsStore.isPinned(session.id),
+      (session) => !sessionBrowserPrefsStore.isPinned(session.id) && !session.archived,
     ),
   ),
 );
+
+// 归档会话
+const archivedSessions = ref<Session[]>([]);
+const showArchivedSection = ref(false);
+const archivedLoading = ref(false);
+
+async function loadArchivedSessions() {
+  archivedLoading.value = true;
+  try {
+    const profile = chatStore.sessionProfileFilter || undefined;
+    const summaries = await fetchSessions(undefined, 2000, profile, true);
+    const archived = summaries
+      .filter(s => s.archived === 1)
+      .map(s => ({
+        id: s.id,
+        profile: s.profile || undefined,
+        title: s.title || '',
+        source: s.source,
+        createdAt: s.started_at * 1000,
+        updatedAt: (s.last_active || s.ended_at || s.started_at) * 1000,
+        model: s.model,
+        provider: s.provider,
+        messageCount: s.message_count,
+      } as Session))
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    archivedSessions.value = archived;
+  } catch {
+    // ignore
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
+function toggleArchivedSection() {
+  showArchivedSection.value = !showArchivedSection.value;
+  if (showArchivedSection.value && archivedSessions.value.length === 0) {
+    loadArchivedSessions();
+  }
+}
 
 watch(
   () => [
@@ -428,14 +467,26 @@ const contextSessionPinned = computed(() =>
 );
 const contextSession = computed(() =>
   contextSessionId.value
-    ? chatStore.sessions.find((session) => session.id === contextSessionId.value) || null
+    ? chatStore.sessions.find((session) => session.id === contextSessionId.value)
+      || archivedSessions.value.find((session) => session.id === contextSessionId.value)
+      || null
     : null,
+);
+
+const contextSessionArchived = computed(() =>
+  contextSessionId.value
+    ? archivedSessions.value.some(s => s.id === contextSessionId.value)
+    : false,
 );
 
 const contextMenuOptions = computed(() => {
   const options: DropdownOption[] = [{
     label: t(contextSessionPinned.value ? "chat.unpin" : "chat.pin"),
     key: "pin",
+  },
+  {
+    label: t(contextSessionArchived.value ? "chat.unarchive" : "chat.archive"),
+    key: "archive",
   },
   { label: t("chat.rename"), key: "rename" },
   { label: t("chat.setWorkspace"), key: "workspace" }]
@@ -497,6 +548,32 @@ async function handleContextMenuSelect(key: string) {
   if (!contextSessionId.value) return;
   if (key === "pin") {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value);
+    return;
+  }
+  if (key === "archive") {
+    const id = contextSessionId.value;
+    if (contextSessionArchived.value) {
+      const ok = await unarchiveSession(id);
+      if (ok) {
+        archivedSessions.value = archivedSessions.value.filter(s => s.id !== id);
+        await chatStore.loadSessions(chatStore.sessionProfileFilter);
+        message.success(t("chat.unarchived"));
+      }
+    } else {
+      const ok = await archiveSession(id);
+      if (ok) {
+        if (chatStore.activeSessionId === id) {
+          // 当前活跃会话被归档，切换到下一个
+          const remaining = chatStore.sessions.filter(s => s.id !== id);
+          if (remaining.length > 0) {
+            await chatStore.switchSession(remaining[0].id);
+          }
+        }
+        await chatStore.loadSessions(chatStore.sessionProfileFilter);
+        if (showArchivedSection.value) loadArchivedSessions();
+        message.success(t("chat.archived"));
+      }
+    }
     return;
   }
   if (key === "copy-link") {
@@ -901,6 +978,44 @@ async function handleSessionModelCustomSubmit() {
           @delete="handleDeleteSession(s.id)"
           @toggle-select="toggleSessionSelection(s)"
         />
+      </div>
+
+      <!-- 归档会话：固定在侧边栏底部 -->
+      <div v-if="showSessions" class="archived-section">
+        <button class="archived-toggle" @click="toggleArchivedSection">
+          <svg
+            class="archived-chevron"
+            :class="{ 'archived-chevron--open': showArchivedSection }"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+          <span class="archived-toggle-label">{{ t("chat.archivedSessions") }}</span>
+          <span v-if="archivedSessions.length > 0" class="session-group-count">{{ archivedSessions.length }}</span>
+        </button>
+        <div v-if="showArchivedSection" class="archived-list">
+          <div v-if="archivedLoading" class="session-loading">{{ t("common.loading") }}</div>
+          <div v-else-if="archivedSessions.length === 0" class="session-empty" style="padding: 8px 12px;">{{ t("chat.noArchivedSessions") }}</div>
+          <SessionListItem
+            v-for="s in archivedSessions"
+            :key="`archived-${s.id}`"
+            :session="s"
+            :active="s.id === chatStore.activeSessionId"
+            :pinned="false"
+            :can-delete="false"
+            :show-profile="false"
+            :to="sessionHref(s.id)"
+            @select="handleSessionClick(s.id)"
+            @contextmenu="handleContextMenu($event, s.id)"
+          />
+        </div>
       </div>
     </aside>
 
@@ -1719,6 +1834,50 @@ async function handleSessionModelCustomSubmit() {
   font-size: 10px;
   color: $text-muted;
   font-weight: 400;
+}
+
+.archived-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.15));
+}
+
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: $text-muted;
+  font-size: 12px;
+  border-radius: $radius-sm;
+  transition: background $transition-fast;
+
+  &:hover {
+    background: var(--bg-hover, rgba(128, 128, 128, 0.08));
+  }
+}
+
+.archived-chevron {
+  transition: transform $transition-fast;
+  flex-shrink: 0;
+
+  &--open {
+    transform: rotate(90deg);
+  }
+}
+
+.archived-toggle-label {
+  flex: 1;
+  text-align: left;
+}
+
+.archived-list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0 0 4px;
 }
 
 .session-items {

@@ -12,7 +12,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, archiveSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -95,6 +95,10 @@ const contextSessionPinned = computed(() =>
   contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
 )
 
+const contextSessionArchived = computed(() =>
+  contextSessionId.value ? Boolean(contextSessionSummary.value?.archived) : false,
+)
+
 const contextMenuOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     {
@@ -103,6 +107,10 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       disabled: Boolean(contextSessionSummary.value?.webui_imported),
     },
     { label: t(contextSessionPinned.value ? 'chat.unpin' : 'chat.pin'), key: 'pin' },
+    {
+      label: t(contextSessionArchived.value ? 'chat.unarchive' : 'chat.archive'),
+      key: 'archive',
+    },
     { label: t('chat.copySessionLink'), key: 'copy-link' },
     { label: t('chat.copySessionId'), key: 'copy-id' },
   ]
@@ -573,6 +581,23 @@ async function handleContextMenuSelect(key: string) {
   if (!contextSessionId.value) return
   if (key === 'pin') {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
+  } else if (key === 'archive') {
+    const id = contextSessionId.value
+    if (contextSessionArchived.value) {
+      const ok = await unarchiveSession(id)
+      if (ok) {
+        const summary = findHistorySession(id)
+        if (summary) (summary as any).archived = 0
+        message.success(t('chat.unarchived'))
+      }
+    } else {
+      const ok = await archiveSession(id)
+      if (ok) {
+        const summary = findHistorySession(id)
+        if (summary) (summary as any).archived = 1
+        message.success(t('chat.archived'))
+      }
+    }
   } else if (key === 'copy-link') {
     await copySessionLink(contextSessionId.value)
   } else if (key === 'copy-id') {
