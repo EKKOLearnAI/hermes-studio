@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Aurora OS">
+  <defs>
+    <linearGradient id="aurora-bg" x1="24" x2="156" y1="18" y2="162" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eff6ff"/>
+      <stop offset="0.45" stop-color="#c7d2fe"/>
+      <stop offset="1" stop-color="#f5d0fe"/>
+    </linearGradient>
+    <linearGradient id="aurora-ribbon-a" x1="39" x2="137" y1="131" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.52" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <linearGradient id="aurora-ribbon-b" x1="52" x2="148" y1="50" y2="130" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a5f3fc"/>
+      <stop offset="0.45" stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#f0abfc"/>
+    </linearGradient>
+    <filter id="soft-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.25 0 0 0 0 0.35 0 0 0 0 1 0 0 0 0.55 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="180" height="180" rx="42" fill="url(#aurora-bg)"/>
+  <circle cx="138" cy="40" r="20" fill="#fff" opacity=".38"/>
+  <circle cx="39" cy="139" r="28" fill="#fff" opacity=".24"/>
+  <path
+    d="M37 126c23-43 38-72 52-82 10-7 20-5 30 7 10 12 19 30 31 53 4 8-7 16-14 9-13-13-21-25-30-38-4-6-8-7-13-2-9 8-22 30-41 64-6 11-21 1-15-11Z"
+    fill="url(#aurora-ribbon-a)"
+    filter="url(#soft-glow)"
+  />
+  <path
+    d="M52 122c20-25 36-39 50-42 15-4 27 5 43 30 5 8-5 18-13 11-12-10-21-15-31-14-11 1-23 11-40 29-9 9-18-5-9-14Z"
+    fill="url(#aurora-ribbon-b)"
+    opacity=".88"
+  />
+  <path d="M140 39h8v4h-8v8h-4v-8h-8v-4h8v-8h4v8Z" fill="#fff" opacity=".86"/>
+</svg>

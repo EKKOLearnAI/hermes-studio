@@ -1,0 +1,25 @@
+{
+  "name": "Aurora OS",
+  "short_name": "Aurora",
+  "description": "Aurora OS Quant Station and AI Operating Layer",
+  "start_url": "/#/hermes/chat",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0a0a14",
+  "background_color": "#05050a",
+  "icons": [
+    {
+      "src": "/icons/aurora-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/aurora-touch-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
