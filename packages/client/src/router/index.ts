@@ -1,5 +1,9 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import {
+  AURORA_RETIRED_LEGACY_ROUTES,
+  getAuroraAppKindForLegacyRoute,
+} from '@/services/hermes/aurora/route-app-bridge'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -12,6 +16,7 @@ const router = createRouter({
     },
     {
       path: '/hermes/chat',
+      alias: ['/aurora', '/aurora/chat'],
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
     },
@@ -39,6 +44,16 @@ const router = createRouter({
       path: '/hermes/kanban',
       name: 'hermes.kanban',
       component: () => import('@/views/hermes/KanbanView.vue'),
+    },
+    {
+      path: '/hermes/quant-lab',
+      name: 'hermes.quantLab',
+      component: () => import('@/views/hermes/QuantLabView.vue'),
+    },
+    {
+      path: '/hermes/life-os',
+      name: 'hermes.lifeOS',
+      component: () => import('@/views/hermes/LifeOSView.vue'),
     },
     {
       path: '/hermes/models',
@@ -93,6 +108,16 @@ const router = createRouter({
       component: () => import('@/views/hermes/SettingsView.vue'),
     },
     {
+      path: '/hermes/gateways',
+      name: 'hermes.gateways',
+      component: () => import('@/views/hermes/GatewaysView.vue'),
+    },
+    {
+      path: '/hermes/system-status',
+      name: 'hermes.systemStatus',
+      component: () => import('@/views/hermes/SystemStatusView.vue'),
+    },
+    {
       path: '/hermes/code-intelligence',
       name: 'hermes.codeIntelligence',
       component: () => import('@/views/hermes/CodeIntelligenceView.vue'),
@@ -139,6 +164,12 @@ const router = createRouter({
       component: () => import('@/views/hermes/McpManagerView.vue'),
       meta: { requiresSuperAdmin: true },
     },
+    {
+      path: '/trading-view',
+      name: 'TradingViewBrowser',
+      component: () => import('@/views/TradingViewBrowser.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 })
 
@@ -147,7 +178,7 @@ router.beforeEach((to, _from, next) => {
   if (to.meta.public) {
     // Already has key, skip login
     if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/hermes/chat' })
+      next({ path: '/aurora' })
       return
     }
     next()
@@ -157,6 +188,31 @@ router.beforeEach((to, _from, next) => {
   // All other pages require token
   if (!hasApiKey()) {
     next({ name: 'login' })
+    return
+  }
+
+  const bridgedAppKind = getAuroraAppKindForLegacyRoute(to.path)
+  if (bridgedAppKind) {
+    next({
+      path: '/aurora',
+      query: {
+        ...to.query,
+        app: bridgedAppKind,
+        legacyPath: to.path,
+      },
+      replace: true,
+    })
+    return
+  }
+
+  if (AURORA_RETIRED_LEGACY_ROUTES.has(to.path)) {
+    next({
+      path: '/aurora',
+      query: {
+        retiredSurface: to.path.replace('/hermes/', ''),
+      },
+      replace: true,
+    })
     return
   }
 
