@@ -57,6 +57,21 @@ export interface ProfileRuntimeStatusesResponse {
   refreshing?: boolean
 }
 
+export interface AuroraProfilePreferences {
+  schemaVersion: number
+  updatedAt: string
+  desktop: {
+    pinnedApps: string[]
+    updatedAt: string
+  }
+}
+
+export interface AuroraProfilePreferencesResponse {
+  profile: string
+  storage: 'profile' | 'default'
+  preferences: AuroraProfilePreferences
+}
+
 export async function fetchProfiles(): Promise<HermesProfile[]> {
   const res = await request<{ profiles: HermesProfile[] }>('/api/hermes/profiles')
   return res.profiles
@@ -65,6 +80,20 @@ export async function fetchProfiles(): Promise<HermesProfile[]> {
 export async function fetchProfileDetail(name: string): Promise<HermesProfileDetail> {
   const res = await request<{ profile: HermesProfileDetail }>(`/api/hermes/profiles/${encodeURIComponent(name)}`)
   return res.profile
+}
+
+export async function fetchAuroraProfilePreferences(name: string): Promise<AuroraProfilePreferencesResponse> {
+  return request<AuroraProfilePreferencesResponse>(`/api/hermes/profiles/${encodeURIComponent(name)}/aurora-preferences`)
+}
+
+export async function updateAuroraProfilePreferences(
+  name: string,
+  preferences: { desktop: { pinnedApps: string[] } },
+): Promise<AuroraProfilePreferencesResponse> {
+  return request<AuroraProfilePreferencesResponse>(`/api/hermes/profiles/${encodeURIComponent(name)}/aurora-preferences`, {
+    method: 'PUT',
+    body: JSON.stringify(preferences),
+  })
 }
 
 export async function fetchProfileRuntimeStatus(name: string): Promise<ProfileRuntimeStatus> {
