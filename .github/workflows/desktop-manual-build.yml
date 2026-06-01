@@ -188,7 +188,12 @@ jobs:
 
       - name: Build desktop artifact
         shell: bash
-        run: npm --prefix packages/desktop run dist -- ${{ needs.validate.outputs.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
+        run: |
+          if [ "${{ needs.validate.outputs.target_os }}" = "darwin" ]; then
+            ulimit -n 10240 || true
+            echo "File descriptor limit: $(ulimit -n)"
+          fi
+          npm --prefix packages/desktop run dist -- ${{ needs.validate.outputs.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
