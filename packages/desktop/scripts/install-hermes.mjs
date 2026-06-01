@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 // Install hermes-agent into the bundled Python at resources/python/<os>-<arch>/.
 // Prefers `uv` (10-100x faster, more deterministic) and falls back to pip.
-import { existsSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -12,11 +22,19 @@ const ROOT = resolve(__dirname, '..')
 
 const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
-const HERMES_VERSION = process.env.HERMES_VERSION || '0.15.1'
+const HERMES_VERSION = process.env.HERMES_VERSION || '0.15.2'
 const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[mcp]==${HERMES_VERSION}`
+const EXTRA_PYTHON_PACKAGES = splitPackageList(process.env.HERMES_EXTRA_PYTHON_PACKAGES || 'websockets')
+const BROWSER_PACKAGES = splitPackageList(
+  process.env.HERMES_BROWSER_PACKAGES || 'agent-browser@^0.26.0 @askjo/camofox-browser@^1.5.2',
+)
+const SKIP_BROWSER_RUNTIME = process.env.HERMES_SKIP_BROWSER_RUNTIME === '1'
+  || process.env.HERMES_SKIP_BROWSER_RUNTIME?.toLowerCase() === 'true'
 
 const OS_LABEL = TARGET_OS === 'win32' ? 'win' : TARGET_OS === 'darwin' ? 'mac' : TARGET_OS
 const PY_DIR = resolve(ROOT, 'resources', 'python', `${OS_LABEL}-${TARGET_ARCH}`)
+const NODE_PREFIX = resolve(PY_DIR, 'node')
+const PLAYWRIGHT_BROWSERS_PATH = resolve(PY_DIR, 'ms-playwright')
 
 const pyBin = TARGET_OS === 'win32'
   ? resolve(PY_DIR, 'python.exe')
@@ -32,33 +50,154 @@ function hasUv() {
   return r.status === 0
 }
 
-let r
-if (hasUv()) {
-  console.log(`→ Installing ${HERMES_PACKAGE} via uv`)
-  r = spawnSync('uv', [
+function splitPackageList(value) {
+  return value
+    .split(/[,\s]+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: 'inherit', ...options })
+  if (result.status !== 0) process.exit(result.status ?? 1)
+  return result
+}
+
+function optionalRun(command, args, options = {}) {
+  return spawnSync(command, args, { stdio: 'inherit', ...options })
+}
+
+function installPythonPackages(packages, label) {
+  if (packages.length === 0) return
+  if (hasUv()) {
+    console.log(`→ Installing ${label} via uv: ${packages.join(' ')}`)
+    run('uv', [
     'pip', 'install',
     '--python', pyBin,
-    HERMES_PACKAGE,
-  ], { stdio: 'inherit' })
-} else {
-  console.log(`→ Installing ${HERMES_PACKAGE} via pip`)
-  r = spawnSync(pyBin, [
-    '-m', 'pip', 'install',
-    HERMES_PACKAGE,
-    '--no-warn-script-location',
-    '--disable-pip-version-check',
-  ], { stdio: 'inherit' })
+      ...packages,
+    ])
+  } else {
+    console.log(`→ Installing ${label} via pip: ${packages.join(' ')}`)
+    run(pyBin, [
+      '-m', 'pip', 'install',
+      ...packages,
+      '--no-warn-script-location',
+      '--disable-pip-version-check',
+    ])
+  }
 }
-if (r.status !== 0) process.exit(r.status ?? 1)
 
-r = spawnSync(pyBin, [
-  '-c',
-  'import mcp; import tools.mcp_tool as t; assert t._MCP_AVAILABLE',
-], { stdio: 'inherit' })
-if (r.status !== 0) {
-  console.error('MCP Python SDK sanity check failed')
-  process.exit(r.status ?? 1)
+function npmCommand() {
+  const candidates = TARGET_OS === 'win32'
+    ? ['npm.cmd', 'npm.exe', 'npm']
+    : ['npm']
+  for (const candidate of candidates) {
+    const result = optionalRun(candidate, ['--version'], { stdio: 'ignore' })
+    if (result.status === 0) return candidate
+  }
+  return null
 }
+
+function agentBrowserCommand() {
+  if (TARGET_OS === 'win32') {
+    return resolve(NODE_PREFIX, 'agent-browser.cmd')
+  }
+  return resolve(NODE_PREFIX, 'bin', 'agent-browser')
+}
+
+function browserRuntimeEnv() {
+  const nodePath = TARGET_OS === 'win32'
+    ? NODE_PREFIX
+    : resolve(NODE_PREFIX, 'bin')
+  return {
+    ...process.env,
+    PATH: [nodePath, process.env.PATH].filter(Boolean).join(TARGET_OS === 'win32' ? ';' : ':'),
+    PLAYWRIGHT_BROWSERS_PATH,
+  }
+}
+
+function sitePackagesDir() {
+  if (TARGET_OS === 'win32') {
+    return resolve(PY_DIR, 'Lib', 'site-packages')
+  }
+  const libDir = resolve(PY_DIR, 'lib')
+  const py = readdirSync(libDir).find(n => /^python\d+\.\d+$/.test(n))
+  if (!py) throw new Error(`Could not locate pythonX.Y under ${libDir}`)
+  return resolve(libDir, py, 'site-packages')
+}
+
+function pythonModuleExists(moduleName) {
+  const result = optionalRun(pyBin, [
+    '-c',
+    `import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(${JSON.stringify(moduleName)}) else 1)`,
+  ], { stdio: 'ignore' })
+  return result.status === 0
+}
+
+function removeBrokenDashboardAuthPlugin() {
+  if (pythonModuleExists('hermes_cli.dashboard_auth')) return
+
+  const pluginDir = resolve(sitePackagesDir(), 'plugins', 'dashboard_auth', 'nous')
+  if (!existsSync(pluginDir)) return
+
+  rmSync(pluginDir, { recursive: true, force: true })
+  console.warn(
+    '! Removed bundled dashboard_auth/nous plugin because hermes_cli.dashboard_auth is missing from the hermes-agent package',
+  )
+}
+
+function installBrowserRuntime() {
+  if (SKIP_BROWSER_RUNTIME) {
+    console.warn('! Skipping bundled browser runtime because HERMES_SKIP_BROWSER_RUNTIME is set')
+    return
+  }
+  if (BROWSER_PACKAGES.length === 0) {
+    console.warn('! Skipping bundled browser runtime because HERMES_BROWSER_PACKAGES is empty')
+    return
+  }
+
+  const npm = npmCommand()
+  if (!npm) {
+    console.error('npm not found; bundled browser runtime requires Node.js/npm')
+    process.exit(1)
+  }
+
+  console.log(`→ Installing browser runtime via npm prefix ${NODE_PREFIX}`)
+  run(npm, [
+    'install',
+    '-g',
+    '--prefix',
+    NODE_PREFIX,
+    '--silent',
+    '--ignore-scripts',
+    ...BROWSER_PACKAGES,
+  ])
+
+  const ab = agentBrowserCommand()
+  if (!existsSync(ab)) {
+    console.error(`agent-browser binary not found at ${ab} after npm install`)
+    process.exit(1)
+  }
+
+  console.log(`→ Installing Chromium for bundled agent-browser at ${PLAYWRIGHT_BROWSERS_PATH}`)
+  run(ab, ['install'], { env: browserRuntimeEnv() })
+}
+
+installPythonPackages([HERMES_PACKAGE], 'hermes-agent')
+installPythonPackages(EXTRA_PYTHON_PACKAGES, 'extra Python runtime packages')
+removeBrokenDashboardAuthPlugin()
+installBrowserRuntime()
+
+run(pyBin, [
+  '-c',
+  [
+    'import importlib.util',
+    'import mcp',
+    'import tools.mcp_tool as t',
+    'assert t._MCP_AVAILABLE',
+    'assert importlib.util.find_spec("websockets") is not None',
+  ].join('; '),
+])
 
 const hermesBin = TARGET_OS === 'win32'
   ? resolve(PY_DIR, 'Scripts', 'hermes.exe')
@@ -76,14 +215,11 @@ if (!existsSync(hermesBin)) {
 // it at the venv root with a *relative* symlink so the venv stays portable when copied
 // into the packaged .app/.exe (an absolute symlink would break the moment the bundle
 // is moved to /Applications/...).
-const { readdirSync, symlinkSync, copyFileSync, unlinkSync, lstatSync } = await import('node:fs')
 function siteRunAgentRelative() {
   if (TARGET_OS === 'win32') {
     return ['Lib', 'site-packages', 'run_agent.py'].join('\\')
   }
-  const libDir = resolve(PY_DIR, 'lib')
-  const py = readdirSync(libDir).find(n => /^python\d+\.\d+$/.test(n))
-  return ['lib', py, 'site-packages', 'run_agent.py'].join('/')
+  return `${sitePackagesDir().slice(PY_DIR.length + 1)}/run_agent.py`
 }
 {
   const relSrc = siteRunAgentRelative()
@@ -102,7 +238,6 @@ function siteRunAgentRelative() {
 // Relocate: replace the pip-generated launcher (which embeds an absolute
 // shebang to the build-time Python path) with a relative wrapper so the
 // bundled venv works after being moved into the .app/.exe payload.
-const { writeFileSync, chmodSync } = await import('node:fs')
 if (TARGET_OS === 'win32') {
   // Windows: pip generates a .exe launcher that embeds a relative shebang
   // already. Add a .cmd wrapper that prefers the colocated python.exe.
@@ -139,8 +274,19 @@ if (TARGET_OS === 'win32') {
 
 console.log(`✓ hermes installed at ${hermesBin} (relocatable launcher)`)
 
-r = spawnSync(hermesCheckCommand, hermesCheckArgs, { stdio: 'inherit' })
-if (r.status !== 0) {
-  console.error('hermes --version failed')
-  process.exit(r.status ?? 1)
+run(hermesCheckCommand, hermesCheckArgs)
+
+if (!SKIP_BROWSER_RUNTIME) {
+  run(pyBin, [
+    '-c',
+    [
+      'import os, shutil',
+      `os.environ["PLAYWRIGHT_BROWSERS_PATH"] = ${JSON.stringify(PLAYWRIGHT_BROWSERS_PATH)}`,
+      'from tools.browser_tool import _chromium_installed',
+      'assert shutil.which("agent-browser") is not None',
+      'assert _chromium_installed()',
+    ].join('; '),
+  ], { env: browserRuntimeEnv() })
 }
+
+console.log('✓ hermes Python, MCP, websockets, agent-browser, and Chromium checks passed')
