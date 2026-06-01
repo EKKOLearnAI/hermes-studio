@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Hermes Web UI</strong>
+  <strong>QuantHermes Web UI</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 

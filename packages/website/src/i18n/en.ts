@@ -1,7 +1,7 @@
 export default {
   brand: {
-    name: 'Hermes Web UI',
-    logoAlt: 'Hermes',
+    name: 'QuantHermes Web UI',
+    logoAlt: 'QuantHermes',
   },
   ui: {
     copy: 'Copy',

@@ -130,6 +130,15 @@
 - 已完成工作日志落盘
 - 已准备将当前所有本地工作保存到 git 提交
 
+### 2026-06-01 (续) - 品牌化恢复验证与修复
+
+- **任务背景**：检索项目中 QuantHermes 品牌修改是否被上游同步覆盖。
+- **分析结论**：官网（Website）的多语言文件和项目 README 在同步过程中被覆盖回退到了 `Hermes Web UI`。
+- **修复内容**：
+  - 恢复 `packages/website/src/i18n/zh.ts` 与 `en.ts` 中的 `brand.name` 为 `QuantHermes Web UI`。
+  - 恢复 `README.md` 与 `README_zh.md` 中的标题为 `QuantHermes Web UI`。
+- **验证结果**：已确认客户端核心品牌化（登录页、页面标题、默认账号）未受损。修复后官网与文档品牌保持一致。
+
 ## 2026-05-15 - 定制版更新机制改造
 
 ### 任务背景
