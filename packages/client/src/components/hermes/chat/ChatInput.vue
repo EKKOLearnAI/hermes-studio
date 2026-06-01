@@ -3,21 +3,39 @@ import type { Attachment } from '@/stores/hermes/chat'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useAuroraCommanderStore } from '@/stores/hermes/aurora-commander'
+import { useVibeCodingStore } from '@/stores/hermes/vibe-coding'
+import { useAuroraWorkingMemoryStore } from '@/stores/hermes/working-memory'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
+import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
+import { fetchPlugins, type HermesPluginInfo } from '@/api/hermes/plugins'
+import { getAuroraToolCommandInput } from '@/services/hermes/aurora/intent-parsers'
 import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import { useTerminalState } from '@/composables/useTerminalState'
+
+withDefaults(defineProps<{
+  launcher?: boolean
+}>(), {
+  launcher: false,
+})
+
+const emit = defineEmits<{
+  submitted: []
+}>()
 
 const chatStore = useChatStore()
-const appStore = useAppStore()
-const profilesStore = useProfilesStore()
-const { t } = useI18n()
+const auroraCommanderStore = useAuroraCommanderStore()
+const vibeCodingStore = useVibeCodingStore()
+const workingMemoryStore = useAuroraWorkingMemoryStore()
+const i18n = useI18n()
+const t = i18n.t
+const activeLocale = computed(() => String(i18n.locale?.value || 'zh-TW'))
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
-const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
-type DraftMap = Record<string, string>
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -26,37 +44,183 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const { activeTicker, getTickerLiveMetrics } = useTerminalState()
+type ComposerMode = 'intent' | 'build' | 'automate'
+const composerMode = ref<ComposerMode>('intent')
+const isBuildMode = computed(() => composerMode.value === 'build')
+const isAutomateMode = computed(() => composerMode.value === 'automate')
+
+const quantContextHint = computed(() => {
+  if (!activeTicker.value) return ''
+  const metrics = getTickerLiveMetrics(activeTicker.value)
+  const signal = metrics?.signal || metrics?.action
+  const score = typeof metrics?.score === 'number' ? `Score ${metrics.score}` : ''
+  return [t('aurora.omnibar.quantWatching'), activeTicker.value, signal, score].filter(Boolean).join(' · ')
+})
+const workingMemoryHint = computed(() =>
+  workingMemoryStore.contextLockEnabled ? workingMemoryStore.contextLabel : '',
+)
+
+const trimmedIntent = computed(() => inputText.value.trim())
+const composerModeLabels = computed<Record<ComposerMode, string>>(() => ({
+  intent: t('aurora.omnibar.ask'),
+  build: t('aurora.omnibar.build'),
+  automate: t('aurora.omnibar.automate'),
+}))
+
+const intentMode = computed(() => {
+  if (chatStore.isStreaming) return 'processing'
+  if (trimmedIntent.value.startsWith('/')) return 'command'
+  if (isBuildMode.value) return 'build'
+  if (isAutomateMode.value) return 'automate'
+  if (attachments.value.length > 0) return 'context'
+  return 'ask'
+})
+
+const intentModeLabel = computed(() => {
+  if (intentMode.value === 'processing') return t('aurora.omnibar.processing')
+  if (intentMode.value === 'command') return t('aurora.omnibar.command')
+  if (intentMode.value === 'build') return t('aurora.omnibar.build')
+  if (intentMode.value === 'automate') return t('aurora.omnibar.automate')
+  if (intentMode.value === 'context') return t('aurora.omnibar.context')
+  return t('aurora.omnibar.ask')
+})
+
+const intentPreview = computed(() => {
+  if (trimmedIntent.value) {
+    return trimmedIntent.value.length > 88
+      ? `${trimmedIntent.value.slice(0, 88)}...`
+      : trimmedIntent.value
+  }
+  if (attachments.value.length > 0) {
+    return t('aurora.omnibar.attachment', { count: attachments.value.length })
+  }
+  if (isBuildMode.value) return t('aurora.omnibar.buildPreview')
+  if (isAutomateMode.value) return t('aurora.omnibar.automatePreview')
+  return chatStore.activeSession?.title || t('aurora.omnibar.newIntent')
+})
+
+type SlashTargetKind = 'Command' | 'Skill' | 'Plugin'
+
+interface SlashTarget {
+  id: string
+  label: string
+  insertText: string
+  kind: SlashTargetKind
+  description: string
+  meta?: string
+}
 
 const bridgeCommands = computed(() => [
   { name: 'usage', args: '', description: t('chat.slashCommands.usage') },
   { name: 'status', args: '', description: t('chat.slashCommands.status') },
   { name: 'abort', args: '', description: t('chat.slashCommands.abort') },
   { name: 'queue', args: t('chat.slashCommandArgs.message'), description: t('chat.slashCommands.queue') },
-  { name: 'plan', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.plan') },
-  { name: 'goal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.goal') },
-  { name: 'goal', args: 'status', insertText: 'goal status', description: t('chat.slashCommands.goalStatus') },
-  { name: 'goal', args: 'pause', insertText: 'goal pause', description: t('chat.slashCommands.goalPause') },
-  { name: 'goal', args: 'resume', insertText: 'goal resume', description: t('chat.slashCommands.goalResume') },
-  { name: 'goal', args: 'done', insertText: 'goal done', description: t('chat.slashCommands.goalDone') },
-  { name: 'goal', args: 'clear', insertText: 'goal clear', description: t('chat.slashCommands.goalClear') },
-  { name: 'subgoal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.subgoal') },
   { name: 'clear', args: '', description: t('chat.slashCommands.clear') },
   { name: 'clear', args: '--history', insertText: 'clear --history', description: t('chat.slashCommands.clearHistory') },
   { name: 'title', args: t('chat.slashCommandArgs.title'), description: t('chat.slashCommands.title') },
   { name: 'compress', args: '', description: t('chat.slashCommands.compress') },
   { name: 'steer', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.steer') },
   { name: 'destroy', args: '', description: t('chat.slashCommands.destroy') },
-  { name: 'reload-mcp', args: '', description: t('chat.slashCommands.reloadMcp') },
 ])
 
 const slashActive = ref(false)
 const slashQuery = ref('')
 const slashActiveIndex = ref(0)
+const historyPaletteOpen = ref(false)
+const historyPaletteIndex = ref(0)
+const mentionActive = ref(false)
+const mentionQuery = ref('')
+const mentionActiveIndex = ref(0)
+const slashQuickSelectLoaded = ref(false)
+const slashQuickSelectLoading = ref(false)
+const slashQuickSelectError = ref('')
+const skillSlashTargets = ref<SlashTarget[]>([])
+const pluginSlashTargets = ref<SlashTarget[]>([])
 const isBridgeSession = computed(() => chatStore.activeSession?.source === 'cli')
-const filteredBridgeCommands = computed(() => {
+const bridgeSlashTargets = computed<SlashTarget[]>(() =>
+  isBridgeSession.value
+    ? bridgeCommands.value.map(command => ({
+        id: `command:${command.insertText || command.name}`,
+        label: `/${command.name}`,
+        insertText: command.insertText || command.name,
+        kind: 'Command',
+        description: command.description,
+        meta: command.args,
+      }))
+    : [],
+)
+const slashTargets = computed(() => [
+  ...bridgeSlashTargets.value,
+  ...skillSlashTargets.value,
+  ...pluginSlashTargets.value,
+])
+const filteredSlashTargets = computed(() => {
   const query = slashQuery.value.toLowerCase()
-  return bridgeCommands.value.filter(command =>
-    command.name.includes(query) || command.insertText?.includes(query),
+  return slashTargets.value.filter(target =>
+    target.label.toLowerCase().includes(query) ||
+    target.insertText.toLowerCase().includes(query) ||
+    target.description.toLowerCase().includes(query) ||
+    target.kind.toLowerCase().includes(query) ||
+    target.meta?.toLowerCase().includes(query),
+  )
+})
+const recentSessions = computed(() =>
+  [...chatStore.sessions]
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, 8),
+)
+const mentionTargets = computed(() => [
+  {
+    id: 'commander',
+    label: 'Commander',
+    handle: '@commander',
+    kind: t('aurora.omnibar.agent'),
+    description: t('aurora.omnibar.commanderDesc'),
+  },
+  {
+    id: 'quant',
+    label: 'Quant Lab',
+    handle: '@quant',
+    kind: t('aurora.omnibar.agent'),
+    description: t('aurora.omnibar.quantDesc'),
+  },
+  {
+    id: 'lifeos',
+    label: 'LifeOS',
+    handle: '@lifeos',
+    kind: t('aurora.omnibar.agent'),
+    description: t('aurora.omnibar.lifeosDesc'),
+  },
+  {
+    id: 'memory',
+    label: 'Memory',
+    handle: '@memory',
+    kind: t('aurora.omnibar.agent'),
+    description: t('aurora.omnibar.memoryDesc'),
+  },
+  {
+    id: 'kanban',
+    label: 'Kanban',
+    handle: '@kanban',
+    kind: t('aurora.omnibar.agent'),
+    description: t('aurora.omnibar.kanbanDesc'),
+  },
+  {
+    id: 'group-chat',
+    label: 'Group Chat',
+    handle: '@group',
+    kind: t('aurora.omnibar.channel'),
+    description: t('aurora.omnibar.groupDesc'),
+  },
+])
+const filteredMentionTargets = computed(() => {
+  const query = mentionQuery.value.toLowerCase()
+  if (!query) return mentionTargets.value
+  return mentionTargets.value.filter(target =>
+    target.label.toLowerCase().includes(query) ||
+    target.handle.toLowerCase().includes(query) ||
+    target.kind.toLowerCase().includes(query),
   )
 })
 
@@ -94,43 +258,8 @@ function startResize(e: MouseEvent) {
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
-function readDraftMap(): DraftMap {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) || '{}')
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function getActiveDraftSessionId() {
-  return chatStore.activeSessionId || chatStore.activeSession?.id || ''
-}
-
-function loadDraftForActiveSession() {
-  const sessionId = getActiveDraftSessionId()
-  inputText.value = sessionId ? readDraftMap()[sessionId] || '' : ''
-}
-
-function saveDraftForActiveSession(value: string) {
-  const sessionId = getActiveDraftSessionId()
-  if (!sessionId) return
-  const drafts = readDraftMap()
-  if (value) {
-    drafts[sessionId] = value
-  } else {
-    delete drafts[sessionId]
-  }
-  if (Object.keys(drafts).length > 0) {
-    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts))
-  } else {
-    localStorage.removeItem(DRAFT_STORAGE_KEY)
-  }
-}
-
 // 从 localStorage 读取设置
 onMounted(() => {
-  loadDraftForActiveSession()
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
@@ -146,15 +275,41 @@ watch(autoPlaySpeech, (value) => {
   chatStore.setAutoPlaySpeech(value)
 })
 
-watch(inputText, (value) => {
-  saveDraftForActiveSession(value)
+const isVibeBlocking = computed(() =>
+  vibeCodingStore.isVisible && vibeCodingStore.status !== 'idle',
+)
+
+const isAuroraBlocking = computed(() =>
+  auroraCommanderStore.isRunning || isVibeBlocking.value,
+)
+
+const canSend = computed(() => {
+  if (isAuroraBlocking.value) return false
+  return isBuildMode.value
+    ? trimmedIntent.value.length > 0
+    : trimmedIntent.value.length > 0 || attachments.value.length > 0
 })
 
-watch(() => chatStore.activeSession?.id, () => {
-  loadDraftForActiveSession()
-})
+const sendLabel = computed(() =>
+  isAuroraBlocking.value
+    ? t('aurora.omnibar.working')
+    : isBuildMode.value && !trimmedIntent.value.startsWith('/') ? t('aurora.omnibar.build')
+      : isAutomateMode.value && !trimmedIntent.value.startsWith('/') ? t('aurora.omnibar.automate')
+        : t('chat.send'),
+)
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+function setComposerMode(mode: ComposerMode) {
+  dismissTransientAuroraCard()
+  composerMode.value = mode
+  nextTick(() => textareaRef.value?.focus())
+}
+
+function dismissTransientAuroraCard() {
+  if (auroraCommanderStore.pendingApproval) return
+  if (auroraCommanderStore.isRunning || auroraCommanderStore.result || auroraCommanderStore.error) {
+    auroraCommanderStore.clear()
+  }
+}
 
 function scrollCommandIntoView() {
   nextTick(() => {
@@ -164,11 +319,98 @@ function scrollCommandIntoView() {
   })
 }
 
-function updateSlashState() {
-  if (!isBridgeSession.value) {
-    slashActive.value = false
-    return
+function skillToSlashTarget(category: string, skill: SkillInfo): SlashTarget | null {
+  if (skill.enabled === false || skill.source === 'hub') return null
+  return {
+    id: `skill:${category}:${skill.name}`,
+    label: `/skill:${skill.name}`,
+    insertText: `skill:${skill.name}`,
+    kind: 'Skill',
+    description: skill.description || t('aurora.omnibar.useSkillContext'),
+    meta: category,
   }
+}
+
+function pluginToSlashTarget(plugin: HermesPluginInfo): SlashTarget | null {
+  if (!['enabled', 'auto-active', 'provider-managed'].includes(plugin.effectiveStatus)) return null
+  return {
+    id: `plugin:${plugin.key}`,
+    label: `/plugin:${plugin.key}`,
+    insertText: `plugin:${plugin.key}`,
+    kind: 'Plugin',
+    description: plugin.description || plugin.name || t('aurora.omnibar.usePluginContext'),
+    meta: plugin.kind || plugin.source,
+  }
+}
+
+async function loadSlashQuickSelectTargets() {
+  if (slashQuickSelectLoaded.value || slashQuickSelectLoading.value) return
+  slashQuickSelectLoading.value = true
+  slashQuickSelectError.value = ''
+
+  const [skillsResult, pluginsResult] = await Promise.allSettled([
+    fetchSkills(),
+    fetchPlugins(),
+  ])
+
+  if (skillsResult.status === 'fulfilled') {
+    skillSlashTargets.value = skillsResult.value.categories
+      .flatMap(category =>
+        category.skills
+          .map(skill => skillToSlashTarget(category.name, skill))
+          .filter((target): target is SlashTarget => target !== null),
+      )
+      .slice(0, 18)
+  }
+
+  if (pluginsResult.status === 'fulfilled') {
+    pluginSlashTargets.value = pluginsResult.value.plugins
+      .map(pluginToSlashTarget)
+      .filter((target): target is SlashTarget => target !== null)
+      .slice(0, 12)
+  }
+
+  slashQuickSelectLoaded.value = true
+  slashQuickSelectLoading.value = false
+
+  if (skillsResult.status === 'rejected' || pluginsResult.status === 'rejected') {
+    slashQuickSelectError.value = t('aurora.omnibar.slashLoadError')
+  }
+}
+
+function closeCommandPalettes() {
+  historyPaletteOpen.value = false
+  mentionActive.value = false
+}
+
+function formatSessionTime(timestamp?: number): string {
+  if (!timestamp) return t('aurora.omnibar.recent')
+  return new Intl.DateTimeFormat(activeLocale.value.toLowerCase().startsWith('en') ? 'en-US' : activeLocale.value, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp))
+}
+
+function openHistoryPalette() {
+  slashActive.value = false
+  mentionActive.value = false
+  historyPaletteIndex.value = 0
+  historyPaletteOpen.value = true
+  nextTick(() => textareaRef.value?.focus())
+}
+
+async function selectHistorySession(index = historyPaletteIndex.value) {
+  const session = recentSessions.value[index]
+  if (!session) return
+  historyPaletteOpen.value = false
+  inputText.value = ''
+  await chatStore.switchSession(session.id)
+  emit('submitted')
+}
+
+function updateSlashState() {
   const el = textareaRef.value
   if (!el) return
   const cursorPos = el.selectionStart
@@ -179,11 +421,13 @@ function updateSlashState() {
   }
   slashQuery.value = beforeCursor.slice(1)
   slashActiveIndex.value = 0
-  slashActive.value = filteredBridgeCommands.value.length > 0
+  slashActive.value = true
+  void loadSlashQuickSelectTargets()
+  if (slashActive.value) closeCommandPalettes()
 }
 
-function selectBridgeCommand(command: { name: string; args: string; insertText?: string }) {
-  inputText.value = `/${command.insertText || command.name} `
+function selectSlashTarget(target: SlashTarget) {
+  inputText.value = `/${target.insertText} `
   slashActive.value = false
   nextTick(() => {
     const el = textareaRef.value
@@ -194,17 +438,63 @@ function selectBridgeCommand(command: { name: string; args: string; insertText?:
   })
 }
 
+function getMentionTrigger() {
+  const el = textareaRef.value
+  if (!el) return null
+  const cursorPos = el.selectionStart
+  const beforeCursor = inputText.value.slice(0, cursorPos)
+  const match = beforeCursor.match(/(^|\s)@([\w-]*)$/)
+  if (!match) return null
+  return {
+    start: cursorPos - match[2].length - 1,
+    end: cursorPos,
+    query: match[2],
+  }
+}
+
+function updateMentionState() {
+  const trigger = getMentionTrigger()
+  if (!trigger) {
+    mentionActive.value = false
+    return
+  }
+  slashActive.value = false
+  historyPaletteOpen.value = false
+  mentionQuery.value = trigger.query
+  mentionActiveIndex.value = Math.min(mentionActiveIndex.value, Math.max(filteredMentionTargets.value.length - 1, 0))
+  mentionActive.value = filteredMentionTargets.value.length > 0
+}
+
+function selectMentionTarget(index = mentionActiveIndex.value) {
+  const target = filteredMentionTargets.value[index]
+  const trigger = getMentionTrigger()
+  if (!target || !trigger) return
+  inputText.value = `${inputText.value.slice(0, trigger.start)}${target.handle} ${inputText.value.slice(trigger.end)}`
+  mentionActive.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    const pos = trigger.start + target.handle.length + 1
+    el.setSelectionRange(pos, pos)
+    el.focus()
+  })
+}
+
+function syncInputFromTextarea() {
+  const rawValue = textareaRef.value?.value
+  if (typeof rawValue === 'string' && rawValue !== inputText.value) {
+    inputText.value = rawValue
+  }
+}
+
 // --- Context info ---
 
-const contextLength = ref(256000)
-const FALLBACK_CONTEXT = 256000
-let contextLengthLoadedKey = ''
-let contextLengthRequestKey = ''
-let contextLengthRequest: Promise<void> | null = null
+const contextLength = ref(200000)
+const FALLBACK_CONTEXT = 200000
 
 // Context length editing
 const showContextEditModal = ref(false)
-const editingContextLimit = ref(256000)
+const editingContextLimit = ref(200000)
 const isSavingContextLimit = ref(false)
 
 async function handleEditContextLimit() {
@@ -220,8 +510,8 @@ async function saveContextLimit() {
 
   isSavingContextLimit.value = true
   try {
-    const provider = chatStore.activeSession?.provider || appStore.selectedProvider || ''
-    const model = chatStore.activeSession?.model || appStore.selectedModel || ''
+    const provider = chatStore.activeSession?.provider || useAppStore().selectedProvider || ''
+    const model = chatStore.activeSession?.model || useAppStore().selectedModel || ''
 
     if (!provider || !model) {
       message.error(t('chat.contextEditFailed'))
@@ -230,7 +520,6 @@ async function saveContextLimit() {
 
     await setModelContext(provider, model, editingContextLimit.value)
     contextLength.value = editingContextLimit.value
-    contextLengthLoadedKey = currentContextLengthKey()
     showContextEditModal.value = false
     message.success(t('chat.contextEditSuccess'))
   } catch (err: any) {
@@ -240,71 +529,39 @@ async function saveContextLimit() {
   }
 }
 
-function currentContextLengthParams() {
-  const activeSession = chatStore.activeSession
-  return {
-    profile: activeSession?.profile || profilesStore.activeProfileName || undefined,
-    provider: activeSession?.provider || undefined,
-    model: activeSession?.model || undefined,
+async function loadContextLength() {
+  try {
+    const activeSession = chatStore.activeSession
+    const profile = activeSession?.profile || useProfilesStore().activeProfileName || undefined
+    contextLength.value = await fetchContextLength(
+      profile,
+      activeSession?.provider || undefined,
+      activeSession?.model || undefined,
+    )
+  } catch {
+    contextLength.value = FALLBACK_CONTEXT
   }
 }
 
-function currentContextLengthKey() {
-  const params = currentContextLengthParams()
-  return `${params.profile || ''}|${params.provider || ''}|${params.model || ''}`
-}
-
-async function loadContextLength() {
-  const key = currentContextLengthKey()
-  if (key === contextLengthLoadedKey) return
-  if (key === contextLengthRequestKey && contextLengthRequest) return contextLengthRequest
-
-  contextLengthRequestKey = key
-  contextLengthRequest = (async () => {
-    const params = currentContextLengthParams()
-    try {
-      const value = await fetchContextLength(params.profile, params.provider, params.model)
-      if (currentContextLengthKey() !== key) return
-      contextLength.value = value
-      contextLengthLoadedKey = key
-    } catch {
-      if (currentContextLengthKey() !== key) return
-      contextLength.value = FALLBACK_CONTEXT
-      contextLengthLoadedKey = key
-    } finally {
-      if (contextLengthRequestKey === key) {
-        contextLengthRequest = null
-        contextLengthRequestKey = ''
-      }
-    }
-  })()
-  return contextLengthRequest
-}
-
 onMounted(loadContextLength)
-watch(
-  () => [
-    profilesStore.activeProfileName,
-    appStore.selectedProvider,
-    appStore.selectedModel,
-    chatStore.activeSession?.id,
-    chatStore.activeSession?.profile,
-    chatStore.activeSession?.provider,
-    chatStore.activeSession?.model,
-  ],
-  loadContextLength,
-  { flush: 'post' },
-)
+watch(() => useProfilesStore().activeProfileName, loadContextLength)
+watch(() => useAppStore().selectedProvider, loadContextLength)
+watch(() => useAppStore().selectedModel, loadContextLength)
+watch(() => chatStore.activeSession?.id, loadContextLength)
+watch(() => chatStore.activeSession?.profile, loadContextLength)
+watch(() => chatStore.activeSession?.provider, loadContextLength)
+watch(() => chatStore.activeSession?.model, loadContextLength)
 
 const totalTokens = computed(() => {
-  const context = chatStore.activeSession?.contextTokens
-  if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
 })
 
 const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
+const commandPaletteShortcut = computed(() =>
+  typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘K' : 'Ctrl K',
+)
 
 const usagePercent = computed(() =>
   Math.min((totalTokens.value / contextLength.value) * 100, 100),
@@ -393,15 +650,56 @@ function handleDrop(e: DragEvent) {
 
 // --- Send ---
 
-function handleSend() {
+async function handleSend() {
+  syncInputFromTextarea()
   const text = inputText.value.trim()
+  if (isAuroraBlocking.value) return
   if (!text && attachments.value.length === 0) return
 
-  chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
+  const auroraToolInput = text ? getAuroraToolCommandInput(text) : null
+
+  if (auroraToolInput) {
+    const handledByAurora = await auroraCommanderStore.routeInput(auroraToolInput)
+    if (handledByAurora) {
+      inputText.value = ''
+      attachments.value = []
+      slashActive.value = false
+      closeCommandPalettes()
+      emit('submitted')
+
+      if (textareaRef.value) {
+        textareaRef.value.style.height = 'auto'
+      }
+      return
+    }
+    auroraCommanderStore.clearPassiveResult()
+  }
+
+  if (isBuildMode.value && text && !text.startsWith('/') && !auroraToolInput) {
+    vibeCodingStore.start(text)
+    inputText.value = ''
+    slashActive.value = false
+    closeCommandPalettes()
+    emit('submitted')
+
+    if (textareaRef.value) {
+      textareaRef.value.style.height = 'auto'
+    }
+    return
+  }
+
+  if (!isBuildMode.value && text && attachments.value.length === 0 && !text.startsWith('/') && !auroraToolInput) {
+    auroraCommanderStore.clearPassiveResult()
+  }
+
+  const fallbackText = auroraToolInput || text
+  const hermesText = fallbackText ? workingMemoryStore.enrichPrompt(fallbackText) : fallbackText
+  chatStore.sendMessage(hermesText, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
-  saveDraftForActiveSession('')
   attachments.value = []
   slashActive.value = false
+  closeCommandPalettes()
+  emit('submitted')
 
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
@@ -416,6 +714,7 @@ function handleCompositionEnd() {
   requestAnimationFrame(() => {
     isComposing.value = false
     updateSlashState()
+    updateMentionState()
   })
 }
 
@@ -424,22 +723,68 @@ function isImeEnter(e: KeyboardEvent): boolean {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (slashActive.value && filteredBridgeCommands.value.length > 0) {
+  if (historyPaletteOpen.value) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      slashActiveIndex.value = (slashActiveIndex.value + 1) % filteredBridgeCommands.value.length
+      historyPaletteIndex.value = (historyPaletteIndex.value + 1) % Math.max(recentSessions.value.length, 1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      historyPaletteIndex.value = (historyPaletteIndex.value - 1 + Math.max(recentSessions.value.length, 1)) % Math.max(recentSessions.value.length, 1)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void selectHistorySession()
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      historyPaletteOpen.value = false
+      return
+    }
+  }
+
+  if (mentionActive.value && filteredMentionTargets.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      mentionActiveIndex.value = (mentionActiveIndex.value + 1) % filteredMentionTargets.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      mentionActiveIndex.value = (mentionActiveIndex.value - 1 + filteredMentionTargets.value.length) % filteredMentionTargets.value.length
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      selectMentionTarget()
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      mentionActive.value = false
+      return
+    }
+  }
+
+  if (slashActive.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      slashActiveIndex.value = (slashActiveIndex.value + 1) % Math.max(filteredSlashTargets.value.length, 1)
       scrollCommandIntoView()
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
-      slashActiveIndex.value = (slashActiveIndex.value - 1 + filteredBridgeCommands.value.length) % filteredBridgeCommands.value.length
+      slashActiveIndex.value = (slashActiveIndex.value - 1 + Math.max(filteredSlashTargets.value.length, 1)) % Math.max(filteredSlashTargets.value.length, 1)
       scrollCommandIntoView()
       return
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    if ((e.key === 'Enter' || e.key === 'Tab') && filteredSlashTargets.value.length > 0) {
       e.preventDefault()
-      selectBridgeCommand(filteredBridgeCommands.value[slashActiveIndex.value])
+      selectSlashTarget(filteredSlashTargets.value[slashActiveIndex.value])
       return
     }
     if (e.key === 'Escape') {
@@ -458,7 +803,11 @@ function handleKeydown(e: KeyboardEvent) {
 
 function handleInput(e: Event) {
   const el = e.target as HTMLTextAreaElement
-  if (!isComposing.value) updateSlashState()
+  if (el.value.trim()) dismissTransientAuroraCard()
+  if (!isComposing.value) {
+    updateSlashState()
+    updateMentionState()
+  }
   // 用户手动拖拽自定义高度时，不覆盖
   if (textareaHeight.value !== null) return
   el.style.height = 'auto'
@@ -470,19 +819,27 @@ function handleCommandHover(index: number) {
 }
 
 function onDocumentMousedown(e: MouseEvent) {
-  if (!slashActive.value) return
   const target = e.target as HTMLElement
   if (!target.closest('.slash-command-dropdown') && !target.closest('.input-wrapper')) {
     slashActive.value = false
+    closeCommandPalettes()
   }
+}
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return
+  e.preventDefault()
+  openHistoryPalette()
 }
 
 onMounted(() => {
   document.addEventListener('mousedown', onDocumentMousedown)
+  document.addEventListener('keydown', onGlobalKeydown)
 })
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocumentMousedown)
+  document.removeEventListener('keydown', onGlobalKeydown)
 })
 
 function removeAttachment(id: string) {
@@ -505,7 +862,10 @@ function isImage(type: string): boolean {
 </script>
 
 <template>
-  <div class="chat-input-area">
+  <div
+    class="chat-input-area"
+    :class="{ 'intent-launcher-input': launcher }"
+  >
     <!-- Top bar: attach + auto play speech + context info -->
     <div class="input-top-bar">
       <NTooltip trigger="hover">
@@ -518,6 +878,43 @@ function isImage(type: string): boolean {
         </template>
         {{ t('chat.attachFiles') }}
       </NTooltip>
+
+      <div
+        class="omni-mode-switch"
+        role="tablist"
+        :aria-label="t('aurora.omnibar.modeLabel')"
+      >
+        <button
+          type="button"
+          class="omni-mode-button"
+          :class="{ active: composerMode === 'intent' }"
+          role="tab"
+          :aria-selected="composerMode === 'intent'"
+          @click="setComposerMode('intent')"
+        >
+          {{ composerModeLabels.intent }}
+        </button>
+        <button
+          type="button"
+          class="omni-mode-button"
+          :class="{ active: composerMode === 'build' }"
+          role="tab"
+          :aria-selected="composerMode === 'build'"
+          @click="setComposerMode('build')"
+        >
+          {{ composerModeLabels.build }}
+        </button>
+        <button
+          type="button"
+          class="omni-mode-button"
+          :class="{ active: composerMode === 'automate' }"
+          role="tab"
+          :aria-selected="composerMode === 'automate'"
+          @click="setComposerMode('automate')"
+        >
+          {{ composerModeLabels.automate }}
+        </button>
+      </div>
 
       <div class="auto-play-speech-switch">
         <NTooltip trigger="hover">
@@ -554,6 +951,16 @@ function isImage(type: string): boolean {
         </template>
         {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
       </NTooltip>
+
+      <span v-if="quantContextHint" class="quant-context-hint">
+        <span class="quant-context-dot" />
+        {{ quantContextHint }}
+      </span>
+
+      <span v-if="workingMemoryStore.hasContextLock && workingMemoryHint" class="working-memory-hint">
+        <span class="working-memory-dot" />
+        Context · {{ workingMemoryHint }}
+      </span>
 
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
@@ -619,37 +1026,123 @@ function isImage(type: string): boolean {
         @change="handleFileChange"
       />
       <div class="resize-handle" @mousedown="startResize"></div>
-      <textarea
-        ref="textareaRef"
-        v-model="inputText"
-        class="input-textarea"
-        :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
-        :placeholder="t('chat.inputPlaceholder')"
-        rows="1"
-        @keydown="handleKeydown"
-        @compositionstart="handleCompositionStart"
-        @compositionend="handleCompositionEnd"
-        @input="handleInput"
-        @paste="handlePaste"
-      ></textarea>
+      <span v-if="launcher" class="launcher-sparkle" aria-hidden="true">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+        </svg>
+      </span>
+      <div class="intent-composer">
+        <div class="intent-strip">
+          <span class="intent-mode" :class="intentMode">
+            <span class="intent-mode-dot" aria-hidden="true"></span>
+            {{ intentModeLabel }}
+          </span>
+          <span class="intent-preview">{{ intentPreview }}</span>
+        </div>
+        <textarea
+          ref="textareaRef"
+          v-model="inputText"
+          class="input-textarea"
+          :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
+          :placeholder="launcher ? t('aurora.omnibar.placeholder') : t('chat.inputPlaceholder')"
+          rows="1"
+          @keydown="handleKeydown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
+          @input="handleInput"
+          @focus="dismissTransientAuroraCard"
+          @paste="handlePaste"
+        ></textarea>
+      </div>
       <Transition name="dropdown-fade">
         <div
-          v-if="slashActive && filteredBridgeCommands.length > 0"
-          ref="commandDropdownRef"
-          class="slash-command-dropdown"
+          v-if="historyPaletteOpen"
+          class="omni-command-palette history-palette"
+          :aria-label="t('aurora.omnibar.historyPalette')"
         >
-          <div
-            v-for="(command, i) in filteredBridgeCommands"
-            :key="command.name"
-            class="slash-command-item"
+          <div class="palette-header">
+            <span>{{ t('aurora.omnibar.historyTitle') }}</span>
+            <kbd>{{ commandPaletteShortcut }}</kbd>
+          </div>
+          <button
+            v-for="(session, i) in recentSessions"
+            :key="session.id"
+            class="palette-item"
+            :class="{ active: i === historyPaletteIndex }"
+            type="button"
+            @mousedown.prevent="selectHistorySession(i)"
+            @mouseenter="historyPaletteIndex = i"
+          >
+            <span class="palette-item-title">{{ session.title || t('aurora.omnibar.untitledIntent') }}</span>
+            <span class="palette-item-meta">{{ session.source || 'api' }} · {{ formatSessionTime(session.updatedAt || session.createdAt) }}</span>
+          </button>
+          <p v-if="recentSessions.length === 0" class="palette-empty">
+            {{ t('aurora.omnibar.noRecentChats') }}
+          </p>
+        </div>
+      </Transition>
+
+      <Transition name="dropdown-fade">
+        <div
+          v-if="mentionActive && filteredMentionTargets.length > 0"
+          class="omni-command-palette mention-palette"
+          :aria-label="t('aurora.omnibar.summonPalette')"
+        >
+          <div class="palette-header">
+            <span>{{ t('aurora.omnibar.summon') }}</span>
+            <kbd>@</kbd>
+          </div>
+          <button
+            v-for="(target, i) in filteredMentionTargets"
+            :key="target.id"
+            class="palette-item"
+            :class="{ active: i === mentionActiveIndex }"
+            type="button"
+            @mousedown.prevent="selectMentionTarget(i)"
+            @mouseenter="mentionActiveIndex = i"
+          >
+            <span class="palette-item-title">{{ target.handle }} {{ target.label }}</span>
+            <span class="palette-item-meta">{{ target.kind }} · {{ target.description }}</span>
+          </button>
+        </div>
+      </Transition>
+
+      <Transition name="dropdown-fade">
+        <div
+          v-if="slashActive"
+          ref="commandDropdownRef"
+          class="omni-command-palette slash-command-dropdown"
+          :aria-label="t('aurora.omnibar.skillsPalette')"
+        >
+          <div class="palette-header">
+            <span>{{ t('aurora.omnibar.skillsTitle') }}</span>
+            <kbd>/</kbd>
+          </div>
+          <button
+            v-for="(target, i) in filteredSlashTargets"
+            :key="target.id"
+            type="button"
+            class="palette-item slash-command-item"
             :class="{ active: i === slashActiveIndex }"
-            @mousedown.prevent="selectBridgeCommand(command)"
+            @mousedown.prevent="selectSlashTarget(target)"
             @mouseenter="handleCommandHover(i)"
           >
-            <span class="slash-command-name">/{{ command.name }}</span>
-            <span v-if="command.args" class="slash-command-args">{{ command.args }}</span>
-            <span class="slash-command-desc">{{ command.description }}</span>
-          </div>
+            <span class="palette-item-title slash-command-name">{{ target.label }}</span>
+            <span class="palette-item-meta">
+              <span class="slash-command-kind">{{ target.kind }}</span>
+              <span v-if="target.meta"> · {{ target.meta }}</span>
+              <span> · {{ target.description }}</span>
+            </span>
+          </button>
+          <p v-if="slashQuickSelectLoading" class="palette-empty">
+            {{ t('aurora.omnibar.loadingSkills') }}
+          </p>
+          <p v-else-if="slashQuickSelectError" class="palette-empty">
+            {{ slashQuickSelectError }}
+          </p>
+          <p v-else-if="filteredSlashTargets.length === 0" class="palette-empty">
+            {{ t('aurora.omnibar.noMatchingSkills') }}
+          </p>
         </div>
       </Transition>
       <div class="input-actions">
@@ -669,11 +1162,61 @@ function isImage(type: string): boolean {
           @click="handleSend"
         >
           <template #icon>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <svg v-if="launcher" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </template>
-          {{ t('chat.send') }}
+          <span class="send-label">{{ sendLabel }}</span>
         </NButton>
       </div>
+    </div>
+
+    <div
+      v-if="launcher"
+      class="launcher-mode-switch"
+      role="tablist"
+      :aria-label="t('aurora.omnibar.auroraModeLabel')"
+    >
+      <button
+        type="button"
+        class="launcher-mode-button"
+        :class="{ active: composerMode === 'intent' }"
+        role="tab"
+        :aria-selected="composerMode === 'intent'"
+        @click="setComposerMode('intent')"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6a8 8 0 1 1 18-5z" />
+        </svg>
+        {{ composerModeLabels.intent }}
+      </button>
+      <button
+        type="button"
+        class="launcher-mode-button"
+        :class="{ active: composerMode === 'build' }"
+        role="tab"
+        :aria-selected="composerMode === 'build'"
+        @click="setComposerMode('build')"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+          <path d="M4.5 7.8 12 12l7.5-4.2" />
+          <path d="M12 12v8" />
+        </svg>
+        {{ composerModeLabels.build }}
+      </button>
+      <button
+        type="button"
+        class="launcher-mode-button"
+        :class="{ active: composerMode === 'automate' }"
+        role="tab"
+        :aria-selected="composerMode === 'automate'"
+        @click="setComposerMode('automate')"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2 4 14h7l-1 8 10-13h-7z" />
+        </svg>
+        {{ composerModeLabels.automate }}
+      </button>
     </div>
 
     <!-- Context Length Edit Modal -->
@@ -726,6 +1269,17 @@ function isImage(type: string): boolean {
   padding: 12px 20px 16px;
   border-top: 1px solid $border-color;
   flex-shrink: 0;
+  transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+
+  &.intent-launcher-input {
+    display: grid;
+    gap: 16px;
+    width: min(860px, calc(100vw - 420px));
+    min-width: min(620px, calc(100vw - 48px));
+    max-width: 860px;
+    padding: 0;
+    border-top: 0;
+  }
 }
 
 .input-top-bar {
@@ -733,6 +1287,53 @@ function isImage(type: string): boolean {
   align-items: center;
   gap: 8px;
   padding: 0 0 6px;
+  flex-wrap: wrap;
+}
+
+.omni-mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(58px, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.intent-launcher-input .input-top-bar {
+  display: none;
+}
+
+.omni-mode-button {
+  min-width: 0;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 0;
+  color: $text-muted;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  transition:
+    background-color $transition-fast,
+    color $transition-fast;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(var(--accent-primary-rgb), 0.06);
+  }
+
+  &.active {
+    color: $accent-primary;
+    background: rgba(var(--accent-primary-rgb), 0.11);
+  }
+}
+
+:global(.dark) .omni-mode-switch {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .auto-play-speech-switch {
@@ -807,6 +1408,61 @@ function isImage(type: string): boolean {
   &.context-warning {
     color: #e8a735;
   }
+}
+
+.quant-context-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(360px, 45vw);
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 255, 157, 0.28);
+  background: rgba(0, 255, 157, 0.06);
+  color: #00ff9d;
+  font-family: $font-code;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 0 12px rgba(0, 255, 157, 0.08);
+}
+
+.quant-context-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: #00ff9d;
+  box-shadow: 0 0 8px rgba(0, 255, 157, 0.9);
+}
+
+.working-memory-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, 42vw);
+  padding: 2px 8px;
+  border: 1px solid rgba(129, 140, 248, 0.22);
+  border-radius: 999px;
+  color: rgba(99, 102, 241, 0.88);
+  background: rgba(129, 140, 248, 0.08);
+  font-family: $font-code;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 0 12px rgba(129, 140, 248, 0.08);
+}
+
+.working-memory-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: #818cf8;
+  box-shadow: 0 0 10px rgba(129, 140, 248, 0.82);
 }
 
 .context-limit-editable {
@@ -924,22 +1580,264 @@ function isImage(type: string): boolean {
 
 .input-wrapper {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
-  background-color: $bg-input;
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
-  padding: 10px 12px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.46)),
+    $bg-input;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.12);
+  border-radius: 18px;
+  padding: 9px 12px 10px;
   position: relative;
-  transition: border-color $transition-fast, background-color $transition-fast;
+  box-shadow:
+    0 10px 30px rgba(72, 98, 138, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(18px);
+  transition: border-color $transition-fast, background-color $transition-fast, box-shadow $transition-fast;
 
   &:focus-within {
     border-color: $accent-primary;
+    box-shadow:
+      0 12px 34px rgba(var(--accent-primary-rgb), 0.12),
+      0 0 0 3px rgba(var(--accent-primary-rgb), 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
   }
 
   .dark & {
-    background-color: #333333;
+    background:
+      linear-gradient(135deg, rgba(42, 48, 60, 0.88), rgba(32, 36, 45, 0.72)),
+      #333333;
   }
+}
+
+.intent-launcher-input .input-wrapper {
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  padding: 8px 10px 8px 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 8px 32px rgba(139, 92, 246, 0.08),
+    0 24px 70px rgba(81, 87, 143, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(34px);
+
+  &:focus-within {
+    border-color: rgba(151, 125, 255, 0.45);
+    box-shadow:
+      0 8px 32px rgba(31, 38, 135, 0.08),
+      0 32px 100px rgba(126, 105, 255, 0.2),
+      0 0 0 5px rgba(135, 108, 255, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+}
+
+.launcher-sparkle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 999px;
+  color: #6675ff;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+:global(.dark) .intent-launcher-input .input-wrapper {
+  border-color: rgba(255, 255, 255, 0.16);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.055)),
+    rgba(17, 21, 31, 0.58);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.intent-launcher-input .intent-strip {
+  display: none;
+}
+
+.intent-launcher-input .input-textarea {
+  min-height: 30px;
+  max-height: 120px;
+  color: rgba(38, 47, 92, 0.82);
+  font-size: clamp(16px, 1.65vw, 19px);
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.intent-launcher-input .input-textarea::placeholder {
+  color: rgba(70, 77, 126, 0.44);
+}
+
+.intent-launcher-input .input-actions :deep(.n-button) {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 31% 24%, rgba(255, 255, 255, 0.86), transparent 24%),
+    linear-gradient(135deg, #818cf8 0%, #8b5cf6 58%, #a855f7 100%);
+  box-shadow:
+    0 14px 30px rgba(116, 89, 255, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.intent-launcher-input .input-actions :deep(.n-button:hover) {
+  background:
+    radial-gradient(circle at 31% 24%, rgba(255, 255, 255, 0.86), transparent 24%),
+    linear-gradient(135deg, #6f7cff 0%, #8150ef 58%, #a855f7 100%);
+  box-shadow:
+    0 16px 34px rgba(116, 89, 255, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.46);
+}
+
+.intent-launcher-input .send-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.launcher-mode-switch {
+  display: inline-flex;
+  justify-content: center;
+  gap: 10px;
+  justify-self: center;
+}
+
+.launcher-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 94px;
+  height: 38px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  color: rgba(65, 56, 156, 0.78);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.055);
+  box-shadow:
+    0 8px 22px rgba(139, 92, 246, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(28px);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 820;
+  line-height: 1;
+  transition: all 0.3s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.launcher-mode-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 1.7;
+}
+
+.launcher-mode-button:hover,
+.launcher-mode-button.active {
+  color: rgba(56, 47, 146, 0.95);
+  border-color: rgba(124, 102, 255, 0.34);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06)),
+    rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 14px 30px rgba(126, 105, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.intent-composer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.intent-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 18px;
+}
+
+.intent-mode {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.13);
+  border-radius: 999px;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  color: $accent-primary;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+
+  &.command {
+    border-color: rgba(var(--warning-rgb), 0.18);
+    background: rgba(var(--warning-rgb), 0.08);
+    color: $warning;
+  }
+
+  &.context {
+    border-color: rgba(0, 255, 157, 0.2);
+    background: rgba(0, 255, 157, 0.07);
+    color: #00b875;
+  }
+
+  &.processing {
+    border-color: rgba(43, 209, 255, 0.2);
+    background: rgba(43, 209, 255, 0.08);
+    color: #169ec7;
+  }
+
+  &.build {
+    border-color: rgba(255, 115, 172, 0.24);
+    background: rgba(255, 115, 172, 0.08);
+    color: #bd2f73;
+  }
+
+  &.ask,
+  &.automate {
+    border-color: rgba(121, 99, 255, 0.22);
+    background: rgba(121, 99, 255, 0.08);
+    color: #7059f7;
+  }
+}
+
+.intent-mode-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.intent-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: $text-muted;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resize-handle {
@@ -958,7 +1856,7 @@ function isImage(type: string): boolean {
 }
 
 .input-textarea {
-  flex: 1;
+  width: 100%;
   background: none;
   border: none;
   outline: none;
@@ -970,10 +1868,6 @@ function isImage(type: string): boolean {
   max-height: 400px;
   min-height: 20px;
   overflow-y: auto;
-
-  @media (max-width: 768px) {
-    font-size: 16px;
-  }
 
   &::placeholder {
     color: $text-muted;
@@ -1009,15 +1903,138 @@ function isImage(type: string): boolean {
   }
 }
 
+.omni-command-palette {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 10px);
+  z-index: 30;
+  display: grid;
+  gap: 5px;
+  max-height: min(360px, 52vh);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.44);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.52)),
+    rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 18px 46px rgba(66, 84, 117, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+}
+
+.palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  padding: 0 7px 4px;
+  color: rgba(24, 32, 51, 0.48);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.palette-header kbd {
+  min-width: 38px;
+  padding: 4px 7px;
+  border: 1px solid rgba(121, 99, 255, 0.14);
+  border-radius: 8px;
+  color: #7059f7;
+  background: rgba(121, 99, 255, 0.08);
+  font-family: $font-ui;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+}
+
+.palette-item {
+  display: grid;
+  gap: 4px;
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 13px;
+  color: rgba(24, 32, 51, 0.72);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.palette-item.active,
+.palette-item:hover {
+  color: #6150dc;
+  background: rgba(121, 99, 255, 0.1);
+}
+
+.palette-item-title,
+.palette-item-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-item-title {
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.palette-item-meta {
+  color: rgba(24, 32, 51, 0.48);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.palette-empty {
+  margin: 0;
+  padding: 14px 10px;
+  color: rgba(24, 32, 51, 0.48);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+:global(.dark) .omni-command-palette {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(135deg, rgba(31, 37, 50, 0.9), rgba(20, 24, 34, 0.78)),
+    rgba(18, 22, 32, 0.82);
+}
+
+:global(.dark) .palette-header,
+:global(.dark) .palette-item-meta,
+:global(.dark) .palette-empty {
+  color: rgba(237, 243, 255, 0.52);
+}
+
+:global(.dark) .palette-item {
+  color: rgba(237, 243, 255, 0.76);
+}
+
+:global(.dark) .palette-item.active,
+:global(.dark) .palette-item:hover {
+  color: #9de9ff;
+  background: rgba(43, 209, 255, 0.1);
+}
+
 .slash-command-item {
   display: grid;
-  grid-template-columns: auto auto 1fr;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: $radius-sm;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 13px;
   cursor: pointer;
-  min-height: 36px;
+  min-height: 52px;
 
   &.active,
   &:hover {
@@ -1030,6 +2047,11 @@ function isImage(type: string): boolean {
   font-size: 13px;
   color: $accent-primary;
   white-space: nowrap;
+}
+
+.slash-command-kind {
+  color: #7059f7;
+  font-weight: 900;
 }
 
 .slash-command-args {
@@ -1050,7 +2072,7 @@ function isImage(type: string): boolean {
 
 .dropdown-fade-enter-active,
 .dropdown-fade-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dropdown-fade-enter-from,
