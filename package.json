@@ -34,6 +34,7 @@
   },
   "scripts": {
     "start": "vite --host --port 8648",
+    "tauri": "tauri",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "cross-env HERMES_WEB_UI_BACKEND_PORT=8647 vite --host --port 8649 --strictPort",
     "dev:server": "nodemon",
@@ -44,6 +45,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:aurora:unit": "vitest run tests/client/aurora-intent-parsers.test.ts tests/client/aurora-result-presenters.test.ts tests/client/aurora-app-mode-contract.test.ts tests/client/aurora-audit-events.test.ts tests/client/aurora-vibe-coding-store.test.ts tests/client/aurora-capability-manifest.test.ts tests/client/aurora-governance-store.test.ts tests/client/aurora-mirofish-graph-app.test.ts tests/client/aurora-chat-input-routing.test.ts tests/client/aurora-event-bus-working-memory.test.ts tests/client/aurora-tradingview-app.test.ts tests/client/aurora-status-panel-neural-events.test.ts tests/client/aurora-widget-watchdog.test.ts",
+    "test:aurora:visual": "playwright test tests/e2e/aurora-visual-regression.spec.ts",
+    "test:aurora": "npm run test:aurora:unit && playwright test tests/e2e/aurora-os.spec.ts tests/e2e/aurora-visual-regression.spec.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "dev:website": "vite --config vite.config.website.ts",
@@ -57,6 +61,8 @@
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
     "build:desktop:linux": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
+    "memory:sync": "bash scripts/hermes_memory_sync.sh",
+    "memory:sync:setup": "bash scripts/hermes_memory_sync_setup.sh",
     "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
@@ -68,6 +74,7 @@
     "eventsource": "^4.1.0",
     "js-tiktoken": "^1.0.21",
     "katex": "^0.17.0",
+    "lightweight-charts": "^5.2.0",
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
@@ -80,6 +87,7 @@
     "@multiavatar/multiavatar": "^1.0.7",
     "@pinia/testing": "^1.0.3",
     "@playwright/test": "^1.60.0",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",
     "@types/katex": "^0.16.8",
