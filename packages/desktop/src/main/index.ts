@@ -97,8 +97,8 @@ function createTray() {
       ? desktopWindowsTrayIcon()
       : desktopIcon()
   const icon = nativeImage.createFromPath(source).resize({
-    width: process.platform === 'darwin' ? 18 : process.platform === 'win32' ? 20 : 16,
-    height: process.platform === 'darwin' ? 18 : process.platform === 'win32' ? 20 : 16,
+    width: process.platform === 'darwin' ? 18 : process.platform === 'win32' ? 24 : 16,
+    height: process.platform === 'darwin' ? 18 : process.platform === 'win32' ? 24 : 16,
     quality: 'best',
   })
   if (process.platform === 'darwin') {

@@ -46,8 +46,8 @@ export function desktopIcon(): string {
 }
 
 export function desktopWindowsTrayIcon(): string {
-  if (app.isPackaged) return resolve(process.resourcesPath, 'build', 'icon.ico')
-  return resolve(app.getAppPath(), 'build', 'icon.ico')
+  if (app.isPackaged) return resolve(process.resourcesPath, 'build', 'trayWindows.png')
+  return resolve(app.getAppPath(), 'build', 'trayWindows.png')
 }
 
 export function desktopTrayTemplateIcon(): string {

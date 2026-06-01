@@ -31,6 +31,7 @@ extraResources:
       - "icon.png"
       - "icon.ico"
       - "trayTemplate.png"
+      - "trayWindows.png"
   - from: "../.."
     to: "webui"
     filter:
