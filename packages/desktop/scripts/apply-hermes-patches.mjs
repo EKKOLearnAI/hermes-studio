@@ -33,6 +33,7 @@ const sitePkgs = process.env.HERMES_AGENT_SITE_PACKAGES ?? (
 )
 
 const dtPath = join(sitePkgs, 'gateway', 'platforms', 'dingtalk.py')
+const sitecustomizePath = join(sitePkgs, 'sitecustomize.py')
 if (!existsSync(dtPath)) {
   console.error(`dingtalk.py not found at ${dtPath} — is hermes-agent installed?`)
   process.exit(1)
@@ -177,4 +178,31 @@ patch(
 if (src !== before) {
   writeFileSync(dtPath, src)
 }
+
+const brotlicffiCompatMarker = '# patch:brotlicffi-error-compat'
+const brotlicffiCompat = `
+${brotlicffiCompatMarker}
+try:
+    import brotlicffi as _hermes_brotlicffi
+    if not hasattr(_hermes_brotlicffi, "error"):
+        _hermes_brotlicffi.error = (
+            getattr(_hermes_brotlicffi, "Error", None)
+            or getattr(_hermes_brotlicffi, "BrotliError", None)
+            or Exception
+        )
+except Exception:
+    pass
+`
+
+const sitecustomize = existsSync(sitecustomizePath) ? readFileSync(sitecustomizePath, 'utf-8') : ''
+if (sitecustomize.includes(brotlicffiCompatMarker)) {
+  console.log('  · brotlicffi-error-compat  (already applied)')
+  skipped++
+} else {
+  const nextSitecustomize = `${sitecustomize.replace(/\s*$/, '')}\n${brotlicffiCompat.trim()}\n`
+  writeFileSync(sitecustomizePath, nextSitecustomize)
+  console.log('  ✓ brotlicffi-error-compat')
+  applied++
+}
+
 console.log(`Done. Applied ${applied}, skipped ${skipped}.`)
