@@ -6,6 +6,10 @@ directories:
   output: release
   buildResources: build
 
+publish:
+  provider: generic
+  url: https://download.ekkolearnai.com
+
 # Don't auto-prune our root node_modules; we curate `files` and `extraResources` ourselves.
 buildDependenciesFromSource: false
 nodeGypRebuild: false
@@ -25,6 +29,7 @@ extraResources:
     to: "build"
     filter:
       - "icon.png"
+      - "trayTemplate.png"
   - from: "../.."
     to: "webui"
     filter:
@@ -48,6 +53,8 @@ asarUnpack:
 mac:
   target:
     - target: dmg
+      arch: [arm64, x64]
+    - target: zip
       arch: [arm64, x64]
   category: public.app-category.developer-tools
   hardenedRuntime: true

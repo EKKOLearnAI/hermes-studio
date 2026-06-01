@@ -51,7 +51,7 @@ Expected desktop release outputs:
 
 | Target | Required release globs |
 | --- | --- |
-| macOS | `*.dmg`, `*.dmg.blockmap`, `latest*.yml` |
+| macOS | `*.dmg`, `*.dmg.blockmap`, `*.zip`, `*.zip.blockmap`, `latest*.yml` |
 | Windows | `*.exe`, `*.exe.blockmap`, `latest*.yml` |
 | Linux x64 | `*.AppImage`, `*.deb`, `latest*.yml` |
 | Linux arm64 | `*.AppImage`, `latest*.yml` |

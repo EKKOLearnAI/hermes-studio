@@ -1,13 +1,106 @@
-import { app, BrowserWindow, Menu, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
-import { desktopIcon, hermesBinExists, hermesBin } from './paths'
-import { initAutoUpdater } from './updater'
+import { desktopIcon, desktopTrayTemplateIcon, hermesBinExists, hermesBin } from './paths'
+import { checkForDesktopUpdates, initAutoUpdater } from './updater'
+import { t } from './desktop-i18n'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
+const START_HIDDEN = process.argv.includes('--hidden')
 
 let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
+let tray: Tray | null = null
+let isQuitting = false
+
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow()
+  }
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function quitApp() {
+  isQuitting = true
+  app.quit()
+}
+
+function getOpenAtLogin(): boolean {
+  return app.getLoginItemSettings().openAtLogin
+}
+
+function setOpenAtLogin(openAtLogin: boolean) {
+  app.setLoginItemSettings({
+    openAtLogin,
+    openAsHidden: true,
+    path: process.execPath,
+    args: ['--hidden'],
+  })
+}
+
+function updateTrayMenu() {
+  if (!tray) return
+  const isVisible = !!mainWindow && mainWindow.isVisible()
+  const menu = Menu.buildFromTemplate([
+    {
+      label: isVisible ? t('tray.hide') : t('tray.show'),
+      click: () => {
+        if (mainWindow?.isVisible()) {
+          mainWindow.hide()
+        } else {
+          showMainWindow()
+        }
+        updateTrayMenu()
+      },
+    },
+    {
+      label: t('tray.checkForUpdates'),
+      click: () => {
+        checkForDesktopUpdates(true).catch(err => {
+          console.error('[tray] update check failed:', err)
+        })
+      },
+    },
+    {
+      label: t('tray.openAtLogin'),
+      type: 'checkbox',
+      checked: getOpenAtLogin(),
+      click: (item) => {
+        setOpenAtLogin(item.checked)
+        updateTrayMenu()
+      },
+    },
+    { type: 'separator' },
+    {
+      label: t('tray.quit'),
+      click: quitApp,
+    },
+  ])
+  tray.setContextMenu(menu)
+}
+
+function createTray() {
+  if (tray) return
+  const source = process.platform === 'darwin' ? desktopTrayTemplateIcon() : desktopIcon()
+  const icon = nativeImage.createFromPath(source).resize({
+    width: process.platform === 'darwin' ? 18 : 16,
+    height: process.platform === 'darwin' ? 18 : 16,
+    quality: 'best',
+  })
+  if (process.platform === 'darwin') {
+    icon.setTemplateImage(true)
+  }
+  tray = new Tray(icon)
+  tray.setToolTip('Hermes Studio')
+  tray.on('click', () => {
+    showMainWindow()
+    updateTrayMenu()
+  })
+  updateTrayMenu()
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -18,6 +111,7 @@ function createWindow() {
     title: 'Hermes Studio',
     backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
+    show: !START_HIDDEN,
     ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
@@ -26,6 +120,16 @@ function createWindow() {
       sandbox: false,
     },
   })
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    mainWindow?.hide()
+    updateTrayMenu()
+  })
+
+  mainWindow.on('show', updateTrayMenu)
+  mainWindow.on('hide', updateTrayMenu)
 
   // External links → system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -44,6 +148,7 @@ function createWindow() {
   } else {
     mainWindow.loadURL(splashHtml())
   }
+  updateTrayMenu()
 }
 
 function splashHtml(): string {
@@ -95,10 +200,7 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
+    showMainWindow()
   })
 
   app.whenReady().then(() => {
@@ -107,25 +209,34 @@ if (!gotLock) {
     // visual clutter. macOS keeps a menu (system requirement) but Electron's
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    createTray()
     createWindow()
     bootstrap()
-    initAutoUpdater()
+    initAutoUpdater({
+      beforeQuitAndInstall: () => {
+        isQuitting = true
+      },
+    })
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()
       } else if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        mainWindow.show()
-        mainWindow.focus()
+        showMainWindow()
       }
     })
   })
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
+    if (isQuitting && process.platform !== 'darwin') app.quit()
   })
 
   app.on('before-quit', async (e) => {
+    if (!isQuitting && process.platform !== 'darwin') {
+      e.preventDefault()
+      mainWindow?.hide()
+      updateTrayMenu()
+      return
+    }
     e.preventDefault()
     await stopWebUiServer().catch(() => undefined)
     app.exit(0)

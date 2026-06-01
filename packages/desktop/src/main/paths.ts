@@ -45,6 +45,11 @@ export function desktopIcon(): string {
   return resolve(app.getAppPath(), 'build', 'icon.png')
 }
 
+export function desktopTrayTemplateIcon(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, 'build', 'trayTemplate.png')
+  return resolve(app.getAppPath(), 'build', 'trayTemplate.png')
+}
+
 export function webUiHome(): string {
   return process.env.HERMES_WEB_UI_HOME?.trim() || resolve(homedir(), '.hermes-web-ui')
 }

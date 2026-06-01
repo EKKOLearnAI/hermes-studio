@@ -15,6 +15,27 @@ const execFileAsync = promisify(execFile)
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 
+function killProcessTree(proc: ChildProcess): void {
+  if (!proc.pid || proc.killed) return
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      killer.once('error', () => undefined)
+      return
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    proc.kill('SIGKILL')
+  } catch {
+    /* ignore */
+  }
+}
+
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
@@ -207,12 +228,14 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   // setup is a #!/bin/sh wrapper, not a python interpreter, so detection
   // resolves to /bin/sh and the bridge crashes (exit code 2) immediately.
   const isWin = process.platform === 'win32'
-  const bundledPython = isWin
-    ? join(pythonDir(), 'python.exe')
-    : join(pythonDir(), 'bin', 'python3')
   const bundledPythonNoWindow = isWin
     ? join(pythonDir(), 'pythonw.exe')
-    : bundledPython
+    : join(pythonDir(), 'bin', 'python3')
+  const bundledPython = isWin && existsSync(bundledPythonNoWindow)
+    ? bundledPythonNoWindow
+    : isWin
+      ? join(pythonDir(), 'python.exe')
+      : join(pythonDir(), 'bin', 'python3')
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
@@ -312,7 +335,7 @@ export function stopWebUiServer(): Promise<void> {
     if (!serverProc || serverProc.killed) return resolve()
     const proc = serverProc
     const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL') } catch { /* */ }
+      killProcessTree(proc)
       resolve()
     }, 3000)
     proc.once('exit', () => {
