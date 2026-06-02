@@ -19,10 +19,15 @@ import { app } from 'electron'
 import {
   bundledGit,
   bundledNode,
+  bundledPython,
   desktopRuntimeDir,
   hermesBinExists,
   runtimePlatformKey,
 } from './paths'
+import {
+  hermesAgentVersionFromRuntimeTag,
+  runtimeManifestMatchesHermesAgentVersion,
+} from './runtime-version'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_RUNTIME_BASE_URL = 'https://download.ekkolearnai.com'
@@ -48,6 +53,11 @@ type RuntimeDescriptor = {
   name: string
   url: string
   sha256?: string
+  hermesAgentVersion?: string
+}
+
+type PackagedRuntimeRelease = {
+  tag?: string
   hermesAgentVersion?: string
 }
 
@@ -89,7 +99,7 @@ function missingRuntimeFiles(root: string): string[] {
 
 function runtimeReady(): boolean {
   const gitReady = process.platform !== 'win32' || !!bundledGit()
-  return hermesBinExists() && existsSync(bundledNode()) && gitReady
+  return existsSync(bundledPython()) && hermesBinExists() && existsSync(bundledNode()) && gitReady
 }
 
 export function isDesktopRuntimeReady(): boolean {
@@ -105,7 +115,7 @@ function releaseTagCandidates(): string[] {
   return Array.from(new Set(candidates.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)))
 }
 
-function packagedRuntimeReleaseTag(): string | null {
+function packagedRuntimeReleaseMetadata(): PackagedRuntimeRelease | null {
   const candidates = app.isPackaged
     ? [join(process.resourcesPath, 'build', PACKAGED_RUNTIME_RELEASE_NAME)]
     : [join(app.getAppPath(), 'build', PACKAGED_RUNTIME_RELEASE_NAME)]
@@ -113,12 +123,33 @@ function packagedRuntimeReleaseTag(): string | null {
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue
     try {
-      const metadata = JSON.parse(readFileSync(candidate, 'utf-8')) as { tag?: unknown }
-      if (typeof metadata.tag === 'string' && metadata.tag.trim()) return metadata.tag.trim()
+      const metadata = JSON.parse(readFileSync(candidate, 'utf-8')) as { tag?: unknown; hermesAgentVersion?: unknown }
+      return {
+        tag: typeof metadata.tag === 'string' && metadata.tag.trim() ? metadata.tag.trim() : undefined,
+        hermesAgentVersion: typeof metadata.hermesAgentVersion === 'string' && metadata.hermesAgentVersion.trim()
+          ? metadata.hermesAgentVersion.trim()
+          : undefined,
+      }
     } catch {}
   }
 
   return null
+}
+
+function packagedRuntimeReleaseTag(): string | null {
+  const metadata = packagedRuntimeReleaseMetadata()
+  if (metadata?.tag) return metadata.tag
+  return null
+}
+
+export function cachedRuntimeNeedsPackagedReleaseUpdate(): boolean {
+  const metadata = packagedRuntimeReleaseMetadata()
+  const expectedVersion = process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG
+    ? hermesAgentVersionFromRuntimeTag(process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG)
+    : metadata?.hermesAgentVersion || hermesAgentVersionFromRuntimeTag(metadata?.tag)
+  if (!expectedVersion) return false
+  const match = runtimeManifestMatchesHermesAgentVersion(readCachedRuntimeManifest(desktopRuntimeDir()), expectedVersion)
+  return match === false
 }
 
 function runtimeAssetUrl(assetName: string, tag: string, source: RuntimeDownloadSource): string {

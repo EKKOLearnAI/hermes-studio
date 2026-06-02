@@ -7,6 +7,7 @@ import { t } from './desktop-i18n'
 import { installHermesStudioCliShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import {
+  cachedRuntimeNeedsPackagedReleaseUpdate,
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
   type RuntimeDownloadSource,
@@ -305,14 +306,18 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
     const forceUpdate = !!process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE
+    const runtimeReady = isDesktopRuntimeReady()
+    const packagedRuntimeUpdate = app.isPackaged && runtimeReady && cachedRuntimeNeedsPackagedReleaseUpdate()
+    const shouldCheckRuntime = !runtimeReady || forceUpdate || runtimeUrlOverride || manifestOverride || packagedRuntimeUpdate
+    const runtimeSource = selectedSource || (packagedRuntimeUpdate ? 'cf' : undefined)
 
-    if (!isDesktopRuntimeReady() || forceUpdate || runtimeUrlOverride || manifestOverride) {
-      if (!selectedSource && !runtimeUrlOverride && !manifestOverride) {
+    if (shouldCheckRuntime) {
+      if (!runtimeSource && !runtimeUrlOverride && !manifestOverride) {
         if (mainWindow) await mainWindow.loadURL(runtimeSourceHtml())
         isBootstrapping = false
         return
       }
-      await ensureDesktopRuntime(updateSplash, selectedSource)
+      await ensureDesktopRuntime(updateSplash, runtimeSource)
     }
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)

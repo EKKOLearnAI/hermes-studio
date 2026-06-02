@@ -1,11 +1,14 @@
 import { app } from 'electron'
 import { existsSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { homedir, platform, arch } from 'node:os'
+import { homedir, platform } from 'node:os'
+import {
+  resolveRuntimeResourceDir,
+  runtimePlatformKey,
+  type DesktopRuntimeResource,
+} from './runtime-paths'
 
 const isWin = platform() === 'win32'
-const osLabel = isWin ? 'win' : platform() === 'darwin' ? 'mac' : platform() // mac | linux | win
-const archLabel = arch() // arm64 | x64
 
 export function isPackaged() {
   return app.isPackaged
@@ -23,9 +26,7 @@ export function webuiServerEntry(): string {
   return join(webuiDir(), 'dist', 'server', 'index.js')
 }
 
-export function runtimePlatformKey(): string {
-  return `${osLabel}-${archLabel}`
-}
+export { runtimePlatformKey }
 
 export function desktopRuntimeDir(): string {
   const override = process.env.HERMES_DESKTOP_RUNTIME_DIR?.trim()
@@ -33,26 +34,18 @@ export function desktopRuntimeDir(): string {
   return join(webUiHome(), 'desktop-runtime', runtimePlatformKey())
 }
 
-function packagedResourceDir(name: string): string {
-  return resolve(process.resourcesPath, name)
+export function runtimeResourceDir(name: DesktopRuntimeResource, packaged: boolean, appPath = app.getAppPath()): string {
+  return resolveRuntimeResourceDir(name, packaged, appPath, desktopRuntimeDir(), runtimePlatformKey())
 }
 
 // dev:  packages/desktop/resources/python/<os>-<arch>
-// prod: <resources>/python when present, otherwise downloaded runtime cache.
+// prod: downloaded runtime cache under Web UI home.
 export function pythonDir(): string {
-  if (app.isPackaged) {
-    const packaged = packagedResourceDir('python')
-    return existsSync(packaged) ? packaged : join(desktopRuntimeDir(), 'python')
-  }
-  return resolve(app.getAppPath(), 'resources', 'python', runtimePlatformKey())
+  return runtimeResourceDir('python', app.isPackaged)
 }
 
 export function nodeDir(): string {
-  if (app.isPackaged) {
-    const packaged = packagedResourceDir('node')
-    return existsSync(packaged) ? packaged : join(desktopRuntimeDir(), 'node')
-  }
-  return resolve(app.getAppPath(), 'resources', 'node', runtimePlatformKey())
+  return runtimeResourceDir('node', app.isPackaged)
 }
 
 export function nodeBinDir(): string {
@@ -65,11 +58,7 @@ export function bundledNode(): string {
 }
 
 export function gitDir(): string {
-  if (app.isPackaged) {
-    const packaged = packagedResourceDir('git')
-    return existsSync(packaged) ? packaged : join(desktopRuntimeDir(), 'git')
-  }
-  return resolve(app.getAppPath(), 'resources', 'git', runtimePlatformKey())
+  return runtimeResourceDir('git', app.isPackaged)
 }
 
 export function gitPathDirs(): string[] {
