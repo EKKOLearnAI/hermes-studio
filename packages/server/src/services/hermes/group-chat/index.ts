@@ -93,6 +93,7 @@ interface Member {
     online: boolean
     socketId: string
     source?: 'human' | 'agent'
+    avatar: string
 }
 
 let _tablesEnsured = false
@@ -676,7 +677,7 @@ class ChatRoom {
         this.name = name || id
     }
 
-    addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human'): Member {
+    addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human', avatar: string = ''): Member {
         const existing = this.members.get(userId)
         if (existing) {
             existing.name = name
@@ -684,9 +685,10 @@ class ChatRoom {
             existing.online = true
             existing.socketId = socketId
             existing.source = source
+            if (avatar) existing.avatar = avatar
             return existing
         }
-        const member: Member = { id: socketId, userId, name, description, joinedAt: Date.now(), online: true, socketId, source }
+        const member: Member = { id: socketId, userId, name, description, joinedAt: Date.now(), online: true, socketId, source, avatar }
         this.members.set(userId, member)
         return member
     }
@@ -967,7 +969,7 @@ export class GroupChatServer {
         }
 
         // Add to in-memory online participants (keyed by userId)
-        room.addOrUpdateMember(socketId, userId, userName, description, source)
+        room.addOrUpdateMember(socketId, userId, userName, description, source, userAvatar)
         socket.join(roomId)
 
         if (source !== 'agent') {
