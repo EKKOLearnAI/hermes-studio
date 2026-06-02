@@ -11,6 +11,7 @@ const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'sea
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const regenerateTitleMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true, title: 'Regenerated' } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
@@ -34,6 +35,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   remove: removeMock,
   batchRemove: batchRemoveMock,
   rename: renameMock,
+  regenerateTitle: regenerateTitleMock,
   setWorkspace: setWorkspaceMock,
   setModel: setModelMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
@@ -58,6 +60,7 @@ describe('session routes', () => {
     getMock.mockClear()
     removeMock.mockClear()
     renameMock.mockClear()
+    regenerateTitleMock.mockClear()
     setModelMock.mockClear()
   })
 
@@ -82,6 +85,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/:id/export',
       '/api/hermes/sessions/:id/usage',
       '/api/hermes/sessions/:id/rename',
+      '/api/hermes/sessions/:id/title/regenerate',
       '/api/hermes/sessions/:id/model',
     ]))
   })
@@ -147,5 +151,17 @@ describe('session routes', () => {
     await handler(ctx)
 
     expect(exportSessionMock).toHaveBeenCalledWith(ctx)
+  })
+
+  it('delegates title regeneration to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/title/regenerate')
+    const handler = layer.stack[0]
+    const ctx: any = { params: { id: 'session-abc' }, query: {}, request: { body: {} }, body: null }
+
+    await handler(ctx)
+
+    expect(regenerateTitleMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ ok: true, title: 'Regenerated' })
   })
 })

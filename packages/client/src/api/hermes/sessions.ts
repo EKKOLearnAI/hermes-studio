@@ -202,6 +202,17 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export async function regenerateSessionTitle(id: string): Promise<string | null> {
+  try {
+    const res = await request<{ ok: boolean; title: string }>(`/api/hermes/sessions/${id}/title/regenerate`, {
+      method: 'POST',
+    })
+    return res.title || null
+  } catch {
+    return null
+  }
+}
+
 export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/workspace`, {

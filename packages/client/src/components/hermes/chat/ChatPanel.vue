@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
+import { renameSession, regenerateSessionTitle, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -438,6 +438,7 @@ const contextMenuOptions = computed(() => {
     key: "pin",
   },
   { label: t("chat.rename"), key: "rename" },
+  { label: t("chat.regenerateTitle"), key: "regenerate-title" },
   { label: t("chat.setWorkspace"), key: "workspace" }]
 
   if (contextSession.value?.source === "cli") {
@@ -525,6 +526,20 @@ async function handleContextMenuSelect(key: string) {
     showWorkspaceModal.value = true;
   } else if (key === "model") {
     await openSessionModelModal(contextSessionId.value);
+  } else if (key === "regenerate-title") {
+    const title = await regenerateSessionTitle(contextSessionId.value);
+    if (title) {
+      const session = chatStore.sessions.find(
+        (s) => s.id === contextSessionId.value,
+      );
+      if (session) session.title = title;
+      if (chatStore.activeSession?.id === contextSessionId.value) {
+        chatStore.activeSession.title = title;
+      }
+      message.success(t("chat.titleRegenerated"));
+    } else {
+      message.error(t("chat.regenerateTitleFailed"));
+    }
   } else if (key === "rename") {
     const session = chatStore.sessions.find(
       (s) => s.id === contextSessionId.value,

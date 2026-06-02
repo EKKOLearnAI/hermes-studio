@@ -21,6 +21,7 @@ import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
+import { generateHeuristicSessionTitle } from '../../services/hermes/session-title'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 
@@ -643,6 +644,29 @@ export async function rename(ctx: any) {
     return
   }
   ctx.body = { ok: true }
+}
+
+export async function regenerateTitle(ctx: any) {
+  const detail = localGetSessionDetail(ctx.params.id)
+  if (!detail) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, detail)) return
+
+  const title = generateHeuristicSessionTitle(
+    Array.isArray(detail.messages) ? detail.messages : [],
+    detail.title || detail.id,
+  )
+  const ok = localRenameSession(ctx.params.id, title)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to rename session' }
+    return
+  }
+
+  ctx.body = { ok: true, title }
 }
 
 export async function setWorkspace(ctx: any) {
