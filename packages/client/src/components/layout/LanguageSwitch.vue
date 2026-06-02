@@ -15,6 +15,7 @@ const options = [
   { label: 'Español', value: 'es' },
   { label: 'Deutsch', value: 'de' },
   { label: 'Português', value: 'pt' },
+  { label: 'Русский', value: 'ru' },
 ]
 
 function handleChange(val: string) {
