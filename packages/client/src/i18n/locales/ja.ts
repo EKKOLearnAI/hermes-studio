@@ -1260,7 +1260,7 @@ export default {
   // 更新履歴
   changelog: {
     new_0_6_7_1: 'Desktop アプリは既定で port 8748 を使用し、LAN アクセスとローカルブラウザからの直接アクセスに対応しました',
-    new_0_6_7_9: 'Desktop のダウンロードリンクを公式サイト https://ekkolearnai.com/ に追加し、最新インストーラーは引き続き GitHub Releases からも取得できます',
+    new_0_6_7_9: 'Desktop のダウンロードリンクを公式サイト https://hermes-studio.ai/ に追加し、最新インストーラーは引き続き GitHub Releases からも取得できます',
     new_0_6_7_2: 'MCP ツールは bridge の tool discovery 修正、MCP 管理ライフサイクル修正、管理画面のモデル別 tool visibility によりさらに整備されました',
     new_0_6_7_3: 'メッセージ一覧は empty state の中央揃え、scroll jitter、History 読み込み中のライブチャット混入を修正し、セッション別スクロール位置保持と 1.5 秒のフェードインに対応しました',
     new_0_6_7_4: 'Bridge と runtime は text/tool-call の順序保持、Profile runtime status loading 修正、Node/npm 検出改善、本番 data directory 作成スキップで安定しました',

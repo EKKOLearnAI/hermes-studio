@@ -332,10 +332,7 @@ function playSpeech(content: string, autoplay = false) {
         return
     }
     if (voiceSettings.provider.value === 'webspeech') {
-        const text = speech.extractReadableText(content)
-        if (!text) return
-        speech.stop(false)
-        speech.speakViaBrowser(props.message.id, text, {
+        speech.toggleBrowser(props.message.id, content, {
             voiceName: voiceSettings.webspeechVoice.value || undefined,
         })
         return

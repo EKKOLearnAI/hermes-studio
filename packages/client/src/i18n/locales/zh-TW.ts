@@ -1488,7 +1488,7 @@ export default {
   // 更新日誌
   changelog: {
     new_0_6_7_1: '桌面版預設使用 8748 連接埠，支援區域網路內存取，也可以直接用本機瀏覽器開啟 Web UI',
-    new_0_6_7_9: '桌面端下載入口已補充到官網 https://ekkolearnai.com/，也可以繼續從 GitHub Releases 取得最新安裝包',
+    new_0_6_7_9: '桌面端下載入口已補充到官網 https://hermes-studio.ai/，也可以繼續從 GitHub Releases 取得最新安裝包',
     new_0_6_7_2: 'MCP 工具鏈繼續完善：修復 bridge 工具發現與 MCP 管理生命週期，並在管理頁支援按模型控制工具可見性',
     new_0_6_7_3: '訊息列表體驗優化：修復空狀態置中、捲動抖動、歷史會話載入串訊息，並在切換會話時保留捲動位置與 1.5 秒淡入效果',
     new_0_6_7_4: 'Bridge 與執行狀態更穩定：保持文字和 tool-call 順序、修復 Profile runtime 狀態載入、改進 Node/npm 偵測，並避免正式環境自動建立資料目錄',

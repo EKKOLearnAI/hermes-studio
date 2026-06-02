@@ -268,7 +268,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_BRIDGE_TOOLSETS` | profile/default | Toolset override for bridge runs. |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/default | Maximum turn override for bridge runs. |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | Controls bridge platform hint suppression passed to Hermes Agent. |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkolearnai.com` | OpenRouter attribution referer sent by bridge runs. |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | OpenRouter attribution referer sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | OpenRouter attribution title sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | platform/runtime dependent | Force managed legacy gateway process handling. Set `1`, `true`, `yes`, or `on` to enable. |

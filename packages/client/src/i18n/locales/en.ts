@@ -1483,7 +1483,7 @@ export default {
   // Changelog
   changelog: {
     new_0_6_7_1: 'The desktop app now defaults to port 8748, supports LAN access, and can be opened directly from a local browser',
-    new_0_6_7_9: 'Desktop download links are now available on the official website at https://ekkolearnai.com/, and the latest installers remain available from GitHub Releases',
+    new_0_6_7_9: 'Desktop download links are now available on the official website at https://hermes-studio.ai/, and the latest installers remain available from GitHub Releases',
     new_0_6_7_2: 'MCP tooling is more complete with bridge tool discovery fixes, MCP management lifecycle fixes, and per-model tool visibility controls in the manager',
     new_0_6_7_3: 'Message lists now center empty states correctly, reduce scroll jitter, avoid leaking live chat messages into History while loading, preserve per-session scroll positions, and fade in over 1.5 seconds on session switches',
     new_0_6_7_4: 'Bridge and runtime stability improved by preserving text/tool-call ordering, fixing Profile runtime status loading, improving Node/npm detection, and skipping production data directory creation',

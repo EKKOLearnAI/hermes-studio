@@ -274,7 +274,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_BRIDGE_TOOLSETS` | profile/默认值 | bridge 运行时的 toolset 覆盖。 |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/默认值 | bridge 运行时的最大轮数覆盖。 |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | 控制传给 Hermes Agent 的 bridge platform hint suppression。 |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkolearnai.com` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
 | `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | bridge 运行发送给 OpenRouter 的 attribution title。 |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | 由平台/运行环境决定 | 强制启用旧 gateway 进程托管；设为 `1`、`true`、`yes` 或 `on` 开启。 |

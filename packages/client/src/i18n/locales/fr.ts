@@ -1261,7 +1261,7 @@ jobTriggered: 'Job declenche',
   // Journal des modifications
   changelog: {
     new_0_6_7_1: 'L application desktop utilise maintenant le port 8748 par défaut, prend en charge l accès LAN et peut être ouverte directement depuis un navigateur local',
-    new_0_6_7_9: 'Les liens de téléchargement desktop sont maintenant disponibles sur le site officiel https://ekkolearnai.com/, et les derniers installateurs restent disponibles via GitHub Releases',
+    new_0_6_7_9: 'Les liens de téléchargement desktop sont maintenant disponibles sur le site officiel https://hermes-studio.ai/, et les derniers installateurs restent disponibles via GitHub Releases',
     new_0_6_7_2: 'Les outils MCP sont plus complets avec des corrections de découverte bridge, de cycle de vie MCP et des contrôles de visibilité par modèle dans le gestionnaire',
     new_0_6_7_3: 'Les listes de messages centrent mieux les états vides, réduisent les sauts de scroll, évitent d afficher le chat actif pendant le chargement de History, conservent la position par session et ajoutent un fondu de 1,5 seconde au changement de session',
     new_0_6_7_4: 'Bridge et runtime sont plus stables avec ordre texte/tool-call préservé, chargement du statut runtime de Profile corrigé, meilleure détection Node/npm et création du dossier de données production évitée',

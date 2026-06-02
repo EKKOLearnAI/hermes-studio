@@ -1260,7 +1260,7 @@ export default {
   // 변경 이력
   changelog: {
     new_0_6_7_1: 'Desktop 앱은 기본적으로 8748 포트를 사용하며 LAN 접근과 로컬 브라우저 직접 열기를 지원합니다',
-    new_0_6_7_9: 'Desktop 다운로드 링크가 공식 웹사이트 https://ekkolearnai.com/ 에 추가되었으며 최신 설치 파일은 GitHub Releases 에서도 계속 받을 수 있습니다',
+    new_0_6_7_9: 'Desktop 다운로드 링크가 공식 웹사이트 https://hermes-studio.ai/ 에 추가되었으며 최신 설치 파일은 GitHub Releases 에서도 계속 받을 수 있습니다',
     new_0_6_7_2: 'MCP 도구는 bridge tool discovery 수정, MCP 관리 라이프사이클 수정, 관리자 화면의 모델별 tool visibility 제어로 더 완성되었습니다',
     new_0_6_7_3: '메시지 목록은 빈 상태 중앙 정렬, 스크롤 튐, History 로딩 중 라이브 채팅 메시지 노출을 수정하고 세션별 스크롤 위치 보존과 1.5초 페이드인을 지원합니다',
     new_0_6_7_4: 'Bridge 와 runtime 은 text/tool-call 순서 보존, Profile runtime status loading 수정, Node/npm 감지 개선, 운영 데이터 디렉터리 생성 생략으로 더 안정적입니다',
