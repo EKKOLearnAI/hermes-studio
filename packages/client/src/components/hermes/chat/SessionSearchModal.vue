@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { fetchSessions, searchSessions, type SessionSearchResult, type SessionSummary } from '@/api/hermes/sessions'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useSessionSearch } from '@/composables/useSessionSearch'
+import { extractSessionIdFromReference } from '@/utils/session-link'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -30,7 +31,8 @@ type SearchItem = SessionSearchResult | (SessionSummary & {
   rank: number
 })
 
-const hasQuery = computed(() => query.value.trim().length > 0)
+const normalizedQuery = computed(() => extractSessionIdFromReference(query.value) ?? query.value.trim())
+const hasQuery = computed(() => normalizedQuery.value.length > 0)
 
 const items = computed<SearchItem[]>(() => {
   if (hasQuery.value) return searchResults.value
@@ -101,10 +103,11 @@ async function runSearch(text: string) {
   const seq = ++requestSeq
   loading.value = true
   try {
-    const results = text.trim()
+    const normalizedText = extractSessionIdFromReference(text) ?? text.trim()
+    const results = normalizedText
       ? profileFilter.value
-        ? await searchSessions(text.trim(), undefined, 10, profileFilter.value)
-        : await searchSessions(text.trim(), undefined, 10)
+        ? await searchSessions(normalizedText, undefined, 10, profileFilter.value)
+        : await searchSessions(normalizedText, undefined, 10)
       : []
     if (seq !== requestSeq) return
     searchResults.value = results

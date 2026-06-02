@@ -19,6 +19,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { copyToClipboard } from "@/utils/clipboard";
+import { buildSessionProtocolLink } from "@/utils/session-link";
 import FolderPicker from "./FolderPicker.vue";
 import ChatInput from "./ChatInput.vue";
 import ConversationMonitorPane from "./ConversationMonitorPane.vue";
@@ -292,23 +293,16 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
 }
 
-function sessionProfile(sessionId: string): string | null {
-  return chatStore.sessions.find((session) => session.id === sessionId)?.profile || null;
-}
-
-function buildSessionUrl(sessionId: string, profile?: string | null): string {
-  const href = router.resolve({
-    name: "hermes.session",
-    params: { sessionId },
-    query: profile ? { profile } : undefined,
-  }).href;
-  return `${window.location.origin}${window.location.pathname}${href}`;
+function sessionLinkLabel(sessionId: string): string {
+  return chatStore.sessions.find((session) => session.id === sessionId)?.title?.trim() || sessionId;
 }
 
 async function copySessionLink(id?: string) {
   const sessionId = id || chatStore.activeSessionId;
   if (sessionId) {
-    const ok = await copyToClipboard(buildSessionUrl(sessionId, sessionProfile(sessionId)));
+    const link = buildSessionProtocolLink(sessionId, sessionLinkLabel(sessionId));
+    if (!link) return;
+    const ok = await copyToClipboard(link);
     if (ok) message.success(t("common.copied"));
     else message.error(t("common.copied") + " ✗");
   }

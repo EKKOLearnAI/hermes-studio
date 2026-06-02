@@ -183,6 +183,40 @@ describe('session search modal', () => {
     expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', '17')
     expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.chat' })
   })
+
+  it('normalizes session protocol links before searching', async () => {
+    const { openSessionSearch } = useSessionSearch()
+    const wrapper = mount(SessionSearchModal)
+
+    openSessionSearch()
+    await flushPromises()
+    await nextTick()
+
+    const input = wrapper.find('input.n-input-stub')
+    await input.setValue('session://match-1')
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    await nextTick()
+
+    expect(apiMocks.searchSessionsMock).toHaveBeenLastCalledWith('match-1', undefined, 10)
+  })
+
+  it('normalizes markdown session links before searching', async () => {
+    const { openSessionSearch } = useSessionSearch()
+    const wrapper = mount(SessionSearchModal)
+
+    openSessionSearch()
+    await flushPromises()
+    await nextTick()
+
+    const input = wrapper.find('input.n-input-stub')
+    await input.setValue('[Debugging session](session://match-1)')
+    await vi.advanceTimersByTimeAsync(200)
+    await flushPromises()
+    await nextTick()
+
+    expect(apiMocks.searchSessionsMock).toHaveBeenLastCalledWith('match-1', undefined, 10)
+  })
 })
 
 describe('keyboard shortcut', () => {

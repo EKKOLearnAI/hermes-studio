@@ -18,6 +18,7 @@ import {
   SUPPORT_PREVIEW_FILE_TYPES,
 } from './mermaidRenderer'
 import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
+import { buildSessionHashHref, extractSessionIdFromReference } from '@/utils/session-link'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 const PREVIEW_AREA_WIDTH = 'min(800px, 100vw)'
@@ -128,6 +129,39 @@ function normalizeLocalFilePath(path: string): string {
   return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
 }
 
+function rewriteSessionLinks(html: string): string {
+  if (typeof document === 'undefined') {
+    return html
+  }
+
+  const template = document.createElement('template')
+  template.innerHTML = html
+
+  for (const link of template.content.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    const href = link.getAttribute('href')
+    if (!href?.toLowerCase().startsWith('session://')) {
+      continue
+    }
+
+    const sessionId = extractSessionIdFromReference(href)
+    const hashHref = sessionId ? buildSessionHashHref(sessionId) : null
+    if (!sessionId || !hashHref) {
+      const replacement = document.createElement('span')
+      while (link.firstChild) {
+        replacement.appendChild(link.firstChild)
+      }
+      link.replaceWith(replacement)
+      continue
+    }
+
+    link.setAttribute('href', hashHref)
+    link.classList.add('session-link')
+    link.setAttribute('data-session-id', sessionId)
+  }
+
+  return template.innerHTML
+}
+
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
 
@@ -206,7 +240,8 @@ const renderedHtml = computed(() => {
     const re = new RegExp(`(?<=[\\s>({\\[<]|^)@(${escaped.join('|')})(?=[\\s.,!?;:，。！？；：)\\]}>]|<|$)`, 'gi')
     html = html.replace(re, '<span class="mention-highlight">@$1</span>')
   }
-  return html
+
+  return rewriteSessionLinks(html)
 })
 
 function renderMermaidFallback(element: HTMLElement, source: string): void {

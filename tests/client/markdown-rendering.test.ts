@@ -252,6 +252,32 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.find('.markdown-body').text()).toContain('Done outside.')
   })
 
+  it('rewrites valid session protocol links to internal session hashes', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Debugging session](session://cli%3Amatch-1)',
+      },
+    })
+
+    const link = wrapper.find('a.session-link')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('#/hermes/session/cli%3Amatch-1')
+    expect(link.attributes('data-session-id')).toBe('cli:match-1')
+    expect(link.text()).toBe('Debugging session')
+  })
+
+  it('renders invalid session protocol links as non-clickable text', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Invalid session](session://bad%2Fid)',
+      },
+    })
+
+    expect(wrapper.find('a.session-link').exists()).toBe(false)
+    expect(wrapper.find('.markdown-body a').exists()).toBe(false)
+    expect(wrapper.find('.markdown-body').text()).toContain('Invalid session')
+  })
+
   it('renders local mov links as inline video players', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {
