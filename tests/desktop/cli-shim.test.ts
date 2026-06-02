@@ -34,11 +34,17 @@ describe('Hermes Studio CLI shim', () => {
     expect(content).toContain('exec "$APP" -- --hermes-cli "$@"')
   })
 
-  it('clears Electron Node mode in Windows shims before launching the app', () => {
-    const content = createShimContent('C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe', 'win32')
+  it('runs the bundled Python Hermes CLI directly in Windows shims', () => {
+    const content = createShimContent(
+      'C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe',
+      'win32',
+      'x64',
+    )
 
-    expect(content).toContain('set ELECTRON_RUN_AS_NODE=')
-    expect(content).toContain('"%APP%" -- --hermes-cli %*')
+    expect(content).toContain('desktop-runtime\\win-x64')
+    expect(content).toContain('set "PYTHON=%RUNTIME%\\python\\python.exe"')
+    expect(content).toContain('"%PYTHON%" -m hermes_cli.main %*')
+    expect(content).not.toContain('"%APP%" -- --hermes-cli')
   })
 
   it('detects user bin paths with platform-specific separators', () => {
