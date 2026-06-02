@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess, ExecFileOptions, SpawnOptions } from 'child_process'
 import { existsSync } from 'fs'
-import { basename, dirname, join, resolve } from 'path'
+import { basename, dirname, resolve } from 'path'
 
 export interface HermesInvocation {
   command: string
@@ -31,37 +31,6 @@ function withWindowsHide<T extends ExecFileOptions | SpawnOptions>(options?: T):
   return { windowsHide: true, ...(options || {}) } as T
 }
 
-export function windowsEmbeddedPythonHome(command: string): string | null {
-  if (process.platform !== 'win32') return null
-  if (basename(command).toLowerCase() !== 'python.exe') return null
-
-  const root = dirname(command)
-  if (existsSync(join(root, 'Lib')) || existsSync(join(root, 'python312.zip'))) return root
-  return null
-}
-
-export function withWindowsEmbeddedPythonEnv(command: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const pythonHome = windowsEmbeddedPythonHome(command)
-  if (!pythonHome) return env
-
-  const nextEnv: NodeJS.ProcessEnv = {
-    ...env,
-    PYTHONHOME: pythonHome,
-  }
-  delete nextEnv.PYTHONPATH
-  return nextEnv
-}
-
-function withHermesInvocationEnv<T extends ExecFileOptions | SpawnOptions>(invocation: HermesInvocation, options?: T): T {
-  const hiddenOptions = withWindowsHide(options)
-  const baseEnv = hiddenOptions.env
-    ? { ...process.env, ...hiddenOptions.env }
-    : process.env
-  const env = withWindowsEmbeddedPythonEnv(invocation.command, baseEnv)
-  if (env === process.env && !hiddenOptions.env) return hiddenOptions
-  return { ...hiddenOptions, env } as T
-}
-
 export function resolveHermesInvocation(hermesBin = resolveHermesBin()): HermesInvocation {
   if (process.platform === 'win32') {
     const python = bundledCliPythonForWindows(hermesBin)
@@ -81,7 +50,7 @@ export function execHermesWithBin(
     execFile(
       invocation.command,
       [...invocation.argsPrefix, ...args],
-      { ...withHermesInvocationEnv(invocation, options), encoding: 'utf8' },
+      { ...withWindowsHide(options), encoding: 'utf8' },
       (error, stdout, stderr) => {
         if (error) {
           rejectExec(Object.assign(error, { stdout, stderr }))
@@ -103,7 +72,7 @@ export function spawnHermesWithBin(
   options?: SpawnOptions,
 ): ChildProcess {
   const invocation = resolveHermesInvocation(hermesBin)
-  return spawn(invocation.command, [...invocation.argsPrefix, ...args], withHermesInvocationEnv(invocation, options))
+  return spawn(invocation.command, [...invocation.argsPrefix, ...args], withWindowsHide(options))
 }
 
 export function spawnHermes(args: readonly string[], options?: SpawnOptions): ChildProcess {
