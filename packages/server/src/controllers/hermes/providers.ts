@@ -6,8 +6,8 @@ import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } 
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth'])
-const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex'])
+const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex'])
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
