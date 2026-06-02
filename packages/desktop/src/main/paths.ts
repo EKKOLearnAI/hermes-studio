@@ -78,7 +78,10 @@ export function gitPathDirs(): string[] {
   return [
     join(dir, 'cmd'),
     join(dir, 'mingw64', 'bin'),
-    join(dir, 'usr', 'bin'),
+    // Do not expose Git for Windows' Unix toolchain on PATH. Its usr/bin
+    // includes GNU tools like du.exe/find.exe, which can be picked up by
+    // Hermes or subprocesses and recursively scan Windows profile/AppData
+    // trees. We pass git.exe explicitly via HERMES_AGENT_GIT instead.
   ].filter(existsSync)
 }
 
