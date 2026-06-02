@@ -6,7 +6,12 @@ import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
 import { installHermesStudioCliShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
-import { ensureDesktopRuntime, type RuntimeProgress } from './runtime-manager'
+import {
+  ensureDesktopRuntime,
+  isDesktopRuntimeReady,
+  type RuntimeDownloadSource,
+  type RuntimeProgress,
+} from './runtime-manager'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
@@ -190,6 +195,45 @@ function splashHtml(): string {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
+function runtimeSourceHtml(errorMessage?: string): string {
+  const safeError = errorMessage?.replace(/[<>]/g, '')
+  const errorBlock = safeError
+    ? `<pre style="box-sizing:border-box;width:min(680px,calc(100vw - 48px));max-height:180px;overflow:auto;white-space:pre-wrap;margin:0;color:#ff9b9b;background:#241b1b;border:1px solid #553232;border-radius:6px;padding:12px">${safeError}</pre>`
+    : ''
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1a1a;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
+  .wrap{box-sizing:border-box;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:32px;text-align:center}
+  h1{font-weight:500;margin:0;font-size:20px}
+  .label{font-size:14px;color:#b8b8b8}
+  .actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+  button{min-width:150px;padding:10px 14px;border:1px solid #555;border-radius:6px;background:#2b2b2b;color:#eee;cursor:pointer;font-size:14px}
+  button:hover{background:#343434}
+</style></head><body><div class="wrap">
+<h1>Hermes Studio</h1>
+<div class="label">Select a Hermes runtime download source.</div>
+${errorBlock}
+<div class="actions">
+  <button id="cf">Download from Cloudflare</button>
+  <button id="github">Download from GitHub</button>
+</div>
+<script>
+  document.getElementById('cf')?.addEventListener('click', () => {
+    window.hermesDesktop?.retryBootstrap?.('cf')
+  })
+  document.getElementById('github')?.addEventListener('click', () => {
+    window.hermesDesktop?.retryBootstrap?.('github')
+  })
+</script>
+</div></body></html>`
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
+}
+
+function envRuntimeDownloadSource(): RuntimeDownloadSource | undefined {
+  const source = process.env.HERMES_DESKTOP_RUNTIME_SOURCE?.trim().toLowerCase()
+  return source === 'cf' || source === 'github' ? source : undefined
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB']
@@ -226,27 +270,29 @@ function updateSplash(progress: RuntimeProgress) {
   `).catch(() => undefined)
 }
 
-async function bootstrap() {
+async function bootstrap(source?: RuntimeDownloadSource) {
   if (isBootstrapping) return
   isBootstrapping = true
 
   try {
-    await ensureDesktopRuntime(updateSplash)
+    const selectedSource = source || envRuntimeDownloadSource()
+    const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
+    const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
+    const forceUpdate = !!process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE
+
+    if (!isDesktopRuntimeReady() || forceUpdate || runtimeUrlOverride || manifestOverride) {
+      if (!selectedSource && !runtimeUrlOverride && !manifestOverride) {
+        if (mainWindow) await mainWindow.loadURL(runtimeSourceHtml())
+        isBootstrapping = false
+        return
+      }
+      await ensureDesktopRuntime(updateSplash, selectedSource)
+    }
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)
     if (mainWindow) {
-      const msg = String(err instanceof Error ? err.message : err).replace(/[<>]/g, '')
-      mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
-        `<html><body style="font-family:system-ui;padding:32px;background:#1a1a1a;color:#eee">
-         <h2>Failed to prepare Hermes runtime</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre>
-         <button id="retry" style="margin-top:16px;padding:8px 14px;border:1px solid #555;border-radius:6px;background:#2b2b2b;color:#eee;cursor:pointer">Retry</button>
-         <script>
-           document.getElementById('retry')?.addEventListener('click', () => {
-             window.hermesDesktop?.retryBootstrap?.()
-           })
-         </script>
-         </body></html>`,
-      ))
+      const msg = String(err instanceof Error ? err.message : err)
+      await mainWindow.loadURL(runtimeSourceHtml(`Failed to prepare Hermes runtime\n\n${msg}`))
     }
     isBootstrapping = false
     return
@@ -277,13 +323,14 @@ async function bootstrap() {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
-ipcMain.handle('hermes-desktop:retry-bootstrap', async () => {
+ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: RuntimeDownloadSource) => {
   if (serverUrl) {
     await mainWindow?.loadURL(serverUrl)
     return
   }
+  const selectedSource = source === 'cf' || source === 'github' ? source : undefined
   await mainWindow?.loadURL(splashHtml())
-  await bootstrap()
+  await bootstrap(selectedSource)
 })
 
 function runDesktopApp() {
