@@ -140,7 +140,6 @@ jobs:
         run: npm ci --prefix packages/desktop --no-audit --no-fund
 
       - name: Write runtime release metadata
-        if: github.event.inputs.runtime_release_tag != ''
         shell: bash
         env:
           RUNTIME_RELEASE_TAG: ${{ github.event.inputs.runtime_release_tag }}
