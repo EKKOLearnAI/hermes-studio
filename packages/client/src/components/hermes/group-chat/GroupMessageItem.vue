@@ -15,7 +15,7 @@ import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { getDownloadUrl } from '@/api/hermes/download'
-import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000
 const JSON_STRING_DISPLAY_LIMIT = 200
@@ -28,6 +28,7 @@ const JSON_TRUNCATED_KEY = '__truncated__'
 const props = defineProps<{
     message: ChatMessage
     agents: RoomAgent[]
+    members?: MemberInfo[]
     currentUserId?: string
 }>()
 
@@ -62,6 +63,40 @@ const timeStr = computed(() => {
 
 const avatarProfileName = computed(() => agentInfo.value?.profile || props.message.senderName || props.message.senderId)
 const avatarProfile = computed(() => profilesStore.profiles.find(profile => profile.name === agentInfo.value?.profile))
+
+// 找当前消息发送者在 members 里的记录
+const memberInfo = computed(() => {
+    if (isAgent.value) return null
+    return props.members?.find(m =>
+        m.userId === props.message.senderId ||
+        m.name === props.message.senderName
+    ) || null
+})
+
+// 解析 member 的 avatar JSON
+const memberAvatar = computed(() => {
+    const av = memberInfo.value?.avatar
+    if (!av) return null
+    try {
+        const parsed = typeof av === 'string' ? JSON.parse(av) : av
+        if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
+    } catch {}
+    return null
+})
+
+// 当前消息要显示的头像(profile / member / fallback)
+const currentAvatar = computed(() => {
+    if (isAgent.value) {
+        return avatarProfile.value?.avatar ?? null
+    }
+    return memberAvatar.value
+})
+
+// 给 ProfileAvatar 的 name seed
+const avatarDisplayName = computed(() => {
+    if (isAgent.value) return avatarProfileName.value
+    return props.message.senderName || props.message.senderId || 'user'
+})
 
 const mentionNames = computed(() => ['all', ...props.agents.map(a => a.name).filter(Boolean)])
 const parsedThinking = computed(() => parseThinking(props.message.content || '', { streaming: !!props.message.isStreaming }))
@@ -388,7 +423,7 @@ onBeforeUnmount(() => {
 <template>
     <div v-if="isToolMessage" class="group-message tool-message">
         <div class="avatar">
-            <ProfileAvatar :name="avatarProfileName" :avatar="avatarProfile?.avatar" :size="36" />
+            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">
@@ -434,7 +469,7 @@ onBeforeUnmount(() => {
     <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf }">
         <!-- Avatar -->
         <div class="avatar">
-            <ProfileAvatar :name="avatarProfileName" :avatar="avatarProfile?.avatar" :size="36" />
+            <ProfileAvatar :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
         </div>
 
         <div class="msg-body">

@@ -9,6 +9,7 @@ import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
 import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
+import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -565,9 +566,9 @@ class ChatStorage {
 
     // ─── Room Members ──────────────────────────────────────
 
-    getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number }[] {
+    getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[] {
         return (this.db()?.prepare(
-            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt
+            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar
              FROM gc_room_members m
              WHERE m.roomId = ?
                AND NOT EXISTS (
@@ -576,7 +577,7 @@ class ChatStorage {
                    AND (a.agentId = m.userId OR (m.userId NOT GLOB '????????-????-????-????-????????????' AND COALESCE(m.description, '') = '' AND a.name = m.userName))
                )
              ORDER BY m.joinedAt`
-        ).all(roomId) || []) as unknown as { id: string; userId: string; name: string; description: string; joinedAt: number }[]
+        ).all(roomId) || []) as unknown as { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[]
     }
 
     removeRoomMembersForAgent(roomId: string, agent: Pick<RoomAgent, 'agentId' | 'name'>): void {
@@ -587,25 +588,25 @@ class ChatStorage {
         ).run(roomId, agent.agentId, agent.name)
     }
 
-    addRoomMember(roomId: string, userId: string, userName: string, description: string): void {
+    addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = ''): void {
         const existing = this.getMemberByUserId(roomId, userId)
         if (existing) {
-            // Update name/description on rejoin, refresh updatedAt
+            // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
-                'UPDATE gc_room_members SET userName = ?, description = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
-            ).run(userName, description, Date.now(), roomId, userId)
+                'UPDATE gc_room_members SET userName = ?, description = ?, avatar = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
+            ).run(userName, description, avatar ?? '', Date.now(), roomId, userId)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const now = Date.now()
         this.db()?.prepare(
-            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, userId, userName, description, now, now)
+            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, roomId, userId, userName, description, now, now, avatar ?? '')
     }
 
     getMemberByUserId(roomId: string, userId: string): Member | null {
         return (this.db()?.prepare(
-            'SELECT id, userId, userName as name, description, joinedAt FROM gc_room_members WHERE roomId = ? AND userId = ?'
+            'SELECT id, userId, userName as name, description, joinedAt, avatar FROM gc_room_members WHERE roomId = ? AND userId = ?'
         ).get(roomId, userId) as any) ?? null
     }
 
@@ -893,11 +894,22 @@ export class GroupChatServer {
             this.storage.saveRoom(roomId, roomId)
         }
 
+        // Look up the user's avatar (if they have a Hermes web UI account with the same name)
+        let userAvatar = ''
+        if (source !== 'agent' && userName) {
+            try {
+                const matched = findUserByUsername(userName)
+                if (matched) userAvatar = matched.avatar || ''
+            } catch (err) {
+                logger.info(`[GroupChat] avatar lookup failed for ${userName}: ${(err as Error).message}`)
+            }
+        }
+
         // Persist only human members. Agent sockets are runtime participants
         // tracked through gc_room_agents and AgentClients; storing them in
         // gc_room_members makes member counts grow on reconnect/restore.
         if (source !== 'agent') {
-            this.storage.addRoomMember(roomId, userId, userName, description)
+            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar)
         }
 
         // Add to in-memory online participants (keyed by userId)

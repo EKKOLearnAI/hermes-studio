@@ -63,6 +63,7 @@ export interface MemberInfo {
     name: string
     description: string
     joinedAt: number
+    avatar?: string
 }
 
 export interface JoinResult {
