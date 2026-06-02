@@ -100,12 +100,6 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --prefix packages/desktop --no-audit --no-fund
 
-      - name: Write runtime release metadata
-        shell: bash
-        env:
-          HERMES_DESKTOP_RUNTIME_RELEASE_TAG: ${{ vars.HERMES_DESKTOP_RUNTIME_RELEASE_TAG }}
-        run: npm --prefix packages/desktop run write:runtime-release
-
       - name: Configure macOS signing
         if: matrix.target_os == 'darwin'
         shell: bash
