@@ -1260,6 +1260,17 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_9_1: 'L application utilise maintenant la marque Hermes Studio dans le titre du navigateur, la barre laterale, le titre du site, les metadonnees package et les liens officiels',
+    new_0_6_9_2: 'La verification des mises a jour desktop est plus fiable avec fallback release feed quand l API GitHub est limitee ou que les metadonnees par tag manquent',
+    new_0_6_9_3: 'Sur macOS, l installation de mise a jour arrete d abord le serveur Web UI local puis laisse electron-updater gerer la fermeture et l installation',
+    new_0_6_9_4: 'Les identifiants provider et l auth respectent mieux les scopes Profile, et le demarrage gateway/runtime est plus compatible avec les builds desktop packages',
+    new_0_6_9_5: 'Web Speech du navigateur met maintenant en pause et reprend le message courant dans Chrome au lieu de redemarrer depuis le debut',
+    new_0_6_9_6: 'La localisation russe est maintenant disponible dans le selecteur de langue, avec les messages UI client traduits par la communaute',
+    new_0_6_8_1: 'Les builds desktop ajoutent controles tray, verification manuelle des updates, notifications de mise a jour et ouverture locale dans le navigateur',
+    new_0_6_8_2: 'Le desktop Windows demarre plus discretement et plus fiablement avec subprocesses Python/bridge caches, popups terminal corriges, taille icone tray et packaging navigateur',
+    new_0_6_8_3: 'Le packaging desktop est plus stable entre plateformes avec fixes de limite de fichiers de signature macOS, chemins Linux inscriptibles, cold start runtime et workflow checkout',
+    new_0_6_8_4: 'Le site officiel et la distribution progressent avec mirrors de telechargement, deploy du site apres les releases desktop et nettoyage des desktop smoke checks',
+    new_0_6_8_5: 'L experience runtime progresse avec longueurs de contexte provider, brouillons non envoyes conserves, fixes overflow mobile, ports personnalises SSH File Provider et actions preview non bloquantes',
     new_0_6_7_1: 'L application desktop utilise maintenant le port 8748 par défaut, prend en charge l accès LAN et peut être ouverte directement depuis un navigateur local',
     new_0_6_7_9: 'Les liens de téléchargement desktop sont maintenant disponibles sur le site officiel https://hermes-studio.ai/, et les derniers installateurs restent disponibles via GitHub Releases',
     new_0_6_7_2: 'Les outils MCP sont plus complets avec des corrections de découverte bridge, de cycle de vie MCP et des contrôles de visibilité par modèle dans le gestionnaire',

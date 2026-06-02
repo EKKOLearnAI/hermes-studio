@@ -1482,6 +1482,17 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_9_1: 'The app is now branded as Hermes Studio across the browser title, sidebar, website title, package metadata, and official homepage links',
+    new_0_6_9_2: 'Desktop update checks are more reliable with release-feed fallback handling when GitHub API requests are rate-limited or tag-scoped metadata is missing',
+    new_0_6_9_3: 'macOS desktop update install now stops the local Web UI server before letting electron-updater handle quit and install, so Restart installs the downloaded version',
+    new_0_6_9_4: 'Provider credentials and auth now respect Profile scoping more consistently, and gateway/runtime startup is more compatible with packaged desktop launches',
+    new_0_6_9_5: 'Browser Web Speech playback now pauses and resumes the current message in Chrome instead of restarting from the beginning',
+    new_0_6_9_6: 'Russian localization is now available in the language switcher, with translated client UI messages added by the community',
+    new_0_6_8_1: 'Desktop builds gained tray controls, manual update checks, update notifications, and local-browser launch support for the packaged Web UI',
+    new_0_6_8_2: 'Windows desktop startup is quieter and more reliable, with hidden Python/bridge subprocesses, fixed terminal popups, tray icon sizing, and browser packaging fixes',
+    new_0_6_8_3: 'Desktop packaging is more stable across platforms with macOS signing file-limit fixes, Linux writable paths, runtime cold-start handling, and workflow checkout fixes',
+    new_0_6_8_4: 'Official website and release distribution improved with download mirrors, sequenced website deploys after desktop releases, and desktop smoke-check cleanup',
+    new_0_6_8_5: 'Runtime usability improved with provider context-length preferences, unsent chat draft preservation, mobile layout overflow fixes, SSH file-provider custom ports, and nonblocking preview actions',
     new_0_6_7_1: 'The desktop app now defaults to port 8748, supports LAN access, and can be opened directly from a local browser',
     new_0_6_7_9: 'Desktop download links are now available on the official website at https://hermes-studio.ai/, and the latest installers remain available from GitHub Releases',
     new_0_6_7_2: 'MCP tooling is more complete with bridge tool discovery fixes, MCP management lifecycle fixes, and per-model tool visibility controls in the manager',

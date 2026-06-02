@@ -1260,6 +1260,17 @@ jobTriggered: 'Job acionado',
 
   // Registro de alteracoes
   changelog: {
+    new_0_6_9_1: 'O app agora usa a marca Hermes Studio no titulo do navegador, sidebar, titulo do site, metadados do pacote e links oficiais',
+    new_0_6_9_2: 'A verificacao de atualizacoes desktop ficou mais confiavel com fallback para release feed quando a API do GitHub sofre rate limit ou faltam metadados por tag',
+    new_0_6_9_3: 'No macOS, a instalacao de updates para primeiro o servidor Web UI local e depois deixa o electron-updater cuidar do quit e install',
+    new_0_6_9_4: 'Credenciais de providers e auth respeitam melhor o escopo de Profile, e o startup de gateway/runtime ficou mais compativel com builds desktop empacotados',
+    new_0_6_9_5: 'Browser Web Speech agora pausa e retoma a mensagem atual no Chrome em vez de reiniciar do comeco',
+    new_0_6_9_6: 'A localizacao russa agora esta disponivel no seletor de idioma, com mensagens da UI cliente traduzidas pela comunidade',
+    new_0_6_8_1: 'Builds desktop ganharam controles de tray, verificacao manual de updates, notificacoes de update e abertura local no navegador',
+    new_0_6_8_2: 'O desktop Windows inicia de forma mais silenciosa e confiavel com subprocesses Python/bridge ocultos, popups de terminal corrigidos, tamanho de icone tray e packaging de navegador',
+    new_0_6_8_3: 'O packaging desktop ficou mais estavel entre plataformas com fixes de limite de arquivos de assinatura no macOS, caminhos gravaveis no Linux, runtime cold start e workflow checkout',
+    new_0_6_8_4: 'Site oficial e distribuicao melhoraram com mirrors de download, deploy do site apos releases desktop e limpeza dos desktop smoke checks',
+    new_0_6_8_5: 'A experiencia runtime melhorou com comprimentos de contexto por provider, rascunhos nao enviados preservados, fixes de overflow mobile, portas customizadas no SSH File Provider e acoes preview nao bloqueantes',
     new_0_6_7_1: 'O app desktop agora usa a porta 8748 por padrão, permite acesso pela rede local e pode ser aberto diretamente em um navegador local',
     new_0_6_7_9: 'Links de download do desktop agora estão disponíveis no site oficial https://hermes-studio.ai/, e os instaladores mais recentes continuam disponíveis no GitHub Releases',
     new_0_6_7_2: 'As ferramentas MCP ficam mais completas com correções de discovery no bridge, ciclo de vida de gestão MCP e controles de visibilidade por modelo no gestor',

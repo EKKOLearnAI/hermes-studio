@@ -1259,6 +1259,17 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_9_1: '앱 브랜드를 Hermes Studio 로 통일하고 브라우저 제목, 사이드바, 웹사이트 제목, package metadata, 공식 사이트 링크에 반영했습니다',
+    new_0_6_9_2: 'GitHub API rate limit 이나 tag metadata 누락 시 release feed fallback 을 사용해 Desktop 업데이트 확인이 더 안정적입니다',
+    new_0_6_9_3: 'macOS Desktop 업데이트 설치는 먼저 로컬 Web UI server 를 중지한 뒤 electron-updater 가 종료와 설치를 처리해 Restart 로 다운로드 버전을 적용합니다',
+    new_0_6_9_4: 'Provider 자격 증명과 auth 는 Profile scope 를 더 일관되게 따르며 gateway/runtime 시작도 패키징된 Desktop 실행과 더 호환됩니다',
+    new_0_6_9_5: 'Browser Web Speech 는 Chrome 에서 현재 메시지를 일시정지/재개하며 일시정지 클릭 시 처음부터 다시 재생하지 않습니다',
+    new_0_6_9_6: '언어 전환기에 러시아어가 추가되었으며 커뮤니티가 번역한 client UI 메시지를 포함합니다',
+    new_0_6_8_1: 'Desktop build 에 tray control, 수동 update check, update notification, 패키징된 Web UI 의 local browser open 을 추가했습니다',
+    new_0_6_8_2: 'Windows Desktop 은 숨김 Python/bridge subprocess, terminal popup 수정, tray icon 크기 수정, browser packaging 수정으로 더 조용하고 안정적으로 시작합니다',
+    new_0_6_8_3: 'Desktop packaging 은 macOS signing file limit, Linux writable path, runtime cold start, workflow checkout 수정으로 플랫폼 전반의 안정성이 향상되었습니다',
+    new_0_6_8_4: '공식 사이트와 release 배포는 download mirrors, Desktop release 이후 website deploy, desktop smoke check 정리로 개선되었습니다',
+    new_0_6_8_5: 'Provider context length 우선 사용, 미전송 chat draft 보존, mobile layout overflow 수정, SSH File Provider custom port, nonblocking preview actions 로 runtime 경험을 개선했습니다',
     new_0_6_7_1: 'Desktop 앱은 기본적으로 8748 포트를 사용하며 LAN 접근과 로컬 브라우저 직접 열기를 지원합니다',
     new_0_6_7_9: 'Desktop 다운로드 링크가 공식 웹사이트 https://hermes-studio.ai/ 에 추가되었으며 최신 설치 파일은 GitHub Releases 에서도 계속 받을 수 있습니다',
     new_0_6_7_2: 'MCP 도구는 bridge tool discovery 수정, MCP 관리 라이프사이클 수정, 관리자 화면의 모델별 tool visibility 제어로 더 완성되었습니다',

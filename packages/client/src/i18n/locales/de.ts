@@ -1260,6 +1260,17 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_9_1: 'Die App ist jetzt als Hermes Studio gebrandet, inklusive Browser-Titel, Sidebar, Website-Titel, Package-Metadaten und offiziellen Website-Links',
+    new_0_6_9_2: 'Desktop-Update-Pruefungen sind robuster mit Release-Feed-Fallbacks, wenn GitHub API Requests rate-limited sind oder tag-spezifische Metadaten fehlen',
+    new_0_6_9_3: 'macOS Desktop-Updates stoppen vor der Installation den lokalen Web UI Server und lassen dann electron-updater Quit und Installation ausfuehren, sodass Restart die geladene Version installiert',
+    new_0_6_9_4: 'Provider-Zugangsdaten und Auth respektieren Profile-Scopes konsistenter, und Gateway/Runtime-Start ist kompatibler mit paketierten Desktop-Starts',
+    new_0_6_9_5: 'Browser Web Speech pausiert und setzt die aktuelle Nachricht in Chrome jetzt fort, statt beim Pausieren von vorne neu zu starten',
+    new_0_6_9_6: 'Russische Lokalisierung ist jetzt im Sprachumschalter verfuegbar, inklusive von der Community uebersetzter Client-UI-Texte',
+    new_0_6_8_1: 'Desktop-Builds erhalten Tray-Steuerung, manuelle Update-Pruefung, Update-Hinweise und lokales Browser-Oeffnen fuer die paketierte Web UI',
+    new_0_6_8_2: 'Windows Desktop startet leiser und zuverlaessiger mit versteckten Python/bridge-Subprozessen, korrigierten Terminal-Popups, Tray-Icon-Groessen und Browser-Packaging',
+    new_0_6_8_3: 'Desktop-Packaging ist plattformuebergreifend stabiler mit macOS Signing-Dateilimit-Fixes, Linux beschreibbaren Pfaden, Runtime-Cold-Start-Handling und Workflow-Checkout-Fixes',
+    new_0_6_8_4: 'Website und Release-Verteilung wurden mit Download-Mirrors, sequenziertem Website-Deploy nach Desktop-Releases und Desktop-Smoke-Check-Cleanup verbessert',
+    new_0_6_8_5: 'Die Runtime-Nutzung wurde verbessert mit Provider-Kontextlaengen, erhaltenen ungesendeten Chat-Entwuerfen, Mobile-Layout-Overflow-Fixes, SSH File Provider Custom Ports und nicht-blockierenden Preview-Aktionen',
     new_0_6_7_1: 'Die Desktop-App nutzt jetzt standardmäßig Port 8748, unterstützt Zugriff im lokalen Netzwerk und kann direkt im lokalen Browser geöffnet werden',
     new_0_6_7_9: 'Desktop-Download-Links sind jetzt auf der offiziellen Website https://hermes-studio.ai/ verfügbar, aktuelle Installer bleiben außerdem über GitHub Releases verfügbar',
     new_0_6_7_2: 'MCP-Tools sind vollständiger: Bridge Tool Discovery, MCP-Management-Lifecycle und Tool-Sichtbarkeit pro Modell im Manager wurden verbessert',

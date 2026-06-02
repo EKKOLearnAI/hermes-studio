@@ -1260,6 +1260,17 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_9_1: 'La app ahora usa la marca Hermes Studio en el titulo del navegador, la barra lateral, el titulo del sitio, los metadatos del paquete y los enlaces oficiales',
+    new_0_6_9_2: 'La comprobacion de actualizaciones de escritorio es mas fiable con fallback al release feed cuando la API de GitHub tiene rate limit o faltan metadatos por tag',
+    new_0_6_9_3: 'En macOS, la instalacion de actualizaciones detiene primero el servidor Web UI local y luego deja que electron-updater gestione el cierre y la instalacion',
+    new_0_6_9_4: 'Las credenciales de proveedores y la autenticacion respetan mejor el scope de Profile, y el arranque de gateway/runtime es mas compatible con builds de escritorio',
+    new_0_6_9_5: 'Web Speech del navegador ahora pausa y reanuda el mensaje actual en Chrome en vez de reiniciarlo desde el principio',
+    new_0_6_9_6: 'La localizacion rusa ya esta disponible en el selector de idioma, con mensajes de UI del cliente traducidos por la comunidad',
+    new_0_6_8_1: 'Los builds de escritorio incorporan controles de tray, comprobacion manual de actualizaciones, notificaciones de update y apertura local en navegador',
+    new_0_6_8_2: 'El escritorio de Windows arranca de forma mas silenciosa y fiable con subprocesses Python/bridge ocultos, popups de terminal corregidos, tamano de icono de tray y packaging del navegador',
+    new_0_6_8_3: 'El packaging de escritorio es mas estable entre plataformas con fixes de limite de archivos de firma en macOS, rutas escribibles en Linux, cold start de runtime y workflow checkout',
+    new_0_6_8_4: 'El sitio oficial y la distribucion mejoran con mirrors de descarga, deploy del sitio secuenciado despues del release de escritorio y limpieza de desktop smoke checks',
+    new_0_6_8_5: 'La experiencia runtime mejora con longitudes de contexto preferidas por provider, borradores sin enviar preservados, fixes de overflow movil, puertos personalizados en SSH File Provider y acciones de preview no bloqueantes',
     new_0_6_7_1: 'La app de escritorio ahora usa el puerto 8748 por defecto, permite acceso desde la red local y puede abrirse directamente desde un navegador local',
     new_0_6_7_9: 'Los enlaces de descarga de escritorio ya están disponibles en el sitio oficial https://hermes-studio.ai/, y los instaladores más recientes siguen disponibles en GitHub Releases',
     new_0_6_7_2: 'Las herramientas MCP quedan más completas con arreglos de discovery en bridge, ciclo de vida de gestión MCP y controles de visibilidad por modelo en el gestor',

@@ -1487,6 +1487,17 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_9_1: '應用品牌統一為 Hermes Studio，涵蓋瀏覽器標題、側邊欄、官網標題、package metadata 和官網連結',
+    new_0_6_9_2: '桌面端檢查更新更可靠：GitHub API 被限流或 tag 路徑缺少 metadata 時會走 release feed 備援',
+    new_0_6_9_3: 'macOS 桌面端安裝更新時會先停止本機 Web UI server，再交給 electron-updater 退出安裝，修復點擊重啟不安裝的問題',
+    new_0_6_9_4: 'Provider 憑證與認證更嚴格遵循 Profile 作用域，gateway/runtime 啟動也更相容桌面端打包環境',
+    new_0_6_9_5: '瀏覽器 Web Speech 播放現在會在 Chrome 中暫停/恢復目前訊息，不再點擊暫停後從頭重播',
+    new_0_6_9_6: '語言切換器新增俄語，本次合入社群貢獻的俄語用戶端介面翻譯',
+    new_0_6_8_1: '桌面端補齊托盤控制、手動檢查更新、更新提示，以及從本機瀏覽器開啟打包 Web UI 的能力',
+    new_0_6_8_2: 'Windows 桌面端啟動更安靜也更穩定：隱藏 Python/bridge 子程序，修復終端機彈窗、托盤圖示尺寸和瀏覽器打包問題',
+    new_0_6_8_3: '跨平台桌面打包更穩定：修復 macOS 簽名檔案數量限制、Linux 可寫路徑、runtime 冷啟動和 workflow checkout 問題',
+    new_0_6_8_4: '官網與發佈鏈路改進：新增下載鏡像，桌面 release 後再部署官網，並清理桌面 smoke check 流程',
+    new_0_6_8_5: '執行體驗繼續優化：優先使用 provider 上下文長度、保留未送出草稿、修復行動端版面溢出、SSH 檔案 Provider 自訂連接埠和非阻塞預覽操作',
     new_0_6_7_1: '桌面版預設使用 8748 連接埠，支援區域網路內存取，也可以直接用本機瀏覽器開啟 Web UI',
     new_0_6_7_9: '桌面端下載入口已補充到官網 https://hermes-studio.ai/，也可以繼續從 GitHub Releases 取得最新安裝包',
     new_0_6_7_2: 'MCP 工具鏈繼續完善：修復 bridge 工具發現與 MCP 管理生命週期，並在管理頁支援按模型控制工具可見性',

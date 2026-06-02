@@ -1259,6 +1259,17 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_9_1: 'アプリのブランドを Hermes Studio に統一し、ブラウザタイトル、サイドバー、Web サイトタイトル、package metadata、公式サイトリンクに反映しました',
+    new_0_6_9_2: 'GitHub API の rate limit や tag 別 metadata 欠落時に release feed fallback を使い、Desktop の更新チェックがより安定しました',
+    new_0_6_9_3: 'macOS Desktop の更新インストールは先にローカル Web UI server を停止し、electron-updater に終了とインストールを任せるため Restart で正しく適用されます',
+    new_0_6_9_4: 'Provider 認証情報と auth は Profile scope をより一貫して扱い、gateway/runtime 起動も packaged Desktop により適合しました',
+    new_0_6_9_5: 'Browser Web Speech は Chrome で現在のメッセージを一時停止/再開し、停止ボタンで先頭から再生し直さないようになりました',
+    new_0_6_9_6: '言語切り替えにロシア語を追加し、community による client UI message 翻訳を取り込みました',
+    new_0_6_8_1: 'Desktop build に tray control、手動 update check、update notification、packaged Web UI の local browser open を追加しました',
+    new_0_6_8_2: 'Windows Desktop は Python/bridge subprocess 非表示、terminal popup 修正、tray icon sizing、browser packaging 修正でより静かで安定した起動になりました',
+    new_0_6_8_3: 'Desktop packaging は macOS signing file limit、Linux writable path、runtime cold start、workflow checkout 修正で各 platform の安定性が向上しました',
+    new_0_6_8_4: '公式サイトと release 配布は download mirrors、Desktop release 後の website deploy、desktop smoke check cleanup により改善しました',
+    new_0_6_8_5: 'Provider context length 優先、未送信 chat draft 保持、mobile layout overflow 修正、SSH File Provider custom port、nonblocking preview actions で runtime 体験を改善しました',
     new_0_6_7_1: 'Desktop アプリは既定で port 8748 を使用し、LAN アクセスとローカルブラウザからの直接アクセスに対応しました',
     new_0_6_7_9: 'Desktop のダウンロードリンクを公式サイト https://hermes-studio.ai/ に追加し、最新インストーラーは引き続き GitHub Releases からも取得できます',
     new_0_6_7_2: 'MCP ツールは bridge の tool discovery 修正、MCP 管理ライフサイクル修正、管理画面のモデル別 tool visibility によりさらに整備されました',
