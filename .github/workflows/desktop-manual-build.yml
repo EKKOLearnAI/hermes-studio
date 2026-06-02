@@ -24,6 +24,10 @@ on:
         description: "Optional release tag to attach artifacts to"
         required: false
         type: string
+      runtime_release_tag:
+        description: "Optional runtime release tag embedded into the desktop app"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -134,6 +138,14 @@ jobs:
 
       - name: Install desktop dependencies
         run: npm ci --prefix packages/desktop --no-audit --no-fund
+
+      - name: Write runtime release metadata
+        shell: bash
+        env:
+          RUNTIME_RELEASE_TAG: ${{ github.event.inputs.runtime_release_tag }}
+        run: |
+          tag="${RUNTIME_RELEASE_TAG:-$(node packages/desktop/scripts/runtime-asset-name.mjs --release-tag)}"
+          TAG="$tag" node -e 'const fs=require("fs"); fs.writeFileSync("packages/desktop/build/runtime-release.json", JSON.stringify({tag: process.env.TAG}, null, 2) + "\n")'
 
       - name: Configure macOS signing
         if: needs.validate.outputs.target_os == 'darwin'

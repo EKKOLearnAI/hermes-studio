@@ -16,6 +16,7 @@ let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
+let isBootstrapping = false
 
 function showMainWindow() {
   if (!mainWindow) {
@@ -226,6 +227,9 @@ function updateSplash(progress: RuntimeProgress) {
 }
 
 async function bootstrap() {
+  if (isBootstrapping) return
+  isBootstrapping = true
+
   try {
     await ensureDesktopRuntime(updateSplash)
   } catch (err) {
@@ -235,9 +239,16 @@ async function bootstrap() {
       mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
         `<html><body style="font-family:system-ui;padding:32px;background:#1a1a1a;color:#eee">
          <h2>Failed to prepare Hermes runtime</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre>
+         <button id="retry" style="margin-top:16px;padding:8px 14px;border:1px solid #555;border-radius:6px;background:#2b2b2b;color:#eee;cursor:pointer">Retry</button>
+         <script>
+           document.getElementById('retry')?.addEventListener('click', () => {
+             window.hermesDesktop?.retryBootstrap?.()
+           })
+         </script>
          </body></html>`,
       ))
     }
+    isBootstrapping = false
     return
   }
 
@@ -260,10 +271,20 @@ async function bootstrap() {
          </body></html>`,
       ))
     }
+  } finally {
+    isBootstrapping = false
   }
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+ipcMain.handle('hermes-desktop:retry-bootstrap', async () => {
+  if (serverUrl) {
+    await mainWindow?.loadURL(serverUrl)
+    return
+  }
+  await mainWindow?.loadURL(splashHtml())
+  await bootstrap()
+})
 
 function runDesktopApp() {
   const gotLock = app.requestSingleInstanceLock()

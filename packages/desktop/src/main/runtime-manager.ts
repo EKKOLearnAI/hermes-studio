@@ -25,7 +25,7 @@ import {
 } from './paths'
 
 const execFileAsync = promisify(execFile)
-const DEFAULT_RUNTIME_REPO = 'EKKOLearnAI/hermes-web-ui'
+const DEFAULT_RUNTIME_BASE_URL = 'https://download.ekkolearnai.com'
 const RUNTIME_MANIFEST_NAME = 'runtime-manifest.json'
 const PACKAGED_RUNTIME_RELEASE_NAME = 'runtime-release.json'
 
@@ -89,21 +89,21 @@ function packagedRuntimeReleaseTag(): string | null {
 }
 
 function runtimeAssetUrl(assetName: string, tag: string): string {
-  const template = process.env.HERMES_DESKTOP_RUNTIME_BASE_URL?.trim()
-  if (template) {
-    if (template.includes('{asset}') || template.includes('{tag}')) {
-      return template
-        .replace(/\{asset\}/g, encodeURIComponent(assetName))
-        .replace(/\{tag\}/g, encodeURIComponent(tag))
+  const repo = process.env.HERMES_DESKTOP_RUNTIME_REPO?.trim()
+  if (repo) {
+    if (tag === 'latest') {
+      return `https://github.com/${repo}/releases/latest/download/${encodeURIComponent(assetName)}`
     }
-    return `${template.replace(/\/$/, '')}/${encodeURIComponent(assetName)}`
+    return `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`
   }
 
-  const repo = process.env.HERMES_DESKTOP_RUNTIME_REPO?.trim() || DEFAULT_RUNTIME_REPO
-  if (tag === 'latest') {
-    return `https://github.com/${repo}/releases/latest/download/${encodeURIComponent(assetName)}`
+  const template = process.env.HERMES_DESKTOP_RUNTIME_BASE_URL?.trim() || DEFAULT_RUNTIME_BASE_URL
+  if (template.includes('{asset}') || template.includes('{tag}')) {
+    return template
+      .replace(/\{asset\}/g, encodeURIComponent(assetName))
+      .replace(/\{tag\}/g, encodeURIComponent(tag))
   }
-  return `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`
+  return `${template.replace(/\/$/, '')}/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
