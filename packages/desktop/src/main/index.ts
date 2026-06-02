@@ -198,24 +198,50 @@ function splashHtml(): string {
 function runtimeSourceHtml(errorMessage?: string): string {
   const safeError = errorMessage?.replace(/[<>]/g, '')
   const errorBlock = safeError
-    ? `<pre style="box-sizing:border-box;width:min(680px,calc(100vw - 48px));max-height:180px;overflow:auto;white-space:pre-wrap;margin:0;color:#ff9b9b;background:#241b1b;border:1px solid #553232;border-radius:6px;padding:12px">${safeError}</pre>`
+    ? `<section class="error" aria-live="polite">
+        <div class="error-title">Download failed</div>
+        <pre>${safeError}</pre>
+       </section>`
     : ''
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
 <style>
-  html,body{margin:0;height:100%;background:#1a1a1a;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
-  .wrap{box-sizing:border-box;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:32px;text-align:center}
-  h1{font-weight:500;margin:0;font-size:20px}
-  .label{font-size:14px;color:#b8b8b8}
-  .actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
-  button{min-width:150px;padding:10px 14px;border:1px solid #555;border-radius:6px;background:#2b2b2b;color:#eee;cursor:pointer;font-size:14px}
-  button:hover{background:#343434}
-</style></head><body><div class="wrap">
-<h1>Hermes Studio</h1>
-<div class="label">Select a Hermes runtime download source.</div>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:#191919;color:#f1f1f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
+  body{display:grid;place-items:center;padding:32px}
+  .wrap{width:min(720px,100%);display:flex;flex-direction:column;align-items:center;gap:22px;text-align:center}
+  .brand{display:flex;align-items:center;gap:10px;color:#f6f6f6}
+  .mark{width:32px;height:32px;border-radius:7px;background:#f0f0f0;color:#171717;display:grid;place-items:center;font-weight:700;font-size:16px}
+  h1{font-weight:560;margin:0;font-size:22px;line-height:1.25}
+  .label{max-width:520px;font-size:14px;line-height:1.6;color:#b9b9b9;margin:0}
+  .actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  button{min-height:86px;border:1px solid #4c4c4c;border-radius:8px;background:#242424;color:#f2f2f2;cursor:pointer;padding:16px;text-align:left;display:flex;flex-direction:column;gap:7px;transition:background .14s ease,border-color .14s ease,transform .14s ease}
+  button:hover{background:#2d2d2d;border-color:#747474;transform:translateY(-1px)}
+  button:active{transform:translateY(0)}
+  button:focus-visible{outline:2px solid #dcdcdc;outline-offset:3px}
+  .button-title{font-size:15px;font-weight:650;line-height:1.2}
+  .button-detail{font-size:12px;line-height:1.45;color:#aaaaaa}
+  .error{width:100%;text-align:left;background:#241b1b;border:1px solid #6b3939;border-radius:8px;padding:14px}
+  .error-title{font-size:13px;font-weight:650;color:#ffc3c3;margin-bottom:8px}
+  pre{width:100%;max-height:180px;overflow:auto;white-space:pre-wrap;margin:0;color:#ffaaaa;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  @media (max-width:560px){
+    body{padding:24px}
+    .actions{grid-template-columns:1fr}
+    button{min-height:78px}
+  }
+</style></head><body><main class="wrap">
+<div class="brand"><div class="mark">H</div><h1>Hermes Studio</h1></div>
+<p class="label">Select a runtime download source to start local services.</p>
 ${errorBlock}
 <div class="actions">
-  <button id="cf">Download from Cloudflare</button>
-  <button id="github">Download from GitHub</button>
+  <button id="cf">
+    <span class="button-title">Download from Cloudflare</span>
+    <span class="button-detail">Use the Hermes Studio download proxy.</span>
+  </button>
+  <button id="github">
+    <span class="button-title">Download from GitHub</span>
+    <span class="button-detail">Use the release asset directly from GitHub.</span>
+  </button>
 </div>
 <script>
   document.getElementById('cf')?.addEventListener('click', () => {
@@ -225,7 +251,7 @@ ${errorBlock}
     window.hermesDesktop?.retryBootstrap?.('github')
   })
 </script>
-</div></body></html>`
+</main></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
