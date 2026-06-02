@@ -53,6 +53,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   preview: 'TEXT NOT NULL DEFAULT \'\'',
   last_active: 'INTEGER NOT NULL',
   workspace: 'TEXT',
+  archived: 'INTEGER NOT NULL DEFAULT 0',
 }
 
 export const MESSAGES_TABLE = 'messages'

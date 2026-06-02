@@ -14,6 +14,8 @@ const downloadApiMock = vi.hoisted(() => ({
   downloadFile: vi.fn(() => Promise.resolve()),
   fetchFileText: vi.fn(() => Promise.resolve('preview content')),
   getDownloadUrl: vi.fn((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`),
+  openFileWithDefault: vi.fn(() => Promise.resolve(true)),
+  openInExplorer: vi.fn(() => Promise.resolve(true)),
 }))
 
 vi.mock('mermaid', () => ({
@@ -56,12 +58,19 @@ vi.mock('naive-ui', () => ({
     warning: vi.fn(),
     info: vi.fn(),
   }),
+  NDropdown: {
+    props: ['show', 'x', 'y', 'options', 'placement', 'trigger'],
+    template: '<div class="n-dropdown-stub"><slot /></div>',
+    emits: ['select', 'clickoutside'],
+  },
 }))
 
 vi.mock('@/api/hermes/download', () => ({
   downloadFile: downloadApiMock.downloadFile,
   fetchFileText: downloadApiMock.fetchFileText,
   getDownloadUrl: downloadApiMock.getDownloadUrl,
+  openFileWithDefault: downloadApiMock.openFileWithDefault,
+  openInExplorer: downloadApiMock.openInExplorer,
 }))
 
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'

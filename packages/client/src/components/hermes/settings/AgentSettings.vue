@@ -63,6 +63,20 @@ function debouncedSave(key: string, value: any) {
         @update:value="v => v != null && debouncedSave('restart_drain_timeout', v)"
       />
     </SettingRow>
+    <SettingRow :label="t('settings.agent.reasoningEffort')" :hint="t('settings.agent.reasoningEffortHint')">
+      <NSelect
+        :value="settingsStore.agent.reasoning_effort || ''"
+        :options="[
+          { label: t('settings.agent.default'), value: '' },
+          { label: 'low', value: 'low' },
+          { label: 'medium', value: 'medium' },
+          { label: 'high', value: 'high' },
+          { label: 'xhigh', value: 'xhigh' },
+        ]"
+        size="small" class="input-sm"
+        @update:value="v => save({ reasoning_effort: v })"
+      />
+    </SettingRow>
     <SettingRow :label="t('settings.agent.toolEnforcement')" :hint="t('settings.agent.toolEnforcementHint')">
       <NSelect
         :value="settingsStore.agent.tool_use_enforcement || 'auto'"

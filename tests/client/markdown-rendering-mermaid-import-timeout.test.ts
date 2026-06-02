@@ -22,6 +22,11 @@ vi.mock('naive-ui', () => ({
   NSpin: {
     template: '<div><slot /></div>',
   },
+  NDropdown: {
+    props: ['show', 'x', 'y', 'options', 'placement', 'trigger'],
+    template: '<div class="n-dropdown-stub"><slot /></div>',
+    emits: ['select', 'clickoutside'],
+  },
   useMessage: () => ({
     error: vi.fn(),
     success: vi.fn(),

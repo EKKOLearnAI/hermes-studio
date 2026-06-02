@@ -16,6 +16,11 @@ vi.mock('naive-ui', () => ({
     warning: vi.fn(),
     info: vi.fn(),
   }),
+  NDropdown: {
+    props: ['show', 'x', 'y', 'options', 'placement', 'trigger'],
+    template: '<div class="n-dropdown-stub"><slot /></div>',
+    emits: ['select', 'clickoutside'],
+  },
 }))
 
 import MessageItem from '@/components/hermes/chat/MessageItem.vue'

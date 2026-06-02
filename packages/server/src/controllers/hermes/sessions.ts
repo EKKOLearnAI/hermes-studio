@@ -314,8 +314,9 @@ export async function list(ctx: any) {
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const profile = explicitProfileFilter(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
+  const includeArchived = ctx.query.includeArchived === 'true' || ctx.query.includeArchived === '1'
 
-  const allSessions = localListSessions(profile, source, effectiveLimit)
+  const allSessions = localListSessions(profile, source, effectiveLimit, includeArchived)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
     sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
@@ -334,9 +335,10 @@ export async function listHermesSessions(ctx: any) {
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const profile = requestedProfile(ctx)
   const effectiveLimit = limit && limit > 0 ? limit : 2000
+  const includeArchived = ctx.query.includeArchived === 'true' || ctx.query.includeArchived === '1'
 
   const importedIds = new Set(localListSessions(profile, undefined, effectiveLimit).map(session => session.id))
-  const allSessions = (await listSessionSummaries(source, effectiveLimit, profile))
+  const allSessions = (await listSessionSummaries(source, effectiveLimit, profile, includeArchived))
     .map(session => ({
       ...(profile ? { ...session, profile } : session),
       webui_imported: importedIds.has(session.id),
@@ -660,6 +662,34 @@ export async function setWorkspace(ctx: any) {
     createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
   }
   updateSession(id, { workspace: workspace || null } as any)
+  ctx.body = { ok: true }
+}
+
+export async function archive(ctx: any) {
+  const { updateSession, getSession } = await import('../../db/hermes/session-store')
+  const id = ctx.params.id
+  const existing = getSession(id)
+  if (denySessionAccess(ctx, existing)) return
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  updateSession(id, { archived: 1 })
+  ctx.body = { ok: true }
+}
+
+export async function unarchive(ctx: any) {
+  const { updateSession, getSession } = await import('../../db/hermes/session-store')
+  const id = ctx.params.id
+  const existing = getSession(id)
+  if (denySessionAccess(ctx, existing)) return
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  updateSession(id, { archived: 0 })
   ctx.body = { ok: true }
 }
 

@@ -24,6 +24,7 @@ export interface SessionSummary {
   cost_status: string
   workspace?: string | null
   webui_imported?: boolean
+  archived?: number
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -59,11 +60,12 @@ export interface HermesMessage {
   reasoning: string | null
 }
 
-export async function fetchSessions(source?: string, limit?: number, profile?: string): Promise<SessionSummary[]> {
+export async function fetchSessions(source?: string, limit?: number, profile?: string, includeArchived = false): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (source) params.set('source', source)
   if (limit) params.set('limit', String(limit))
   if (profile) params.set('profile', profile)
+  if (includeArchived) params.set('includeArchived', 'true')
   const query = params.toString()
   const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions${query ? `?${query}` : ''}`)
   return res.sessions
@@ -72,11 +74,12 @@ export async function fetchSessions(source?: string, limit?: number, profile?: s
 /**
  * Fetch Hermes sessions only (exclude api_server source)
  */
-export async function fetchHermesSessions(source?: string, limit?: number, profile?: string | null): Promise<SessionSummary[]> {
+export async function fetchHermesSessions(source?: string, limit?: number, profile?: string | null, includeArchived = false): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (source) params.set('source', source)
   if (limit) params.set('limit', String(limit))
   if (profile) params.set('profile', profile)
+  if (includeArchived) params.set('includeArchived', 'true')
   const query = params.toString()
   const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions/hermes${query ? `?${query}` : ''}`)
   return res.sessions
@@ -220,6 +223,24 @@ export async function setSessionModel(id: string, model: string, provider: strin
       method: 'POST',
       body: JSON.stringify({ model, provider }),
     })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function archiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/archive`, { method: 'POST' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function unarchiveSession(id: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/sessions/${id}/unarchive`, { method: 'POST' })
     return true
   } catch {
     return false

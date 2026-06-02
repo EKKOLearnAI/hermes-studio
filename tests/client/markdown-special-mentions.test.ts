@@ -23,7 +23,10 @@ vi.mock('naive-ui', async (importOriginal) => {
 
 vi.mock('@/api/hermes/download', () => ({
   downloadFile: vi.fn(),
+  fetchFileText: vi.fn(),
   getDownloadUrl: vi.fn((path: string) => `/download?path=${encodeURIComponent(path)}`),
+  openFileWithDefault: vi.fn(),
+  openInExplorer: vi.fn(),
 }))
 
 vi.mock('@/components/hermes/chat/mermaidRenderer', () => ({
