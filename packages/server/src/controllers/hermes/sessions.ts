@@ -675,7 +675,7 @@ export async function archive(ctx: any) {
     ctx.body = { error: 'Session not found' }
     return
   }
-  updateSession(id, { archived: 1 } as any)
+  updateSession(id, { archived: 1 })
   ctx.body = { ok: true }
 }
 
@@ -689,7 +689,7 @@ export async function unarchive(ctx: any) {
     ctx.body = { error: 'Session not found' }
     return
   }
-  updateSession(id, { archived: 0 } as any)
+  updateSession(id, { archived: 0 })
   ctx.body = { ok: true }
 }
 

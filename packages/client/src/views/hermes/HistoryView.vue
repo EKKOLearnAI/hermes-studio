@@ -588,14 +588,14 @@ async function handleContextMenuSelect(key: string) {
       const ok = await unarchiveSession(id)
       if (ok) {
         const summary = findHistorySession(id)
-        if (summary) (summary as any).archived = 0
+        if (summary) summary.archived = 0
         message.success(t('chat.unarchived'))
       }
     } else {
       const ok = await archiveSession(id)
       if (ok) {
         const summary = findHistorySession(id)
-        if (summary) (summary as any).archived = 1
+        if (summary) summary.archived = 1
         message.success(t('chat.archived'))
       }
     }
