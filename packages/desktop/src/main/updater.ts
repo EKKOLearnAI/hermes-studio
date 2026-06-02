@@ -6,12 +6,8 @@ let initialized = false
 let checking = false
 let updateDownloaded = false
 
-const LATEST_RELEASE_URL = 'https://api.github.com/repos/EKKOLearnAI/hermes-web-ui/releases/latest'
+const LATEST_RELEASE_DOWNLOAD_URL = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download'
 const CLOUDFLARE_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
-
-interface GitHubRelease {
-  tag_name?: string
-}
 
 class MissingUpdateInfoError extends Error {
   constructor(public readonly url: string) {
@@ -26,18 +22,25 @@ interface AutoUpdaterOptions {
 
 let options: AutoUpdaterOptions = {}
 
-async function getLatestReleaseTag(): Promise<string> {
-  const res = await fetch(LATEST_RELEASE_URL, {
+async function getLatestReleaseTag(assetName: string): Promise<string> {
+  const res = await fetch(`${LATEST_RELEASE_DOWNLOAD_URL}/${encodeURIComponent(assetName)}`, {
+    method: 'HEAD',
+    redirect: 'manual',
     headers: {
-      Accept: 'application/vnd.github+json',
       'User-Agent': `Hermes-Studio/${app.getVersion()}`,
     },
   })
-  if (!res.ok) throw new Error(`GitHub returned ${res.status}`)
 
-  const release = await res.json() as GitHubRelease
-  const tag = release.tag_name?.trim()
-  if (!tag) throw new Error('Latest release response did not include a tag')
+  if (res.status < 300 || res.status >= 400) throw new Error(`GitHub returned ${res.status}`)
+
+  const location = res.headers.get('location')
+  if (!location) throw new Error('Latest release redirect did not include a location')
+
+  const redirectUrl = new URL(location, LATEST_RELEASE_DOWNLOAD_URL)
+  const parts = redirectUrl.pathname.split('/')
+  const downloadIndex = parts.indexOf('download')
+  const tag = downloadIndex >= 0 ? parts[downloadIndex + 1]?.trim() : ''
+  if (!tag) throw new Error('Latest release redirect did not include a tag')
   return tag
 }
 
@@ -60,7 +63,7 @@ async function assertUpdateManifestExists(feedUrl: string): Promise<void> {
 }
 
 async function configureFeedFromLatestRelease(): Promise<void> {
-  const tag = await getLatestReleaseTag()
+  const tag = await getLatestReleaseTag(updateManifestFile())
   const feedUrl = `${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}`
   await assertUpdateManifestExists(feedUrl)
   autoUpdater.setFeedURL({
