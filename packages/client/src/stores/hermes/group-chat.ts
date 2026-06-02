@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getApiKey } from '@/api/client'
+import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { Attachment, ContentBlock } from './chat'
 import {
@@ -215,10 +216,16 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     })
 
     // ─── Connection ────────────────────────────────────────
-    function connect() {
+    async function connect() {
+        let authUserId: number | undefined
+        try {
+            const user = await fetchCurrentUser()
+            authUserId = user.id
+        } catch { /* non-critical: avatar fallback handles missing id */ }
         const socket = connectGroupChat({
             userId: userId.value,
             userName: userName.value || undefined,
+            authUserId,
         })
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })
 
