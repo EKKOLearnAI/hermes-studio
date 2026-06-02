@@ -6,8 +6,6 @@ on:
       tag:
         description: "Existing release tag to attach runtime assets to"
         required: true
-  release:
-    types: [published]
 
 permissions:
   contents: write
