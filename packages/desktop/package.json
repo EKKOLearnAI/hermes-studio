@@ -7,7 +7,7 @@
     "name": "Hermes Studio Contributors",
     "email": "noreply@hermes-studio.local"
   },
-  "license": "MIT",
+  "license": "BSL-1.1",
   "private": true,
   "main": "dist/main/index.js",
   "scripts": {
