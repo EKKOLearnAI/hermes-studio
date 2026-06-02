@@ -15,6 +15,7 @@ import {
 } from './paths'
 import { HERMES_CLI_ARG } from './cli-constants'
 import { ensureDesktopRuntime } from './runtime-manager'
+import { resolveDesktopHermesCliInvocation } from './hermes-cli-invocation'
 
 export function parseHermesCliArgs(argv: string[] = process.argv): string[] | null {
   const index = argv.indexOf(HERMES_CLI_ARG)
@@ -30,9 +31,16 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
     return 1
   }
 
-  const command = hermesBin()
-  if (!existsSync(command)) {
-    console.error(`hermes binary missing at ${command}`)
+  const hermesCommand = hermesBin()
+  const pythonCommand = bundledPython()
+  const invocation = resolveDesktopHermesCliInvocation(process.platform, hermesCommand, pythonCommand)
+  if (!existsSync(hermesCommand)) {
+    console.error(`hermes binary missing at ${hermesCommand}`)
+    console.error('Run: npm run prepare:runtime (to build a local Hermes runtime)')
+    return 127
+  }
+  if (!existsSync(invocation.command)) {
+    console.error(`Hermes CLI runtime missing at ${invocation.command}`)
     console.error('Run: npm run prepare:runtime (to build a local Hermes runtime)')
     return 127
   }
@@ -40,7 +48,7 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
   mkdirSync(webUiHome(), { recursive: true })
   mkdirSync(hermesHome(), { recursive: true })
 
-  const binDir = dirname(command)
+  const binDir = dirname(hermesCommand)
   const bundledNodeBin = nodeBinDir()
   const bundledAgentBrowserBin = process.platform === 'win32'
     ? join(pythonDir(), 'node')
@@ -58,9 +66,9 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_DESKTOP: 'true',
-    HERMES_BIN: command,
-    HERMES_AGENT_BRIDGE_PYTHON: bundledPython(),
-    HERMES_AGENT_CLI_PYTHON: bundledPython(),
+    HERMES_BIN: hermesCommand,
+    HERMES_AGENT_BRIDGE_PYTHON: pythonCommand,
+    HERMES_AGENT_CLI_PYTHON: pythonCommand,
     HERMES_AGENT_ROOT: pythonDir(),
     HERMES_AGENT_NODE: bundledNode(),
     HERMES_AGENT_NODE_ROOT: process.platform === 'win32' ? bundledNodeBin : dirname(bundledNodeBin),
@@ -75,7 +83,7 @@ export async function runBundledHermesCli(args: string[]): Promise<number> {
   }
 
   return await new Promise(resolve => {
-    const child = spawn(command, args, {
+    const child = spawn(invocation.command, [...invocation.argsPrefix, ...args], {
       env,
       stdio: 'inherit',
       windowsHide: false,
