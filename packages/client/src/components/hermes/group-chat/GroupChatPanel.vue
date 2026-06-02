@@ -52,12 +52,14 @@ function agentAvatarName(agent: RoomAgent): string {
 
 const hasRoom = computed(() => !!store.currentRoomId)
 
-/** Resolve the current user's custom avatar from the member list (populated via Socket.IO). */
+/** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
 const userMemberAvatar = computed(() => {
+    // Prefer the live member list (populated when a room is active)
     const member = store.members.find(m => m.userId === store.userId)
-    if (!member?.avatar) return null
+    const raw = member?.avatar || store.currentUserAvatar
+    if (!raw) return null
     try {
-        const parsed = typeof member.avatar === 'string' ? JSON.parse(member.avatar) : member.avatar
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
         if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
     } catch { /* malformed JSON — fall through to multiavatar */ }
     return null
