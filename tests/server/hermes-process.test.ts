@@ -28,6 +28,8 @@ afterEach(() => {
   spawnCalls.length = 0
   delete process.env.HERMES_AGENT_BRIDGE_PYTHON
   delete process.env.HERMES_AGENT_CLI_PYTHON
+  delete process.env.PYTHONHOME
+  delete process.env.PYTHONPATH
   if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
   vi.resetModules()
 })
@@ -69,6 +71,29 @@ describe('Hermes process invocation', () => {
         args: ['-m', 'hermes_cli.main', '--version'],
         options: expect.objectContaining({ windowsHide: true }),
       })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('sets PYTHONHOME for Windows embedded Python invocations', async () => {
+    setPlatform('win32')
+    process.env.PYTHONPATH = 'C:\\shadow-pythonpath'
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const scripts = join(root, 'Scripts')
+      mkdirSync(scripts)
+      mkdirSync(join(root, 'Lib'))
+      writeFileSync(join(root, 'python.exe'), '')
+      writeFileSync(join(scripts, 'hermes.exe'), '')
+      const { execHermesWithBin } = await import('../../packages/server/src/services/hermes/hermes-process')
+
+      await execHermesWithBin(join(scripts, 'hermes.exe'), ['logs', 'agent'])
+
+      expect(execFileCalls[0].options.env).toMatchObject({
+        PYTHONHOME: root,
+      })
+      expect(execFileCalls[0].options.env.PYTHONPATH).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

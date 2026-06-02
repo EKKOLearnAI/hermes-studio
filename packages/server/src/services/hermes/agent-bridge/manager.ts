@@ -4,6 +4,7 @@ import { createConnection, createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
+import { withWindowsEmbeddedPythonEnv } from '../hermes-process'
 import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
@@ -399,7 +400,10 @@ export class AgentBridgeManager {
     if (agentRoot) args.push('--agent-root', agentRoot)
     if (hermesHome) args.push('--hermes-home', hermesHome)
 
-    const env = buildAgentBridgeProcessEnv(this.endpoint, hermesHome, agentRoot)
+    const env = withWindowsEmbeddedPythonEnv(
+      command.command,
+      buildAgentBridgeProcessEnv(this.endpoint, hermesHome, agentRoot),
+    )
 
     logger.info('[agent-bridge] starting: %s %s', command.command, args.join(' '))
     const child = spawn(command.command, args, {
