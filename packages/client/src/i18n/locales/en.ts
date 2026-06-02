@@ -1,7 +1,7 @@
 export default {
   // Login
   login: {
-    title: 'QuantHermes Web UI',
+    title: 'Quanta Hermes',
     description: 'Enter your access token to continue. Find it in the server startup logs.',
     placeholder: 'Access token',
     submit: 'Login',
@@ -12,7 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Username',
     passwordPlaceholder: 'Password',
-    defaultCredentialsHint: 'Default username: quanthermes. Default password: 12345678.',
+    defaultCredentialsHint: 'Default username: quanthermes. Default password: 12345678. Change them after the first sign-in.',
     credentialsRequired: 'Please enter username and password',
     invalidCredentials: 'Invalid username or password',
     tooManyAttempts: 'Too many failed attempts, please try again later',
@@ -214,7 +214,7 @@ export default {
     codingAgents: "Coding Agents",
     versionPreview: "Version Preview",
     settings: 'Settings',
-    networkConfig: 'Network Config',
+    networkConfig: 'Switch WiFi',
     connected: 'Connected',
     disconnected: 'Disconnected',
     collapse: 'Collapse menu',
@@ -1545,4 +1545,3 @@ export default {
 
   },
 }
-

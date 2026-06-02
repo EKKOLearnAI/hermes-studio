@@ -13,6 +13,7 @@ import { usePersistentRecord } from '@/composables/usePersistentRecord'
 import RouteLinkItem from '@/components/common/RouteLinkItem.vue'
 import { changelog } from "@/data/changelog";
 import { isStoredSuperAdmin } from "@/api/client";
+import { resolveDeviceUrls } from "@/utils/deviceUrls";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -35,6 +36,7 @@ function hasRoute(name: string): boolean {
   return router.hasRoute(name);
 }
 const logoPath = '/logo.png';
+const brandName = 'Quanta Hermes';
 
 const { record: collapsedGroups, persist: persistCollapsedGroups } = usePersistentRecord('hermes.sidebar.collapsedGroups');
 
@@ -44,7 +46,7 @@ function groupLabel(key: SidebarGroupKey) {
   return t(`sidebar.group${key}${appStore.sidebarCollapsed ? "Short" : ""}`);
 }
 
-const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const provisioningUrl = computed(() => resolveDeviceUrls().provisioningUrl);
 
 function toggleGroup(key: string) {
   collapsedGroups[key] = !collapsedGroups[key];
@@ -71,8 +73,8 @@ function openChangelog() {
 <template>
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
     <RouteLinkItem class="sidebar-logo" :to="{ name: 'hermes.chat' }">
-      <img :src="logoPath" alt="Quanthermes" class="logo-img" />
-      <span class="logo-text">Quanthermes</span>
+      <img :src="logoPath" :alt="brandName" class="logo-img" />
+      <span class="logo-text">{{ brandName }}</span>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
     </RouteLinkItem>
 
@@ -289,7 +291,7 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
-          <a class="nav-item" :href="`http://${hostname}:80`" target="_blank">
+          <a class="nav-item" :href="provisioningUrl" target="_blank" rel="noopener noreferrer">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="16" y="16" width="6" height="6" rx="1" />
               <path d="M32 22h-8" />
@@ -350,7 +352,7 @@ function openChangelog() {
         <LanguageSwitch />
       </div>
       <div class="version-info">
-        <span class="version-text" @click="openChangelog">Quanthermes v{{ appStore.serverVersion || "0.1.0" }}</span>
+        <span class="version-text" @click="openChangelog">{{ brandName }} v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
       <div v-if="appStore.updateEnabled && appStore.updateSourceLabel" class="update-source">

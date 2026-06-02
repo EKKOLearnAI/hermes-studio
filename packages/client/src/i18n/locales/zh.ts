@@ -1,7 +1,7 @@
 export default {
   // 登录
   login: {
-    title: 'QuantHermes Web UI',
+    title: 'Quanta Hermes',
     description: '输入访问令牌以继续。令牌在服务端启动日志中查看。',
     placeholder: '访问令牌',
     submit: '登录',
@@ -12,7 +12,7 @@ export default {
     tokenLogin: '令牌登录',
     usernamePlaceholder: '用户名',
     passwordPlaceholder: '密码',
-    defaultCredentialsHint: '默认登录名：quanthermes，默认密码：12345678',
+    defaultCredentialsHint: '默认登录名：quanthermes，默认密码：12345678。建议首次登录后立即修改。',
     credentialsRequired: '请输入用户名和密码',
     invalidCredentials: '用户名或密码错误',
     tooManyAttempts: '登录失败次数过多，请稍后重试',
@@ -214,7 +214,7 @@ export default {
     codingAgents: "编程工具",
     versionPreview: "版本预览",
     settings: '设置',
-    networkConfig: '配网',
+    networkConfig: '切换 WiFi',
     connected: '已连接',
     disconnected: '未连接',
     collapse: '收起菜单',
@@ -1547,4 +1547,3 @@ export default {
 
   },
 }
-

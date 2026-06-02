@@ -1,4 +1,4 @@
-﻿﻿﻿﻿export default {
+﻿﻿﻿﻿﻿﻿﻿﻿export default {
   // ログイン
   login: {
     title: 'QuantHermes Web UI',

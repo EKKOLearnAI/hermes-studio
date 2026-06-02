@@ -1,17 +1,15 @@
 <p align="center">
-  <strong>QuantHermes Web UI</strong>
+  <strong>Hermes Web UI</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
 <p align="center">
-  A full-featured desktop app and web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
+  A full-featured web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
   Manage AI chat sessions, monitor usage & costs, configure platform channels,<br/>
   schedule cron jobs, browse skills — all from a clean, responsive web interface.
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">Download Hermes Studio Desktop</a>
-  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -173,22 +171,7 @@ hermes-web-ui reset-default-login
 
 ## Quick Start
 
-### Desktop App (Recommended)
-
-Download the latest **Hermes Studio** desktop installer from
-[GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest).
-
-Desktop builds are published for macOS, Windows, and Linux, with separate
-architecture assets where applicable. The desktop app bundles the Web UI
-runtime and stores Hermes Agent data in the native Hermes location:
-
-- Windows: `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes`)
-- macOS/Linux: `~/.hermes`
-
-The desktop wrapper stores its own Web UI state separately in
-`~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
-
-### npm
+### npm (Recommended)
 
 ```bash
 npm install -g hermes-web-ui
@@ -196,6 +179,23 @@ hermes-web-ui start
 ```
 
 Open **http://localhost:8648**
+
+### One-line Setup (Auto-detect OS)
+
+Automatically installs Node.js (if missing) and hermes-web-ui on Debian/Ubuntu/macOS:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+```
+
+### WSL
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+hermes-web-ui start
+```
+
+> WSL uses the same Web UI daemon startup flow as other local installs; no separate gateway service is started by Web UI.
 
 ### Docker Compose
 
@@ -238,55 +238,22 @@ and package installs such as `pip install hermes-agent`.
 
 ## Web UI Environment Variables
 
-These variables configure Hermes Web UI, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
+These variables configure Hermes Web UI itself. Provider API keys and Hermes Agent settings are managed separately through Hermes profiles.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8648` | Web UI listen port. |
 | `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
-| `HERMES_WEBUI_STATE_DIR` | unset | Compatibility alias for `HERMES_WEB_UI_HOME`. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | `*` | Koa CORS origin setting. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
-| `AUTH_JWT_SECRET` | `AUTH_TOKEN` | JWT signing secret override for username/password sessions. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
 | `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
 | `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
-| `HERMES_HOME` | platform default | Hermes data home. Windows uses `%LOCALAPPDATA%\hermes`; macOS/Linux uses `~/.hermes`. |
-| `HERMES_BIN` | `hermes` | Custom Hermes CLI binary path. |
-| `HERMES_AGENT_ROOT` | auto-discovered | Hermes Agent source checkout containing `run_agent.py`. |
-| `HERMES_AGENT_BRIDGE_PYTHON` | auto-discovered | Python interpreter used to launch the agent bridge. |
-| `HERMES_AGENT_BRIDGE_UV` | auto-discovered | `uv` executable used to launch the agent bridge when available. |
-| `UV` | auto-discovered | Fallback `uv` executable path. |
-| `PYTHON` | auto-discovered | Fallback Python executable for the agent bridge. |
-| `HERMES_AGENT_BRIDGE_ENDPOINT` | platform default | Agent bridge broker endpoint. Windows defaults to `tcp://127.0.0.1:18765`; macOS/Linux defaults to `ipc:///tmp/hermes-agent-bridge.sock`. |
-| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Timeout for Node requests to the bridge broker. |
-| `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | Short retry window for connecting to the bridge socket. |
-| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | Timeout while waiting for the Python bridge to become ready. |
-| `HERMES_AGENT_BRIDGE_AUTO_RESTART` | enabled | Auto-restart the bridge broker after unexpected exit. Set `0`, `false`, `no`, or `off` to disable. |
-| `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | `1000` | Base delay for bridge auto-restart backoff. |
-| `HERMES_AGENT_BRIDGE_PLATFORM` | `cli` | Platform identity passed to Hermes Agent. |
-| `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` | platform default | Profile worker transport. Set `tcp` for loopback TCP or `ipc`/`unix` for Unix domain sockets; defaults to Windows TCP and macOS/Linux IPC. |
-| `HERMES_AGENT_BRIDGE_WORKER_PORT_BASE` | `18780` | Base port for TCP worker endpoints. |
-| `HERMES_BRIDGE_PROVIDER` | profile/default | Provider override for bridge runs. |
-| `HERMES_BRIDGE_TOOLSETS` | profile/default | Toolset override for bridge runs. |
-| `HERMES_BRIDGE_MAX_TURNS` | profile/default | Maximum turn override for bridge runs. |
-| `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | Controls bridge platform hint suppression passed to Hermes Agent. |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkolearnai.com` | OpenRouter attribution referer sent by bridge runs. |
-| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | OpenRouter attribution title sent by bridge runs. |
-| `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
-| `HERMES_WEB_UI_MANAGED_GATEWAY` | platform/runtime dependent | Force managed legacy gateway process handling. Set `1`, `true`, `yes`, or `on` to enable. |
-| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | enabled in production | Controls whether Web UI shutdown also stops managed gateway processes. Set `0` or `false` to detach them. |
-| `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config for legacy gateway compatibility. |
-| `HERMES_WEB_UI_PREVIEW_REPO` | package repository | GitHub repository used by Version Preview. |
-| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | platform default | Version Preview broker transport. Set `tcp` to use loopback TCP for Preview on macOS/Linux; when unset, Preview follows `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp`. |
-| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | isolated preview endpoint | Directly overrides the Version Preview broker endpoint. |
-| `HERMES_WEB_UI_BACKEND_PORT` | `8648` | Backend port used by the Vite dev proxy. |
-| `HERMES_WEB_UI_FRONTEND_PORT` | `8649` | Frontend Vite dev server port. |
 
 ### CLI Commands
 
@@ -323,8 +290,8 @@ npm install
 npm run dev
 ```
 
-- Frontend: http://localhost:8649
-- BFF Server: http://localhost:8647
+- Frontend: http://localhost:5173
+- BFF Server: http://localhost:8648
 
 ```bash
 npm run build   # outputs to dist/
