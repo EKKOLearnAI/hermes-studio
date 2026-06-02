@@ -22,7 +22,7 @@ import {
 } from './paths'
 
 const DEFAULT_PORT = 8748
-const DEFAULT_READY_TIMEOUT_MS = 30_000
+const DEFAULT_READY_TIMEOUT_MS = 120_000
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
@@ -405,10 +405,10 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   })
 
   const timeoutMs = readyTimeoutMs()
-  await Promise.all([
-    waitForReady(port, timeoutMs),
-    bridgeStartup.wait(timeoutMs),
-  ])
+  void bridgeStartup.wait(timeoutMs).catch(err => {
+    console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+  })
+  await waitForReady(port, timeoutMs)
   return getServerUrl(port)
 }
 

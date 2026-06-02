@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 import {
@@ -57,6 +57,25 @@ export type RuntimeProgress = {
 }
 
 type RuntimeProgressHandler = (progress: RuntimeProgress) => void
+
+function requiredRuntimeFiles(root: string): string[] {
+  const pythonBin = process.platform === 'win32'
+    ? join(root, 'python', 'python.exe')
+    : join(root, 'python', 'bin', 'python3')
+  const hermesBin = process.platform === 'win32'
+    ? join(root, 'python', 'Scripts', 'hermes.exe')
+    : join(root, 'python', 'bin', 'hermes')
+  const nodeBin = process.platform === 'win32'
+    ? join(root, 'node', 'node.exe')
+    : join(root, 'node', 'bin', 'node')
+  const files = [pythonBin, hermesBin, nodeBin, join(root, RUNTIME_MANIFEST_NAME)]
+  if (process.platform === 'win32') files.push(join(root, 'git', 'cmd', 'git.exe'))
+  return files
+}
+
+function missingRuntimeFiles(root: string): string[] {
+  return requiredRuntimeFiles(root).filter(file => !existsSync(file))
+}
 
 function runtimeReady(): boolean {
   const gitReady = process.platform !== 'win32' || !!bundledGit()
@@ -230,10 +249,9 @@ async function extractRuntimeArchive(archive: string, targetRoot: string): Promi
     await execFileAsync(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xzf', archive, '-C', tempRoot], {
       windowsHide: true,
     })
-    for (const required of ['python', 'node']) {
-      if (!existsSync(join(tempRoot, required))) {
-        throw new Error(`Runtime archive did not contain ${required}/`)
-      }
+    const missing = missingRuntimeFiles(tempRoot)
+    if (missing.length > 0) {
+      throw new Error(`Runtime archive is missing required files: ${missing.map(file => relative(tempRoot, file)).join(', ')}`)
     }
     rmSync(targetRoot, { recursive: true, force: true })
     mkdirSync(parent, { recursive: true })
@@ -265,19 +283,23 @@ export async function ensureDesktopRuntime(onProgress?: RuntimeProgressHandler):
   const archive = join(dirname(runtimeRoot), `${descriptor.name}.download`)
   console.log(`[runtime] downloading Hermes runtime ${descriptor.name}`)
   onProgress?.({ stage: 'download', message: `Downloading ${descriptor.name}...` })
-  await downloadFile(descriptor.url, archive, onProgress)
-  if (descriptor.sha256) {
-    onProgress?.({ stage: 'verify', message: 'Verifying Hermes runtime...' })
-    const actual = await sha256File(archive)
-    if (actual !== descriptor.sha256) {
-      throw new Error(`Runtime checksum mismatch for ${descriptor.name}`)
+  let archiveSize = 0
+  try {
+    await downloadFile(descriptor.url, archive, onProgress)
+    archiveSize = statSync(archive).size
+    if (descriptor.sha256) {
+      onProgress?.({ stage: 'verify', message: 'Verifying Hermes runtime...' })
+      const actual = await sha256File(archive)
+      if (actual !== descriptor.sha256) {
+        throw new Error(`Runtime checksum mismatch for ${descriptor.name}`)
+      }
     }
-  }
 
-  onProgress?.({ stage: 'extract', message: 'Extracting Hermes runtime...' })
-  await extractRuntimeArchive(archive, runtimeRoot)
-  const archiveSize = statSync(archive).size
-  rmSync(archive, { force: true })
+    onProgress?.({ stage: 'extract', message: 'Extracting Hermes runtime...' })
+    await extractRuntimeArchive(archive, runtimeRoot)
+  } finally {
+    rmSync(archive, { force: true })
+  }
 
   const manifestPath = join(runtimeRoot, RUNTIME_MANIFEST_NAME)
   if (!existsSync(manifestPath)) {
