@@ -335,7 +335,18 @@ install_webui_dependencies() {
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
   run chown -R "${APP_USER}:${APP_USER}" "${DEPLOY_DIR}"
-  run_as_app_user "cd '${DEPLOY_DIR}' && PATH='${path_env}' npm install --include=dev && PATH='${path_env}' npm ls --depth=0 @vscode/markdown-it-katex vite vue-tsc >/dev/null"
+  run_as_app_user "cd '${DEPLOY_DIR}' && PATH='${path_env}' HERMES_WEB_UI_SKIP_PREPARE=1 npm install --include=dev && PATH='${path_env}' npm ls --depth=0 @vscode/markdown-it-katex naive-ui typescript vite vue-tsc >/dev/null"
+}
+
+check_webui_dependencies() {
+  step "Check installed Web UI dependencies"
+
+  run test -f "${DEPLOY_DIR}/node_modules/naive-ui/package.json"
+  run test -f "${DEPLOY_DIR}/node_modules/naive-ui/es/index.d.ts"
+  run test -f "${DEPLOY_DIR}/node_modules/typescript/package.json"
+  run test -f "${DEPLOY_DIR}/node_modules/vue-tsc/package.json"
+  run test -f "${DEPLOY_DIR}/node_modules/vite/package.json"
+  info "Required build-time dependencies are present."
 }
 
 build_webui() {
@@ -555,6 +566,7 @@ install_node
 install_hermes_agent
 write_npmrc
 install_webui_dependencies
+check_webui_dependencies
 build_webui
 write_service_env
 install_systemd_service

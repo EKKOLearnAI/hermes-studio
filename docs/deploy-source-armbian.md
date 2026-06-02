@@ -34,6 +34,7 @@
 
 - 部署脚本：`scripts/deploy-source-armbian.sh`
 - systemd 模板：`scripts/hermes-web-ui.service`
+- 统一排障速查：[`docs/deploy-troubleshooting.md`](./deploy-troubleshooting.md)
 
 ## 重要说明
 
@@ -43,6 +44,7 @@
   - 脚本所在目录的上一级
   - `DEPLOY_DIR`
 - 如果这两个位置都没有源码目录，脚本会直接报错退出。
+- 如果现场部署失败，优先按 [`docs/deploy-troubleshooting.md`](./deploy-troubleshooting.md) 的命令顺序排查。
 
 ## 默认主流程：压缩打包 + SCP 上传 + 解压部署
 
@@ -167,11 +169,17 @@ sudo systemctl restart hermes-web-ui.service
 7. 自动执行官方 `Hermes Agent` 安装脚本
    - 默认附带 `--skip-setup --skip-browser`
 8. 为运行用户写入 `~/.npmrc` 国内镜像配置
-9. 执行 `npm install`
-10. 执行 `npm run build`
-11. 生成 `/etc/default/hermes-web-ui`
-12. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
-13. 启动并设置 `hermes-web-ui.service` 开机自启
+9. 执行 `npm install --include=dev`
+   - 显式设置 `HERMES_WEB_UI_SKIP_PREPARE=1`，避免安装阶段被根目录 `prepare` 提前触发构建
+10. 检查关键构建依赖和类型文件是否完整：
+   - `node_modules/naive-ui/es/index.d.ts`
+   - `node_modules/typescript/package.json`
+   - `node_modules/vue-tsc/package.json`
+   - `node_modules/vite/package.json`
+11. 执行 `npm run build`
+12. 生成 `/etc/default/hermes-web-ui`
+13. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
+14. 启动并设置 `hermes-web-ui.service` 开机自启
 
 ## 默认参数
 
@@ -291,7 +299,7 @@ http://127.0.0.1:6060
 
 ## 手动验证
 
-如果你是在 Armbian / Ubuntu 设备上首次走源码部署，建议先阅读 [`docs/work-log.md`](./work-log.md) 中 `2026-05-19` 的排障记录，再做下面这些检查。
+如果你是在 Armbian / Ubuntu 设备上首次走源码部署，建议先看 [`docs/deploy-troubleshooting.md`](./deploy-troubleshooting.md) 的“源码部署排查”，再做下面这些检查。
 
 ### 检查 Node 版本
 
@@ -389,6 +397,8 @@ sudo HERMES_INSTALLER_MIRROR=https://your-mirror/install.sh ./scripts/deploy-sou
 
 ### 4. `npm install` 很慢或失败
 
+源码部署脚本会在安装阶段显式设置 `HERMES_WEB_UI_SKIP_PREPARE=1`，避免根目录 `prepare` 在 `npm install` 过程中提前触发 `npm run build`。安装完成后，脚本会先检查 `naive-ui`、`typescript`、`vue-tsc`、`vite` 的关键文件是否存在，再单独执行构建。
+
 当前仓库未提交 `package-lock.json`，因此源码部署脚本使用 `npm install` 而不是 `npm ci`。脚本会为运行用户写入 `~/.npmrc`，默认使用：
 
 - `https://registry.npmmirror.com`
@@ -399,6 +409,9 @@ sudo HERMES_INSTALLER_MIRROR=https://your-mirror/install.sh ./scripts/deploy-sou
 ```bash
 sudo -u hermesui -H cat /home/hermesui/.npmrc
 sudo -u hermesui -H env PATH=/opt/node-v23/bin:$PATH npm config get registry
+sudo -u hermesui -H test -f /opt/hermes-web-ui/node_modules/naive-ui/es/index.d.ts && echo naive-ui-types-ok
+sudo -u hermesui -H test -f /opt/hermes-web-ui/node_modules/typescript/package.json && echo typescript-ok
+sudo -u hermesui -H test -f /opt/hermes-web-ui/node_modules/vue-tsc/package.json && echo vue-tsc-ok
 ```
 
 ### 5. Hermes 已安装但还未配置
@@ -477,11 +490,15 @@ sudo -u hermesui -H ls -lah /tmp/hermes-agent-bridge.sock
 
 ### 8. 想重新部署
 
-如果你只是更新代码，推荐：
+如果你只是重新部署本地源码包，推荐：
 
 ```bash
+sudo systemctl stop hermes-web-ui.service || true
+sudo rm -rf /opt/hermes-web-ui
+sudo mkdir -p /opt
+sudo tar -xzf /tmp/hermes-web-ui-src.tar.gz -C /opt
 cd /opt/hermes-web-ui
-git pull --ff-only
+chmod +x scripts/deploy-source-armbian.sh
 sudo ./scripts/deploy-source-armbian.sh
 ```
 
@@ -507,7 +524,7 @@ sudo systemctl daemon-reload
 
 源码部署仍然需要网络，但它拆分成了：
 
-- `git` 拉取代码
+- 本地源码包上传
 - `Hermes` 官方安装脚本
 - `Node.js` 二进制镜像
 - `npm` 包镜像

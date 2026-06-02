@@ -19,8 +19,11 @@
 ## 脚本位置
 
 - 脚本：`scripts/deploy-armbian.sh`
+- 统一排障速查：[`docs/deploy-troubleshooting.md`](./deploy-troubleshooting.md)
 
 ## 推荐执行方式
+
+如果现场部署失败，优先按 [`docs/deploy-troubleshooting.md`](./deploy-troubleshooting.md) 的“Docker 部署排查”执行标准检查命令。
 
 ### 方式一：仓库内执行
 

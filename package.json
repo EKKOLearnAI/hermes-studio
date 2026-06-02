@@ -38,7 +38,7 @@
     "dev:client": "cross-env HERMES_WEB_UI_BACKEND_PORT=8647 vite --host --port 8649 --strictPort",
     "dev:server": "nodemon",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
-    "prepare": "node -e \"process.exit(require('fs').existsSync('dist') ? 0 : 1)\" || npm run build",
+    "prepare": "node -e \"const fs=require('fs'); process.exit(process.env.HERMES_WEB_UI_SKIP_PREPARE === '1' || fs.existsSync('dist') ? 0 : 1)\" || npm run build",
     "preview": "cross-env NODE_ENV=production vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
