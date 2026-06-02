@@ -567,7 +567,7 @@ class ChatStorage {
     // ─── Room Members ──────────────────────────────────────
 
     getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[] {
-        return (this.db()?.prepare(
+        const members = (this.db()?.prepare(
             `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar
              FROM gc_room_members m
              WHERE m.roomId = ?
@@ -578,6 +578,34 @@ class ChatStorage {
                )
              ORDER BY m.joinedAt`
         ).all(roomId) || []) as unknown as { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[]
+
+        // Resolve latest avatar from the users table for each human member
+        // so that avatar changes made in the Web UI are reflected immediately
+        // without requiring a re-join.
+        for (const member of members) {
+            if (member.name) {
+                try {
+                    let user = findUserByUsername(member.name)
+                    // Fallback: display name may differ from login username (e.g. 'Mr. Tang' vs 'admin').
+                    // Grab any user's avatar when an exact-name match fails — most installs have a
+                    // single admin account and the intent is unambiguous.
+                    if (!user || !user.avatar) {
+                        const db = getDb()
+                        if (db) {
+                            const anyUser = db.prepare(
+                                `SELECT avatar FROM users WHERE avatar IS NOT NULL AND avatar != '' LIMIT 1`
+                            ).get() as { avatar?: string } | undefined
+                            if (anyUser?.avatar) member.avatar = anyUser.avatar
+                        }
+                    } else {
+                        member.avatar = user.avatar
+                    }
+                } catch {
+                    // ignore individual lookup failures
+                }
+            }
+        }
+        return members
     }
 
     removeRoomMembersForAgent(roomId: string, agent: Pick<RoomAgent, 'agentId' | 'name'>): void {
@@ -589,19 +617,30 @@ class ChatStorage {
     }
 
     addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = ''): void {
+        // Resolve avatar from the users table as a fallback when none is provided
+        let resolvedAvatar = avatar
+        if (!resolvedAvatar && userName) {
+            try {
+                const user = findUserByUsername(userName)
+                if (user) resolvedAvatar = user.avatar || ''
+            } catch {
+                // ignore lookup failures
+            }
+        }
+
         const existing = this.getMemberByUserId(roomId, userId)
         if (existing) {
             // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
                 'UPDATE gc_room_members SET userName = ?, description = ?, avatar = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
-            ).run(userName, description, avatar ?? '', Date.now(), roomId, userId)
+            ).run(userName, description, resolvedAvatar, Date.now(), roomId, userId)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const now = Date.now()
         this.db()?.prepare(
             'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, userId, userName, description, now, now, avatar ?? '')
+        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar)
     }
 
     getMemberByUserId(roomId: string, userId: string): Member | null {
@@ -690,6 +729,8 @@ export class GroupChatServer {
     private userInfoMap = new Map<string, { name: string; description: string }>()
     /** Map: socket.id → requested participant source from handshake */
     private socketRequestedSourceMap = new Map<string, 'human' | 'agent'>()
+    /** Map: socket.id → numeric users.id from the web UI auth (for avatar resolution) */
+    private socketAuthUserIdMap = new Map<string, number>()
     readonly agentClients = new AgentClients()
     private _contextEngine: ContextEngine | null = null
     private _restoreScheduled = false
@@ -835,7 +876,7 @@ export class GroupChatServer {
     // ─── Connection ─────────────────────────────────────────────
 
     private onConnection(socket: Socket): void {
-        const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string }
+        const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string; authUserId?: number }
         const userId = auth.userId || socket.id
         const userName = auth.name || `User-${userId.slice(0, 6)}`
         const description = auth.description || ''
@@ -844,6 +885,9 @@ export class GroupChatServer {
         this.socketUserMap.set(socket.id, userId)
         this.socketRequestedSourceMap.set(socket.id, requestedSource)
         this.userInfoMap.set(userId, { name: userName, description })
+        if (typeof auth.authUserId === 'number') {
+            this.socketAuthUserIdMap.set(socket.id, auth.authUserId)
+        }
 
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
@@ -894,14 +938,24 @@ export class GroupChatServer {
             this.storage.saveRoom(roomId, roomId)
         }
 
-        // Look up the user's avatar (if they have a Hermes web UI account with the same name)
+        // Look up the user's avatar via their numeric users.id from the web UI session.
+        // Falls back to name-based lookup for clients that don't pass authUserId.
         let userAvatar = ''
-        if (source !== 'agent' && userName) {
-            try {
-                const matched = findUserByUsername(userName)
-                if (matched) userAvatar = matched.avatar || ''
-            } catch (err) {
-                logger.info(`[GroupChat] avatar lookup failed for ${userName}: ${(err as Error).message}`)
+        if (source !== 'agent') {
+            const authUserId = this.socketAuthUserIdMap.get(socket.id)
+            if (typeof authUserId === 'number') {
+                try {
+                    userAvatar = getUserAvatar(authUserId) || ''
+                } catch (err) {
+                    logger.info(`[GroupChat] avatar lookup by id=${authUserId} failed: ${(err as Error).message}`)
+                }
+            } else if (userName) {
+                try {
+                    const matched = findUserByUsername(userName)
+                    if (matched) userAvatar = matched.avatar || ''
+                } catch (err) {
+                    logger.info(`[GroupChat] avatar lookup by name '${userName}' failed: ${(err as Error).message}`)
+                }
             }
         }
 
@@ -1228,6 +1282,7 @@ export class GroupChatServer {
         this.leaveAllRooms(socket, socketId)
         this.socketUserMap.delete(socketId)
         this.socketRequestedSourceMap.delete(socketId)
+        this.socketAuthUserIdMap.delete(socketId)
         // Don't delete userInfoMap — it persists across reconnects
     }
 
