@@ -20,7 +20,7 @@ import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
-import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
+import { ensureProfileGatewaysRunning, startGatewayAutostartWatchdog } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 
@@ -81,6 +81,29 @@ function safeNetworkInterfaces() {
   }
 }
 
+function isDesktopRuntime(): boolean {
+  return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
+}
+
+async function startRuntimeServicesBeforeListen(): Promise<void> {
+  try {
+    await ensureProfileGatewaysRunning()
+    console.log('[bootstrap] profile gateways checked')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+  }
+  startGatewayAutostartWatchdog()
+
+  try {
+    agentBridgeManager = await startAgentBridgeManager()
+    console.log('[bootstrap] agent bridge started')
+  } catch (err) {
+    logger.warn(err, '[bootstrap] agent bridge failed to start')
+    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+  }
+}
+
 function startRuntimeServicesAfterListen(): void {
   void (async () => {
     try {
@@ -90,6 +113,7 @@ function startRuntimeServicesAfterListen(): void {
       logger.warn(err, '[bootstrap] failed to ensure profile gateways')
       console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
     }
+    startGatewayAutostartWatchdog()
   })()
 
   void (async () => {
@@ -129,6 +153,10 @@ export async function bootstrap() {
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to inject bundled skills')
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
+  }
+
+  if (!isDesktopRuntime()) {
+    await startRuntimeServicesBeforeListen()
   }
 
   const app = new Koa()
@@ -207,8 +235,10 @@ export async function bootstrap() {
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
 
-  agentBridgeManager = getAgentBridgeManager()
-  startRuntimeServicesAfterListen()
+  if (isDesktopRuntime()) {
+    agentBridgeManager = getAgentBridgeManager()
+    startRuntimeServicesAfterListen()
+  }
 
   // Restore group chat agents after server is ready.
   groupChatServer.restoreWhenReady()

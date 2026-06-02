@@ -19,6 +19,11 @@ const HERMES_SUBCOMMAND_PROFILE_NAMES = new Set([
   'profile', 'plugins', 'honcho', 'acp',
 ])
 
+const DEFAULT_GATEWAY_WATCHDOG_INTERVAL_MS = 60000
+
+let watchdogTimer: NodeJS.Timeout | null = null
+let watchdogRunning = false
+
 function resolveHermesBin(): string {
   return process.env.HERMES_BIN?.trim() || 'hermes'
 }
@@ -41,8 +46,22 @@ function isTermuxRuntime(): boolean {
 }
 
 function envFlagEnabled(name: string): boolean {
+  return envFlagValue(name) === true
+}
+
+function envFlagValue(name: string): boolean | undefined {
   const value = String(process.env[name] || '').trim().toLowerCase()
-  return ['1', 'true', 'yes', 'on'].includes(value)
+  if (!value) return undefined
+  if (['1', 'true', 'yes', 'on'].includes(value)) return true
+  if (['0', 'false', 'no', 'off'].includes(value)) return false
+  return undefined
+}
+
+function envPositiveInt(name: string): number | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 export function shouldUseManagedGatewayRun(): boolean {
@@ -57,6 +76,15 @@ export function shouldUseManagedGatewayRunForAutostart(platform: NodeJS.Platform
     isDockerRuntime() ||
     isTermuxRuntime() ||
     platform === 'win32'
+}
+
+export function shouldRunGatewayAutostartWatchdog(
+  platform: NodeJS.Platform = process.platform,
+  managedGatewayRun = shouldUseManagedGatewayRunForAutostart(platform),
+): boolean {
+  const configured = envFlagValue('HERMES_WEB_UI_GATEWAY_WATCHDOG')
+  if (configured !== undefined) return configured
+  return managedGatewayRun
 }
 
 export function gatewayStatusLooksRunning(output: string): boolean {
@@ -291,4 +319,29 @@ export async function ensureProfileGatewaysRunning(): Promise<void> {
       logger.warn('[gateway-autostart] gateway start completed but did not report running within timeout profile=%s home=%s', profile, profileDir)
     }
   }
+}
+
+export function startGatewayAutostartWatchdog(): void {
+  if (watchdogTimer || !shouldRunGatewayAutostartWatchdog()) return
+  const intervalMs = envPositiveInt('HERMES_WEB_UI_GATEWAY_WATCHDOG_INTERVAL_MS') ?? DEFAULT_GATEWAY_WATCHDOG_INTERVAL_MS
+  watchdogTimer = setInterval(() => {
+    if (watchdogRunning) return
+    watchdogRunning = true
+    ensureProfileGatewaysRunning()
+      .catch(err => {
+        logger.warn(err, '[gateway-autostart] gateway watchdog check failed')
+      })
+      .finally(() => {
+        watchdogRunning = false
+      })
+  }, intervalMs)
+  watchdogTimer.unref?.()
+  logger.info('[gateway-autostart] gateway watchdog started intervalMs=%d', intervalMs)
+}
+
+export function stopGatewayAutostartWatchdog(): void {
+  if (!watchdogTimer) return
+  clearInterval(watchdogTimer)
+  watchdogTimer = null
+  watchdogRunning = false
 }

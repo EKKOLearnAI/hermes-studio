@@ -7,6 +7,7 @@ import {
   gatewayStatusLooksRunning,
   gatewayStateLooksRunningForProfile,
   parseGatewayStatusesFromProfileListOutput,
+  shouldRunGatewayAutostartWatchdog,
   shouldUseManagedGatewayRun,
   shouldUseManagedGatewayRunForAutostart,
 } from '../../packages/server/src/services/hermes/gateway-autostart'
@@ -68,6 +69,36 @@ describe('gateway autostart status parsing', () => {
 
   it('uses managed gateway autostart on Windows', () => {
     expect(shouldUseManagedGatewayRunForAutostart('win32')).toBe(true)
+  })
+
+  it('runs the gateway watchdog only for managed gateway runtimes by default', () => {
+    const previousManaged = process.env.HERMES_WEB_UI_MANAGED_GATEWAY
+    const previousWatchdog = process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG
+    delete process.env.HERMES_WEB_UI_MANAGED_GATEWAY
+    delete process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG
+    try {
+      expect(shouldRunGatewayAutostartWatchdog('linux', false)).toBe(false)
+      expect(shouldRunGatewayAutostartWatchdog('linux', true)).toBe(true)
+
+      process.env.HERMES_WEB_UI_MANAGED_GATEWAY = '1'
+      expect(shouldRunGatewayAutostartWatchdog('linux')).toBe(true)
+    } finally {
+      if (previousManaged === undefined) delete process.env.HERMES_WEB_UI_MANAGED_GATEWAY
+      else process.env.HERMES_WEB_UI_MANAGED_GATEWAY = previousManaged
+      if (previousWatchdog === undefined) delete process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG
+      else process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG = previousWatchdog
+    }
+  })
+
+  it('allows the gateway watchdog to be explicitly disabled', () => {
+    const previous = process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG
+    process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG = '0'
+    try {
+      expect(shouldRunGatewayAutostartWatchdog('win32')).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG
+      else process.env.HERMES_WEB_UI_GATEWAY_WATCHDOG = previous
+    }
   })
 
   it('detects managed gateway state files with a live pid', () => {

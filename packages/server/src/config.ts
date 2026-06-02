@@ -22,6 +22,8 @@ import { homedir } from 'os'
  * Runtime behavior:
  * - PROFILE: Initial Hermes profile name. Default: default.
  * - GATEWAY_HOST: Default gateway host written into profile config. Default: 127.0.0.1.
+ * - HERMES_WEB_UI_GATEWAY_WATCHDOG: Enable/disable periodic managed gateway recovery.
+ * - HERMES_WEB_UI_GATEWAY_WATCHDOG_INTERVAL_MS: Managed gateway recovery interval.
  * - HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: Whether Web UI shutdown also stops gateways.
  * - WORKSPACE_BASE: Base directory for workspace browsing. Default: /opt/data/workspace.
  *
