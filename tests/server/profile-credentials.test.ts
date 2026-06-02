@@ -55,6 +55,7 @@ describe('isExclusivePlatformKey', () => {
       'OPENAI_API_KEY',
       'ANTHROPIC_API_KEY',
       'GEMINI_API_KEY',
+      'GOOGLE_API_KEY',
       'DEEPSEEK_API_KEY',
       'MINIMAX_API_KEY',
       'DASHSCOPE_API_KEY',

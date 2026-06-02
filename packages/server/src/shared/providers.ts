@@ -79,6 +79,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    label: 'Google Gemini (OAuth)',
+    value: 'google-gemini-cli',
+    builtin: true,
+    base_url: 'cloudcode-pa://google',
+    models: [
+      'gemini-3.1-pro-preview',
+      'gemini-3-pro-preview',
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite-preview',
+    ],
+  },
+  {
     label: 'DeepSeek',
     value: 'deepseek',
     builtin: true,
