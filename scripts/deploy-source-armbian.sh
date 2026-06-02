@@ -12,13 +12,13 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
 
-trap 'err "源码部署失败，出错行号: $LINENO"' ERR
+trap 'err "Source deployment failed at line: $LINENO"' ERR
 
 if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
   SUDO=()
 else
   if ! command -v sudo >/dev/null 2>&1; then
-    err "当前不是 root，且系统中没有 sudo。请使用 root 运行该脚本。"
+    err "This script requires root or sudo."
     exit 1
   fi
   SUDO=(sudo)
@@ -36,7 +36,7 @@ require_safe_env_value() {
   local name="$1"
   local value="$2"
   if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-    err "环境变量 ${name} 包含非法换行符。"
+    err "Environment variable ${name} contains an invalid newline."
     exit 1
   fi
 }
@@ -65,17 +65,17 @@ is_clock_synchronized() {
 
 try_sync_clock() {
   if ! command_exists timedatectl; then
-    warn "系统未提供 timedatectl，跳过时间同步检测。"
+    warn "timedatectl is not available. Skipping clock sync check."
     return 1
   fi
 
-  step "检查系统时间同步状态"
+  step "Check clock sync status"
   if is_clock_synchronized; then
-    info "系统时间已同步。"
+    info "System clock is synchronized."
     return 0
   fi
 
-  warn "系统时间尚未同步，尝试启用 NTP 并等待同步。"
+  warn "System clock is not synchronized yet. Enabling NTP and waiting."
   run timedatectl set-ntp true || true
   if command_exists systemctl; then
     run systemctl restart systemd-timesyncd || true
@@ -85,12 +85,12 @@ try_sync_clock() {
   for i in 1 2 3 4 5; do
     sleep 3
     if is_clock_synchronized; then
-      info "系统时间同步成功。"
+      info "System clock synchronized successfully."
       return 0
     fi
   done
 
-  warn "系统时间仍未同步，将在 apt update 时尝试跳过日期校验。"
+  warn "System clock is still not synchronized. apt update will retry with date checks disabled."
   return 1
 }
 
@@ -99,20 +99,20 @@ apt_update() {
     return 0
   fi
 
-  warn "apt-get update 失败，尝试自动同步系统时间后重试。"
+  warn "apt-get update failed. Retrying after clock synchronization."
   try_sync_clock || true
 
   if run apt-get update -y; then
     return 0
   fi
 
-  warn "时间同步后仍失败，使用 Acquire::Check-Date=false 兜底更新软件源。"
+  warn "apt-get update still failed after clock sync. Retrying with Acquire::Check-Date=false."
   run apt-get -o Acquire::Check-Date=false update -y
 }
 
 require_debian_like() {
   if [[ ! -r /etc/os-release ]]; then
-    err "无法读取 /etc/os-release，当前系统不受支持。"
+    err "Cannot read /etc/os-release. This system is not supported."
     exit 1
   fi
 
@@ -121,12 +121,12 @@ require_debian_like() {
   local id_like_value="${ID_LIKE:-}"
   local id_value="${ID:-}"
   if [[ "${id_value}" != "ubuntu" && "${id_value}" != "debian" && "${id_like_value}" != *"debian"* ]]; then
-    err "当前脚本仅支持 Debian/Ubuntu/Armbian 系列系统。"
-    echo "检测到: ID=${id_value:-unknown}, ID_LIKE=${id_like_value:-unknown}"
+    err "This script supports only Debian, Ubuntu, or Armbian-like systems."
+    echo "Detected: ID=${id_value:-unknown}, ID_LIKE=${id_like_value:-unknown}"
     exit 1
   fi
 
-  info "系统检测通过: ${PRETTY_NAME:-unknown}"
+  info "Detected supported system: ${PRETTY_NAME:-unknown}"
 }
 
 require_supported_arch() {
@@ -135,22 +135,22 @@ require_supported_arch() {
   case "$arch" in
     aarch64|arm64)
       NODE_ARCH="arm64"
-      info "架构检测通过: $arch"
+      info "Detected supported architecture: $arch"
       ;;
     x86_64|amd64)
       NODE_ARCH="x64"
-      info "架构检测通过: $arch"
+      info "Detected supported architecture: $arch"
       ;;
     *)
-      err "当前架构暂未验证: $arch"
-      err "建议使用 arm64/aarch64 或 amd64/x86_64 设备。"
+      err "Unsupported or unverified architecture: $arch"
+      err "Use an arm64/aarch64 or amd64/x86_64 device."
       exit 1
       ;;
   esac
 }
 
 install_base_packages() {
-  step "安装基础依赖"
+  step "Install base packages"
   apt_update
   run apt-get install -y \
     ca-certificates \
@@ -166,39 +166,21 @@ install_base_packages() {
     pkg-config \
     xz-utils \
     fonts-wqy-zenhei \
-    fonts-wqy-microhei \
-    locales
-}
-
-setup_locales() {
-  step "配置中文 Locale 支持"
-  if run locale -a | grep -i "zh_CN.utf8" >/dev/null 2>&1; then
-    info "zh_CN.UTF-8 已存在，跳过生成。"
-    return 0
-  fi
-
-  if [[ -f /etc/locale.gen ]]; then
-    run sed -i '/^#.*zh_CN.UTF-8 UTF-8/s/^#\s*//' /etc/locale.gen
-    run locale-gen zh_CN.UTF-8 || true
-    info "已尝试从 locale.gen 生成 zh_CN.UTF-8。"
-  else
-    warn "/etc/locale.gen 不存在，尝试直接生成。"
-    run locale-gen zh_CN.UTF-8 || true
-  fi
+    fonts-wqy-microhei
 }
 
 ensure_app_user() {
-  step "准备运行用户"
+  step "Prepare runtime user"
   if id "${APP_USER}" >/dev/null 2>&1; then
-    info "运行用户已存在: ${APP_USER}"
+    info "Runtime user already exists: ${APP_USER}"
   else
     run useradd --create-home --shell /bin/bash "${APP_USER}"
-    info "已创建运行用户: ${APP_USER}"
+    info "Created runtime user: ${APP_USER}"
   fi
 
   APP_USER_HOME="$(getent passwd "${APP_USER}" | cut -d: -f6)"
   if [[ -z "${APP_USER_HOME}" ]]; then
-    err "无法解析运行用户 ${APP_USER} 的 HOME 目录。"
+    err "Failed to resolve HOME for runtime user ${APP_USER}."
     exit 1
   fi
 
@@ -212,27 +194,29 @@ resolve_repo_dir() {
 
   if [[ -f "${script_root}/package.json" ]]; then
     DEPLOY_DIR="${script_root}"
-    info "检测到仓库目录: ${DEPLOY_DIR}"
+    info "Using source tree next to the script: ${DEPLOY_DIR}"
     return 0
   fi
 
   if [[ -f "${DEPLOY_DIR}/package.json" ]]; then
-    info "使用部署目录中的现有仓库: ${DEPLOY_DIR}"
+    info "Using extracted source tree from DEPLOY_DIR: ${DEPLOY_DIR}"
     return 0
   fi
 
-  step "拉取源码仓库"
-  run mkdir -p "$(dirname "${DEPLOY_DIR}")"
-  run git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" "${DEPLOY_DIR}"
-  info "已克隆源码到: ${DEPLOY_DIR}"
+  err "No source tree found."
+  err "Expected package.json in either:"
+  err "  1. the directory next to this script, or"
+  err "  2. DEPLOY_DIR=${DEPLOY_DIR}"
+  err "Upload and extract the local source package first, then rerun this script."
+  exit 1
 }
 
 prepare_deploy_dirs() {
-  step "准备部署目录"
+  step "Prepare deployment directories"
   run mkdir -p "${DEPLOY_DIR}" "${HERMES_HOME_DIR}" "${NODE_INSTALL_DIR}" "$(dirname "${SERVICE_ENV_FILE}")"
   run chown -R "${APP_USER}:${APP_USER}" "${DEPLOY_DIR}" "${HERMES_HOME_DIR}"
-  info "代码目录: ${DEPLOY_DIR}"
-  info "Hermes 数据目录: ${HERMES_HOME_DIR}"
+  info "Source directory: ${DEPLOY_DIR}"
+  info "Hermes data directory: ${HERMES_HOME_DIR}"
 }
 
 download_file() {
@@ -242,24 +226,24 @@ download_file() {
   local url
   for url in "$@"; do
     if curl -fsSL --connect-timeout 10 --retry 2 --retry-delay 2 "$url" -o "$output"; then
-      info "下载成功: $url"
+      info "Downloaded successfully: $url"
       return 0
     fi
-    warn "下载失败，尝试下一个地址: $url"
+    warn "Download failed, trying next URL: $url"
   done
 
   return 1
 }
 
 install_node() {
-  step "安装 Node.js ${NODE_VERSION}"
+  step "Install Node.js ${NODE_VERSION}"
 
   local installed_major=""
   if [[ -x "${NODE_BIN}" ]]; then
     installed_major="$("${NODE_BIN}" -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
   fi
   if [[ "${installed_major}" =~ ^[0-9]+$ ]] && [[ "${installed_major}" -ge "${NODE_REQUIRED_MAJOR}" ]]; then
-    info "Node.js 已满足要求: $("${NODE_BIN}" -v)"
+    info "Node.js already satisfies the requirement: $("${NODE_BIN}" -v)"
     return 0
   fi
 
@@ -276,16 +260,16 @@ install_node() {
   run tar -xJf "${archive_path}" --strip-components=1 -C "${NODE_INSTALL_DIR}"
 
   rm -rf "${tmp_dir}"
-  info "Node.js 安装完成: $("${NODE_BIN}" -v)"
+  info "Node.js installation completed: $("${NODE_BIN}" -v)"
 }
 
 install_hermes_agent() {
-  step "安装 Hermes Agent"
+  step "Install Hermes Agent"
 
   local hermes_bin_candidate
   hermes_bin_candidate="${APP_USER_HOME}/.local/bin/hermes"
   if run_as_app_user "test -x '${hermes_bin_candidate}'"; then
-    info "Hermes 已安装，跳过安装步骤。"
+    info "Hermes is already installed. Skipping installation."
     return 0
   fi
 
@@ -307,7 +291,7 @@ do
     exit 0
   fi
 done
-echo "Hermes 安装脚本下载失败" >&2
+echo "Failed to download the Hermes installer script." >&2
 exit 1
 EOF
 )
@@ -318,15 +302,15 @@ EOF
     HERMES_INSTALLER_FALLBACK="${HERMES_INSTALLER_FALLBACK}"
 
   if ! run_as_app_user "test -x '${hermes_bin_candidate}'"; then
-    err "Hermes 安装完成后仍未找到命令: ${hermes_bin_candidate}"
+    err "Hermes installation completed, but the binary was not found: ${hermes_bin_candidate}"
     exit 1
   fi
 
-  info "Hermes 已安装到: ${hermes_bin_candidate}"
+  info "Hermes installed at: ${hermes_bin_candidate}"
 }
 
 write_npmrc() {
-  step "写入 npm 国内源配置"
+  step "Write npm mirror configuration"
   run tee "${APP_USER_HOME}/.npmrc" >/dev/null <<EOF
 registry=${NPM_REGISTRY}
 disturl=${NODE_MIRROR_URL%/}
@@ -342,11 +326,11 @@ phantomjs_cdnurl=${NPM_BINARY_MIRROR_PREFIX%/}/phantomjs
 selenium_cdnurl=${NPM_BINARY_MIRROR_PREFIX%/}/selenium
 EOF
   run chown "${APP_USER}:${APP_USER}" "${APP_USER_HOME}/.npmrc"
-  info "已写入 ${APP_USER_HOME}/.npmrc"
+  info "Wrote ${APP_USER_HOME}/.npmrc"
 }
 
 install_webui_dependencies() {
-  step "安装 hermes-web-ui 依赖"
+  step "Install hermes-web-ui dependencies"
   local path_env
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -355,14 +339,14 @@ install_webui_dependencies() {
 }
 
 build_webui() {
-  step "构建 hermes-web-ui"
+  step "Build hermes-web-ui"
   local path_env
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   run_as_app_user "cd '${DEPLOY_DIR}' && PATH='${path_env}' npm run build"
 }
 
 write_service_env() {
-  step "写入服务环境变量"
+  step "Write service environment file"
   local hermes_bin
   hermes_bin="${APP_USER_HOME}/.local/bin/hermes"
 
@@ -376,14 +360,13 @@ HERMES_HOME=${HERMES_HOME_DIR}
 HERMES_BIN=${hermes_bin}
 HERMES_AGENT_ROOT=${APP_USER_HOME}/.hermes/hermes-agent
 HERMES_WEB_UI_HOME=${APP_USER_HOME}/.hermes-web-ui
-# 支持中文显示与处理
-LANG=zh_CN.UTF-8
-LC_ALL=zh_CN.UTF-8
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
 EOF
 
   run chown root:root "${SERVICE_ENV_FILE}"
   run chmod 0644 "${SERVICE_ENV_FILE}"
-  info "已生成 ${SERVICE_ENV_FILE}"
+  info "Wrote ${SERVICE_ENV_FILE}"
 }
 
 wait_for_http_ready() {
@@ -404,72 +387,72 @@ wait_for_http_ready() {
 require_log_dir_writable() {
   local state_dir="${APP_USER_HOME}/.hermes-web-ui"
   local log_dir="${state_dir}/logs"
-  step "检查运行时目录权限"
+  step "Check runtime directory permissions"
   run mkdir -p "${log_dir}"
   run chown -R "${APP_USER}:${APP_USER}" "${state_dir}"
   run_as_app_user "test -w '${state_dir}' && test -w '${log_dir}'"
-  info "运行时目录可写: ${log_dir}"
+  info "Runtime directories are writable: ${log_dir}"
 }
 
 check_runtime_artifacts() {
   local hermes_bin="${APP_USER_HOME}/.local/bin/hermes"
-  step "检查运行时工件"
+  step "Check runtime artifacts"
   run test -x "${NODE_BIN}"
   run_as_app_user "test -x '${hermes_bin}' && '${hermes_bin}' --version >/dev/null"
   run test -f "${DEPLOY_DIR}/dist/server/index.js"
   run test -f "${DEPLOY_DIR}/dist/client/index.html"
-  info "Node、Hermes 与构建产物检查通过。"
+  info "Node, Hermes, and build artifacts look good."
 }
 
 check_bridge_status() {
   local bridge_log="${APP_USER_HOME}/.hermes-web-ui/logs/bridge.log"
-  step "检查 agent bridge 日志"
+  step "Check agent bridge log"
   if [[ ! -f "${bridge_log}" ]]; then
-    warn "bridge 日志不存在，跳过 bridge 稳定性检查。"
+    warn "bridge.log does not exist yet. Skipping bridge stability check."
     return 0
   fi
 
   if run bash -lc "tail -n 200 '${bridge_log}' | grep -E 'bridge exited unexpectedly|agent-bridge\\] exited code='" >/dev/null 2>&1; then
-    err "检测到 agent bridge 异常退出，请查看 ${bridge_log}"
+    err "Detected an unexpected agent bridge exit. Check ${bridge_log}"
     return 1
   fi
 
-  info "agent bridge 日志未发现异常退出。"
+  info "No unexpected agent bridge exits detected."
 }
 
 post_deploy_self_check() {
   local probe_url="http://127.0.0.1:${PORT}"
-  step "执行部署后自检"
+  step "Run post-deploy self-checks"
 
   if ! run systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}"; then
-    err "systemd 服务未处于 active 状态: ${SYSTEMD_SERVICE_NAME}"
+    err "systemd service is not active: ${SYSTEMD_SERVICE_NAME}"
     run systemctl status "${SYSTEMD_SERVICE_NAME}" --no-pager || true
     return 1
   fi
-  info "systemd 服务状态正常。"
+  info "systemd service is active."
 
   check_runtime_artifacts
   require_log_dir_writable
 
   if ! wait_for_http_ready "${probe_url}/health" "\"status\":\"ok\""; then
-    err "健康检查未通过: ${probe_url}/health"
+    err "Health check failed: ${probe_url}/health"
     run journalctl -u "${SYSTEMD_SERVICE_NAME}" -n 120 --no-pager || true
     return 1
   fi
-  info "健康检查通过。"
+  info "Health check passed."
 
   if ! wait_for_http_ready "${probe_url}/api/auth/status" "\"hasPasswordLogin\":true"; then
-    err "认证状态检查未通过: ${probe_url}/api/auth/status"
+    err "Auth status check failed: ${probe_url}/api/auth/status"
     run journalctl -u "${SYSTEMD_SERVICE_NAME}" -n 120 --no-pager || true
     return 1
   fi
-  info "认证状态检查通过。"
+  info "Auth status check passed."
 
   check_bridge_status
 }
 
 install_systemd_service() {
-  step "安装 systemd 服务"
+  step "Install systemd service"
 
   local rendered_service
   rendered_service="$(mktemp)"
@@ -500,7 +483,7 @@ PY
   rm -f "${rendered_service}"
   run systemctl daemon-reload
   run systemctl enable --now "${SYSTEMD_SERVICE_NAME}"
-  info "systemd 服务已启动: ${SYSTEMD_SERVICE_NAME}"
+  info "systemd service started: ${SYSTEMD_SERVICE_NAME}"
 }
 
 show_summary() {
@@ -508,19 +491,19 @@ show_summary() {
   server_url="http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT}"
 
   echo
-  info "源码部署完成"
+  info "Source deployment completed"
   echo "----------------------------------------"
-  echo "访问地址: ${server_url}"
-  echo "本机地址: http://127.0.0.1:${PORT}"
-  echo "代码目录: ${DEPLOY_DIR}"
-  echo "Hermes 数据目录: ${HERMES_HOME_DIR}"
-  echo "运行用户: ${APP_USER}"
+  echo "Server URL: ${server_url}"
+  echo "Local URL: http://127.0.0.1:${PORT}"
+  echo "Source directory: ${DEPLOY_DIR}"
+  echo "Hermes data directory: ${HERMES_HOME_DIR}"
+  echo "Runtime user: ${APP_USER}"
   echo
-  echo "首次 Hermes 配置:"
+  echo "Initial Hermes setup:"
   echo "  sudo -u ${APP_USER} -H env HERMES_HOME=${HERMES_HOME_DIR} ${APP_USER_HOME}/.local/bin/hermes setup"
   echo "  sudo -u ${APP_USER} -H env HERMES_HOME=${HERMES_HOME_DIR} ${APP_USER_HOME}/.local/bin/hermes model"
   echo
-  echo "常用命令:"
+  echo "Common commands:"
   echo "  sudo systemctl status ${SYSTEMD_SERVICE_NAME}"
   echo "  sudo journalctl -u ${SYSTEMD_SERVICE_NAME} -f"
   echo "  sudo systemctl restart ${SYSTEMD_SERVICE_NAME}"
@@ -532,8 +515,6 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/hermes-web-ui}"
 PORT="${PORT:-6060}"
 BIND_HOST="${BIND_HOST:-0.0.0.0}"
 APP_USER="${APP_USER:-hermesui}"
-REPO_URL="${REPO_URL:-https://github.com/EKKOLearnAI/hermes-web-ui.git}"
-REPO_REF="${REPO_REF:-main}"
 HERMES_HOME_DIR="${HERMES_HOME_DIR:-${DEPLOY_DIR}/hermes_data}"
 NODE_REQUIRED_MAJOR="${NODE_REQUIRED_MAJOR:-23}"
 NODE_VERSION="${NODE_VERSION:-23.11.1}"
@@ -560,14 +541,13 @@ require_safe_env_value "HERMES_HOME_DIR" "${HERMES_HOME_DIR}"
 require_safe_env_value "SERVICE_ENV_FILE" "${SERVICE_ENV_FILE}"
 
 echo
-echo "hermes / hermes-web-ui 源码一键部署"
+echo "hermes / hermes-web-ui source deployment"
 echo "=================================="
 echo
 
 require_debian_like
 require_supported_arch
 install_base_packages
-setup_locales
 ensure_app_user
 resolve_repo_dir
 prepare_deploy_dirs

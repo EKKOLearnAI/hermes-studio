@@ -1,10 +1,12 @@
 # Armbian/Ubuntu 源码部署指南
 
-本文档面向无法稳定访问 Docker Hub 的 `Armbian / Ubuntu 24.04` 设备，目标是直接在宿主机完成：
+本文档对应“本地源码打包后上传部署”的场景，不再以设备侧 `git clone` 作为默认流程。
+
+目标机器会在宿主机上直接完成：
 
 - 自动安装 `Hermes Agent`
 - 自动安装 `Node.js 23`
-- 自动配置国内 npm 源
+- 自动配置 npm 镜像源
 - 自动构建 `hermes-web-ui`
 - 自动写入 `systemd` 服务并设置开机自启
 - 保留 `Hermes` 首次绑定与模型配置为人工操作
@@ -15,17 +17,17 @@
 - 推荐架构：
   - `arm64 / aarch64`
   - `amd64 / x86_64`
-- 设备可以访问：
-  - GitHub 仓库或其可用镜像/CDN
-  - `npmmirror` 镜像
+- 目标机器可以访问：
+  - `npmmirror` 或你自定义的 Node / npm 镜像
+  - `Hermes Agent` 安装脚本地址或其镜像
 
 ## 适用场景
 
-当以下任一条件成立时，推荐使用源码部署：
+当以下任一条件成立时，推荐使用本地源码包部署：
 
 - `docker.io` 无法稳定拉取镜像
 - Docker 国内镜像源无法解析或频繁超时
-- 设备网络对 `Docker Hub` 不友好，但 npm / Git 下载仍可用
+- 你已经在本地改好了源码，希望原样部署到设备
 - 你希望直接使用宿主机进程 + `systemd` 管理服务
 
 ## 相关文件
@@ -33,31 +35,101 @@
 - 部署脚本：`scripts/deploy-source-armbian.sh`
 - systemd 模板：`scripts/hermes-web-ui.service`
 
-## 快速开始
+## 重要说明
 
-### 1. 安装 Git
+- `deploy-source-armbian.sh` 现在**不会自动 `git clone` 仓库**。
+- 运行脚本前，你必须先把源码包上传并解压到目标目录，或者直接在源码目录内运行脚本。
+- 脚本会检查以下任一位置是否存在 `package.json`：
+  - 脚本所在目录的上一级
+  - `DEPLOY_DIR`
+- 如果这两个位置都没有源码目录，脚本会直接报错退出。
 
-```bash
-apt-get update -y
-apt-get install -y git
+## 默认主流程：压缩打包 + SCP 上传 + 解压部署
+
+### 方案一：Windows PowerShell 本地打包
+
+建议在仓库的上一级目录执行，这样压缩包里会保留顶层目录 `hermes-web-ui/`：
+
+```powershell
+cd G:\AIproject\longxia_keli
+tar.exe `
+  --exclude=.git `
+  --exclude=node_modules `
+  --exclude=dist `
+  --exclude=.runtime-hermes `
+  --exclude=hermes_data `
+  -czf hermes-web-ui-src.tar.gz `
+  hermes-web-ui
 ```
 
-### 2. 拉取仓库
+上传到目标机器：
+
+```powershell
+scp .\hermes-web-ui-src.tar.gz user@YOUR_DEVICE_IP:/tmp/
+```
+
+登录目标机器后解压并执行安装：
 
 ```bash
-cd /opt
-git clone https://github.com/EKKOLearnAI/hermes-web-ui.git
+ssh user@YOUR_DEVICE_IP
+sudo rm -rf /opt/hermes-web-ui
+sudo mkdir -p /opt
+sudo tar -xzf /tmp/hermes-web-ui-src.tar.gz -C /opt
 cd /opt/hermes-web-ui
-```
-
-### 3. 执行源码一键部署
-
-```bash
 chmod +x scripts/deploy-source-armbian.sh
 sudo ./scripts/deploy-source-armbian.sh
 ```
 
-### 4. 完成 Hermes 首次配置
+### 方案二：Linux/macOS 本地打包
+
+```bash
+cd /path/to/parent/of/hermes-web-ui
+tar \
+  --exclude=.git \
+  --exclude=node_modules \
+  --exclude=dist \
+  --exclude=.runtime-hermes \
+  --exclude=hermes_data \
+  -czf hermes-web-ui-src.tar.gz \
+  hermes-web-ui
+scp hermes-web-ui-src.tar.gz user@YOUR_DEVICE_IP:/tmp/
+ssh user@YOUR_DEVICE_IP
+```
+
+远端解压并执行安装：
+
+```bash
+sudo rm -rf /opt/hermes-web-ui
+sudo mkdir -p /opt
+sudo tar -xzf /tmp/hermes-web-ui-src.tar.gz -C /opt
+cd /opt/hermes-web-ui
+chmod +x scripts/deploy-source-armbian.sh
+sudo ./scripts/deploy-source-armbian.sh
+```
+
+### 可选：自定义安装参数
+
+如果你需要在解压后直接指定端口、运行用户或数据目录，可以这样执行：
+
+```bash
+cd /opt/hermes-web-ui
+sudo PORT=8080 \
+  APP_USER=hermesui \
+  HERMES_HOME_DIR=/data/hermes \
+  ./scripts/deploy-source-armbian.sh
+```
+
+### 建议保留在压缩包外的目录
+
+为了减小体积并避免把本地环境带到目标机，建议不要把下面这些目录打进源码包：
+
+- `.git`
+- `node_modules`
+- `dist`
+- `.runtime-hermes`
+- `hermes_data`
+
+## 部署完成后的首次配置
 
 默认运行用户是 `hermesui`，默认 `HERMES_HOME` 是 `/opt/hermes-web-ui/hermes_data`。
 
@@ -441,4 +513,3 @@ sudo systemctl daemon-reload
 - `npm` 包镜像
 
 相比单纯依赖 Docker Hub，这条链路在国内网络环境里通常更容易逐段兜底。
-
