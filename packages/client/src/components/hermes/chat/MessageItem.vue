@@ -14,6 +14,7 @@ import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
   handleCodeBlockCopyClick,
+  isUnifiedDiffContent,
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
@@ -456,12 +457,14 @@ function formatToolPayload(raw?: string): ToolPayload {
       language: "json",
     };
   } catch {
+    const language = isUnifiedDiffContent(raw) ? "diff" : undefined;
     return {
       full: raw,
       display:
-        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
-          : raw,
+        language === "diff" || raw.length <= TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw
+          : raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated"),
+      language,
     };
   }
 }
@@ -1547,6 +1550,13 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  :deep(.hljs-unified-diff code.hljs) {
+    max-height: none;
+    overflow-y: visible;
+    white-space: pre;
+    word-break: normal;
   }
 }
 

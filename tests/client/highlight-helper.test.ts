@@ -12,7 +12,21 @@ vi.mock('highlight.js', () => ({
   default: highlightJsMock,
 }))
 
-import { normalizeHighlightLanguage, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
+import {
+  isUnifiedDiffContent,
+  normalizeHighlightLanguage,
+  renderHighlightedCodeBlock,
+} from '@/components/hermes/chat/highlight'
+
+const UNIFIED_DIFF_SAMPLE = `diff --git a/foo.ts b/foo.ts
+index 1111111..2222222 100644
+--- a/foo.ts
++++ b/foo.ts
+@@ -1,2 +1,2 @@
+-const value = 1
++const value = 2
+ console.log(value)
+`
 
 describe('highlight helper', () => {
   beforeEach(() => {
@@ -77,5 +91,34 @@ describe('highlight helper', () => {
 
     expect(html).toContain('&lt;tag&gt;')
     expect(html).toContain('class="code-lang">vue</span>')
+  })
+
+  it('detects unified diff content conservatively', () => {
+    expect(isUnifiedDiffContent(UNIFIED_DIFF_SAMPLE)).toBe(true)
+    expect(isUnifiedDiffContent('--- note\n+++ more\nplain text')).toBe(false)
+    expect(isUnifiedDiffContent('@@ -1 +1 @@\n-a\n+b', 'diff')).toBe(true)
+  })
+
+  it('renders unified diffs with semantic rows, line numbers, and no highlight.js execution', () => {
+    const html = renderHighlightedCodeBlock(UNIFIED_DIFF_SAMPLE, undefined, 'Copy')
+
+    expect(highlightJsMock.highlight).not.toHaveBeenCalled()
+    expect(html).toContain('hljs-unified-diff')
+    expect(html).toContain('class="code-lang">diff</span>')
+    expect(html).toContain('diff-line diff-line-file-header')
+    expect(html).toContain('diff-line diff-line-hunk-header')
+    expect(html).toContain('diff-line diff-line-removed')
+    expect(html).toContain('diff-line diff-line-added')
+    expect(html).toContain('class="diff-line-number diff-line-number-old" aria-hidden="true">1</span>')
+    expect(html).toContain('class="diff-line-number diff-line-number-new" aria-hidden="true">1</span>')
+    expect(html).toContain('class="diff-line-number diff-line-number-context" aria-hidden="true">2</span>')
+    expect(html).toContain('class="diff-line-content">-const value = 1</span>')
+    expect(html).toContain('class="diff-line-content">+const value = 2</span>')
+  })
+
+  it('renders unified diff rows without newline text nodes between block rows', () => {
+    const html = renderHighlightedCodeBlock(UNIFIED_DIFF_SAMPLE, undefined, 'Copy')
+
+    expect(html).not.toContain('</span>\n<span class="diff-line')
   })
 })
