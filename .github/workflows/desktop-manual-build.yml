@@ -143,9 +143,7 @@ jobs:
         shell: bash
         env:
           RUNTIME_RELEASE_TAG: ${{ github.event.inputs.runtime_release_tag }}
-        run: |
-          tag="${RUNTIME_RELEASE_TAG:-$(node packages/desktop/scripts/runtime-asset-name.mjs --release-tag)}"
-          TAG="$tag" node -e 'const fs=require("fs"); fs.writeFileSync("packages/desktop/build/runtime-release.json", JSON.stringify({tag: process.env.TAG}, null, 2) + "\n")'
+        run: npm --prefix packages/desktop run write:runtime-release
 
       - name: Configure macOS signing
         if: needs.validate.outputs.target_os == 'darwin'

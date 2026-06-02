@@ -18,13 +18,14 @@ import { basename, resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { platform as osPlatform, arch as osArch, homedir as osHomedir } from 'node:os'
+import { hermesVersion } from './runtime-config.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 
 const TARGET_OS = process.env.TARGET_OS || osPlatform()
 const TARGET_ARCH = process.env.TARGET_ARCH || osArch()
-const HERMES_VERSION = process.env.HERMES_VERSION || '0.15.2'
+const HERMES_VERSION = hermesVersion()
 // Match the packaged runtime to the channel list exposed at /hermes/channels.
 // Telegram, Discord, and Slack are covered by "messaging". We intentionally
 // install Matrix's plaintext deps below instead of using the "matrix" extra:

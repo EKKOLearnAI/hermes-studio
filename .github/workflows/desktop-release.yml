@@ -104,9 +104,7 @@ jobs:
         shell: bash
         env:
           HERMES_DESKTOP_RUNTIME_RELEASE_TAG: ${{ vars.HERMES_DESKTOP_RUNTIME_RELEASE_TAG }}
-        run: |
-          tag="${HERMES_DESKTOP_RUNTIME_RELEASE_TAG:-$(node packages/desktop/scripts/runtime-asset-name.mjs --release-tag)}"
-          TAG="$tag" node -e 'const fs=require("fs"); fs.writeFileSync("packages/desktop/build/runtime-release.json", JSON.stringify({tag: process.env.TAG}, null, 2) + "\n")'
+        run: npm --prefix packages/desktop run write:runtime-release
 
       - name: Configure macOS signing
         if: matrix.target_os == 'darwin'
