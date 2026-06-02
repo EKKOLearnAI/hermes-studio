@@ -34,11 +34,47 @@ const EXT_LANG_MAP: Record<string, string> = {
   '.kt': 'kotlin',
 }
 
-function getLanguageFromPath(filePath: string): string {
+const SPECIAL_FILE_LANG_MAP: Record<string, string> = {
+  Dockerfile: 'dockerfile',
+  Makefile: 'makefile',
+  'CMakeLists.txt': 'cmake',
+  '.gitignore': 'gitignore',
+  '.dockerignore': 'gitignore',
+}
+
+const TEXT_BASENAMES = new Set([
+  ...Object.keys(SPECIAL_FILE_LANG_MAP),
+  'README',
+  'LICENSE',
+  'NOTICE',
+  'CHANGELOG',
+  'CONTRIBUTING',
+])
+
+const TEXT_EXTS = new Set([
+  '.txt', '.text', '.log', '.csv', '.tsv',
+  '.js', '.jsx', '.mjs', '.cjs',
+  '.ts', '.tsx', '.mts', '.cts',
+  '.json', '.jsonc',
+  '.html', '.htm', '.css', '.scss', '.less',
+  '.md', '.markdown',
+  '.py', '.pyw',
+  '.yaml', '.yml', '.xml',
+  '.sh', '.bash', '.zsh', '.fish',
+  '.sql', '.go', '.rs', '.java',
+  '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx', '.hh', '.hxx',
+  '.toml', '.ini', '.env', '.conf', '.cfg', '.properties',
+  '.vue', '.svelte', '.astro',
+  '.dockerfile', '.graphql', '.gql',
+  '.lua', '.r', '.rb', '.php', '.swift', '.kt', '.kts',
+  '.diff', '.patch', '.lock',
+])
+
+export function getLanguageFromPath(filePath: string): string {
   const name = filePath.split('/').pop() || ''
-  if (name === 'Dockerfile') return 'dockerfile'
-  if (name === 'Makefile') return 'makefile'
-  const ext = '.' + name.split('.').pop()?.toLowerCase()
+  const specialLanguage = SPECIAL_FILE_LANG_MAP[name]
+  if (specialLanguage) return specialLanguage
+  const ext = getFileExt(name)
   return EXT_LANG_MAP[ext] || 'plaintext'
 }
 
@@ -59,8 +95,13 @@ export function isMarkdownFile(name: string): boolean {
 }
 
 export function isTextFile(name: string): boolean {
-  const binaryExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.zip', '.gz', '.tar', '.7z', '.rar', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.mp3', '.mp4', '.wav', '.webm', '.avi', '.mov', '.exe', '.dll', '.so', '.dylib', '.bin', '.dat', '.db', '.sqlite'])
-  return !binaryExts.has(getFileExt(name))
+  const basename = name.split('/').pop() || ''
+  if (TEXT_BASENAMES.has(basename) || basename.startsWith('.env.')) return true
+  return TEXT_EXTS.has(getFileExt(basename))
+}
+
+export function isPreviewableFile(name: string): boolean {
+  return isImageFile(name) || isMarkdownFile(name) || isTextFile(name)
 }
 
 // Returns true if `targetPath` is the same as `changedPath` or lives inside it
@@ -88,8 +129,9 @@ export const useFilesStore = defineStore('files', () => {
 
   const previewFile = ref<{
     path: string
-    type: 'image' | 'markdown'
+    type: 'image' | 'markdown' | 'text'
     content?: string
+    language?: string
   } | null>(null)
 
   const pathSegments = computed(() => {
@@ -163,6 +205,14 @@ export const useFilesStore = defineStore('files', () => {
     } else if (isMarkdownFile(entry.name)) {
       const result = await filesApi.readFile(entry.path)
       previewFile.value = { path: entry.path, type: 'markdown', content: result.content }
+    } else if (isTextFile(entry.name)) {
+      const result = await filesApi.readFile(entry.path)
+      previewFile.value = {
+        path: entry.path,
+        type: 'text',
+        content: result.content,
+        language: getLanguageFromPath(entry.path),
+      }
     }
   }
 
