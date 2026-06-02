@@ -100,8 +100,7 @@ function releaseTagCandidates(): string[] {
   const override = process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG?.trim()
   if (override) return [override]
 
-  const version = app.getVersion()
-  const candidates = [packagedRuntimeReleaseTag(), version, `v${version}`, 'latest']
+  const candidates = [packagedRuntimeReleaseTag()]
   return Array.from(new Set(candidates.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)))
 }
 
@@ -165,9 +164,14 @@ async function resolveRuntimeDescriptor(source?: RuntimeDownloadSource): Promise
     throw new Error('Hermes runtime download source is not selected')
   }
 
+  const tags = releaseTagCandidates()
+  if (!manifestOverride && tags.length === 0) {
+    throw new Error('Hermes runtime release metadata is missing')
+  }
+
   const candidates = manifestOverride
     ? [{ tag: '', url: manifestOverride }]
-    : releaseTagCandidates().map(tag => ({ tag, url: runtimeAssetUrl(platformManifestName, tag, downloadSource!) }))
+    : tags.map(tag => ({ tag, url: runtimeAssetUrl(platformManifestName, tag, downloadSource!) }))
 
   let lastError: Error | null = null
   for (const candidate of candidates) {
