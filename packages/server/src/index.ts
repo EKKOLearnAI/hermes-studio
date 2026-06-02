@@ -20,7 +20,7 @@ import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
-import { ensureProfileGatewaysRunning, startGatewayAutostartWatchdog } from './services/hermes/gateway-autostart'
+import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 
@@ -93,7 +93,6 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
     logger.warn(err, '[bootstrap] failed to ensure profile gateways')
     console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
   }
-  startGatewayAutostartWatchdog()
 
   try {
     agentBridgeManager = await startAgentBridgeManager()
@@ -113,7 +112,6 @@ function startRuntimeServicesAfterListen(): void {
       logger.warn(err, '[bootstrap] failed to ensure profile gateways')
       console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
     }
-    startGatewayAutostartWatchdog()
   })()
 
   void (async () => {

@@ -272,8 +272,6 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | OpenRouter attribution title sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | platform/runtime dependent | Force managed legacy gateway process handling. Set `1`, `true`, `yes`, or `on` to enable. |
-| `HERMES_WEB_UI_GATEWAY_WATCHDOG` | managed gateway runtimes | Periodically checks and recovers profile gateways only when Web UI owns gateway processes. Set `0`, `false`, `no`, or `off` to disable. |
-| `HERMES_WEB_UI_GATEWAY_WATCHDOG_INTERVAL_MS` | `60000` | Interval for the managed gateway watchdog. |
 | `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | enabled in production | Controls whether Web UI shutdown also stops managed gateway processes. Set `0` or `false` to detach them. |
 | `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config for legacy gateway compatibility. |
 | `HERMES_WEB_UI_PREVIEW_REPO` | package repository | GitHub repository used by Version Preview. |
