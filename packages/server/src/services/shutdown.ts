@@ -2,6 +2,11 @@ import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
 
+function shouldStopAgentBridgeOnShutdown(): boolean {
+  const raw = String(process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(raw)
+}
+
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
   let isShuttingDown = false
 
@@ -23,16 +28,19 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
         logger.warn(err, 'Failed to stop preview runtime (non-fatal)')
       }
 
-      if (agentBridgeManager) {
+      if (agentBridgeManager && shouldStopAgentBridgeOnShutdown()) {
         try {
           await agentBridgeManager.stop()
           logger.info('Agent bridge stopped')
         } catch (err) {
           logger.warn(err, 'Failed to stop agent bridge (non-fatal)')
         }
+      } else if (agentBridgeManager) {
+        logger.info('Leaving agent bridge running across Web UI shutdown')
       }
 
-      // Close ChatRunSocket first to abort all active runs and close EventSource connections
+      // Close ChatRunSocket first to release WebSocket state. CLI bridge runs
+      // keep running in the external bridge and are reattached after restart.
       if (chatRunServer) {
         chatRunServer.close()
         logger.info('ChatRunSocket closed')

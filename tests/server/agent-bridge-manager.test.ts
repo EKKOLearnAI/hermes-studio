@@ -132,9 +132,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('waits briefly for a restarting bridge socket before failing', async () => {
-    const endpoint = process.platform === 'win32'
-      ? `tcp://127.0.0.1:${32000 + (process.pid % 10000)}`
-      : `ipc://${join(tempDir, 'late-bridge.sock')}`
+    const endpoint = `tcp://127.0.0.1:${32000 + (process.pid % 10000)}`
     let server: Server | undefined
 
     const ready = new Promise<void>((resolve) => {
@@ -160,6 +158,52 @@ describe('agent bridge manager command resolution', () => {
       await ready
     } finally {
       await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve())
+    }
+  })
+
+  it('attaches to an already running bridge instead of spawning a replacement', async () => {
+    const endpoint = `tcp://127.0.0.1:${34000 + (process.pid % 10000)}`
+    let requestCount = 0
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        requestCount += 1
+        const request = JSON.parse(chunk.toString('utf8').trim())
+        expect(request).toMatchObject({ action: 'ping' })
+        socket.end(`${JSON.stringify({ ok: true, pong: true })}\n`)
+      })
+    })
+
+    await new Promise<void>((resolve) => {
+      if (endpoint.startsWith('ipc://')) {
+        server.listen(endpoint.slice('ipc://'.length), resolve)
+      } else {
+        const url = new URL(endpoint)
+        server.listen(Number(url.port), url.hostname, resolve)
+      }
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
+
+      await manager.start()
+
+      expect(requestCount).toBe(1)
+      expect(manager.getRuntimeState()).toMatchObject({
+        endpoint,
+        ready: true,
+        running: true,
+        attached: true,
+        pid: undefined,
+      })
+      await manager.stop()
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        attached: false,
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 })

@@ -566,6 +566,147 @@ export async function handleBridgeRun(
   }
 }
 
+function latestAssistantText(state: SessionState): string {
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i]
+    if (message.role === 'assistant') return message.content || ''
+  }
+  return ''
+}
+
+export async function resumeBridgeRun(
+  nsp: ReturnType<Server['of']>,
+  socket: Socket,
+  args: {
+    sessionId: string
+    runId: string
+    profile: string
+    instructions: string
+    model?: string | null
+    provider?: string | null
+  },
+  sessionMap: Map<string, SessionState>,
+  bridge: AgentBridgeClient,
+  dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
+) {
+  const { sessionId, runId, profile, instructions } = args
+  let state = sessionMap.get(sessionId)
+  if (!state) {
+    state = { messages: [], isWorking: false, events: [], queue: [] }
+    sessionMap.set(sessionId, state)
+  }
+
+  const runMarker = state.activeRunMarker || `cli_resume_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  state.isWorking = true
+  state.isAborting = false
+  state.profile = profile
+  state.source = 'cli'
+  state.runId = runId
+  state.activeRunMarker = runMarker
+  state.bridgeOutput = state.bridgeOutput || latestAssistantText(state)
+  state.bridgePendingAssistantContent = state.bridgePendingAssistantContent || ''
+  state.bridgePendingReasoningContent = state.bridgePendingReasoningContent || ''
+  state.bridgePendingToolCallMarkup = state.bridgePendingToolCallMarkup || ''
+  state.bridgePendingTools = state.bridgePendingTools || []
+  state.bridgeToolCounter = state.bridgeToolCounter || 0
+
+  const emit = (event: string, payload: any) => {
+    const tagged = { ...payload, session_id: sessionId }
+    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
+      socket.emit(event, tagged)
+    }
+  }
+
+  let cursor = 0
+  let eventCursor = 0
+  try {
+    const snapshot = await bridge.getResult(runId)
+    const deltas = Array.isArray(snapshot.deltas) ? snapshot.deltas.map(String) : []
+    const output = typeof snapshot.output === 'string' ? snapshot.output : deltas.join('')
+    const persisted = state.bridgeOutput || ''
+    const missingOutput = output && output.startsWith(persisted) ? output.slice(persisted.length) : ''
+    if (missingOutput) {
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        sessionId,
+        runMarker,
+        {
+          ok: true,
+          run_id: runId,
+          session_id: sessionId,
+          status: 'running',
+          delta: missingOutput,
+          cursor: deltas.length,
+          output,
+          done: false,
+          events: [],
+          event_cursor: Array.isArray(snapshot.events) ? snapshot.events.length : 0,
+          error: null,
+        },
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        instructions,
+        { model: args.model, provider: args.provider },
+      )
+    }
+    cursor = deltas.length
+    eventCursor = Array.isArray(snapshot.events) ? snapshot.events.length : 0
+  } catch (err) {
+    bridgeLogger.warn({
+      err: err instanceof Error ? { message: err.message, name: err.name } : err,
+      sessionId,
+      runId,
+    }, '[chat-run-socket] failed to snapshot running bridge run before resume')
+  }
+
+  try {
+    for (;;) {
+      const chunk = await bridge.getOutput(runId, cursor, eventCursor)
+      cursor = chunk.cursor
+      eventCursor = chunk.event_cursor
+      if (chunk.delta || chunk.done || (chunk.events && chunk.events.length > 0)) {
+        await applyBridgeChunkAsync(
+          nsp,
+          socket,
+          state,
+          sessionId,
+          runMarker,
+          chunk,
+          emit,
+          profile,
+          sessionMap,
+          bridge,
+          dequeueNextQueuedRun,
+          instructions,
+          { model: args.model, provider: args.provider },
+        )
+      }
+      if (chunk.done) return
+      await delay(100)
+    }
+  } catch (err) {
+    if (state.activeRunMarker !== runMarker) return
+    state.isWorking = false
+    state.isAborting = false
+    state.profile = undefined
+    state.runId = undefined
+    state.activeRunMarker = undefined
+    state.events = []
+    emit('run.failed', {
+      event: 'run.failed',
+      run_id: runId,
+      error: err instanceof Error ? err.message : String(err),
+      resumed: true,
+    })
+  }
+}
+
 async function refreshFinalContextUsage(args: {
   sessionId: string
   profile: string

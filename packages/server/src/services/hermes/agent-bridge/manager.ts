@@ -4,7 +4,7 @@ import { createConnection, createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
-import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
+import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
 const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
@@ -34,6 +34,7 @@ export interface AgentBridgeManagerRuntimeState {
   endpoint: string
   running: boolean
   ready: boolean
+  attached: boolean
   pid?: number
   starting: boolean
   stopping: boolean
@@ -249,6 +250,11 @@ function isDesktopRuntime(): boolean {
   return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
 }
 
+function shouldKillStaleIpcBridgeProcesses(): boolean {
+  const raw = String(process.env.HERMES_AGENT_BRIDGE_KILL_STALE_IPC || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(raw)
+}
+
 async function canListenTcpEndpoint(endpoint: string): Promise<boolean> {
   const url = new URL(endpoint)
   const host = url.hostname || '127.0.0.1'
@@ -339,11 +345,74 @@ async function killWindowsEndpointOccupants(endpoint: string): Promise<void> {
   await waitForTcpEndpoint(endpoint, 3000)
 }
 
+/**
+ * Find and kill stale bridge broker/worker processes that are still connected
+ * to the given IPC socket path.  This happens after a `systemctl restart` with
+ * KillMode=process where the Node parent is killed but bridge Python children
+ * survive as orphans.
+ */
+async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
+  const sockPath = endpoint.replace(/^ipc:\/\//, '')
+  if (!sockPath) return
+
+  const isWorkerSock = sockPath.includes('hermes-agent-bridge-workers')
+  // Also derive the worker socket path so we can kill worker orphans too.
+  const workerSockDir = `${sockPath.replace(/\/[^/]+$/, '')}`.replace(
+    /hermes-agent-bridge-workers$/,
+    'hermes-agent-bridge-workers',
+  )
+  const socketsToCheck = [sockPath]
+  if (!isWorkerSock) {
+    // broker socket — also check worker sockets under the same namespace
+    const workerDir = require('path').join(require('path').dirname(sockPath), 'hermes-agent-bridge-workers')
+    try {
+      const fs = await import('fs')
+      for (const entry of await fs.promises.readdir(workerDir)) {
+        socketsToCheck.push(require('path').join(workerDir, entry))
+      }
+    } catch { /* dir may not exist */ }
+  }
+
+  const pidsToKill = new Set<number>()
+  for (const sock of socketsToCheck) {
+    try {
+      // lsof finds processes with the Unix socket open (listening or connected)
+      const out = execFileSync('lsof', ['-F', 'p', '-U', '--', sock], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim()
+      for (const line of out.split('\n')) {
+        const pid = Number(line.replace(/^p/, ''))
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
+          pidsToKill.add(pid)
+        }
+      }
+    } catch {
+      // lsof exits non-zero when nothing found — that's fine
+    }
+  }
+
+  if (!pidsToKill.size) return
+
+  for (const pid of pidsToKill) {
+    try {
+      logger.warn('[agent-bridge] killing stale bridge process pid=%d on IPC socket %s', pid, sockPath)
+      process.kill(pid, 'SIGKILL')
+    } catch (err) {
+      logger.warn(err, '[agent-bridge] failed to kill stale bridge process pid=%d', pid)
+    }
+  }
+  // Give processes time to exit
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
+
 export class AgentBridgeManager {
   endpoint: string
   private readonly options: AgentBridgeManagerOptions
   private readonly explicitEndpoint: boolean
   private child: ChildProcess | null = null
+  private attached = false
   private starting: Promise<void> | null = null
   private ready = false
   private stopping = false
@@ -357,7 +426,7 @@ export class AgentBridgeManager {
   }
 
   get running(): boolean {
-    return !!this.child && !this.child.killed && this.ready
+    return this.ready && (this.attached || (!!this.child && !this.child.killed))
   }
 
   getRuntimeState(): AgentBridgeManagerRuntimeState {
@@ -365,6 +434,7 @@ export class AgentBridgeManager {
       endpoint: this.endpoint,
       running: this.running,
       ready: this.ready,
+      attached: this.attached,
       pid: this.child?.pid,
       starting: !!this.starting,
       stopping: this.stopping,
@@ -390,6 +460,10 @@ export class AgentBridgeManager {
   }
 
   private async startProcess(): Promise<void> {
+    if (await this.attachExistingBridge()) {
+      return
+    }
+
     const script = bridgeScriptPath()
     const command = resolveAgentBridgeCommand(this.options)
     await this.prepareEndpoint()
@@ -405,10 +479,12 @@ export class AgentBridgeManager {
     const child = spawn(command.command, args, {
       env,
       cwd: process.cwd(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: process.platform !== 'win32',
       windowsHide: true,
     })
     this.child = child
+    this.attached = false
     this.ready = false
 
     child.once('exit', (code, signal) => {
@@ -419,13 +495,7 @@ export class AgentBridgeManager {
       if (shouldRestart) this.scheduleRestart(code, signal)
     })
 
-    child.stderr?.on('data', chunk => {
-      const text = String(chunk).trim()
-      if (text) logger.warn('[agent-bridge] %s', text)
-    })
-
     await new Promise<void>((resolveReady, rejectReady) => {
-      let buffered = ''
       const startupTimeoutMs = this.options.startupTimeoutMs
         ?? envPositiveInt('HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS')
         ?? DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS
@@ -446,64 +516,69 @@ export class AgentBridgeManager {
         this.restartAttempts = 0
         readyResolved = true
         cleanup()
-        child.stdout?.off('data', onStdout)
         resolveReady()
       }
 
       const onError = (err: Error) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(err)
       }
 
       const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(new Error(`agent bridge exited before ready code=${code} signal=${signal}`))
       }
 
       let readyResolved = false
-      const onStdout = (chunk: Buffer) => {
-        const text = chunk.toString('utf8')
-        buffered += text
-        for (;;) {
-          const newline = buffered.indexOf('\n')
-          if (newline < 0) break
-          const line = buffered.slice(0, newline).trim()
-          buffered = buffered.slice(newline + 1)
-          if (!line) continue
-          logger.info('[agent-bridge] %s', line)
-          if (!readyResolved) {
-            try {
-              const parsed = JSON.parse(line)
-              if (parsed?.event === 'ready') {
-                markReady()
-                return
-              }
-            } catch {}
-          }
-        }
-      }
 
       child.once('error', onError)
       child.once('exit', onExitBeforeReady)
-      child.stdout?.on('data', onStdout)
 
-      if (isDesktopRuntime() && isTcpEndpoint(this.endpoint)) {
-        const probe = async () => {
-          while (!readyResolved && !child.killed) {
-            if (await canConnectTcpEndpoint(this.endpoint)) {
-              markReady()
-              return
-            }
+      const probe = async () => {
+        const client = new AgentBridgeClient({
+          endpoint: this.endpoint,
+          timeoutMs: 1000,
+          connectRetryMs: 0,
+        })
+        while (!readyResolved && !child.killed) {
+          try {
+            await client.ping()
+            markReady()
+            return
+          } catch {
             await new Promise(resolve => setTimeout(resolve, 100))
           }
         }
-        probe().catch(onError)
       }
+      probe().catch(onError)
     })
 
     logger.info('[agent-bridge] ready at %s', this.endpoint)
+    if (process.platform !== 'win32') {
+      child.unref()
+    }
+  }
+
+  private async attachExistingBridge(): Promise<boolean> {
+    try {
+      const client = new AgentBridgeClient({
+        endpoint: this.endpoint,
+        timeoutMs: envPositiveInt('HERMES_AGENT_BRIDGE_ATTACH_TIMEOUT_MS') ?? 5000,
+        connectRetryMs: envPositiveInt('HERMES_AGENT_BRIDGE_ATTACH_RETRY_MS') ?? 5000,
+      })
+      await client.ping()
+      this.child = null
+      this.attached = true
+      this.ready = true
+      this.restartAttempts = 0
+      logger.info('[agent-bridge] attached to existing bridge at %s', this.endpoint)
+      return true
+    } catch (err) {
+      logger.debug(err, '[agent-bridge] no reusable bridge at %s', this.endpoint)
+      this.attached = false
+      this.ready = false
+      return false
+    }
   }
 
   private async prepareEndpoint(): Promise<void> {
@@ -511,6 +586,12 @@ export class AgentBridgeManager {
       if (!(await canListenTcpEndpoint(this.endpoint))) {
         await killWindowsEndpointOccupants(this.endpoint)
       }
+    }
+    // Preserve surviving bridge processes by default so Web UI restarts do not
+    // terminate active conversations. Operators can opt in to cleanup for
+    // known-stale sockets with HERMES_AGENT_BRIDGE_KILL_STALE_IPC=1.
+    if (this.endpoint.startsWith('ipc://') && process.platform !== 'win32' && shouldKillStaleIpcBridgeProcesses()) {
+      await killStaleIpcBridgeProcesses(this.endpoint)
     }
     process.env.HERMES_AGENT_BRIDGE_ENDPOINT = this.endpoint
   }
@@ -552,15 +633,22 @@ export class AgentBridgeManager {
       this.restartTimer = null
     }
     const child = this.child
-    if (!child) return
+    if (!child) {
+      this.ready = false
+      this.attached = false
+      return
+    }
     this.ready = false
+    this.attached = false
     this.child = null
 
     await new Promise<void>((resolveStop) => {
+      // Allow enough time for the broker to gracefully stop its worker
+      // subprocesses (WorkerProcess.stop uses a 3s timeout per worker).
       const timeout = setTimeout(() => {
         if (!child.killed) child.kill('SIGKILL')
         resolveStop()
-      }, 1500)
+      }, 10_000)
       child.once('exit', () => {
         clearTimeout(timeout)
         resolveStop()
