@@ -27,6 +27,7 @@ import {
   runtimeManifestMatchesHermesAgentVersion,
 } from './runtime-version'
 import { extractTarGzipArchive } from './runtime-archive'
+import { t } from './desktop-i18n'
 
 const DEFAULT_RUNTIME_BASE_URL = 'https://download.ekkolearnai.com'
 const DEFAULT_RUNTIME_GITHUB_REPO = 'EKKOLearnAI/hermes-web-ui'
@@ -269,7 +270,7 @@ function downloadFile(
         receivedBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk)
         onProgress?.({
           stage: 'download',
-          message: 'Downloading Hermes runtime...',
+          message: t('runtime.downloading'),
           percent: totalBytes ? Math.min(100, (receivedBytes / totalBytes) * 100) : undefined,
           receivedBytes,
           totalBytes,
@@ -328,7 +329,7 @@ export async function ensureDesktopRuntime(
 
   let descriptor: RuntimeDescriptor
   try {
-    onProgress?.({ stage: 'resolve', message: 'Checking Hermes runtime...' })
+    onProgress?.({ stage: 'resolve', message: t('runtime.checking') })
     descriptor = await resolveRuntimeDescriptor(source)
   } catch (err) {
     if (runtimeReady() && !process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE) {
@@ -342,20 +343,20 @@ export async function ensureDesktopRuntime(
 
   const archive = join(dirname(runtimeRoot), `${descriptor.name}.download`)
   console.log(`[runtime] downloading Hermes runtime ${descriptor.name}`)
-  onProgress?.({ stage: 'download', message: `Downloading ${descriptor.name}...` })
+  onProgress?.({ stage: 'download', message: t('runtime.downloadingPackage', { name: descriptor.name }) })
   let archiveSize = 0
   try {
     await downloadFile(descriptor.url, archive, onProgress)
     archiveSize = statSync(archive).size
     if (descriptor.sha256) {
-      onProgress?.({ stage: 'verify', message: 'Verifying Hermes runtime...' })
+      onProgress?.({ stage: 'verify', message: t('runtime.verifying') })
       const actual = await sha256File(archive)
       if (actual !== descriptor.sha256) {
         throw new Error(`Runtime checksum mismatch for ${descriptor.name}`)
       }
     }
 
-    onProgress?.({ stage: 'extract', message: 'Extracting Hermes runtime...' })
+    onProgress?.({ stage: 'extract', message: t('runtime.extracting') })
     await extractRuntimeArchive(archive, runtimeRoot)
   } finally {
     rmSync(archive, { force: true })
@@ -374,6 +375,6 @@ export async function ensureDesktopRuntime(
       },
     }, null, 2))
   }
-  onProgress?.({ stage: 'ready', message: 'Hermes runtime ready.' })
+  onProgress?.({ stage: 'ready', message: t('runtime.ready') })
   console.log(`[runtime] Hermes runtime ready at ${runtimeRoot}`)
 }
