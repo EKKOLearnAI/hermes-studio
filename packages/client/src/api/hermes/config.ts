@@ -73,6 +73,30 @@ export interface AppConfig {
   [key: string]: any
 }
 
+export interface AuxiliaryModelTask {
+  key: string
+  label: string
+  default_timeout?: number
+  default_download_timeout?: number
+}
+
+export interface AuxiliaryModelSettings {
+  provider?: string
+  model?: string
+  base_url?: string
+  api_key?: string
+  timeout?: number
+  download_timeout?: number
+  extra_body?: Record<string, any>
+}
+
+export type AuxiliaryModelsConfig = Record<string, AuxiliaryModelSettings>
+
+export interface AuxiliaryModelsResponse {
+  tasks: AuxiliaryModelTask[]
+  auxiliary: AuxiliaryModelsConfig
+}
+
 export async function fetchConfig(sections?: string[]): Promise<AppConfig> {
   const query = sections ? `?sections=${sections.join(',')}` : ''
   return request<AppConfig>(`/api/hermes/config${query}`)
@@ -86,6 +110,20 @@ export async function updateConfigSection(
   await request('/api/hermes/config', {
     method: 'PUT',
     body: JSON.stringify({ section, values, ...options }),
+  })
+}
+
+export async function fetchAuxiliaryModels(): Promise<AuxiliaryModelsResponse> {
+  return request<AuxiliaryModelsResponse>('/api/hermes/config/auxiliary-models')
+}
+
+export async function saveAuxiliaryModels(auxiliary: AuxiliaryModelsConfig): Promise<{
+  success: boolean
+  auxiliary: AuxiliaryModelsConfig
+}> {
+  return request<{ success: boolean; auxiliary: AuxiliaryModelsConfig }>('/api/hermes/config/auxiliary-models', {
+    method: 'PUT',
+    body: JSON.stringify({ auxiliary }),
   })
 }
 

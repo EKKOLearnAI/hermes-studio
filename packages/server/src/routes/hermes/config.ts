@@ -5,4 +5,6 @@ export const configRoutes = new Router()
 
 configRoutes.get('/api/hermes/config', ctrl.getConfig)
 configRoutes.put('/api/hermes/config', ctrl.updateConfig)
+configRoutes.get('/api/hermes/config/auxiliary-models', ctrl.getAuxiliaryModels)
+configRoutes.put('/api/hermes/config/auxiliary-models', ctrl.updateAuxiliaryModels)
 configRoutes.put('/api/hermes/config/credentials', ctrl.updateCredentials)
