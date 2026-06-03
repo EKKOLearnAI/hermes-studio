@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   createReadStream,
@@ -14,7 +13,6 @@ import {
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
 import { basename, dirname, join, relative } from 'node:path'
-import { promisify } from 'node:util'
 import { app } from 'electron'
 import {
   bundledGit,
@@ -28,8 +26,8 @@ import {
   hermesAgentVersionFromRuntimeTag,
   runtimeManifestMatchesHermesAgentVersion,
 } from './runtime-version'
+import { extractTarGzipArchive } from './runtime-archive'
 
-const execFileAsync = promisify(execFile)
 const DEFAULT_RUNTIME_BASE_URL = 'https://download.ekkolearnai.com'
 const DEFAULT_RUNTIME_GITHUB_REPO = 'EKKOLearnAI/hermes-web-ui'
 const RUNTIME_MANIFEST_NAME = 'runtime-manifest.json'
@@ -307,9 +305,7 @@ async function extractRuntimeArchive(archive: string, targetRoot: string): Promi
   mkdirSync(tempRoot, { recursive: true })
 
   try {
-    await execFileAsync(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-xzf', archive, '-C', tempRoot], {
-      windowsHide: true,
-    })
+    await extractTarGzipArchive(archive, tempRoot)
     const missing = missingRuntimeFiles(tempRoot)
     if (missing.length > 0) {
       throw new Error(`Runtime archive is missing required files: ${missing.map(file => relative(tempRoot, file)).join(', ')}`)
