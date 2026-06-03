@@ -692,6 +692,16 @@ def _refresh_terminal_env() -> None:
         )
 
 
+def _refresh_approval_allowlist() -> None:
+    """Reload command_allowlist into tools.approval's process-local cache."""
+    try:
+        from tools.approval import load_permanent_allowlist
+
+        load_permanent_allowlist()
+    except Exception:
+        pass
+
+
 def _resolve_model(cfg: dict[str, Any]) -> str:
     env_model = (
         os.environ.get("HERMES_MODEL", "")
@@ -957,6 +967,7 @@ class AgentPool:
 
             with _profile_env(profile):
                 _refresh_worker_profile_env()
+                _refresh_approval_allowlist()
                 discovered_mcp_tools = _discover_bridge_mcp_tools()
                 cfg = _load_cfg()
                 resolved_model = requested_model or _resolve_model(cfg)
@@ -986,6 +997,7 @@ class AgentPool:
                     status_callback=self._status_callback(session_id),
                     thinking_callback=self._make_thinking_callback(session_id),
                     reasoning_callback=self._text_event_callback(session_id, "reasoning.delta"),
+                    stream_delta_callback=self._stream_delta_callback(session_id),
                     tool_progress_callback=self._tool_progress_callback(session_id),
                     tool_start_callback=self._tool_start_callback(session_id),
                     tool_complete_callback=self._tool_complete_callback(session_id),
@@ -1352,11 +1364,9 @@ class AgentPool:
                     "event": "turn.boundary",
                 })
                 return
-            if delta:
-                self._append_event(session_id, {
-                    "event": "stream.delta",
-                    "delta": str(delta),
-                })
+            # Text deltas are already captured by the per-run stream_callback
+            # passed to run_conversation.  Only consume boundary signals here
+            # so registering this callback does not duplicate assistant text.
 
         return callback
 
@@ -1634,6 +1644,7 @@ class AgentPool:
 
     def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None) -> None:
         with _profile_env(profile):
+            _refresh_approval_allowlist()
             def stream_callback(delta: str) -> None:
                 with self._lock:
                     text = str(delta)
