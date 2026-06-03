@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onMounted } from 'vue'
+import { ref, watch, computed, onMounted, nextTick } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage, useDialog } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
@@ -9,7 +9,7 @@ import CopilotLoginModal from './CopilotLoginModal.vue'
 import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
 import { fetchProviderModels } from '@/api/hermes/system'
-import { normalizeCustomProviderBaseUrl } from '@/utils/providerBaseUrl'
+import { inferApiKeyFunPresetProvider, isApiKeyFunBaseUrl, type ApiKeyFunPresetProvider } from '@/utils/providerBaseUrl'
 
 const { t } = useI18n()
 
@@ -77,6 +77,31 @@ const FUN_LINK_MAP: Record<string, string> = {
 
 const funProviderLink = computed(() => selectedPreset.value ? FUN_LINK_MAP[selectedPreset.value] || '' : '')
 
+async function switchToApiKeyFunPreset(providerKey: ApiKeyFunPresetProvider, preferredModel: string) {
+  const apiKey = formData.value.api_key
+  const contextLength = formData.value.context_length
+  providerType.value = 'preset'
+  await nextTick()
+  selectedPreset.value = providerKey
+  await nextTick()
+  formData.value.api_key = apiKey
+  formData.value.context_length = contextLength
+  if (preferredModel) {
+    if (!modelOptions.value.some(option => option.value === preferredModel)) {
+      modelOptions.value = [{ label: preferredModel, value: preferredModel }, ...modelOptions.value]
+    }
+    formData.value.model = preferredModel
+  }
+}
+
+async function routeApiKeyFunCustomProvider(model: string) {
+  if (providerType.value !== 'custom') return
+  if (!isApiKeyFunBaseUrl(formData.value.base_url)) return
+  const providerKey = inferApiKeyFunPresetProvider(model)
+  if (!providerKey) return
+  await switchToApiKeyFunPreset(providerKey, model)
+}
+
 function autoGenerateName(url: string): string {
   const clean = url.replace(/^https?:\/\//, '').replace(/\/v1\/?$/, '')
   const host = clean.split('/')[0]
@@ -118,6 +143,10 @@ watch(() => formData.value.base_url, (url) => {
   if (providerType.value === 'custom' && url.trim() && !formData.value.name) {
     formData.value.name = autoGenerateName(url.trim())
   }
+})
+
+watch(() => formData.value.model, (model) => {
+  void routeApiKeyFunCustomProvider(model)
 })
 
 watch(providerType, () => {
@@ -201,17 +230,21 @@ async function handleSave() {
 
   loading.value = true
   try {
+    const contextLength = formData.value.context_length ?? undefined
+    const apiKeyFunPreset = providerType.value === 'custom' && isApiKeyFunBaseUrl(formData.value.base_url)
+      ? inferApiKeyFunPresetProvider(formData.value.model)
+      : null
     const providerKey = providerType.value === 'preset'
       ? selectedPreset.value
+      : apiKeyFunPreset
+    const presetProvider = apiKeyFunPreset
+      ? modelsStore.allProviders.find(group => group.provider === apiKeyFunPreset)
       : null
-
-    const contextLength = formData.value.context_length ?? undefined
-    const baseUrl = providerType.value === 'custom'
-      ? normalizeCustomProviderBaseUrl(formData.value.base_url)
-      : formData.value.base_url.trim()
+    const baseUrl = presetProvider?.base_url || formData.value.base_url.trim()
+    const providerName = presetProvider?.label || formData.value.name.trim()
 
     await modelsStore.addProvider({
-      name: formData.value.name.trim(),
+      name: providerName,
       base_url: baseUrl,
       api_key: formData.value.api_key.trim(),
       model: formData.value.model,
