@@ -23,6 +23,7 @@ import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { generateSessionTitleForSession } from '../../services/hermes/session-title-generator'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -643,6 +644,21 @@ export async function rename(ctx: any) {
     return
   }
   ctx.body = { ok: true }
+}
+
+export async function generateTitle(ctx: any) {
+  const existing = localGetSessionDetail(ctx.params.id)
+  if (denySessionAccess(ctx, existing)) return
+  if (!existing) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+
+  ctx.body = await generateSessionTitleForSession(
+    ctx.params.id,
+    requestedProfile(ctx) || existing.profile || 'default',
+  )
 }
 
 export async function setWorkspace(ctx: any) {

@@ -42,6 +42,14 @@ export interface SessionResetConfig {
   at_hour?: number
 }
 
+export interface SessionTitleGenerationConfig {
+  enabled?: boolean
+  use_chat_model?: boolean
+  provider?: string
+  model?: string
+  prompt?: string
+}
+
 export interface PrivacyConfig {
   redact_pii?: boolean
 }
@@ -57,6 +65,7 @@ export interface AppConfig {
   memory?: MemoryConfig
   compression?: CompressionConfig
   session_reset?: SessionResetConfig
+  session_title_generation?: SessionTitleGenerationConfig
   privacy?: PrivacyConfig
   approvals?: ApprovalConfig
   telegram?: Record<string, any>

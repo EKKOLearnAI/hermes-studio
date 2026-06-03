@@ -19,6 +19,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { copyToClipboard } from "@/utils/clipboard";
+import { getDefaultModelForProfile as getDefaultModelForProfileUtil, getModelGroupsForProfile as getModelGroupsForProfileUtil } from "@/composables/model-selection";
 import FolderPicker from "./FolderPicker.vue";
 import ChatInput from "./ChatInput.vue";
 import ConversationMonitorPane from "./ConversationMonitorPane.vue";
@@ -187,29 +188,11 @@ const newChatModel = ref<string>("");
 const newChatLoading = ref(false);
 
 function getModelGroupsForProfile(profile: string) {
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  return profileModels?.groups || [];
+  return getModelGroupsForProfileUtil(appStore.profileModelGroups, profile)
 }
 
 function getDefaultModelForProfile(profile: string) {
-  const groups = getModelGroupsForProfile(profile);
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
-  const providerGroup = defaultProvider
-    ? groups.find((group) => group.provider === defaultProvider)
-    : undefined;
-  const fallbackGroup = providerGroup || groups.find((group) => group.models.length > 0);
-  return {
-    provider: fallbackGroup?.provider || "",
-    model: fallbackGroup?.models.includes(defaultModel)
-      ? defaultModel
-      : fallbackGroup?.models[0] || "",
-  };
+  return getDefaultModelForProfileUtil(appStore.profileModelGroups, profile)
 }
 
 const newChatProfileOptions = computed(() =>

@@ -202,6 +202,22 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+export interface GenerateSessionTitleResult {
+  ok: boolean
+  applied: boolean
+  title: string
+}
+
+export async function generateSessionTitle(id: string, profile?: string | null): Promise<GenerateSessionTitleResult> {
+  const params = new URLSearchParams()
+  if (profile) params.set('profile', profile)
+  const query = params.toString()
+  return request<GenerateSessionTitleResult>(
+    `/api/hermes/sessions/${id}/generate-title${query ? `?${query}` : ''}`,
+    { method: 'POST' },
+  )
+}
+
 export async function setSessionWorkspace(id: string, workspace: string | null): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/workspace`, {

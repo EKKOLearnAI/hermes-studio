@@ -30,6 +30,7 @@ import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
+import { buildStandardSessionTitleFromText, maybeGenerateSessionTitleForSession } from '../session-title-generator'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -309,7 +310,7 @@ export async function handleBridgeRun(
 
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
-      const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+      const preview = buildStandardSessionTitleFromText(previewText)
       createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
     }
     messageId = addMessage({
@@ -320,7 +321,7 @@ export async function handleBridgeRun(
     })
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
-    const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
+    const preview = buildStandardSessionTitleFromText(previewText)
     createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
   }
 
@@ -965,6 +966,9 @@ async function applyBridgeChunkAsync(
   state.activeRunMarker = undefined
   state.events = []
   const eventName = terminalError ? 'run.failed' : 'run.completed'
+  const titleGeneration = terminalError
+    ? undefined
+    : await maybeGenerateSessionTitleForSession(sessionId, profile)
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
@@ -975,6 +979,7 @@ async function applyBridgeChunkAsync(
     outputTokens: usage.outputTokens,
     contextTokens,
     queue_remaining: state.queue.length,
+    title_generation: titleGeneration,
   }
   emit(eventName, payload)
 

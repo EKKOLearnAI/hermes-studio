@@ -9,6 +9,7 @@ import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import { buildStandardSessionTitle } from '@/shared/session-title'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -46,6 +47,7 @@ export interface Message {
   commandAction?: string
   commandData?: Record<string, unknown>
 }
+
 
 export interface PendingApproval {
   sessionId: string
@@ -1304,13 +1306,8 @@ export const useChatStore = defineStore('chat', () => {
     const target = sessions.value.find(s => s.id === sessionId)
     if (!target) return
     if (!target.title) {
-      const firstUser = target.messages.find(m => m.role === 'user')
-      if (firstUser) {
-        const title = firstUser.attachments?.length
-          ? firstUser.attachments.map(a => a.name).join(', ')
-          : firstUser.content
-        target.title = title.slice(0, 40) + (title.length > 40 ? '...' : '')
-      }
+      const title = buildStandardSessionTitle(target.messages)
+      if (title) target.title = title
     }
     target.updatedAt = Date.now()
   }
@@ -1924,6 +1921,14 @@ export const useChatStore = defineStore('chat', () => {
                 cleanup()
               }
               activeAssistantMessageId = null
+              const titleGeneration = (evt as any).title_generation
+              if (titleGeneration?.applied && titleGeneration.title) {
+                const target = sessions.value.find(s => s.id === sid)
+                if (target) {
+                  target.title = titleGeneration.title
+                  target.updatedAt = Date.now()
+                }
+              }
               updateSessionTitle(sid)
               break
             }
@@ -2382,6 +2387,14 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
+          }
+          const titleGeneration = (evt as any).title_generation
+          if (titleGeneration?.applied && titleGeneration.title) {
+            const target = sessions.value.find(s => s.id === sid)
+            if (target) {
+              target.title = titleGeneration.title
+              target.updatedAt = Date.now()
+            }
           }
           updateSessionTitle(sid)
           break

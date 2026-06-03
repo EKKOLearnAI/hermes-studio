@@ -14,6 +14,7 @@ import {
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger } from '../../logger'
 import { contentBlocksToString, extractTextForPreview, isContentBlockArray, convertContentBlocks } from './content-blocks'
+import { buildStandardSessionTitleFromText, maybeGenerateSessionTitleForSession } from '../session-title-generator'
 import { convertHistoryFormat } from './message-format'
 import { readSseFrames } from './sse-utils'
 import { extractResponseText } from './response-utils'
@@ -23,10 +24,15 @@ import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
+import { readConfigYamlForProfile } from '../../config-helpers'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
 
 export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
   return 'cli'
+}
+
+export function buildInitialSessionTitle(input: string | ContentBlock[], _config: Record<string, any> = {}): string {
+  return buildStandardSessionTitleFromText(extractTextForPreview(input))
 }
 
 export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<string, SessionState>): Promise<SessionState> {
@@ -130,6 +136,7 @@ export async function handleApiRun(
     state.source = 'api_server'
     state.activeRunMarker = runMarker
 
+    const profileConfig = await readConfigYamlForProfile(profile).catch(() => ({}))
     let peerUserMessage: { id?: number; role: 'user'; content: string; timestamp: number } | null = null
     if (!skipUserMessage) {
       const inputStr = contentBlocksToString(input)
@@ -143,9 +150,8 @@ export async function handleApiRun(
       })
 
       if (!getSession(session_id)) {
-        const previewText = extractTextForPreview(input)
-        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        const title = buildInitialSessionTitle(input, profileConfig)
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title })
       }
 
       const messageId = addMessage({
@@ -166,9 +172,8 @@ export async function handleApiRun(
         timestamp: now,
       })
       if (!getSession(session_id)) {
-        const previewText = extractTextForPreview(input)
-        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        const title = buildInitialSessionTitle(input, profileConfig)
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title })
       }
       const messageId = addMessage({
         session_id,
@@ -327,6 +332,10 @@ export async function handleApiRun(
             profile: sessionMap.get(session_id)?.profile,
           })
         }
+        let titleGeneration: Awaited<ReturnType<typeof maybeGenerateSessionTitleForSession>> | undefined
+        if (upstreamEvent === 'response.completed' && session_id) {
+          titleGeneration = await maybeGenerateSessionTitleForSession(session_id, profile)
+        }
         const eventName = upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed'
         emit(eventName, {
           event: eventName,
@@ -336,6 +345,7 @@ export async function handleApiRun(
           usage: finalOutput.usage,
           error: finalOutput.error || parsed.error,
           queue_remaining: queueLen,
+          title_generation: titleGeneration,
         })
         if (session_id && queueLen > 0) dequeueNextQueuedRun(socket, session_id)
         return

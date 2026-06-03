@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listConversationSummariesFromDbMock = vi.fn()
 const getConversationDetailFromDbMock = vi.fn()
@@ -27,6 +27,7 @@ const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
+const titleBridgeRequestMock = vi.fn()
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -101,6 +102,17 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
+  PROVIDER_ENV_MAP: {
+    'openai-api': { api_key_env: 'OPENAI_API_KEY', base_url_env: 'OPENAI_BASE_URL' },
+    'openai-codex': { api_key_env: '', base_url_env: '' },
+    lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
+  },
+}))
+
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: class {
+    request = titleBridgeRequestMock
+  },
 }))
 
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
@@ -152,6 +164,7 @@ describe('session conversations controller', () => {
     listUserProfilesMock.mockReturnValue([])
     readConfigYamlForProfileMock.mockReset()
     readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
+    titleBridgeRequestMock.mockReset()
   })
 
   it('lists conversations from the local session store', async () => {
@@ -638,6 +651,161 @@ describe('session conversations controller', () => {
     expect(ctx.body.model_usage).toEqual([
       { model: ' ', input_tokens: 2, output_tokens: 1, cache_read_tokens: 1, cache_write_tokens: 1, reasoning_tokens: 0, sessions: 1 },
     ])
+  })
+
+  it('generates titles from the first user and first non-empty assistant messages', async () => {
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'gpt-default', provider: 'openai' },
+      session_title_generation: {
+        enabled: true,
+        use_chat_model: false,
+        model: 'gpt-5',
+        provider: 'openai',
+        prompt: 'Generate a short title from the first user message and the first assistant reply.',
+      },
+    })
+    titleBridgeRequestMock.mockResolvedValue({
+      ok: true,
+      content: 'Kyoto planning',
+    })
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'cli',
+      model: 'gpt-5',
+      provider: 'openai',
+      title: '',
+      messages: [
+        { role: 'user', content: 'Plan a trip to Kyoto', attachments: [] },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'tool-1' }] },
+        { role: 'assistant', content: 'Let’s compare train vs flight options.' },
+      ],
+    } as any)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, query: { profile: 'default' }, request: { body: {} }, body: null }
+    await mod.generateTitle(ctx)
+
+    expect(titleBridgeRequestMock).toHaveBeenCalledTimes(1)
+    const [bridgePayload] = titleBridgeRequestMock.mock.calls[0]
+    expect(bridgePayload.action).toBe('auxiliary_llm')
+    expect(bridgePayload.task).toBe('title_generation')
+    expect(bridgePayload.profile).toBe('default')
+    expect(bridgePayload.model).toBe('gpt-5')
+    expect(bridgePayload.provider).toBe('openai')
+    expect(bridgePayload.messages[0].content).toContain('first user message')
+    expect(bridgePayload.messages[0].content).toContain('first assistant reply')
+    expect(bridgePayload.messages[1].content).toContain('First user message:')
+    expect(bridgePayload.messages[1].content).toContain('Plan a trip to Kyoto')
+    expect(bridgePayload.messages[1].content).toContain('First assistant message:')
+    expect(bridgePayload.messages[1].content).toContain('Let’s compare train vs flight options.')
+    expect(localRenameSessionMock).toHaveBeenCalledWith('session-1', 'Kyoto planning')
+    expect(ctx.body).toEqual({ ok: true, applied: true, title: 'Kyoto planning' })
+  })
+
+  it('keeps the standard first-message title when the title model returns no title', async () => {
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'gpt-default', provider: 'openai' },
+      session_title_generation: {
+        enabled: true,
+        use_chat_model: false,
+        model: 'gpt-5',
+        provider: 'openai',
+      },
+    })
+    titleBridgeRequestMock.mockResolvedValue({
+      ok: true,
+      content: '',
+    })
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'cli',
+      model: 'gpt-5',
+      provider: 'openai',
+      title: 'Plan a trip to Kyoto',
+      messages: [
+        { role: 'user', content: 'Plan a trip to Kyoto', attachments: [] },
+        { role: 'assistant', content: 'Sure — I can help.' },
+      ],
+    } as any)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, query: { profile: 'default' }, request: { body: {} }, body: null }
+    await mod.generateTitle(ctx)
+
+    expect(titleBridgeRequestMock).toHaveBeenCalledTimes(1)
+    expect(localRenameSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true, applied: false, title: 'Plan a trip to Kyoto', reason: 'empty_model_output' })
+  })
+
+  it('does not overwrite a manual title with a generated title', async () => {
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'gpt-default', provider: 'openai' },
+      session_title_generation: {
+        enabled: true,
+        use_chat_model: false,
+        model: 'gpt-5',
+        provider: 'openai',
+      },
+    })
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'cli',
+      model: 'gpt-5',
+      provider: 'openai',
+      title: 'Manual planning title',
+      messages: [
+        { role: 'user', content: 'Plan a trip to Kyoto', attachments: [] },
+        { role: 'assistant', content: 'Sure — I can help.' },
+      ],
+    } as any)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, query: { profile: 'default' }, request: { body: {} }, body: null }
+    await mod.generateTitle(ctx)
+
+    expect(titleBridgeRequestMock).not.toHaveBeenCalled()
+    expect(localRenameSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true, applied: false, title: 'Manual planning title', reason: 'manual_title' })
+  })
+
+  it('replaces a historic long automatic fallback title with a generated title', async () => {
+    const firstUser = 'Как понять, стоит мне брать зарядное устройство на 100Вт или на 140Вт?'
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'gpt-default', provider: 'openai' },
+      session_title_generation: {
+        enabled: true,
+        use_chat_model: false,
+        model: 'gpt-5',
+        provider: 'openai',
+      },
+    })
+    titleBridgeRequestMock.mockResolvedValue({
+      ok: true,
+      content: 'Выбор зарядки USB-C',
+    })
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'cli',
+      model: 'gpt-5',
+      provider: 'openai',
+      title: firstUser,
+      messages: [
+        { role: 'user', content: firstUser, attachments: [] },
+        { role: 'assistant', content: 'Если коротко, 100Вт достаточно для большинства ноутбуков.' },
+      ],
+    } as any)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-1' }, query: { profile: 'default' }, request: { body: {} }, body: null }
+    await mod.generateTitle(ctx)
+
+    expect(titleBridgeRequestMock).toHaveBeenCalledTimes(1)
+    expect(localRenameSessionMock).toHaveBeenCalledWith('session-1', 'Выбор зарядки USB-C')
+    expect(ctx.body).toEqual({ ok: true, applied: true, title: 'Выбор зарядки USB-C' })
   })
 
   it('sets a session model and provider in the local session store', async () => {

@@ -362,6 +362,50 @@ assert broker._session_worker_key == {}
 `)
   })
 
+  it('routes auxiliary LLM requests through the profile worker', () => {
+    runPython(String.raw`
+${harness}
+
+class AuxWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+
+    def __init__(self):
+        self.profile = "default"
+        self.key = "default"
+        self.requests = []
+
+    def request(self, req, timeout=None):
+        self.requests.append((req, timeout))
+        return {"ok": True, "content": "Generated title"}
+
+broker = bridge.BridgeBroker("ipc:///tmp/broker.sock")
+worker = AuxWorker()
+broker._workers["default"] = worker
+
+resp = broker.handle({
+    "action": "auxiliary_llm",
+    "task": "title_generation",
+    "profile": "default",
+    "messages": [{"role": "user", "content": "hello"}],
+    "timeout": 45,
+})
+assert resp == {"ok": True, "content": "Generated title"}
+assert len(worker.requests) == 1
+forwarded, timeout = worker.requests[0]
+assert forwarded == {
+    "action": "auxiliary_llm",
+    "task": "title_generation",
+    "profile": "default",
+    "messages": [{"role": "user", "content": "hello"}],
+    "timeout": 45,
+}
+assert timeout >= 45
+`)
+  })
+
   it('builds broker ping metrics without calling profile workers', () => {
     runPython(String.raw`
 ${harness}

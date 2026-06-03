@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getSystemPromptMock = vi.fn()
 const getSessionMock = vi.fn()
+const getSessionDetailMock = vi.fn()
 const createSessionMock = vi.fn()
 const addMessageMock = vi.fn()
+const renameSessionMock = vi.fn()
 const updateSessionMock = vi.fn()
 const updateSessionStatsMock = vi.fn()
 const updateUsageMock = vi.fn()
+const readConfigYamlForProfileMock = vi.fn()
 const buildCompressedHistoryMock = vi.fn()
 const buildDbHistoryMock = vi.fn()
 const buildSnapshotAwareHistoryMock = vi.fn(async (_sessionId: string, _profile: string, history: any[]) => history)
@@ -35,6 +38,13 @@ const syncBridgeReasoningToMessageMock = vi.fn()
 const recordBridgeToolStartedMock = vi.fn()
 const recordBridgeToolCompletedMock = vi.fn()
 const resolveBridgeRunModelConfigMock = vi.fn()
+const titleBridgeRequestMock = vi.fn()
+
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: class {
+    request = titleBridgeRequestMock
+  },
+}))
 
 vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
@@ -42,10 +52,17 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   getSession: getSessionMock,
+  getSessionDetail: getSessionDetailMock,
   createSession: createSessionMock,
   addMessage: addMessageMock,
+  renameSession: renameSessionMock,
   updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
+}))
+
+vi.mock('../../packages/server/src/services/config-helpers', () => ({
+  readConfigYamlForProfile: readConfigYamlForProfileMock,
+  PROVIDER_ENV_MAP: {},
 }))
 
 vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
@@ -118,6 +135,10 @@ describe('bridge run final context usage', () => {
     vi.clearAllMocks()
     getSystemPromptMock.mockReturnValue('system prompt')
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', model: '', provider: '' })
+    getSessionDetailMock.mockReturnValue({ id: 'session-1', profile: 'default', title: 'hello', messages: [] })
+    readConfigYamlForProfileMock.mockResolvedValue({ session_title_generation: { enabled: false } })
+    titleBridgeRequestMock.mockReset()
+    titleBridgeRequestMock.mockResolvedValue({ ok: true, content: 'Generated title' })
     resolveBridgeRunModelConfigMock.mockResolvedValue({ model: 'gpt-test', provider: 'openai' })
     buildCompressedHistoryMock.mockResolvedValue([{ role: 'user', content: 'previous' }])
     buildDbHistoryMock.mockResolvedValue([
@@ -147,6 +168,21 @@ describe('bridge run final context usage', () => {
     const socket = makeSocket()
     const state = makeState()
     const sessionMap = new Map([['session-1', state]])
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'gpt-test', provider: 'openai-api' },
+      session_title_generation: { enabled: true },
+    })
+    getSessionDetailMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      title: 'hello',
+      model: 'gpt-test',
+      provider: 'openai-api',
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'done' },
+      ],
+    })
     const bridge = {
       chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
       contextEstimate: vi.fn().mockResolvedValue({
@@ -193,7 +229,9 @@ describe('bridge run final context usage', () => {
       inputTokens: 11,
       outputTokens: 7,
       contextTokens: 12345,
+      title_generation: { ok: true, applied: true, title: 'Generated title' },
     }))
+    expect(renameSessionMock).toHaveBeenCalledWith('session-1', 'Generated title')
   })
 
   it('evaluates active goals after a successful bridge run and queues continuation prompts', async () => {

@@ -2244,6 +2244,39 @@ class BridgeServer:
         self._stop = threading.Event()
         self._last_gc = time.time()
 
+    def _handle_auxiliary_llm(self, req: dict[str, Any]) -> dict[str, Any]:
+        task = str(req.get("task") or "").strip() or None
+        messages = req.get("messages") or []
+        if not isinstance(messages, list):
+            raise ValueError("messages must be a list")
+        profile = req.get("profile")
+
+        with _profile_env(str(profile) if profile else None):
+            _ensure_agent_imports()
+            from agent.auxiliary_client import call_llm
+
+            response = call_llm(
+                task=task,
+                provider=req.get("provider"),
+                model=req.get("model"),
+                base_url=req.get("base_url"),
+                api_key=req.get("api_key"),
+                messages=messages,
+                temperature=req.get("temperature"),
+                max_tokens=req.get("max_tokens"),
+                timeout=req.get("timeout"),
+                extra_body=req.get("extra_body") if isinstance(req.get("extra_body"), dict) else None,
+            )
+
+        content = ""
+        try:
+            choice = response.choices[0]
+            message = getattr(choice, "message", None)
+            content = str(getattr(message, "content", "") or getattr(choice, "text", "") or "")
+        except Exception:
+            content = str(response or "")
+        return {"content": content}
+
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()
         if not action:
@@ -2295,6 +2328,9 @@ class BridgeServer:
                     time.sleep(0.05)
                 return self.pool.get_result(record.run_id)
             return {"run_id": record.run_id, "session_id": session_id, "status": record.status}
+
+        if action == "auxiliary_llm":
+            return self._handle_auxiliary_llm(req)
 
         if action == "context_estimate":
             session_id = str(req.get("session_id") or "").strip() or uuid.uuid4().hex
@@ -3360,6 +3396,10 @@ class BridgeBroker:
             return self._forward(profile, req, self._normalize_worker_key(profile, req.get("worker_key")))
 
         if action == "context_estimate":
+            profile = self._normalize_profile(req.get("profile"))
+            return self._forward(profile, req, self._normalize_worker_key(profile, req.get("worker_key")))
+
+        if action == "auxiliary_llm":
             profile = self._normalize_profile(req.get("profile"))
             return self._forward(profile, req, self._normalize_worker_key(profile, req.get("worker_key")))
 
