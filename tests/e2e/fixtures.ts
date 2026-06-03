@@ -55,6 +55,22 @@ const sampleJob = {
   last_delivery_error: null,
 }
 
+const sampleAuxiliaryModelTasks = [
+  { key: 'vision', label: 'Vision', default_timeout: 120, default_download_timeout: 30 },
+  { key: 'web_extract', label: 'Web extract', default_timeout: 360 },
+  { key: 'compression', label: 'Compression', default_timeout: 120 },
+  { key: 'skills_hub', label: 'Skills hub', default_timeout: 30 },
+  { key: 'approval', label: 'Approval', default_timeout: 30 },
+  { key: 'mcp', label: 'MCP', default_timeout: 30 },
+  { key: 'title_generation', label: 'Title generation', default_timeout: 30 },
+  { key: 'triage_specifier', label: 'Triage specifier', default_timeout: 120 },
+  { key: 'kanban_decomposer', label: 'Kanban decomposer', default_timeout: 180 },
+  { key: 'profile_describer', label: 'Profile describer', default_timeout: 60 },
+  { key: 'curator', label: 'Curator', default_timeout: 600 },
+  { key: 'session_search', label: 'Session search', default_timeout: 30 },
+  { key: 'flush_memories', label: 'Flush memories', default_timeout: 30 },
+]
+
 function jsonResponse(body: unknown, status = 200) {
   return {
     status,
@@ -174,6 +190,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/provider-models') {
       await route.fulfill(jsonResponse({ models: ['proxy-model-a', 'proxy-model-b'] }))
+      return
+    }
+
+    if (pathname === '/api/hermes/config/auxiliary-models') {
+      await route.fulfill(jsonResponse({ tasks: sampleAuxiliaryModelTasks, auxiliary: {} }))
       return
     }
 
