@@ -22,6 +22,7 @@ vi.mock('@/utils/clipboard', () => ({
 import {
   extractUnifiedDiffPayload,
   handleCodeBlockCopyClick,
+  inferStructuredLanguage,
   isUnifiedDiffContent,
   normalizeHighlightLanguage,
   renderHighlightedCodeBlock,
@@ -63,6 +64,33 @@ describe('highlight helper', () => {
 
     expect(html).toContain('data-copy-code="true"')
     expect(html).not.toContain('onclick=')
+  })
+
+
+  it('infers patch-style raw payloads as diff', () => {
+    expect(inferStructuredLanguage([
+      '*** Begin Patch',
+      '*** Update File: demo.ts',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n'))).toBe('diff')
+  })
+
+  it('does not infer primitive JSON-looking text as json', () => {
+    expect(inferStructuredLanguage('false')).toBeUndefined()
+    expect(inferStructuredLanguage('0')).toBeUndefined()
+  })
+
+  it('infers unified diff payloads as diff', () => {
+    expect(inferStructuredLanguage([
+      '--- a/demo.ts',
+      '+++ b/demo.ts',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n'))).toBe('diff')
   })
 
   it('preserves shell-session highlighting instead of remapping shell fences to bash', () => {

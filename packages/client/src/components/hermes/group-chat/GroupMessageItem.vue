@@ -9,7 +9,7 @@ import {
     copyTextToClipboard,
     extractUnifiedDiffPayload,
     handleCodeBlockCopyClick,
-    isUnifiedDiffContent,
+    inferStructuredLanguage,
     renderHighlightedCodeBlock,
 } from '../chat/highlight'
 import { parseThinking, countThinkingChars } from '@/utils/thinking-parser'
@@ -176,9 +176,9 @@ const copyableContent = computed(() => {
 
 const toolExpanded = ref(false)
 const isToolMessage = computed(() => props.message.role === 'tool')
-const hasToolDetails = computed(() => !!(props.message.toolArgs || props.message.toolResult))
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs))
 const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true))
+const hasToolDetails = computed(() => !!(toolArgsPayload.value.full || toolResultPayload.value.full))
 const fullToolArgs = computed(() => toolArgsPayload.value.full)
 const formattedToolArgs = computed(() => toolArgsPayload.value.display)
 const fullToolResult = computed(() => toolResultPayload.value.full)
@@ -274,32 +274,52 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
     return { [JSON_TRUNCATED_KEY]: marker }
 }
 
-function formatToolPayload(raw?: string, extractDiff = false): ToolPayload {
-    if (!raw) return { full: '', display: '' }
+function normalizeToolPayload(raw: unknown): string {
+    if (raw === null || raw === undefined || raw === '') return ''
+    if (typeof raw === 'string') return raw
     try {
-        const parsed = JSON.parse(raw)
-        const full = JSON.stringify(parsed, null, 2)
-        const extractedDiff = extractDiff ? extractUnifiedDiffPayload(parsed) : null
-        if (extractedDiff) {
-            return {
-                full,
-                display: extractedDiff,
-                language: 'diff',
-            }
-        }
-        const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-            ? JSON.stringify(truncateJsonValue(parsed, t('chat.truncated')), null, 2)
-            : full
-        return { full, display, language: 'json' }
+        const serialized = JSON.stringify(raw)
+        if (serialized !== undefined) return serialized
     } catch {
-        const language = isUnifiedDiffContent(raw) ? 'diff' : undefined
-        return {
-            full: raw,
-            display: language === 'diff' || raw.length <= TOOL_PAYLOAD_DISPLAY_LIMIT ? raw : raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + '\n' + t('chat.truncated'),
-            language,
+        // Fall through to String(raw) for non-serializable runtime payloads.
+    }
+    return String(raw)
+}
+
+function formatToolPayload(raw?: unknown, extractDiff = false): ToolPayload {
+    const text = normalizeToolPayload(raw)
+    if (!text) return { full: '', display: '' }
+
+    const shouldParseJson = typeof raw !== 'string' || /^[\[{]/.test(text.trim())
+    if (shouldParseJson) {
+        try {
+            const parsed = JSON.parse(text)
+            const full = JSON.stringify(parsed, null, 2)
+            const extractedDiff = extractDiff ? extractUnifiedDiffPayload(parsed) : null
+            if (extractedDiff) {
+                return {
+                    full,
+                    display: extractedDiff,
+                    language: 'diff',
+                }
+            }
+            const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+                ? JSON.stringify(truncateJsonValue(parsed, t('chat.truncated')), null, 2)
+                : full
+            return { full, display, language: 'json' }
+        } catch {
+            // Fall through to text rendering for non-JSON strings.
         }
     }
+
+    const language = inferStructuredLanguage(text)
+    return {
+        full: text,
+        display: language === 'diff' || text.length <= TOOL_PAYLOAD_DISPLAY_LIMIT ? text : text.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + '\n' + t('chat.truncated'),
+        language,
+    }
 }
+
 
 function renderToolPayload(content: string, language?: string): string {
     return renderHighlightedCodeBlock(content, language, t('common.copy'), {

@@ -50,9 +50,9 @@ export interface ChatMessage {
     isStreaming?: boolean
     toolName?: string
     toolCallId?: string
-    toolArgs?: string
+    toolArgs?: unknown
     toolPreview?: string
-    toolResult?: string
+    toolResult?: unknown
     toolStatus?: 'running' | 'done' | 'error'
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
 }

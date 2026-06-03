@@ -30,8 +30,8 @@ export interface Message {
   toolName?: string
   toolCallId?: string
   toolPreview?: string
-  toolArgs?: string
-  toolResult?: string
+  toolArgs?: unknown
+  toolResult?: unknown
   toolStatus?: 'running' | 'done' | 'error'
   toolDuration?: number  // 工具执行时长（秒）
   isStreaming?: boolean
@@ -179,25 +179,49 @@ async function buildContentBlocks(
   return blocks
 }
 
+function hasRuntimeToolPayload(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== ''
+}
+
+function runtimeToolPayloadOrUndefined(value: unknown): unknown | undefined {
+  return hasRuntimeToolPayload(value) ? value : undefined
+}
+
+function runtimePayloadText(value: unknown): string {
+  if (!hasRuntimeToolPayload(value)) return ''
+  if (typeof value === 'string') return value
+  try {
+    const serialized = JSON.stringify(value)
+    if (serialized !== undefined) return serialized
+  } catch {
+    // Fall through to String(value) for non-serializable runtime payloads.
+  }
+  return String(value)
+}
+
+function runtimeToolOutputHasError(value: unknown): boolean {
+  return typeof value === 'string' && isToolOutputError(value)
+}
+
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   // Filter out assistant messages with no display content unless they carry tool call metadata
   // needed to name later tool result rows when resuming persisted history.
   const filteredMsgs = msgs.filter(m => {
     if (m.role === 'assistant') {
-      return (m.tool_calls?.length || 0) > 0 || (m.content && m.content.trim() !== '')
+      return (m.tool_calls?.length || 0) > 0 || runtimePayloadText((m as any).content).trim() !== ''
     }
     return true
   })
 
   // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
-  const toolArgsMap = new Map<string, string>()
+  const toolArgsMap = new Map<string, unknown>()
   for (const msg of filteredMsgs) {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (tc.id) {
           if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-          if (tc.function?.arguments) toolArgsMap.set(tc.id, tc.function.arguments)
+          if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
         }
       }
     }
@@ -206,7 +230,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   const result: Message[] = []
   for (const msg of filteredMsgs) {
     // Skip assistant messages that only contain tool_calls (no meaningful content)
-    if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
+    if (msg.role === 'assistant' && msg.tool_calls?.length && !runtimePayloadText((msg as any).content).trim()) {
       // Emit a tool.started message for each tool call
       for (const tc of msg.tool_calls) {
         result.push({
@@ -216,7 +240,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           timestamp: Math.round(msg.timestamp * 1000),
           toolName: tc.function?.name || undefined,
           toolCallId: tc.id,
-          toolArgs: tc.function?.arguments || undefined,
+          toolArgs: runtimeToolPayloadOrUndefined(tc.function?.arguments),
           toolStatus: 'done',
         })
       }
@@ -227,15 +251,18 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     if (msg.role === 'tool') {
       const tcId = msg.tool_call_id || ''
       const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-      const toolArgs = toolArgsMap.get(tcId) || undefined
+      const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
       // Extract a short preview from the content
       let preview = ''
-      if (msg.content) {
+      const contentText = runtimePayloadText((msg as any).content)
+      if (contentText) {
         try {
-          const parsed = JSON.parse(msg.content)
-          preview = parsed.url || parsed.title || parsed.preview || parsed.summary || ''
+          const parsed = typeof (msg as any).content === 'string'
+            ? JSON.parse(contentText)
+            : (msg as any).content
+          preview = parsed?.url || parsed?.title || parsed?.preview || parsed?.summary || ''
         } catch {
-          preview = msg.content.slice(0, 80)
+          preview = contentText.slice(0, 80)
         }
       }
       // Find and remove the matching placeholder from tool_calls above
@@ -254,7 +281,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
         toolCallId: tcId || undefined,
         toolArgs,
         toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-        toolResult: msg.content || undefined,
+        toolResult: runtimeToolPayloadOrUndefined((msg as any).content),
         toolStatus: 'done',
       })
       continue
@@ -697,7 +724,7 @@ export const useChatStore = defineStore('chat', () => {
                 if (existingTool) {
                   updateMessage(sessionId, existingTool.id, {
                     toolName: e.tool || e.name,
-                    toolArgs: typeof e.arguments === 'string' ? e.arguments : existingTool.toolArgs,
+                    toolArgs: hasRuntimeToolPayload((e as any).arguments) ? (e as any).arguments : existingTool.toolArgs,
                     toolPreview: e.preview || existingTool.toolPreview,
                     toolStatus: existingTool.toolStatus || 'running',
                   })
@@ -710,7 +737,7 @@ export const useChatStore = defineStore('chat', () => {
                     toolName: e.tool || e.name,
                     toolCallId,
                     toolPreview: e.preview,
-                    toolArgs: typeof e.arguments === 'string' ? e.arguments : undefined,
+                    toolArgs: runtimeToolPayloadOrUndefined((e as any).arguments),
                     toolStatus: 'running',
                   })
                 }
@@ -721,9 +748,9 @@ export const useChatStore = defineStore('chat', () => {
                   ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
                   : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
                 if (toolMsgs.length > 0) {
-                  const output = typeof e.output === 'string' ? e.output : undefined
+                  const output = runtimeToolPayloadOrUndefined((e as any).output)
                   updateMessage(sessionId, toolMsgs[toolMsgs.length - 1].id, {
-                    toolStatus: e.error === true || isToolOutputError(output) ? 'error' : 'done',
+                    toolStatus: e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
                     toolDuration: e.duration,
                     toolResult: output,
                   })
@@ -1783,7 +1810,7 @@ export const useChatStore = defineStore('chat', () => {
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
                   toolName: evt.tool || evt.name,
-                  toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : existingTool.toolArgs,
+                  toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
                   toolPreview: evt.preview || existingTool.toolPreview,
                   toolStatus: existingTool.toolStatus || 'running',
                 })
@@ -1797,7 +1824,7 @@ export const useChatStore = defineStore('chat', () => {
                 toolName: evt.tool || evt.name,
                 toolCallId,
                 toolPreview: evt.preview,
-                toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
+                toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
                 toolStatus: 'running',
               })
 
@@ -1813,8 +1840,8 @@ export const useChatStore = defineStore('chat', () => {
                 : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
-                const output = typeof (evt as any).output === 'string' ? (evt as any).output : undefined
-                const hasError = (evt as any).error === true || isToolOutputError(output)
+                const output = runtimeToolPayloadOrUndefined((evt as any).output)
+                const hasError = (evt as any).error === true || runtimeToolOutputHasError(output)
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
                   toolStatus: hasError ? 'error' : 'done',
@@ -1861,6 +1888,9 @@ export const useChatStore = defineStore('chat', () => {
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : msgs[msgs.length - 1]
+              const completedAssistantMessageId = lastMsg?.role === 'assistant' && lastMsg.isStreaming
+                ? lastMsg.id
+                : null
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
@@ -1886,17 +1916,29 @@ export const useChatStore = defineStore('chat', () => {
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = activeAssistantMessageId
                   ? msgs.find(m => m.id === activeAssistantMessageId)
-                  : [...msgs].reverse().find(m => m.role === 'assistant')
+                  : completedAssistantMessageId
+                    ? msgs.find(m => m.id === completedAssistantMessageId)
+                    : undefined
                 if (lastAssistant) {
-                  updateMessage(sid, lastAssistant.id, {
-                    content: (evt as any).parsed_content || '',
-                  })
+                  const parsedContent = typeof (evt as any).parsed_content === 'string'
+                    ? (evt as any).parsed_content
+                    : ''
+                  const parsedContentTrimmed = parsedContent.trim()
+                  const existingContentTrimmed = lastAssistant.content?.trim() ?? ''
+                  if (parsedContentTrimmed || !existingContentTrimmed) {
+                    updateMessage(sid, lastAssistant.id, {
+                      content: parsedContent,
+                    })
+                    finalOutputTrimmed = parsedContentTrimmed
+                  } else {
+                    finalOutputTrimmed = existingContentTrimmed
+                    runProducedAssistantText = true
+                  }
                   if ((evt as any).parsed_reasoning) {
                     updateMessage(sid, lastAssistant.id, {
                       reasoning: (evt as any).parsed_reasoning,
                     })
                   }
-                  finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
                 }
               } else {
                 // Fallback to output field (legacy behavior)
@@ -2268,7 +2310,7 @@ export const useChatStore = defineStore('chat', () => {
           if (existingTool) {
             updateMessage(sid, existingTool.id, {
               toolName: evt.tool || evt.name,
-              toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : existingTool.toolArgs,
+              toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
               toolPreview: evt.preview || existingTool.toolPreview,
               toolStatus: existingTool.toolStatus || 'running',
             })
@@ -2282,7 +2324,7 @@ export const useChatStore = defineStore('chat', () => {
             toolName: evt.tool || evt.name,
             toolCallId,
             toolPreview: evt.preview,
-            toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
+            toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
             toolStatus: 'running',
           })
 
@@ -2297,8 +2339,8 @@ export const useChatStore = defineStore('chat', () => {
             ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
           if (toolMsgs.length > 0) {
-            const output = typeof (evt as any).output === 'string' ? (evt as any).output : undefined
-            const hasError = (evt as any).error === true || isToolOutputError(output)
+            const output = runtimeToolPayloadOrUndefined((evt as any).output)
+            const hasError = (evt as any).error === true || runtimeToolOutputHasError(output)
             updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
               toolStatus: hasError ? 'error' : 'done',
               toolDuration: (evt as any).duration,
@@ -2350,6 +2392,9 @@ export const useChatStore = defineStore('chat', () => {
           const lastMsg = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
             : msgs[msgs.length - 1]
+          const completedAssistantMessageId = lastMsg?.role === 'assistant' && lastMsg.isStreaming
+            ? lastMsg.id
+            : null
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
           }
@@ -2369,17 +2414,29 @@ export const useChatStore = defineStore('chat', () => {
             const msgs = getSessionMsgs(sid)
             const lastAssistant = activeAssistantMessageId
               ? msgs.find(m => m.id === activeAssistantMessageId)
-              : [...msgs].reverse().find(m => m.role === 'assistant')
+              : completedAssistantMessageId
+                ? msgs.find(m => m.id === completedAssistantMessageId)
+                : undefined
             if (lastAssistant) {
-              updateMessage(sid, lastAssistant.id, {
-                content: (evt as any).parsed_content || '',
-              })
+              const parsedContent = typeof (evt as any).parsed_content === 'string'
+                ? (evt as any).parsed_content
+                : ''
+              const parsedContentTrimmed = parsedContent.trim()
+              const existingContentTrimmed = lastAssistant.content?.trim() ?? ''
+              if (parsedContentTrimmed || !existingContentTrimmed) {
+                updateMessage(sid, lastAssistant.id, {
+                  content: parsedContent,
+                })
+                finalOutputTrimmed = parsedContentTrimmed
+              } else {
+                finalOutputTrimmed = existingContentTrimmed
+                runProducedAssistantText = true
+              }
               if ((evt as any).parsed_reasoning) {
                 updateMessage(sid, lastAssistant.id, {
                   reasoning: (evt as any).parsed_reasoning,
                 })
               }
-              finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
             }
           } else {
             // Fallback to output field (legacy behavior)

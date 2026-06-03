@@ -785,15 +785,35 @@ const currentUserAvatar = ref('')
     }
 })
 
+function hasRuntimeToolPayload(value: unknown): boolean {
+    return value !== null && value !== undefined && value !== ''
+}
+
+function runtimeToolPayloadOrUndefined(value: unknown): unknown | undefined {
+    return hasRuntimeToolPayload(value) ? value : undefined
+}
+
+function runtimePayloadText(value: unknown): string {
+    if (!hasRuntimeToolPayload(value)) return ''
+    if (typeof value === 'string') return value
+    try {
+        const serialized = JSON.stringify(value)
+        if (serialized !== undefined) return serialized
+    } catch {
+        // Fall through to String(value) for non-serializable runtime payloads.
+    }
+    return String(value)
+}
+
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
     const toolNameMap = new Map<string, string>()
-    const toolArgsMap = new Map<string, string>()
+    const toolArgsMap = new Map<string, unknown>()
     for (const msg of msgs) {
         if (msg.role === 'assistant' && msg.tool_calls?.length) {
             for (const tc of msg.tool_calls) {
                 if (!tc?.id) continue
                 if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-                if (tc.function?.arguments) toolArgsMap.set(tc.id, tc.function.arguments)
+                if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
             }
         }
     }
@@ -803,14 +823,14 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
         if (
             msg.role !== 'tool' &&
             !msg.tool_calls?.length &&
-            !msg.content?.trim() &&
+            !runtimePayloadText((msg as any).content).trim() &&
             !msg.reasoning?.trim() &&
             (!msg.isStreaming || msg.finish_reason === 'streaming')
         ) {
             continue
         }
 
-        if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
+        if (msg.role === 'assistant' && msg.tool_calls?.length && !runtimePayloadText((msg as any).content).trim()) {
             for (const tc of msg.tool_calls) {
                 result.push({
                     ...msg,
@@ -819,7 +839,7 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                     content: '',
                     toolName: tc.function?.name || undefined,
                     toolCallId: tc.id,
-                    toolArgs: tc.function?.arguments || undefined,
+                    toolArgs: runtimeToolPayloadOrUndefined(tc.function?.arguments),
                     toolStatus: 'running',
                 })
             }
@@ -829,14 +849,17 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
         if (msg.role === 'tool') {
             const tcId = msg.tool_call_id || ''
             const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-            const toolArgs = toolArgsMap.get(tcId) || undefined
+            const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
             let preview = ''
-            if (msg.content) {
+            const contentText = runtimePayloadText((msg as any).content)
+            if (contentText) {
                 try {
-                    const parsed = JSON.parse(msg.content)
-                    preview = parsed.url || parsed.title || parsed.preview || parsed.summary || ''
+                    const parsed = typeof (msg as any).content === 'string'
+                        ? JSON.parse(contentText)
+                        : (msg as any).content
+                    preview = parsed?.url || parsed?.title || parsed?.preview || parsed?.summary || ''
                 } catch {
-                    preview = msg.content.slice(0, 80)
+                    preview = contentText.slice(0, 80)
                 }
             }
             const placeholderIdx = result.findIndex(
@@ -852,9 +875,9 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 content: '',
                 toolName: toolName || (placeholderIdx !== -1 ? result[placeholderIdx].toolName : undefined),
                 toolCallId: tcId || undefined,
-                toolArgs: toolArgs || (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
+                toolArgs: toolArgs !== undefined ? toolArgs : (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
                 toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-                toolResult: msg.content || undefined,
+                toolResult: runtimeToolPayloadOrUndefined((msg as any).content),
                 toolStatus: 'done',
             }
             if (placeholderIdx !== -1) result[placeholderIdx] = merged

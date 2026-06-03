@@ -221,4 +221,29 @@ describe('group chat store streaming merge', () => {
       isStreaming: false,
     })
   })
+
+  it('maps non-string and falsy tool payloads from room history', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'msg-tool-call',
+        content: '',
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'lookup', arguments: false } }],
+      } as unknown as Partial<ChatMessage>),
+      assistantMessage({
+        id: 'msg-tool-result',
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: { ok: true },
+      } as unknown as Partial<ChatMessage>),
+    ])
+
+    expect(store.sortedMessages).toHaveLength(1)
+    expect(store.sortedMessages[0]).toMatchObject({
+      role: 'tool',
+      toolName: 'lookup',
+      toolArgs: false,
+      toolResult: { ok: true },
+      toolStatus: 'done',
+    })
+  })
 })
