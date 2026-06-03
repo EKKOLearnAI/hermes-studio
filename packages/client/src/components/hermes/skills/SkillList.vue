@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NSwitch, useMessage } from 'naive-ui'
+import { NSwitch, useMessage, useDialog } from 'naive-ui'
 import type { SkillCategory, SkillSource, SkillInfo } from '@/api/hermes/skills'
-import { toggleSkill } from '@/api/hermes/skills'
+import { toggleSkill, deleteSkillApi } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 
 const props = defineProps<{
     categories: SkillCategory[]
@@ -20,11 +21,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     select: [category: string, skill: string]
+    deleted: [category: string, skill: string]
 }>()
 
 const collapsedCategories = ref<Set<string>>(new Set())
 const archiveCollapsed = ref(true)
 const togglingSkills = ref<Set<string>>(new Set())
+const deletingSkills = ref<Set<string>>(new Set())
 
 const filteredArchived = computed(() => {
     let result = props.archived
@@ -103,6 +106,29 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
         togglingSkills.value.delete(skillName)
     }
 }
+
+function confirmDelete(category: string, skillName: string) {
+    if (deletingSkills.value.has(skillName)) return
+    dialog.warning({
+        title: t('skills.delete'),
+        content: t('skills.deleteConfirm', { name: skillName }),
+        positiveText: t('common.delete'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+            deletingSkills.value.add(skillName)
+            try {
+                await deleteSkillApi(skillName)
+                message.success(t('skills.deleteSuccess'))
+                message.info(t('skills.reloadHint'), { duration: 6000 })
+                emit('deleted', category, skillName)
+            } catch (err: any) {
+                message.error(t('skills.deleteFailed') + `: ${err.message}`)
+            } finally {
+                deletingSkills.value.delete(skillName)
+            }
+        },
+    })
+}
 </script>
 
 <template>
@@ -134,6 +160,18 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
                         </span>
                         <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
                     </div>
+                    <button v-if="(skill.source ?? 'local') === 'local'" class="skill-action-btn"
+                        :title="t('skills.delete')" :disabled="deletingSkills.has(skill.name)"
+                        @click.stop="confirmDelete(cat.name, skill.name)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                        </svg>
+                    </button>
                     <NSwitch size="small" :value="skill.enabled !== false" :loading="togglingSkills.has(skill.name)"
                         @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
                 </button>
@@ -335,5 +373,31 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
 .skill-archived {
     opacity: 0.6;
     padding-left: 28px;
+}
+
+.skill-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: $text-muted;
+    border-radius: $radius-sm;
+    cursor: pointer;
+    padding: 0;
+    transition: background $transition-fast, color $transition-fast;
+
+    &:hover:not(:disabled) {
+        background: rgba(220, 38, 38, 0.12);
+        color: #dc2626;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
 }
 </style>

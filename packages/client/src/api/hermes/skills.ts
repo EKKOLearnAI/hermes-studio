@@ -1,4 +1,4 @@
-import { request } from '../client'
+import { request, getBaseUrlValue, getApiKey, getActiveProfileName } from '../client'
 
 export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
 
@@ -20,9 +20,15 @@ export interface SkillCategory {
   skills: SkillInfo[]
 }
 
+export interface SkillPaths {
+  local: string
+  external: string[]
+}
+
 export interface SkillListResponse {
   categories: SkillCategory[]
   archived: SkillInfo[]
+  paths?: SkillPaths
 }
 
 export interface SkillFileEntry {
@@ -43,6 +49,7 @@ export interface MemoryData {
 export interface SkillsData {
   categories: SkillCategory[]
   archived: SkillInfo[]
+  paths?: SkillPaths
 }
 
 export interface SkillUsageRow {
@@ -83,7 +90,7 @@ export interface SkillUsageStats {
 
 export async function fetchSkills(): Promise<SkillsData> {
   const res = await request<SkillListResponse>('/api/hermes/skills')
-  return { categories: res.categories, archived: res.archived ?? [] }
+  return { categories: res.categories, archived: res.archived ?? [], paths: res.paths }
 }
 
 export async function fetchSkillUsageStats(days = 7): Promise<SkillUsageStats> {
@@ -124,4 +131,43 @@ export async function pinSkillApi(name: string, pinned: boolean): Promise<void> 
     method: 'PUT',
     body: JSON.stringify({ name, pinned }),
   })
+}
+
+export async function deleteSkillApi(name: string): Promise<void> {
+  await request(`/api/hermes/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
+/**
+ * Import one or more files (a single .zip OR a folder of files with relative paths).
+ * For folder uploads, the caller should pass File objects whose `webkitRelativePath`
+ * starts with the skill folder name; we forward those paths verbatim as the
+ * `filename` parameter so the server can reconstruct the directory tree.
+ */
+export async function importSkill(files: File[], category?: string): Promise<{ name: string }> {
+  const baseUrl = getBaseUrlValue()
+  const token = getApiKey()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const profile = getActiveProfileName()
+  if (profile) headers['X-Hermes-Profile'] = profile
+
+  const formData = new FormData()
+  for (const f of files) {
+    const relPath = (f as any).webkitRelativePath || f.name
+    formData.append('file', f, relPath)
+  }
+  if (category) formData.append('category', category)
+
+  const res = await fetch(`${baseUrl}/api/hermes/skills/import`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+  const text = await res.text()
+  let payload: any = null
+  try { payload = text ? JSON.parse(text) : null } catch { /* keep raw text */ }
+  if (!res.ok) {
+    throw new Error(payload?.error || text || `Import failed (${res.status})`)
+  }
+  return payload || { name: '' }
 }
