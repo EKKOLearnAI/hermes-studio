@@ -156,6 +156,8 @@ def _process_exists(pid: int) -> bool:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding=_platform_text_encoding(),
+                errors="ignore",
                 timeout=5,
                 **_hidden_subprocess_kwargs(),
             )
@@ -3095,6 +3097,8 @@ def _kill_windows_endpoint_occupants(endpoint: str) -> None:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding=_platform_text_encoding(),
+                errors="ignore",
                 timeout=10,
                 **_hidden_subprocess_kwargs(),
             )
