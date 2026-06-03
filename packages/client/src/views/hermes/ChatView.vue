@@ -24,6 +24,12 @@ const routeProfile = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const tabTitle = computed(() => chatStore.activeSession?.title?.trim() || 'Hermes Studio')
+
+watch(tabTitle, (value) => {
+  document.title = value
+}, { immediate: true })
+
 async function loadRouteSession() {
   await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
   if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
