@@ -281,4 +281,40 @@ describe('MessageItem tool details', () => {
     expect(toolDetails.find('.diff-line-added .diff-line-content').text()).toContain('b'.repeat(1600))
     expect(toolDetails.text()).not.toContain('chat.truncated')
   })
+
+  it('shows only an embedded difference field when a JSON tool result contains a unified diff', async () => {
+    const writeText = vi.mocked(navigator.clipboard.writeText)
+    const largeDiff = `diff --git a/foo.ts b/foo.ts\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1,1 +1,1 @@\n-${'a'.repeat(1600)}\n+${'b'.repeat(1600)}\n`
+    const fullResult = {
+      summary: 'metadata should stay out of the visible diff display',
+      difference: largeDiff,
+      ok: true,
+    }
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-json-diff-large',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'git_show',
+          toolResult: JSON.stringify(fullResult),
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const toolDetails = wrapper.find('.tool-details')
+    const code = toolDetails.find('code.hljs')
+    expect(toolDetails.find('.code-lang').text()).toBe('diff')
+    expect(toolDetails.find('.hljs-unified-diff').exists()).toBe(true)
+    expect(toolDetails.find('.diff-line-added .diff-line-content').text()).toContain('b'.repeat(1600))
+    expect(code.text()).not.toContain('metadata should stay out')
+    expect(toolDetails.text()).not.toContain('chat.truncated')
+
+    await wrapper.find('.tool-details [data-copy-source="tool-result"] [data-copy-code="true"]').trigger('click')
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(fullResult, null, 2))
+  })
 })

@@ -10,6 +10,16 @@ const LANGUAGE_ALIASES: Record<string, string> = {
 }
 
 const UNIFIED_DIFF_LANGUAGES = new Set(['diff', 'patch'])
+const DIFF_CONTEXT_FOLD_THRESHOLD = 8
+const DIFF_CONTEXT_FOLD_EDGE_LINES = 3
+const DIFF_PAYLOAD_FIELD_NAMES = new Set([
+  'difference',
+  'diff',
+  'patch',
+  'stdout',
+  'output',
+  'content',
+])
 
 function escapeHtml(value: string): string {
   return value
@@ -30,13 +40,17 @@ function renderCodeBlockWrapper(
   labelLanguage: string | undefined,
   copyLabel: string,
   extraClasses: string[] = [],
+  rawCopyText?: string,
 ): string {
   const languageLabelHtml = labelLanguage
     ? `<span class="code-lang">${escapeHtml(labelLanguage)}</span>`
     : ''
   const blockClasses = ['hljs-code-block', ...extraClasses].join(' ')
+  const copyTextAttr = rawCopyText == null
+    ? ''
+    : ` data-copy-text="${escapeHtml(rawCopyText)}"`
 
-  return `<pre class="${blockClasses}"><div class="code-header">${languageLabelHtml}<button type="button" class="copy-btn" data-copy-code="true">${escapeHtml(copyLabel)}</button></div><code class="hljs language-${sanitizeLanguageClass(codeClassLanguage)}">${highlighted}</code></pre>`
+  return `<pre class="${blockClasses}"${copyTextAttr}><div class="code-header">${languageLabelHtml}<button type="button" class="copy-btn" data-copy-code="true">${escapeHtml(copyLabel)}</button></div><code class="hljs language-${sanitizeLanguageClass(codeClassLanguage)}">${highlighted}</code></pre>`
 }
 
 function isUnifiedDiffLanguage(lang?: string): boolean {
@@ -62,6 +76,11 @@ function isDiffRemovedLine(line: string): boolean {
 type DiffLineNumbers = {
   oldNumber?: number
   newNumber?: number
+}
+
+type RenderedDiffLine = {
+  html: string
+  foldableContext: boolean
 }
 
 function parseDiffHunkHeader(line: string): DiffLineNumbers | null {
@@ -112,14 +131,60 @@ function advanceDiffLineNumber(line: string, numbers: DiffLineNumbers): void {
   if (numbers.newNumber != null) numbers.newNumber += 1
 }
 
-function renderUnifiedDiffCode(content: string, labelLanguage: string, copyLabel: string): string {
+function renderDiffContextFoldLine(foldLabel: string): string {
+  return `<span class="diff-line diff-line-context-fold"><span class="diff-line-number diff-line-number-empty" aria-hidden="true"></span><span class="diff-line-content">⋮ ${escapeHtml(foldLabel)}</span></span>`
+}
+
+function collapseFoldableContextRows(
+  rows: RenderedDiffLine[],
+  formatFoldLabel: (hiddenCount: number) => string,
+): RenderedDiffLine[] {
+  const folded: RenderedDiffLine[] = []
+  let index = 0
+
+  while (index < rows.length) {
+    if (!rows[index].foldableContext) {
+      folded.push(rows[index])
+      index += 1
+      continue
+    }
+
+    const runStart = index
+    while (index < rows.length && rows[index].foldableContext) index += 1
+    const run = rows.slice(runStart, index)
+
+    if (run.length <= DIFF_CONTEXT_FOLD_THRESHOLD) {
+      folded.push(...run)
+      continue
+    }
+
+    const edge = Math.min(DIFF_CONTEXT_FOLD_EDGE_LINES, Math.floor(run.length / 2))
+    const hiddenCount = run.length - edge * 2
+    folded.push(...run.slice(0, edge))
+    folded.push({
+      html: renderDiffContextFoldLine(formatFoldLabel(hiddenCount)),
+      foldableContext: false,
+    })
+    folded.push(...run.slice(run.length - edge))
+  }
+
+  return folded
+}
+
+function renderUnifiedDiffCode(
+  content: string,
+  labelLanguage: string,
+  copyLabel: string,
+  formatFoldLabel: (hiddenCount: number) => string,
+): string {
   const numbers: DiffLineNumbers = {}
   const lines = content.split(/\r?\n/)
   if (lines.at(-1) === '') lines.pop()
 
-  const highlighted = lines
+  const renderedRows = lines
     .map((line) => {
       const classes = ['diff-line']
+      let foldableContext = false
       if (isDiffFileHeader(line)) classes.push('diff-line-file-header')
       else if (isDiffHunkHeader(line)) {
         classes.push('diff-line-hunk-header')
@@ -131,15 +196,19 @@ function renderUnifiedDiffCode(content: string, labelLanguage: string, copyLabel
       }
       else if (isDiffAddedLine(line)) classes.push('diff-line-added')
       else if (isDiffRemovedLine(line)) classes.push('diff-line-removed')
+      else foldableContext = true
 
       const lineNumber = formatDiffLineNumber(line, numbers)
       const html = `<span class="${classes.join(' ')}"><span class="diff-line-number ${lineNumber.className}" aria-hidden="true">${escapeHtml(lineNumber.value)}</span><span class="diff-line-content">${escapeHtml(line || ' ')}</span></span>`
       advanceDiffLineNumber(line, numbers)
-      return html
+      return { html, foldableContext }
     })
+
+  const highlighted = collapseFoldableContextRows(renderedRows, formatFoldLabel)
+    .map((row) => row.html)
     .join('')
 
-  return renderCodeBlockWrapper(highlighted, 'diff', labelLanguage, copyLabel, ['hljs-unified-diff'])
+  return renderCodeBlockWrapper(highlighted, 'diff', labelLanguage, copyLabel, ['hljs-unified-diff'], content)
 }
 
 export function normalizeHighlightLanguage(lang?: string): string {
@@ -198,8 +267,41 @@ export function isUnifiedDiffContent(content: string, lang?: string): boolean {
   return fileHeaders >= 2 && hunkHeaders > 0
 }
 
+export function extractUnifiedDiffPayload(value: unknown, depth = 0): string | null {
+  if (depth > 4 || value === null || typeof value !== 'object') return null
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const diff = extractUnifiedDiffPayload(item, depth + 1)
+      if (diff) return diff
+    }
+    return null
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+  for (const [key, candidate] of entries) {
+    if (
+      DIFF_PAYLOAD_FIELD_NAMES.has(key.toLowerCase())
+      && typeof candidate === 'string'
+      && isUnifiedDiffContent(candidate)
+    ) {
+      return candidate
+    }
+  }
+
+  for (const [, candidate] of entries) {
+    if (candidate && typeof candidate === 'object') {
+      const diff = extractUnifiedDiffPayload(candidate, depth + 1)
+      if (diff) return diff
+    }
+  }
+
+  return null
+}
+
 type RenderHighlightedCodeBlockOptions = {
   maxHighlightLength?: number
+  formatDiffFoldLabel?: (hiddenCount: number) => string
 }
 
 export function renderHighlightedCodeBlock(
@@ -213,7 +315,8 @@ export function renderHighlightedCodeBlock(
   const highlightLimit = options.maxHighlightLength ?? Number.POSITIVE_INFINITY
 
   if (isUnifiedDiffContent(content, requestedLanguage || normalizedLanguage)) {
-    return renderUnifiedDiffCode(content, requestedLanguage || 'diff', copyLabel)
+    const formatDiffFoldLabel = options.formatDiffFoldLabel ?? ((hiddenCount: number) => String(hiddenCount))
+    return renderUnifiedDiffCode(content, requestedLanguage || 'diff', copyLabel, formatDiffFoldLabel)
   }
 
   let highlighted = ''
@@ -256,9 +359,9 @@ export async function handleCodeBlockCopyClick(event: MouseEvent): Promise<boole
 
   event.preventDefault()
 
-  const block = button.closest('.hljs-code-block')
+  const block = button.closest<HTMLElement>('.hljs-code-block')
   const code = block?.querySelector('code')
-  const text = code?.textContent ?? ''
+  const text = block?.getAttribute('data-copy-text') ?? code?.textContent ?? ''
   if (!text) return false
 
   return copyTextToClipboard(text)
