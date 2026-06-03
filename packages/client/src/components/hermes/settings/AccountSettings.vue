@@ -85,11 +85,14 @@ async function handleAvatarUpload(event: Event) {
 async function handleRandomAvatar() {
   avatarSaving.value = true
   try {
-    const seed = username.value || 'default'
+    const randomPart = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
+    const seed = `${username.value || 'default'}-${Date.now()}-${randomPart}`
     const svg = multiavatar(seed)
     const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
-    await updateMyAvatar({ type: 'image', dataUrl })
-    avatar.value = { type: 'image', dataUrl }
+    await updateMyAvatar({ type: 'image', dataUrl, seed })
+    avatar.value = { type: 'image', dataUrl, seed }
     message.success(t('settings.userAvatar.saveSuccess'))
   } catch (err: any) {
     message.error(err.message || t('settings.userAvatar.saveFailed'))

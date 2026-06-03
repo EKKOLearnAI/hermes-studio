@@ -1060,7 +1060,7 @@ export default {
       upload: '上传图片',
       random: '随机生成',
       reset: '恢复默认',
-      hint: '支持 PNG/JPEG/WebP,最大 1MB,自动压缩到 500KB 以下',
+      hint: '支持 PNG、JPEG、WebP，最大 1MB，会自动压缩到 500KB 以下',
       invalidType: '请选择 PNG、JPEG 或 WebP 图片',
       tooLarge: '头像图片不能超过 1MB',
       saveSuccess: '头像已保存',
