@@ -13,8 +13,14 @@ vi.mock('@/components/hermes/chat/ChatPanel.vue', () => ({
   default: { template: '<div data-testid="chat-panel" />' },
 }))
 
+const mockRoute = {
+  name: 'hermes.session',
+  params: {},
+  query: {},
+}
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: {}, query: {} }),
+  useRoute: () => mockRoute,
   useRouter: () => ({ replace: vi.fn() }),
 }))
 
@@ -94,7 +100,9 @@ describe('ChatView tab title', () => {
     await nextTick()
 
     expect(document.title).toBe('Implementation Notes')
+
     wrapper.unmount()
+    expect(document.title).toBe('Hermes Studio')
   })
 
   it('falls back to the product title when the session title is blank', () => {
