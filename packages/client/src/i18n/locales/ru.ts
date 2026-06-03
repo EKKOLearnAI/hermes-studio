@@ -1323,6 +1323,16 @@ export default {
   },
 
   changelog: {
+    new_0_6_10_1: 'Тексты сайта теперь последовательно используют название Hermes Studio, сохраняя неизменными идентификаторы npm package, CLI, репозитория и переменных окружения',
+    new_0_6_10_2: 'Экраны запуска desktop и загрузки runtime теперь используют локализованные тексты для запуска сервисов, выбора источника, прогресса и ошибок',
+    new_0_6_10_3: 'Проверки процессов Windows Agent Bridge допускают локализованный вывод tasklist/taskkill и предотвращают сбои UnicodeDecodeError из-за не-UTF-8 вывода системных команд',
+    new_0_6_10_4: 'Документация OpenAPI теперь включает endpoints для avatar, auxiliary model config, provider model cache refresh и импорта Hermes sessions',
+    new_0_6_10_5: 'Workspace file browser теперь поддерживает более полные text previews и coverage контекстного меню для source и document files',
+    new_0_6_10_6: 'Agent Bridge стал надежнее благодаря обновлению tool approval allowlists и декодированию Windows tasklist/taskkill output',
+    new_0_6_10_7: 'Пользователи могут загружать profile avatars, а group chat members теперь синхронизируют и отображают account avatars единообразно',
+    new_0_6_10_8: 'Provider model catalogs теперь можно refresh из UI',
+    new_0_6_10_9: 'Memory notes теперь можно сохранять с пустым содержимым, чтобы очищать personal notes без ошибки сохранения',
+    new_0_6_10_10: 'Repository harness docs теперь отслеживают chat-chain changes, чтобы bridge и chat-runtime updates были документированы до прохождения CI',
     new_0_6_9_1: 'Приложение теперь использует бренд Hermes Studio в заголовке браузера, боковой панели, заголовке сайта, метаданных пакетов и официальных ссылках',
     new_0_6_9_2: 'Проверка обновлений desktop стала надёжнее благодаря fallback через release feed, когда GitHub API ограничен rate limit или отсутствуют metadata для tag',
     new_0_6_9_3: 'На macOS установка обновления сначала останавливает локальный Web UI server, затем electron-updater выполняет quit и install, поэтому Restart применяет скачанную версию',
