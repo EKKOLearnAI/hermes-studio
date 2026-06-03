@@ -141,8 +141,22 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           created_at: 0,
           updated_at: 0,
           last_login_at: 0,
+          avatar: '',
         },
       }))
+      return
+    }
+
+    if (pathname === '/api/auth/avatar') {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ avatar: '' }))
+        return
+      }
+      if (request.method() === 'PUT') {
+        await route.fulfill(jsonResponse({ success: true, avatar: '' }))
+        return
+      }
+      await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
       return
     }
 

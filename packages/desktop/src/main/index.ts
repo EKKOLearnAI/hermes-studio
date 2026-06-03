@@ -173,6 +173,7 @@ function createWindow() {
 }
 
 function splashHtml(): string {
+  const startingLabel = escapeHtml(t('desktop.startingLocalServices'))
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Hermes Studio</title>
 <style>
   html,body{margin:0;height:100%;background:#1a1a1a;color:#e5e5e5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;}
@@ -189,18 +190,28 @@ function splashHtml(): string {
 </style></head><body><div class="wrap">
 <h1>Hermes Studio</h1>
 <div class="row"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
-<div id="label" class="label">Starting local services...</div>
+<div id="label" class="label">${startingLabel}</div>
 <div class="progress"><div id="bar" class="bar"></div></div>
 <div id="detail" class="detail"></div>
 </div></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char] || char))
+}
+
 function runtimeSourceHtml(errorMessage?: string): string {
-  const safeError = errorMessage?.replace(/[<>]/g, '')
+  const safeError = errorMessage ? escapeHtml(errorMessage) : ''
   const errorBlock = safeError
     ? `<section class="error" aria-live="polite">
-        <div class="error-title">Download failed</div>
+        <div class="error-title">${escapeHtml(t('desktop.downloadFailed'))}</div>
         <pre>${safeError}</pre>
        </section>`
     : ''
@@ -232,16 +243,16 @@ function runtimeSourceHtml(errorMessage?: string): string {
   }
 </style></head><body><main class="wrap">
 <div class="brand"><div class="mark">H</div><h1>Hermes Studio</h1></div>
-<p class="label">Select a runtime download source to start local services.</p>
+<p class="label">${escapeHtml(t('desktop.selectRuntimeSource'))}</p>
 ${errorBlock}
 <div class="actions">
   <button id="cf">
-    <span class="button-title">Download from Cloudflare</span>
-    <span class="button-detail">Use the Hermes Studio download proxy.</span>
+    <span class="button-title">${escapeHtml(t('desktop.downloadCloudflareTitle'))}</span>
+    <span class="button-detail">${escapeHtml(t('desktop.downloadCloudflareDetail'))}</span>
   </button>
   <button id="github">
-    <span class="button-title">Download from GitHub</span>
-    <span class="button-detail">Use the release asset directly from GitHub.</span>
+    <span class="button-title">${escapeHtml(t('desktop.downloadGithubTitle'))}</span>
+    <span class="button-detail">${escapeHtml(t('desktop.downloadGithubDetail'))}</span>
   </button>
 </div>
 <script>
@@ -323,7 +334,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     console.error('Failed to prepare Hermes runtime:', err)
     if (mainWindow) {
       const msg = String(err instanceof Error ? err.message : err)
-      await mainWindow.loadURL(runtimeSourceHtml(`Failed to prepare Hermes runtime\n\n${msg}`))
+      await mainWindow.loadURL(runtimeSourceHtml(`${t('desktop.failedPrepareRuntime')}\n\n${msg}`))
     }
     isBootstrapping = false
     return
@@ -341,10 +352,10 @@ async function bootstrap(source?: RuntimeDownloadSource) {
   } catch (err) {
     console.error('Failed to start Web UI server:', err)
     if (mainWindow) {
-      const msg = String(err instanceof Error ? err.message : err).replace(/[<>]/g, '')
+      const msg = escapeHtml(String(err instanceof Error ? err.message : err))
       mainWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
         `<html><body style="font-family:system-ui;padding:32px;background:#1a1a1a;color:#eee">
-         <h2>Failed to start local services</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre>
+         <h2>${escapeHtml(t('desktop.failedStartServices'))}</h2><pre style="white-space:pre-wrap;color:#f88">${msg}</pre>
          </body></html>`,
       ))
     }

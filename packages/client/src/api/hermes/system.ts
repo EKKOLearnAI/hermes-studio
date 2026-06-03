@@ -169,10 +169,19 @@ export async function fetchProviderModels(data: {
   base_url: string
   api_key?: string
   freeOnly?: boolean
+  provider?: string
+  label?: string
+  update_cache?: boolean
 }): Promise<{ models: string[] }> {
   return request<{ models: string[] }>('/api/hermes/provider-models', {
     method: 'POST',
     body: JSON.stringify(data),
+  })
+}
+
+export async function refreshProviderModelCache(): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>('/api/hermes/provider-models/cache/refresh', {
+    method: 'POST',
   })
 }
 

@@ -10,7 +10,9 @@ import {
   deleteUser,
   findUserById,
   findUserByUsername,
+  getUserAvatar,
   listUsers,
+  setUserAvatar,
   updateUser,
   updateUsername,
   updateUserPassword,
@@ -53,11 +55,105 @@ export async function currentUser(ctx: Context) {
       created_at: user.created_at,
       updated_at: user.updated_at,
       last_login_at: user.last_login_at,
+      avatar: user.avatar || '',
       requiresCredentialChange: process.env.HERMES_DESKTOP === 'true'
         ? false
         : user.username === DEFAULT_USERNAME && verifyPassword(DEFAULT_PASSWORD, user.password_hash),
     },
   }
+}
+
+const MAX_AVATAR_BYTES = 500 * 1024
+
+function isValidAvatarPayload(value: unknown): { ok: true; json: string } | { ok: false; error: string } {
+  if (!value || typeof value !== 'object') return { ok: false, error: 'Invalid avatar payload' }
+  const obj = value as Record<string, unknown>
+  const type = obj.type
+  if (type !== 'image' && type !== 'default') return { ok: false, error: 'Avatar type must be "image" or "default"' }
+  if (type === 'image') {
+    if (typeof obj.dataUrl !== 'string' || !obj.dataUrl.startsWith('data:image/')) {
+      return { ok: false, error: 'Image avatar must include a dataUrl' }
+    }
+    if (obj.dataUrl.length > MAX_AVATAR_BYTES) {
+      return { ok: false, error: `Avatar image is too large (max ${MAX_AVATAR_BYTES} bytes)` }
+    }
+  }
+  if (obj.seed != null && typeof obj.seed !== 'string') {
+    return { ok: false, error: 'Avatar seed must be a string' }
+  }
+  return { ok: true, json: JSON.stringify(value) }
+}
+
+/**
+ * GET /api/auth/avatar
+ * Return the authenticated user's avatar JSON string.
+ */
+export async function getMyAvatar(ctx: Context) {
+  const userId = ctx.state.user?.id
+  if (!userId) {
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return
+  }
+  ctx.body = { avatar: getUserAvatar(userId) }
+}
+
+/**
+ * PUT /api/auth/avatar
+ * Update the authenticated user's avatar. Body: { avatar: <json string> } OR
+ * body directly contains the avatar object { type, dataUrl?, seed? }.
+ */
+export async function updateMyAvatar(ctx: Context) {
+  const userId = ctx.state.user?.id
+  if (!userId) {
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return
+  }
+  const body = ctx.request.body as { avatar?: unknown } & Record<string, unknown>
+  // Accept both { avatar: "<json string>" } and a direct avatar object
+  const candidate = body && Object.prototype.hasOwnProperty.call(body, 'avatar') ? body.avatar : body
+  if (typeof candidate === 'string') {
+    if (candidate.length > MAX_AVATAR_BYTES * 2) {
+      ctx.status = 400
+      ctx.body = { error: 'Avatar string is too large' }
+      return
+    }
+    try {
+      const parsed = JSON.parse(candidate)
+      const validation = isValidAvatarPayload(parsed)
+      if (!validation.ok) {
+        ctx.status = 400
+        ctx.body = { error: validation.error }
+        return
+      }
+      const ok = setUserAvatar(userId, candidate)
+      if (!ok) {
+        ctx.status = 500
+        ctx.body = { error: 'Failed to save avatar' }
+        return
+      }
+      ctx.body = { success: true, avatar: candidate }
+      return
+    } catch {
+      ctx.status = 400
+      ctx.body = { error: 'Avatar string is not valid JSON' }
+      return
+    }
+  }
+  const validation = isValidAvatarPayload(candidate)
+  if (!validation.ok) {
+    ctx.status = 400
+    ctx.body = { error: validation.error }
+    return
+  }
+  const ok = setUserAvatar(userId, validation.json)
+  if (!ok) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to save avatar' }
+    return
+  }
+  ctx.body = { success: true, avatar: validation.json }
 }
 
 /**

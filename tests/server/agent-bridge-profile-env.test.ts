@@ -519,6 +519,187 @@ print(json.dumps({
     })
   })
 
+  it('forwards agent turn-boundary callbacks without duplicating streamed text', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import time
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        self.tools = []
+        self.stream_delta_callback = kwargs.get("stream_delta_callback")
+
+    def run_conversation(self, message, **kwargs):
+        stream_callback = kwargs.get("stream_callback")
+        if stream_callback:
+            stream_callback("hello")
+        if self.stream_delta_callback:
+            self.stream_delta_callback("ignored-duplicate-text")
+            self.stream_delta_callback(None)
+        return {
+            "final_response": "hello",
+            "messages": [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": "hello"},
+            ],
+        }
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: []
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+record = pool.start_chat("session-1", "hi", profile="default")
+deadline = time.time() + 2
+while record.status == "running" and time.time() < deadline:
+    time.sleep(0.01)
+
+output = pool.get_output(record.run_id)
+print(json.dumps({
+    "status": output["status"],
+    "delta": output["delta"],
+    "events": output["events"],
+}))
+`)
+
+    expect(result.status).toBe('complete')
+    expect(result.delta).toBe('hello')
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'stream.delta', delta: 'hello' }),
+      expect.objectContaining({ event: 'turn.boundary' }),
+    ]))
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'stream.delta', delta: 'ignored-duplicate-text' }),
+    ]))
+  })
+
+  it('reloads command allowlist for bridge agent creation and runs', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import time
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+allowlist_homes = []
+tools_pkg = types.ModuleType("tools")
+tools_pkg.__path__ = []
+sys.modules["tools"] = tools_pkg
+
+approval = types.ModuleType("tools.approval")
+def load_permanent_allowlist():
+    allowlist_homes.append(os.environ.get("HERMES_HOME", ""))
+    return {"script execution via -e/-c flag"}
+def set_current_session_key(session_key):
+    return None
+def register_gateway_notify(session_key, callback):
+    pass
+def reset_current_session_key(token):
+    pass
+def unregister_gateway_notify(session_key):
+    pass
+approval.load_permanent_allowlist = load_permanent_allowlist
+approval.set_current_session_key = set_current_session_key
+approval.register_gateway_notify = register_gateway_notify
+approval.reset_current_session_key = reset_current_session_key
+approval.unregister_gateway_notify = unregister_gateway_notify
+sys.modules["tools.approval"] = approval
+
+terminal_tool = types.ModuleType("tools.terminal_tool")
+terminal_tool.set_approval_callback = lambda callback: None
+sys.modules["tools.terminal_tool"] = terminal_tool
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        self.tools = []
+
+    def run_conversation(self, message, **kwargs):
+        stream_callback = kwargs.get("stream_callback")
+        if stream_callback:
+            stream_callback("ok")
+        return {
+            "final_response": "ok",
+            "messages": [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": "ok"},
+            ],
+        }
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: []
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+record = pool.start_chat("session-allowlist", "hi", profile="default")
+deadline = time.time() + 2
+while record.status == "running" and time.time() < deadline:
+    time.sleep(0.01)
+
+print(json.dumps({
+    "status": record.status,
+    "allowlist_homes": allowlist_homes,
+}))
+`)
+
+    const expectedHome = await realpath(tempDir)
+    expect(result.status).toBe('complete')
+    expect(result.allowlist_homes.length).toBeGreaterThanOrEqual(2)
+    expect(result.allowlist_homes.every((home: string) => home === expectedHome)).toBe(true)
+  })
+
   it('handles Windows netstat output decode failures without crashing', async () => {
     const result = await runBridgeProbe(`
 import importlib.util

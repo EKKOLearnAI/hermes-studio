@@ -21,6 +21,7 @@ import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
+import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 
@@ -232,6 +233,7 @@ export async function bootstrap() {
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+  refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
 
   if (isDesktopRuntime()) {
     agentBridgeManager = getAgentBridgeManager()

@@ -49,6 +49,7 @@ const COPILOT_KEY = 'copilot'
 const CLIPROXYAPI_KEY = 'cliproxyapi'
 const XAI_OAUTH_KEY = 'xai-oauth'
 const ALIBABA_CODING_KEY = 'alibaba-coding-plan'
+const CUSTOM_STORED_PRESET_KEYS = new Set(['fun-codex', 'fun-claude'])
 const ALIBABA_CODING_REGIONS = {
   intl: 'https://coding-intl.dashscope.aliyuncs.com/v1',
   cn: 'https://coding.dashscope.aliyuncs.com/v1',
@@ -69,6 +70,16 @@ const selectedPresetProvider = computed(() =>
   selectedPreset.value ? modelsStore.allProviders.find(g => g.provider === selectedPreset.value) : null,
 )
 const canEditPresetBaseUrl = computed(() => !!selectedPresetProvider.value?.base_url_env)
+const canFetchProviderCatalog = computed(() =>
+  !!formData.value.base_url.trim() &&
+  (providerType.value === 'custom' || (
+    providerType.value === 'preset' &&
+    !isCodex.value &&
+    !isNous.value &&
+    !isCopilot.value &&
+    !isXaiOAuth.value
+  )),
+)
 
 const FUN_LINK_MAP: Record<string, string> = {
   'fun-codex': 'https://apikey.fun/register?aff=LIBAPI',
@@ -109,6 +120,10 @@ function autoGenerateName(url: string): string {
     return t('models.local', { host })
   }
   return host.charAt(0).toUpperCase() + host.slice(1)
+}
+
+function customProviderKey(name: string): string {
+  return `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
 }
 
 watch(selectedPreset, (val) => {
@@ -170,9 +185,22 @@ async function fetchModels() {
 
   fetchingModels.value = true
   try {
+    const provider = providerType.value === 'preset'
+      ? selectedPreset.value && CUSTOM_STORED_PRESET_KEYS.has(selectedPreset.value)
+        ? customProviderKey(selectedPreset.value)
+        : selectedPreset.value || undefined
+      : formData.value.name.trim()
+        ? customProviderKey(formData.value.name)
+        : undefined
+    const label = providerType.value === 'preset'
+      ? selectedPresetProvider.value?.label || provider
+      : formData.value.name.trim() || provider
     const data = await fetchProviderModels({
       base_url: base_url.trim(),
       api_key: formData.value.api_key.trim(),
+      provider,
+      label,
+      update_cache: !!provider,
     })
     modelOptions.value = data.models.map(m => ({ label: m, value: m }))
     if (modelOptions.value.length > 0 && !formData.value.model) {
@@ -438,7 +466,7 @@ function handleClose() {
             style="flex: 1"
           />
           <NButton
-            v-if="providerType === 'custom' || (providerType === 'preset' && modelOptions.length === 0)"
+            v-if="canFetchProviderCatalog"
             :loading="fetchingModels"
             @click="fetchModels"
           >

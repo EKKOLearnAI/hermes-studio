@@ -51,6 +51,19 @@ function agentAvatarName(agent: RoomAgent): string {
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
+
+/** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
+const userMemberAvatar = computed(() => {
+    // Prefer the live member list (populated when a room is active)
+    const member = store.members.find(m => m.userId === store.userId)
+    const raw = member?.avatar || store.currentUserAvatar
+    if (!raw) return null
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+        if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
+    } catch { /* malformed JSON — fall through to multiavatar */ }
+    return null
+})
 const visibleApproval = computed(() => store.activePendingApproval)
 
 function formatTokens(tokens: number): string {
@@ -394,7 +407,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <div class="avatar-stack-inner">
                                 <!-- User avatar first -->
                                 <span class="avatar-stack-item" :style="{ zIndex: store.agents.length + 1 }">
-                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                                 </span>
                                 <span
                                     v-for="(agent, index) in store.agents.slice(-4)"
@@ -409,7 +422,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </template>
                         <div class="agent-popover">
                             <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
-                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ store.userName || 'You' }}</span>
                                     <span class="agent-popover-profile">{{ t('groupChat.you') }}</span>
@@ -431,7 +444,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <!-- Only user avatar, no agents -->
                     <div v-else-if="store.userName" class="avatar-stack-inner">
                         <span class="avatar-stack-item">
-                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                         </span>
                     </div>
                     <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">

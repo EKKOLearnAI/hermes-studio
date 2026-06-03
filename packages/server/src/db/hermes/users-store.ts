@@ -15,6 +15,7 @@ export interface UserRecord {
   created_at: number
   updated_at: number
   last_login_at: number | null
+  avatar: string
 }
 
 export interface UserProfileRecord {
@@ -178,6 +179,25 @@ export function updateUsername(userId: UserId, username: string): boolean {
   if (!id) return false
   const result = db.prepare(`UPDATE ${USERS_TABLE} SET username = ?, updated_at = ? WHERE id = ?`)
     .run(username, Date.now(), id)
+  return result.changes > 0
+}
+
+export function getUserAvatar(userId: UserId): string {
+  const db = getDb()
+  if (!db) return ''
+  const id = normalizeUserId(userId)
+  if (!id) return ''
+  const row = db.prepare(`SELECT avatar FROM ${USERS_TABLE} WHERE id = ?`).get(id) as { avatar?: string } | undefined
+  return row?.avatar || ''
+}
+
+export function setUserAvatar(userId: UserId, avatarJson: string): boolean {
+  const db = getDb()
+  if (!db) return false
+  const id = normalizeUserId(userId)
+  if (!id) return false
+  const result = db.prepare(`UPDATE ${USERS_TABLE} SET avatar = ?, updated_at = ? WHERE id = ?`)
+    .run(avatarJson ?? '', Date.now(), id)
   return result.changes > 0
 }
 
