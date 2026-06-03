@@ -38,12 +38,16 @@ const props = withDefaults(defineProps<{
   rowGap?: number;
   padding?: string;
   topThreshold?: number;
+  autoScroll?: boolean;
+  autoScrollThreshold?: number;
 }>(), {
   estimatedItemHeight: 180,
   overscan: 8,
   rowGap: 16,
   padding: "20px",
   topThreshold: 120,
+  autoScroll: true,
+  autoScrollThreshold: 200,
 });
 
 const emit = defineEmits<{
@@ -361,9 +365,18 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
 });
 
-watch(messageKeys, () => {
+watch(messageKeys, (newKeys, oldKeys) => {
   cancelAnchorAlignment();
-  nextTick(syncViewport);
+  nextTick(() => {
+    syncViewport();
+    // Auto-scroll to bottom when new messages are added and autoScroll is enabled
+    if (props.autoScroll && oldKeys && newKeys.length > oldKeys.length) {
+      // Only auto-scroll if the user was already near the bottom
+      if (isNearBottom(props.autoScrollThreshold)) {
+        scrollToBottom({ frames: 3, keepAliveMs: 1000 });
+      }
+    }
+  });
 });
 
 defineExpose({
