@@ -35,6 +35,8 @@ const HERMES_VERSION = hermesVersion()
 // the channel extras below.
 const HERMES_EXTRAS = [
   'mcp',
+  'hindsight',
+  'honcho',
   'messaging',
   'slack',
   'wecom',
@@ -45,6 +47,14 @@ const HERMES_PACKAGE = process.env.HERMES_PACKAGE || `hermes-agent[${HERMES_EXTR
 const EXTRA_PYTHON_PACKAGES = splitPackageList(
   process.env.HERMES_EXTRA_PYTHON_PACKAGES || [
     'websockets',
+    // Bundled plugin runtime deps. Keep these in sync with hermes-agent
+    // plugins/*/plugin.yaml and the bundled plugin imports.
+    'hindsight-client==0.6.1',
+    'honcho-ai==2.0.1',
+    'mem0ai==2.0.4',
+    'supermemory==3.45.0',
+    'numpy==2.4.3',
+    'playwright==1.60.0',
     'mautrix==0.21.0',
     'Markdown==3.10.2',
     'aiosqlite==0.22.1',
@@ -364,6 +374,9 @@ function installBrowserRuntime() {
     process.exit(1)
   }
   console.log(`✓ bundled Chrome executable available at ${browserExecutable}`)
+
+  console.log(`→ Installing Python Playwright Chromium at ${PLAYWRIGHT_BROWSERS_PATH}`)
+  run(pyBin, ['-m', 'playwright', 'install', 'chromium'], { env: browserRuntimeEnv() })
 }
 
 installPythonPackages([HERMES_PACKAGE], 'hermes-agent')
@@ -377,6 +390,12 @@ run(pyBin, [
     'import importlib.util',
     'import mcp',
     'import tools.mcp_tool as t',
+    'import hindsight_client',
+    'import honcho',
+    'import mem0',
+    'import supermemory',
+    'import numpy',
+    'import playwright',
     'assert t._MCP_AVAILABLE',
     'assert importlib.util.find_spec("websockets") is not None',
   ].join('; '),
