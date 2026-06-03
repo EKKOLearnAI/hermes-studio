@@ -1,472 +1,920 @@
-# CLI/Bridge Chat Sessions 实现文档
+# Chat Sessions 链路文档
 
-> 状态：本文档描述当前 `main` 中 Web UI 聊天会话的 API Server / Bridge(beta) 双路径实现。
+> 状态：本文档按当前 `main` 重新整理普通 Chat 会话的完整实现链路。旧的独立
+> CLI Chat 面板、`/cli-chat-run` namespace、`cli-chat.ts` 客户端和 Python
+> bridge 直连命令层已经不再是产品入口。
+>
+> 最后重建时间：2026-06-03。
+>
+> 维护要求：后续 PR 如果修改本文列出的普通 Chat 链路核心文件，需要同步更新
+> “最近链路变更记录”，写清楚修改时间、PR/commit、动到的功能和行为影响。
+> `packages/server/src/services/hermes/agent-bridge/` 是普通 Chat 的核心链路，
+> 该目录下任何改动都算 Chat 链路改动；即使只是启动、环境变量、日志或品牌
+> attribution，也要记录影响范围，必要时明确“运行行为无变化”。
+> `packages/server/src/services/hermes/group-chat/`、`/group-chat` Socket.IO、
+> group-chat 前端 store/API/component、共享压缩器和 context-engine 也属于核心
+> 聊天链路，改动时同样需要记录。
 
-## 概述
+## 1. 结论先行
 
-当前实现把原来的聊天通道统一到 Socket.IO namespace `/chat-run`。前端仍使用同一套 `ChatPanel + MessageList + ChatInput`，通过会话的 `source` 字段区分运行方式：
-
-| source | 运行路径 | 说明 |
-|--------|----------|------|
-| `api_server` | Web UI Server → Hermes Gateway `/v1/responses` | 默认聊天路径 |
-| `cli` | Web UI Server → Python agent bridge → `AIAgent` | Bridge(beta)，在 Web UI 服务端子进程里直接运行 Hermes Agent |
-
-Bridge 会话不是一个独立 UI 面板，而是普通会话的一种来源。用户通过“新建聊天”下拉菜单选择 `API` 或 `Bridge (beta)`。
-
-Bridge 模式支持：
-
-- 流式文本输出
-- reasoning/thinking 增量
-- tool started/completed 事件
-- 工具审批请求与响应
-- abort 中断
-- per-session 队列
-- profile 隔离
-- 从 DB resume 会话
-- 与 API Server 路径共用上下文压缩逻辑
-
-当前不再支持旧文档里的独立 `/cli-chat-run` namespace、`CliChatPanel.vue`、`cli-chat.ts` 和独立 `command` / `steer` socket 事件。CLI/Bridge 会话中的 slash command 现在通过统一 `/chat-run` 的 `run` payload 进入后端解析；当前支持 `/usage`、`/status`、`/abort`、`/queue`、`/clear`、`/title`、`/compress`、`/steer`、`/destroy`。
-
----
-
-## 整体架构
+当前普通 Chat 的主链路是：
 
 ```text
-ChatPanel.vue
-  ├─ MessageList.vue
-  └─ ChatInput.vue
-        │
-        │ Socket.IO /chat-run
-        ▼
-ChatRunSocket (Node.js)
-  ├─ source=api_server → Hermes Gateway /v1/responses
-  └─ source=cli        → AgentBridgeClient
-                              │ TCP/Unix socket, newline JSON
-                              ▼
-                         hermes_bridge.py
-                              │ in-process import
-                              ▼
-                         AIAgent (hermes-agent)
+ChatPanel / ChatInput
+  -> Pinia chat store
+  -> packages/client/src/api/hermes/chat.ts
+  -> Socket.IO namespace /chat-run
+  -> ChatRunSocket
+  -> handleBridgeRun()
+  -> AgentBridgeClient
+  -> hermes_bridge.py broker
+  -> profile worker
+  -> AIAgent / Hermes Agent tools
 ```
 
-### 分流规则
+也就是说，当前 Web UI 普通聊天默认不是走 Hermes Gateway `/v1/responses`，
+而是走 `source=cli` 的 Agent Bridge 路径。代码里仍保留 `api_server`
+类型和 `handle-api-run.ts`，但 `resolveRunSource()` 当前固定返回 `cli`。
 
-`ChatRunSocket.resolveRunSource()` 决定本轮运行走哪个后端：
+核心原则：
 
-1. `run` payload 中 `source === 'cli'` 时走 bridge。
-2. `source === 'api_server'` 时走 gateway。
-3. 未显式传 `source` 时，如果 DB 中已有 session 的 `source` 是 `cli`，继续走 bridge。
-4. 其他情况默认走 `api_server`。
+- UI 只有一套普通 Chat 页面，不再有单独 CLI Chat 页面。
+- 所有长连接事件统一走 `/chat-run`。
+- 所有普通会话都落 Web UI 自己的 SQLite `sessions/messages` 表。
+- Hermes profile、model、provider、workspace、source 都是 session 级上下文。
+- 多 tab / 页面刷新通过 `resume` 重新加入同一个 `session:{id}` room。
+- 同一个 session 同时只跑一个 active run，后续输入进入 session 队列。
+- 工具审批、用户澄清、压缩、abort、usage、slash command 都复用同一条
+  `/chat-run` 事件通道。
 
----
+### 最近链路变更记录
 
-## 主要文件
+| 时间 | PR / commit | 动到的功能 | 链路影响 |
+| --- | --- | --- | --- |
+| 2026-06-03 | #1273 `91bb68dc` | 用户头像上传；group-chat 成员头像同步 | auth 用户头像进入 group-chat 成员展示链路，`/group-chat` handshake 携带 `authUserId`，服务端按用户 id/name 查头像并同步给 room members；不改变普通 Chat run，但改变 group-chat 成员元数据和消息展示。 |
+| 2026-06-03 | #1272 `2f1686da` | Bridge 工具审批 allowlist；Bridge 文本/turn boundary 回调 | `hermes_bridge.py` 在 agent 创建和每次 run 开始时刷新 `tools.approval` 的 `command_allowlist` 进程内缓存，保证“始终允许”写入配置后，后续同 profile run 能读到。`stream_delta_callback` 现在只转发 turn boundary，不再把 agent 的文本 delta 再追加一遍，避免和 `stream_callback` 重复。 |
+| 2026-06-03 | #1263 `e6648456` | 上下文压缩辅助模型配置 | 新增 profile 级 `auxiliary.compression` 设置。Chat 压缩链路在 `buildCompressedHistory()`、bridge forced compression 和运行中 compression request 中都会解析 compression 专用 provider/model；`auto` 使用当前 session model/provider，`main` 使用 profile 默认模型，显式配置则使用 compression 专用模型。 |
+| 2026-06-02 | #1240 `6792a451` | 消息语音播放 | 普通 Chat 的 `MessageItem.vue` 使用 `useSpeech.toggleBrowser()` 处理 Web Speech 播放/暂停，修复浏览器语音无法按同一消息切换暂停/继续的问题；同时更新 bridge OpenRouter attribution 环境变量品牌值。 |
+| 2026-05-30 | #1145 `cb410e50` | Bridge 文本和工具事件顺序 | Bridge 将每个文本 chunk 同步写入 `events` 中的 `stream.delta`，Node 端在事件循环内按顺序处理 `stream.delta`，并在同一 chunk 已有 ordered delta 时跳过聚合 `chunk.delta`，避免“文本 -> tool -> 文本”场景把字拆开或重复输出。 |
+| 2026-05-28 | #1080 `a6b3bec2` | 历史消息分页和虚拟列表 | 前端 session 状态新增 `messageTotal`、`loadedMessageCount`、`hasMoreBefore` 等字段；HTTP session API 新增分页消息读取；`resume` payload 携带分页元数据。刷新、切换、多 tab resume 时不再一次性加载全部历史消息。 |
+
+近期不属于本文普通 Chat 主链路的 PR：
+
+- #1266 `98bdc257`：provider base URL preset 映射，影响模型配置表单，不改变 `/chat-run` 执行链路。
+- #1262 `fd2b42ac`：workspace 文件预览，影响文件浏览/预览，不改变 Chat run、resume、approval 或 compression 链路。
+
+## 2. 主要文件
 
 ### 前端
 
-| 文件 | 说明 |
-|------|------|
-| `packages/client/src/components/hermes/chat/ChatPanel.vue` | 统一聊天面板；新建菜单包含 `API` 和 `Bridge (beta)`；渲染审批条 |
-| `packages/client/src/components/hermes/chat/MessageList.vue` | 统一消息列表；展示文本、reasoning、tool 消息等 |
-| `packages/client/src/components/hermes/chat/ChatInput.vue` | 统一输入框；发送、停止、附件上传入口 |
-| `packages/client/src/api/hermes/chat.ts` | `/chat-run` Socket.IO 客户端；注册 session 事件处理器；发送 run/abort/approval |
-| `packages/client/src/stores/hermes/chat.ts` | 会话状态、发送流程、resume、队列、审批、消息映射 |
+| 文件 | 职责 |
+| --- | --- |
+| `packages/client/src/components/hermes/chat/ChatPanel.vue` | 普通 Chat 页面容器，组合消息列表、输入框、审批条、澄清条、抽屉面板。 |
+| `packages/client/src/components/hermes/chat/ChatInput.vue` | 输入框、发送、附件、停止按钮入口。 |
+| `packages/client/src/components/hermes/chat/MessageList.vue` / `VirtualMessageList.vue` | 消息列表渲染和虚拟滚动。 |
+| `packages/client/src/components/hermes/chat/MessageItem.vue` | 单条消息渲染，包含 assistant、tool、reasoning、附件等 UI。 |
+| `packages/client/src/stores/hermes/chat.ts` | Chat 核心状态机：session 列表、发送、resume、队列、流式事件、审批、澄清、abort、压缩状态。 |
+| `packages/client/src/api/hermes/chat.ts` | `/chat-run` Socket.IO 客户端，负责连接、全局事件分发、run/resume/abort/approval/clarify 协议。 |
+| `packages/client/src/api/hermes/sessions.ts` | HTTP session API：列表、详情分页、删除、重命名、模型更新。 |
+| `packages/client/src/api/hermes/group-chat.ts` | `/group-chat` Socket.IO 客户端和 group-chat HTTP room/agent/config API。 |
+| `packages/client/src/stores/hermes/group-chat.ts` | Group Chat 状态机：rooms、members、messages、agents、streaming、context/compression 状态。 |
+| `packages/client/src/components/hermes/group-chat/*` | Group Chat 页面、输入框、消息列表、成员/agent 展示和房间创建配置。 |
 
 ### 后端
 
-| 文件 | 说明 |
-|------|------|
-| `packages/server/src/services/hermes/run-chat/index.ts` | `/chat-run` Socket.IO 入口；按 `source` 分流 API Server 与 Bridge 运行 |
-| `packages/server/src/services/hermes/run-chat/handle-api-run.ts` | API Server 路径；调用 Hermes Gateway `/v1/responses` 并消费流式响应 |
-| `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts` | Bridge 路径；调用 Agent Bridge 并写入本地会话库 |
-| `packages/server/src/services/hermes/run-chat/session-command.ts` | CLI/Bridge slash command 解析与处理 |
-| `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 端 bridge 客户端；通过 socket 请求 Python bridge |
-| `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge 子进程生命周期管理 |
-| `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python bridge 服务；创建并复用 `AIAgent` 实例 |
-| `packages/server/src/services/hermes/agent-bridge/index.ts` | bridge 模块导出 |
-| `packages/server/src/index.ts` | 启动 `AgentBridgeManager` 和 `ChatRunSocket` |
-| `packages/server/src/services/shutdown.ts` | 关闭时停止 chat socket 和 bridge 子进程 |
-| `packages/server/src/controllers/hermes/sessions.ts` | 会话列表和详情读取，包含 `source` 信息 |
-| `packages/server/src/controllers/hermes/profiles.ts` | profile 管理接口；按 URL/body 中的 profile 做权限校验 |
+| 文件 | 职责 |
+| --- | --- |
+| `packages/server/src/services/hermes/run-chat/index.ts` | `ChatRunSocket`，`/chat-run` namespace 入口、认证、profile 校验、run/resume/abort/approval/clarify/queue 分发。 |
+| `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts` | 当前主运行路径：创建/更新本地 session，构建上下文，调用 Agent Bridge，消费 bridge 事件，落库。 |
+| `packages/server/src/services/hermes/run-chat/handle-api-run.ts` | 保留的 API Server 路径实现；当前 `resolveRunSource()` 固定返回 `cli`，正常不会走到这里。 |
+| `packages/server/src/services/hermes/run-chat/session-command.ts` | slash command 解析和执行。 |
+| `packages/server/src/services/hermes/run-chat/abort.ts` | active run 中断、状态落盘、队列衔接。 |
+| `packages/server/src/services/hermes/run-chat/compression.ts` | DB history 构建、snapshot-aware history、上下文压缩。 |
+| `packages/server/src/services/hermes/run-chat/bridge-message.ts` | Bridge assistant/tool 消息的内存态与 DB flush。 |
+| `packages/server/src/services/hermes/run-chat/bridge-delta.ts` | 过滤 bridge 输出中的工具调用标记，避免 UI 文本重复或丢字符。 |
+| `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 到 Python bridge 的本地 socket 客户端。 |
+| `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge broker 子进程生命周期管理。 |
+| `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python broker/worker，实现 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
+| `packages/server/src/services/hermes/group-chat/index.ts` | `/group-chat` Socket.IO server、room/member/message 存储、agent 恢复、mention 分发、approval/interrupt 入口。 |
+| `packages/server/src/services/hermes/group-chat/agent-clients.ts` | Group Chat agent socket client，调用 Agent Bridge 执行被 mention 的 agent，并同步 tool/reasoning/context 状态。 |
+| `packages/server/src/services/hermes/context-engine/*` | Group Chat 上下文压缩和 summary cache。 |
+| `packages/server/src/lib/context-compressor/*` | 普通 Chat 和 Group Chat 共用的 token 估算、摘要压缩和 context message 处理。 |
+| `packages/server/src/routes/hermes/group-chat.ts` | Group Chat HTTP room/agent/config/compress/clear-context API。 |
+| `packages/server/src/db/hermes/session-store.ts` | Web UI 本地 session/message SQLite 存储。 |
+| `packages/server/src/controllers/hermes/sessions.ts` | HTTP session 列表、详情、分页、删除、导入/导出等控制器。 |
 
-### 已移除的旧文件
+## 3. 数据模型
 
-| 文件 | 状态 |
-|------|------|
-| `packages/client/src/api/hermes/cli-chat.ts` | 已删除 |
-| `packages/client/src/components/hermes/chat/CliChatPanel.vue` | 已删除 |
-| `packages/server/src/services/hermes/cli-chat-run-socket.ts` | 已删除 |
+普通 Chat 使用 Web UI 本地 SQLite，而不是直接把 Hermes CLI 历史当作唯一状态。
+核心表由 `packages/server/src/db/hermes/schemas.ts` 初始化。
 
----
+### sessions
 
-## 前端流程
+`session-store.ts` 暴露的主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | Web UI session id。前端新建时生成，发送 run 时传入。 |
+| `profile` | Hermes profile。新 session 使用当前 active profile，已存在 session 优先使用 DB 中的 profile。 |
+| `source` | 当前会话来源。当前普通 Chat 实际写入 `cli`。历史数据可能存在 `api_server`。 |
+| `model` / `provider` | session 绑定模型。首轮发送会写入选中的模型/供应商，后续可更新。 |
+| `title` / `preview` | 会话标题和预览。标题可以由 `/title` 改，也可由首条用户输入生成。 |
+| `workspace` | 当前工作目录上下文，会被注入 run instructions。 |
+| `message_count` / `tool_call_count` | 由 `updateSessionStats()` 从 messages 表统计。 |
+| `input_tokens` / `output_tokens` | usage 统计结果。 |
+| `last_active` / `started_at` / `ended_at` | 会话时间元数据。 |
+
+### messages
+
+主要 role：
+
+| role | 说明 |
+| --- | --- |
+| `user` | 普通用户输入。 |
+| `command` | 用户输入的 slash command 展示消息。 |
+| `assistant` | Agent 输出文本，可带 `reasoning` / `reasoning_content`。 |
+| `tool` | 工具执行结果。 |
+
+工具调用相关字段：
+
+- `tool_call_id`
+- `tool_calls`
+- `tool_name`
+- `finish_reason`
+- `reasoning`
+- `reasoning_details`
+- `reasoning_content`
+
+前端读取历史时通过 `mapHermesMessages()` 把 DB 行映射成 UI `Message`，包括：
+
+- assistant 文本消息
+- reasoning 内容
+- tool started/tool completed 的可视化行
+- 队列消息
+- command/system 消息
+
+## 4. 前端状态机
+
+`useChatStore()` 是普通 Chat 的中心状态。
+
+常见状态：
+
+| 状态 | 说明 |
+| --- | --- |
+| `sessions` | 当前加载的 session 列表和每个 session 的消息数组。 |
+| `activeSessionId` / `activeSession` | 当前页面正在显示的 session。 |
+| `serverWorking` | 前端认为服务端仍有 active run 的 session id 集合。 |
+| `streamStates` | 当前前端已注册流式 handler 的 session。 |
+| `queueLengths` / queued user messages | 每个 session 的服务端队列长度和 UI 可见队列消息。 |
+| `pendingApprovals` | 工具审批请求，按 `sessionId + approvalId` 存。 |
+| `pendingClarifies` | 用户澄清请求，按 `sessionId + clarifyId` 存。 |
+| `compressionStates` | 上下文压缩中的临时 UI 状态。 |
+| `abortState` | 当前 active run 的中断状态。 |
 
 ### 新建会话
 
-`ChatPanel.vue` 中的新建按钮使用下拉菜单：
-
-- `API`：调用 `chatStore.newChat()`，创建默认 `api_server` 会话。
-- `Bridge (beta)`：调用 `chatStore.newCliSession()`，创建 `source: 'cli'` 会话。
-
-Bridge 会话 ID 使用类似 `YYYYMMDD_HHMMSS_xxxxxx` 的格式，便于与 Hermes CLI 风格的 session ID 对齐。
-
-### 发送消息
-
-1. `ChatInput.vue` 触发 store 的发送逻辑。
-2. `chat.ts` 根据 active session 组装输入内容，附件会被转为 `ContentBlock[]`。
-3. 调用 `startRunViaSocket()`。
-4. 前端向 `/chat-run` emit：
+普通新建入口最终调用：
 
 ```ts
-socket.emit('run', {
-  session_id,
-  input,
-  instructions,
-  model,
-  queue_id,
-  source, // api_server 或 cli
-})
+newChat(options)
 ```
 
-5. 前端注册本 session 的事件 handler，通过 `session_id` 隔离多会话并发事件。
+它会：
 
-### Resume
+1. 从当前 app model/profile 状态创建本地前端 session 对象。
+2. 切换到这个 session。
+3. 此时 DB 里不一定已经有 session 行；真正落库发生在第一次 run 时。
 
-切换会话、页面恢复可见、或刷新后，前端通过：
+历史上的 `newCliSession()` 仍存在，但普通 Chat 当前也是 `source=cli`，不再需要单独 UI 面板区分。
+
+### 切换会话
+
+切换 session 时，store 会优先通过 Socket.IO `resume`：
 
 ```ts
-socket.emit('resume', { session_id })
+resumeSession(sessionId, onResumed, profile)
 ```
 
-服务端返回：
+服务端会：
+
+1. `socket.join("session:<id>")`
+2. 如果内存 `sessionMap` 有状态，直接返回。
+3. 否则从 DB 读取分页消息和 usage。
+4. 如果该 session 正在运行，返回最近 transient events。
+
+前端收到 `resumed` 后会：
+
+- 替换/补齐本地消息。
+- 恢复 `isWorking`、`isAborting`、queue、usage。
+- 对 active run 重新注册 handlers。
+- 重新显示审批、澄清、压缩、abort 等未完成状态。
+
+## 5. 发送消息链路
+
+### 前端发送
+
+入口是 `chat.ts` store 的：
+
+```ts
+sendMessage(content, attachments?)
+```
+
+主要步骤：
+
+1. 如果没有 active session，先创建一个。
+2. 捕获发送时的 `sid`，后续所有回调都用这个 sid，避免用户切换 session 后事件写错地方。
+3. 判断是否 slash command：`content.trim().startsWith("/")`。
+4. 判断是否需要排队：
+   - 如果服务端当前 session 正在运行；
+   - 且不是可立即处理的 mid-run slash command；
+   - 则 UI 先显示 queued 消息。
+5. 如果有附件：
+   - 先走 `/upload`；
+   - 再组装 `ContentBlock[]`；
+   - image block 包含 `type/name/path/media_type`；
+   - file block 包含 `type/name/path/media_type?`。
+6. 等待模型列表 ready，读取当前 session 或全局选择的 model/provider。
+7. 构造 run payload。
+
+当前 payload 形态：
 
 ```ts
 {
-  session_id,
-  messages,
-  isWorking,
-  isAborting,
-  events,
-  inputTokens,
-  outputTokens,
-  queueLength,
+  input,
+  session_id: sid,
+  profile,
+  model,
+  provider,
+  model_groups,
+  queue_id: userMsg.id,
+  source: "cli",
 }
 ```
 
-如果服务端发现该 session 仍在运行，前端会重新注册 handler，并允许继续 abort。
+首轮发送会带 `model/provider`，已存在 session 后通常依赖 DB 中的 session 模型。
 
-### 审批
+### Socket.IO 发送
 
-Bridge 工具需要人工确认时，服务端会发 `approval.requested`，前端 store 记录为 `activePendingApproval`，`ChatPanel.vue` 在输入框上方显示审批条。
+`startRunViaSocket()` 负责：
 
-前端响应审批：
+1. `connectChatRun(profile)` 建立或复用 `/chat-run` socket。
+2. 注册当前 `session_id` 的事件 handlers 到 `sessionEventHandlers`。
+3. 发送：
 
 ```ts
-socket.emit('approval.respond', {
+socket.emit("run", body)
+```
+
+如果同一个 session 已经有 handler，新的 run 只 emit，不重复注册，避免多 tab/多次发送造成事件重复处理。
+
+## 6. `/chat-run` 连接和认证
+
+前端连接：
+
+```ts
+io(`${baseUrl}/chat-run`, {
+  auth: { token },
+  query: { profile },
+  transports: ["websocket", "polling"],
+  reconnection: true,
+})
+```
+
+后端 `ChatRunSocket.authMiddleware()`：
+
+1. 如果 auth 关闭，直接放行。
+2. 如果 auth 开启，使用 `authenticateUserToken()` 验证 token。
+3. 如果 socket query 里带 profile，检查用户是否可访问该 profile。
+4. 把 authenticated user 写入 `socket.data.user`。
+
+每次 run 时还会调用 `resolveRunProfile()`：
+
+- payload 显式 `profile` 优先。
+- 没有 session id 时使用 socket 当前 profile。
+- 有 session id 时优先用 DB 中 session.profile。
+- 非 super admin 需要通过 `userCanAccessProfile()`。
+
+## 7. 服务端 run 分发
+
+`ChatRunSocket` 监听：
+
+| 客户端事件 | 服务端行为 |
+| --- | --- |
+| `run` | 解析 profile、source、slash command、queue，然后进入 run handler。 |
+| `resume` | 加入 session room，返回 DB/内存状态。 |
+| `abort` | 调用 `handleAbort()`。 |
+| `cancel_queued_run` | 从 session queue 删除指定 queue item。 |
+| `approval.respond` | 转发到 bridge `approval_respond`。 |
+| `clarify.respond` | 转发到 bridge `clarify_respond`。 |
+
+### source 分流
+
+当前代码：
+
+```ts
+export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
+  return "cli"
+}
+```
+
+因此：
+
+- payload 即使传 `source: "api_server"`，当前仍会被解析为 `cli`。
+- `handleApiRun()` 是保留实现，不是当前普通 Chat 的实际路径。
+- 新会话落库时 `source` 写为 `cli`。
+
+### sessionMap
+
+后端内存态是：
+
+```ts
+Map<string, SessionState>
+```
+
+每个 `SessionState` 包含：
+
+- `messages`
+- `isWorking`
+- `isAborting`
+- `events`
+- `queue`
+- `runId`
+- `activeRunMarker`
+- `profile`
+- `source`
+- bridge pending text/reasoning/tool 状态
+- usage/context token 状态
+
+DB 是持久层，`sessionMap` 是运行时和 resume 用的 transient 层。
+
+## 8. Bridge run 详细链路
+
+实际执行在：
+
+```ts
+handleBridgeRun(...)
+```
+
+### 8.1 初始化 run
+
+服务端会：
+
+1. 根据 session DB 和 payload 解析 model/provider。
+2. 生成 `runMarker = cli_run_<...>`，用于把同一轮用户、assistant、tool 消息串起来。
+3. 初始化 `SessionState`：
+   - `isWorking = true`
+   - `isAborting = false`
+   - `source = "cli"`
+   - 清空 pending assistant/reasoning/tool 状态
+4. 如果需要展示用户输入：
+   - 内存 `state.messages.push(...)`
+   - 如果 DB session 不存在，`createSession({ source: "cli" })`
+   - `addMessage()` 写入 DB
+5. `socket.join("session:<id>")`
+6. 向其他同 room tab 广播 `run.peer_user_message`。
+
+### 8.2 instructions 组装
+
+最终 instructions 包含：
+
+- `getSystemPrompt()`
+- 用户或调用方传入的 `instructions`
+- 当前 Hermes profile
+- session workspace
+- Web UI 工具调用提示：如果工具调用 Web UI API，需要带 `X-Hermes-Profile`
+
+### 8.3 上下文构建
+
+run 前调用：
+
+```ts
+buildCompressedHistory(...)
+```
+
+它会基于 DB history 和 compression snapshot 构建适合本次 run 的历史：
+
+- 读取本 session messages。
+- 排除或包含当前用户输入，视调用场景决定。
+- 使用 snapshot-aware history，避免已经压缩的旧上下文重复膨胀。
+- 必要时触发上下文压缩。
+- 对 Bridge 路径会调用 `context_estimate` 估算固定上下文开销：
+  - system prompt tokens
+  - tool tokens
+  - tool count/names
+
+### 8.4 调用 AgentBridgeClient
+
+服务端发起：
+
+```ts
+bridge.chat(sessionId, bridgeInput, bridgeHistory, fullInstructions, profile, {
+  storage_message,
+  model,
+  provider,
+})
+```
+
+返回：
+
+```ts
+{
+  ok: true,
+  run_id,
+  session_id,
+  status
+}
+```
+
+随后 Node 轮询：
+
+```ts
+for await (const chunk of bridge.streamOutput(run_id)) {
+  applyBridgeChunkAsync(...)
+}
+```
+
+`streamOutput()` 实际通过 `get_output` action，携带 `cursor` 和 `event_cursor`
+增量读取文本和事件。
+
+## 9. Python Agent Bridge
+
+### 9.1 进程结构
+
+`AgentBridgeManager` 启动 `hermes_bridge.py` broker 子进程：
+
+```text
+python hermes_bridge.py --endpoint <endpoint> --agent-root <root> --hermes-home <home>
+```
+
+默认 endpoint：
+
+| 平台 | 默认 |
+| --- | --- |
+| Windows | `tcp://127.0.0.1:18765` |
+| macOS/Linux | `ipc:///tmp/hermes-agent-bridge.sock` |
+
+broker 会再按 profile 路由到 worker。worker 里维护实际 `AIAgent` 会话池。
+
+### 9.2 Node/Python 协议
+
+Node 和 Python 使用本地 socket 的单行 JSON 协议。
+
+示例请求：
+
+```json
+{"action":"chat","session_id":"abc","message":"hello","profile":"default"}
+```
+
+示例响应：
+
+```json
+{"ok":true,"run_id":"...","session_id":"abc","status":"running"}
+```
+
+`AgentBridgeClient` 每次请求新建 socket，发送一行 JSON，读取一行 JSON。
+请求默认串行化，默认 timeout 是 120 秒，connect 失败有短重试窗口。
+
+### 9.3 常用 action
+
+| action | 说明 |
+| --- | --- |
+| `chat` | 启动一轮 agent conversation。 |
+| `get_output` | 根据 cursor/event_cursor 拉取增量输出。 |
+| `context_estimate` | 估算 system prompt/tool 固定上下文 token。 |
+| `interrupt` | 中断 session 当前 run。 |
+| `steer` | 给正在运行的 session 追加 steering instruction。 |
+| `command` | 执行 plan/goal/subgoal 等 bridge command。 |
+| `approval_respond` | 响应工具审批。 |
+| `clarify_respond` | 响应澄清请求。 |
+| `compression_respond` | Node 完成本地压缩后把压缩结果交还给 bridge。 |
+| `goal_evaluate` / `goal_pause` | goal continuation 的状态评估和暂停。 |
+| `status` | 查询 bridge session 状态。 |
+| `destroy` | 销毁指定 bridge session。 |
+| `destroy_all` | 销毁全部 bridge session，主要用于进程关闭或维护。 |
+| `mcp_*` | MCP 相关维护动作，例如 reload。 |
+
+## 10. 流式事件映射
+
+Bridge 输出 chunk 里有两类数据：
+
+- `delta`：聚合文本增量。
+- `events`：有序事件列表。
+
+如果 `events` 中出现 `stream.delta`，Node 以事件顺序处理文本，避免再处理
+聚合 `chunk.delta`，否则会重复输出。
+
+### 事件映射
+
+| Bridge event | `/chat-run` event | UI 结果 |
+| --- | --- | --- |
+| `stream.delta` / chunk `delta` | `message.delta` | assistant 文本增量。 |
+| `reasoning.delta` | `reasoning.delta` | reasoning 增量。 |
+| `thinking.delta` | `thinking.delta` | thinking/reasoning 增量。 |
+| `reasoning.available` | `reasoning.available` | 标记 reasoning 可用。 |
+| `tool.started` | `tool.started` | 显示工具开始行，先 flush pending assistant 文本。 |
+| `tool.completed` | `tool.completed` | 显示工具结果和耗时/error。 |
+| `subagent.*` | `subagent.*` | 显示子代理状态、工具、进度和总结。 |
+| `status` | `agent.event` | 显示 agent 状态事件。 |
+| `approval.requested` | `approval.requested` | 显示审批条。 |
+| `approval.resolved` | `approval.resolved` | 清理审批条。 |
+| `clarify.requested` | `clarify.requested` | 显示澄清输入。 |
+| `clarify.resolved` | `clarify.resolved` | 清理澄清输入。 |
+| `bridge.compression.requested` | `compression.started` | UI 显示压缩中，Node 执行本地压缩。 |
+| `bridge.compression.completed` | `compression.completed` | UI 显示压缩结果，更新 context tokens。 |
+| terminal chunk done | `run.completed` / `run.failed` | 结束 run，更新 usage，衔接队列。 |
+
+### 消息落库
+
+Bridge run 中不会每个字符都立即落库。Node 会维护 pending assistant/tool 状态：
+
+- 文本增量累加到 `bridgePendingAssistantContent`。
+- reasoning 累加到 `bridgePendingReasoningContent`。
+- 工具开始前、turn boundary、run 结束、abort 前会 `flushBridgePendingToDb()`。
+- tool started/completed 通过 `recordBridgeToolStarted()` 和
+  `recordBridgeToolCompleted()` 形成 DB 可恢复的 assistant/tool 结构。
+
+这样可以保证：
+
+- UI 实时流式显示。
+- DB 中历史可恢复。
+- 刷新页面后 tool/reasoning/assistant 不丢。
+
+## 11. run 完成和失败
+
+当 bridge chunk `done=true`：
+
+1. flush pending 工具标记和 assistant 文本。
+2. `updateSessionStats(sessionId)`。
+3. 延迟短时间等待 usage flush。
+4. `calcAndUpdateUsage()` 计算 input/output tokens。
+5. `refreshFinalContextUsage()` 计算 snapshot-aware context tokens。
+6. `updateUsage()` 写 usage store。
+7. 检测 `bridgeTerminalError()`：
+   - bridge status 为 `error`
+   - result 中带 error/exception
+   - final_response 看起来是上游错误
+8. 发送 `run.completed` 或 `run.failed`。
+9. 如果队列中还有消息，自动 dequeue 下一条。
+
+前端收到 terminal event 后：
+
+- 关闭 streaming assistant 状态。
+- 清理 `serverWorking`。
+- 播放完成提示音（如果开启）。
+- 更新 session title/usage/context tokens。
+- 如果 `queue_remaining > 0`，保持 handler，不提前清理。
+
+## 12. 队列
+
+同一个 session 同时只允许一个 active run。
+
+队列进入点：
+
+1. 服务端收到 `run`，发现 `state.isWorking=true`。
+2. 前端 `/queue <message>` command。
+3. `/plan` 或 `/goal` 生成 kickoff prompt，但当前 session 正在运行。
+4. abort 完成后仍有队列。
+
+队列项类型：
+
+```ts
+interface QueuedRun {
+  queue_id: string
+  input: string | ContentBlock[]
+  displayInput?: string | ContentBlock[] | null
+  displayRole?: "user" | "command"
+  storageMessage?: string
+  model?: string
+  provider?: string
+  model_groups?: Array<{ provider: string; models: string[] }>
+  instructions?: string
+  profile: string
+  source?: "cli" | "api_server"
+  originSocketId?: string
+  goalContinuation?: boolean
+}
+```
+
+队列事件：
+
+- `run.queued`：队列长度变化。
+- `queued_messages`：UI 可见队列消息。
+- `dequeued_queue_id`：某条队列开始执行，前端移除 queued 展示。
+
+取消队列：
+
+```ts
+socket.emit("cancel_queued_run", { session_id, queue_id })
+```
+
+## 13. Abort
+
+前端 stop 按钮最终调用：
+
+```ts
+socket.emit("abort", { session_id })
+```
+
+服务端 `handleAbort()`：
+
+1. 如果没有 active run，发送 ignored 的 `abort.completed`。
+2. 设置 `state.isAborting=true`。
+3. 发送 `abort.started`。
+4. 先 flush 当前内存 assistant/tool 状态到 DB。
+5. CLI source 调用：
+   - `bridge.interrupt(sessionId, "Aborted by user", profile)`
+   - `bridge.goalPause(..., "user-interrupted")`
+   - 移除 goal continuation 队列项
+6. 标记 abort completed，更新 usage。
+7. 如果队列不为空，启动下一条队列。
+
+前端收到：
+
+- `abort.started`：显示中断中。
+- `abort.completed`：清理中断状态；如果有队列继续保持 streaming handler。
+
+## 14. 工具审批
+
+Bridge 里有两类审批来源：
+
+1. Hermes 工具层直接回调，例如 terminal/本地命令审批。
+2. gateway approval notify，经 `tools.approval` 按 session key 路由。
+
+Python 侧生成：
+
+```json
+{
+  "event": "approval.requested",
+  "approval_id": "...",
+  "command": "...",
+  "description": "...",
+  "choices": ["once", "session", "always", "deny"],
+  "allow_permanent": true,
+  "timeout_ms": 60000
+}
+```
+
+Node 映射到 `/chat-run`：
+
+```ts
+approval.requested
+```
+
+前端：
+
+- `chat.ts` store 写入 `pendingApprovals`。
+- `ChatPanel.vue` 显示审批 UI。
+- 用户选择后调用：
+
+```ts
+respondToolApproval(sessionId, approvalId, choice)
+```
+
+再发送：
+
+```ts
+socket.emit("approval.respond", {
   session_id,
   approval_id,
   choice, // once | session | always | deny
 })
 ```
 
----
+Python bridge 会：
 
-## `/chat-run` Socket.IO 协议
+- 找到对应 approval queue 或 gateway session。
+- 写入选择。
+- 发送 `approval.resolved`。
+- 在运行开始/审批相关路径刷新 `command_allowlist` 的进程内缓存，确保“始终允许”的持久配置能被后续工具判断读到。
 
-### 客户端 → 服务端
+## 15. 用户澄清
 
-| 事件 | 数据 | 说明 |
-|------|------|------|
-| `run` | `{ session_id, input, model?, instructions?, queue_id?, source? }` | 启动一轮运行；`source` 决定 API Server 或 Bridge |
-| `resume` | `{ session_id }` | 加入 session room 并恢复状态 |
-| `abort` | `{ session_id }` | 中断当前运行 |
-| `cancel_queued_run` | `{ session_id, queue_id }` | 取消等待队列中的一条 run |
-| `approval.respond` | `{ session_id, approval_id, choice }` | 响应 Bridge 工具审批 |
+澄清请求和审批类似，但用于 agent 主动问用户问题。
 
-客户端不再发送独立 `command` 或 `steer` Socket.IO 事件；slash command 作为普通 `run.input` 进入 `/chat-run`，由服务端在 `source=cli` 时解析。
-
-### 服务端 → 客户端
-
-| 事件 | 说明 |
-|------|------|
-| `resumed` | 返回 DB 消息、运行状态、队列长度和最近事件 |
-| `run.started` | 运行开始 |
-| `run.queued` | 当前 session 已有运行，新请求进入队列 |
-| `message.delta` | 文本增量 |
-| `reasoning.delta` | reasoning 增量 |
-| `thinking.delta` | thinking 增量 |
-| `reasoning.available` | reasoning 内容可用 |
-| `tool.started` | 工具调用开始 |
-| `tool.completed` | 工具调用结束 |
-| `approval.requested` | Bridge 工具请求人工审批 |
-| `approval.resolved` | 审批完成或超时 |
-| `compression.started` | 上下文压缩开始 |
-| `compression.completed` | 上下文压缩结束 |
-| `usage.updated` | token 用量更新 |
-| `abort.started` | 中断开始 |
-| `abort.completed` | 中断结束 |
-| `session.command` | slash command 的执行结果或错误反馈 |
-| `run.completed` | 运行完成 |
-| `run.failed` | 运行失败 |
-
-### 认证
-
-`/chat-run` 使用 Socket.IO auth token：
-
-```ts
-io(`${baseUrl}/chat-run`, {
-  auth: { token },
-  query: { profile },
-})
-```
-
-服务端会与 Web UI token 比对。
-
----
-
-## ChatRunSocket 后端行为
-
-### API Server 路径
-
-`source=api_server` 时：
-
-1. 写入用户消息到 Web UI 本地 session DB。
-2. 通过 `buildCompressedHistory()` 构建上下文。
-3. 请求当前 profile 的 Hermes Gateway：
-
-```text
-POST <upstream>/v1/responses
-```
-
-4. 读取 SSE frame，映射为统一的 `/chat-run` 事件。
-5. 完成后写入 assistant/tool 消息，更新 usage。
-
-### Bridge 路径
-
-`source=cli` 时：
-
-1. 写入用户消息到 Web UI 本地 session DB。
-2. 复用同一套 `buildCompressedHistory()` 构建压缩上下文。
-3. 调用：
-
-```ts
-this.bridge.chat(session_id, input, history, instructions, profile)
-```
-
-4. 轮询 `AgentBridgeClient.streamOutput(run_id)`。
-5. 将 Python bridge 的 delta 和 events 映射成统一事件。
-6. 将 assistant 文本、reasoning、tool 调用结果 flush 回 DB。
-
-### 队列
-
-同一个 `session_id` 同时只能有一个 active run。新的 `run` 到达时：
-
-- 如果当前 session 正在运行，则放入 `state.queue`。
-- 发送 `run.queued` 更新队列长度。
-- 当前 run 结束或 abort 完成后，自动执行下一条 queued run。
-
----
-
-## Python Agent Bridge
-
-### 通信协议
-
-Node 和 Python bridge 之间使用本地 socket 的单行 JSON 协议：
+Bridge event：
 
 ```json
-{ "action": "chat", "session_id": "xxx", "message": "hello" }
-```
-
-响应也是单行 JSON：
-
-```json
-{ "ok": true, "run_id": "xxx", "session_id": "xxx", "status": "running" }
-```
-
-### Endpoint
-
-默认 endpoint 按平台选择：
-
-| 平台 | 默认 endpoint |
-|------|---------------|
-| Windows | `tcp://127.0.0.1:18765` |
-| macOS/Linux | `ipc:///tmp/hermes-agent-bridge.sock` |
-
-Windows 使用 TCP 是因为部分 Python/Windows 环境没有 Unix domain socket 支持。
-
-### 当前实际使用的 action
-
-| Action | 说明 |
-|--------|------|
-| `chat` | 启动一轮 `AIAgent.run_conversation()` |
-| `get_output` | 通过 `cursor` 和 `event_cursor` 获取增量文本与事件 |
-| `interrupt` | 调用 agent 中断当前运行 |
-| `approval_respond` | 响应工具审批 |
-| `destroy_all` | 维护动作；仅用于明确的全量清理/进程关闭场景，普通 profile 切换不会调用 |
-
-bridge 代码里还保留了一些调试/维护 action，例如 `ping`、`get_result`、`get_history`、`destroy`、`list`、`shutdown`、`steer`。当前 `/chat-run` 前端路径不会直接暴露这些 action；需要的能力由 Node `/chat-run` 层封装，例如 `/steer` slash command 会调用 `steer` action。
-
-旧的 `command` action 已移除，Python bridge 不再直接解析 `/new`、`/undo`、`/retry`、`/branch` 等旧斜杠命令；当前 CLI/Bridge slash command 支持范围以 Node `/chat-run` 的 `session-command.ts` 为准。
-
-### 会话和 profile
-
-`AgentPool` 维护 `session_id -> AgentSession`：
-
-- 每个 session 持有独立 `AIAgent` 实例。
-- session 按请求中的 profile 创建和复用；前端切换 Hermes Profile 只改变后续请求使用的 profile，不会影响其他 bridge 内存 session。
-- `HERMES_HOME` 会在创建 agent 时临时切到 profile home。
-- `SessionDB` 按 profile 的 `state.db` 路径缓存。
-- 空闲 session 会被 bridge GC，默认 30 分钟无运行后销毁内存态。
-
-### 工具和审批事件
-
-bridge 从 `AIAgent` 回调中收集事件：
-
-- `stream.delta`
-- `reasoning.delta`
-- `thinking.delta`
-- `tool.started`
-- `tool.completed`
-- `tool.progress`
-- `approval.requested`
-- `approval.resolved`
-- `turn.boundary`
-- `status`
-
-`ChatRunSocket` 会把这些事件转换为前端统一事件，并负责 DB 落盘。
-
-审批默认等待 60 秒，超时自动 `deny`。
-
----
-
-## AgentBridgeClient
-
-`AgentBridgeClient` 是 Node 端本地 socket 客户端。
-
-行为：
-
-- 支持 `ipc://` 和 `tcp://` endpoint。
-- 每次请求新建 socket，发送一行 JSON，读取一行 JSON。
-- 请求通过内部 lock 串行化。
-- 默认请求响应超时为 `120000ms`。
-- `streamOutput()` 每 100ms 轮询一次 `get_output`。
-
-示例：
-
-```ts
-const started = await bridge.chat(sessionId, input, history, instructions, profile)
-
-for await (const chunk of bridge.streamOutput(started.run_id)) {
-  // chunk.delta
-  // chunk.events
-  // chunk.done
+{
+  "event": "clarify.requested",
+  "clarify_id": "...",
+  "question": "...",
+  "choices": ["..."],
+  "timeout_ms": 60000
 }
 ```
 
-注意：目前 socket connect 阶段没有独立 connect timeout，主要依赖系统连接错误和请求响应 timeout。
+前端显示澄清 UI，并发送：
 
----
+```ts
+socket.emit("clarify.respond", {
+  session_id,
+  clarify_id,
+  response
+})
+```
 
-## AgentBridgeManager
+服务端转发到：
 
-`AgentBridgeManager` 负责启动和停止 Python bridge。
+```ts
+bridge.clarifyRespond(clarifyId, response)
+```
 
-启动流程：
+然后通过 `clarify.resolved` 清理 UI 状态。
 
-1. 定位 `hermes_bridge.py`。
-2. 发现 `hermes-agent` 根目录。
-3. 选择 Python 解释器。
-4. 以子进程启动：
+## 16. Slash Commands
+
+slash command 不是独立 socket 事件。它们作为普通 `run.input` 发给 `/chat-run`，
+后端在 `source=cli` 时由 `session-command.ts` 解析。
+
+当前支持：
+
+| 命令 | 说明 |
+| --- | --- |
+| `/usage` | 计算并显示当前 session usage。 |
+| `/status` | 显示 session/bridge/profile/model/queue/run 状态。 |
+| `/abort` | 请求中断当前 run。 |
+| `/queue <message>` | 当前 run 活跃时追加一条队列消息。 |
+| `/plan ...` | 调用 bridge plan command，可能生成 kickoff prompt 并立即/排队运行。 |
+| `/goal ...` | 设置、查询、暂停、恢复、清理 goal。 |
+| `/subgoal ...` | 子目标命令。 |
+| `/clear` | 清理当前显示状态，不删 DB 历史。 |
+| `/clear --history` | 删除当前 session DB messages，要求 session idle。 |
+| `/title <title>` | 重命名 session。 |
+| `/compress` | session idle 时手动触发上下文压缩。 |
+| `/steer <instruction>` | 对正在运行的 bridge run 发送 steering instruction。 |
+| `/destroy` | 销毁 bridge agent，清空运行态和队列。 |
+| `/reload-mcp [server]` | session idle 时重载 MCP。 |
+
+未知 command 会返回 `session.command` error，不进入 agent run。
+
+## 17. 上下文压缩
+
+压缩有三种触发方式：
+
+1. run 前 `buildCompressedHistory()` 根据上下文窗口自动判断。
+2. Bridge 运行中发出 `bridge.compression.requested`。
+3. 用户执行 `/compress`。
+
+压缩结果会写 compression snapshot，并在后续 context 构建时使用
+snapshot-aware history，避免重复发送完整长历史。
+
+事件：
+
+- `compression.started`
+- `compression.completed`
+
+前端会显示临时压缩状态，并更新 session `contextTokens`。
+
+## 18. 多 tab 和断线恢复
+
+多 tab 使用同一个 `session:{id}` room。
+
+关键机制：
+
+- 当前 tab 发出用户消息后，其他 tab 收到 `run.peer_user_message`。
+- 所有服务端事件都带 `session_id`。
+- 前端全局 Socket.IO listener 根据 `session_id` 分发到对应 handler。
+- transient disconnect 后，前端 reconnect 会自动发 `resume`。
+- `resume` 返回：
+  - DB/内存 messages
+  - `isWorking`
+  - `isAborting`
+  - transient `events`
+  - usage/context tokens
+  - queue length/messages
+
+因此页面刷新、切换 session、断线重连后可以恢复：
+
+- streaming assistant
+- pending approval
+- pending clarify
+- compression state
+- abort state
+- queue state
+
+## 19. HTTP Session API 和 Chat 的关系
+
+Socket.IO `/chat-run` 负责 active run。HTTP API 负责静态数据读写：
+
+| 能力 | 路径/模块 |
+| --- | --- |
+| session list | `controllers/hermes/sessions.ts` + `session-store.ts` |
+| session detail/page | `fetchSessionMessagesPage()` 对应后端分页 detail |
+| delete session | 删除 Web UI DB session/messages，同时尝试删除对应 Hermes profile 历史（如果存在） |
+| rename session | `renameSession()` |
+| set session model | `setSessionModel()` |
+| conversation monitor | 从本地 session/conversation summary 读，不驱动 active run |
+
+Chat 运行过程中落库由 Socket.IO run handler 做；页面历史和列表刷新使用 HTTP API。
+
+## 20. Group Chat 链路
+
+Group Chat 是聊天核心链路的一部分，使用独立 namespace `/group-chat`，但 agent
+执行、context token、压缩、tool/reasoning 展示仍会复用 Agent Bridge 和共享
+context-compressor。
+
+主链路：
 
 ```text
-python hermes_bridge.py --endpoint <endpoint> --agent-root <root> --hermes-home <home>
+GroupChatPanel / GroupChatInput
+  -> group-chat Pinia store
+  -> packages/client/src/api/hermes/group-chat.ts
+  -> Socket.IO namespace /group-chat
+  -> GroupChatServer
+  -> AgentClients
+  -> AgentBridgeClient
+  -> hermes_bridge.py broker
+  -> profile worker
+  -> AIAgent / Hermes Agent tools
 ```
 
-5. 监听 stdout，等待：
+核心行为：
 
-```json
-{ "event": "ready", "endpoint": "..." }
-```
+- `GroupChatServer` 管理 room、member、typing、message、agent runtime 和 room
+  runtime state。
+- 普通用户通过 `/group-chat` socket 加入 room；agent 也作为 socket client 加入
+  同一个 namespace，但使用 `source=agent` 和 `GROUP_CHAT_AGENT_SOCKET_SECRET`。
+- `AgentClients` 根据 mention routing 选择目标 agent，构造 group history 和
+  instructions，然后通过 `AgentBridgeClient` 调用对应 profile 的 bridge session。
+- group-chat 消息、tool call、tool result、reasoning、context status 都写入
+  group-chat 自己的 DB 表，并广播给 room。
+- group-chat 有独立 room compression 配置：
+  `triggerTokens`、`maxHistoryTokens`、`tailMessageCount`。
+- context 压缩通过 `ContextEngine` 和共享 `context-compressor` 实现；压缩进度会
+  以 room/agent 维度同步到前端。
+- 用户头像、agent 成员、在线状态、邀请链接属于 group-chat member 元数据链路；
+  改动这些也需要记录，因为它们会影响聊天页面展示和 room 同步。
 
-6. 默认 ready 超时为 `120000ms`。
+排查 group-chat 时优先看：
 
-Python 选择优先级：
+- `/group-chat` socket handshake auth、`authUserId`、`source=agent`。
+- `GroupChatServer.onConnection()`、room join/message/approval/interrupt handlers。
+- `AgentClients` 的 mention routing、bridge context cache、tool/reasoning 映射。
+- `ContextEngine` 和 room compression 配置。
+- `gc_*` DB 表以及 `group-chat` 相关 server/client tests。
 
-1. `HERMES_AGENT_BRIDGE_PYTHON`
-2. `agentRoot/venv` 或 `agentRoot/.venv`
-3. installed `hermes` 命令 shebang
-4. `uv run --project <agentRoot> python`
-5. 系统 `python3` / `python`
+## 21. 启动和关闭
 
-关闭时先发 `SIGTERM`，1.5 秒后仍未退出则 `SIGKILL`。
+启动时：
 
----
+1. server bootstrap 初始化 DB schema。
+2. 启动 group chat Socket.IO server。
+3. 尝试启动 Agent Bridge manager。
+4. 创建 `ChatRunSocket(groupChatServer.getIO())` 并 `init()`。
 
-## 启动与关闭
+Bridge 启动失败不会阻止 Web UI server 启动，但普通 Chat run 会在调用 bridge 时失败。
 
-### 启动
+关闭时：
 
-`bootstrap()` 中会先尝试启动 bridge：
+- `ChatRunSocket.close()` abort active response stream/清理内存态。
+- `AgentBridgeManager.stop()` 关闭 Python broker。
+- 其他 WebSocket/Socket.IO 服务按 shutdown 流程停止。
 
-```ts
-agentBridgeManager = await startAgentBridgeManager()
-```
-
-bridge 启动失败不会阻止 Web UI 启动，但 Bridge(beta) 会话后续运行会失败。
-
-随后创建统一的 chat socket：
-
-```ts
-chatRunServer = new ChatRunSocket(groupChatServer.getIO())
-chatRunServer.init()
-```
-
-### 关闭
-
-服务关闭时会清理：
-
-- `/chat-run` Socket.IO 状态
-- Python agent bridge 子进程
-- 其他 WebSocket/Socket.IO 服务
-
----
-
-## 环境变量
+## 22. 环境变量
 
 | 变量 | 说明 |
-|------|------|
-| `HERMES_AGENT_BRIDGE_ENDPOINT` | Bridge endpoint；Windows 默认 `tcp://127.0.0.1:18765`，macOS/Linux 默认 `ipc:///tmp/hermes-agent-bridge.sock` |
-| `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` | profile worker endpoint transport；设为 `tcp` 使用 loopback TCP，设为 `ipc`/`unix` 使用 Unix domain socket；默认 Windows 使用 TCP，macOS/Linux 使用 IPC |
-| `HERMES_AGENT_BRIDGE_WORKER_PORT_BASE` | TCP worker endpoint 起始端口，默认 `18780`；仅在 worker transport 为 TCP 时生效 |
-| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | Version Preview 的 bridge broker endpoint transport；设为 `tcp` 可让预览环境在 macOS/Linux 上也使用 loopback TCP；未设置时会跟随 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp` |
-| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | 直接覆盖 Version Preview 的 bridge broker endpoint；用于需要完全自定义预览 bridge 地址的部署 |
-| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 `120000` ms |
-| `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | Node 连接 bridge socket 失败时的短重试窗口，默认 `5000` ms |
-| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | Node 等待 Python bridge ready 的超时，默认 `120000` ms |
-| `HERMES_AGENT_BRIDGE_AUTO_RESTART` | bridge broker 意外退出后是否自动重启；设为 `0`/`false`/`no`/`off` 可关闭，默认开启 |
-| `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | bridge broker 自动重启基础延迟，默认 `1000` ms，连续失败时最多退避到 `30000` ms |
-| `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器路径 |
-| `HERMES_AGENT_ROOT` | hermes-agent 安装目录 |
-| `HERMES_AGENT_BRIDGE_UV` | 指定 uv 可执行文件路径 |
-| `HERMES_AGENT_BRIDGE_PLATFORM` | bridge 传给 Hermes Agent 的平台标识，默认 `cli` |
-| `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge 使用的 provider |
-| `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数 |
-| `UV` | uv 可执行文件路径 fallback |
+| --- | --- |
+| `HERMES_AGENT_BRIDGE_ENDPOINT` | Node 到 Python bridge broker 的 endpoint。Windows 默认 TCP，macOS/Linux 默认 IPC。 |
+| `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` | broker 到 profile worker 的 transport，支持 `tcp`/`ipc`。 |
+| `HERMES_AGENT_BRIDGE_WORKER_PORT_BASE` | TCP worker 起始端口。 |
+| `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | Node 等待 bridge 请求响应的超时，默认 120000ms。 |
+| `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | Node connect bridge 的短重试窗口，默认 5000ms。 |
+| `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | bridge ready 超时，默认 120000ms。 |
+| `HERMES_AGENT_BRIDGE_AUTO_RESTART` | broker 意外退出是否自动重启，默认开启。 |
+| `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | 自动重启基础延迟。 |
+| `HERMES_AGENT_BRIDGE_PYTHON` | 指定 Python 解释器。 |
+| `HERMES_AGENT_ROOT` | 指定 hermes-agent 根目录。 |
+| `HERMES_AGENT_BRIDGE_UV` / `UV` | 指定 uv。 |
+| `HERMES_AGENT_BRIDGE_PLATFORM` | bridge 传给 Hermes Agent 的 platform，默认 `cli`。 |
+| `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge provider。 |
+| `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数。 |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | Version Preview bridge transport。 |
+| `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | Version Preview bridge endpoint。 |
 
-正常使用不需要配置这些变量。Bridge 支持多个用户/多个 profile 的运行并存；Web UI 的 Hermes Profile 切换不会重启 bridge 或销毁其他正在运行的任务。`HERMES_AGENT_BRIDGE_ENDPOINT` 控制 Node 与 Python bridge broker 的连接地址；`HERMES_AGENT_BRIDGE_WORKER_TRANSPORT` 控制 broker 与每个 profile worker 的连接方式。macOS/Linux 默认仍使用 IPC；如果 Electron、沙盒或安全软件环境下 IPC 不稳定，可以设置 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp` 切到 loopback TCP。Version Preview 默认继续使用独立的 broker endpoint，也会为 TCP worker 使用独立端口段，避免和正式实例共享端口池；如需让 Preview 的 broker 在 macOS/Linux 上也走 TCP，可设置 `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT=tcp`，未设置时会跟随 `HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp`。Windows 下如果默认 TCP 端口被旧 bridge/broker/worker 占用，新 bridge 会先按端口杀掉旧进程树，再用同一个 endpoint 重建。
+## 23. 当前限制和注意事项
 
-Windows 首次启动慢时可以临时放大：
+- 当前普通 Chat 实际固定走 `cli` bridge；`api_server` handler 是保留代码，不是主链路。
+- Bridge 启动失败时 Web UI 仍能打开，但 Chat run 会失败。
+- Bridge socket 是本地 JSON line 协议，不是浏览器直接连接 Python。
+- 同一 session 只有一个 active run；并发输入走队列。
+- `sessionMap` 是进程内 transient 状态，server 重启后只能从 DB 恢复已落库内容，不能恢复已丢失的 Python 内存 run。
+- 工具审批依赖 Python bridge 和 Hermes tools 的审批回调；“始终允许”需要持久 allowlist 和进程内 allowlist cache 都更新。
+- `workspace`、profile、model/provider 都会影响 run 上下文，排查问题时不要只看 session id。
+- group-chat 是独立 namespace `/group-chat` 和独立 store/service，但属于聊天核心链路，相关改动也要更新本文变更记录。
 
-```powershell
-$env:HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = "300000"
-$env:HERMES_AGENT_BRIDGE_TIMEOUT_MS = "300000"
-```
+## 24. 排查入口
 
----
+常见问题和优先检查点：
 
-## 当前限制
-
-- Bridge(beta) 仍依赖 Python bridge 成功启动；启动失败时 Web UI 可用，但 bridge 会话不可用。
-- bridge socket connect 阶段还没有单独 connect timeout。
-- 旧 CLI 独立面板和独立 `/cli-chat-run` namespace 已移除。
-- 旧 bridge `command/steer` socket 控制层已移除；CLI/Bridge slash command 现在通过统一 `/chat-run` 的 `run.input` 解析并以 `session.command` 反馈。
+| 问题 | 检查 |
+| --- | --- |
+| 发送后没有输出 | 看 server log 中 `[chat-run-socket] starting CLI bridge run` 和 bridge 是否 ready。 |
+| Socket 认证失败 | 检查 localStorage token、`/chat-run` auth middleware、用户 profile 权限。 |
+| profile 不对 | 看 socket query profile、payload profile、DB session.profile。已存在 session 优先使用 DB profile。 |
+| 输出重复 | 看 `stream.delta` 和 `chunk.delta` 是否被重复处理，重点查 `bridge-delta.ts` / `applyBridgeChunkAsync()`。 |
+| 工具消息丢失 | 查 `flushBridgePendingToDb()`、`recordBridgeToolStarted()`、`recordBridgeToolCompleted()`。 |
+| 刷新后状态不对 | 查 `resume` payload、`state.events`、前端 `resumeServerWorkingRun()`。 |
+| 队列不同步 | 查 `run.queued`、`queued_messages`、`dequeued_queue_id`。 |
+| 审批一直弹 | 查 bridge approval callback、`approval.respond`、工具 allowlist 是否持久化且 cache 已刷新。 |
+| abort 后仍运行 | 查 `bridge.interrupt()`、`goalPause()`、`abort.completed` 和 Python worker 状态。 |
+| token/context 数不对 | 查 `context_estimate`、compression snapshot、`refreshFinalContextUsage()`。 |
