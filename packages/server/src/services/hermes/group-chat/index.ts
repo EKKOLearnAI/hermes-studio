@@ -94,6 +94,7 @@ interface Member {
     socketId: string
     source?: 'human' | 'agent'
     avatar: string
+    authUserId?: number | null
 }
 
 let _tablesEnsured = false
@@ -569,7 +570,7 @@ class ChatStorage {
 
     getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[] {
         const members = (this.db()?.prepare(
-            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar
+            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar, m.authUserId
              FROM gc_room_members m
              WHERE m.roomId = ?
                AND NOT EXISTS (
@@ -578,35 +579,29 @@ class ChatStorage {
                    AND (a.agentId = m.userId OR (m.userId NOT GLOB '????????-????-????-????-????????????' AND COALESCE(m.description, '') = '' AND a.name = m.userName))
                )
              ORDER BY m.joinedAt`
-        ).all(roomId) || []) as unknown as { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[]
+        ).all(roomId) || []) as unknown as {
+            id: string
+            userId: string
+            name: string
+            description: string
+            joinedAt: number
+            avatar: string
+            authUserId?: number | null
+        }[]
 
-        // Resolve latest avatar from the users table for each human member
-        // so that avatar changes made in the Web UI are reflected immediately
-        // without requiring a re-join.
         for (const member of members) {
-            if (member.name) {
-                try {
-                    let user = findUserByUsername(member.name)
-                    // Fallback: display name may differ from login username (e.g. 'Mr. Tang' vs 'admin').
-                    // Grab any user's avatar when an exact-name match fails — most installs have a
-                    // single admin account and the intent is unambiguous.
-                    if (!user || !user.avatar) {
-                        const db = getDb()
-                        if (db) {
-                            const anyUser = db.prepare(
-                                `SELECT avatar FROM users WHERE avatar IS NOT NULL AND avatar != '' LIMIT 1`
-                            ).get() as { avatar?: string } | undefined
-                            if (anyUser?.avatar) member.avatar = anyUser.avatar
-                        }
-                    } else {
-                        member.avatar = user.avatar
-                    }
-                } catch {
-                    // ignore individual lookup failures
+            try {
+                if (typeof member.authUserId === 'number' && member.authUserId > 0) {
+                    member.avatar = getUserAvatar(member.authUserId) || member.avatar || ''
+                } else if (member.name) {
+                    const user = findUserByUsername(member.name)
+                    if (user?.avatar) member.avatar = user.avatar
                 }
+            } catch {
+                // ignore individual lookup failures
             }
         }
-        return members
+        return members.map(({ authUserId: _authUserId, ...member }) => member)
     }
 
     removeRoomMembersForAgent(roomId: string, agent: Pick<RoomAgent, 'agentId' | 'name'>): void {
@@ -617,9 +612,15 @@ class ChatStorage {
         ).run(roomId, agent.agentId, agent.name)
     }
 
-    addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = ''): void {
-        // Resolve avatar from the users table as a fallback when none is provided
+    addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = '', authUserId?: number): void {
         let resolvedAvatar = avatar
+        if (!resolvedAvatar && typeof authUserId === 'number' && authUserId > 0) {
+            try {
+                resolvedAvatar = getUserAvatar(authUserId) || ''
+            } catch {
+                // ignore lookup failures
+            }
+        }
         if (!resolvedAvatar && userName) {
             try {
                 const user = findUserByUsername(userName)
@@ -631,22 +632,26 @@ class ChatStorage {
 
         const existing = this.getMemberByUserId(roomId, userId)
         if (existing) {
+            const nextAvatar = resolvedAvatar || existing.avatar || ''
+            const nextAuthUserId = typeof authUserId === 'number' && authUserId > 0
+                ? authUserId
+                : existing.authUserId ?? null
             // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
-                'UPDATE gc_room_members SET userName = ?, description = ?, avatar = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
-            ).run(userName, description, resolvedAvatar, Date.now(), roomId, userId)
+                'UPDATE gc_room_members SET userName = ?, description = ?, avatar = ?, authUserId = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
+            ).run(userName, description, nextAvatar, nextAuthUserId, Date.now(), roomId, userId)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const now = Date.now()
         this.db()?.prepare(
-            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar)
+            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar, authUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar, authUserId ?? null)
     }
 
     getMemberByUserId(roomId: string, userId: string): Member | null {
         return (this.db()?.prepare(
-            'SELECT id, userId, userName as name, description, joinedAt, avatar FROM gc_room_members WHERE roomId = ? AND userId = ?'
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND userId = ?'
         ).get(roomId, userId) as any) ?? null
     }
 
@@ -943,8 +948,9 @@ export class GroupChatServer {
         // Look up the user's avatar via their numeric users.id from the web UI session.
         // Falls back to name-based lookup for clients that don't pass authUserId.
         let userAvatar = ''
+        let authUserId: number | undefined
         if (source !== 'agent') {
-            const authUserId = this.socketAuthUserIdMap.get(socket.id)
+            authUserId = this.socketAuthUserIdMap.get(socket.id)
             if (typeof authUserId === 'number') {
                 try {
                     userAvatar = getUserAvatar(authUserId) || ''
@@ -965,7 +971,7 @@ export class GroupChatServer {
         // tracked through gc_room_agents and AgentClients; storing them in
         // gc_room_members makes member counts grow on reconnect/restore.
         if (source !== 'agent') {
-            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar)
+            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
         }
 
         // Add to in-memory online participants (keyed by userId)
