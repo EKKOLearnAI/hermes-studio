@@ -51,6 +51,7 @@ ChatPanel / ChatInput
 
 | 时间 | PR / commit | 动到的功能 | 链路影响 |
 | --- | --- | --- | --- |
+| 2026-06-03 | #1289 `7848256` | tool result / unified diff 展示 | `MessageItem.vue`、`GroupMessageItem.vue`、`MarkdownRenderer.vue` 和共享 highlighter 对 unified diff 走专门展示路径：tool result JSON 中的 diff 字段只显示 diff body，长段未改动上下文静态折叠，复制仍保留完整原始内容；不改变 `/chat-run` 协议、消息落库、工具审批或 group-chat agent 执行行为。 |
 | 2026-06-03 | #1284 `2aeed108` | Windows Agent Bridge 子进程输出解码 | `hermes_bridge.py` 的 Windows parent PID 探测和 stale bridge 进程清理改用平台文本编码读取 `tasklist.exe` / `taskkill.exe` 输出，并忽略不可解码字节；修复本地 code page 输出导致 subprocess reader 线程抛 `UnicodeDecodeError` 的问题，不改变 `/chat-run` 协议、消息落库或工具审批行为。 |
 | 2026-06-03 | #1273 `91bb68dc` | 用户头像上传；group-chat 成员头像同步 | auth 用户头像进入 group-chat 成员展示链路，`/group-chat` handshake 携带 `authUserId`，服务端按用户 id/name 查头像并同步给 room members；不改变普通 Chat run，但改变 group-chat 成员元数据和消息展示。 |
 | 2026-06-03 | #1272 `2f1686da` | Bridge 工具审批 allowlist；Bridge 文本/turn boundary 回调 | `hermes_bridge.py` 在 agent 创建和每次 run 开始时刷新 `tools.approval` 的 `command_allowlist` 进程内缓存，保证“始终允许”写入配置后，后续同 profile run 能读到。`stream_delta_callback` 现在只转发 turn boundary，不再把 agent 的文本 delta 再追加一遍，避免和 `stream_callback` 重复。 |
