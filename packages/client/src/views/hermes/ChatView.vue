@@ -24,8 +24,17 @@ const routeProfile = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+function routeProfileFilter(): string | null {
+  if (!routeSessionId.value) return chatStore.sessionProfileFilter
+  return routeProfile.value ?? null
+}
+
 async function loadRouteSession() {
-  await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
+  const profile = routeProfileFilter()
+  if (routeProfile.value) {
+    chatStore.sessionProfileFilter = routeProfile.value
+  }
+  await chatStore.loadSessions(profile, routeSessionId.value)
   if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
     await router.replace({ name: 'hermes.chat' })
   }
@@ -48,15 +57,23 @@ watch([routeSessionId, routeProfile], async ([sessionId]) => {
     await chatStore.loadSessions(chatStore.sessionProfileFilter)
     return
   }
-  if (chatStore.activeSessionId === sessionId) return
+  if (chatStore.activeSessionId === sessionId) {
+    const activeProfile = chatStore.activeSession?.profile || 'default'
+    if (!routeProfile.value || activeProfile === routeProfile.value) return
+    await loadRouteSession()
+    return
+  }
 
-  const exists = chatStore.sessions.some(session => session.id === sessionId)
+  const exists = chatStore.sessions.some(session => {
+    if (session.id !== sessionId) return false
+    return !routeProfile.value || (session.profile || 'default') === routeProfile.value
+  })
   if (!exists) {
     await loadRouteSession()
     return
   }
 
-  await chatStore.switchSession(sessionId)
+  await chatStore.switchSession(sessionId, null, routeProfile.value)
 })
 </script>
 

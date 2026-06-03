@@ -2,7 +2,12 @@ const SAFE_SESSION_ID_RE = /^[A-Za-z0-9._:-]+$/
 const SESSION_PROTOCOL_RE = /^session:\/\//i
 const MARKDOWN_LINK_RE = /^\[(.*)\]\((.+)\)$/s
 
-function decodeSessionId(value: string): string | null {
+export interface SessionReference {
+  sessionId: string
+  profile?: string
+}
+
+function decodeComponent(value: string): string | null {
   try {
     return decodeURIComponent(value)
   } catch {
@@ -10,50 +15,65 @@ function decodeSessionId(value: string): string | null {
   }
 }
 
-function normalizeSessionId(sessionId: string): string | null {
-  if (!SAFE_SESSION_ID_RE.test(sessionId)) {
+function normalizeSafeToken(value: string): string | null {
+  if (!SAFE_SESSION_ID_RE.test(value)) {
     return null
   }
 
-  return sessionId
+  return value
 }
 
-export function extractSessionIdFromReference(reference: string): string | null {
+function extractHref(reference: string): string | null {
   const trimmed = reference.trim()
   if (!trimmed) {
     return null
   }
 
-  let href = trimmed
   const markdownMatch = trimmed.match(MARKDOWN_LINK_RE)
-  if (markdownMatch) {
-    href = markdownMatch[2].trim()
-  }
-
-  if (!SESSION_PROTOCOL_RE.test(href)) {
-    return null
-  }
-
-  const rawSessionId = href.slice('session://'.length).trim()
-  if (!rawSessionId) {
-    return null
-  }
-
-  const decodedSessionId = decodeSessionId(rawSessionId)
-  if (!decodedSessionId) {
-    return null
-  }
-
-  return normalizeSessionId(decodedSessionId)
+  return markdownMatch ? markdownMatch[2].trim() : trimmed
 }
 
-export function buildSessionHashHref(sessionId: string): string | null {
-  const normalized = normalizeSessionId(sessionId)
+export function extractSessionReference(reference: string): SessionReference | null {
+  const href = extractHref(reference)
+  if (!href || !SESSION_PROTOCOL_RE.test(href)) {
+    return null
+  }
+
+  const rawTarget = href.slice('session://'.length).trim()
+  if (!rawTarget) {
+    return null
+  }
+
+  const queryStart = rawTarget.indexOf('?')
+  const rawSessionId = queryStart >= 0 ? rawTarget.slice(0, queryStart) : rawTarget
+  const query = queryStart >= 0 ? rawTarget.slice(queryStart + 1) : ''
+  const decodedSessionId = decodeComponent(rawSessionId)
+  const sessionId = decodedSessionId ? normalizeSafeToken(decodedSessionId) : null
+  if (!sessionId) {
+    return null
+  }
+
+  const params = new URLSearchParams(query)
+  const rawProfile = params.get('profile')?.trim()
+  const decodedProfile = rawProfile ? decodeComponent(rawProfile) : null
+  const profile = decodedProfile ? normalizeSafeToken(decodedProfile) : null
+
+  return profile ? { sessionId, profile } : { sessionId }
+}
+
+export function extractSessionIdFromReference(reference: string): string | null {
+  return extractSessionReference(reference)?.sessionId ?? null
+}
+
+export function buildSessionHashHref(sessionId: string, profile?: string | null): string | null {
+  const normalized = normalizeSafeToken(sessionId)
   if (!normalized) {
     return null
   }
 
-  return `#/hermes/session/${encodeURIComponent(normalized)}`
+  const normalizedProfile = profile?.trim() ? normalizeSafeToken(profile.trim()) : null
+  const profileQuery = normalizedProfile ? `?profile=${encodeURIComponent(normalizedProfile)}` : ''
+  return `#/hermes/session/${encodeURIComponent(normalized)}${profileQuery}`
 }
 
 export function escapeMarkdownLinkLabel(label: string): string {
@@ -64,12 +84,14 @@ export function escapeMarkdownLinkLabel(label: string): string {
     .replace(/\]/g, '\\]')
 }
 
-export function buildSessionProtocolLink(sessionId: string, label: string): string | null {
-  const normalized = normalizeSessionId(sessionId)
+export function buildSessionProtocolLink(sessionId: string, label: string, profile?: string | null): string | null {
+  const normalized = normalizeSafeToken(sessionId)
   if (!normalized) {
     return null
   }
 
+  const normalizedProfile = profile?.trim() ? normalizeSafeToken(profile.trim()) : null
+  const profileQuery = normalizedProfile ? `?profile=${encodeURIComponent(normalizedProfile)}` : ''
   const safeLabel = escapeMarkdownLinkLabel(label.trim() || normalized)
-  return `[${safeLabel}](session://${encodeURIComponent(normalized)})`
+  return `[${safeLabel}](session://${encodeURIComponent(normalized)}${profileQuery})`
 }

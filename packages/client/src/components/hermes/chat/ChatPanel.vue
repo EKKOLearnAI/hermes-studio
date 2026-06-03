@@ -62,26 +62,30 @@ const showSessions = ref(
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
 
-function sessionHref(sessionId: string) {
+function sessionHref(session: string | Pick<Session, "id" | "profile">) {
+  const sessionId = typeof session === "string" ? session : session.id;
+  const profile = typeof session === "string" ? null : session.profile || "default";
   return router.resolve({
     name: "hermes.session",
     params: { sessionId },
+    query: profile ? { profile } : undefined,
   }).href;
 }
 
-function openSessionInNewTab(sessionId: string) {
+function openSessionInNewTab(session: string | Pick<Session, "id" | "profile">) {
   if (typeof window === "undefined") return;
-  window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
+  window.open(sessionHref(session), "_blank", "noopener,noreferrer");
 }
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
   messageListRef.value?.scrollToAnchor(target.messageId, target.anchorId);
 }
 
-async function handleSessionClick(sessionId: string) {
+async function handleSessionClick(session: Pick<Session, "id" | "profile">) {
   await router.push({
     name: "hermes.session",
-    params: { sessionId },
+    params: { sessionId: session.id },
+    query: { profile: session.profile || "default" },
   });
   if (mobileQuery?.matches) showSessions.value = false;
 }
@@ -293,14 +297,25 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
 }
 
-function sessionLinkLabel(sessionId: string): string {
-  return chatStore.sessions.find((session) => session.id === sessionId)?.title?.trim() || sessionId;
+function resolveSessionForAction(sessionId: string, profile?: string | null): Session | null {
+  if (chatStore.activeSession?.id === sessionId && (!profile || (chatStore.activeSession.profile || "default") === profile)) {
+    return chatStore.activeSession;
+  }
+  return chatStore.sessions.find((session) => {
+    if (session.id !== sessionId) return false;
+    return !profile || (session.profile || "default") === profile;
+  }) || null;
 }
 
-async function copySessionLink(id?: string) {
+function sessionLinkLabel(sessionId: string, profile?: string | null): string {
+  return resolveSessionForAction(sessionId, profile)?.title?.trim() || sessionId;
+}
+
+async function copySessionLink(id?: string, profile?: string | null) {
   const sessionId = id || chatStore.activeSessionId;
   if (sessionId) {
-    const link = buildSessionProtocolLink(sessionId, sessionLinkLabel(sessionId));
+    const session = resolveSessionForAction(sessionId, profile);
+    const link = buildSessionProtocolLink(sessionId, sessionLinkLabel(sessionId, profile), session?.profile);
     if (!link) return;
     const ok = await copyToClipboard(link);
     if (ok) message.success(t("common.copied"));
@@ -415,6 +430,7 @@ const canSelectAll = computed(() => {
 });
 
 const contextSessionId = ref<string | null>(null);
+const contextSessionProfile = ref<string | null>(null);
 const contextSessionPinned = computed(() =>
   contextSessionId.value
     ? sessionBrowserPrefsStore.isPinned(contextSessionId.value)
@@ -422,7 +438,7 @@ const contextSessionPinned = computed(() =>
 );
 const contextSession = computed(() =>
   contextSessionId.value
-    ? chatStore.sessions.find((session) => session.id === contextSessionId.value) || null
+    ? resolveSessionForAction(contextSessionId.value, contextSessionProfile.value)
     : null,
 );
 
@@ -466,9 +482,10 @@ const contextMenuOptions = computed(() => {
   return options
 });
 
-function handleContextMenu(e: MouseEvent, sessionId: string) {
+function handleContextMenu(e: MouseEvent, session: Session) {
   e.preventDefault();
-  contextSessionId.value = sessionId;
+  contextSessionId.value = session.id;
+  contextSessionProfile.value = session.profile || "default";
   showContextMenu.value = true;
   contextMenuX.value = e.clientX;
   contextMenuY.value = e.clientY;
@@ -494,11 +511,11 @@ async function handleContextMenuSelect(key: string) {
     return;
   }
   if (key === "copy-link") {
-    copySessionLink(contextSessionId.value);
+    copySessionLink(contextSessionId.value, contextSessionProfile.value);
   } else if (key === "copy-id") {
     copySessionId(contextSessionId.value);
   } else if (key === "open-link") {
-    openSessionInNewTab(contextSessionId.value);
+    openSessionInNewTab({ id: contextSessionId.value, profile: contextSessionProfile.value || "default" });
   } else if (parseExportKey(key)) {
     const { mode, ext } = parseExportKey(key)!;
     const loadingMsg = mode === "compressed" ? message.loading(t("chat.exportCompressing"), { duration: 0 }) : null;
@@ -867,9 +884,9 @@ async function handleSessionModelCustomSubmit() {
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
             :show-profile="true"
-            :to="sessionHref(s.id)"
-            @select="handleSessionClick(s.id)"
-            @contextmenu="handleContextMenu($event, s.id)"
+            :to="sessionHref(s)"
+            @select="handleSessionClick(s)"
+            @contextmenu="handleContextMenu($event, s)"
             @delete="handleDeleteSession(s.id)"
             @toggle-select="toggleSessionSelection(s)"
           />
@@ -889,9 +906,9 @@ async function handleSessionModelCustomSubmit() {
           :selectable="isBatchMode"
           :selected="isSessionSelected(s)"
           :show-profile="true"
-          :to="sessionHref(s.id)"
-          @select="handleSessionClick(s.id)"
-          @contextmenu="handleContextMenu($event, s.id)"
+          :to="sessionHref(s)"
+          @select="handleSessionClick(s)"
+          @contextmenu="handleContextMenu($event, s)"
           @delete="handleDeleteSession(s.id)"
           @toggle-select="toggleSessionSelection(s)"
         />

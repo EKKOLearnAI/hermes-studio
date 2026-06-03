@@ -97,6 +97,23 @@ export class ChatRunSocket {
       return profile
     }
 
+    const resolveResumeProfile = (sessionId: string, requested?: string) => {
+      const requestedProfile = typeof requested === 'string' ? requested.trim() : ''
+      const storedSession = getSession(sessionId)
+      const storedProfile = (storedSession?.profile || '').trim()
+      if (storedProfile && requestedProfile && storedProfile !== requestedProfile) {
+        throw new Error(`Session ${sessionId} belongs to profile "${storedProfile}", not "${requestedProfile}"`)
+      }
+      const profile = storedProfile && profileExists(storedProfile)
+        ? storedProfile
+        : requestedProfile || currentProfile()
+      if (!profileExists(profile)) throw new Error(`Profile "${profile}" does not exist`)
+      if (socketUser && !this.canAccessProfile(socketUser, profile)) {
+        throw new Error(`Profile "${profile}" is not available for this user`)
+      }
+      return profile
+    }
+
     socket.on('run', async (data: {
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
@@ -214,9 +231,19 @@ export class ChatRunSocket {
         data.queue_id, data.session_id, state.queue.length)
     })
 
-    socket.on('resume', async (data: { session_id?: string }) => {
+    socket.on('resume', async (data: { session_id?: string; profile?: string }) => {
       if (!data.session_id) return
       const sid = data.session_id
+      try {
+        resolveResumeProfile(sid, data.profile)
+      } catch (err) {
+        socket.emit('resume.failed', {
+          event: 'resume.failed',
+          session_id: sid,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
       socket.join(`session:${sid}`)
       this.resumeSession(socket, sid)
     })

@@ -2,6 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handleBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleApiRunMock = vi.hoisted(() => vi.fn(async () => {}))
+const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn(async () => ({
+  messages: [],
+  events: [],
+  isWorking: false,
+  isAborting: false,
+  queue: [],
+  messageTotal: 0,
+  messageLoadedCount: 0,
+  messagePageLimit: 300,
+  hasMoreBefore: false,
+})))
+const getSessionMock = vi.hoisted(() => vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })))
+const listProfileNamesFromDiskMock = vi.hoisted(() => vi.fn(() => ['default']))
+const userCanAccessProfileMock = vi.hoisted(() => vi.fn((_userId?: string, _profile?: string) => true))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
   handleBridgeRun: handleBridgeRunMock,
@@ -9,7 +23,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', 
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-api-run', () => ({
   handleApiRun: handleApiRunMock,
-  loadSessionStateFromDb: vi.fn(),
+  loadSessionStateFromDb: loadSessionStateFromDbMock,
   resolveRunSource: vi.fn((source?: string) => source || 'cli'),
 }))
 
@@ -32,13 +46,13 @@ vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
-  getSession: vi.fn(() => ({ id: 'session-1', profile: 'default', source: 'cli' })),
+  getSession: getSessionMock,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
   getProfileDir: vi.fn(() => '/tmp/hermes-default'),
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+  listProfileNamesFromDisk: listProfileNamesFromDiskMock,
 }))
 
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
@@ -47,7 +61,7 @@ vi.mock('../../packages/server/src/middleware/user-auth', () => ({
 }))
 
 vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
-  userCanAccessProfile: vi.fn(() => true),
+  userCanAccessProfile: userCanAccessProfileMock,
 }))
 
 function makeServerHarness() {
@@ -58,6 +72,7 @@ function makeServerHarness() {
     on: vi.fn(),
   }
   const io = { of: vi.fn(() => namespace) }
+  const handlers = new Map<string, (...args: any[]) => any>()
   const socket = {
     id: 'socket-1',
     connected: true,
@@ -66,14 +81,31 @@ function makeServerHarness() {
     emit: vi.fn(),
     join: vi.fn(),
     to: vi.fn(() => ({ emit: vi.fn() })),
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: any[]) => any) => {
+      handlers.set(event, handler)
+      return socket
+    }),
   }
-  return { io, namespace, socket }
+  return { io, namespace, socket, handlers }
 }
 
 describe('ChatRunSocket queued bridge runs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getSessionMock.mockImplementation(() => ({ id: 'session-1', profile: 'default', source: 'cli' }))
+    listProfileNamesFromDiskMock.mockImplementation(() => ['default'])
+    userCanAccessProfileMock.mockImplementation(() => true)
+    loadSessionStateFromDbMock.mockResolvedValue({
+      messages: [],
+      events: [],
+      isWorking: false,
+      isAborting: false,
+      queue: [],
+      messageTotal: 0,
+      messageLoadedCount: 0,
+      messagePageLimit: 300,
+      hasMoreBefore: false,
+    })
   })
 
   it('persists normal queued bridge messages when they are dequeued', async () => {
@@ -124,5 +156,27 @@ describe('ChatRunSocket queued bridge runs', () => {
       queue_id: 'queue-plan',
     }))
     expect(call[6]).toBe(false)
+  })
+
+  it('rejects resume attempts for sessions outside the socket user profile access', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'private', source: 'cli' })
+    listProfileNamesFromDiskMock.mockReturnValue(['default', 'private'])
+    userCanAccessProfileMock.mockImplementation((_userId: string, profile: string) => profile !== 'private')
+
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { io, socket, handlers } = makeServerHarness()
+    ;(socket.data as any).user = { id: 'user-1', role: 'user' }
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).onConnection(socket)
+
+    await handlers.get('resume')?.({ session_id: 'session-1' })
+
+    expect(socket.join).not.toHaveBeenCalled()
+    expect(loadSessionStateFromDbMock).not.toHaveBeenCalled()
+    expect(socket.emit).toHaveBeenCalledWith('resume.failed', expect.objectContaining({
+      event: 'resume.failed',
+      session_id: 'session-1',
+      error: expect.stringContaining('private'),
+    }))
   })
 })

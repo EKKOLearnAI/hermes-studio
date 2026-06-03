@@ -296,6 +296,27 @@ function mapHermesSession(s: SessionSummary): Session {
   }
 }
 
+function sessionRuntimeKey(session: Pick<Session, 'id' | 'profile'>): string {
+  return `${session.profile || 'default'}\u0000${session.id}`
+}
+
+function encodeActiveSessionRef(session: Pick<Session, 'id' | 'profile'>): string {
+  return JSON.stringify({ id: session.id, profile: session.profile || 'default' })
+}
+
+function decodeActiveSessionRef(value: string | null): { id: string; profile: string | null } | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value)
+    if (parsed && typeof parsed.id === 'string') {
+      return { id: parsed.id, profile: typeof parsed.profile === 'string' ? parsed.profile : null }
+    }
+  } catch {
+    // Backward compatibility: old storage entries are bare session ids.
+  }
+  return { id: value, profile: null }
+}
+
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
 
@@ -476,12 +497,12 @@ export const useChatStore = defineStore('chat', () => {
       const fresh = list.map(mapHermesSession)
       // Preserve already-loaded messages for sessions that are still present,
       // so we don't blow away the active session's messages on refresh.
-      const runtimeByIdBefore = new Map(sessions.value.map(s => [s.id, {
+      const runtimeByIdBefore = new Map(sessions.value.map(s => [sessionRuntimeKey(s), {
         messages: s.messages,
         contextTokens: s.contextTokens,
       }]))
       for (const s of fresh) {
-        const prev = runtimeByIdBefore.get(s.id)
+        const prev = runtimeByIdBefore.get(sessionRuntimeKey(s))
         if (prev?.messages?.length) s.messages = prev.messages
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
       }
@@ -490,18 +511,25 @@ export const useChatStore = defineStore('chat', () => {
       // Restore route-selected session first (tab-local source of truth),
       // then current in-memory session, then persisted legacy/default choice,
       // then fallback to the most recent session.
-      const currentId = activeSessionId.value
+      const currentRef = activeSessionId.value
+        ? { id: activeSessionId.value, profile: activeSession.value?.profile || profile || null }
+        : null
       const legacyActiveKey = legacyStorageKey()
-      const storedId = getItemBestEffort(storageKey()) || (legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
-      const targetId = preferredSessionId && sessions.value.some(s => s.id === preferredSessionId)
-        ? preferredSessionId
-        : currentId && sessions.value.some(s => s.id === currentId)
-          ? currentId
-          : storedId && sessions.value.some(s => s.id === storedId)
-            ? storedId
-            : sessions.value[0]?.id
-      if (targetId) {
-        await switchSession(targetId)
+      const storedRef = decodeActiveSessionRef(getItemBestEffort(storageKey()))
+        || decodeActiveSessionRef(legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
+      const preferredRef = preferredSessionId ? { id: preferredSessionId, profile: profile || null } : null
+      const findTarget = (ref: { id: string; profile: string | null } | null) => ref
+        ? sessions.value.find(s => {
+          if (s.id !== ref.id) return false
+          return !ref.profile || (s.profile || 'default') === ref.profile
+        }) || null
+        : null
+      const target = findTarget(preferredRef)
+        || findTarget(currentRef)
+        || findTarget(storedRef)
+        || sessions.value[0]
+      if (target) {
+        await switchSession(target.id, null, target.profile)
       } else {
         clearActiveSession()
       }
@@ -578,16 +606,22 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
-  async function switchSession(sessionId: string, focusId?: string | null) {
+  async function switchSession(sessionId: string, focusId?: string | null, profile?: string | null) {
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
-    setItemBestEffort(storageKey(), sessionId)
-    const legacyActiveKey = legacyStorageKey()
-    if (legacyActiveKey) removeItem(legacyActiveKey)
-    activeSession.value = sessions.value.find(s => s.id === sessionId) || null
+    const targetProfile = profile || null
+    activeSession.value = sessions.value.find(s => {
+      if (s.id !== sessionId) return false
+      return !targetProfile || (s.profile || 'default') === targetProfile
+    }) || null
 
     if (!activeSession.value) return
+
+    const resumeProfile = activeSession.value.profile || 'default'
+    setItemBestEffort(storageKey(), encodeActiveSessionRef(activeSession.value))
+    const legacyActiveKey = legacyStorageKey()
+    if (legacyActiveKey) removeItem(legacyActiveKey)
 
     isLoadingMessages.value = true
 
@@ -601,7 +635,7 @@ export const useChatStore = defineStore('chat', () => {
             resolve()
             return
           }
-          const target = sessions.value.find(s => s.id === sessionId)
+          const target = sessions.value.find(s => s.id === sessionId && (s.profile || 'default') === resumeProfile)
           if (!target) {
             resolve()
             return
@@ -730,7 +764,10 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
           resolve()
-        }, activeSession.value?.profile)
+        }, resumeProfile, (err) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
       })
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
@@ -2574,7 +2611,15 @@ export const useChatStore = defineStore('chat', () => {
               activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
             }
             resumeServerWorkingRun(sid)
-          }, activeSession.value?.profile)
+          }, activeSession.value?.profile, (err) => {
+            console.warn('Failed to resume session after tab visibility change:', err)
+            if (activeSessionId.value === sid) {
+              serverWorking.value.delete(sid)
+              queueLengths.value.delete(sid)
+              setAbortState(null)
+              setCompressionState(sid, null)
+            }
+          })
         }
       }
     })

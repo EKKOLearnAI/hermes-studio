@@ -18,7 +18,7 @@ import {
   SUPPORT_PREVIEW_FILE_TYPES,
 } from './mermaidRenderer'
 import { downloadFile, getDownloadUrl, fetchFileText } from '@/api/hermes/download'
-import { buildSessionHashHref, extractSessionIdFromReference } from '@/utils/session-link'
+import { buildSessionHashHref, extractSessionReference } from '@/utils/session-link'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 const PREVIEW_AREA_WIDTH = 'min(800px, 100vw)'
@@ -143,9 +143,9 @@ function rewriteSessionLinks(html: string): string {
       continue
     }
 
-    const sessionId = extractSessionIdFromReference(href)
-    const hashHref = sessionId ? buildSessionHashHref(sessionId) : null
-    if (!sessionId || !hashHref) {
+    const reference = extractSessionReference(href)
+    const hashHref = reference ? buildSessionHashHref(reference.sessionId, reference.profile) : null
+    if (!reference || !hashHref) {
       const replacement = document.createElement('span')
       while (link.firstChild) {
         replacement.appendChild(link.firstChild)
@@ -156,7 +156,10 @@ function rewriteSessionLinks(html: string): string {
 
     link.setAttribute('href', hashHref)
     link.classList.add('session-link')
-    link.setAttribute('data-session-id', sessionId)
+    link.setAttribute('data-session-id', reference.sessionId)
+    if (reference.profile) {
+      link.setAttribute('data-session-profile', reference.profile)
+    }
   }
 
   return template.innerHTML

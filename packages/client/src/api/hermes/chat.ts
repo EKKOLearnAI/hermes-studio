@@ -647,10 +647,23 @@ export function resumeSession(
   sessionId: string,
   onResumed: (data: ResumeSessionPayload) => void,
   profile?: string | null,
+  onFailed?: (err: Error) => void,
 ): Socket {
   const socket = connectChatRun(profile)
 
-  socket.once('resumed', onResumed)
+  const handleResumed = (data: ResumeSessionPayload) => {
+    removeSocketListener(socket, 'resume.failed', handleFailed)
+    onResumed(data)
+  }
+  const handleFailed = (data: { session_id?: string; error?: string }) => {
+    if (data.session_id !== sessionId) return
+    removeSocketListener(socket, 'resumed', handleResumed as (...args: any[]) => void)
+    removeSocketListener(socket, 'resume.failed', handleFailed)
+    onFailed?.(new Error(data.error || 'Failed to resume session'))
+  }
+
+  socket.once('resumed', handleResumed)
+  socket.on('resume.failed', handleFailed)
   socket.emit('resume', { session_id: sessionId, ...(profile ? { profile } : {}) })
 
   return socket

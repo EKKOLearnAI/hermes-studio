@@ -4,18 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
 const apiMocks = vi.hoisted(() => ({
+  fetchSessionMock: vi.fn(),
   fetchSessionsMock: vi.fn(),
   searchSessionsMock: vi.fn(),
   routerPushMock: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
+  fetchSession: apiMocks.fetchSessionMock,
   fetchSessions: apiMocks.fetchSessionsMock,
   searchSessions: apiMocks.searchSessionsMock,
 }))
 
 const chatStoreMock = vi.hoisted(() => ({
   sessions: [] as Array<Record<string, any>>,
+  sessionProfileFilter: null as string | null,
   loadSessions: vi.fn(),
   switchSession: vi.fn(),
   newChat: vi.fn(),
@@ -79,8 +82,10 @@ describe('session search modal', () => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     chatStoreMock.sessions = []
+    chatStoreMock.sessionProfileFilter = null
     chatStoreMock.loadSessions.mockResolvedValue(undefined)
     chatStoreMock.switchSession.mockResolvedValue(undefined)
+    apiMocks.fetchSessionMock.mockResolvedValue(null)
     apiMocks.fetchSessionsMock.mockResolvedValue([
       {
         id: 'recent-1',
@@ -180,11 +185,34 @@ describe('session search modal', () => {
     await flushPromises()
 
     expect(chatStoreMock.loadSessions).toHaveBeenCalled()
-    expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', '17')
+    expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', '17', 'default')
     expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.chat' })
   })
 
-  it('normalizes session protocol links before searching', async () => {
+  it('opens exact session protocol links without relying on text search', async () => {
+    apiMocks.fetchSessionMock.mockResolvedValue({
+      id: 'match-1',
+      profile: 'cpcode',
+      source: 'cli',
+      model: 'openai/gpt-5.4',
+      title: 'Exact linked session',
+      preview: 'exact preview',
+      started_at: 1710002000,
+      ended_at: null,
+      last_active: 1710002005,
+      message_count: 6,
+      tool_call_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      billing_provider: 'openrouter',
+      estimated_cost_usd: 0,
+      actual_cost_usd: 0,
+      cost_status: 'estimated',
+      messages: [],
+    })
     const { openSessionSearch } = useSessionSearch()
     const wrapper = mount(SessionSearchModal)
 
@@ -193,15 +221,22 @@ describe('session search modal', () => {
     await nextTick()
 
     const input = wrapper.find('input.n-input-stub')
-    await input.setValue('session://match-1')
+    await input.setValue('session://match-1?profile=cpcode')
     await vi.advanceTimersByTimeAsync(200)
     await flushPromises()
     await nextTick()
 
-    expect(apiMocks.searchSessionsMock).toHaveBeenLastCalledWith('match-1', undefined, 10)
+    expect(apiMocks.fetchSessionMock).toHaveBeenCalledWith('match-1', 'cpcode')
+    expect(apiMocks.searchSessionsMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Exact linked session')
+
+    await wrapper.find('button.result-item').trigger('click')
+    await flushPromises()
+
+    expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', null, 'cpcode')
   })
 
-  it('normalizes markdown session links before searching', async () => {
+  it('falls back to normalized markdown session ids when exact open misses', async () => {
     const { openSessionSearch } = useSessionSearch()
     const wrapper = mount(SessionSearchModal)
 
@@ -215,6 +250,7 @@ describe('session search modal', () => {
     await flushPromises()
     await nextTick()
 
+    expect(apiMocks.fetchSessionMock).toHaveBeenCalledWith('match-1', null)
     expect(apiMocks.searchSessionsMock).toHaveBeenLastCalledWith('match-1', undefined, 10)
   })
 })

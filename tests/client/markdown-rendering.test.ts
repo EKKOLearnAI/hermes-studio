@@ -255,14 +255,15 @@ describe('MarkdownRenderer', () => {
   it('rewrites valid session protocol links to internal session hashes', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {
-        content: '[Debugging session](session://cli%3Amatch-1)',
+        content: '[Debugging session](session://cli%3Amatch-1?profile=cpcode)',
       },
     })
 
     const link = wrapper.find('a.session-link')
     expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toBe('#/hermes/session/cli%3Amatch-1')
+    expect(link.attributes('href')).toBe('#/hermes/session/cli%3Amatch-1?profile=cpcode')
     expect(link.attributes('data-session-id')).toBe('cli:match-1')
+    expect(link.attributes('data-session-profile')).toBe('cpcode')
     expect(link.text()).toBe('Debugging session')
   })
 
