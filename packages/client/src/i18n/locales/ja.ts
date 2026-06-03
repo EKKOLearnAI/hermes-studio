@@ -606,6 +606,10 @@ export default {
   models: {
     title: 'モデル',
     addProvider: 'プロバイダーを追加',
+    refreshModelCache: 'モデルキャッシュを更新',
+    refreshModelCacheLoading: 'モデルキャッシュを更新中...',
+    refreshModelCacheSuccess: 'モデルキャッシュを更新しました',
+    refreshModelCacheFailed: 'モデルキャッシュの更新に失敗しました',
     providerType: 'プロバイダー種別',
     preset: 'プリセット',
     custom: 'カスタム',

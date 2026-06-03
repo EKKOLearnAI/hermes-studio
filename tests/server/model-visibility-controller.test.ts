@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
@@ -14,6 +14,7 @@ const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetc
   mockListUserProfiles: vi.fn(() => []),
   mockReadProviderModelCatalogCache: vi.fn(),
   mockGetCachedProviderModels: vi.fn(),
+  mockRefreshConfiguredProviderModelCatalogs: vi.fn(),
   mockWriteProviderModelCatalogEntry: vi.fn(),
   mockGetCopilotModelsDetailed: vi.fn(async () => []),
 }))
@@ -120,6 +121,7 @@ vi.mock('../../packages/server/src/services/app-config', () => ({
 vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({
   readProviderModelCatalogCache: mockReadProviderModelCatalogCache,
   getCachedProviderModels: mockGetCachedProviderModels,
+  refreshConfiguredProviderModelCatalogs: mockRefreshConfiguredProviderModelCatalogs,
   writeProviderModelCatalogEntry: mockWriteProviderModelCatalogEntry,
 }))
 
@@ -152,6 +154,7 @@ beforeEach(() => {
   mockListUserProfiles.mockReturnValue([])
   mockReadProviderModelCatalogCache.mockResolvedValue({ version: 1, updated_at: '1970-01-01T00:00:00.000Z', providers: {} })
   mockGetCachedProviderModels.mockReturnValue(null)
+  mockRefreshConfiguredProviderModelCatalogs.mockResolvedValue(undefined)
   mockWriteProviderModelCatalogEntry.mockResolvedValue({})
   mockGetCopilotModelsDetailed.mockResolvedValue([])
 })
@@ -419,6 +422,15 @@ describe('models controller — model visibility', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('refreshes configured provider model catalog cache on demand', async () => {
+    const ctx = makeCtx()
+    await ctrl.refreshProviderModelCatalogCache(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRefreshConfiguredProviderModelCatalogs).toHaveBeenCalledWith({ force: true })
   })
 
   it('does not fetch Copilot live models while serving available models', async () => {

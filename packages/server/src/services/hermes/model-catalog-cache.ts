@@ -300,9 +300,9 @@ async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Pro
   await Promise.all(workers)
 }
 
-export async function refreshConfiguredProviderModelCatalogs(): Promise<void> {
+export async function refreshConfiguredProviderModelCatalogs(options: { force?: boolean } = {}): Promise<void> {
   const cache = await readProviderModelCatalogCache()
-  if (Object.keys(cache.providers).length > 0) {
+  if (!options.force && Object.keys(cache.providers).length > 0) {
     logger.info('[model-catalog-cache] provider model catalog cache exists; skipping startup refresh')
     return
   }

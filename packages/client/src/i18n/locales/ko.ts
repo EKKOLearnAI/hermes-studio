@@ -606,6 +606,10 @@ export default {
   models: {
     title: '모델',
     addProvider: 'Provider 추가',
+    refreshModelCache: '모델 캐시 새로고침',
+    refreshModelCacheLoading: '모델 캐시를 새로고침하는 중...',
+    refreshModelCacheSuccess: '모델 캐시를 새로고침했습니다',
+    refreshModelCacheFailed: '모델 캐시 새로고침 실패',
     providerType: 'Provider 유형',
     preset: '프리셋',
     custom: '사용자 지정',

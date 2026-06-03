@@ -179,6 +179,12 @@ export async function fetchProviderModels(data: {
   })
 }
 
+export async function refreshProviderModelCache(): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>('/api/hermes/provider-models/cache/refresh', {
+    method: 'POST',
+  })
+}
+
 export async function updateDefaultModel(data: {
   default: string
   provider?: string

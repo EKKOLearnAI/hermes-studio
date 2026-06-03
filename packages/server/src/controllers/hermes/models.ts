@@ -12,6 +12,7 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 import {
   getCachedProviderModels,
   readProviderModelCatalogCache,
+  refreshConfiguredProviderModelCatalogs,
   writeProviderModelCatalogEntry,
   type ProviderModelCatalogCache,
 } from '../../services/hermes/model-catalog-cache'
@@ -838,6 +839,16 @@ export async function fetchProviderModelList(ctx: any) {
   } catch (err: any) {
     ctx.status = err?.name === 'TimeoutError' ? 504 : 502
     ctx.body = { error: err?.message || 'Failed to fetch provider models' }
+  }
+}
+
+export async function refreshProviderModelCatalogCache(ctx: any) {
+  try {
+    await refreshConfiguredProviderModelCatalogs({ force: true })
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to refresh provider model cache' }
   }
 }
 
