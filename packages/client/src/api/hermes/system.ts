@@ -169,6 +169,9 @@ export async function fetchProviderModels(data: {
   base_url: string
   api_key?: string
   freeOnly?: boolean
+  provider?: string
+  label?: string
+  update_cache?: boolean
 }): Promise<{ models: string[] }> {
   return request<{ models: string[] }>('/api/hermes/provider-models', {
     method: 'POST',
