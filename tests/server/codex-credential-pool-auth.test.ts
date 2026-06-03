@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -18,12 +18,24 @@ function writeEnv(content = '') {
   writeHermesFile('.env', content)
 }
 
-function writeAuthJson(auth: Record<string, unknown>) {
-  writeHermesFile('auth.json', JSON.stringify(auth, null, 2))
+function writeAuthJson(auth: Record<string, unknown>, path = 'auth.json') {
+  writeHermesFile(path, JSON.stringify(auth, null, 2))
 }
 
-function makeCtx(): any {
-  return { params: {}, query: {}, request: { body: {} }, body: undefined, status: 200 }
+function readAuthJson(path = 'auth.json') {
+  return JSON.parse(readFileSync(join(hermesHome, path), 'utf-8'))
+}
+
+function makeCtx(profile?: string): any {
+  return {
+    params: {},
+    query: {},
+    request: { body: {} },
+    state: profile ? { profile: { name: profile } } : {},
+    get: () => '',
+    body: undefined,
+    status: 200,
+  }
 }
 
 async function loadModelsController() {
@@ -50,6 +62,7 @@ describe('OpenAI Codex credential pool auth compatibility', () => {
   beforeEach(() => {
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-codex-pool-'))
     process.env.HERMES_HOME = hermesHome
+    process.env.CODEX_HOME = join(hermesHome, 'codex-home')
     writeConfigYaml('model:\n  default: gpt-5.5\n  provider: openai-codex\n')
     writeEnv('')
   })
@@ -59,6 +72,7 @@ describe('OpenAI Codex credential pool auth compatibility', () => {
     vi.doUnmock('../../packages/server/src/services/hermes/copilot-models')
     vi.doUnmock('../../packages/server/src/services/logger')
     delete process.env.HERMES_HOME
+    delete process.env.CODEX_HOME
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''
   })
@@ -111,5 +125,38 @@ describe('OpenAI Codex credential pool auth compatibility', () => {
     await status(ctx)
 
     expect(ctx.body).toEqual({ authenticated: true, last_refresh: '2026-05-10T00:00:00.000Z' })
+  })
+
+  it('reports Codex status from the request-scoped profile', async () => {
+    mkdirSync(join(hermesHome, 'profiles', 'research'), { recursive: true })
+    writeAuthJson({ version: 1, providers: {}, credential_pool: {} })
+    writeAuthJson({
+      version: 1,
+      providers: {},
+      credential_pool: {
+        'openai-codex': [
+          { access_token: 'research-token', refresh_token: 'research-refresh', last_refresh: '2026-06-02T00:00:00.000Z' },
+        ],
+      },
+    }, 'profiles/research/auth.json')
+
+    const { status } = await loadCodexAuthController()
+    const ctx = makeCtx('research')
+
+    await status(ctx)
+
+    expect(ctx.body).toEqual({ authenticated: true, last_refresh: '2026-06-02T00:00:00.000Z' })
+  })
+
+  it('persists Codex OAuth credentials in the request-scoped profile only', async () => {
+    mkdirSync(join(hermesHome, 'profiles', 'research'), { recursive: true })
+
+    const { saveCodexOAuthTokensForProfile } = await loadCodexAuthController()
+    saveCodexOAuthTokensForProfile('research', 'research-access-token', 'research-refresh-token')
+
+    expect(existsSync(join(hermesHome, 'auth.json'))).toBe(false)
+    const auth = readAuthJson('profiles/research/auth.json')
+    expect(auth.providers['openai-codex'].tokens.access_token).toBe('research-access-token')
+    expect(auth.credential_pool['openai-codex'][0].access_token).toBe('research-access-token')
   })
 })

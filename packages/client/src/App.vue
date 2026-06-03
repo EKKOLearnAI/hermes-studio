@@ -87,7 +87,8 @@ useKeyboard()
 .app-layout {
   display: flex;
   height: calc(100 * var(--vh));
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
 
   &.no-sidebar {

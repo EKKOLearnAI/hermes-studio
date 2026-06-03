@@ -79,7 +79,7 @@ No Hermes gateway ports are exposed by this compose setup.
 - Hermes CLI binary comes from `HERMES_BIN` env (`packages/server/src/services/hermes-cli.ts`).
 - If `HERMES_BIN` is not provided, code falls back to `hermes` in `PATH`.
 - Profile-specific chat runs are handled through the Hermes agent bridge. The selected/requested profile is authorized per account and passed with runtime requests; switching the frontend Hermes Profile does not restart the bridge or clear other running tasks.
-- The Web UI does not automatically start or manage a Hermes Agent gateway process on startup.
+- Docker is a managed gateway runtime: Web UI checks profile gateways on startup, but it does not run a periodic gateway recovery loop.
 
 ## Common Operations
 

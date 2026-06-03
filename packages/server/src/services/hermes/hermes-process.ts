@@ -17,8 +17,8 @@ export function resolveHermesBin(customBin?: string): string {
   return customBin?.trim() || process.env.HERMES_BIN?.trim() || 'hermes'
 }
 
-function bundledPythonForWindows(hermesBin: string): string | null {
-  const envPython = process.env.HERMES_AGENT_BRIDGE_PYTHON?.trim()
+function bundledCliPythonForWindows(hermesBin: string): string | null {
+  const envPython = process.env.HERMES_AGENT_CLI_PYTHON?.trim()
   if (envPython) return envPython
 
   if (basename(hermesBin).toLowerCase() !== 'hermes.exe') return null
@@ -26,9 +26,14 @@ function bundledPythonForWindows(hermesBin: string): string | null {
   return existsSync(python) ? python : null
 }
 
+function withWindowsHide<T extends ExecFileOptions | SpawnOptions>(options?: T): T {
+  if (process.platform !== 'win32') return (options || {}) as T
+  return { windowsHide: true, ...(options || {}) } as T
+}
+
 export function resolveHermesInvocation(hermesBin = resolveHermesBin()): HermesInvocation {
   if (process.platform === 'win32') {
-    const python = bundledPythonForWindows(hermesBin)
+    const python = bundledCliPythonForWindows(hermesBin)
     if (python) return { command: python, argsPrefix: ['-m', 'hermes_cli.main'] }
   }
 
@@ -45,7 +50,7 @@ export function execHermesWithBin(
     execFile(
       invocation.command,
       [...invocation.argsPrefix, ...args],
-      { ...options, encoding: 'utf8' },
+      { ...withWindowsHide(options), encoding: 'utf8' },
       (error, stdout, stderr) => {
         if (error) {
           rejectExec(Object.assign(error, { stdout, stderr }))
@@ -67,7 +72,7 @@ export function spawnHermesWithBin(
   options?: SpawnOptions,
 ): ChildProcess {
   const invocation = resolveHermesInvocation(hermesBin)
-  return spawn(invocation.command, [...invocation.argsPrefix, ...args], options || {})
+  return spawn(invocation.command, [...invocation.argsPrefix, ...args], withWindowsHide(options))
 }
 
 export function spawnHermes(args: readonly string[], options?: SpawnOptions): ChildProcess {

@@ -4,12 +4,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能 Web 管理面板。<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能桌面应用和 Web 管理面板。<br/>
   管理 AI 聊天会话、监控用量与成本、配置平台渠道、<br/>
   管理定时任务、浏览技能 —— 全部在一个简洁响应式的 Web 界面中完成。
 </p>
 
 <p align="center">
+  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">下载 Hermes Studio 桌面版</a>
+  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -179,7 +181,21 @@ hermes-web-ui reset-default-login
 
 ## 快速开始
 
-### npm 安装（推荐）
+### 桌面应用（推荐）
+
+从 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest)
+下载最新的 **Hermes Studio** 桌面安装包。
+
+桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
+桌面应用内置 Web UI 运行时，Hermes Agent 数据会保存到原生 Hermes 目录：
+
+- Windows：`%LOCALAPPDATA%\hermes`（找不到时回退到 `%APPDATA%\hermes`）
+- macOS/Linux：`~/.hermes`
+
+桌面壳自身的 Web UI 状态会单独保存到 `~/.hermes-web-ui`，除非设置了
+`HERMES_WEB_UI_HOME`。
+
+### npm 安装
 
 ```bash
 npm install -g hermes-web-ui
@@ -258,7 +274,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_BRIDGE_TOOLSETS` | profile/默认值 | bridge 运行时的 toolset 覆盖。 |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/默认值 | bridge 运行时的最大轮数覆盖。 |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | 控制传给 Hermes Agent 的 bridge platform hint suppression。 |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkolearnai.com` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
 | `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | bridge 运行发送给 OpenRouter 的 attribution title。 |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | 由平台/运行环境决定 | 强制启用旧 gateway 进程托管；设为 `1`、`true`、`yes` 或 `on` 开启。 |

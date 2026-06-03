@@ -20,7 +20,7 @@ test('renders authenticated shell and navigates between key product routes', asy
   await expect(modelsLink).toHaveAttribute('href', '#/hermes/models')
   await modelsLink.click()
   await expect(page).toHaveURL(/#\/hermes\/models$/)
-  await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Models', exact: true })).toBeVisible()
   await expect(page.getByText('test-model').first()).toBeVisible()
 
   const settingsLink = page.locator('aside.sidebar').getByRole('link', { name: /^Settings$/ })

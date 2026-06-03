@@ -1,0 +1,123 @@
+name: Publish Desktop Runtime to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach runtime assets to"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-runtime-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  runtime:
+    name: Runtime (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64
+            runner: macos-14
+            target_os: darwin
+            target_arch: arm64
+          - label: macOS x64
+            runner: macos-15-intel
+            target_os: darwin
+            target_arch: x64
+          - label: Windows x64
+            runner: windows-latest
+            target_os: win32
+            target_arch: x64
+          - label: Linux x64
+            runner: ubuntu-22.04
+            target_os: linux
+            target_arch: x64
+          - label: Linux arm64
+            runner: ubuntu-22.04-arm
+            target_os: linux
+            target_arch: arm64
+            skip_browser_runtime: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - name: Resolve runtime asset names
+        id: names
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+        run: |
+          echo "asset=$(node packages/desktop/scripts/runtime-asset-name.mjs)" >> "$GITHUB_OUTPUT"
+          echo "manifest=$(node packages/desktop/scripts/runtime-asset-name.mjs --manifest)" >> "$GITHUB_OUTPUT"
+
+      - name: Check existing release assets
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ASSET: ${{ steps.names.outputs.asset }}
+          MANIFEST: ${{ steps.names.outputs.manifest }}
+        run: |
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' || true)"
+          if printf '%s\n' "$assets" | grep -Fx "$ASSET" >/dev/null \
+            && printf '%s\n' "$assets" | grep -Fx "$MANIFEST" >/dev/null; then
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+            echo "Runtime asset already exists: $ASSET"
+          else
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            echo "Runtime asset missing: $ASSET or $MANIFEST"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.missing == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/desktop/package-lock.json
+
+      - name: Install uv
+        if: steps.check.outputs.missing == 'true'
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install desktop dependencies
+        if: steps.check.outputs.missing == 'true'
+        run: npm ci --prefix packages/desktop --no-audit --no-fund
+
+      - name: Prepare runtime resources
+        if: steps.check.outputs.missing == 'true'
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+          GH_TOKEN: ${{ github.token }}
+          HERMES_SKIP_BROWSER_RUNTIME: ${{ matrix.skip_browser_runtime || 'false' }}
+        run: npm --prefix packages/desktop run prepare:runtime
+
+      - name: Package runtime
+        if: steps.check.outputs.missing == 'true'
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+        run: npm --prefix packages/desktop run package:runtime
+
+      - name: Upload runtime assets to release
+        if: steps.check.outputs.missing == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          fail_on_unmatched_files: true
+          files: |
+            packages/desktop/release/runtime/${{ steps.names.outputs.asset }}
+            packages/desktop/release/runtime/${{ steps.names.outputs.asset }}.sha256
+            packages/desktop/release/runtime/${{ steps.names.outputs.manifest }}

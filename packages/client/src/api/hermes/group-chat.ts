@@ -64,6 +64,7 @@ export interface MemberInfo {
     name: string
     description: string
     joinedAt: number
+    avatar?: string
 }
 
 export interface JoinResult {
@@ -78,7 +79,7 @@ export interface JoinResult {
 
 let socket: ReturnType<typeof io> | null = null
 
-export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string }): ReturnType<typeof io> {
+export function connectGroupChat(opts?: { userId?: string; userName?: string; description?: string; authUserId?: number }): ReturnType<typeof io> {
     if (socket?.connected) return socket
 
     const token = getApiKey()
@@ -91,6 +92,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
             userId,
             name: opts?.userName || localStorage.getItem('gc_user_name') || undefined,
             description: opts?.description || localStorage.getItem('gc_user_description') || undefined,
+            authUserId: opts?.authUserId,
         },
         transports: ['websocket', 'polling'],
         reconnection: true,

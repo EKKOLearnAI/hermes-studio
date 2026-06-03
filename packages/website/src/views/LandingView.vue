@@ -9,16 +9,28 @@ import StarHistorySection from '@/components/landing/StarHistorySection.vue'
 <template>
   <div class="landing">
     <HeroSection />
+    <section class="download-section">
+      <InstallSection />
+    </section>
     <ScreenshotsSection />
     <FeaturesGrid />
     <div class="cta-row">
-      <InstallSection class="cta-col" />
       <StarHistorySection class="cta-col" />
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
+.download-section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 56px 24px 16px;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 32px 16px 8px;
+  }
+}
+
 .cta-row {
   max-width: 1120px;
   margin: 0 auto;

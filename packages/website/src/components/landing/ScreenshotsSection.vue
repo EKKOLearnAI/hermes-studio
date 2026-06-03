@@ -1,25 +1,26 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useScrollReveal } from '@/composables/useScrollReveal'
 
+interface ScreenshotItem {
+  src: string
+  alt: string
+}
+
+const { t, tm } = useI18n()
 useScrollReveal()
 
-const images = [
-  { src: '/image1.png', alt: 'AI Chat with Image Generation' },
-  { src: '/image2.png', alt: 'Chat and File Browser' },
-  { src: '/image3.png', alt: 'Multi-panel Workspace' },
-  { src: '/image4.png', alt: 'Kanban Board' },
-]
-
+const images = computed(() => tm('screenshots.items') as ScreenshotItem[])
 const activeIndex = ref(0)
 let timer: ReturnType<typeof setInterval>
 
 function next() {
-  activeIndex.value = (activeIndex.value + 1) % images.length
+  activeIndex.value = (activeIndex.value + 1) % images.value.length
 }
 
 function prev() {
-  activeIndex.value = (activeIndex.value - 1 + images.length) % images.length
+  activeIndex.value = (activeIndex.value - 1 + images.value.length) % images.value.length
 }
 
 function setActive(i: number) {
@@ -53,7 +54,7 @@ onUnmounted(() => {
             <span class="dot green" />
           </div>
           <div class="browser-url">
-            <span>http://localhost:8648</span>
+            <span>{{ t('screenshots.localUrl') }}</span>
           </div>
           <div class="browser-spacer" />
         </div>
@@ -71,7 +72,7 @@ onUnmounted(() => {
 
       <!-- Navigation -->
       <div class="screenshot-nav">
-        <button class="nav-arrow" @click="prev(); resetTimer()">
+        <button class="nav-arrow" :aria-label="t('screenshots.previous')" @click="prev(); resetTimer()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
 
@@ -80,12 +81,13 @@ onUnmounted(() => {
             v-for="(_img, i) in images"
             :key="i"
             class="dot-btn"
+            :aria-label="t('screenshots.goTo', { number: i + 1 })"
             :class="{ active: activeIndex === i }"
             @click="setActive(i)"
           />
         </div>
 
-        <button class="nav-arrow" @click="next(); resetTimer()">
+        <button class="nav-arrow" :aria-label="t('screenshots.next')" @click="next(); resetTimer()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
         </button>
       </div>

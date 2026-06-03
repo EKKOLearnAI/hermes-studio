@@ -24,6 +24,12 @@ type BottomScrollOptions = number | {
   frames?: number;
   keepAliveMs?: number;
 }
+type ViewportScrollSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasNearBottom: boolean;
+}
 
 const props = withDefaults(defineProps<{
   messages: VirtualItem[];
@@ -63,6 +69,7 @@ let bottomFrameAttempts = 0;
 let anchorFrame: number | null = null;
 let anchorToken = 0;
 let activeAnchorTarget: AnchorTarget | null = null;
+let viewportRestoreFrame: number | null = null;
 
 const messageKeys = computed(() => props.messages.map(messageKey));
 const bufferPx = computed(() => Math.max(props.estimatedItemHeight, props.estimatedItemHeight * props.overscan));
@@ -285,6 +292,53 @@ function restoreScrollPosition(snapshot: { scrollTop: number; scrollHeight: numb
   });
 }
 
+function captureViewportPosition(): ViewportScrollSnapshot | null {
+  const el = getScrollerElement();
+  if (!el) return null;
+  return {
+    scrollTop: el.scrollTop,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    wasNearBottom: isNearBottom(64),
+  };
+}
+
+function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames = 4) {
+  if (!snapshot) return;
+  keepBottomUntil = 0;
+  if (bottomFrame != null) {
+    cancelAnimationFrame(bottomFrame);
+    bottomFrame = null;
+    bottomFrameRemaining = 0;
+    bottomFrameAttempts = 0;
+  }
+  if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
+
+  nextTick(() => {
+    let remaining = frames;
+    const step = () => {
+      const el = getScrollerElement();
+      if (!el) {
+        viewportRestoreFrame = null;
+        return;
+      }
+      const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      const nextScrollTop = Math.min(maxScrollTop, Math.max(0, snapshot.scrollTop));
+      scrollerRef.value?.scrollToPosition(nextScrollTop);
+      el.scrollTop = nextScrollTop;
+      syncViewport();
+
+      remaining -= 1;
+      if (remaining <= 0) {
+        viewportRestoreFrame = null;
+        return;
+      }
+      viewportRestoreFrame = requestAnimationFrame(step);
+    };
+    viewportRestoreFrame = requestAnimationFrame(step);
+  });
+}
+
 let resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
@@ -303,6 +357,7 @@ onBeforeUnmount(() => {
   bottomFrameRemaining = 0;
   bottomFrameAttempts = 0;
   if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
+  if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
   resizeObserver?.disconnect();
 });
 
@@ -318,6 +373,8 @@ defineExpose({
   scrollToAnchor,
   captureScrollPosition,
   restoreScrollPosition,
+  captureViewportPosition,
+  restoreViewportPosition,
 });
 </script>
 
@@ -371,6 +428,7 @@ defineExpose({
   min-height: 0;
   display: flex;
   position: relative;
+  animation: message-list-fade-in 1.5s ease both;
 }
 
 .virtual-message-list {
@@ -404,5 +462,21 @@ defineExpose({
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+@keyframes message-list-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .virtual-message-list-host {
+    animation: none;
+  }
 }
 </style>

@@ -31,6 +31,7 @@ should not duplicate server persistence rules.
 - `HERMES_WEB_UI_HOME` and `HERMES_WEBUI_STATE_DIR` override Web UI state location.
 - Hermes Agent state lives under Hermes profile directories and must stay distinct from Web UI state.
 - Uploads default to `config.uploadDir`, which is derived from the Web UI home unless `UPLOAD_DIR` is set.
+- Runtime data directories must also live under the Web UI home, not beside built `dist` assets.
 - Profile-scoped Hermes data should use existing profile helpers instead of manually joining paths.
 
 ## Server Structure
@@ -69,8 +70,9 @@ Frontend rules:
 
 Desktop packaging is intentionally split:
 
-- Pull requests run a Linux desktop smoke test in `.github/workflows/build.yml`.
-- Published releases and manual dispatches run `.github/workflows/desktop-release.yml`.
+- Pull requests run the web UI build and tests in `.github/workflows/build.yml`.
+- Published releases and manual dispatches run desktop artifact packaging in `.github/workflows/desktop-release.yml`
+  and `.github/workflows/desktop-manual-build.yml`.
 - Each release matrix target uploads only the artifact globs for its own platform.
 
 Do not make a Windows job require macOS `.dmg` files or a Linux job require

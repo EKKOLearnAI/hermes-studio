@@ -1,5 +1,5 @@
 import { execFile } from 'child_process'
-import { existsSync, realpathSync } from 'fs'
+import { existsSync, readdirSync, realpathSync } from 'fs'
 import { mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, extname, join } from 'path'
@@ -15,6 +15,7 @@ const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses'
 const CODING_AGENT_HOME_DIR = 'coding-agent'
 const CODEX_MODEL_CATALOG_FILE = 'codex-model-catalog.json'
 const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be precise, safe, and helpful.'
+const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 
 export type CodingAgentId = 'claude-code' | 'codex'
 
@@ -41,6 +42,7 @@ export interface CodingAgentMutationResult extends CodingAgentsStatus {
   success: boolean
   tool: CodingAgentToolStatus
   message?: string
+  code?: string
 }
 
 export interface CodingAgentConfigFileDefinition {
@@ -161,6 +163,70 @@ function getNpmCliPath() {
 
 function getNpmBin() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
+}
+
+function compareNodeVersionDesc(left: string, right: string): number {
+  const leftParts = left.replace(/^v/, '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  const rightParts = right.replace(/^v/, '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const diff = (rightParts[index] || 0) - (leftParts[index] || 0)
+    if (diff !== 0) return diff
+  }
+  return right.localeCompare(left)
+}
+
+function getNvmNodeBinPaths(): string {
+  if (process.env.HERMES_DESKTOP !== 'true' || process.platform === 'win32') return ''
+
+  const nvmDir = process.env.NVM_DIR?.trim() || join(homedir(), '.nvm')
+  const versionsDir = join(nvmDir, 'versions', 'node')
+  if (!existsSync(versionsDir)) return ''
+
+  try {
+    return readdirSync(versionsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort(compareNodeVersionDesc)
+      .map(version => join(versionsDir, version, 'bin'))
+      .filter(binDir => existsSync(binDir))
+      .join(delimiter)
+  } catch {
+    return ''
+  }
+}
+
+function nodeEnvironmentMissingError(): Error {
+  const err = new Error('Node/npm environment was not detected. Please install Node.js and try again.')
+  ;(err as any).code = NODE_ENVIRONMENT_MISSING_CODE
+  return err
+}
+
+function isNodeEnvironmentMissingError(err: any): boolean {
+  const text = [
+    err?.code,
+    err?.message,
+    typeof err?.stderr === 'string' ? err.stderr : '',
+    typeof err?.stdout === 'string' ? err.stdout : '',
+  ].filter(Boolean).join('\n').toLowerCase()
+  return text.includes('enoent') ||
+    text.includes('spawn npm') ||
+    text.includes('npm: command not found') ||
+    text.includes('npm not found') ||
+    text.includes('node: command not found') ||
+    text.includes('node not found')
+}
+
+function npmCliFromNpmBin(npmBin: string): { node: string; npmCli: string } | null {
+  const binDir = dirname(npmBin)
+  if (process.platform === 'win32') {
+    const node = join(binDir, 'node.exe')
+    const npmCli = join(binDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    return existsSync(node) && existsSync(npmCli) ? { node, npmCli } : null
+  }
+
+  const node = join(binDir, 'node')
+  const npmCli = join(dirname(binDir), 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  return existsSync(node) && existsSync(npmCli) ? { node, npmCli } : null
 }
 
 function normalizeScopeSegment(value: string | undefined, fallback: string, label: string): string {
@@ -468,32 +534,66 @@ function getScopedConfigFileDefinition(id: string, key: string, scopeInput: Codi
 function getCurrentNodeEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: [getNodeBinDir(), process.env.PATH].filter(Boolean).join(delimiter),
+    PATH: [getNodeBinDir(), getNvmNodeBinPaths(), process.env.PATH].filter(Boolean).join(delimiter),
     npm_node_execpath: process.execPath,
   }
 }
 
+async function npmExecution(args: string[], env: NodeJS.ProcessEnv): Promise<{ command: string; args: string[] }> {
+  const bundledNpmCli = getNpmCliPath()
+  if (bundledNpmCli) return { command: process.execPath, args: [bundledNpmCli, ...args] }
+
+  let npmBin: string | null = null
+  for (const command of [...new Set([getNpmBin(), 'npm'])]) {
+    const paths = await findCommandPaths(command, env)
+    if (paths[0]) {
+      npmBin = paths[0]
+      break
+    }
+  }
+  if (!npmBin) throw nodeEnvironmentMissingError()
+
+  const npmCli = npmCliFromNpmBin(npmBin)
+  if (npmCli) return { command: npmCli.node, args: [npmCli.npmCli, ...args] }
+
+  let nodeBin: string | null = null
+  for (const command of [...new Set([process.platform === 'win32' ? 'node.exe' : 'node', 'node'])]) {
+    const paths = await findCommandPaths(command, env)
+    if (paths[0]) {
+      nodeBin = paths[0]
+      break
+    }
+  }
+  if (!nodeBin) throw nodeEnvironmentMissingError()
+
+  return commandExecution(npmBin, args)
+}
+
 async function runNpm(args: string[], options: { timeout?: number; env?: NodeJS.ProcessEnv } = {}) {
-  const npmCli = getNpmCliPath()
-  const command = npmCli ? process.execPath : getNpmBin()
-  const commandArgs = npmCli ? [npmCli, ...args] : args
-  return execFileAsync(command, commandArgs, {
+  const env = {
+    ...getCurrentNodeEnv(),
+    ...options.env,
+  }
+  const execution = await npmExecution(args, env)
+  return execFileAsync(execution.command, execution.args, {
     encoding: 'utf-8',
     timeout: options.timeout,
     windowsHide: true,
     maxBuffer: 10 * 1024 * 1024,
-    env: {
-      ...getCurrentNodeEnv(),
-      ...options.env,
-    },
+    env,
   })
 }
 
 function normalizeError(err: any): string {
+  if (isNodeEnvironmentMissingError(err)) return nodeEnvironmentMissingError().message
   const stderr = typeof err?.stderr === 'string' ? err.stderr.trim() : ''
   const stdout = typeof err?.stdout === 'string' ? err.stdout.trim() : ''
   const message = stderr || stdout || err?.message || String(err)
   return message.split(/\r?\n/).filter(Boolean).slice(0, 4).join('\n')
+}
+
+function normalizeErrorCode(err: any): string | undefined {
+  return isNodeEnvironmentMissingError(err) ? NODE_ENVIRONMENT_MISSING_CODE : undefined
 }
 
 async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promise<string[]> {
@@ -703,6 +803,7 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
       tool: status,
       tools: allStatus.tools,
       message: normalizeError(err),
+      code: normalizeErrorCode(err),
     }
   } finally {
     installingTools.delete(tool.id)
@@ -752,6 +853,7 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
       tool: status,
       tools: allStatus.tools,
       message: normalizeError(err),
+      code: normalizeErrorCode(err),
     }
   } finally {
     deletingTools.delete(tool.id)

@@ -24,6 +24,11 @@ interface RunChatCompressionConfig {
   compressor: Partial<CompressorConfig>
 }
 
+interface CompressionModelContext {
+  model?: string | null
+  provider?: string | null
+}
+
 export class ContextWindowTooSmallError extends Error {
   constructor(message: string) {
     super(message)
@@ -94,6 +99,50 @@ function clampRatio(value: unknown, fallback: number, min: number, max: number):
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback
   return Math.min(max, Math.max(min, n))
+}
+
+function readDefaultModelContext(config: Record<string, any>, fallback: CompressionModelContext): CompressionModelContext {
+  const modelConfig = config?.model
+  if (typeof modelConfig === 'string') {
+    const model = modelConfig.trim()
+    return {
+      model: model || fallback.model,
+      provider: fallback.provider,
+    }
+  }
+  if (modelConfig && typeof modelConfig === 'object' && !Array.isArray(modelConfig)) {
+    const model = String(modelConfig.default || '').trim()
+    const provider = String(modelConfig.provider || '').trim()
+    return {
+      model: model || fallback.model,
+      provider: provider || fallback.provider,
+    }
+  }
+  return fallback
+}
+
+async function resolveCompressionModelContext(
+  profile: string,
+  fallback: CompressionModelContext,
+): Promise<CompressionModelContext> {
+  let config: Record<string, any> = {}
+  try {
+    config = await readConfigYamlForProfile(profile)
+  } catch (err) {
+    logger.warn(err, '[context-compress] failed to read auxiliary compression model config for profile %s, using session model', profile)
+    return fallback
+  }
+
+  const compression = config?.auxiliary?.compression
+  if (!compression || typeof compression !== 'object' || Array.isArray(compression)) return fallback
+
+  const provider = typeof compression.provider === 'string' ? compression.provider.trim() : ''
+  if (!provider || provider === 'auto') return fallback
+  if (provider === 'main') return readDefaultModelContext(config, fallback)
+
+  const model = typeof compression.model === 'string' ? compression.model.trim() : ''
+  if (!model) return fallback
+  return { model, provider }
 }
 
 async function getRunChatCompressionConfig(profile: string, contextLength: number): Promise<RunChatCompressionConfig> {
@@ -194,7 +243,7 @@ export async function buildCompressedHistory(
   apiKey: string | undefined,
   emit: (event: string, payload: any) => void,
   sessionMap: Map<string, SessionState>,
-  modelContext: { model?: string | null; provider?: string | null } = {},
+  modelContext: CompressionModelContext = {},
   contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>,
   currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
@@ -351,7 +400,7 @@ export async function compressHistory(
   totalTokens: number,
   emit: (event: string, payload: any) => void,
   sessionMap: Map<string, SessionState>,
-  modelContext: { model?: string | null; provider?: string | null } = {},
+  modelContext: CompressionModelContext = {},
   compressionConfig?: Partial<CompressorConfig>,
   currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
@@ -369,11 +418,15 @@ export async function compressHistory(
   try {
     const session = getSession(sessionId)
     const summarizerProfile = session?.profile || 'default'
+    const summarizerModelContext = await resolveCompressionModelContext(summarizerProfile, {
+      model: modelContext.model || session?.model,
+      provider: modelContext.provider || session?.provider,
+    })
     const compressor = new ChatContextCompressor({ config: compressionConfig })
     const result = await compressor.compress(history, upstream, apiKey, sessionId, {
       profile: summarizerProfile,
-      model: modelContext.model || session?.model,
-      provider: modelContext.provider || session?.provider,
+      model: summarizerModelContext.model,
+      provider: summarizerModelContext.provider,
       workerKey: `${summarizerProfile}:compression:${sessionId}`,
     })
     const afterTokens = await calcAndUpdateUsage(sessionId, cState, emit)
@@ -483,10 +536,14 @@ export async function forceCompressBridgeHistory(
 
   const compressor = new ChatContextCompressor({ config: compressionConfig.compressor })
   const summarizerProfile = session?.profile || profile || 'default'
-  const result = await compressor.compress(history, upstream, apiKey, sessionId, {
-    profile: summarizerProfile,
+  const summarizerModelContext = await resolveCompressionModelContext(summarizerProfile, {
     model: session?.model,
     provider: session?.provider,
+  })
+  const result = await compressor.compress(history, upstream, apiKey, sessionId, {
+    profile: summarizerProfile,
+    model: summarizerModelContext.model,
+    provider: summarizerModelContext.provider,
     workerKey: `${summarizerProfile}:compression:${sessionId}`,
   })
   const compressedMessages = result.messages.map(m => {

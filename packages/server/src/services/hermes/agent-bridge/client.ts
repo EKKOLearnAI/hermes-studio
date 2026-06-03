@@ -609,8 +609,8 @@ export class AgentBridgeClient {
     return this.request({ action: 'mcp_server_test', name, ...(profile ? { profile } : {}) }, { timeoutMs: 180_000 })
   }
 
-  mcpTools(server?: string, profile?: string): Promise<McpActionResponse> {
-    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}) })
+  mcpTools(server?: string, profile?: string, raw?: boolean): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}), ...(raw ? { raw } : {}) })
   }
 
   mcpReload(server?: string, profile?: string): Promise<McpActionResponse> {

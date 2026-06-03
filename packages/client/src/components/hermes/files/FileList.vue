@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useFilesStore, isImageFile, isMarkdownFile, isTextFile } from '@/stores/hermes/files'
+import { useFilesStore, isPreviewableFile, isTextFile } from '@/stores/hermes/files'
 import { downloadFile } from '@/api/hermes/download'
 import type { FileEntry } from '@/api/hermes/files'
 
@@ -45,13 +45,21 @@ function getFileIcon(entry: FileEntry): string {
   return iconMap[ext] || '📄'
 }
 
-function handleDoubleClick(entry: FileEntry) {
+async function handlePreview(entry: FileEntry) {
+  try {
+    await filesStore.openPreview(entry)
+  } catch {
+    message.error(t('files.backendError'))
+  }
+}
+
+async function handleDoubleClick(entry: FileEntry) {
   if (entry.isDir) {
     filesStore.navigateTo(entry.path)
   } else if (isTextFile(entry.name)) {
-    filesStore.openEditor(entry.path)
-  } else if (isImageFile(entry.name) || isMarkdownFile(entry.name)) {
-    filesStore.openPreview(entry)
+    await filesStore.openEditor(entry.path)
+  } else if (isPreviewableFile(entry.name)) {
+    await handlePreview(entry)
   }
 }
 
@@ -103,6 +111,7 @@ async function handleDownload(entry: FileEntry) {
           <div class="file-size">{{ entry.isDir ? '—' : formatSize(entry.size) }}</div>
           <div class="file-date">{{ formatDate(entry.modTime) }}</div>
           <div class="file-actions">
+            <NButton v-if="isPreviewableFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="handlePreview(entry)" :title="t('files.preview')">👁️</NButton>
             <NButton v-if="isTextFile(entry.name) && !entry.isDir" size="tiny" quaternary @click.stop="filesStore.openEditor(entry.path)" :title="t('files.edit')">✏️</NButton>
             <NButton v-if="!entry.isDir" size="tiny" quaternary @click.stop="handleDownload(entry)" :title="t('files.download')">⬇️</NButton>
           </div>

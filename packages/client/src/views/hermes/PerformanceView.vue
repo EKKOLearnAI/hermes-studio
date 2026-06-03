@@ -466,6 +466,13 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
+  .page-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: $bg-primary;
+  }
+
   .header-actions {
     width: 100%;
   }

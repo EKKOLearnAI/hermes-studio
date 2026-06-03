@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
-import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
+import { dirname, join } from 'path'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
 
 // --- Nous Portal OAuth Constants ---
@@ -14,6 +14,7 @@ const POLL_DEFAULT_INTERVAL = 5000
 // --- Session Store ---
 interface NousSession {
   id: string
+  profile: string
   deviceCode: string
   userCode: string
   verificationUrl: string
@@ -52,8 +53,73 @@ function saveAuthJson(authPath: string, data: AuthJson): void {
   writeFileSync(authPath, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
 
+function requestedProfile(ctx: any): string {
+  const headerProfile = typeof ctx.get === 'function' ? ctx.get('x-hermes-profile') : ''
+  const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
+  const bodyProfile = typeof ctx.request?.body?.profile === 'string' ? ctx.request.body.profile : ''
+  return ctx.state?.profile?.name ||
+    headerProfile.trim() ||
+    queryProfile.trim() ||
+    bodyProfile.trim() ||
+    getActiveProfileName() ||
+    'default'
+}
+
+function authPathForProfile(profile: string): string {
+  return join(getProfileDir(profile), 'auth.json')
+}
+
+export function saveNousOAuthTokensForProfile(
+  profile: string,
+  tokenData: {
+    access_token: string
+    refresh_token?: string
+    expires_in?: number
+    inference_base_url?: string
+  },
+  agentKey = '',
+  agentKeyExpiresAt = '',
+): void {
+  const inferenceBaseUrl = tokenData.inference_base_url || 'https://inference-api.nousresearch.com/v1'
+  const auth = loadAuthJson(authPathForProfile(profile))
+  if (!auth.providers) auth.providers = {}
+  const now = new Date()
+  auth.providers['nous'] = {
+    portal_base_url: NOUS_PORTAL_URL,
+    inference_base_url: inferenceBaseUrl,
+    client_id: NOUS_CLIENT_ID,
+    scope: NOUS_SCOPE,
+    token_type: 'Bearer',
+    access_token: tokenData.access_token,
+    refresh_token: tokenData.refresh_token || null,
+    obtained_at: now.toISOString(),
+    expires_at: tokenData.expires_in ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString() : null,
+    agent_key: agentKey || null,
+    agent_key_expires_at: agentKeyExpiresAt || null,
+    agent_key_obtained_at: agentKey ? now.toISOString() : null,
+  }
+
+  if (!auth.credential_pool) auth.credential_pool = {}
+  auth.credential_pool['nous'] = [{
+    id: `nous-${Date.now()}`,
+    label: 'Nous Portal',
+    auth_type: 'oauth',
+    source: 'device_code',
+    priority: 0,
+    access_token: tokenData.access_token,
+    refresh_token: tokenData.refresh_token || null,
+    portal_base_url: NOUS_PORTAL_URL,
+    inference_base_url: inferenceBaseUrl,
+    agent_key: agentKey || null,
+    agent_key_expires_at: agentKeyExpiresAt || null,
+    base_url: inferenceBaseUrl,
+  }]
+
+  saveAuthJson(authPathForProfile(profile), auth)
+}
+
 // --- Background poll worker ---
-async function nousLoginWorker(session: NousSession, authPath: string): Promise<void> {
+async function nousLoginWorker(session: NousSession): Promise<void> {
   const startTime = Date.now()
   let interval = session.interval || POLL_DEFAULT_INTERVAL
 
@@ -112,43 +178,7 @@ async function nousLoginWorker(session: NousSession, authPath: string): Promise<
           logger.warn(err, 'Nous agent key minting failed, proceeding without')
         }
 
-        // Save to auth.json
-        const auth = loadAuthJson(authPath)
-        if (!auth.providers) auth.providers = {}
-        const now = new Date()
-        auth.providers['nous'] = {
-          portal_base_url: NOUS_PORTAL_URL,
-          inference_base_url: inferenceBaseUrl,
-          client_id: NOUS_CLIENT_ID,
-          scope: NOUS_SCOPE,
-          token_type: 'Bearer',
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token || null,
-          obtained_at: now.toISOString(),
-          expires_at: tokenData.expires_in ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString() : null,
-          agent_key: agentKey || null,
-          agent_key_expires_at: agentKeyExpiresAt || null,
-          agent_key_obtained_at: agentKey ? now.toISOString() : null,
-        }
-
-        // Credential pool entry
-        if (!auth.credential_pool) auth.credential_pool = {}
-        auth.credential_pool['nous'] = [{
-          id: `nous-${Date.now()}`,
-          label: 'Nous Portal',
-          auth_type: 'oauth',
-          source: 'device_code',
-          priority: 0,
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token || null,
-          portal_base_url: NOUS_PORTAL_URL,
-          inference_base_url: inferenceBaseUrl,
-          agent_key: agentKey || null,
-          agent_key_expires_at: agentKeyExpiresAt || null,
-          base_url: inferenceBaseUrl,
-        }]
-
-        saveAuthJson(authPath, auth)
+        saveNousOAuthTokensForProfile(session.profile, tokenData, agentKey, agentKeyExpiresAt)
         session.status = 'approved'
         logger.info('Nous login successful')
         return
@@ -223,6 +253,7 @@ export async function start(ctx: any) {
     const sessionId = randomUUID()
     const session: NousSession = {
       id: sessionId,
+      profile: requestedProfile(ctx),
       deviceCode: data.device_code,
       userCode: data.user_code,
       verificationUrl: data.verification_uri,
@@ -234,8 +265,7 @@ export async function start(ctx: any) {
     }
     sessions.set(sessionId, session)
 
-    const authPath = getActiveAuthPath()
-    nousLoginWorker(session, authPath).catch(err => {
+    nousLoginWorker(session).catch(err => {
       logger.error(err, 'Nous login worker error')
       session.status = 'error'
       session.error = err.message
@@ -270,7 +300,7 @@ export async function poll(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const authPath = getActiveAuthPath()
+    const authPath = authPathForProfile(requestedProfile(ctx))
     const auth = loadAuthJson(authPath)
     const nousProvider = auth.providers?.['nous']
     if (!nousProvider?.access_token) {

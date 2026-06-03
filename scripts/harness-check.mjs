@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -26,6 +27,70 @@ function requireDir(relativePath) {
   }
 }
 
+function gitLines(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function changedFilesFromGit() {
+  const files = new Set()
+
+  for (const file of gitLines(['diff', '--name-only'])) files.add(file)
+  for (const file of gitLines(['diff', '--name-only', '--cached'])) files.add(file)
+
+  const baseRef = process.env.GITHUB_BASE_REF
+  if (baseRef) {
+    const baseCandidates = [`origin/${baseRef}`, baseRef]
+    let foundPrBase = false
+    for (const base of baseCandidates) {
+      const diff = gitLines(['diff', '--name-only', `${base}...HEAD`])
+      if (diff.length > 0) {
+        foundPrBase = true
+        for (const file of diff) files.add(file)
+        break
+      }
+    }
+    if (process.env.GITHUB_ACTIONS === 'true' && !foundPrBase && files.size === 0) {
+      fail(`Unable to inspect PR diff against ${baseRef}; build checkout must fetch full history`)
+    }
+  } else {
+    const upstream = gitLines(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])[0]
+    if (upstream) {
+      for (const file of gitLines(['diff', '--name-only', `${upstream}...HEAD`])) files.add(file)
+    }
+  }
+
+  return [...files].sort()
+}
+
+function isChatSessionChainFile(file) {
+  return file === 'packages/client/src/api/hermes/chat.ts'
+    || file === 'packages/client/src/api/hermes/group-chat.ts'
+    || file === 'packages/client/src/api/hermes/sessions.ts'
+    || file === 'packages/client/src/stores/hermes/group-chat.ts'
+    || file === 'packages/client/src/stores/hermes/chat.ts'
+    || file === 'packages/server/src/controllers/hermes/sessions.ts'
+    || file === 'packages/server/src/db/hermes/session-store.ts'
+    || file === 'packages/server/src/routes/hermes/group-chat.ts'
+    || file.startsWith('packages/client/src/components/hermes/group-chat/')
+    || file.startsWith('packages/client/src/components/hermes/chat/')
+    || file.startsWith('packages/server/src/lib/context-compressor/')
+    || file.startsWith('packages/server/src/services/hermes/context-engine/')
+    || file.startsWith('packages/server/src/services/hermes/group-chat/')
+    || file.startsWith('packages/server/src/services/hermes/run-chat/')
+    || file.startsWith('packages/server/src/services/hermes/agent-bridge/')
+}
+
 for (const file of [
   'AGENTS.md',
   'ARCHITECTURE.md',
@@ -42,12 +107,28 @@ for (const dir of [
   'packages/client/src',
   'packages/server/src',
   'packages/desktop',
+  'packages/desktop/build/icons',
   'tests/client',
   'tests/server',
   'tests/e2e',
   '.github/workflows',
 ]) {
   requireDir(dir)
+}
+
+for (const icon of [
+  'packages/desktop/build/icon.png',
+  'packages/desktop/build/icon.icns',
+  'packages/desktop/build/icon.ico',
+  'packages/desktop/build/icons/16x16.png',
+  'packages/desktop/build/icons/32x32.png',
+  'packages/desktop/build/icons/48x48.png',
+  'packages/desktop/build/icons/64x64.png',
+  'packages/desktop/build/icons/128x128.png',
+  'packages/desktop/build/icons/256x256.png',
+  'packages/desktop/build/icons/512x512.png',
+]) {
+  requireFile(icon)
 }
 
 const agents = await readText('AGENTS.md')
@@ -99,10 +180,54 @@ const buildWorkflow = await readText('.github/workflows/build.yml')
 if (!buildWorkflow.includes('npm run harness:check')) {
   fail('Build workflow must run npm run harness:check')
 }
+if (!buildWorkflow.includes('fetch-depth: 0')) {
+  fail('Build workflow checkout must use fetch-depth: 0 so harness:check can inspect PR diffs')
+}
+
+const chatSessionsDoc = await readText('docs/cli-chat-sessions.md')
+for (const phrase of [
+  '最后重建时间',
+  '维护要求',
+  '最近链路变更记录',
+  'packages/server/src/services/hermes/agent-bridge/',
+  'packages/server/src/services/hermes/group-chat/',
+  'packages/server/src/lib/context-compressor/',
+  '任何改动都算 Chat 链路改动',
+]) {
+  if (!chatSessionsDoc.includes(phrase)) {
+    fail(`docs/cli-chat-sessions.md must document chat chain maintenance rule: ${phrase}`)
+  }
+}
+
+const changedFiles = changedFilesFromGit()
+const changedChatChainFiles = changedFiles.filter(
+  file => file !== 'docs/cli-chat-sessions.md' && isChatSessionChainFile(file),
+)
+if (changedChatChainFiles.length > 0 && !changedFiles.includes('docs/cli-chat-sessions.md')) {
+  fail(
+    [
+      'Chat session chain changed without updating docs/cli-chat-sessions.md.',
+      'Update "最近链路变更记录" with date, PR/commit, touched feature, and behavior impact.',
+      `Changed chain files: ${changedChatChainFiles.join(', ')}`,
+    ].join(' '),
+  )
+}
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')
+const desktopRuntimeWorkflow = await readText('.github/workflows/desktop-runtime.yml')
+const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
+const desktopPackageJson = await readText('packages/desktop/package.json')
+const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
+const desktopWebuiServer = await readText('packages/desktop/src/main/webui-server.ts')
+const desktopRuntimeManager = await readText('packages/desktop/src/main/runtime-manager.ts')
+const desktopPaths = await readText('packages/desktop/src/main/paths.ts')
+const desktopRuntimeAssetName = await readText('packages/desktop/scripts/runtime-asset-name.mjs')
 if (!desktopReleaseWorkflow.includes('files: ${{ matrix.artifact_files }}')) {
   fail('desktop-release.yml must upload matrix-specific artifact_files')
+}
+
+if (!electronBuilderConfig.includes('icon: build/icons')) {
+  fail('electron-builder.yml must configure the Linux icon set')
 }
 
 for (const target of ['target_os: darwin', 'target_os: win32', 'target_os: linux']) {
@@ -111,7 +236,7 @@ for (const target of ['target_os: darwin', 'target_os: win32', 'target_os: linux
   }
 }
 
-for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage', 'latest*.yml']) {
+for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage']) {
   if (!desktopReleaseWorkflow.includes(expectedGlob)) {
     fail(`desktop-release.yml is missing expected artifact glob ${expectedGlob}`)
   }
@@ -119,6 +244,82 @@ for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage', 'latest*.yml']) {
 
 if (!desktopReleaseWorkflow.includes('fail_on_unmatched_files: true')) {
   fail('desktop-release.yml must keep fail_on_unmatched_files: true')
+}
+
+for (const phrase of [
+  'resources/python/${os}-${arch}',
+  'resources/node/${os}-${arch}',
+  'resources/git/${os}-${arch}',
+]) {
+  if (electronBuilderConfig.includes(phrase)) {
+    fail(`electron-builder.yml must not bundle desktop runtime resource: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  '"fetch:node"',
+  '"fetch:git"',
+  '"prepare:runtime"',
+  '"package:runtime"',
+  '"runtime:asset-name"',
+]) {
+  if (!desktopPackageJson.includes(phrase)) {
+    fail(`packages/desktop/package.json must support runtime package publishing: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'steps.check.outputs.missing',
+  'npm --prefix packages/desktop run prepare:runtime',
+  'npm --prefix packages/desktop run package:runtime',
+]) {
+  if (!desktopRuntimeWorkflow.includes(phrase)) {
+    fail(`desktop-runtime.yml must build and publish missing runtime package assets: ${phrase}`)
+  }
+}
+
+if (!desktopRuntimeAssetName.includes('hermes-runtime-hermes-agent-')) {
+  fail('runtime asset naming must include hermes-agent version')
+}
+
+for (const phrase of [
+  'websockets',
+  'agent-browser@^0.26.0',
+  'AGENT_BROWSER_HOME',
+  'AGENT_BROWSER_EXECUTABLE_PATH',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'ms-playwright',
+  'removeBrokenDashboardAuthPlugin',
+]) {
+  if (!desktopInstallHermes.includes(phrase)) {
+    fail(`install-hermes.mjs must bundle Hermes browser runtime support: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'bundledNodeBin',
+  'HERMES_AGENT_NODE',
+  'HERMES_AGENT_GIT',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'ms-playwright',
+]) {
+  if (!desktopWebuiServer.includes(phrase)) {
+    fail(`desktop webui server must expose bundled browser runtime: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'HERMES_DESKTOP_RUNTIME_URL',
+  'HERMES_DESKTOP_RUNTIME_BASE_URL',
+  'runtime-manifest.json',
+]) {
+  if (!desktopRuntimeManager.includes(phrase)) {
+    fail(`desktop runtime manager must support downloadable runtime packages: ${phrase}`)
+  }
+}
+
+if (!desktopPaths.includes('HERMES_DESKTOP_RUNTIME_DIR')) {
+  fail('desktop paths must allow HERMES_DESKTOP_RUNTIME_DIR override')
 }
 
 if (failures.length > 0) {

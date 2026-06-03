@@ -150,7 +150,7 @@ onMounted(() => {
       <div class="install-box animate-fade-in animate-delay-3">
         <code>{{ installCmd }}</code>
         <button class="copy-btn" @click="copyCmd">
-          {{ copied ? 'Copied!' : 'Copy' }}
+          {{ copied ? t('ui.copied') : t('ui.copy') }}
         </button>
       </div>
     </div>

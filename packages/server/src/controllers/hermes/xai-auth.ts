@@ -2,11 +2,11 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { createServer, type Server } from 'http'
 import { request as httpsRequest, type RequestOptions } from 'https'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, join } from 'path'
 import { URL } from 'url'
-import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
+import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { logger } from '../../services/logger'
-import { updateConfigYaml } from '../../services/config-helpers'
+import { updateConfigYamlForProfile } from '../../services/config-helpers'
 
 const XAI_OAUTH_ISSUER = 'https://auth.x.ai'
 const XAI_OAUTH_DISCOVERY_URL = `${XAI_OAUTH_ISSUER}/.well-known/openid-configuration`
@@ -22,6 +22,7 @@ const XAI_DEFAULT_MODEL = 'grok-4.3'
 
 interface XaiSession {
   id: string
+  profile: string
   status: 'pending' | 'approved' | 'expired' | 'error'
   authorizeUrl: string
   redirectUri: string
@@ -159,7 +160,27 @@ function saveAuthJson(authPath: string, data: AuthJson): void {
   writeFileSync(authPath, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
 
-async function saveTokens(session: XaiSession, tokenData: any) {
+function requestedProfile(ctx: any): string {
+  const headerProfile = typeof ctx.get === 'function' ? ctx.get('x-hermes-profile') : ''
+  const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
+  const bodyProfile = typeof ctx.request?.body?.profile === 'string' ? ctx.request.body.profile : ''
+  return ctx.state?.profile?.name ||
+    headerProfile.trim() ||
+    queryProfile.trim() ||
+    bodyProfile.trim() ||
+    getActiveProfileName() ||
+    'default'
+}
+
+function authPathForProfile(profile: string): string {
+  return join(getProfileDir(profile), 'auth.json')
+}
+
+export async function saveXaiOAuthTokensForProfile(
+  profile: string,
+  session: Pick<XaiSession, 'discovery' | 'redirectUri'>,
+  tokenData: any,
+) {
   const accessToken = String(tokenData.access_token || '').trim()
   const refreshToken = String(tokenData.refresh_token || '').trim()
   if (!accessToken || !refreshToken) throw new Error('xAI token response missing access_token or refresh_token')
@@ -173,7 +194,7 @@ async function saveTokens(session: XaiSession, tokenData: any) {
     token_type: String(tokenData.token_type || 'Bearer').trim() || 'Bearer',
   }
 
-  const authPath = getActiveAuthPath()
+  const authPath = authPathForProfile(profile)
   const auth = loadAuthJson(authPath)
   if (!auth.providers) auth.providers = {}
   auth.providers['xai-oauth'] = {
@@ -196,7 +217,11 @@ async function saveTokens(session: XaiSession, tokenData: any) {
   }]
   saveAuthJson(authPath, auth)
 
-  await updateConfigYaml(applyXaiOAuthDefaultModel)
+  await updateConfigYamlForProfile(profile, applyXaiOAuthDefaultModel)
+}
+
+async function saveTokens(session: XaiSession, tokenData: any) {
+  await saveXaiOAuthTokensForProfile(session.profile, session, tokenData)
 }
 
 async function exchangeCode(session: XaiSession, code: string) {
@@ -277,6 +302,7 @@ export async function start(ctx: any) {
   try {
     cleanupExpiredSessions()
     const sessionId = randomUUID()
+    const profile = requestedProfile(ctx)
     const discovery = await discoverXai()
     const codeVerifier = makeCodeVerifier()
     const state = randomUUID().replace(/-/g, '')
@@ -296,6 +322,7 @@ export async function start(ctx: any) {
     }).toString()}`
     sessions.set(sessionId, {
       id: sessionId,
+      profile,
       status: 'pending',
       authorizeUrl,
       redirectUri,
@@ -325,7 +352,7 @@ export async function poll(ctx: any) {
 
 export async function status(ctx: any) {
   try {
-    const auth = loadAuthJson(getActiveAuthPath())
+    const auth = loadAuthJson(authPathForProfile(requestedProfile(ctx)))
     const provider = auth.providers?.['xai-oauth']
     const pool = auth.credential_pool?.['xai-oauth']
     ctx.body = {

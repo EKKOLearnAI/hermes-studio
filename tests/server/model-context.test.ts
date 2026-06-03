@@ -109,6 +109,22 @@ describe('getModelContextLength', () => {
     expect(getModelContextLength()).toBe(1_050_000)
   })
 
+  it('prefers requested provider model context_length over top-level default context_length', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n  provider: openai-codex\n  context_length: 272000\n\nproviders:\n  qwen:\n    name: Qwen\n    default_model: qwen3.6-plus\n    models:\n      qwen3.6-plus:\n        context_length: 1048576\n`)
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength({ provider: 'qwen', model: 'qwen3.6-plus' })).toBe(1_048_576)
+  })
+
+  it('uses provider-level context_length when the requested model belongs to that provider', async () => {
+    writeConfig(`model:\n  default: gpt-5.5\n  provider: openai-codex\n  context_length: 272000\n\nproviders:\n  qwen:\n    name: Qwen\n    default_model: qwen3.6-plus\n    models:\n      - qwen3.6-plus\n    context_length: 1048576\n`)
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength({ provider: 'qwen', model: 'qwen3.6-plus' })).toBe(1_048_576)
+  })
+
   it('keeps legacy model-name cache lookup when no provider is configured', async () => {
     writeConfig(`model:\n  default: gpt-5.5\n`)
     writeModelsCache({

@@ -627,13 +627,9 @@ function handleSpeechToggle() {
 
   // Web Speech API 模式
   if (voiceSettings.provider.value === 'webspeech') {
-    const text = speech.extractReadableText(content)
-    if (text) {
-      speech.stop(false)
-      speech.speakViaBrowser(props.message.id, text, {
-        voiceName: voiceSettings.webspeechVoice.value || undefined,
-      })
-    }
+    speech.toggleBrowser(props.message.id, content, {
+      voiceName: voiceSettings.webspeechVoice.value || undefined,
+    })
     return
   }
 

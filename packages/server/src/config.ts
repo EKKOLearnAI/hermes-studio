@@ -14,6 +14,7 @@ import { homedir } from 'os'
  * - HERMES_WEBUI_STATE_DIR: Compatibility alias for HERMES_WEB_UI_HOME.
  *   Default: join(homedir(), '.hermes-web-ui').
  * - UPLOAD_DIR: Upload directory override. Default: join(HERMES_WEB_UI_HOME, 'upload').
+ * - dataDir: Development-only internal Web UI runtime data directory.
  *
  * Auth:
  * - AUTH_TOKEN: Explicit bearer token. If unset, Web UI stores an auto-generated token under HERMES_WEB_UI_HOME.
@@ -39,6 +40,10 @@ export function getListenHost(env: Record<string, string | undefined> = process.
 export function getWebUiHome(env: Record<string, string | undefined> = process.env): string {
   const appHome = env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()
   return appHome ? resolve(appHome) : join(homedir(), '.hermes-web-ui')
+}
+
+export function shouldCreateWebUiDataDir(env: Record<string, string | undefined> = process.env): boolean {
+  return env.NODE_ENV !== 'production'
 }
 
 const appHome = getWebUiHome()

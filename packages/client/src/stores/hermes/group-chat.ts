@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getApiKey } from '@/api/client'
+import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { Attachment, ContentBlock } from './chat'
 import {
@@ -130,6 +131,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const loadedMessageCount = ref(0)
     const hasMoreBefore = ref(false)
     const isLoadingOlderMessages = ref(false)
+const currentUserAvatar = ref('')
 
     function resetMessagePaging() {
         totalMessages.value = 0
@@ -216,10 +218,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     })
 
     // ─── Connection ────────────────────────────────────────
-    function connect() {
+    async function connect() {
+        let authUserId: number | undefined
+        try {
+            const user = await fetchCurrentUser()
+            authUserId = user.id
+            currentUserAvatar.value = user.avatar || ''
+        } catch { /* non-critical: avatar fallback handles missing id */ }
         const socket = connectGroupChat({
             userId: userId.value,
             userName: userName.value || undefined,
+            authUserId,
         })
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })
 
@@ -775,6 +784,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         isLoadingOlderMessages,
         userId,
         userName,
+        currentUserAvatar,
         // Computed
         sortedMessages,
         memberNames,

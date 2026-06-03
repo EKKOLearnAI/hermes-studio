@@ -106,6 +106,136 @@ print(json.dumps({
   })
 })
 
+describe('agent bridge Windows desktop subprocess defaults', () => {
+  it('adds CREATE_NO_WINDOW to sync and async nested subprocesses without replacing existing flags', async () => {
+    const result = await runBridgeProbe(String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+original_os_name = bridge.os.name
+original_popen = bridge.subprocess.Popen
+original_async_exec = bridge.asyncio.create_subprocess_exec
+original_async_shell = bridge.asyncio.create_subprocess_shell
+original_create_no_window = getattr(bridge.subprocess, "CREATE_NO_WINDOW", None)
+original_startupinfo = getattr(bridge.subprocess, "STARTUPINFO", None)
+original_startf = getattr(bridge.subprocess, "STARTF_USESHOWWINDOW", None)
+original_sw_hide = getattr(bridge.subprocess, "SW_HIDE", None)
+original_installed = getattr(bridge.subprocess, "_hermes_hidden_defaults_installed", None)
+
+class FakePopen:
+    calls = []
+
+    def __init__(self, *args, **kwargs):
+        FakePopen.calls.append({"args": args, "kwargs": kwargs})
+
+async_calls = []
+
+async def fake_create_subprocess_exec(*args, **kwargs):
+    async_calls.append({"kind": "exec", "args": args, "kwargs": kwargs})
+    return {"kind": "exec"}
+
+async def fake_create_subprocess_shell(*args, **kwargs):
+    async_calls.append({"kind": "shell", "args": args, "kwargs": kwargs})
+    return {"kind": "shell"}
+
+class FakeStartupInfo:
+    def __init__(self):
+        self.dwFlags = 0
+        self.wShowWindow = None
+
+try:
+    bridge.os.name = "nt"
+    bridge.os.environ["HERMES_DESKTOP"] = "true"
+    bridge.subprocess.Popen = FakePopen
+    bridge.asyncio.create_subprocess_exec = fake_create_subprocess_exec
+    bridge.asyncio.create_subprocess_shell = fake_create_subprocess_shell
+    bridge.subprocess.CREATE_NO_WINDOW = 0x08000000
+    bridge.subprocess.STARTUPINFO = FakeStartupInfo
+    bridge.subprocess.STARTF_USESHOWWINDOW = 0x00000001
+    bridge.subprocess.SW_HIDE = 0
+    if hasattr(bridge.subprocess, "_hermes_hidden_defaults_installed"):
+        delattr(bridge.subprocess, "_hermes_hidden_defaults_installed")
+
+    bridge._install_windows_hidden_subprocess_defaults()
+    bridge.subprocess.Popen(["git", "status"], creationflags=0x00000200)
+    flags = FakePopen.calls[0]["kwargs"]["creationflags"]
+    startupinfo = FakePopen.calls[0]["kwargs"]["startupinfo"]
+    bridge.asyncio.run(bridge.asyncio.create_subprocess_exec("git", "status", creationflags=0x00000400))
+    bridge.asyncio.run(bridge.asyncio.create_subprocess_shell("git status"))
+    async_exec_flags = async_calls[0]["kwargs"]["creationflags"]
+    async_exec_startupinfo = async_calls[0]["kwargs"]["startupinfo"]
+    async_shell_flags = async_calls[1]["kwargs"]["creationflags"]
+    async_shell_startupinfo = async_calls[1]["kwargs"]["startupinfo"]
+finally:
+    bridge.os.name = original_os_name
+    bridge.subprocess.Popen = original_popen
+    bridge.asyncio.create_subprocess_exec = original_async_exec
+    bridge.asyncio.create_subprocess_shell = original_async_shell
+    if original_create_no_window is None:
+        try:
+            delattr(bridge.subprocess, "CREATE_NO_WINDOW")
+        except AttributeError:
+            pass
+    else:
+        bridge.subprocess.CREATE_NO_WINDOW = original_create_no_window
+    for name, original in [
+        ("STARTUPINFO", original_startupinfo),
+        ("STARTF_USESHOWWINDOW", original_startf),
+        ("SW_HIDE", original_sw_hide),
+    ]:
+        if original is None:
+            try:
+                delattr(bridge.subprocess, name)
+            except AttributeError:
+                pass
+        else:
+            setattr(bridge.subprocess, name, original)
+    if original_installed is None:
+        try:
+            delattr(bridge.subprocess, "_hermes_hidden_defaults_installed")
+        except AttributeError:
+            pass
+    else:
+        bridge.subprocess._hermes_hidden_defaults_installed = original_installed
+
+print(json.dumps({
+    "flags": flags,
+    "has_create_no_window": bool(flags & 0x08000000),
+    "kept_existing_flag": bool(flags & 0x00000200),
+    "startupinfo_hidden": bool(startupinfo.dwFlags & 0x00000001) and startupinfo.wShowWindow == 0,
+    "async_exec_flags": async_exec_flags,
+    "async_exec_has_create_no_window": bool(async_exec_flags & 0x08000000),
+    "async_exec_kept_existing_flag": bool(async_exec_flags & 0x00000400),
+    "async_exec_startupinfo_hidden": bool(async_exec_startupinfo.dwFlags & 0x00000001) and async_exec_startupinfo.wShowWindow == 0,
+    "async_shell_flags": async_shell_flags,
+    "async_shell_has_create_no_window": bool(async_shell_flags & 0x08000000),
+    "async_shell_startupinfo_hidden": bool(async_shell_startupinfo.dwFlags & 0x00000001) and async_shell_startupinfo.wShowWindow == 0,
+}))
+`)
+
+    expect(result).toEqual({
+      flags: 0x08000200,
+      has_create_no_window: true,
+      kept_existing_flag: true,
+      startupinfo_hidden: true,
+      async_exec_flags: 0x08000400,
+      async_exec_has_create_no_window: true,
+      async_exec_kept_existing_flag: true,
+      async_exec_startupinfo_hidden: true,
+      async_shell_flags: 0x08000000,
+      async_shell_has_create_no_window: true,
+      async_shell_startupinfo_hidden: true,
+    })
+  })
+})
+
 describe('agent bridge profile environment', () => {
   it('runs agent calls with the requested profile HERMES_HOME and restores the bridge home', async () => {
     const profileHome = join(tempDir, 'profiles', 'work')
@@ -387,6 +517,187 @@ print(json.dumps({
       mcp_tool_count: 1,
       restored_home: tempDir,
     })
+  })
+
+  it('forwards agent turn-boundary callbacks without duplicating streamed text', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import time
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        self.tools = []
+        self.stream_delta_callback = kwargs.get("stream_delta_callback")
+
+    def run_conversation(self, message, **kwargs):
+        stream_callback = kwargs.get("stream_callback")
+        if stream_callback:
+            stream_callback("hello")
+        if self.stream_delta_callback:
+            self.stream_delta_callback("ignored-duplicate-text")
+            self.stream_delta_callback(None)
+        return {
+            "final_response": "hello",
+            "messages": [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": "hello"},
+            ],
+        }
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: []
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+record = pool.start_chat("session-1", "hi", profile="default")
+deadline = time.time() + 2
+while record.status == "running" and time.time() < deadline:
+    time.sleep(0.01)
+
+output = pool.get_output(record.run_id)
+print(json.dumps({
+    "status": output["status"],
+    "delta": output["delta"],
+    "events": output["events"],
+}))
+`)
+
+    expect(result.status).toBe('complete')
+    expect(result.delta).toBe('hello')
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'stream.delta', delta: 'hello' }),
+      expect.objectContaining({ event: 'turn.boundary' }),
+    ]))
+    expect(result.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'stream.delta', delta: 'ignored-duplicate-text' }),
+    ]))
+  })
+
+  it('reloads command allowlist for bridge agent creation and runs', async () => {
+    await writeFile(join(tempDir, 'config.yaml'), 'model:\n  default: fake-model\n', 'utf-8')
+
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import time
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+root = os.environ["TEST_HERMES_HOME"]
+os.environ["HERMES_HOME"] = root
+os.environ["HERMES_AGENT_BRIDGE_BASE_HOME"] = root
+
+allowlist_homes = []
+tools_pkg = types.ModuleType("tools")
+tools_pkg.__path__ = []
+sys.modules["tools"] = tools_pkg
+
+approval = types.ModuleType("tools.approval")
+def load_permanent_allowlist():
+    allowlist_homes.append(os.environ.get("HERMES_HOME", ""))
+    return {"script execution via -e/-c flag"}
+def set_current_session_key(session_key):
+    return None
+def register_gateway_notify(session_key, callback):
+    pass
+def reset_current_session_key(token):
+    pass
+def unregister_gateway_notify(session_key):
+    pass
+approval.load_permanent_allowlist = load_permanent_allowlist
+approval.set_current_session_key = set_current_session_key
+approval.register_gateway_notify = register_gateway_notify
+approval.reset_current_session_key = reset_current_session_key
+approval.unregister_gateway_notify = unregister_gateway_notify
+sys.modules["tools.approval"] = approval
+
+terminal_tool = types.ModuleType("tools.terminal_tool")
+terminal_tool.set_approval_callback = lambda callback: None
+sys.modules["tools.terminal_tool"] = terminal_tool
+
+run_agent = types.ModuleType("run_agent")
+class FakeAgent:
+    def __init__(self, **kwargs):
+        self.tools = []
+
+    def run_conversation(self, message, **kwargs):
+        stream_callback = kwargs.get("stream_callback")
+        if stream_callback:
+            stream_callback("ok")
+        return {
+            "final_response": "ok",
+            "messages": [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": "ok"},
+            ],
+        }
+run_agent.AIAgent = FakeAgent
+sys.modules["run_agent"] = run_agent
+
+class FakeDbHolder:
+    error = None
+    def get_for_profile(self, profile):
+        return None
+
+bridge._ensure_agent_imports = lambda: None
+bridge._load_cfg = lambda: {"model": {"default": "fake-model"}, "agent": {}}
+bridge._resolve_runtime = lambda model, provider=None: {"provider": "fake"}
+bridge._load_enabled_toolsets = lambda: []
+bridge._discover_bridge_mcp_tools = lambda: []
+bridge._load_reasoning_config = lambda: None
+bridge._load_service_tier = lambda: None
+
+pool = bridge.AgentPool()
+pool._db = FakeDbHolder()
+record = pool.start_chat("session-allowlist", "hi", profile="default")
+deadline = time.time() + 2
+while record.status == "running" and time.time() < deadline:
+    time.sleep(0.01)
+
+print(json.dumps({
+    "status": record.status,
+    "allowlist_homes": allowlist_homes,
+}))
+`)
+
+    const expectedHome = await realpath(tempDir)
+    expect(result.status).toBe('complete')
+    expect(result.allowlist_homes.length).toBeGreaterThanOrEqual(2)
+    expect(result.allowlist_homes.every((home: string) => home === expectedHome)).toBe(true)
   })
 
   it('handles Windows netstat output decode failures without crashing', async () => {

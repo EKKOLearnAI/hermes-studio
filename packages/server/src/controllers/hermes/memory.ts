@@ -28,7 +28,7 @@ export async function get(ctx: any) {
 
 export async function save(ctx: any) {
   const { section, content } = ctx.request.body as { section: string; content: string }
-  if (!section || !content) {
+  if (!section || content === undefined || content === null) {
     ctx.status = 400
     ctx.body = { error: 'Missing section or content' }
     return

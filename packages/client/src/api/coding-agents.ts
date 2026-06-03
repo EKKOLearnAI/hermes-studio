@@ -24,6 +24,7 @@ export interface CodingAgentMutationResult extends CodingAgentsStatus {
   success: boolean
   tool: CodingAgentToolStatus
   message?: string
+  code?: string
 }
 
 export interface CodingAgentConfigFileContent {

@@ -66,6 +66,10 @@ describe('gateway autostart status parsing', () => {
     }
   })
 
+  it('uses managed gateway autostart on Windows', () => {
+    expect(shouldUseManagedGatewayRunForAutostart('win32')).toBe(true)
+  })
+
   it('detects managed gateway state files with a live pid', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hermes-gateway-state-'))
     try {

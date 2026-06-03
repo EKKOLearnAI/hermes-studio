@@ -1,5 +1,16 @@
+<script lang="ts">
+type SessionScrollSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasNearBottom: boolean;
+}
+
+const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
+</script>
+
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
@@ -14,7 +25,7 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
-const pendingBottomSessionId = ref<string | null>(null);
+const pendingInitialScrollSessionId = ref<string | null>(null);
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -101,6 +112,35 @@ function scrollToAnchor(messageId: string, anchorId: string) {
   listRef.value?.scrollToAnchor(messageId, anchorId);
 }
 
+function saveSessionScrollPosition(sessionId: string | null | undefined) {
+  if (!sessionId) return;
+  const snapshot = listRef.value?.captureViewportPosition() ?? null;
+  if (snapshot) sessionScrollPositions.set(sessionId, snapshot);
+}
+
+function applyInitialSessionScroll(sessionId: string) {
+  if (chatStore.activeSessionId !== sessionId) return;
+  if (chatStore.focusMessageId) {
+    pendingInitialScrollSessionId.value = null;
+    scrollToMessage(chatStore.focusMessageId);
+    return;
+  }
+
+  const snapshot = sessionScrollPositions.get(sessionId);
+  if (snapshot) {
+    pendingInitialScrollSessionId.value = null;
+    if (snapshot.wasNearBottom) {
+      scrollToBottom();
+    } else {
+      listRef.value?.restoreViewportPosition(snapshot);
+    }
+    return;
+  }
+
+  scrollToBottom();
+  if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
+}
+
 async function handleTopReach() {
   const session = chatStore.activeSession;
   if (!session?.hasMoreBefore || session.isLoadingOlderMessages) return;
@@ -111,17 +151,14 @@ async function handleTopReach() {
   listRef.value?.restoreScrollPosition(snapshot);
 }
 
-// Scroll to bottom on session switch
 watch(
   () => chatStore.activeSessionId,
-  (id) => {
+  async (id, previousId) => {
+    saveSessionScrollPosition(previousId);
     if (!id) return;
-    pendingBottomSessionId.value = id;
-    if (chatStore.focusMessageId) {
-      scrollToMessage(chatStore.focusMessageId);
-      return;
-    }
-    scrollToBottom();
+    pendingInitialScrollSessionId.value = id;
+    await nextTick();
+    applyInitialSessionScroll(id);
   },
   { immediate: true },
 );
@@ -129,13 +166,8 @@ watch(
 watch(
   () => [chatStore.activeSessionId, chatStore.messages.length] as const,
   ([id, length]) => {
-    if (!id || pendingBottomSessionId.value !== id || length === 0) return;
-    pendingBottomSessionId.value = null;
-    if (chatStore.focusMessageId) {
-      scrollToMessage(chatStore.focusMessageId);
-      return;
-    }
-    scrollToBottom();
+    if (!id || pendingInitialScrollSessionId.value !== id || length === 0) return;
+    applyInitialSessionScroll(id);
   },
   { flush: "post" },
 );
@@ -160,6 +192,7 @@ watch(
 watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
+    if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
     if (chatStore.focusMessageId) {
       scrollToMessage(chatStore.focusMessageId);
       return;
@@ -169,12 +202,17 @@ watch(
   },
 );
 watch(currentToolCalls, () => {
+  if (pendingInitialScrollSessionId.value === chatStore.activeSessionId) return;
   if (chatStore.focusMessageId) {
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
   if (!isNearBottom()) return;
   scrollToBottom();
+});
+
+onBeforeUnmount(() => {
+  saveSessionScrollPosition(chatStore.activeSessionId);
 });
 
 defineExpose({
@@ -186,6 +224,7 @@ defineExpose({
 
 <template>
   <VirtualMessageList
+    :key="chatStore.activeSessionId || 'chat-empty'"
     ref="listRef"
     :messages="displayMessages"
     @top-reach="handleTopReach"

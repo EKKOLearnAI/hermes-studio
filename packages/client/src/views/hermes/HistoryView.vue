@@ -283,6 +283,8 @@ async function syncRouteSession() {
   const sessionProfile = routeProfile.value || findHistorySession(sessionId)?.profile || null
   const currentProfile = historySession.value?.profile || null
   if (historySessionId.value !== sessionId || currentProfile !== sessionProfile) {
+    historySessionId.value = sessionId
+    historySession.value = null
     await loadHistorySession(sessionId, sessionProfile)
   }
 }

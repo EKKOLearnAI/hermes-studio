@@ -4,11 +4,12 @@ import yaml from 'js-yaml'
 import {
   NAlert, NButton, NEmpty, NInput, NModal,
   NSpin, NRadioGroup, NRadioButton, useMessage,
+  NCheckbox, NScrollbar,
 } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import McpServerCard from '@/components/hermes/mcp/McpServerCard.vue'
 import {
-  fetchMcpServers, mcpServerAdd, mcpServerRemove,
+  fetchMcpServers, fetchMcpTools, mcpServerAdd, mcpServerRemove,
   mcpServerUpdate, mcpServerTest, mcpReload,
   type McpServerInfo, type McpServerConfig,
 } from '@/api/hermes/mcp'
@@ -28,6 +29,14 @@ const jsonText = ref('')
 const jsonError = ref('')
 const saving = ref(false)
 const inputMode = ref<'json' | 'yaml'>('json')
+
+// Tools visibility modal
+const showToolsModal = ref(false)
+const toolsModalServer = ref<McpServerInfo | null>(null)
+const toolsMode = ref<'all' | 'include' | 'exclude'>('all')
+const selectedTools = ref<string[]>([])
+const allTools = ref<string[]>([])
+const fetchingTools = ref(false)
 
 const jsonPlaceholder = '{\n  "my-server": {\n    "command": "npx",\n    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]\n  }\n}'
 const yamlPlaceholder = 'my-server:\n  command: npx\n  args:\n    - "-y"\n    - "@modelcontextprotocol/server-filesystem"\n    - "/path"'
@@ -195,15 +204,15 @@ async function loadServers() {
   try {
     const data = await fetchMcpServers()
     servers.value = data.servers ?? []
-    // Populate toolsByServer from embedded tool_details
+    // Populate toolsByServer from embedded tool_details, including empty filtered results.
+    const nextToolsByServer: Record<string, {name: string, description: string}[]> = {}
     for (const s of servers.value) {
-      if (s.tool_details?.length) {
-        toolsByServer.value[s.name] = s.tool_details.map(t => ({
-          name: t.name,
-          description: t.description || '',
-        }))
-      }
+      nextToolsByServer[s.name] = (s.tool_details || []).map(t => ({
+        name: t.name,
+        description: t.description || '',
+      }))
     }
+    toolsByServer.value = nextToolsByServer
     // Auto-retry with exponential backoff if enabled servers are still disconnected
     const hasPending = servers.value.some(s => s.raw_config.enabled !== false && !s.connected)
     if (hasPending && _autoRetryCount < MAX_AUTO_RETRIES) {
@@ -368,6 +377,113 @@ async function handleTest(server: McpServerInfo) {
 
 
 void loadServers()
+
+function openToolsModal(server: McpServerInfo) {
+  toolsModalServer.value = server
+  // Load mode from config
+  const tools = server.raw_config.tools
+  if (!tools || (!tools.include && !tools.exclude)) {
+    toolsMode.value = 'all'
+    selectedTools.value = [...server.tool_names]
+  } else if (tools.include) {
+    toolsMode.value = 'include'
+    selectedTools.value = [...tools.include]
+  } else {
+    toolsMode.value = 'exclude'
+    selectedTools.value = [...(tools.exclude || [])]
+  }
+  allTools.value = [...server.tool_names]
+  showToolsModal.value = true
+}
+
+async function fetchToolsList() {
+  if (!toolsModalServer.value) return
+  fetchingTools.value = true
+  try {
+    const res = await fetchMcpTools(toolsModalServer.value.name, true)
+    if (res.ok && res.results?.length) {
+      const serverResult = res.results.find((r: { server: string }) => r.server === toolsModalServer.value!.name)
+      if (serverResult?.tools) {
+        allTools.value = serverResult.tools.map((t: { name: string }) => t.name)
+        // Reset selection to current mode
+        if (toolsMode.value === 'all') {
+          selectedTools.value = [...allTools.value]
+        }
+      }
+    }
+  } catch (err: any) {
+    message.error(err.message || t('mcp.fetchToolsFailed'))
+  } finally {
+    fetchingTools.value = false
+  }
+}
+
+function handleToolsModeChange(mode: 'all' | 'include' | 'exclude') {
+  toolsMode.value = mode
+  if (mode === 'all') {
+    selectedTools.value = [...allTools.value]
+  } else {
+    // Load from config for include/exclude mode
+    const server = toolsModalServer.value
+    if (server) {
+      const tools = server.raw_config.tools
+      if (mode === 'include' && tools?.include) {
+        selectedTools.value = [...tools.include]
+      } else if (mode === 'exclude' && tools?.exclude) {
+        selectedTools.value = [...tools.exclude]
+      } else {
+        selectedTools.value = []
+      }
+    }
+  }
+}
+
+function handleToolCheck(tool: string, checked: boolean) {
+  if (checked) {
+    if (!selectedTools.value.includes(tool)) {
+      selectedTools.value.push(tool)
+    }
+  } else {
+    selectedTools.value = selectedTools.value.filter(t => t !== tool)
+  }
+}
+
+function selectAllTools() {
+  selectedTools.value = [...allTools.value]
+}
+
+function clearSelectedTools() {
+  selectedTools.value = []
+}
+
+async function saveToolsVisibility() {
+  const server = toolsModalServer.value
+  if (!server) return
+
+  const config = { ...server.raw_config }
+
+  if (toolsMode.value === 'all') {
+    delete config.tools
+  } else if (toolsMode.value === 'include') {
+    config.tools = { include: [...selectedTools.value] }
+  } else {
+    config.tools = { exclude: [...selectedTools.value] }
+  }
+
+  try {
+    const res = await mcpServerUpdate(server.name, config)
+    if (res.ok) {
+      message.success(t('mcp.toolsVisibilitySaved'))
+      showToolsModal.value = false
+      await loadServers()
+      scheduleReload()
+    } else {
+      message.error(res.error || t('mcp.updateFailed'))
+    }
+  } catch (err: any) {
+    message.error(err.message || t('mcp.updateFailed'))
+  }
+}
 </script>
 
 <template>
@@ -435,6 +551,7 @@ void loadServers()
             @reload="handleReload"
             @remove="handleRemove"
             @toggle-enabled="handleToggleEnabled"
+            @manage-tools="openToolsModal"
           />
         </div>
         <NEmpty v-else-if="!loading" :description="t('mcp.empty')" />
@@ -463,6 +580,67 @@ void loadServers()
         <NButton type="primary" :loading="saving" @click="saveServer">
           {{ modalMode === 'add' ? t('mcp.add') : t('mcp.save') }}
         </NButton>
+      </div>
+    </NModal>
+
+    <!-- Tools Visibility Modal -->
+    <NModal v-model:show="showToolsModal" :title="t('mcp.toolsVisibilityTitle')" preset="card" :style="{ width: 'min(480px, calc(100vw - 32px))' }">
+      <div v-if="toolsModalServer" class="tools-modal-content">
+        <div class="tools-modal-header">
+          <span class="server-name-label">{{ toolsModalServer.name }}</span>
+          <NButton size="small" :loading="fetchingTools" @click="fetchToolsList">
+            {{ t('mcp.fetchTools') }}
+          </NButton>
+        </div>
+
+        <div class="tools-mode-selector">
+          <span class="mode-label">{{ t('mcp.toolsMode') }}</span>
+          <NRadioGroup v-model:value="toolsMode" size="small" @update:value="handleToolsModeChange">
+            <NRadioButton value="all">{{ t('mcp.toolsModeAll') }}</NRadioButton>
+            <NRadioButton value="include">{{ t('mcp.toolsModeInclude') }}</NRadioButton>
+            <NRadioButton value="exclude">{{ t('mcp.toolsModeExclude') }}</NRadioButton>
+          </NRadioGroup>
+        </div>
+
+        <div class="tools-list-container">
+          <div class="tools-list-header">
+            <span>{{ t('mcp.toolsListHeader') }}</span>
+            <div v-if="toolsMode !== 'all'" class="tools-list-actions">
+              <NButton size="tiny" quaternary @click="selectAllTools">
+                {{ toolsMode === 'exclude' ? t('mcp.toolsExcludeAll') : t('mcp.toolsSelectAll') }}
+              </NButton>
+              <NButton size="tiny" quaternary @click="clearSelectedTools">
+                {{ toolsMode === 'exclude' ? t('mcp.toolsClearExcluded') : t('mcp.toolsClearSelection') }}
+              </NButton>
+            </div>
+          </div>
+          <NScrollbar style="max-height: 300px;">
+            <div v-if="allTools.length" class="tools-checkbox-list">
+              <div v-for="tool in allTools" :key="tool" class="tool-checkbox-item" :class="{ disabled: toolsMode === 'all' }">
+                <NCheckbox
+                  :checked="selectedTools.includes(tool)"
+                  :disabled="toolsMode === 'all'"
+                  @update:checked="(val: boolean) => handleToolCheck(tool, val)"
+                />
+                <span class="tool-name" :title="tool">{{ tool }}</span>
+              </div>
+            </div>
+            <div v-else class="tools-empty">
+              <span class="muted">{{ t('mcp.toolsEmpty') }}</span>
+            </div>
+          </NScrollbar>
+        </div>
+
+        <div class="tools-summary">
+          <span v-if="toolsMode === 'all'">{{ t('mcp.toolsSummaryAll', { count: allTools.length }) }}</span>
+          <span v-else-if="toolsMode === 'include'">{{ t('mcp.toolsSummaryInclude', { count: selectedTools.length, total: allTools.length }) }}</span>
+          <span v-else>{{ t('mcp.toolsSummaryExclude', { count: selectedTools.length, total: allTools.length }) }}</span>
+        </div>
+
+        <div class="modal-actions">
+          <NButton @click="showToolsModal = false">{{ t('mcp.cancel') }}</NButton>
+          <NButton type="primary" @click="saveToolsVisibility">{{ t('mcp.save') }}</NButton>
+        </div>
       </div>
     </NModal>
   </div>
@@ -622,6 +800,112 @@ void loadServers()
 
   .servers-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+.tools-modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tools-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.server-name-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.tools-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mode-label {
+  font-size: 13px;
+  color: $text-muted;
+  white-space: nowrap;
+}
+
+.tools-list-container {
+  border: 1px solid $border-color;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tools-list-header {
+  padding: 10px 12px;
+  background: $bg-secondary;
+  font-size: 12px;
+  font-weight: 600;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tools-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.tools-checkbox-list {
+  padding: 8px 0;
+}
+
+.tool-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  transition: background 0.15s;
+
+  &:hover {
+    background: $bg-secondary;
+  }
+
+  &.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.tool-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools-empty {
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.tools-summary {
+  font-size: 12px;
+  color: $text-muted;
+  text-align: center;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .tools-mode-selector {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

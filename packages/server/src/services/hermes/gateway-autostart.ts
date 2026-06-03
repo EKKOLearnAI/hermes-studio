@@ -52,10 +52,11 @@ export function shouldUseManagedGatewayRun(): boolean {
     process.platform === 'win32'
 }
 
-export function shouldUseManagedGatewayRunForAutostart(): boolean {
+export function shouldUseManagedGatewayRunForAutostart(platform: NodeJS.Platform = process.platform): boolean {
   return envFlagEnabled('HERMES_WEB_UI_MANAGED_GATEWAY') ||
     isDockerRuntime() ||
-    isTermuxRuntime()
+    isTermuxRuntime() ||
+    platform === 'win32'
 }
 
 export function gatewayStatusLooksRunning(output: string): boolean {

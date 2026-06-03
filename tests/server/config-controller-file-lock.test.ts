@@ -36,6 +36,7 @@ function makeCtx(body: unknown, profile?: string): any {
     request: { body },
     query: {},
     state: profile ? { profile: { name: profile } } : {},
+    get: vi.fn(() => ''),
     status: 200,
     body: undefined,
   }
@@ -204,5 +205,108 @@ describe('config controller locked file updates', () => {
     await getConfig(ctx)
     expect(ctx.body.platforms.telegram.token).toBe('new-research-token')
     expect(ctx.body.telegram.require_mention).toBe(true)
+  })
+
+  it('reads and replaces auxiliary model settings in the requested profile', async () => {
+    const researchDir = join(hermesHome, 'profiles', 'research')
+    await mkdir(researchDir, { recursive: true })
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'model:',
+      '  default: root-model',
+      'auxiliary:',
+      '  compression:',
+      '    provider: openrouter',
+      '    model: root-compressor',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(researchDir, 'config.yaml'), [
+      'model:',
+      '  default: research-model',
+      'auxiliary:',
+      '  vision:',
+      '    provider: main',
+      '  web_extract:',
+      '    provider: auto',
+      '    base_url: keep-visible-base-url',
+      '    api_key: keep-visible-api-key',
+      '',
+    ].join('\n'), 'utf-8')
+
+    const { getAuxiliaryModels, updateAuxiliaryModels } = await loadController()
+    const readCtx = makeCtx({})
+    readCtx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'research' : '')
+
+    await getAuxiliaryModels(readCtx)
+
+    expect(readCtx.body.auxiliary).toEqual({
+      vision: { provider: 'main' },
+      web_extract: {
+        provider: 'auto',
+        base_url: 'keep-visible-base-url',
+        api_key: 'keep-visible-api-key',
+      },
+    })
+    expect(readCtx.body.tasks.some((task: any) => task.key === 'compression' && task.default_timeout === 120)).toBe(true)
+    expect(readCtx.body.tasks.some((task: any) => task.key === 'vision' && task.default_download_timeout === 30)).toBe(true)
+
+    const writeCtx = makeCtx({
+      auxiliary: {
+        compression: {
+          provider: ' openrouter ',
+          model: ' google/gemini-3-flash-preview ',
+          timeout: 120.7,
+          download_timeout: 30,
+          extra_body: { temperature: 0 },
+          ignored: 'drop',
+        },
+        empty_task: {
+          provider: 'auto',
+          model: 'drop-model',
+          base_url: 'drop-base-url',
+          api_key: 'drop-api-key',
+          extra_body: { should: 'drop' },
+          timeout: 30,
+        },
+        blank_task: {
+          provider: '',
+          model: '',
+        },
+      },
+    })
+    writeCtx.get = vi.fn((name: string) => name.toLowerCase() === 'x-hermes-profile' ? 'research' : '')
+
+    await updateAuxiliaryModels(writeCtx)
+
+    expect(writeCtx.body).toEqual({
+      success: true,
+      auxiliary: {
+        compression: {
+          provider: 'openrouter',
+          model: 'google/gemini-3-flash-preview',
+          timeout: 120,
+          extra_body: { temperature: 0 },
+        },
+        empty_task: {
+          provider: 'auto',
+          timeout: 30,
+        },
+      },
+    })
+    const rootConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    const researchConfig = YAML.load(await readFile(join(researchDir, 'config.yaml'), 'utf-8')) as any
+    expect(rootConfig.auxiliary.compression.model).toBe('root-compressor')
+    expect(researchConfig.model.default).toBe('research-model')
+    expect(researchConfig.auxiliary).toEqual({
+      compression: {
+        provider: 'openrouter',
+        model: 'google/gemini-3-flash-preview',
+        timeout: 120,
+        extra_body: { temperature: 0 },
+      },
+      empty_task: {
+        provider: 'auto',
+        timeout: 30,
+      },
+    })
   })
 })
