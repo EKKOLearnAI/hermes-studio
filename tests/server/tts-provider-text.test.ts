@@ -18,6 +18,14 @@ describe('tts provider text helpers', () => {
     expect(cleanTtsText('Hello <img alt="a > b" src="x"/> world')).toBe('Hello world')
   })
 
+  it('removes html comments', () => {
+    expect(cleanTtsText('Hello <!--secret--> world')).toBe('Hello world')
+  })
+
+  it('removes html declarations', () => {
+    expect(cleanTtsText('Hello <!DOCTYPE html> world')).toBe('Hello world')
+  })
+
   it('removes custom self-closing tags', () => {
     expect(cleanTtsText('A <custom-tag/> B')).toBe('A B')
   })

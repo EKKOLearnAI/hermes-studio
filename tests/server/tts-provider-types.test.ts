@@ -1,6 +1,8 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import type {
+  MimoTtsProvider,
   MimoTtsProviderOptions,
+  OpenaiTtsProvider,
   OpenaiTtsProviderOptions,
   TtsProvider,
 } from '../../packages/server/src/services/hermes/tts-providers/types'
@@ -20,6 +22,7 @@ describe('tts provider type usability', () => {
     }
 
     expectTypeOf(provider).toEqualTypeOf<TtsProvider<OpenaiTtsProviderOptions>>()
+    expectTypeOf(provider).toEqualTypeOf<OpenaiTtsProvider>()
   })
 
   it('accepts Mimo provider options', () => {
@@ -36,5 +39,6 @@ describe('tts provider type usability', () => {
     }
 
     expectTypeOf(provider).toEqualTypeOf<TtsProvider<MimoTtsProviderOptions>>()
+    expectTypeOf(provider).toEqualTypeOf<MimoTtsProvider>()
   })
 })

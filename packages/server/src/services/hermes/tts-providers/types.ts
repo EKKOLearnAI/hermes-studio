@@ -41,3 +41,6 @@ export interface MimoTtsProviderOptions {
   voiceCloneDataUri?: string
   stylePrompt?: string
 }
+
+export type OpenaiTtsProvider = TtsProvider<OpenaiTtsProviderOptions>
+export type MimoTtsProvider = TtsProvider<MimoTtsProviderOptions>
