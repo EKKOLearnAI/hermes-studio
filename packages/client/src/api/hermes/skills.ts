@@ -12,6 +12,9 @@ export interface SkillInfo {
   useCount?: number
   viewCount?: number
   pinned?: boolean
+  /** External skills only — raw form of the configured external dir (e.g. `~/my_skills/...`),
+   *  used by the UI to group external skills by their source path. */
+  sourcePath?: string
 }
 
 export interface SkillCategory {
@@ -20,9 +23,20 @@ export interface SkillCategory {
   skills: SkillInfo[]
 }
 
+export interface ExternalDirEntry {
+  raw: string
+  expanded: string
+  exists: boolean
+  isDir: boolean
+}
+
 export interface SkillPaths {
   local: string
   external: string[]
+  /** Raw entries as written in `config.skills.external_dirs`, with existence
+   *  flags so the UI can grey-out paths that don't currently resolve.
+   *  Optional — older servers may not include it. */
+  externalRaw?: ExternalDirEntry[]
 }
 
 export interface SkillListResponse {
@@ -133,8 +147,22 @@ export async function pinSkillApi(name: string, pinned: boolean): Promise<void> 
   })
 }
 
-export async function deleteSkillApi(name: string): Promise<void> {
-  await request(`/api/hermes/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+export async function fetchExternalDirs(): Promise<ExternalDirEntry[]> {
+  const res = await request<{ dirs: ExternalDirEntry[] }>('/api/hermes/skills/external-dirs')
+  return res.dirs ?? []
+}
+
+export async function saveExternalDirs(dirs: string[]): Promise<void> {
+  await request('/api/hermes/skills/external-dirs', {
+    method: 'PUT',
+    body: JSON.stringify({ dirs }),
+  })
+}
+
+export async function deleteSkillApi(category: string, name: string): Promise<void> {
+  const c = encodeURIComponent(category)
+  const n = encodeURIComponent(name)
+  await request(`/api/hermes/skills/${c}/${n}`, { method: 'DELETE' })
 }
 
 /**

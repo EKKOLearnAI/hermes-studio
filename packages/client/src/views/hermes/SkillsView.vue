@@ -1,22 +1,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NInput, NButton, useMessage } from 'naive-ui'
+import { NInput, NButton } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
+import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
-import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo, type SkillPaths } from '@/api/hermes/skills'
+import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t, locale } = useI18n()
-const message = useMessage()
 const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
-const paths = ref<SkillPaths | null>(null)
 const loading = ref(false)
 const selectedCategory = ref('')
 const selectedSkill = ref('')
@@ -25,6 +24,7 @@ const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
 const recommendations = ref('')
 const showImportModal = ref(false)
+const showExternalDirsModal = ref(false)
 let mobileQuery: MediaQueryList | null = null
 let recommendationsRequestSeq = 0
 
@@ -68,7 +68,6 @@ async function loadSkills() {
     const data = await fetchSkills()
     categories.value = data.categories
     archived.value = data.archived
-    paths.value = data.paths ?? null
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {
@@ -128,13 +127,9 @@ function handleImported() {
   loadSkills()
 }
 
-async function copyPath(path: string) {
-  try {
-    await navigator.clipboard.writeText(path)
-    message.success(t('skills.pathCopied'))
-  } catch {
-    message.error(t('skills.pathCopyFailed'))
-  }
+function handleExternalDirsSaved() {
+  showExternalDirsModal.value = false
+  loadSkills()
 }
 
 function handlePinToggled(name: string, pinned: boolean) {
@@ -188,6 +183,15 @@ function handlePinToggled(name: string, pinned: boolean) {
           </template>
           {{ t('skills.import') }}
         </NButton>
+        <NButton size="small" @click="showExternalDirsModal = true">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </template>
+          {{ t('skills.externalDirs.manage') }}
+        </NButton>
         <NInput
           v-model:value="searchQuery"
           :placeholder="t('skills.searchPlaceholder')"
@@ -199,33 +203,14 @@ function handlePinToggled(name: string, pinned: boolean) {
     </header>
 
     <SkillImportModal v-if="showImportModal" @close="showImportModal = false" @saved="handleImported" />
+    <SkillExternalDirsModal v-if="showExternalDirsModal"
+      @close="showExternalDirsModal = false" @saved="handleExternalDirsSaved" />
 
     <div class="skills-content">
       <div v-if="loading && categories.length === 0" class="skills-loading">{{ t('common.loading') }}</div>
       <div v-else class="skills-layout">
           <div class="mobile-backdrop" :class="{ active: showSidebar }" @click="showSidebar = false" />
           <div v-if="showSidebar" class="skills-sidebar">
-            <div v-if="paths" class="skills-paths">
-              <div class="skills-paths-row" :title="paths.local" @click="copyPath(paths.local)">
-                <span class="path-label">{{ t('skills.path.local') }}</span>
-                <span class="path-value">{{ paths.local }}</span>
-                <svg class="path-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </div>
-              <div v-for="dir in paths.external" :key="dir" class="skills-paths-row external"
-                :title="dir" @click="copyPath(dir)">
-                <span class="path-label">{{ t('skills.path.external') }}</span>
-                <span class="path-value">{{ dir }}</span>
-                <svg class="path-copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              </div>
-            </div>
             <SkillList
               :categories="categories"
               :archived="archived"
@@ -375,66 +360,6 @@ function handlePinToggled(name: string, pinned: boolean) {
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
-}
-
-.skills-paths {
-  padding: 6px 8px;
-  border-bottom: 1px solid $border-color;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.skills-paths-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: $text-muted;
-  padding: 3px 6px;
-  border-radius: $radius-sm;
-  cursor: pointer;
-  transition: background $transition-fast, color $transition-fast;
-
-  &:hover {
-    background: rgba(var(--accent-primary-rgb), 0.06);
-    color: $text-secondary;
-
-    .path-copy-icon {
-      opacity: 1;
-    }
-  }
-
-  &.external .path-label {
-    color: #f59e0b;
-  }
-}
-
-.path-label {
-  flex-shrink: 0;
-  font-weight: 600;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: $text-secondary;
-}
-
-.path-value {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  direction: rtl;
-  text-align: left;
-}
-
-.path-copy-icon {
-  flex-shrink: 0;
-  opacity: 0.4;
-  transition: opacity $transition-fast;
 }
 
 .skills-main {
