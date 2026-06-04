@@ -13,7 +13,7 @@ export interface TtsSynthesisResult {
   provider: TtsProviderId
 }
 
-export interface TtsProvider<TOptions extends Record<string, unknown> = Record<string, unknown>> {
+export interface TtsProvider<TOptions extends object = Record<string, unknown>> {
   id: TtsProviderId
   synthesize(req: TtsSynthesisRequest, options: TOptions): Promise<TtsSynthesisResult>
 }

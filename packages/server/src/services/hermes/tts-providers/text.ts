@@ -10,11 +10,11 @@ const HTML_TAG_RE = /<\/?[a-zA-Z][\w:-]*(?:\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?\s*\
 export function cleanTtsText(content: string): string {
   if (!content) return ''
   return content
-    .replace(HIDDEN_REASONING_BLOCK_RE, '')
-    .replace(UNCLOSED_HIDDEN_REASONING_BLOCK_RE, '')
-    .replace(FENCED_CODE_BLOCK_RE, '')
-    .replace(UNCLOSED_FENCED_CODE_BLOCK_RE, '')
-    .replace(INLINE_CODE_RE, '')
+    .replace(HIDDEN_REASONING_BLOCK_RE, ' ')
+    .replace(UNCLOSED_HIDDEN_REASONING_BLOCK_RE, ' ')
+    .replace(FENCED_CODE_BLOCK_RE, ' ')
+    .replace(UNCLOSED_FENCED_CODE_BLOCK_RE, ' ')
+    .replace(INLINE_CODE_RE, ' ')
     .replace(HTML_TAG_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim()

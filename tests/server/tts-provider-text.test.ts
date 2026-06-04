@@ -26,6 +26,18 @@ describe('tts provider text helpers', () => {
     expect(cleanTtsText('Hello <think>secret</think> world')).toBe('Hello world')
   })
 
+  it('keeps words separated when think blocks are adjacent to text', () => {
+    expect(cleanTtsText('Hello<think>secret</think>world')).toBe('Hello world')
+  })
+
+  it('keeps words separated when fenced code blocks are adjacent to text', () => {
+    expect(cleanTtsText('Hello```ts\nx()\n```world')).toBe('Hello world')
+  })
+
+  it('keeps words separated when inline code is adjacent to text', () => {
+    expect(cleanTtsText('foo`code`bar')).toBe('foo bar')
+  })
+
   it('removes unclosed fenced code blocks', () => {
     expect(cleanTtsText('Hello ```ts\nconst x = 1')).toBe('Hello')
   })
