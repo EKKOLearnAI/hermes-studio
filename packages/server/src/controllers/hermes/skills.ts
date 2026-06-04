@@ -2,10 +2,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile, cp } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { createHash, randomBytes } from 'crypto'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-
-const execFileAsync = promisify(execFile)
+import AdmZip from 'adm-zip'
 import {
   readConfigYamlForProfile, updateConfigYamlForProfile,
   safeReadFile, extractDescription, listFilesRecursive,
@@ -34,6 +31,46 @@ function expandConfiguredPath(value: string): string {
   if (expandedEnv === '~') return homedir()
   if (expandedEnv.startsWith('~/')) return join(homedir(), expandedEnv.slice(2))
   return expandedEnv
+}
+
+/** Read `config.skills.external_dirs` verbatim (after trim, dropping empties),
+ *  preserving `~`/`$VAR` so the UI can show what the user typed. */
+function readRawExternalDirs(config: Record<string, any>): string[] {
+  const rawDirs = config.skills?.external_dirs
+  const entries = typeof rawDirs === 'string'
+    ? [rawDirs]
+    : Array.isArray(rawDirs)
+      ? rawDirs
+      : []
+  const out: string[] = []
+  for (const entry of entries) {
+    const trimmed = String(entry || '').trim()
+    if (trimmed) out.push(trimmed)
+  }
+  return out
+}
+
+interface ExternalDirEntryDto {
+  raw: string
+  expanded: string
+  exists: boolean
+  isDir: boolean
+}
+
+/** Read raw entries and stat each one. Order preserved. */
+async function describeRawExternalDirs(config: Record<string, any>): Promise<ExternalDirEntryDto[]> {
+  const rawEntries = readRawExternalDirs(config)
+  return Promise.all(rawEntries.map(async (raw) => {
+    const expanded = resolve(expandConfiguredPath(raw))
+    let exists = false
+    let isDir = false
+    try {
+      const info = await stat(expanded)
+      exists = true
+      isDir = info.isDirectory()
+    } catch { /* missing → exists=false */ }
+    return { raw, expanded, exists, isDir }
+  }))
 }
 
 async function resolveExternalSkillsDirs(config: Record<string, any>, localSkillsDir: string): Promise<string[]> {
@@ -318,7 +355,12 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
   return categories
 }
 
-async function scanExternalSkillsDir(skillsDir: string, disabledList: string[], usageStats: Map<string, UsageStats>) {
+async function scanExternalSkillsDir(
+  skillsDir: string,
+  disabledList: string[],
+  usageStats: Map<string, UsageStats>,
+  sourcePath: string,
+) {
   return scanSkillsDir(skillsDir, new Map(), new Set(), disabledList, usageStats).then(categories =>
     categories.map(category => ({
       ...category,
@@ -326,6 +368,7 @@ async function scanExternalSkillsDir(skillsDir: string, disabledList: string[], 
         ...skill,
         source: 'external' as SkillSource,
         modified: undefined,
+        sourcePath,
       })),
     })),
   )
@@ -384,8 +427,16 @@ export async function list(ctx: any) {
 
     // Scan all skills (supports both two-level and three-level directory structures)
     let categories = await scanSkillsDir(skillsDir, bundledManifest, hubNames, disabledList, usageStats)
+    // Map resolved → raw so we can attach the user-written path (e.g. ~/...) to
+    // each external skill — the SkillsView groups by this when the external
+    // filter is active.
+    const rawByResolved = new Map<string, string>()
+    for (const entry of await describeRawExternalDirs(config)) {
+      if (!rawByResolved.has(entry.expanded)) rawByResolved.set(entry.expanded, entry.raw)
+    }
     for (const externalDir of await resolveExternalSkillsDirs(config, skillsDir)) {
-      const externalCategories = await scanExternalSkillsDir(externalDir, disabledList, usageStats)
+      const sourcePath = rawByResolved.get(externalDir) || externalDir
+      const externalCategories = await scanExternalSkillsDir(externalDir, disabledList, usageStats, sourcePath)
       categories = mergeExternalCategories(categories, externalCategories)
     }
 
@@ -412,10 +463,11 @@ export async function list(ctx: any) {
     archived.sort((a: any, b: any) => a.name.localeCompare(b.name))
 
     const externalDirs = await resolveExternalSkillsDirs(config, skillsDir)
+    const externalRaw = await describeRawExternalDirs(config)
     ctx.body = {
       categories,
       archived,
-      paths: { local: skillsDir, external: externalDirs },
+      paths: { local: skillsDir, external: externalDirs, externalRaw },
     }
   } catch (err: any) {
     ctx.status = 500
@@ -432,6 +484,77 @@ export async function usageStats(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+  }
+}
+
+const MAX_EXTERNAL_DIR_LEN = 2048
+
+/** GET /api/hermes/skills/external-dirs — return the raw list with existence flags */
+export async function listExternalDirs(ctx: any) {
+  try {
+    const config = await readConfigYamlForProfile(requestedProfile(ctx))
+    ctx.body = { dirs: await describeRawExternalDirs(config) }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/** PUT /api/hermes/skills/external-dirs — replace the list verbatim. */
+export async function updateExternalDirs(ctx: any) {
+  const body = (ctx.request.body || {}) as { dirs?: unknown }
+  if (!Array.isArray(body.dirs)) {
+    ctx.status = 400
+    ctx.body = { error: 'dirs must be an array of strings' }
+    return
+  }
+  const cleaned: string[] = []
+  for (const entry of body.dirs) {
+    if (typeof entry !== 'string') {
+      ctx.status = 400
+      ctx.body = { error: 'dirs entries must be strings' }
+      return
+    }
+    if (entry.length > MAX_EXTERNAL_DIR_LEN) {
+      ctx.status = 400
+      ctx.body = { error: `Path too long (max ${MAX_EXTERNAL_DIR_LEN} chars)` }
+      return
+    }
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f]/.test(entry)) {
+      ctx.status = 400
+      ctx.body = { error: 'Path contains control characters' }
+      return
+    }
+    const trimmed = entry.trim()
+    if (trimmed) cleaned.push(trimmed)
+  }
+
+  // Dedupe verbatim (case-sensitive). Two different `~`/`$VAR` strings that
+  // resolve to the same dir are kept — the user wrote both intentionally.
+  const seen = new Set<string>()
+  const deduped: string[] = []
+  for (const entry of cleaned) {
+    if (seen.has(entry)) continue
+    seen.add(entry)
+    deduped.push(entry)
+  }
+
+  try {
+    await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
+      if (!config.skills) config.skills = {}
+      if (deduped.length === 0) {
+        delete config.skills.external_dirs
+      } else {
+        // Always normalise to array form even if the previous value was a string.
+        config.skills.external_dirs = deduped
+      }
+      return config
+    })
+    ctx.body = { success: true, dirs: deduped }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
   }
 }
 
@@ -610,10 +733,11 @@ function parsePart(part: Buffer): ParsedPart | null {
 }
 
 export async function deleteSkill(ctx: any) {
-  const name = String((ctx.params as any)?.name || '')
-  if (!isValidSkillName(name)) {
+  const category = String((ctx.params as any)?.category || '')
+  const name = String((ctx.params as any)?.skill || '')
+  if (!isValidSkillName(category) || !isValidSkillName(name)) {
     ctx.status = 400
-    ctx.body = { error: 'Invalid skill name' }
+    ctx.body = { error: 'Invalid category or skill name' }
     return
   }
 
@@ -629,19 +753,22 @@ export async function deleteSkill(ctx: any) {
       return
     }
 
-    const skillDir = await findSkillDirByName(skillsDir, name)
-    if (!skillDir) {
+    // Resolve via the same category-aware path used by list/listFiles/readFile_
+    // so two skills sharing a name in different categories don't collide.
+    // Skip `external_dirs` here — only the local profile dir is deletable.
+    const localSkillDir = await findSkillDirInRoot(skillsDir, category, name)
+    if (!localSkillDir) {
       ctx.status = 404
       ctx.body = { error: 'Skill not found' }
       return
     }
-    if (!isPathWithin(skillDir, skillsDir)) {
+    if (!isPathWithin(localSkillDir, skillsDir)) {
       ctx.status = 403
       ctx.body = { error: 'Access denied' }
       return
     }
 
-    await rm(skillDir, { recursive: true, force: true })
+    await rm(localSkillDir, { recursive: true, force: true })
 
     // Cleanup `disabled` list in profile config so the deleted name doesn't linger
     try {
@@ -738,25 +865,49 @@ export async function importSkill(ctx: any) {
   try {
     if (isSingleZip) {
       // ============ ZIP MODE ============
+      // Extract in pure Node (adm-zip) so the server doesn't depend on a system
+      // `unzip` binary — which is missing on Windows and on slim Linux images.
       const zipPart = filePartsAll[0]
       stagingDir = join(tmpdir(), `hermes-skill-import-${randomBytes(6).toString('hex')}`)
-      await mkdir(stagingDir, { recursive: true })
-
-      const zipPath = join(stagingDir, 'upload.zip')
       const extractDir = join(stagingDir, 'extracted')
-      await writeFile(zipPath, zipPart.data)
       await mkdir(extractDir, { recursive: true })
 
+      let zip: AdmZip
       try {
-        await execFileAsync('unzip', ['-o', '-q', zipPath, '-d', extractDir])
+        zip = new AdmZip(zipPart.data)
       } catch (err: any) {
-        if (err?.code === 'ENOENT') {
-          ctx.status = 500
-          ctx.body = { error: 'unzip command not found on server. Please use folder upload instead.' }
-          return
-        }
         ctx.status = 400
-        ctx.body = { error: `Failed to unzip archive: ${err.message || err}` }
+        ctx.body = { error: `Failed to read zip archive: ${err?.message || err}` }
+        return
+      }
+
+      try {
+        for (const entry of zip.getEntries()) {
+          // Normalise to forward slashes; adm-zip uses POSIX separators internally
+          // but be defensive.
+          const rel = entry.entryName.replace(/\\/g, '/')
+          if (!rel || rel.startsWith('/')) continue
+          // Skip macOS metadata and dotfile noise at the top level
+          const top = rel.split('/')[0]
+          if (top === '__MACOSX' || top.startsWith('.')) continue
+
+          const dest = resolve(join(extractDir, rel))
+          if (!isPathWithin(dest, extractDir)) {
+            ctx.status = 400
+            ctx.body = { error: `Path traversal detected in zip entry: ${rel}` }
+            return
+          }
+
+          if (entry.isDirectory) {
+            await mkdir(dest, { recursive: true })
+            continue
+          }
+          await mkdir(dirname(dest), { recursive: true })
+          await writeFile(dest, entry.getData())
+        }
+      } catch (err: any) {
+        ctx.status = 400
+        ctx.body = { error: `Failed to unzip archive: ${err?.message || err}` }
         return
       }
 
