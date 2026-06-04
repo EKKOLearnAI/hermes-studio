@@ -68,6 +68,11 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
+      path: '/hermes/quant-lab',
+      name: 'hermes.quantLab',
+      component: () => import('@/views/hermes/QuantLabView.vue'),
+    },
+    {
       path: '/hermes/skills-usage',
       name: 'hermes.skillsUsage',
       component: () => import('@/views/hermes/SkillsUsageView.vue'),

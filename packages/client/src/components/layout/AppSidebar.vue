@@ -275,6 +275,13 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('tools')" class="nav-group-items">
+          <RouteLinkItem v-if="hasRoute('hermes.quantLab')" class="nav-item" :to="{ name: 'hermes.quantLab' }" :active="selectedKey === 'hermes.quantLab'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="M7 15l4-4 3 3 5-7" />
+            </svg>
+            <span>Quant Lab</span>
+          </RouteLinkItem>
           <RouteLinkItem v-if="hasRoute('hermes.codingAgents')" class="nav-item" :to="{ name: 'hermes.codingAgents' }" :active="selectedKey === 'hermes.codingAgents'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="16 18 22 12 16 6" />

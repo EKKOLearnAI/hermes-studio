@@ -35,6 +35,7 @@ import { mediaRoutes } from './hermes/media'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
 import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 import { performanceMonitorRoutes } from './hermes/performance-monitor'
+import { quantLabRoutes } from './hermes/quant-lab'
 import { mcpRoutes } from './hermes/mcp'
 
 /**
@@ -81,6 +82,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(kanbanRoutes.routes())             // Must be before proxy
   app.use(mediaRoutes.routes())              // Must be before proxy
   app.use(performanceMonitorRoutes.routes())  // Must be before proxy
+  app.use(quantLabRoutes.routes())            // Must be before proxy
   app.use(mcpRoutes.routes())                   // MCP management
   app.use(proxyRoutes.routes())
 
