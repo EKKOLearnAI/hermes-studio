@@ -1,13 +1,12 @@
 import type { MimoTtsProviderOptions, MimoTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
+import { assertSafeTtsBaseUrl } from './url-safety'
 
 const MAX_VOICE_CLONE_AUDIO_BYTES = 10 * 1024 * 1024
 
 function normalizeBaseUrl(baseUrl: string): string {
   const url = new URL(baseUrl)
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('MiMo TTS baseUrl must use http or https')
-  }
+  assertSafeTtsBaseUrl(url, 'MiMo')
 
   return url.toString().replace(/\/+$/, '')
 }

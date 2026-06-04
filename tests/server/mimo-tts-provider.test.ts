@@ -142,17 +142,26 @@ describe('mimoTtsProvider', () => {
     expect(getHeader(init?.headers, 'Authorization')).toBe('Bearer secret')
   })
 
-  it('rejects invalid baseUrl protocols before fetch', async () => {
-    await expect(
-      mimoTtsProvider.synthesize(
-        { text: 'Hello' },
-        {
-          baseUrl: 'file:///tmp/x',
-          apiKey: 'secret',
-          model: 'mimo-v2.5-tts',
-        },
-      ),
-    ).rejects.toThrow(/http/i)
+  it('rejects unsafe baseUrl values before fetch', async () => {
+    for (const baseUrl of [
+      'file:///tmp/tts',
+      'http://localhost:8000/v1',
+      'http://127.0.0.1:8000/v1',
+      'http://[::1]:8000/v1',
+      'http://169.254.169.254/latest',
+      'https://user:pass@mimo.example.com/v1',
+    ]) {
+      await expect(
+        mimoTtsProvider.synthesize(
+          { text: 'Hello' },
+          {
+            baseUrl,
+            apiKey: 'secret',
+            model: 'mimo-v2.5-tts',
+          },
+        ),
+      ).rejects.toThrow(/MiMo TTS baseUrl/)
+    }
 
     expect(mockFetch).not.toHaveBeenCalled()
   })

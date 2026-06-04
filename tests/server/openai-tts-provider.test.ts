@@ -193,15 +193,22 @@ describe('openaiTtsProvider', () => {
     expect(url).toBe('https://api.example.com/v1/audio/speech?api-version=2024-01-01')
   })
 
-  it('rejects invalid baseUrl protocols before fetch', async () => {
-    await expect(
-      openaiTtsProvider.synthesize(
-        { text: 'Hello' },
-        {
-          baseUrl: 'file:///tmp/tts',
-        },
-      ),
-    ).rejects.toThrow(/http/i)
+  it('rejects unsafe baseUrl values before fetch', async () => {
+    for (const baseUrl of [
+      'file:///tmp/tts',
+      'http://localhost:8000/v1',
+      'http://127.0.0.1:8000/v1',
+      'http://[::1]:8000/v1',
+      'http://169.254.169.254/latest',
+      'https://user:pass@api.example.com/v1',
+    ]) {
+      await expect(
+        openaiTtsProvider.synthesize(
+          { text: 'Hello' },
+          { baseUrl },
+        ),
+      ).rejects.toThrow(/OpenAI TTS baseUrl/)
+    }
 
     expect(mockFetch).not.toHaveBeenCalled()
   })

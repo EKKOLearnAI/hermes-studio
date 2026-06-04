@@ -1,11 +1,10 @@
 import type { OpenaiTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
+import { assertSafeTtsBaseUrl } from './url-safety'
 
 function buildSpeechUrl(baseUrl: string): string {
   const url = new URL(baseUrl)
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('OpenAI TTS baseUrl must use http or https')
-  }
+  assertSafeTtsBaseUrl(url, 'OpenAI')
 
   const search = url.search
   url.hash = ''

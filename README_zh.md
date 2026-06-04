@@ -176,7 +176,7 @@ hermes-web-ui reset-default-login
 - Provider 支持：浏览器 Web Speech、内置 Edge TTS、OpenAI 兼容 `/audio/speech`、自定义 OpenAI 兼容 TTS 端点、MiMo。
 - MiMo 支持预置音色、音色设计提示词、音色复刻参考音频（`.mp3`/`.wav`，最大 10 MB），并可选择鉴权请求头模式（`Authorization`、`api-key` 或两者同时发送）。
 - Edge / OpenAI 兼容 / 自定义 / MiMo 播放统一走 Web UI 后端 `/api/hermes/tts/synthesize`，停止/暂停状态一致，并会在可行时中断进行中的 fetch。
-- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；音色复刻参考音频会以 data URI 保存在浏览器设置中，避免上传过大或敏感样本。
+- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网；音色复刻参考音频会以 data URI 保存在浏览器设置中，避免上传过大或敏感样本。
 
 ### Web 终端
 
