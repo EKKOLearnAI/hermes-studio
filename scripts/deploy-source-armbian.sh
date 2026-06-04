@@ -273,6 +273,24 @@ install_hermes_agent() {
     return 0
   fi
 
+  # Mode A: Install from Wheel URL (Fast, no git clone)
+  if [[ -n "${HERMES_AGENT_WHEEL_URL}" ]]; then
+    info "Installing Hermes Agent from pre-built wheel: ${HERMES_AGENT_WHEEL_URL}"
+    local venv_dir="${APP_USER_HOME}/.hermes/hermes-agent-venv"
+    local bin_dir="${APP_USER_HOME}/.local/bin"
+
+    run_as_app_user "mkdir -p '${venv_dir}' '${bin_dir}'"
+    run_as_app_user "python3 -m venv '${venv_dir}'"
+    run_as_app_user "'${venv_dir}/bin/pip' install --upgrade pip"
+    run_as_app_user "'${venv_dir}/bin/pip' install '${HERMES_AGENT_WHEEL_URL}'"
+
+    # Link the command
+    run_as_app_user "ln -sf '${venv_dir}/bin/hermes' '${bin_dir}/hermes'"
+    info "Hermes installed from wheel at: ${hermes_bin_candidate}"
+    return 0
+  fi
+
+  # Mode B: Official Installer (Legacy/Source)
   local install_command
   install_command=$(cat <<'EOF'
 set -euo pipefail
@@ -330,6 +348,20 @@ EOF
 }
 
 install_webui_dependencies() {
+  if [[ -n "${WEBUI_BUNDLE_URL}" ]]; then
+    step "Install hermes-web-ui from bundle"
+    local tmp_bundle
+    tmp_bundle="$(mktemp)"
+    if download_file "${tmp_bundle}" "${WEBUI_BUNDLE_URL}"; then
+      run chown "${APP_USER}:${APP_USER}" "${tmp_bundle}"
+      run_as_app_user "cd '${DEPLOY_DIR}' && tar -xzf '${tmp_bundle}'"
+      rm -f "${tmp_bundle}"
+      info "Extracted web-ui bundle to ${DEPLOY_DIR}"
+      return 0
+    fi
+    warn "Failed to download web-ui bundle. Falling back to npm install."
+  fi
+
   step "Install hermes-web-ui dependencies"
   local path_env
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -341,6 +373,11 @@ install_webui_dependencies() {
 check_webui_dependencies() {
   step "Check installed Web UI dependencies"
 
+  if [[ -f "${DEPLOY_DIR}/dist/server/index.js" ]]; then
+    info "Pre-built artifacts detected. Skipping build-time dependency check."
+    return 0
+  fi
+
   run test -f "${DEPLOY_DIR}/node_modules/naive-ui/package.json"
   run test -f "${DEPLOY_DIR}/node_modules/naive-ui/es/index.d.ts"
   run test -f "${DEPLOY_DIR}/node_modules/typescript/package.json"
@@ -350,6 +387,11 @@ check_webui_dependencies() {
 }
 
 build_webui() {
+  if [[ -f "${DEPLOY_DIR}/dist/server/index.js" ]]; then
+    info "Found pre-built artifacts in dist/. Skipping build_webui."
+    return 0
+  fi
+
   step "Build hermes-web-ui"
   local path_env
   path_env="${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -537,6 +579,8 @@ NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 NPM_BINARY_MIRROR_PREFIX="${NPM_BINARY_MIRROR_PREFIX:-https://cdn.npmmirror.com/binaries}"
 HERMES_INSTALLER_MIRROR="${HERMES_INSTALLER_MIRROR:-https://cdn.jsdelivr.net/gh/NousResearch/hermes-agent@main/scripts/install.sh}"
 HERMES_INSTALLER_FALLBACK="${HERMES_INSTALLER_FALLBACK:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
+HERMES_AGENT_WHEEL_URL="${HERMES_AGENT_WHEEL_URL:-https://github.com/NousResearch/hermes-agent/releases/download/v2026.5.29.2/hermes_agent-0.15.2-py3-none-any.whl}"
+WEBUI_BUNDLE_URL="${WEBUI_BUNDLE_URL:-}"
 HERMES_INSTALL_FLAGS="${HERMES_INSTALL_FLAGS:---skip-setup --skip-browser}"
 SERVICE_TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermes-web-ui.service"
 SYSTEMD_SERVICE_NAME="${SYSTEMD_SERVICE_NAME:-hermes-web-ui.service}"
