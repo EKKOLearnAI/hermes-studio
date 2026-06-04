@@ -10,6 +10,12 @@ export interface ModelVisibilityRule {
   models: string[]
 }
 
+export interface GatewayAutoStartConfig {
+  enabled?: boolean
+  include?: string[]
+  exclude?: string[]
+}
+
 export interface AppConfig {
   // Whether GitHub Copilot has been explicitly added by the user in web-ui.
   // Default false: even when COPILOT_GITHUB_TOKEN / gh-cli / apps.json can
@@ -31,6 +37,11 @@ export interface AppConfig {
   // its sidebar/model pages and never renames or rewrites Hermes canonical
   // provider/model IDs. Hermes CLI config remains the upstream source of truth.
   modelVisibility?: Record<string, ModelVisibilityRule>
+
+  // Web UI startup policy for automatically starting Hermes API gateways.
+  // Defaults to legacy behavior: all local profiles are eligible. This is a
+  // Web UI-level setting, not the active Hermes profile's config.yaml.
+  gatewayAutoStart?: GatewayAutoStartConfig
 }
 
 let cache: AppConfig | null = null
