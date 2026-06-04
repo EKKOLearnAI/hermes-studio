@@ -359,6 +359,17 @@ function removePid() {
   try { unlinkSync(PID_FILE) } catch {}
 }
 
+function shouldSkipBrowserOpen(argv = process.argv) {
+  return argv.includes('--no-open')
+}
+
+function maybeOpenBrowser(url, argv = process.argv) {
+  if (shouldSkipBrowserOpen(argv)) return
+  const isWin = process.platform === 'win32'
+  const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
+  try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+}
+
 function startDaemon(port) {
   const existing = getPid()
   if (existing && isRunning(existing)) {
@@ -446,9 +457,7 @@ function startDaemon(port) {
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
-        const isWin = process.platform === 'win32'
-        const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
-        try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        maybeOpenBrowser(url)
       } else if (waited < maxWait) {
         setTimeout(poll, interval)
       } else {
@@ -650,6 +659,7 @@ Options:
   -v, --version      Show version number
   -h, --help         Show this help message
   --port <port>      Specify port (used with start/restart)
+  --no-open          Start without opening the browser
   --restart          Restart after clear-login-locks
 `)
     process.exit(0)
@@ -777,7 +787,9 @@ export {
   commandExists,
   getDaemonStopGraceMs,
   getListeningPids,
+  maybeOpenBrowser,
   parseUnixNetstatListeningPids,
   resetDefaultLogin,
+  shouldSkipBrowserOpen,
   stopDaemon,
 }

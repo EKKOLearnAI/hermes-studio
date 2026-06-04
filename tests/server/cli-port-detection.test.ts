@@ -93,6 +93,23 @@ describe('CLI port detection', () => {
     expect(getListeningPids(8648)).toEqual([4321])
   })
 
+  it('does not open a browser when --no-open is present', async () => {
+    const { maybeOpenBrowser, mocks } = await loadCli({ execSync: vi.fn() })
+
+    maybeOpenBrowser('http://localhost:8648', ['node', 'hermes-web-ui', 'start', '--no-open'])
+
+    expect(mocks.execSync).not.toHaveBeenCalled()
+  })
+
+  it('opens a browser by default after startup', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const { maybeOpenBrowser, mocks } = await loadCli({ execSync: vi.fn() })
+
+    maybeOpenBrowser('http://localhost:8648', ['node', 'hermes-web-ui', 'start'])
+
+    expect(mocks.execSync).toHaveBeenCalledWith('open http://localhost:8648', { stdio: 'ignore' })
+  })
+
   it('parses Linux netstat listener output as a final fallback', async () => {
     const { parseUnixNetstatListeningPids } = await loadCli()
 

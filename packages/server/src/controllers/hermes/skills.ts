@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises'
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { createHash } from 'crypto'
@@ -137,16 +137,39 @@ function readUsageStats(usageContent: string | null): Map<string, UsageStats> {
   return map
 }
 
-async function findSkillDirByName(rootDir: string, skillName: string): Promise<string | null> {
+async function isDirectoryEntry(parentDir: string, entry: import('fs').Dirent): Promise<boolean> {
+  if (entry.isDirectory()) return true
+  if (!entry.isSymbolicLink()) return false
+  try {
+    return (await stat(join(parentDir, entry.name))).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+async function visibleDirectoryNames(parentDir: string): Promise<string[]> {
+  const entries = await readdir(parentDir, { withFileTypes: true })
+  const names: string[] = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    if (await isDirectoryEntry(parentDir, entry)) names.push(entry.name)
+  }
+  return names
+}
+
+async function findSkillDirByName(rootDir: string, skillName: string, visited = new Set<string>()): Promise<string | null> {
   let entries: import('fs').Dirent[]
   try {
+    const realRoot = await realpath(rootDir)
+    if (visited.has(realRoot)) return null
+    visited.add(realRoot)
     entries = await readdir(rootDir, { withFileTypes: true })
   } catch {
     return null
   }
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    if (entry.name.startsWith('.') || !(await isDirectoryEntry(rootDir, entry))) continue
 
     const entryPath = join(rootDir, entry.name)
     const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
@@ -156,7 +179,7 @@ async function findSkillDirByName(rootDir: string, skillName: string): Promise<s
       continue
     }
 
-    const found = await findSkillDirByName(entryPath, skillName)
+    const found = await findSkillDirByName(entryPath, skillName, visited)
     if (found) return found
   }
 
@@ -200,10 +223,7 @@ async function resolveSkillDirFromConfig(
  * Skills without a parent category (flat skills) are grouped under the "misc" category.
  */
 async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, string>, hubNames: Set<string>, disabledList: string[], usageStats: Map<string, UsageStats>) {
-  const allEntries = await readdir(skillsDir, { withFileTypes: true })
-  const dirNames = allEntries
-    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-    .map(e => e.name)
+  const dirNames = await visibleDirectoryNames(skillsDir)
 
   // Classify directories: categories vs. flat skills
   const categoryDirs: { name: string; description: string }[] = []
@@ -213,8 +233,7 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
     const catDir = join(skillsDir, dirName)
     const hasDesc = await safeReadFile(join(catDir, 'DESCRIPTION.md'))
     const hasSkillMd = await safeReadFile(join(catDir, 'SKILL.md'))
-    const subEntries = await readdir(catDir, { withFileTypes: true })
-    const subDirs = subEntries.filter(se => se.isDirectory())
+    const subDirs = await visibleDirectoryNames(catDir)
 
     // Priority: SKILL.md at top level → flat skill
     //           DESCRIPTION.md or subdirs (without SKILL.md) → category
@@ -238,14 +257,17 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
 
   for (const cat of categoryDirs) {
     const catDir = join(skillsDir, cat.name)
-    const subEntries = await readdir(catDir, { withFileTypes: true })
     const skills: any[] = []
+    const visitedSkillDirs = new Set<string>()
     // Recursively collect skills from subdirectories (supports nested sub-categories)
     async function collectSkills(dir: string): Promise<any[]> {
+      const realDir = await realpath(dir)
+      if (visitedSkillDirs.has(realDir)) return []
+      visitedSkillDirs.add(realDir)
       const entries = await readdir(dir, { withFileTypes: true })
       const results: any[] = []
       for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+        if (entry.name.startsWith('.') || !(await isDirectoryEntry(dir, entry))) continue
         const entryPath = join(dir, entry.name)
         const skillMd = await safeReadFile(join(entryPath, 'SKILL.md'))
         if (skillMd) {

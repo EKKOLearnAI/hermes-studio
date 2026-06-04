@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -106,6 +106,35 @@ describe('skills controller', () => {
       model: { default: 'glm-5.1' },
     })
     expect(ctx.body).toEqual({ success: true })
+  })
+
+  it('lists skills that are symlinked into the profile skills directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-symlink-skills-'))
+    const profileDir = join(root, 'profile')
+    const externalRoot = join(root, 'external')
+    const realSkillDir = join(externalRoot, 'linked-skill')
+    const linkedSkillDir = join(profileDir, 'skills', 'linked-skill')
+
+    await mkdir(realSkillDir, { recursive: true })
+    await mkdir(join(profileDir, 'skills'), { recursive: true })
+    await writeFile(join(realSkillDir, 'SKILL.md'), 'Symlinked skill\n')
+    await symlink(realSkillDir, linkedSkillDir, 'dir')
+    mockGetProfileDir.mockReturnValue(profileDir)
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { state: { profile: { name: 'work' } }, body: undefined }
+      await list(ctx)
+
+      const misc = ctx.body.categories.find((category: any) => category.name === 'misc')
+      expect(misc.skills).toContainEqual(expect.objectContaining({
+        name: 'linked-skill',
+        source: 'local',
+        description: 'Symlinked skill',
+      }))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('lists configured external skill directories with external source while keeping local skills first', async () => {
