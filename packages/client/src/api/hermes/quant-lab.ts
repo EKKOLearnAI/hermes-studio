@@ -185,6 +185,13 @@ export interface QuantLabWfRollingPerformance {
   generatedAt: string
   policy: string
   snapshotCount: number
+  avgReturn1d?: number | null
+  winRate1d?: number | null
+  sampleCount1d?: number
+  spyAvgReturn1d?: number | null
+  avgAlphaVsSpy1d?: number | null
+  outperformSpyRate1d?: number | null
+  outperformSpySampleCount1d?: number
   avgReturn5d: number | null
   winRate5d: number | null
   sampleCount5d: number
@@ -240,6 +247,8 @@ export interface QuantLabSnapshot {
   mirofishSeed?: QuantLabMiroFishSeed | null
   mirofishInference?: QuantLabMiroFishInference | null
   wfRollingPerformance?: QuantLabWfRollingPerformance | null
+  aiBottleneckRollingPerformance?: QuantLabWfRollingPerformance | null
+  youziCycleRollingPerformance?: QuantLabWfRollingPerformance | null
 }
 
 export type QuantLabPhaseValidationStatus = 'PASS' | 'FAIL'

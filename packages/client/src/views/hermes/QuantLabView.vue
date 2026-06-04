@@ -4,7 +4,7 @@ import { getQuantLabCandles, getQuantLabEvidenceArchives, getQuantLabMiroFishGra
 import QuantTerminal from '@/components/hermes/quant-lab/QuantTerminal.vue'
 import { buildQuantSocketUrl, useQuantSocket } from '@/composables/useQuantSocket'
 import { useTerminalState, type TerminalTickerMetrics } from '@/composables/useTerminalState'
-import { useAuroraAppWindowStore } from '@/stores/hermes/aurora-app-window'
+import { useAuroraAppWindowStore } from '@/Aurora OS/stores/aurora-app-window'
 import type {
   QuantLabBacktest,
   QuantLabCandleBar,
@@ -212,6 +212,8 @@ const backtests = ref<QuantLabBacktest[]>(DEFAULT_BACKTESTS)
 const backtestSummary = ref<string[]>(DEFAULT_BACKTEST_SUMMARY)
 const dataHealth = ref<QuantLabDataHealth>(DEFAULT_DATA_HEALTH)
 const wfRollingPerformance = ref<QuantLabWfRollingPerformance | null>(null)
+const aiBottleneckRollingPerformance = ref<QuantLabWfRollingPerformance | null>(null)
+const youziCycleRollingPerformance = ref<QuantLabWfRollingPerformance | null>(null)
 const phaseValidationReport = ref<QuantLabPhaseValidationReport | null>(null)
 const phaseValidationError = ref('')
 const snapshotSource = ref('local fallback')
@@ -342,6 +344,8 @@ async function loadSnapshot(): Promise<void> {
     backtestSummary.value = snapshot.backtestSummary
     dataHealth.value = snapshot.dataHealth || DEFAULT_DATA_HEALTH
     wfRollingPerformance.value = snapshot.wfRollingPerformance || null
+    aiBottleneckRollingPerformance.value = snapshot.aiBottleneckRollingPerformance || null
+    youziCycleRollingPerformance.value = snapshot.youziCycleRollingPerformance || null
     latestMiroFishSeed.value = snapshot.mirofishSeed || latestMiroFishSeed.value
     latestMiroFishInference.value = snapshot.mirofishInference || latestMiroFishInference.value
     snapshotSource.value = snapshot.source
@@ -1424,6 +1428,8 @@ onUnmounted(() => {
       :loading-miro-fish-graph="loadingMiroFishGraph"
       :data-health="dataHealth"
       :wf-rolling-performance="wfRollingPerformance"
+      :ai-bottleneck-rolling-performance="aiBottleneckRollingPerformance"
+      :youzi-cycle-rolling-performance="youziCycleRollingPerformance"
       :phase-validation-items="phaseValidationItems"
       :backtests="backtests"
       :snapshot-source="snapshotSource"

@@ -1,5 +1,5 @@
 import Router from '@koa/router'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, readdirSync } from 'fs'
 import { appendFile, mkdir, readdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, extname, join, resolve } from 'path'
@@ -364,6 +364,13 @@ interface QuantLabWfRollingPerformance {
   generatedAt: string
   policy: string
   snapshotCount: number
+  avgReturn1d?: number | null
+  winRate1d?: number | null
+  sampleCount1d?: number
+  spyAvgReturn1d?: number | null
+  avgAlphaVsSpy1d?: number | null
+  outperformSpyRate1d?: number | null
+  outperformSpySampleCount1d?: number
   avgReturn5d: number | null
   winRate5d: number | null
   sampleCount5d: number
@@ -1008,15 +1015,85 @@ function configuredUniverseSymbols(): string[] {
 function candidateUniverseLimit(): number {
   const raw = getProfileEnvValue('HERMES_QUANT_UNIVERSE_MAX') ||
     process.env.HERMES_QUANT_UNIVERSE_MAX ||
-    '300'
+    '500'
   return clamp(Number(raw), 10, 500)
+}
+
+function latestFullMarketDiscoveryCandidates(): CandidateMeta[] {
+  const rawDir = resolve(resolveKnowledgeRoot(), 'raw', 'market', 'full-market-discovery')
+  if (!existsSync(rawDir)) return []
+  try {
+    const files = readdirSync(rawDir)
+      .filter(name => /-quant-candidate-\d+\.csv$/.test(name))
+      .sort()
+    const latest = files[files.length - 1]
+    if (!latest) return []
+    const lines = readFileSync(resolve(rawDir, latest), 'utf-8').trim().split(/\r?\n/).filter(Boolean)
+    const [headerLine, ...rows] = lines
+    if (!headerLine || !rows.length) return []
+    const headers = parseCsvLine(headerLine).map(header => header.trim())
+    const out: CandidateMeta[] = []
+    for (const line of rows) {
+      const cells = parseCsvLine(line)
+      const record = new Map(headers.map((header, index) => [header, cells[index] || '']))
+      const ticker = normalizeTickerSymbol(String(record.get('ticker') || ''))
+      if (!ticker || ticker.includes('=') || ticker.startsWith('^') || MARKET_SYMBOLS.includes(ticker)) continue
+      const discoveryScore = parseOverlayNumber(record.get('discovery_score')) ?? 72
+      const price = parseOverlayNumber(record.get('price')) ?? 100
+      const marketCap = parseOverlayNumber(record.get('market_cap')) ?? 0
+      const riskPenalty = parseOverlayNumber(record.get('risk_penalty')) ?? 0
+      const changePct = Math.abs(parseOverlayNumber(record.get('change_pct')) ?? 0)
+      const risk: QuantLabRisk = price < 5 || riskPenalty >= 12 || changePct >= 10
+        ? 'H'
+        : marketCap > 0 && marketCap < 20_000_000_000 || riskPenalty >= 5 || changePct >= 5
+          ? 'M'
+          : 'L'
+      const liquidityRaw = parseOverlayNumber(record.get('liquidity_score')) ?? 12
+      const qualityRaw = parseOverlayNumber(record.get('quality_proxy_score')) ?? 6
+      const reasonParts = [
+        'full-market discovery',
+        String(record.get('label') || '').trim(),
+        String(record.get('reason') || '').trim(),
+      ].filter(Boolean)
+      out.push({
+        ticker,
+        baseScore: clamp(Math.round(discoveryScore), 58, 90),
+        risk,
+        reason: reasonParts.join(' / '),
+        fallbackPrice: price,
+        sector: String(record.get('sector') || 'Full-Market').trim() || 'Full-Market',
+        theme: 'Full-market discovery',
+        qualityScore: clamp(Math.round((qualityRaw / 15) * 10), 3, 10),
+        earningsScore: 5,
+        liquidityScore: clamp(Math.round((liquidityRaw / 30) * 10), 3, 10),
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function upsertCandidate(byTicker: Map<string, CandidateMeta>, item: CandidateMeta): void {
+  if (MARKET_SYMBOLS.includes(item.ticker)) return
+  const existing = byTicker.get(item.ticker)
+  if (!existing || item.baseScore > existing.baseScore) byTicker.set(item.ticker, item)
 }
 
 function getCandidateUniverse(): CandidateMeta[] {
   const byTicker = new Map<string, CandidateMeta>()
   CANDIDATE_UNIVERSE.forEach(item => byTicker.set(item.ticker, item))
+
+  const fullMarketByTicker = new Map(latestFullMarketDiscoveryCandidates().map(item => [item.ticker, item]))
+  fullMarketByTicker.forEach(item => upsertCandidate(byTicker, item))
+
   configuredUniverseSymbols().forEach(ticker => {
     if (byTicker.has(ticker) || MARKET_SYMBOLS.includes(ticker)) return
+    const fullMarket = fullMarketByTicker.get(ticker)
+    if (fullMarket) {
+      upsertCandidate(byTicker, fullMarket)
+      return
+    }
     byTicker.set(ticker, {
       ticker,
       baseScore: 72,
@@ -1030,10 +1107,7 @@ function getCandidateUniverse(): CandidateMeta[] {
       liquidityScore: 4,
     })
   })
-  broadUniverseCandidates().forEach(item => {
-    if (byTicker.has(item.ticker) || MARKET_SYMBOLS.includes(item.ticker)) return
-    byTicker.set(item.ticker, item)
-  })
+  broadUniverseCandidates().forEach(item => upsertCandidate(byTicker, item))
   return Array.from(byTicker.values()).slice(0, candidateUniverseLimit())
 }
 
@@ -2165,18 +2239,21 @@ async function getLatestMasterDecisionFeedbackMap(): Promise<Map<string, QuantLa
   }
 }
 
-async function getLatestWfRollingPerformance(): Promise<QuantLabWfRollingPerformance | null> {
+async function readLatestRollingPerformanceSummary(
+  suffix: string,
+  defaultPolicy = '',
+): Promise<QuantLabWfRollingPerformance | null> {
   const rawDir = resolve(resolveKnowledgeRoot(), 'raw', 'market', 'quant-simulation')
   if (!existsSync(rawDir)) return null
 
   try {
     const files = (await readdir(rawDir))
-      .filter(name => name.endsWith('-wf-rolling-performance-summary.json'))
+      .filter(name => name.endsWith(suffix))
       .sort()
     const latest = files[files.length - 1]
     if (!latest) return null
 
-    const sourceDate = latest.replace('-wf-rolling-performance-summary.json', '')
+    const sourceDate = latest.replace(suffix, '')
     const sourceFile = resolve(rawDir, latest)
     const raw = JSON.parse(await readFile(sourceFile, 'utf-8')) as Record<string, unknown>
     const stringList = (value: unknown): string[] => Array.isArray(value)
@@ -2195,8 +2272,15 @@ async function getLatestWfRollingPerformance(): Promise<QuantLabWfRollingPerform
     return {
       date: String(raw.date || sourceDate),
       generatedAt: String(raw.generated_at || raw.generatedAt || ''),
-      policy: String(raw.policy || ''),
+      policy: String(raw.policy || defaultPolicy),
       snapshotCount: int('snapshot_count'),
+      avgReturn1d: num('avg_return_1d'),
+      winRate1d: num('win_rate_1d'),
+      sampleCount1d: int('sample_count_1d'),
+      spyAvgReturn1d: num('spy_avg_return_1d'),
+      avgAlphaVsSpy1d: num('avg_alpha_vs_spy_1d'),
+      outperformSpyRate1d: num('outperform_spy_rate_1d'),
+      outperformSpySampleCount1d: int('outperform_spy_sample_count_1d'),
       avgReturn5d: num('avg_return_5d'),
       winRate5d: num('win_rate_5d'),
       sampleCount5d: int('sample_count_5d'),
@@ -2237,6 +2321,24 @@ async function getLatestWfRollingPerformance(): Promise<QuantLabWfRollingPerform
   } catch {
     return null
   }
+}
+
+async function getLatestWfRollingPerformance(): Promise<QuantLabWfRollingPerformance | null> {
+  return readLatestRollingPerformanceSummary('-wf-rolling-performance-summary.json')
+}
+
+async function getLatestAiBottleneckRollingPerformance(): Promise<QuantLabWfRollingPerformance | null> {
+  return readLatestRollingPerformanceSummary(
+    '-ai-bottleneck-rolling-performance-summary.json',
+    'ai-bottleneck-top5-equal-weight',
+  )
+}
+
+async function getLatestYouziCycleRollingPerformance(): Promise<QuantLabWfRollingPerformance | null> {
+  return readLatestRollingPerformanceSummary(
+    '-youzi-cycle-rolling-performance-summary.json',
+    'youzi-cycle-top5-equal-weight',
+  )
 }
 
 function markdownMatch(text: string, pattern: RegExp): string {
@@ -3395,7 +3497,7 @@ export async function buildQuantLabSnapshot() {
   const curatedUniverse = getCandidateUniverse()
   const fallbackRequestedSymbols = Array.from(new Set([...MARKET_SYMBOLS, ...curatedUniverse.map(item => item.ticker)]))
   try {
-    const [screenerPack, backtestPack, latestMiroFishSeed, latestMiroFishInference, valuationOverlay, singleStockValuations, masterFeedback, wfRollingPerformance] = await Promise.all([
+    const [screenerPack, backtestPack, latestMiroFishSeed, latestMiroFishInference, valuationOverlay, singleStockValuations, masterFeedback, wfRollingPerformance, aiBottleneckRollingPerformance, youziCycleRollingPerformance] = await Promise.all([
       fetchYahooScreenerCandidates().catch(err => ({
         candidates: [] as CandidateMeta[],
         detail: `Yahoo screeners unavailable: ${errorMessage(err)}; using curated universe only.`,
@@ -3407,6 +3509,8 @@ export async function buildQuantLabSnapshot() {
       getLatestSingleStockValuationMap(),
       getLatestMasterDecisionFeedbackMap(),
       getLatestWfRollingPerformance(),
+      getLatestAiBottleneckRollingPerformance(),
+      getLatestYouziCycleRollingPerformance(),
     ])
     const candidateUniverse = mergeCandidateUniverses(curatedUniverse, screenerPack.candidates)
     const requestedSymbols = Array.from(new Set([...MARKET_SYMBOLS, ...candidateUniverse.map(item => item.ticker)]))
@@ -3471,6 +3575,8 @@ export async function buildQuantLabSnapshot() {
       mirofishSeed: latestMiroFishSeed,
       mirofishInference: latestMiroFishInference,
       wfRollingPerformance,
+      aiBottleneckRollingPerformance,
+      youziCycleRollingPerformance,
     }
   } catch (err) {
     const [latestMiroFishSeed, latestMiroFishInference] = await Promise.all([

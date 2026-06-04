@@ -107,6 +107,8 @@ const props = defineProps<{
   evidenceArchives: QuantLabEvidenceArchiveEntry[]
   dataHealth: QuantLabDataHealth
   wfRollingPerformance: QuantLabWfRollingPerformance | null
+  aiBottleneckRollingPerformance: QuantLabWfRollingPerformance | null
+  youziCycleRollingPerformance: QuantLabWfRollingPerformance | null
   phaseValidationItems: PhaseValidationDisplayItem[]
   backtests: QuantLabBacktest[]
   snapshotSource: string
@@ -239,15 +241,32 @@ function formatSignedNumber(value: number | null | undefined, digits = 2): strin
   return `${sign}${value.toFixed(digits)}`
 }
 
-const wfRollingMetrics = computed(() => {
-  const wf = props.wfRollingPerformance
-  if (!wf) return []
-  return [
-    { label: '5D', avg: formatRatioPercent(wf.avgReturn5d), win: formatRatioPercent(wf.winRate5d), alpha: formatRatioPercent(wf.avgAlphaVsSpy5d), outperform: formatRatioPercent(wf.outperformSpyRate5d), samples: wf.sampleCount5d },
-    { label: '10D', avg: formatRatioPercent(wf.avgReturn10d), win: formatRatioPercent(wf.winRate10d), alpha: formatRatioPercent(wf.avgAlphaVsSpy10d), outperform: formatRatioPercent(wf.outperformSpyRate10d), samples: wf.sampleCount10d },
-    { label: '20D', avg: formatRatioPercent(wf.avgReturn20d), win: formatRatioPercent(wf.winRate20d), alpha: formatRatioPercent(wf.avgAlphaVsSpy20d), outperform: formatRatioPercent(wf.outperformSpyRate20d), samples: wf.sampleCount20d },
-  ]
-})
+type RollingMetricKey = '1D' | '5D' | '10D' | '20D'
+
+function rollingMetrics(source: QuantLabWfRollingPerformance | null, keys: RollingMetricKey[] = ['5D', '10D', '20D']) {
+  if (!source) return []
+  const metricMap: Record<RollingMetricKey, { label: string; avg: number | null | undefined; win: number | null | undefined; alpha: number | null | undefined; outperform: number | null | undefined; samples: number | undefined }> = {
+    '1D': { label: '1D', avg: source.avgReturn1d, win: source.winRate1d, alpha: source.avgAlphaVsSpy1d, outperform: source.outperformSpyRate1d, samples: source.sampleCount1d },
+    '5D': { label: '5D', avg: source.avgReturn5d, win: source.winRate5d, alpha: source.avgAlphaVsSpy5d, outperform: source.outperformSpyRate5d, samples: source.sampleCount5d },
+    '10D': { label: '10D', avg: source.avgReturn10d, win: source.winRate10d, alpha: source.avgAlphaVsSpy10d, outperform: source.outperformSpyRate10d, samples: source.sampleCount10d },
+    '20D': { label: '20D', avg: source.avgReturn20d, win: source.winRate20d, alpha: source.avgAlphaVsSpy20d, outperform: source.outperformSpyRate20d, samples: source.sampleCount20d },
+  }
+  return keys.map(key => {
+    const metric = metricMap[key]
+    return {
+      label: metric.label,
+      avg: formatRatioPercent(metric.avg),
+      win: formatRatioPercent(metric.win),
+      alpha: formatRatioPercent(metric.alpha),
+      outperform: formatRatioPercent(metric.outperform),
+      samples: metric.samples ?? 0,
+    }
+  })
+}
+
+const wfRollingMetrics = computed(() => rollingMetrics(props.wfRollingPerformance))
+const aiBottleneckRollingMetrics = computed(() => rollingMetrics(props.aiBottleneckRollingPerformance, ['1D', '5D', '10D']))
+const youziCycleRollingMetrics = computed(() => rollingMetrics(props.youziCycleRollingPerformance, ['1D', '5D', '10D']))
 
 const wfRollingChangeText = computed(() => {
   const wf = props.wfRollingPerformance
@@ -255,6 +274,24 @@ const wfRollingChangeText = computed(() => {
   const added = wf.latestAdded.length ? `新增 ${wf.latestAdded.join('/')}` : '新增 none'
   const removed = wf.latestRemoved.length ? `移除 ${wf.latestRemoved.join('/')}` : '移除 none'
   const kept = wf.latestKept.length ? `保留 ${wf.latestKept.join('/')}` : '保留 none'
+  return `${added}｜${removed}｜${kept}`
+})
+
+const aiBottleneckRollingChangeText = computed(() => {
+  const rolling = props.aiBottleneckRollingPerformance
+  if (!rolling) return '尚無 AI Bottleneck rolling dashboard 資料'
+  const added = rolling.latestAdded.length ? `新增 ${rolling.latestAdded.join('/')}` : '新增 none'
+  const removed = rolling.latestRemoved.length ? `移除 ${rolling.latestRemoved.join('/')}` : '移除 none'
+  const kept = rolling.latestKept.length ? `保留 ${rolling.latestKept.join('/')}` : '保留 none'
+  return `${added}｜${removed}｜${kept}`
+})
+
+const youziCycleRollingChangeText = computed(() => {
+  const rolling = props.youziCycleRollingPerformance
+  if (!rolling) return '尚無 Youzi Cycle rolling dashboard 資料'
+  const added = rolling.latestAdded.length ? `新增 ${rolling.latestAdded.join('/')}` : '新增 none'
+  const removed = rolling.latestRemoved.length ? `移除 ${rolling.latestRemoved.join('/')}` : '移除 none'
+  const kept = rolling.latestKept.length ? `保留 ${rolling.latestKept.join('/')}` : '保留 none'
   return `${added}｜${removed}｜${kept}`
 })
 
@@ -1472,6 +1509,42 @@ onBeforeUnmount(() => {
             <small>Sharpe / n={{ wfRollingPerformance?.dailySampleCount ?? 0 }}</small>
           </div>
           <div class="wf-rolling-change">{{ wfRollingChangeText }}</div>
+        </div>
+        <div class="wf-rolling-strip ai-bottleneck-rolling-strip" aria-label="AI Bottleneck rolling paper performance">
+          <div class="wf-rolling-head">
+            <span>AI Bottleneck Rolling</span>
+            <strong>{{ aiBottleneckRollingPerformance ? `${aiBottleneckRollingPerformance.snapshotCount} snapshots` : 'no data' }}</strong>
+            <small>{{ aiBottleneckRollingPerformance?.policy || 'ai-bottleneck-top5-equal-weight' }}</small>
+          </div>
+          <div v-for="metric in aiBottleneckRollingMetrics" :key="metric.label" class="wf-rolling-cell">
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.avg }}</strong>
+            <small>win {{ metric.win }} / αSPY {{ metric.alpha }} / beat {{ metric.outperform }} / n={{ metric.samples }}</small>
+          </div>
+          <div class="wf-rolling-cell">
+            <span>Turnover</span>
+            <strong>{{ formatRatioPercent(aiBottleneckRollingPerformance?.latestTurnover) }}</strong>
+            <small>avg {{ formatRatioPercent(aiBottleneckRollingPerformance?.avgTurnover) }}</small>
+          </div>
+          <div class="wf-rolling-change">{{ aiBottleneckRollingChangeText }}</div>
+        </div>
+        <div class="wf-rolling-strip youzi-cycle-rolling-strip" aria-label="Youzi Cycle rolling paper performance">
+          <div class="wf-rolling-head">
+            <span>Youzi Cycle Rolling</span>
+            <strong>{{ youziCycleRollingPerformance ? `${youziCycleRollingPerformance.snapshotCount} snapshots` : 'no data' }}</strong>
+            <small>{{ youziCycleRollingPerformance?.policy || 'youzi-cycle-top5-equal-weight' }}</small>
+          </div>
+          <div v-for="metric in youziCycleRollingMetrics" :key="metric.label" class="wf-rolling-cell">
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.avg }}</strong>
+            <small>win {{ metric.win }} / αSPY {{ metric.alpha }} / beat {{ metric.outperform }} / n={{ metric.samples }}</small>
+          </div>
+          <div class="wf-rolling-cell">
+            <span>Turnover</span>
+            <strong>{{ formatRatioPercent(youziCycleRollingPerformance?.latestTurnover) }}</strong>
+            <small>avg {{ formatRatioPercent(youziCycleRollingPerformance?.avgTurnover) }}</small>
+          </div>
+          <div class="wf-rolling-change">{{ youziCycleRollingChangeText }}</div>
         </div>
         <table class="terminal-table detail-table">
           <thead>
@@ -3043,6 +3116,24 @@ onBeforeUnmount(() => {
   background:
     radial-gradient(circle at 12% 0%, rgba(0, 255, 156, 0.14), transparent 40%),
     linear-gradient(135deg, rgba(4, 18, 13, 0.98), rgba(5, 5, 5, 0.94));
+}
+
+.ai-bottleneck-rolling-strip {
+  top: 184px;
+  grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(92px, 0.8fr)) minmax(180px, 1.4fr);
+  border-bottom-color: rgba(86, 170, 255, 0.24);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(86, 170, 255, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(3, 12, 28, 0.98), rgba(5, 5, 5, 0.94));
+}
+
+.youzi-cycle-rolling-strip {
+  top: 236px;
+  grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(92px, 0.8fr)) minmax(180px, 1.4fr);
+  border-bottom-color: rgba(255, 192, 86, 0.26);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 176, 64, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(31, 16, 2, 0.98), rgba(5, 5, 5, 0.94));
 }
 
 .wf-rolling-head,
