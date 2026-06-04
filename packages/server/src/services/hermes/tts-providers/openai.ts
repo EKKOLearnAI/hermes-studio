@@ -1,19 +1,32 @@
 import type { OpenaiTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
 
-function normalizeBaseUrl(baseUrl: string): string {
+function buildSpeechUrl(baseUrl: string): string {
   const url = new URL(baseUrl)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('OpenAI TTS baseUrl must use http or https')
   }
 
-  return url.toString().replace(/\/+$/, '')
+  url.search = ''
+  url.hash = ''
+
+  const pathname = url.pathname.replace(/\/+$/, '')
+
+  if (!pathname || pathname === '/') {
+    return `${url.origin}/audio/speech`
+  }
+
+  if (pathname.endsWith('/audio/speech')) {
+    return `${url.origin}${pathname}`
+  }
+
+  return `${url.origin}${pathname}/audio/speech`
 }
 
 export const openaiTtsProvider: OpenaiTtsProvider = {
   id: 'openai',
   async synthesize(req, opts) {
-    const baseUrl = normalizeBaseUrl(opts.baseUrl)
+    const speechUrl = buildSpeechUrl(opts.baseUrl)
     const text = clampTtsText(cleanTtsText(req.text))
 
     if (!text) {
@@ -28,7 +41,7 @@ export const openaiTtsProvider: OpenaiTtsProvider = {
       headers.Authorization = `Bearer ${opts.apiKey}`
     }
 
-    const res = await fetch(`${baseUrl}/audio/speech`, {
+    const res = await fetch(speechUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify({

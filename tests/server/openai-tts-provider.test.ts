@@ -137,6 +137,48 @@ describe('openaiTtsProvider', () => {
     expect(getHeader(init?.headers, 'Authorization')).toBeUndefined()
   })
 
+  it('appends /audio/speech to versioned base urls without duplicating slashes', async () => {
+    mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('ok')))
+
+    await openaiTtsProvider.synthesize(
+      { text: 'Hello' },
+      {
+        baseUrl: 'https://api.example.com/v1/',
+      },
+    )
+
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.example.com/v1/audio/speech')
+  })
+
+  it('does not double-append /audio/speech when baseUrl already targets the speech endpoint', async () => {
+    mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('ok')))
+
+    await openaiTtsProvider.synthesize(
+      { text: 'Hello' },
+      {
+        baseUrl: 'https://api.example.com/v1/audio/speech',
+      },
+    )
+
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.example.com/v1/audio/speech')
+  })
+
+  it('drops query strings and hashes before building the speech endpoint url', async () => {
+    mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('ok')))
+
+    await openaiTtsProvider.synthesize(
+      { text: 'Hello' },
+      {
+        baseUrl: 'https://api.example.com/v1?token=ignored#frag',
+      },
+    )
+
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.example.com/v1/audio/speech')
+  })
+
   it('rejects invalid baseUrl protocols before fetch', async () => {
     await expect(
       openaiTtsProvider.synthesize(
