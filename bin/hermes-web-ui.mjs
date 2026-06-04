@@ -27,6 +27,22 @@ const PREVIEW_FRONTEND_PORT = 8651
 const PREVIEW_AGENT_BRIDGE_PORT = 18650
 const DEFAULT_USERNAME = 'admin'
 const DEFAULT_PASSWORD = '123456'
+const DEFAULT_RESTART_GRACE_MS = 5000
+const DEFAULT_STOP_GRACE_MS = 15000
+const STOP_POLL_INTERVAL_MS = 500
+
+function envPositiveInt(name) {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function getDaemonStopGraceMs(options = {}) {
+  const { restart = false } = options
+  if (restart) {
+    return envPositiveInt('HERMES_WEB_UI_RESTART_GRACE_MS') ?? DEFAULT_RESTART_GRACE_MS
+  }
+  return envPositiveInt('HERMES_WEB_UI_STOP_GRACE_MS') ?? DEFAULT_STOP_GRACE_MS
+}
 
 // ─── Auto-fix node-pty native module ──────────────────────────
 function ensureNativeModules() {
@@ -422,6 +438,10 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
+        const listeningPid = recoverPidFromPort()
+        if (listeningPid) {
+          writePid(listeningPid)
+        }
         const url = `http://localhost:${port}`
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
@@ -452,17 +472,21 @@ function startDaemon(port) {
   setTimeout(poll, interval)
 }
 
-function stopDaemon() {
+function stopDaemon(options = {}) {
+  const { restart = false } = options
   const stoppedPreviewPids = stopPreviewRuntimeFromCli()
-  const pidFromFile = readPidFile()
+  let pidFromFile = readPidFile()
+  let cleanedStalePid = false
   if (pidFromFile && !isRunning(pidFromFile)) {
     removePid()
     console.log(`  ✓ hermes-web-ui was not running (cleaned stale PID: ${pidFromFile})`)
-    return
+    pidFromFile = null
+    cleanedStalePid = true
   }
 
   const pid = pidFromFile ?? recoverPidFromPort()
   if (!pid) {
+    if (cleanedStalePid) return
     if (stoppedPreviewPids) {
       console.log(`  ✓ hermes-web-ui preview stopped`)
       return
@@ -479,11 +503,14 @@ function stopDaemon() {
 
   try {
     try {
-      process.kill(pid, 'SIGTERM')
-      // Wait briefly for graceful shutdown
-      for (let i = 0; i < 10; i++) {
+      process.kill(pid, restart ? 'SIGUSR2' : 'SIGTERM')
+      // Restart keeps the bridge alive and should be quick. Stop waits longer
+      // so the server can ask the bridge broker to stop worker subprocesses.
+      const graceMs = getDaemonStopGraceMs({ restart })
+      const attempts = Math.max(1, Math.ceil(graceMs / STOP_POLL_INTERVAL_MS))
+      for (let i = 0; i < attempts; i++) {
         if (!isRunning(pid)) break
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STOP_POLL_INTERVAL_MS)
       }
     } catch {}
     // Force kill if still alive
@@ -636,7 +663,7 @@ Options:
       stopDaemon()
       break
     case 'restart':
-      stopDaemon()
+      stopDaemon({ restart: true })
       setTimeout(() => startDaemon(getPort()), 500)
       break
     case 'status':
@@ -647,7 +674,7 @@ Options:
       const result = clearLoginLocks()
       if (restartAfterClear && result.serverRunning) {
         const port = getRunningPort() ?? getPort()
-        stopDaemon()
+        stopDaemon({ restart: true })
         setTimeout(() => startDaemon(port), 500)
       }
       break
@@ -748,6 +775,7 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
 export {
   clearLoginLocks,
   commandExists,
+  getDaemonStopGraceMs,
   getListeningPids,
   parseUnixNetstatListeningPids,
   resetDefaultLogin,

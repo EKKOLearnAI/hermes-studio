@@ -52,6 +52,11 @@ ChatPanel / ChatInput
 | 时间 | PR / commit | 动到的功能 | 链路影响 |
 | --- | --- | --- | --- |
 | 2026-06-04 | #1302 | 会话协议链接 profile-aware 打开 | `session://<id>` 解析、Markdown 重写、搜索精确打开、侧栏/上下文菜单链接和 `/chat-run` resume 现在保留并校验 session profile；普通 Chat 的新建、发送和 CLI bridge run 入口不变，但切换/恢复会话时用 `{id, profile}` 避免跨 profile 误开。 |
+| 2026-06-04 | local | CLI bridge abort 超时同步 | `/chat-run` abort 路径在 Hermes Agent 协作式 interrupt 未能在 bridge 同步窗口内完成时，不再提前清理 Web UI `isWorking/runId` 或启动队列，而是发送 `abort.timeout` 并保持 session locked/aborting；同会话新消息继续进入队列，避免旧 Agent run 尚未退出时触发 `session ... is already running`。当前端后续收到 bridge terminal chunk 时再发送 `abort.completed` 并释放状态。前端新增 `abort.timeout` 事件展示“仍在停止中”，并移除本地 20s 自动清 running 兜底。 |
+| 2026-06-04 | #1320 `237fd954` | Agent Bridge restart/resume；shutdown/stop timing | Web UI `restart`/页面内升级通过 `SIGUSR2` 保留 Agent Bridge，server 重启后 `ChatRunSocket.resume` 会查询 bridge status 并通过 `resumeBridgeRun()` 继续 poll 既有 `run_id` 的 delta/events。真实 `stop`/`SIGTERM` 仍会请求 bridge shutdown；非桌面 shutdown 兜底延长到 15s 以覆盖 worker 清理窗口，桌面 `HERMES_DESKTOP=true` 默认仍保持 3s。CLI `restart` 仍使用 5s grace，CLI `stop` 最长等 15s 且进程退出后立即返回。 |
+| 2026-06-04 | local | OpenRouter attribution title | `manager.ts` 的 bridge 默认 OpenRouter attribution title 从 `Hermes Web UI` 改为 `Hermes Studio`，与 `https://hermes-studio.ai` referer 品牌保持一致；只影响 OpenRouter dashboard attribution，不改变 `/chat-run` 协议、消息落库、模型调用或 run 生命周期。 |
+| 2026-06-04 | local | Hermes 原生 AI session title 回传 | `hermes_bridge.py` 在 bridge run 完成后后台调用 Hermes 原生 `maybe_auto_title()` 写入 Hermes `state.db`，并提示标题语言跟随用户首条消息；Node 在 `run.completed` 后后台按 `session_id` 短轮询 `get_session_title`，同步 Web UI 本地 `sessions.title` 并推给前端。只在本地标题仍为空或等于首条消息/preview fallback 时应用，用户手动改过的标题不会被覆盖；不阻塞最终回复、usage、goal continuation 或队列执行，也不改 run 生命周期。 |
+| 2026-06-03 | #1289 `7848256` | tool result / unified diff 展示 | `MessageItem.vue`、`GroupMessageItem.vue`、`MarkdownRenderer.vue` 和共享 highlighter 对 unified diff 走专门展示路径：tool result JSON 中的 diff 字段只显示 diff body，长段未改动上下文静态折叠，复制仍保留完整原始内容；不改变 `/chat-run` 协议、消息落库、工具审批或 group-chat agent 执行行为。 |
 | 2026-06-03 | #1284 `2aeed108` | Windows Agent Bridge 子进程输出解码 | `hermes_bridge.py` 的 Windows parent PID 探测和 stale bridge 进程清理改用平台文本编码读取 `tasklist.exe` / `taskkill.exe` 输出，并忽略不可解码字节；修复本地 code page 输出导致 subprocess reader 线程抛 `UnicodeDecodeError` 的问题，不改变 `/chat-run` 协议、消息落库或工具审批行为。 |
 | 2026-06-03 | #1273 `91bb68dc` | 用户头像上传；group-chat 成员头像同步 | auth 用户头像进入 group-chat 成员展示链路，`/group-chat` handshake 携带 `authUserId`，服务端按用户 id/name 查头像并同步给 room members；不改变普通 Chat run，但改变 group-chat 成员元数据和消息展示。 |
 | 2026-06-03 | #1272 `2f1686da` | Bridge 工具审批 allowlist；Bridge 文本/turn boundary 回调 | `hermes_bridge.py` 在 agent 创建和每次 run 开始时刷新 `tools.approval` 的 `command_allowlist` 进程内缓存，保证“始终允许”写入配置后，后续同 profile run 能读到。`stream_delta_callback` 现在只转发 turn boundary，不再把 agent 的文本 delta 再追加一遍，避免和 `stream_callback` 重复。 |
@@ -890,6 +895,8 @@ Bridge 启动失败不会阻止 Web UI server 启动，但普通 Chat run 会在
 | `HERMES_AGENT_BRIDGE_PLATFORM` | bridge 传给 Hermes Agent 的 platform，默认 `cli`。 |
 | `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge provider。 |
 | `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数。 |
+| `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | 跳过启动时的 gateway 检查/自动启动；dashboard-only 部署可用。 |
+| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | 跳过启动时的内置 skill 注入；外部管理 skills 时可用。 |
 | `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | Version Preview bridge transport。 |
 | `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | Version Preview bridge endpoint。 |
 

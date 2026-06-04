@@ -243,6 +243,8 @@ export default {
           ['HERMES_OPENROUTER_APP_TITLE', 'bridge 运行发送给 OpenRouter 的 attribution title'],
           ['HERMES_OPENROUTER_APP_CATEGORIES', 'bridge 运行发送给 OpenRouter 的 attribution categories'],
           ['HERMES_WEB_UI_MANAGED_GATEWAY', '强制启用旧 gateway 进程托管'],
+          ['HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART', '跳过启动时的 gateway 检查/自动启动；适用于由其它服务管理 Hermes gateway 的 dashboard-only 部署'],
+          ['HERMES_WEB_UI_DISABLE_SKILL_INJECTION', '跳过启动时的内置 skill 注入；适用于由 Web UI 外部管理 skills 或不希望覆盖同名目标目录的部署'],
           ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Hermes Studio 关闭时是否同时停止托管的 gateway 进程'],
           ['GATEWAY_HOST', '旧 gateway 兼容配置中写入 profile 的默认 gateway host'],
           ['HERMES_WEB_UI_PREVIEW_REPO', 'Version Preview 使用的 GitHub 仓库'],

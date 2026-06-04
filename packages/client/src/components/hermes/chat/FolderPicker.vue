@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { NSpin } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { request } from '@/api/client'
 
 interface FolderEntry {
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: string | null]
 }>()
 
+const { t } = useI18n()
 const loading = ref(false)
 const basePath = ref('')
 const folders = ref<FolderEntry[]>([])
@@ -159,18 +161,18 @@ const flatNodes = computed<FlatNode[]>(() => {
           class="folder-item empty"
           :style="{ paddingLeft: `${28 + node.depth * 16}px` }"
         >
-          <span class="folder-empty-text">（空）</span>
+          <span class="folder-empty-text">{{ t('chat.folderPickerEmpty') }}</span>
         </div>
       </template>
 
       <div v-if="folders.length === 0 && !loading" class="folder-empty">
-        暂无工作区文件夹
+        {{ t('chat.folderPickerNoFolders') }}
       </div>
     </div>
 
     <!-- Selected path display -->
     <div v-if="selectedPath" class="folder-selected">
-      <span class="folder-selected-label">已选择：</span>
+      <span class="folder-selected-label">{{ t('chat.folderPickerSelected') }}</span>
       <span class="folder-selected-path">{{ selectedPath }}</span>
     </div>
   </div>

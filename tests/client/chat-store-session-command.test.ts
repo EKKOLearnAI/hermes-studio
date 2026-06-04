@@ -8,6 +8,7 @@ const chatApi = vi.hoisted(() => ({
   getChatRunSocket: vi.fn(() => ({ emit: vi.fn() })),
   sessionCommandHandlers: [] as Array<(event: any) => void>,
   peerUserMessageHandlers: [] as Array<(event: any) => void>,
+  sessionTitleUpdatedHandlers: [] as Array<(event: any) => void>,
 }))
 
 vi.mock('@/api/hermes/chat', () => ({
@@ -24,6 +25,10 @@ vi.mock('@/api/hermes/chat', () => ({
   }),
   onSessionCommand: vi.fn((handler: (event: any) => void) => {
     chatApi.sessionCommandHandlers.push(handler)
+    return vi.fn()
+  }),
+  onSessionTitleUpdated: vi.fn((handler: (event: any) => void) => {
+    chatApi.sessionTitleUpdatedHandlers.push(handler)
     return vi.fn()
   }),
 }))
@@ -65,6 +70,7 @@ describe('chat store session.command fanout', () => {
     vi.resetAllMocks()
     chatApi.sessionCommandHandlers = []
     chatApi.peerUserMessageHandlers = []
+    chatApi.sessionTitleUpdatedHandlers = []
     setActivePinia(createPinia())
   })
 
@@ -128,5 +134,24 @@ describe('chat store session.command fanout', () => {
         commandAction: 'clear',
       }),
     ])
+  })
+
+  it('updates session title from the global generated-title event', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    expect(chatApi.sessionTitleUpdatedHandlers).toHaveLength(1)
+
+    chatApi.sessionTitleUpdatedHandlers[0]({
+      event: 'session.title.updated',
+      session_id: 'session-1',
+      title: 'Generated Title',
+    })
+
+    expect(store.sessions[0].title).toBe('Generated Title')
+    expect(store.activeSession?.title).toBe('Generated Title')
   })
 })

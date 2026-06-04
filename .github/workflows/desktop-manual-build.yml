@@ -79,16 +79,14 @@ jobs:
                 "packages/desktop/release/*.dmg" \
                 "packages/desktop/release/*.dmg.blockmap" \
                 "packages/desktop/release/*.zip" \
-                "packages/desktop/release/*.zip.blockmap" \
-                "packages/desktop/release/latest*.yml"
+                "packages/desktop/release/*.zip.blockmap"
               ;;
             darwin-x64)
               write_common_outputs "macOS x64" "macos-15-intel" "--mac dmg zip --x64" "desktop-darwin-x64" \
                 "packages/desktop/release/*.dmg" \
                 "packages/desktop/release/*.dmg.blockmap" \
                 "packages/desktop/release/*.zip" \
-                "packages/desktop/release/*.zip.blockmap" \
-                "packages/desktop/release/latest*.yml"
+                "packages/desktop/release/*.zip.blockmap"
               ;;
             linux-x64)
               write_common_outputs "Linux x64" "ubuntu-22.04" "--linux AppImage deb --x64" "desktop-linux-x64" \
@@ -211,3 +209,119 @@ jobs:
           tag_name: ${{ github.event.inputs.release_tag }}
           fail_on_unmatched_files: true
           files: ${{ needs.validate.outputs.artifact_files }}
+
+  mac-update-manifest:
+    name: Repair macOS update manifest
+    needs: [validate, desktop]
+    if: needs.validate.outputs.target_os == 'darwin' && github.event.inputs.release_tag != ''
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check macOS release asset completeness
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          missing=0
+          for pattern in \
+            '^Hermes\.Studio-.+-arm64\.zip$' \
+            '^Hermes\.Studio-.+-arm64\.dmg$' \
+            '^Hermes\.Studio-.+-x64\.zip$' \
+            '^Hermes\.Studio-.+-x64\.dmg$'
+          do
+            if ! printf '%s\n' "$assets" | grep -E "$pattern" >/dev/null; then
+              missing=1
+              echo "Missing macOS release asset matching ${pattern}"
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+            echo "Both macOS architectures are not available yet; leaving latest-mac.yml unchanged."
+          fi
+
+      - name: Download macOS release assets
+        if: steps.check.outputs.complete == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-arm64.zip' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-arm64.dmg' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-x64.zip' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-x64.dmg' --dir /tmp/hermes-mac-assets
+          ls -lh /tmp/hermes-mac-assets
+
+      - name: Generate merged latest-mac.yml
+        if: steps.check.outputs.complete == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readdirSync, readFileSync, statSync, writeFileSync } = require('node:fs')
+          const { join } = require('node:path')
+
+          const dir = '/tmp/hermes-mac-assets'
+          const names = readdirSync(dir)
+          const byKey = new Map()
+          let version = null
+
+          for (const name of names) {
+            const match = /^Hermes\.Studio-(.+)-(arm64|x64)\.(zip|dmg)$/.exec(name)
+            if (!match) continue
+            if (version && version !== match[1]) {
+              throw new Error(`Mixed macOS asset versions: ${version} and ${match[1]}`)
+            }
+            version = match[1]
+            byKey.set(`${match[2]}.${match[3]}`, name)
+          }
+
+          if (!version) throw new Error('No macOS release assets found')
+
+          const order = ['arm64.zip', 'arm64.dmg', 'x64.zip', 'x64.dmg']
+          const missing = order.filter(key => !byKey.has(key))
+          if (missing.length > 0) {
+            throw new Error(`Missing macOS release assets: ${missing.join(', ')}`)
+          }
+
+          const entries = order.map(key => {
+            const name = byKey.get(key)
+            const file = join(dir, name)
+            return {
+              url: name,
+              sha512: createHash('sha512').update(readFileSync(file)).digest('base64'),
+              size: statSync(file).size,
+            }
+          })
+
+          const head = entries[0]
+          const lines = [`version: ${version}`, 'files:']
+          for (const entry of entries) {
+            lines.push(`  - url: ${entry.url}`)
+            lines.push(`    sha512: ${entry.sha512}`)
+            lines.push(`    size: ${entry.size}`)
+          }
+          lines.push(`path: ${head.url}`)
+          lines.push(`sha512: ${head.sha512}`)
+          lines.push(`releaseDate: '${new Date().toISOString()}'`)
+          writeFileSync('/tmp/latest-mac.yml', `${lines.join('\n')}\n`)
+          NODE
+          cat /tmp/latest-mac.yml
+
+      - name: Upload merged macOS update manifest to release
+        if: steps.check.outputs.complete == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" /tmp/latest-mac.yml --repo "$GITHUB_REPOSITORY" --clobber

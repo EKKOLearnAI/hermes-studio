@@ -13,7 +13,9 @@ import { useSettingsStore } from "@/stores/hermes/settings";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
+  extractUnifiedDiffPayload,
   handleCodeBlockCopyClick,
+  isUnifiedDiffContent,
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
@@ -439,7 +441,7 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
   return { [JSON_TRUNCATED_KEY]: marker };
 }
 
-function formatToolPayload(raw?: string): ToolPayload {
+function formatToolPayload(raw?: string, extractDiff = false): ToolPayload {
   if (!raw) {
     return { full: "", display: "" };
   }
@@ -447,6 +449,14 @@ function formatToolPayload(raw?: string): ToolPayload {
   try {
     const parsed = JSON.parse(raw);
     const full = JSON.stringify(parsed, null, 2);
+    const extractedDiff = extractDiff ? extractUnifiedDiffPayload(parsed) : null;
+    if (extractedDiff) {
+      return {
+        full,
+        display: extractedDiff,
+        language: "diff",
+      };
+    }
     const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
       ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
       : full;
@@ -456,12 +466,14 @@ function formatToolPayload(raw?: string): ToolPayload {
       language: "json",
     };
   } catch {
+    const language = isUnifiedDiffContent(raw) ? "diff" : undefined;
     return {
       full: raw,
       display:
-        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
-          : raw,
+        language === "diff" || raw.length <= TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw
+          : raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated"),
+      language,
     };
   }
 }
@@ -469,6 +481,7 @@ function formatToolPayload(raw?: string): ToolPayload {
 function renderToolPayload(content: string, language?: string): string {
   return renderHighlightedCodeBlock(content, language, t("common.copy"), {
     maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
+    formatDiffFoldLabel: (hiddenCount) => t("chat.unchangedLines", { count: hiddenCount }),
   });
 }
 
@@ -509,7 +522,7 @@ const hasToolDetails = computed(
 );
 
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
-const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
 
 const fullToolArgs = computed(() => toolArgsPayload.value.full);
 const formattedToolArgs = computed(() => toolArgsPayload.value.display);
@@ -1547,6 +1560,13 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  :deep(.hljs-unified-diff code.hljs) {
+    max-height: none;
+    overflow-y: visible;
+    white-space: pre;
+    word-break: normal;
   }
 }
 

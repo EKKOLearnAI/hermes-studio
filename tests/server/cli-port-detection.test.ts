@@ -141,6 +141,22 @@ describe('CLI port detection', () => {
     }
   })
 
+  it('keeps restart grace short while allowing stop to wait for bridge cleanup', async () => {
+    const { getDaemonStopGraceMs } = await loadCli()
+
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(5_000)
+    expect(getDaemonStopGraceMs()).toBe(15_000)
+  })
+
+  it('allows CLI stop and restart grace periods to be overridden separately', async () => {
+    process.env.HERMES_WEB_UI_RESTART_GRACE_MS = '2500'
+    process.env.HERMES_WEB_UI_STOP_GRACE_MS = '9000'
+    const { getDaemonStopGraceMs } = await loadCli()
+
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(2_500)
+    expect(getDaemonStopGraceMs()).toBe(9_000)
+  })
+
   it('resets an existing admin user to the default password', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-cli-default-login-'))
     process.env.HERMES_WEB_UI_HOME = home

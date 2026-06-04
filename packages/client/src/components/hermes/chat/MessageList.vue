@@ -288,7 +288,9 @@ defineExpose({
             <span class="tool-call-name">
               {{
                 chatStore.abortState.aborting
-                  ? 'Pausing... waiting for the run to stop and sync'
+                  ? chatStore.abortState.timedOut
+                    ? (chatStore.abortState.message || 'Still stopping... new messages will be queued')
+                    : 'Pausing... waiting for the run to stop and sync'
                   : chatStore.abortState.synced
                     ? 'Paused and synced'
                     : 'Paused'

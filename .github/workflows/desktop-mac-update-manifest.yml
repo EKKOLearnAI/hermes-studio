@@ -1,0 +1,111 @@
+name: Repair macOS Update Manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to update (e.g. v0.6.11)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-mac-update-manifest-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    name: Generate and upload latest-mac.yml
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download macOS release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-arm64.zip' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-arm64.dmg' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-x64.zip' --dir /tmp/hermes-mac-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Hermes.Studio-*-x64.dmg' --dir /tmp/hermes-mac-assets
+          ls -lh /tmp/hermes-mac-assets
+
+      - name: Generate merged latest-mac.yml
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { createHash } = require('node:crypto')
+          const { readdirSync, readFileSync, statSync, writeFileSync } = require('node:fs')
+          const { join } = require('node:path')
+
+          const dir = '/tmp/hermes-mac-assets'
+          const names = readdirSync(dir)
+          const byKey = new Map()
+          let version = null
+
+          for (const name of names) {
+            const match = /^Hermes\.Studio-(.+)-(arm64|x64)\.(zip|dmg)$/.exec(name)
+            if (!match) continue
+            if (version && version !== match[1]) {
+              throw new Error(`Mixed macOS asset versions: ${version} and ${match[1]}`)
+            }
+            version = match[1]
+            byKey.set(`${match[2]}.${match[3]}`, name)
+          }
+
+          if (!version) throw new Error('No macOS release assets found')
+
+          const order = ['arm64.zip', 'arm64.dmg', 'x64.zip', 'x64.dmg']
+          const missing = order.filter(key => !byKey.has(key))
+          if (missing.length > 0) {
+            throw new Error(`Missing macOS release assets: ${missing.join(', ')}`)
+          }
+
+          const entries = order.map(key => {
+            const name = byKey.get(key)
+            const file = join(dir, name)
+            return {
+              url: name,
+              sha512: createHash('sha512').update(readFileSync(file)).digest('base64'),
+              size: statSync(file).size,
+            }
+          })
+
+          const head = entries[0]
+          const lines = [`version: ${version}`, 'files:']
+          for (const entry of entries) {
+            lines.push(`  - url: ${entry.url}`)
+            lines.push(`    sha512: ${entry.sha512}`)
+            lines.push(`    size: ${entry.size}`)
+          }
+          lines.push(`path: ${head.url}`)
+          lines.push(`sha512: ${head.sha512}`)
+          lines.push(`releaseDate: '${new Date().toISOString()}'`)
+          writeFileSync('/tmp/latest-mac.yml', `${lines.join('\n')}\n`)
+          NODE
+          cat /tmp/latest-mac.yml
+
+      - name: Upload merged macOS update manifest to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" /tmp/latest-mac.yml --repo "$GITHUB_REPOSITORY" --clobber
+
+          asset_url="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name == "latest-mac.yml") | .apiUrl')"
+          if [ -z "$asset_url" ]; then
+            echo "Uploaded latest-mac.yml was not found on release ${TAG}" >&2
+            exit 1
+          fi
+          curl -fsSL \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "$asset_url" > /tmp/latest-mac-uploaded.yml
+          diff -u /tmp/latest-mac.yml /tmp/latest-mac-uploaded.yml
