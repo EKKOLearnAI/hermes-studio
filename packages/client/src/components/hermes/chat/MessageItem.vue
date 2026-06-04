@@ -14,7 +14,7 @@ import { extractTerminalActionBlocks, stripTerminalActionBlocks, useTerminalActi
 import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
-import { handleCodeBlockCopyClick, renderHighlightedCodeBlock, copyTextToClipboard } from "./highlight";
+import { handleCodeBlockCopyClick, renderHighlightedCodeBlock, copyTextToClipboard, extractUnifiedDiffPayload, isUnifiedDiffContent } from "./highlight";
 
 const TOOL_SUMMARY_MAX_ITEMS = 8;
 const TOOL_SUMMARY_STRING_LIMIT = 180;
@@ -644,7 +644,7 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
   return { [JSON_TRUNCATED_KEY]: marker };
 }
 
-function formatToolPayload(raw?: string): ToolPayload {
+function formatToolPayload(raw?: string, extractDiff = false): ToolPayload {
   if (!raw) return { full: "", display: "" };
 
   try {
@@ -669,6 +669,7 @@ function formatToolPayload(raw?: string): ToolPayload {
       display: raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
         ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
         : raw,
+      language,
     };
   }
 }

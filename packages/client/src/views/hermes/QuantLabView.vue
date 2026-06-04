@@ -4,7 +4,7 @@ import { getQuantLabCandles, getQuantLabEvidenceArchives, getQuantLabMiroFishGra
 import QuantTerminal from '@/components/hermes/quant-lab/QuantTerminal.vue'
 import { buildQuantSocketUrl, useQuantSocket } from '@/composables/useQuantSocket'
 import { useTerminalState, type TerminalTickerMetrics } from '@/composables/useTerminalState'
-import { useAuroraAppWindowStore } from '@/Aurora OS/stores/aurora-app-window'
+import { useAuroraAppWindowStore } from '@/stores/hermes/aurora-app-window'
 import type {
   QuantLabBacktest,
   QuantLabCandleBar,
