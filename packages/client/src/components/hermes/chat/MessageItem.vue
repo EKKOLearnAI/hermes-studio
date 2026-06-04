@@ -651,9 +651,13 @@ function handleSpeechToggle() {
     speech.mimoToggle(props.message.id, content, {
       baseUrl: voiceSettings.mimoBaseUrl.value,
       apiKey,
+      authMode: voiceSettings.mimoAuthMode.value,
       model: voiceSettings.mimoModel.value,
+      voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
       voice: voiceSettings.mimoVoice.value,
       voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+      voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+      voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
       stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
     })
     return
@@ -714,9 +718,13 @@ onMounted(() => {
           void speech.mimoPlay(props.message.id, content, {
             baseUrl: voiceSettings.mimoBaseUrl.value,
             apiKey,
+            authMode: voiceSettings.mimoAuthMode.value,
             model: voiceSettings.mimoModel.value,
+            voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+            voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+            voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
           }).catch(handleAutoplayTtsError)
         }

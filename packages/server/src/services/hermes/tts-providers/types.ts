@@ -39,6 +39,7 @@ export interface MimoTtsProviderOptions {
   voice?: string
   voiceDesignDesc?: string
   voiceCloneDataUri?: string
+  voiceCloneFormat?: 'mp3' | 'wav'
   stylePrompt?: string
 }
 

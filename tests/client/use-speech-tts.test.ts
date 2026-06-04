@@ -157,8 +157,12 @@ describe('client TTS unified synthesize flow', () => {
     await speech.mimoPlay('msg-mimo', 'Hello from MiMo', {
       baseUrl: 'https://mimo.example/v1',
       apiKey: 'mimo-key',
+      authMode: 'api-key',
       model: 'mimo-v2.5-tts',
+      voiceMode: 'voiceClone',
       voice: 'verse',
+      voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
+      voiceCloneFormat: 'wav',
       stylePrompt: 'warm and calm',
     })
 
@@ -172,8 +176,12 @@ describe('client TTS unified synthesize flow', () => {
       options: {
         baseUrl: 'https://mimo.example/v1',
         apiKey: 'mimo-key',
+        authMode: 'api-key',
         model: 'mimo-v2.5-tts',
+        voiceMode: 'voiceClone',
         voice: 'verse',
+        voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
+        voiceCloneFormat: 'wav',
         stylePrompt: 'warm and calm',
       },
     })

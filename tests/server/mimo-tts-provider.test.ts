@@ -194,6 +194,7 @@ describe('mimoTtsProvider', () => {
         apiKey: 'secret',
         model: 'mimo-v2.5-tts-voiceclone',
         voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
+        voiceCloneFormat: 'mp3',
         stylePrompt: 'Match the cadence of the reference audio.',
       },
     )
@@ -209,7 +210,7 @@ describe('mimoTtsProvider', () => {
             type: 'input_audio',
             input_audio: {
               data: 'data:audio/wav;base64,ZmFrZQ==',
-              format: 'wav',
+              format: 'mp3',
             },
           },
         ],

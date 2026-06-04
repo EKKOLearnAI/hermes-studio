@@ -60,7 +60,7 @@ function buildMessages(text: string, opts: MimoTtsProviderOptions) {
             type: 'input_audio',
             input_audio: {
               data: opts.voiceCloneDataUri,
-              format: 'wav',
+              format: opts.voiceCloneFormat || 'wav',
             },
           },
         ],

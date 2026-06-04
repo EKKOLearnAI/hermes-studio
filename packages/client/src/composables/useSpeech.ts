@@ -24,9 +24,13 @@ export interface OpenaiTtsOptions {
 export interface MimoTtsOptions {
   baseUrl: string
   apiKey: string
+  authMode?: 'api-key' | 'bearer' | 'both'
   model: string
-  voice: string               // preset voice ID (preset mode) or data URI (clone mode)
+  voice?: string              // preset voice ID (preset mode)
+  voiceMode?: 'preset' | 'voiceDesign' | 'voiceClone'
   voiceDesignDesc?: string    // voice design description text (voice design mode)
+  voiceCloneDataUri?: string  // reference audio data URI (voice clone mode)
+  voiceCloneFormat?: 'mp3' | 'wav'
   stylePrompt?: string        // natural language style instruction
 }
 

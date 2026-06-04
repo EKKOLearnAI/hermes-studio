@@ -402,9 +402,13 @@ function playSpeech(content: string, autoplay = false) {
         const options = {
             baseUrl: voiceSettings.mimoBaseUrl.value,
             apiKey: voiceSettings.mimoApiKey.value,
+            authMode: voiceSettings.mimoAuthMode.value,
             model: voiceSettings.mimoModel.value,
+            voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' as const : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' as const : 'preset' as const,
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+            voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+            voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
         }
         if (autoplay) void speech.mimoPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
