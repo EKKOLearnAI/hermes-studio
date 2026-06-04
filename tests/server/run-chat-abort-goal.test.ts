@@ -85,4 +85,45 @@ describe('run chat abort goal handling', () => {
       synced: true,
     }))
   })
+
+  it('keeps the session locked when a CLI interrupt does not sync before timeout', async () => {
+    const { handleAbort } = await import('../../packages/server/src/services/hermes/run-chat/abort')
+    const { emit, nsp, socket } = makeHarness()
+    const state = {
+      messages: [],
+      isWorking: true,
+      isAborting: false,
+      events: [],
+      queue: [
+        { queue_id: 'goal-1', input: 'continue goal', profile: 'default', goalContinuation: true },
+        { queue_id: 'user-1', input: 'normal follow-up', profile: 'default', source: 'cli' },
+      ],
+      runId: 'run-1',
+      profile: 'default',
+      source: 'cli',
+    } as any
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      interrupt: vi.fn().mockResolvedValue({ ok: true, synced: false }),
+      goalPause: vi.fn().mockResolvedValue({ handled: true, status: 'paused', reason: 'user-interrupted' }),
+    }
+    const runQueuedItem = vi.fn()
+
+    await handleAbort(nsp as any, socket as any, 'session-1', sessionMap, bridge, runQueuedItem)
+
+    expect(runQueuedItem).not.toHaveBeenCalled()
+    expect(calcAndUpdateUsageMock).not.toHaveBeenCalled()
+    expect(state.isWorking).toBe(true)
+    expect(state.isAborting).toBe(true)
+    expect(state.runId).toBe('run-1')
+    expect(state.queue).toEqual([
+      { queue_id: 'user-1', input: 'normal follow-up', profile: 'default', source: 'cli' },
+    ])
+    expect(emit).toHaveBeenCalledWith('abort.timeout', expect.objectContaining({
+      session_id: 'session-1',
+      run_id: 'run-1',
+      synced: false,
+    }))
+    expect(emit).not.toHaveBeenCalledWith('abort.completed', expect.anything())
+  })
 })

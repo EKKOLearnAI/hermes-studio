@@ -26,7 +26,7 @@ This compose file runs a single service:
 
 - `hermes-webui` — Web UI dashboard with integrated Hermes Agent runtime (pre-built image or built from source)
 
-The Web UI container is built on the `nousresearch/hermes-agent` base image and uses the Hermes CLI / agent bridge runtime for chat execution. It does not start or manage a separate Hermes gateway process.
+The Web UI container is built on the `nousresearch/hermes-agent` base image and uses the Hermes CLI / agent bridge runtime for chat execution. By default it performs startup gateway checks/autostart for profiles, but no Hermes gateway ports are exposed by this compose setup.
 
 ## Environment Variables
 

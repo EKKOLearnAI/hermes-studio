@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -444,6 +444,8 @@ export const useChatStore = defineStore('chat', () => {
   const abortState = ref<{
     aborting: boolean
     synced: boolean | null
+    timedOut?: boolean
+    message?: string
     error?: string
   } | null>(null)
   const isAborting = computed(() => abortState.value?.aborting === true)
@@ -670,6 +672,8 @@ export const useChatStore = defineStore('chat', () => {
                 if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
                 setAbortState({ aborting: true, synced: null })
+              } else if (e.event === 'abort.timeout') {
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
               } else if (e.event === 'abort.completed') {
                 setAbortState({ aborting: false, synced: e.synced ?? false })
               } else if (e.event === 'approval.requested') {
@@ -1315,6 +1319,20 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  function applyGeneratedSessionTitle(evt: RunEvent) {
+    const sid = evt.session_id
+    const title = typeof (evt as any).title === 'string' ? (evt as any).title.trim() : ''
+    if (!sid || !title) return
+    const target = sessions.value.find(s => s.id === sid)
+    if (target) {
+      target.title = title
+      target.updatedAt = Date.now()
+    }
+    if (activeSession.value?.id === sid) {
+      activeSession.value.title = title
+    }
+  }
+
   function primeCompletionBellIfEnabled() {
     if (useSettingsStore().display.bell_on_complete) {
       primeCompletionSound()
@@ -1527,6 +1545,9 @@ export const useChatStore = defineStore('chat', () => {
               case 'abort.started':
                 setAbortState({ aborting: true, synced: null })
                 break
+              case 'abort.timeout':
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
+                break
               case 'abort.completed':
                 setAbortState({ aborting: false, synced: (e as any).synced ?? false })
                 break
@@ -1636,6 +1657,11 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'abort.timeout': {
+              setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+              break
+            }
+
             case 'abort.completed': {
               setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
               clearPendingInteractions(sid)
@@ -1736,6 +1762,11 @@ export const useChatStore = defineStore('chat', () => {
                 activeAssistantMessageId = newId
               }
 
+              break
+            }
+
+            case 'session.title.updated': {
+              applyGeneratedSessionTitle(evt)
               break
             }
 
@@ -2122,6 +2153,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'abort.timeout': {
+          setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+          break
+        }
+
         case 'abort.completed': {
           setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
           clearPendingInteractions(sid)
@@ -2214,6 +2250,11 @@ export const useChatStore = defineStore('chat', () => {
             activeAssistantMessageId = newId
           }
 
+          break
+        }
+
+        case 'session.title.updated': {
+          applyGeneratedSessionTitle(evt)
           break
         }
 
@@ -2449,6 +2490,7 @@ export const useChatStore = defineStore('chat', () => {
       onCompressionStarted: (evt) => handleEvent(evt),
       onCompressionCompleted: (evt) => handleEvent(evt),
       onAbortStarted: (evt) => handleEvent(evt),
+      onAbortTimeout: (evt) => handleEvent(evt),
       onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
       onAgentEvent: (evt) => handleEvent(evt),
@@ -2529,6 +2571,8 @@ export const useChatStore = defineStore('chat', () => {
 
   onSessionCommand(handleGlobalSessionCommand)
 
+  onSessionTitleUpdated(applyGeneratedSessionTitle)
+
   function stopStreaming() {
     const sid = activeSessionId.value
     if (!sid) return
@@ -2543,13 +2587,6 @@ export const useChatStore = defineStore('chat', () => {
       if (lastMsg?.isStreaming) {
         updateMessage(sid, lastMsg.id, { isStreaming: false })
       }
-      window.setTimeout(() => {
-        if (activeSessionId.value === sid && abortState.value?.aborting) {
-          streamStates.value.delete(sid)
-          serverWorking.value.delete(sid)
-          setAbortState(null)
-        }
-      }, 20_000)
     }
   }
 

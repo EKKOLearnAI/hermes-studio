@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import { getSession, getSessionDetail, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
@@ -30,11 +30,80 @@ import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
+import { markAbortCompleted } from './abort'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
+const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
+const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeTitleText(value: unknown): string {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function fallbackTitleFromText(text: string, limit: number, ellipsis: boolean): string {
+  const normalized = normalizeTitleText(text)
+  if (!normalized) return ''
+  if (normalized.length <= limit) return normalized
+  return ellipsis ? `${normalized.slice(0, limit)}...` : normalized.slice(0, limit)
+}
+
+function isReplaceableLocalTitle(sessionId: string): boolean {
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const current = normalizeTitleText(detail.title)
+  if (!current) return true
+  const variants = new Set<string>([''])
+  const preview = normalizeTitleText(detail.preview)
+  if (preview) {
+    variants.add(preview)
+    variants.add(fallbackTitleFromText(preview, 40, true))
+    variants.add(fallbackTitleFromText(preview, 63, false))
+    variants.add(fallbackTitleFromText(preview, 100, false))
+  }
+  const firstUser = detail.messages.find(message => message.role === 'user' && normalizeTitleText(message.content))
+  const firstUserText = normalizeTitleText(firstUser?.content)
+  if (firstUserText) {
+    variants.add(firstUserText)
+    variants.add(fallbackTitleFromText(firstUserText, 40, true))
+    variants.add(fallbackTitleFromText(firstUserText, 63, false))
+    variants.add(fallbackTitleFromText(firstUserText, 100, false))
+  }
+  return variants.has(current)
+}
+
+function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (event: string, payload: any) => void): boolean {
+  const nextTitle = normalizeTitleText(title)
+  if (!nextTitle) return false
+  const session = getSession(sessionId)
+  if (!session || session.source !== 'cli') return false
+  if (!isReplaceableLocalTitle(sessionId)) {
+    logger.info('[chat-run-socket] skipped Hermes generated title for manually titled session %s', sessionId)
+    return false
+  }
+  if (normalizeTitleText(session.title) === nextTitle) return false
+  updateSession(sessionId, {
+    title: nextTitle,
+    last_active: Math.floor(Date.now() / 1000),
+  } as any)
+  emit('session.title.updated', {
+    event: 'session.title.updated',
+    session_id: sessionId,
+    title: nextTitle,
+  })
+  return true
+}
+
+function shouldPollBridgeGeneratedTitle(sessionId: string): boolean {
+  const session = getSession(sessionId)
+  if (!session || session.source !== 'cli') return false
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const userMessageCount = detail.messages.filter(message => message.role === 'user').length
+  return userMessageCount <= 2 && isReplaceableLocalTitle(sessionId)
 }
 
 function looksLikeAgentFailure(value: string): boolean {
@@ -450,7 +519,10 @@ export async function handleBridgeRun(
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
       )
-      if (chunk.done) break
+      if (chunk.done) {
+        void pollBridgeGeneratedTitleAfterRun(bridge, session_id, profile, emit)
+        break
+      }
     }
   } catch (err: any) {
     if (state.activeRunMarker !== runMarker) return
@@ -492,6 +564,147 @@ export async function handleBridgeRun(
       queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+  }
+}
+
+function latestAssistantText(state: SessionState): string {
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i]
+    if (message.role === 'assistant') return message.content || ''
+  }
+  return ''
+}
+
+export async function resumeBridgeRun(
+  nsp: ReturnType<Server['of']>,
+  socket: Socket,
+  args: {
+    sessionId: string
+    runId: string
+    profile: string
+    instructions: string
+    model?: string | null
+    provider?: string | null
+  },
+  sessionMap: Map<string, SessionState>,
+  bridge: AgentBridgeClient,
+  dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
+) {
+  const { sessionId, runId, profile, instructions } = args
+  let state = sessionMap.get(sessionId)
+  if (!state) {
+    state = { messages: [], isWorking: false, events: [], queue: [] }
+    sessionMap.set(sessionId, state)
+  }
+
+  const runMarker = state.activeRunMarker || `cli_resume_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  state.isWorking = true
+  state.isAborting = state.isAborting === true
+  state.profile = profile
+  state.source = 'cli'
+  state.runId = runId
+  state.activeRunMarker = runMarker
+  state.bridgeOutput = state.bridgeOutput || latestAssistantText(state)
+  state.bridgePendingAssistantContent = state.bridgePendingAssistantContent || ''
+  state.bridgePendingReasoningContent = state.bridgePendingReasoningContent || ''
+  state.bridgePendingToolCallMarkup = state.bridgePendingToolCallMarkup || ''
+  state.bridgePendingTools = state.bridgePendingTools || []
+  state.bridgeToolCounter = state.bridgeToolCounter || 0
+
+  const emit = (event: string, payload: any) => {
+    const tagged = { ...payload, session_id: sessionId }
+    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
+      socket.emit(event, tagged)
+    }
+  }
+
+  let cursor = 0
+  let eventCursor = 0
+  try {
+    const snapshot = await bridge.getResult(runId)
+    const deltas = Array.isArray(snapshot.deltas) ? snapshot.deltas.map(String) : []
+    const output = typeof snapshot.output === 'string' ? snapshot.output : deltas.join('')
+    const persisted = state.bridgeOutput || ''
+    const missingOutput = output && output.startsWith(persisted) ? output.slice(persisted.length) : ''
+    if (missingOutput) {
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        sessionId,
+        runMarker,
+        {
+          ok: true,
+          run_id: runId,
+          session_id: sessionId,
+          status: 'running',
+          delta: missingOutput,
+          cursor: deltas.length,
+          output,
+          done: false,
+          events: [],
+          event_cursor: Array.isArray(snapshot.events) ? snapshot.events.length : 0,
+          error: null,
+        },
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        instructions,
+        { model: args.model, provider: args.provider },
+      )
+    }
+    cursor = deltas.length
+    eventCursor = Array.isArray(snapshot.events) ? snapshot.events.length : 0
+  } catch (err) {
+    bridgeLogger.warn({
+      err: err instanceof Error ? { message: err.message, name: err.name } : err,
+      sessionId,
+      runId,
+    }, '[chat-run-socket] failed to snapshot running bridge run before resume')
+  }
+
+  try {
+    for (;;) {
+      const chunk = await bridge.getOutput(runId, cursor, eventCursor)
+      cursor = chunk.cursor
+      eventCursor = chunk.event_cursor
+      if (chunk.delta || chunk.done || (chunk.events && chunk.events.length > 0)) {
+        await applyBridgeChunkAsync(
+          nsp,
+          socket,
+          state,
+          sessionId,
+          runMarker,
+          chunk,
+          emit,
+          profile,
+          sessionMap,
+          bridge,
+          dequeueNextQueuedRun,
+          instructions,
+          { model: args.model, provider: args.provider },
+        )
+      }
+      if (chunk.done) return
+      await delay(100)
+    }
+  } catch (err) {
+    if (state.activeRunMarker !== runMarker) return
+    state.isWorking = false
+    state.isAborting = false
+    state.profile = undefined
+    state.runId = undefined
+    state.activeRunMarker = undefined
+    state.events = []
+    emit('run.failed', {
+      event: 'run.failed',
+      run_id: runId,
+      error: err instanceof Error ? err.message : String(err),
+      resumed: true,
+    })
   }
 }
 
@@ -621,7 +834,9 @@ async function applyBridgeChunkAsync(
       processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
       continue
     }
-    if (evType === 'bridge.context.ready') {
+    if (evType === 'session.title.updated') {
+      syncBridgeGeneratedTitle(sessionId, (ev as any).title, emit)
+    } else if (evType === 'bridge.context.ready') {
       cacheBridgeContext(state, ev)
       const usage = await calcAndUpdateUsage(sessionId, state, emit)
       const snapshotAware = await estimateSnapshotAwareMessageTokens({
@@ -925,7 +1140,19 @@ async function applyBridgeChunkAsync(
       sessionId,
       runId: chunk.run_id,
       status: chunk.status,
-    }, '[chat-run-socket][abort] suppressing CLI bridge terminal chunk during abort')
+    }, '[chat-run-socket][abort] completing CLI bridge abort after terminal chunk')
+    await markAbortCompleted(
+      nsp,
+      socket,
+      sessionId,
+      chunk.run_id || runMarker,
+      sessionMap,
+      (queuedSocket, queuedSessionId, nextQueuedRun, fallbackProfile) => {
+        const queuedState = sessionMap.get(queuedSessionId)
+        if (queuedState) queuedState.queue.unshift(nextQueuedRun)
+        dequeueNextQueuedRun(queuedSocket, queuedSessionId, fallbackProfile)
+      },
+    )
     return
   }
 
@@ -1002,6 +1229,31 @@ async function applyBridgeChunkAsync(
   } else if (!state.activeRunMarker) {
     state.isWorking = false
     state.profile = undefined
+  }
+}
+
+async function pollBridgeGeneratedTitleAfterRun(
+  bridge: AgentBridgeClient,
+  sessionId: string,
+  profile: string,
+  emit: (event: string, payload: any) => void,
+) {
+  if (!shouldPollBridgeGeneratedTitle(sessionId)) return
+  const deadline = Date.now() + BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await delay(BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS)
+    let title = ''
+    try {
+      const result = await bridge.getSessionTitle(sessionId, profile, { timeoutMs: 2000 })
+      title = normalizeTitleText(result.title)
+    } catch (err) {
+      logger.debug(err, '[chat-run-socket] stopped polling bridge generated title for session %s', sessionId)
+      return
+    }
+    if (title) {
+      syncBridgeGeneratedTitle(sessionId, title, emit)
+      return
+    }
   }
 }
 
