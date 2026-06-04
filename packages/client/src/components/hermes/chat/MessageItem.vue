@@ -674,6 +674,11 @@ function handleSpeechToggle() {
 // 监听自动播放事件
 let autoPlayHandler: ((e: Event) => void) | null = null
 
+function handleAutoplayTtsError(err: unknown) {
+  if (err instanceof Error && err.name === 'AbortError') return
+  console.warn('[MessageItem] TTS autoplay failed:', err)
+}
+
 onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
@@ -681,39 +686,39 @@ onMounted(() => {
       const content = customEvent.detail.content || props.message.content || ''
       if (voiceSettings.provider.value === 'openai') {
         const apiUrl = voiceSettings.openaiBaseUrl.value
-        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+        if (apiUrl) void speech.openaiPlay(props.message.id, content, {
           provider: 'openai',
           baseUrl: voiceSettings.openaiBaseUrl.value,
           apiKey: voiceSettings.openaiApiKey.value,
           model: voiceSettings.openaiModel.value,
           voice: voiceSettings.openaiVoice.value,
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'custom') {
         const apiUrl = voiceSettings.customUrl.value
-        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+        if (apiUrl) void speech.openaiPlay(props.message.id, content, {
           provider: 'custom',
           baseUrl: voiceSettings.customUrl.value,
           apiKey: voiceSettings.customApiKey.value || undefined,
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'edge') {
-        speech.openaiPlay(props.message.id, content, {
+        void speech.openaiPlay(props.message.id, content, {
           provider: 'edge',
           baseUrl: '/api/tts/proxy',
           voice: voiceSettings.edgeVoice.value,
           rate: speedToEdgeRate(voiceSettings.edgeRate.value),
           pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'mimo') {
         const apiKey = voiceSettings.mimoApiKey.value
         if (apiKey) {
-          speech.mimoPlay(props.message.id, content, {
+          void speech.mimoPlay(props.message.id, content, {
             baseUrl: voiceSettings.mimoBaseUrl.value,
             apiKey,
             model: voiceSettings.mimoModel.value,
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-          })
+          }).catch(handleAutoplayTtsError)
         }
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)
@@ -736,7 +741,7 @@ onBeforeUnmount(() => {
   if (autoPlayHandler) {
     window.removeEventListener('auto-play-speech', autoPlayHandler)
   }
-  if (speech.currentMessageId.value === props.message.id) {
+  if (speech.currentMessageId.value === props.message.id || speech.currentCustomMessageId.value === props.message.id) {
     speech.stop();
   }
 });

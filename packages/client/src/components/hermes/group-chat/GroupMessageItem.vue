@@ -354,52 +354,61 @@ async function handleToolDetailClick(event: MouseEvent): Promise<void> {
     else if (copyResult === false) toast.error(t('chat.copyFailed'))
 }
 
+function handleAutoplayTtsError(err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    console.warn('[GroupMessageItem] TTS autoplay failed:', err)
+}
+
 function playSpeech(content: string, autoplay = false) {
     if (!content.trim()) return
     if (voiceSettings.provider.value === 'openai') {
         if (!voiceSettings.openaiBaseUrl.value) return
-        const play = autoplay ? speech.openaiPlay : speech.openaiToggle
-        play(props.message.id, content, {
-            provider: 'openai',
+        const options = {
+            provider: 'openai' as const,
             baseUrl: voiceSettings.openaiBaseUrl.value,
             apiKey: voiceSettings.openaiApiKey.value,
             model: voiceSettings.openaiModel.value,
             voice: voiceSettings.openaiVoice.value,
-        })
+        }
+        if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
+        else speech.openaiToggle(props.message.id, content, options)
         return
     }
     if (voiceSettings.provider.value === 'custom') {
         if (!voiceSettings.customUrl.value) return
-        const play = autoplay ? speech.openaiPlay : speech.openaiToggle
-        play(props.message.id, content, {
-            provider: 'custom',
+        const options = {
+            provider: 'custom' as const,
             baseUrl: voiceSettings.customUrl.value,
             apiKey: voiceSettings.customApiKey.value || undefined,
-        })
+        }
+        if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
+        else speech.openaiToggle(props.message.id, content, options)
         return
     }
     if (voiceSettings.provider.value === 'edge') {
-        const play = autoplay ? speech.openaiPlay : speech.openaiToggle
-        play(props.message.id, content, {
-            provider: 'edge',
+        const options = {
+            provider: 'edge' as const,
             baseUrl: '/api/tts/proxy',
             voice: voiceSettings.edgeVoice.value,
             rate: speedToEdgeRate(voiceSettings.edgeRate.value),
             pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
-        })
+        }
+        if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
+        else speech.openaiToggle(props.message.id, content, options)
         return
     }
     if (voiceSettings.provider.value === 'mimo') {
         if (!voiceSettings.mimoApiKey.value) return
-        const play = autoplay ? speech.mimoPlay : speech.mimoToggle
-        play(props.message.id, content, {
+        const options = {
             baseUrl: voiceSettings.mimoBaseUrl.value,
             apiKey: voiceSettings.mimoApiKey.value,
             model: voiceSettings.mimoModel.value,
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-        })
+        }
+        if (autoplay) void speech.mimoPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
+        else speech.mimoToggle(props.message.id, content, options)
         return
     }
     if (voiceSettings.provider.value === 'webspeech') {
@@ -452,7 +461,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     if (autoPlayHandler) window.removeEventListener('auto-play-speech', autoPlayHandler)
-    if (speech.currentMessageId.value === props.message.id) speech.stop()
+    if (speech.currentMessageId.value === props.message.id || speech.currentCustomMessageId.value === props.message.id) speech.stop()
 })
 </script>
 

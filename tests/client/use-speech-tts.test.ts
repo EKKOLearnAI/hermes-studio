@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockFetch = vi.fn()
@@ -360,5 +361,22 @@ describe('client TTS unified synthesize flow', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith(createdUrl)
     expect(speech.isCustomPlaying.value).toBe(false)
     expect(speech.currentCustomMessageId.value).toBe(null)
+  })
+})
+
+describe('client TTS autoplay call sites', () => {
+  it('catches fire-and-forget custom TTS autoplay promises', () => {
+    const messageItem = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
+    const groupMessageItem = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
+
+    expect(messageItem).toContain('function handleAutoplayTtsError')
+    expect(messageItem).toContain('void speech.openaiPlay')
+    expect(messageItem).toContain('void speech.mimoPlay')
+    expect(messageItem).toContain('.catch(handleAutoplayTtsError)')
+
+    expect(groupMessageItem).toContain('function handleAutoplayTtsError')
+    expect(groupMessageItem).toContain('void speech.openaiPlay')
+    expect(groupMessageItem).toContain('void speech.mimoPlay')
+    expect(groupMessageItem).toContain('.catch(handleAutoplayTtsError)')
   })
 })
