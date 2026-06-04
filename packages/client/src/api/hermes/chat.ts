@@ -124,10 +124,12 @@ const sessionEventHandlers = new Map<string, {
   onCompressionStarted: (event: RunEvent) => void
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
+  onAbortTimeout?: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
   onAgentEvent?: (event: RunEvent) => void
   onSessionCommand?: (event: RunEvent) => void
+  onSessionTitleUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
@@ -329,6 +331,19 @@ function globalAbortStartedHandler(event: RunEvent): void {
 }
 
 /**
+ * Global abort.timeout event handler
+ */
+function globalAbortTimeoutHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAbortTimeout) {
+    handlers.onAbortTimeout(event)
+  }
+}
+
+/**
  * Global abort.completed event handler
  */
 function globalAbortCompletedHandler(event: RunEvent): void {
@@ -376,6 +391,11 @@ function globalSessionCommandHandler(event: RunEvent): void {
 function globalSessionTitleUpdatedHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers) {
+    handlers.onSessionTitleUpdated?.(event)
+  }
 
   for (const handler of sessionTitleUpdatedHandlers) {
     handler(event)
@@ -468,10 +488,12 @@ export function registerSessionHandlers(
     onCompressionStarted: (event: RunEvent) => void
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
+    onAbortTimeout?: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
     onAgentEvent?: (event: RunEvent) => void
     onSessionCommand?: (event: RunEvent) => void
+    onSessionTitleUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
@@ -621,6 +643,7 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
     chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
     chatRunSocket.on('abort.started', globalAbortStartedHandler)
+    chatRunSocket.on('abort.timeout', globalAbortTimeoutHandler)
     chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
 
     // Usage events
@@ -828,6 +851,10 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
     },
+    onAbortTimeout: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
     onAbortCompleted: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
@@ -852,6 +879,9 @@ export function startRunViaSocket(
       removeTerminalSocketListeners()
       sessionEventHandlers.delete(sid)
       onDone()
+    },
+    onSessionTitleUpdated: (evt: RunEvent) => {
+      onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {
       if (closed) return

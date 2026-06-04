@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -7,6 +7,8 @@ import {
   gatewayStatusLooksRunning,
   gatewayStateLooksRunningForProfile,
   parseGatewayStatusesFromProfileListOutput,
+  recoverWindowsDesktopGatewayOrphans,
+  shouldRecoverWindowsDesktopGatewayOrphans,
   shouldUseManagedGatewayRun,
   shouldUseManagedGatewayRunForAutostart,
 } from '../../packages/server/src/services/hermes/gateway-autostart'
@@ -68,6 +70,74 @@ describe('gateway autostart status parsing', () => {
 
   it('uses managed gateway autostart on Windows', () => {
     expect(shouldUseManagedGatewayRunForAutostart('win32')).toBe(true)
+  })
+
+  it('only recovers Windows desktop gateway orphans when enabled', () => {
+    expect(shouldRecoverWindowsDesktopGatewayOrphans('win32', { HERMES_DESKTOP: 'true' })).toBe(true)
+    expect(shouldRecoverWindowsDesktopGatewayOrphans('darwin', { HERMES_DESKTOP: 'true' })).toBe(false)
+    expect(shouldRecoverWindowsDesktopGatewayOrphans('win32', {})).toBe(false)
+    expect(shouldRecoverWindowsDesktopGatewayOrphans('win32', {
+      HERMES_DESKTOP: 'true',
+      HERMES_WEB_UI_DISABLE_GATEWAY_STARTUP_RECOVERY: '1',
+    })).toBe(false)
+  })
+
+  it('kills Windows desktop gateway runtime PIDs and removes stale runtime files', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-gateway-recovery-'))
+    const workHome = join(home, 'profiles', 'work')
+    mkdirSync(workHome, { recursive: true })
+    const killed: number[] = []
+    const stopped: string[] = []
+
+    try {
+      writeFileSync(join(home, 'gateway.pid'), JSON.stringify({ pid: 11111 }), 'utf-8')
+      writeFileSync(join(home, 'gateway_state.json'), JSON.stringify({ pid: 99999, gateway_state: 'stopped' }), 'utf-8')
+      writeFileSync(join(workHome, 'gateway.lock'), JSON.stringify({ pid: '22222' }), 'utf-8')
+      writeFileSync(join(workHome, 'gateway_state.json'), JSON.stringify({ pid: 33333, gateway_state: 'running' }), 'utf-8')
+
+      const result = await recoverWindowsDesktopGatewayOrphans({
+        platform: 'win32',
+        env: { HERMES_DESKTOP: 'true' },
+        hermesHome: home,
+        isAlive: pid => pid !== 99999,
+        stopGateway: async profileDir => { stopped.push(profileDir) },
+        execTaskkill: async pid => { killed.push(pid) },
+      })
+
+      expect(result.attempted).toBe(true)
+      expect(stopped.sort()).toEqual([home, workHome].sort())
+      expect(result.stoppedProfileDirs.sort()).toEqual([home, workHome].sort())
+      expect(killed.sort((a, b) => a - b)).toEqual([11111, 22222, 33333])
+      expect(result.killedPids.sort((a, b) => a - b)).toEqual([11111, 22222, 33333])
+      expect(existsSync(join(home, 'gateway.pid'))).toBe(false)
+      expect(existsSync(join(home, 'gateway_state.json'))).toBe(false)
+      expect(existsSync(join(workHome, 'gateway.lock'))).toBe(false)
+      expect(existsSync(join(workHome, 'gateway_state.json'))).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('skips recovery outside Windows desktop mode without deleting runtime files', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-gateway-recovery-skip-'))
+    try {
+      const pidPath = join(home, 'gateway.pid')
+      writeFileSync(pidPath, JSON.stringify({ pid: 11111 }), 'utf-8')
+
+      const result = await recoverWindowsDesktopGatewayOrphans({
+        platform: 'linux',
+        env: { HERMES_DESKTOP: 'true' },
+        hermesHome: home,
+        isAlive: () => {
+          throw new Error('should not check liveness')
+        },
+      })
+
+      expect(result.attempted).toBe(false)
+      expect(existsSync(pidPath)).toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('detects managed gateway state files with a live pid', () => {

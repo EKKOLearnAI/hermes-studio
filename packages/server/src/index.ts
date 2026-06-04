@@ -86,13 +86,30 @@ function isDesktopRuntime(): boolean {
   return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
 }
 
+function envFlagEnabled(name: string): boolean {
+  const value = String(process.env[name] || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(value)
+}
+
+function gatewayAutostartDisabled(): boolean {
+  return envFlagEnabled('HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
+}
+
+function skillInjectionDisabled(): boolean {
+  return envFlagEnabled('HERMES_WEB_UI_DISABLE_SKILL_INJECTION')
+}
+
 async function startRuntimeServicesBeforeListen(): Promise<void> {
-  try {
-    await ensureProfileGatewaysRunning()
-    console.log('[bootstrap] profile gateways checked')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+  if (gatewayAutostartDisabled()) {
+    console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
+  } else {
+    try {
+      await ensureProfileGatewaysRunning()
+      console.log('[bootstrap] profile gateways checked')
+    } catch (err) {
+      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+    }
   }
 
   try {
@@ -105,15 +122,19 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
 }
 
 function startRuntimeServicesAfterListen(): void {
-  void (async () => {
-    try {
-      await ensureProfileGatewaysRunning()
-      console.log('[bootstrap] profile gateways checked')
-    } catch (err) {
-      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-    }
-  })()
+  if (gatewayAutostartDisabled()) {
+    console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
+  } else {
+    void (async () => {
+      try {
+        await ensureProfileGatewaysRunning()
+        console.log('[bootstrap] profile gateways checked')
+      } catch (err) {
+        logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+        console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+      }
+    })()
+  }
 
   void (async () => {
     try {
@@ -134,24 +155,28 @@ export async function bootstrap() {
   }
 
   await initLoginLimiter()
-  try {
-    const skillInjector = new HermesSkillInjector()
-    const injectionResult = await skillInjector.injectMissingSkills()
-    if (injectionResult.injected.length > 0) {
-      logger.info({
-        injected: [...new Set(injectionResult.injected)],
-        targetCount: injectionResult.targets.length,
-      }, '[bootstrap] bundled skills injected')
+  if (skillInjectionDisabled()) {
+    console.log('[bootstrap] bundled skill injection disabled by HERMES_WEB_UI_DISABLE_SKILL_INJECTION')
+  } else {
+    try {
+      const skillInjector = new HermesSkillInjector()
+      const injectionResult = await skillInjector.injectMissingSkills()
+      if (injectionResult.injected.length > 0) {
+        logger.info({
+          injected: [...new Set(injectionResult.injected)],
+          targetCount: injectionResult.targets.length,
+        }, '[bootstrap] bundled skills injected')
+      }
+      if (injectionResult.updated.length > 0) {
+        logger.info({
+          updated: [...new Set(injectionResult.updated)],
+          targetCount: injectionResult.targets.length,
+        }, '[bootstrap] bundled skills updated')
+      }
+    } catch (err) {
+      logger.warn(err, '[bootstrap] failed to inject bundled skills')
+      console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
     }
-    if (injectionResult.updated.length > 0) {
-      logger.info({
-        updated: [...new Set(injectionResult.updated)],
-        targetCount: injectionResult.targets.length,
-      }, '[bootstrap] bundled skills updated')
-    }
-  } catch (err) {
-    logger.warn(err, '[bootstrap] failed to inject bundled skills')
-    console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
   }
 
   if (!isDesktopRuntime()) {

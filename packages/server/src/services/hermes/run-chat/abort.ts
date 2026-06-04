@@ -11,6 +11,8 @@ import { replaceState } from './compression'
 import { calcAndUpdateUsage } from './usage'
 import type { QueuedRun, SessionState } from './types'
 
+const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent is still stopping. New messages will be queued until the current run exits.'
+
 export async function handleAbort(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
@@ -59,8 +61,9 @@ export async function handleAbort(
   }
 
   if (state.source === 'cli') {
+    let interruptResult: any = null
     try {
-      await bridge.interrupt(sessionId, 'Aborted by user', state.profile)
+      interruptResult = await bridge.interrupt(sessionId, 'Aborted by user', state.profile)
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
     }
@@ -69,6 +72,22 @@ export async function handleAbort(
       state.queue = state.queue.filter(item => !item.goalContinuation)
     } catch (err) {
       logger.debug(err, '[chat-run-socket][abort] goal pause-on-interrupt skipped for session %s', sessionId)
+    }
+    if (interruptResult?.synced === false) {
+      replaceState(sessionMap, sessionId, 'abort.timeout', {
+        event: 'abort.timeout',
+        run_id: runId,
+        synced: false,
+        message: ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE,
+      })
+      emitToSession(nsp, socket, sessionId, 'abort.timeout', {
+        event: 'abort.timeout',
+        run_id: runId,
+        synced: false,
+        message: ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE,
+      })
+      logger.warn({ sessionId, runId }, '[chat-run-socket][abort] CLI bridge interrupt did not sync before timeout')
+      return
     }
   } else if (state.abortController) {
     state.abortController.abort()
