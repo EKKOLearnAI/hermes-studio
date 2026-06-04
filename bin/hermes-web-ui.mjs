@@ -422,6 +422,10 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
+        const listeningPid = recoverPidFromPort()
+        if (listeningPid) {
+          writePid(listeningPid)
+        }
         const url = `http://localhost:${port}`
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
@@ -452,13 +456,14 @@ function startDaemon(port) {
   setTimeout(poll, interval)
 }
 
-function stopDaemon() {
+function stopDaemon(options = {}) {
+  const { restart = false } = options
   const stoppedPreviewPids = stopPreviewRuntimeFromCli()
-  const pidFromFile = readPidFile()
+  let pidFromFile = readPidFile()
   if (pidFromFile && !isRunning(pidFromFile)) {
     removePid()
     console.log(`  ✓ hermes-web-ui was not running (cleaned stale PID: ${pidFromFile})`)
-    return
+    pidFromFile = null
   }
 
   const pid = pidFromFile ?? recoverPidFromPort()
@@ -479,7 +484,7 @@ function stopDaemon() {
 
   try {
     try {
-      process.kill(pid, 'SIGTERM')
+      process.kill(pid, restart ? 'SIGUSR2' : 'SIGTERM')
       // Wait briefly for graceful shutdown
       for (let i = 0; i < 10; i++) {
         if (!isRunning(pid)) break
@@ -636,7 +641,7 @@ Options:
       stopDaemon()
       break
     case 'restart':
-      stopDaemon()
+      stopDaemon({ restart: true })
       setTimeout(() => startDaemon(getPort()), 500)
       break
     case 'status':
@@ -647,7 +652,7 @@ Options:
       const result = clearLoginLocks()
       if (restartAfterClear && result.serverRunning) {
         const port = getRunningPort() ?? getPort()
-        stopDaemon()
+        stopDaemon({ restart: true })
         setTimeout(() => startDaemon(port), 500)
       }
       break

@@ -2,9 +2,15 @@ import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
 
-function shouldStopAgentBridgeOnShutdown(): boolean {
+export function shouldStopAgentBridgeOnShutdown(signal: string): boolean {
   const raw = String(process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN || '').trim().toLowerCase()
-  return ['1', 'true', 'yes', 'on'].includes(raw)
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false
+
+  // The CLI uses SIGUSR2 for an intentional Web UI restart so active bridge
+  // runs survive and can be reattached. SIGTERM/SIGINT represent real service
+  // shutdown and should stop the bridge broker/workers.
+  return signal !== 'SIGUSR2'
 }
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
@@ -28,7 +34,7 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
         logger.warn(err, 'Failed to stop preview runtime (non-fatal)')
       }
 
-      if (agentBridgeManager && shouldStopAgentBridgeOnShutdown()) {
+      if (agentBridgeManager && shouldStopAgentBridgeOnShutdown(signal)) {
         try {
           await agentBridgeManager.stop()
           logger.info('Agent bridge stopped')

@@ -163,13 +163,12 @@ describe('agent bridge manager command resolution', () => {
 
   it('attaches to an already running bridge instead of spawning a replacement', async () => {
     const endpoint = `tcp://127.0.0.1:${34000 + (process.pid % 10000)}`
-    let requestCount = 0
+    const actions: string[] = []
     const server = createServer((socket) => {
       socket.once('data', (chunk) => {
-        requestCount += 1
         const request = JSON.parse(chunk.toString('utf8').trim())
-        expect(request).toMatchObject({ action: 'ping' })
-        socket.end(`${JSON.stringify({ ok: true, pong: true })}\n`)
+        actions.push(request.action)
+        socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
       })
     })
 
@@ -188,7 +187,7 @@ describe('agent bridge manager command resolution', () => {
 
       await manager.start()
 
-      expect(requestCount).toBe(1)
+      expect(actions).toEqual(['ping'])
       expect(manager.getRuntimeState()).toMatchObject({
         endpoint,
         ready: true,
@@ -197,6 +196,41 @@ describe('agent bridge manager command resolution', () => {
         pid: undefined,
       })
       await manager.stop()
+      expect(actions).toEqual(['ping', 'shutdown'])
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        attached: false,
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('requests shutdown when stopping an attached bridge', async () => {
+    const endpoint = `tcp://127.0.0.1:${35000 + (process.pid % 10000)}`
+    const actions: string[] = []
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString('utf8').trim())
+        actions.push(request.action)
+        socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
+      })
+    })
+
+    await new Promise<void>((resolve) => {
+      const url = new URL(endpoint)
+      server.listen(Number(url.port), url.hostname, resolve)
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
+
+      await manager.start()
+      await manager.stop()
+
+      expect(actions).toEqual(['ping', 'shutdown'])
       expect(manager.getRuntimeState()).toMatchObject({
         ready: false,
         running: false,

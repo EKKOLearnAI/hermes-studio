@@ -634,6 +634,18 @@ export class AgentBridgeManager {
     }
     const child = this.child
     if (!child) {
+      if (this.attached || this.ready) {
+        try {
+          const client = new AgentBridgeClient({
+            endpoint: this.endpoint,
+            timeoutMs: envPositiveInt('HERMES_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS') ?? 5000,
+            connectRetryMs: 0,
+          })
+          await client.shutdown()
+        } catch (err) {
+          logger.warn(err, '[agent-bridge] failed to request attached bridge shutdown')
+        }
+      }
       this.ready = false
       this.attached = false
       return
