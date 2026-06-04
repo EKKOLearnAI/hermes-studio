@@ -1,5 +1,5 @@
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
-import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
@@ -298,6 +298,7 @@ function mapHermesSession(s: SessionSummary): Session {
 
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
+const SIDEBAR_SESSIONS_KEY = 'hermes_sidebar_sessions'
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -312,6 +313,26 @@ function getProfileName(): string {
 
 function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
+
+function sidebarStorageKey(): string { return SIDEBAR_SESSIONS_KEY + '_' + getProfileName() }
+
+function saveSidebarIds(ids: string[]) {
+  if (ids.length === 0) return
+  try {
+    localStorage.setItem(sidebarStorageKey(), JSON.stringify(ids.slice(0, 50)))
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function loadSidebarIds(): string[] {
+  try {
+    const raw = localStorage.getItem(sidebarStorageKey())
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
 
 function isQuotaExceededError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
@@ -487,6 +508,25 @@ export const useChatStore = defineStore('chat', () => {
       }
       sessions.value = fresh
 
+      // Restore sidebar sessions from localStorage that aren't in the API response
+      const storedIds = loadSidebarIds()
+      if (storedIds.length > 0) {
+        const missingIds = storedIds.filter(id => !sessions.value.some(s => s.id === id))
+        if (missingIds.length > 0) {
+          await Promise.allSettled(missingIds.map(async (id) => {
+            const detail = await fetchSession(id, profile || undefined)
+            if (detail) {
+              const s = mapHermesSession(detail as unknown as SessionSummary)
+              if (!sessions.value.some(existing => existing.id === s.id)) {
+                sessions.value.push(s)
+              }
+            }
+          }))
+        }
+      }
+      // Persist the current sidebar list
+      saveSidebarIds(sessions.value.map(s => s.id))
+
       // Restore route-selected session first (tab-local source of truth),
       // then current in-memory session, then persisted legacy/default choice,
       // then fallback to the most recent session.
@@ -585,6 +625,8 @@ export const useChatStore = defineStore('chat', () => {
     setItemBestEffort(storageKey(), sessionId)
     const legacyActiveKey = legacyStorageKey()
     if (legacyActiveKey) removeItem(legacyActiveKey)
+    // Persist sidebar list after switching sessions
+    saveSidebarIds(sessions.value.map(s => s.id))
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
 
     if (!activeSession.value) return
@@ -835,6 +877,7 @@ export const useChatStore = defineStore('chat', () => {
       // Add new session
       sessions.value.push(session)
     }
+    saveSidebarIds(sessions.value.map(s => s.id))
   }
 
   function updateMessage(sessionId: string, id: string, update: Partial<Message>) {
