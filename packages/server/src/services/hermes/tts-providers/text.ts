@@ -5,7 +5,7 @@ const UNCLOSED_HIDDEN_REASONING_BLOCK_RE = /<(think|thinking)\b[^>]*>[\s\S]*/gi
 const FENCED_CODE_BLOCK_RE = /```[\s\S]*?```/g
 const UNCLOSED_FENCED_CODE_BLOCK_RE = /```[\s\S]*/g
 const INLINE_CODE_RE = /`[^`\n]+`/g
-const HTML_TAG_RE = /<\/?[a-zA-Z][\w:-]*(?:\s+[^<>]*)?>/g
+const HTML_TAG_RE = /<\/?[a-zA-Z][\w:-]*(?:\s+(?:[^"'<>]|"[^"]*"|'[^']*')*)?\s*\/?>/g
 
 export function cleanTtsText(content: string): string {
   if (!content) return ''
@@ -15,7 +15,7 @@ export function cleanTtsText(content: string): string {
     .replace(FENCED_CODE_BLOCK_RE, '')
     .replace(UNCLOSED_FENCED_CODE_BLOCK_RE, '')
     .replace(INLINE_CODE_RE, '')
-    .replace(HTML_TAG_RE, '')
+    .replace(HTML_TAG_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }

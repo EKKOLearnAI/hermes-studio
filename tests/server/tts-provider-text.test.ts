@@ -10,6 +10,18 @@ describe('tts provider text helpers', () => {
     expect(cleanTtsText('2 < 3 and 5 > 4')).toBe('2 < 3 and 5 > 4')
   })
 
+  it('replaces self-closing html tags with spacing', () => {
+    expect(cleanTtsText('Hello<br/>world')).toBe('Hello world')
+  })
+
+  it('removes tags with quoted attributes containing angle brackets', () => {
+    expect(cleanTtsText('Hello <img alt="a > b" src="x"/> world')).toBe('Hello world')
+  })
+
+  it('removes custom self-closing tags', () => {
+    expect(cleanTtsText('A <custom-tag/> B')).toBe('A B')
+  })
+
   it('removes think blocks', () => {
     expect(cleanTtsText('Hello <think>secret</think> world')).toBe('Hello world')
   })
