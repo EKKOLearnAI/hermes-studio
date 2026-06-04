@@ -891,6 +891,8 @@ Bridge 启动失败不会阻止 Web UI server 启动，但普通 Chat run 会在
 | `HERMES_AGENT_BRIDGE_PLATFORM` | bridge 传给 Hermes Agent 的 platform，默认 `cli`。 |
 | `HERMES_BRIDGE_PROVIDER` | 覆盖 bridge provider。 |
 | `HERMES_BRIDGE_MAX_TURNS` | 覆盖 bridge 最大轮数。 |
+| `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | 跳过启动时的 gateway 检查/自动启动；dashboard-only 部署可用。 |
+| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | 跳过启动时的内置 skill 注入；外部管理 skills 时可用。 |
 | `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT` | Version Preview bridge transport。 |
 | `HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT` | Version Preview bridge endpoint。 |
 
