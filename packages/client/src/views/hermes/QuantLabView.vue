@@ -1,17 +1,48 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { fetchQuantLabStatus, type QuantLabStatus } from '@/api/hermes/quant-lab'
+import { computed, onMounted, ref } from 'vue'
+import {
+  fetchQuantLabRollingPerformance,
+  fetchQuantLabStatus,
+  type QuantLabRollingPerformance,
+  type QuantLabRollingPerformanceResponse,
+  type QuantLabStatus,
+} from '@/api/hermes/quant-lab'
 
 const loading = ref(false)
 const error = ref('')
 const status = ref<QuantLabStatus | null>(null)
+const rollingPerformance = ref<QuantLabRollingPerformanceResponse | null>(null)
+
+const rollingCards = computed(() => [
+  { key: 'wf', label: 'WF Top5', data: rollingPerformance.value?.summaries.wf ?? null },
+  { key: 'aiBottleneck', label: 'AI Bottleneck', data: rollingPerformance.value?.summaries.aiBottleneck ?? null },
+  { key: 'youziCycle', label: 'Youzi Cycle', data: rollingPerformance.value?.summaries.youziCycle ?? null },
+])
+
+function formatPercent(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a'
+  return `${(value * 100).toFixed(2)}%`
+}
+
+function formatList(items: string[]): string {
+  return items.length ? items.join(', ') : 'none'
+}
+
+function latestChangeText(summary: QuantLabRollingPerformance): string {
+  return `Added ${formatList(summary.latestAdded)} · Removed ${formatList(summary.latestRemoved)} · Kept ${formatList(summary.latestKept)}`
+}
 
 async function loadStatus() {
   loading.value = true
   error.value = ''
 
   try {
-    status.value = await fetchQuantLabStatus()
+    const [statusResponse, rollingResponse] = await Promise.all([
+      fetchQuantLabStatus(),
+      fetchQuantLabRollingPerformance(),
+    ])
+    status.value = statusResponse
+    rollingPerformance.value = rollingResponse
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load Quant Lab status'
   } finally {
@@ -31,7 +62,7 @@ onMounted(() => {
         <p class="eyebrow">Hermes Quant Lab</p>
         <h1>Quant Lab</h1>
         <p class="subtitle">
-          Foundation surface for future market research, signal ranking, and valuation workflows.
+          Foundation surface for market research, signal ranking, valuation workflows, and rolling paper performance.
         </p>
       </div>
       <button class="refresh-button" :disabled="loading" @click="loadStatus">
@@ -62,6 +93,52 @@ onMounted(() => {
           <dd>{{ status?.capabilities?.join(', ') || 'status' }}</dd>
         </div>
       </dl>
+    </section>
+
+    <section class="status-card rolling-card">
+      <div class="status-header">
+        <div>
+          <h2>Rolling paper performance</h2>
+          <p class="muted">Latest summaries from Hermes Knowledge quant-simulation outputs.</p>
+        </div>
+        <span class="status-pill" :class="{ ready: rollingPerformance?.ok }">
+          {{ rollingPerformance?.ok ? 'Loaded' : loading ? 'Loading' : 'No data' }}
+        </span>
+      </div>
+
+      <div class="rolling-grid">
+        <article v-for="card in rollingCards" :key="card.key" class="rolling-summary">
+          <div class="rolling-summary-header">
+            <h3>{{ card.label }}</h3>
+            <span>{{ card.data ? `${card.data.snapshotCount} snapshots` : 'no data' }}</span>
+          </div>
+
+          <template v-if="card.data">
+            <p class="policy">{{ card.data.policy }} · {{ card.data.sourceDate }}</p>
+            <dl class="metrics-grid">
+              <div>
+                <dt>1D Avg</dt>
+                <dd>{{ formatPercent(card.data.avgReturn1d) }}</dd>
+              </div>
+              <div>
+                <dt>5D Avg</dt>
+                <dd>{{ formatPercent(card.data.avgReturn5d) }}</dd>
+              </div>
+              <div>
+                <dt>10D Avg</dt>
+                <dd>{{ formatPercent(card.data.avgReturn10d) }}</dd>
+              </div>
+              <div>
+                <dt>Turnover</dt>
+                <dd>{{ formatPercent(card.data.latestTurnover) }}</dd>
+              </div>
+            </dl>
+            <p class="change-text">{{ latestChangeText(card.data) }}</p>
+            <p class="muted">Source: {{ card.data.sourceFile }}</p>
+          </template>
+          <p v-else class="muted">No rolling performance summary found yet.</p>
+        </article>
+      </div>
     </section>
   </main>
 </template>
@@ -106,6 +183,7 @@ onMounted(() => {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -163,11 +241,59 @@ h1 {
   }
 }
 
-.status-grid {
+.status-grid,
+.metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 16px;
   margin: 0;
+}
+
+.rolling-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rolling-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.rolling-summary {
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  padding: 16px;
+  background: $bg-secondary;
+}
+
+.rolling-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+
+  span {
+    color: $text-secondary;
+    font-size: 12px;
+    font-weight: 700;
+  }
+}
+
+.policy,
+.change-text,
+.muted {
+  color: $text-secondary;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.policy,
+.metrics-grid,
+.change-text {
+  margin-top: 12px;
 }
 
 dt {
