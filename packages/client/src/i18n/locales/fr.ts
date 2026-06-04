@@ -385,6 +385,7 @@ export default {
     arguments: 'Arguments',
     result: 'Resultat',
     truncated: '... (tronque)',
+    unchangedLines: '{count} lignes inchangées',
     executionDuration: 'Temps d’exécution',    thinkingLabel: 'Raisonnement',
     thinkingInProgress: 'En réflexion…',
     thinkingShow: 'Afficher le raisonnement',

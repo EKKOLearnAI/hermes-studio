@@ -411,6 +411,7 @@ export default {
     arguments: 'Arguments',
     result: 'Result',
     truncated: '... (truncated)',
+    unchangedLines: '{count} unchanged lines',
     executionDuration: 'Execution time',
     thinkingLabel: 'Thinking',
     thinkingInProgress: 'Thinking…',

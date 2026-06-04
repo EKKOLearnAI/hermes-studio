@@ -385,6 +385,7 @@ export default {
     arguments: 'Argumentos',
     result: 'Resultado',
     truncated: '... (truncado)',
+    unchangedLines: '{count} líneas sin cambios',
     executionDuration: 'Tiempo de ejecución',    thinkingLabel: 'Pensamiento',
     thinkingInProgress: 'Pensando…',
     thinkingShow: 'Mostrar pensamiento',

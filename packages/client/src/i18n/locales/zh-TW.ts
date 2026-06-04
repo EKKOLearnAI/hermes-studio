@@ -405,6 +405,7 @@ export default {
     arguments: '參數',
     result: '結果',
     truncated: '... (已截斷)',
+    unchangedLines: '{count} 行未修改',
     executionDuration: '執行時長',
     thinkingLabel: '思考過程',
     thinkingInProgress: '思考中…',

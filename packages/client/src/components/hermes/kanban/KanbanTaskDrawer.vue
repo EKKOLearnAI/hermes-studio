@@ -18,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   updated: []
+  navigate: [taskId: string]
 }>()
 
 const { t } = useI18n()
@@ -196,6 +197,11 @@ async function handleAssign() {
     message.error(err.message)
   }
 }
+
+function handleNavigateTask(taskId: string) {
+  emit('updated')
+  emit('navigate', taskId)
+}
 </script>
 
 <template>
@@ -208,6 +214,22 @@ async function handleAssign() {
             <div class="detail-row">
               <span class="detail-label">{{ t('kanban.detail.status') }}</span>
               <span class="detail-value status-badge" :class="detail.task.status">{{ localizedTaskStatus }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Task ID</span>
+              <span class="detail-value task-id-value">{{ detail.task.id }}</span>
+            </div>
+            <div v-if="detail.parents?.length" class="detail-row">
+              <span class="detail-label">Parent</span>
+              <span class="detail-value">
+                <a v-for="pid in detail.parents" :key="pid" class="task-link" @click="handleNavigateTask(pid)">{{ pid }}</a>
+              </span>
+            </div>
+            <div v-if="detail.children?.length" class="detail-row">
+              <span class="detail-label">Children</span>
+              <span class="detail-value">
+                <a v-for="cid in detail.children" :key="cid" class="task-link" @click="handleNavigateTask(cid)">{{ cid }}</a>
+              </span>
             </div>
             <div class="detail-row">
               <span class="detail-label">{{ t('kanban.detail.assignee') }}</span>
@@ -474,6 +496,35 @@ async function handleAssign() {
 .detail-value {
   font-size: 12px;
   color: $text-primary;
+}
+
+.task-id-value {
+  font-family: $font-code;
+  font-size: 11px;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  user-select: all;
+}
+
+.task-link {
+  font-family: $font-code;
+  font-size: 11px;
+  color: $accent-primary;
+  cursor: pointer;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  transition: background $transition-fast;
+
+  &:hover {
+    background: rgba(var(--accent-primary-rgb), 0.14);
+    text-decoration: underline;
+  }
+
+  &:not(:last-child) {
+    margin-right: 4px;
+  }
 }
 
 .status-badge {

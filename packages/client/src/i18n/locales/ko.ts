@@ -385,6 +385,7 @@ export default {
     arguments: '인수',
     result: '결과',
     truncated: '... (잘림)',
+    unchangedLines: '변경 없음 {count}줄',
     executionDuration: '실행 시간',    thinkingLabel: '사고 과정',
     thinkingInProgress: '사고 중…',
     thinkingShow: '사고 과정 펼치기',

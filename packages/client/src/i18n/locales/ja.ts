@@ -385,6 +385,7 @@ export default {
     arguments: '引数',
     result: '結果',
     truncated: '... (省略)',
+    unchangedLines: '変更なし {count} 行',
     executionDuration: '実行時間',    thinkingLabel: '思考過程',
     thinkingInProgress: '思考中…',
     thinkingShow: '思考過程を表示',

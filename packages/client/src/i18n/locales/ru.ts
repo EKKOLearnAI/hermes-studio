@@ -313,6 +313,7 @@ export default {
     arguments: 'Аргументы',
     result: 'Результат',
     truncated: '... (обрезано)',
+    unchangedLines: '{count} строк без изменений',
     executionDuration: 'Длительность выполнения',
     thinkingLabel: 'Процесс размышления',
     thinkingInProgress: 'Размышление…',

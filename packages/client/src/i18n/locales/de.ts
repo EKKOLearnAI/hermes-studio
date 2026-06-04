@@ -385,6 +385,7 @@ export default {
     arguments: 'Argumente',
     result: 'Ergebnis',
     truncated: '... (abgeschnitten)',
+    unchangedLines: '{count} unveränderte Zeilen',
     executionDuration: 'Ausführungszeit',    thinkingLabel: 'Denkprozess',
     thinkingInProgress: 'Denkt…',
     thinkingShow: 'Denkprozess anzeigen',

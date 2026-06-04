@@ -214,6 +214,8 @@ if (changedChatChainFiles.length > 0 && !changedFiles.includes('docs/cli-chat-se
 }
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')
+const desktopManualBuildWorkflow = await readText('.github/workflows/desktop-manual-build.yml')
+const desktopMacUpdateManifestWorkflow = await readText('.github/workflows/desktop-mac-update-manifest.yml')
 const desktopRuntimeWorkflow = await readText('.github/workflows/desktop-runtime.yml')
 const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
 const desktopPackageJson = await readText('packages/desktop/package.json')
@@ -244,6 +246,49 @@ for (const expectedGlob of ['*.dmg', '*.exe', '*.AppImage']) {
 
 if (!desktopReleaseWorkflow.includes('fail_on_unmatched_files: true')) {
   fail('desktop-release.yml must keep fail_on_unmatched_files: true')
+}
+
+function workflowCaseBody(text, caseLabel) {
+  const start = text.indexOf(`${caseLabel})`)
+  if (start < 0) fail(`desktop-manual-build.yml is missing ${caseLabel} case`)
+  const end = text.indexOf(';;', start)
+  if (end < 0) fail(`desktop-manual-build.yml ${caseLabel} case is missing terminator`)
+  return text.slice(start, end)
+}
+
+for (const macCase of ['darwin-arm64', 'darwin-x64']) {
+  const body = workflowCaseBody(desktopManualBuildWorkflow, macCase)
+  if (body.includes('latest*.yml')) {
+    fail(`desktop-manual-build.yml must not publish single-arch macOS update manifests from ${macCase}`)
+  }
+  for (const glob of ['*.dmg.blockmap', '*.zip.blockmap']) {
+    if (!body.includes(glob)) {
+      fail(`desktop-manual-build.yml ${macCase} must keep uploading ${glob}`)
+    }
+  }
+}
+
+for (const phrase of [
+  'mac-update-manifest:',
+  "if: needs.validate.outputs.target_os == 'darwin' && github.event.inputs.release_tag != ''",
+  'Both macOS architectures are not available yet; leaving latest-mac.yml unchanged.',
+  'gh release upload "$TAG" /tmp/latest-mac.yml',
+]) {
+  if (!desktopManualBuildWorkflow.includes(phrase)) {
+    fail(`desktop-manual-build.yml must include macOS manifest repair behavior: ${phrase}`)
+  }
+}
+
+if (!desktopMacUpdateManifestWorkflow.includes('Repair macOS Update Manifest')) {
+  fail('desktop-mac-update-manifest.yml must provide a manual macOS manifest repair workflow')
+}
+
+if (!desktopMacUpdateManifestWorkflow.includes("gh release download \"$TAG\"") || !desktopMacUpdateManifestWorkflow.includes('/tmp/latest-mac.yml')) {
+  fail('desktop-mac-update-manifest.yml must generate latest-mac.yml from release assets')
+}
+
+if (!desktopMacUpdateManifestWorkflow.includes('gh release upload "$TAG" /tmp/latest-mac.yml')) {
+  fail('desktop-mac-update-manifest.yml must upload the merged latest-mac.yml to the release')
 }
 
 for (const phrase of [
