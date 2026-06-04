@@ -30,6 +30,7 @@ import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
+import { generateInitialSessionTitle, scheduleFirstTurnSessionTitleFinalization } from '../session-title'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -309,8 +310,8 @@ export async function handleBridgeRun(
 
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
-      const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+      const title = generateInitialSessionTitle(previewText)
+      createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title, titleSource: 'initial' })
     }
     messageId = addMessage({
       session_id,
@@ -320,8 +321,8 @@ export async function handleBridgeRun(
     })
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
-    const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+    const title = generateInitialSessionTitle(previewText)
+    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title, titleSource: 'initial' })
   }
 
   socket.join(`session:${session_id}`)
@@ -979,6 +980,13 @@ async function applyBridgeChunkAsync(
   emit(eventName, payload)
 
   if (!terminalError) {
+    scheduleFirstTurnSessionTitleFinalization(sessionId, {
+      bridge,
+      profile,
+      model: modelContext.model,
+      provider: modelContext.provider,
+      emit,
+    })
     await maybeEnqueueGoalContinuation({
       nsp,
       socket,

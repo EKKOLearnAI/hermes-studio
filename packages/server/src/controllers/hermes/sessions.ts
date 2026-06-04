@@ -12,6 +12,7 @@ import {
   updateSession as localUpdateSession,
   updateSessionStats as localUpdateSessionStats,
 } from '../../db/hermes/session-store'
+import { deriveTitleFromCompactionSummary } from '../../lib/context-compressor'
 import { ExportCompressor } from '../../lib/context-compressor/export-compressor'
 import { deleteUsage, getUsage, getUsageBatch } from '../../db/hermes/usage-store'
 import type { UsageStatsModelRow, UsageStatsDailyRow } from '../../db/hermes/usage-store'
@@ -21,9 +22,10 @@ import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getGroupChatServer } from '../../routes/hermes/group-chat'
 import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
-import { generateHeuristicSessionTitle } from '../../services/hermes/session-title'
+import { generateHeuristicSessionTitle, NEW_CHAT_TITLE } from '../../services/hermes/session-title'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { getCompressionSnapshot } from '../../db/hermes/compression-snapshot'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -637,7 +639,7 @@ export async function rename(ctx: any) {
   }
   const existing = localGetSession(ctx.params.id)
   if (denySessionAccess(ctx, existing)) return
-  const ok = localRenameSession(ctx.params.id, title.trim())
+  const ok = localRenameSession(ctx.params.id, title.trim(), 'manual')
   if (!ok) {
     ctx.status = 500
     ctx.body = { error: 'Failed to rename session' }
@@ -655,18 +657,15 @@ export async function regenerateTitle(ctx: any) {
   }
   if (denySessionAccess(ctx, detail)) return
 
-  const title = generateHeuristicSessionTitle(
+  const snapshot = getCompressionSnapshot(ctx.params.id)
+  const compactionTitle = deriveTitleFromCompactionSummary(snapshot?.summary || '')
+  const source = compactionTitle ? 'compaction' : 'heuristic'
+  const title = compactionTitle || generateHeuristicSessionTitle(
     Array.isArray(detail.messages) ? detail.messages : [],
     detail.title || detail.id,
   )
-  const ok = localRenameSession(ctx.params.id, title)
-  if (!ok) {
-    ctx.status = 500
-    ctx.body = { error: 'Failed to rename session' }
-    return
-  }
 
-  ctx.body = { ok: true, title }
+  ctx.body = { ok: true, title, source }
 }
 
 export async function setWorkspace(ctx: any) {
@@ -681,7 +680,7 @@ export async function setWorkspace(ctx: any) {
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile: requestedProfile(ctx) || 'default', title: NEW_CHAT_TITLE, titleSource: 'initial' })
   }
   updateSession(id, { workspace: workspace || null } as any)
   ctx.body = { ok: true }
@@ -704,7 +703,7 @@ export async function setModel(ctx: any) {
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile: requestedProfile(ctx) || 'default', title: NEW_CHAT_TITLE, titleSource: 'initial' })
   }
   updateSession(id, { model: model.trim(), provider: (provider || '').trim() } as any)
   ctx.body = { ok: true }

@@ -48,6 +48,9 @@ export interface RunEvent {
     output_tokens: number
     total_tokens: number
   }
+  /** Auto-generated title finalized by the server after the first assistant response. */
+  title?: string
+  titleSource?: string
   /** session_id tag added by server for client-side filtering */
   session_id?: string
   /** Queue length from run.queued event */
@@ -135,6 +138,7 @@ const sessionEventHandlers = new Map<string, {
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
+const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -369,6 +373,15 @@ function globalSessionCommandHandler(event: RunEvent): void {
   }
 }
 
+function globalSessionTitleUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  for (const handler of sessionTitleUpdatedHandlers) {
+    handler(event)
+  }
+}
+
 function globalAgentEventHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
@@ -497,6 +510,13 @@ export function onSessionCommand(handler: (event: RunEvent) => void): () => void
   }
 }
 
+export function onSessionTitleUpdated(handler: (event: RunEvent) => void): () => void {
+  sessionTitleUpdatedHandlers.add(handler)
+  return () => {
+    sessionTitleUpdatedHandlers.delete(handler)
+  }
+}
+
 export function respondClarify(
   sessionId: string,
   clarifyId: string,
@@ -607,6 +627,7 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
     chatRunSocket.on('agent.event', globalAgentEventHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)
+    chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
 
     globalListenersRegistered = true
   }

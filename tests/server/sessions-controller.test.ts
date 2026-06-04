@@ -656,6 +656,49 @@ describe('session conversations controller', () => {
     expect(ctx.body).toEqual({ ok: true })
   })
 
+  it('precreates model-only sessions with the initial New Chat title source', async () => {
+    getSessionMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { model: 'grok-4', provider: 'xai' } },
+      query: { profile: 'travel' },
+      body: null,
+    }
+    await mod.setModel(ctx)
+
+    expect(localCreateSessionMock).toHaveBeenCalledWith({
+      id: 'session-1',
+      profile: 'travel',
+      title: 'New Chat',
+      titleSource: 'initial',
+    })
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { model: 'grok-4', provider: 'xai' })
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('precreates workspace-only sessions with the initial New Chat title source', async () => {
+    getSessionMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { workspace: '/tmp/work' } },
+      body: null,
+    }
+    await mod.setWorkspace(ctx)
+
+    expect(localCreateSessionMock).toHaveBeenCalledWith({
+      id: 'session-1',
+      profile: 'default',
+      title: 'New Chat',
+      titleSource: 'initial',
+    })
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { workspace: '/tmp/work' })
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
   it('deletes a current-profile Hermes history session even when no local Web UI session exists', async () => {
     getActiveProfileNameMock.mockReturnValue('travel')
     getSessionMock.mockReturnValue(null)
@@ -856,4 +899,59 @@ describe('session conversations controller', () => {
       expect(JSON.parse(ctx.body)).toMatchObject({ id: 'cli-123' })
     })
   })
+
+  it('marks user rename requests as manual title updates', async () => {
+    getSessionMock.mockReturnValue({ id: 's1', profile: 'default', title: 'Old' })
+    localRenameSessionMock.mockReturnValue(true)
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 's1' }, request: { body: { title: 'User title' } }, headers: {}, body: null }
+
+    await mod.rename(ctx)
+
+    expect(localRenameSessionMock).toHaveBeenCalledWith('s1', 'User title', 'manual')
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('returns a suggested compaction summary title without renaming the session', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 's1',
+      profile: 'default',
+      title: 'Old',
+      messages: [{ role: 'user', content: 'Please investigate compaction title behavior.' }],
+    })
+    getCompressionSnapshotMock.mockReturnValue({
+      summary: `## Active Task
+User asked: "触发一次compactification看看是不是真的能够更新title"
+
+## Goal
+Verify compaction title updates.`,
+      lastMessageIndex: 10,
+      messageCountAtTime: 12,
+    })
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 's1' }, headers: {}, body: null }
+
+    await mod.regenerateTitle(ctx)
+
+    expect(localRenameSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true, title: 'compactification title', source: 'compaction' })
+  })
+
+  it('returns a heuristic title suggestion without renaming the session', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 's1',
+      profile: 'default',
+      title: 'Old',
+      messages: [{ role: 'user', content: 'Please investigate compaction title behavior.' }],
+    })
+    getCompressionSnapshotMock.mockReturnValue(null)
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 's1' }, headers: {}, body: null }
+
+    await mod.regenerateTitle(ctx)
+
+    expect(localRenameSessionMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true, title: 'Investigate compaction title behavior', source: 'heuristic' })
+  })
+
 })

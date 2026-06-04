@@ -381,7 +381,7 @@ export async function handleSessionCommand(
       if (!getSession(sessionId)) {
         createSession({ id: sessionId, profile: ctx.profile, source: 'cli', model: ctx.model, title })
       }
-      const updated = renameSession(sessionId, title)
+      const updated = renameSession(sessionId, title, 'manual')
       emitCommand({
         ok: updated,
         action: 'title',

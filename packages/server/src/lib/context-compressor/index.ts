@@ -54,6 +54,8 @@ export interface CompressionConfig {
   tailMessageCount: number
   /** Timeout for LLM summarization call (default: 300_000ms) */
   summarizationTimeoutMs: number
+  /** Ask the summarizer to emit a short title alongside the summary */
+  autoTitle: boolean
 }
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -62,6 +64,7 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   headMessageCount: 0,
   tailMessageCount: 10,
   summarizationTimeoutMs: 300_000,
+  autoTitle: true,
 }
 
 export interface CompressedResult {
@@ -74,6 +77,87 @@ export interface CompressedResult {
     summaryTokenEstimate: number
     verbatimCount: number
     compressedStartIndex: number
+    generatedTitle?: string | null
+  }
+}
+
+export interface ParsedCompactionOutput {
+  title: string | null
+  summary: string
+  usedSentinelBlocks: boolean
+}
+
+const TITLE_OPEN = '<hermes_compaction_title_v1>'
+const TITLE_CLOSE = '</hermes_compaction_title_v1>'
+const SUMMARY_OPEN = '<hermes_compaction_summary_v1>'
+const SUMMARY_CLOSE = '</hermes_compaction_summary_v1>'
+
+function sanitizeGeneratedTitle(value: string): string | null {
+  let title = String(value || '')
+    .replace(/[`*_~#]/g, '')
+    .replace(/^[-•\s]+/, '')
+    .replace(/^(User asked|用户问|用户要求|Active task)\s*[:：]\s*/i, '')
+    .replace(/^[\"'“”‘’]+|[\"'“”‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!title) return null
+  const lower = title.toLowerCase()
+  if (lower.includes('compactification') && (lower.includes('title') || title.includes('标题'))) return 'compactification title'
+  if (title.includes('<') || title.includes('>')) return null
+  if (/^(none|无|n\/?a)\.?$/i.test(title)) return null
+  if (title.length > 48) title = `${title.slice(0, 47).trimEnd()}…`
+  return title
+}
+
+function extractSection(summary: string, heading: string): string {
+  const target = `## ${heading}`.toLowerCase()
+  const lines = String(summary || '').split(/\r?\n/)
+  const start = lines.findIndex(line => line.trim().toLowerCase() === target)
+  if (start < 0) return ''
+  const body: string[] = []
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s+/.test(line.trim())) break
+    body.push(line)
+  }
+  return body.join('\n').trim()
+}
+
+export function deriveTitleFromCompactionSummary(summary: string): string | null {
+  const raw = String(summary || '').trim()
+  if (!raw) return null
+  // If the model attempted the sentinel protocol but malformed it, do not guess;
+  // malformed tags are treated as untrusted protocol output.
+  if (raw.includes(TITLE_OPEN) || raw.includes(TITLE_CLOSE) || raw.includes(SUMMARY_OPEN) || raw.includes(SUMMARY_CLOSE)) {
+    return null
+  }
+
+  const activeTask = extractSection(raw, 'Active Task')
+  const explicitAsk = activeTask.match(/(?:User asked|用户问|用户要求)\s*[:：]\s*[\"'“”‘’]?([^\n\"'“”‘’]+)/i)?.[1]
+  const candidates = [
+    explicitAsk,
+    ...activeTask.split(/\r?\n/),
+    ...extractSection(raw, 'Goal').split(/\r?\n/),
+  ]
+
+  for (const candidate of candidates) {
+    const title = sanitizeGeneratedTitle(candidate || '')
+    if (title && !/^\[.*\]$/.test(title)) return title
+  }
+  return null
+}
+
+export function parseCompactionOutput(rawOutput: string): ParsedCompactionOutput {
+  const raw = String(rawOutput || '').trim()
+  const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(
+    `^\\s*${escaped(TITLE_OPEN)}\\s*([\\s\\S]*?)\\s*${escaped(TITLE_CLOSE)}\\s*${escaped(SUMMARY_OPEN)}\\s*([\\s\\S]*?)\\s*${escaped(SUMMARY_CLOSE)}\\s*$`,
+  )
+  const match = raw.match(pattern)
+  if (!match) return { title: null, summary: rawOutput, usedSentinelBlocks: false }
+  return {
+    title: sanitizeGeneratedTitle(match[1]),
+    summary: match[2].trim(),
+    usedSentinelBlocks: true,
   }
 }
 
@@ -251,7 +335,27 @@ Be specific with file paths, commands, line numbers, and results.]
 ## Critical Context
 [Any specific values, error messages, configuration details, or data that would be lost without explicit preservation]`
 
-export function buildFullPrompt(contentToSummarize: string, summaryBudget: number): string {
+
+function titleOutputInstructions(autoTitle: boolean): string {
+  if (!autoTitle) return ''
+  return `
+MANDATORY OUTPUT CONTRACT:
+- The first non-whitespace characters of your response MUST be ${TITLE_OPEN}.
+- The final non-whitespace characters of your response MUST be ${SUMMARY_CLOSE}.
+- Output exactly two sentinel blocks, in this order, with no preamble:
+
+${TITLE_OPEN}
+[A concise same-language session title, one line only, no markdown/XML; leave empty if no useful title exists]
+${TITLE_CLOSE}
+
+${SUMMARY_OPEN}
+[the structured summary body]
+${SUMMARY_CLOSE}
+
+Do not use these sentinel tags anywhere inside the summary body.`
+}
+
+export function buildFullPrompt(contentToSummarize: string, summaryBudget: number, autoTitle = false): string {
   return `You are a summarization agent creating a context checkpoint.
 Your output will be injected as reference material for a DIFFERENT
 assistant that continues the conversation.
@@ -270,10 +374,12 @@ ${TEMPLATE_SECTIONS}
 
 Target ~${summaryBudget} tokens. Be CONCRETE — include file paths, command outputs, error messages, line numbers, and specific values. Avoid vague descriptions like "made some changes" — say exactly what changed.
 
-Write only the summary body. Do not include any preamble or prefix.`
+${titleOutputInstructions(autoTitle)}
+
+Write only the requested output. Do not include any preamble or prefix.`
 }
 
-export function buildIncrementalPrompt(previousSummary: string, contentToSummarize: string, summaryBudget: number): string {
+export function buildIncrementalPrompt(previousSummary: string, contentToSummarize: string, summaryBudget: number, autoTitle = false): string {
   return `You are a summarization agent creating a context checkpoint.
 Your output will be injected as reference material for a DIFFERENT
 assistant that continues the conversation.
@@ -303,7 +409,9 @@ ${TEMPLATE_SECTIONS}
 
 Target ~${summaryBudget} tokens. Be CONCRETE — include file paths, command outputs, error messages, line numbers, and specific values. Avoid vague descriptions like "made some changes" — say exactly what changed.
 
-Write only the summary body. Do not include any preamble or prefix.`
+${titleOutputInstructions(autoTitle)}
+
+Write only the requested output. Do not include any preamble or prefix.`
 }
 
 // ─── Pre-cleaning ───────────────────────────────────────
@@ -656,13 +764,17 @@ export class ChatContextCompressor {
     )
 
     let summary: string | null = null
+    let generatedTitle: string | null = null
     try {
       const contentToSummarize = serializeForSummary(toCompress)
-      const prompt = buildIncrementalPrompt(previousSummary, contentToSummarize, this.config.summaryBudget)
+      const prompt = buildIncrementalPrompt(previousSummary, contentToSummarize, this.config.summaryBudget, this.config.autoTitle)
 
       const t0 = Date.now()
       summary = await callSummarizer(upstream, apiKey, prompt, [], this.config.summarizationTimeoutMs, previousSummary, summarizer)
       logger.info('[context-compressor] incremental-llm done in %dms, %d chars', Date.now() - t0, summary.length)
+      const parsed = this.config.autoTitle ? parseCompactionOutput(summary) : { title: null, summary, usedSentinelBlocks: false }
+      summary = parsed.summary
+      generatedTitle = parsed.title || deriveTitleFromCompactionSummary(parsed.summary)
     } catch (err: any) {
       logger.warn('[context-compressor] incremental-llm failed: %s — keeping new messages verbatim', err.message)
       const fallback = [
@@ -706,6 +818,7 @@ export class ChatContextCompressor {
         summaryTokenEstimate: countTokens(SUMMARY_PREFIX + summary),
         verbatimCount: result.length === head.length + 1 + tail.length ? head.length + tail.length : 0,
         compressedStartIndex: newLastIndex,
+        generatedTitle,
       },
     }
   }
@@ -736,13 +849,17 @@ export class ChatContextCompressor {
     )
 
     const contentToSummarize = serializeForSummary(toCompress)
-    const prompt = buildFullPrompt(contentToSummarize, this.config.summaryBudget)
+    const prompt = buildFullPrompt(contentToSummarize, this.config.summaryBudget, this.config.autoTitle)
 
     let summary: string | null = null
+    let generatedTitle: string | null = null
     try {
       const t0 = Date.now()
       summary = await callSummarizer(upstream, apiKey, prompt, [], this.config.summarizationTimeoutMs, undefined, summarizer)
       logger.info('[context-compressor] full-llm done in %dms, %d chars', Date.now() - t0, summary.length)
+      const parsed = this.config.autoTitle ? parseCompactionOutput(summary) : { title: null, summary, usedSentinelBlocks: false }
+      summary = parsed.summary
+      generatedTitle = parsed.title || deriveTitleFromCompactionSummary(parsed.summary)
     } catch (err: any) {
       logger.warn('[context-compressor] full-llm failed: %s', err.message)
     }
@@ -771,6 +888,7 @@ export class ChatContextCompressor {
         summaryTokenEstimate: summary ? countTokens(SUMMARY_PREFIX + summary) : 0,
         verbatimCount: budgetedResult.length === result.length ? head.length + tail.length : 0,
         compressedStartIndex: tailStart - 1,
+        generatedTitle,
       },
     }
   }

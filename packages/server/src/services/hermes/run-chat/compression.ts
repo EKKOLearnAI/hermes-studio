@@ -21,6 +21,7 @@ import type { SessionState, BridgeCompressionResult } from './types'
 interface RunChatCompressionConfig {
   enabled: boolean
   triggerTokens: number
+  autoTitle: boolean
   compressor: Partial<CompressorConfig>
 }
 
@@ -157,15 +158,18 @@ async function getRunChatCompressionConfig(profile: string, contextLength: numbe
   const targetRatio = clampRatio(raw.target_ratio, 0.2, 0.01, 0.8)
   const protectLastN = clampInt(raw.protect_last_n, 20, 0, 500)
   const protectFirstN = clampInt(raw.protect_first_n, 3, 0, 100)
+  const autoTitle = raw.auto_title !== false
 
   return {
     enabled: raw.enabled !== false,
     triggerTokens: Math.floor(contextLength * threshold),
+    autoTitle,
     compressor: {
       triggerTokens: Math.floor(contextLength * threshold),
       summaryBudget: Math.max(1_000, Math.floor(contextLength * targetRatio)),
       headMessageCount: protectFirstN,
       tailMessageCount: protectLastN,
+      autoTitle,
     },
   }
 }

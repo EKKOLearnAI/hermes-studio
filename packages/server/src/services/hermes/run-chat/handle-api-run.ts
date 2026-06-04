@@ -23,6 +23,7 @@ import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
 import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
+import { generateInitialSessionTitle, scheduleFirstTurnSessionTitleFinalization } from '../session-title'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
 
 export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
@@ -144,8 +145,8 @@ export async function handleApiRun(
 
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
-        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        const title = generateInitialSessionTitle(previewText)
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title, titleSource: 'initial' })
       }
 
       const messageId = addMessage({
@@ -167,8 +168,8 @@ export async function handleApiRun(
       })
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
-        const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        const title = generateInitialSessionTitle(previewText)
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title, titleSource: 'initial' })
       }
       const messageId = addMessage({
         session_id,
@@ -337,6 +338,9 @@ export async function handleApiRun(
           error: finalOutput.error || parsed.error,
           queue_remaining: queueLen,
         })
+        if (session_id && eventName === 'run.completed') {
+          scheduleFirstTurnSessionTitleFinalization(session_id, { profile, model, provider, emit })
+        }
         if (session_id && queueLen > 0) dequeueNextQueuedRun(socket, session_id)
         return
       }

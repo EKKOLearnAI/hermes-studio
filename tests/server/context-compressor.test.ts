@@ -499,4 +499,95 @@ describe('ChatContextCompressor', () => {
     expect(result.meta.compressedStartIndex).toBe(22)
     expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', 'updated summary', 22, 23)
   })
+
+  it('extracts a generated title from anchored compaction sentinel tags without storing the tags in the summary', async () => {
+    const { parseCompactionOutput } = await import('../../packages/server/src/lib/context-compressor')
+    const parsed = parseCompactionOutput(`<hermes_compaction_title_v1>
+PR5 compaction titles
+</hermes_compaction_title_v1>
+
+<hermes_compaction_summary_v1>
+## Active Task
+Ship the PR5 title update.
+</hermes_compaction_summary_v1>`)
+
+    expect(parsed).toEqual({
+      title: 'PR5 compaction titles',
+      summary: '## Active Task\nShip the PR5 title update.',
+      usedSentinelBlocks: true,
+    })
+  })
+
+  it('does not confuse XML-ish envelopes inside the summary body with the title sentinel', async () => {
+    const { parseCompactionOutput } = await import('../../packages/server/src/lib/context-compressor')
+    const parsed = parseCompactionOutput(`<hermes_compaction_title_v1>
+Parser safety
+</hermes_compaction_title_v1>
+<hermes_compaction_summary_v1>
+## Critical Context
+The model previously returned <summary><title>wrong</title></summary>.
+</hermes_compaction_summary_v1>`)
+
+    expect(parsed.title).toBe('Parser safety')
+    expect(parsed.summary).toContain('<summary><title>wrong</title></summary>')
+    expect(parsed.usedSentinelBlocks).toBe(true)
+  })
+
+
+
+  it('derives a fallback title from a structured compaction summary when the model ignores sentinel tags', async () => {
+    const { deriveTitleFromCompactionSummary } = await import('../../packages/server/src/lib/context-compressor')
+
+    const title = deriveTitleFromCompactionSummary(`## Active Task
+User asked: "触发一次compactification看看是不是真的能够更新title"
+
+## Goal
+Verify whether compaction updates the session title.`)
+
+    expect(title).toBe('compactification title')
+  })
+
+  it('falls back to the raw response when compaction sentinel tags are malformed', async () => {
+    const { parseCompactionOutput } = await import('../../packages/server/src/lib/context-compressor')
+    const raw = '<hermes_compaction_title_v1>Bad\n</hermes_compaction_title_v1>\n## Active Task\nNo summary sentinel.'
+
+    expect(parseCompactionOutput(raw)).toEqual({
+      title: null,
+      summary: raw,
+      usedSentinelBlocks: false,
+    })
+  })
+
+  it('stores only the parsed summary and exposes the parsed title in compression metadata', async () => {
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const compressor = new ChatContextCompressor({
+      config: { headMessageCount: 0, tailMessageCount: 1, summaryBudget: 1000, autoTitle: true },
+    })
+    const messages = [
+      { role: 'user', content: 'old context' },
+      { role: 'assistant', content: 'old response' },
+      { role: 'user', content: 'tail' },
+    ]
+    getCompressionSnapshotMock.mockReturnValue(null)
+    bridgeRequestMock.mockResolvedValue({
+      status: 'completed',
+      result: { final_response: `<hermes_compaction_title_v1>
+PR5 title guardrails
+</hermes_compaction_title_v1>
+<hermes_compaction_summary_v1>
+## Active Task
+Implement guarded compaction title updates.
+</hermes_compaction_summary_v1>` },
+    })
+
+    const result = await compressor.compress(messages, 'http://upstream', undefined, 's1')
+
+    expect(result.messages.map(m => m.content)).toEqual([
+      `${SUMMARY_PREFIX}\n\n## Active Task\nImplement guarded compaction title updates.`,
+      'tail',
+    ])
+    expect(result.meta.generatedTitle).toBe('PR5 title guardrails')
+    expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', '## Active Task\nImplement guarded compaction title updates.', 1, 3)
+  })
+
 })

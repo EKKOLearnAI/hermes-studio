@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -70,6 +70,7 @@ export interface Session {
   id: string
   profile?: string
   title: string
+  titleSource?: string
   source?: string
   messages: Message[]
   createdAt: number
@@ -277,7 +278,8 @@ function mapHermesSession(s: SessionSummary): Session {
   return {
     id: s.id,
     profile: s.profile || 'default',
-    title: s.title || '',
+    title: s.title || 'New Chat',
+    titleSource: (s as any).title_source || (s as any).titleSource || undefined,
     source: s.source || undefined,
     messages: [],
     createdAt: Math.round(s.started_at * 1000),
@@ -542,7 +544,7 @@ export const useChatStore = defineStore('chat', () => {
     const session: Session = {
       id: uid(),
       profile: options.profile || useProfilesStore().activeProfileName || 'default',
-      title: '',
+      title: 'New Chat',
       source: 'cli',
       messages: [],
       createdAt: Date.now(),
@@ -568,7 +570,7 @@ export const useChatStore = defineStore('chat', () => {
     const hex = Math.random().toString(16).slice(2, 8)
     const session: Session = {
       id: `${ts}_${hex}`,
-      title: '',
+      title: 'New Chat',
       source: 'cli',
       messages: [],
       createdAt: Date.now(),
@@ -1315,6 +1317,16 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  function applyServerSessionTitle(sessionId: string, evt: Pick<RunEvent, 'title' | 'titleSource'>) {
+    const title = typeof evt.title === 'string' ? evt.title.trim() : ''
+    if (!title) return
+    const target = sessions.value.find(s => s.id === sessionId)
+    if (!target) return
+    target.title = title
+    target.titleSource = evt.titleSource
+    target.updatedAt = Date.now()
+  }
+
   function primeCompletionBellIfEnabled() {
     if (useSettingsStore().display.bell_on_complete) {
       primeCompletionSound()
@@ -1924,6 +1936,7 @@ export const useChatStore = defineStore('chat', () => {
                 cleanup()
               }
               activeAssistantMessageId = null
+              applyServerSessionTitle(sid, evt)
               updateSessionTitle(sid)
               break
             }
@@ -2383,6 +2396,7 @@ export const useChatStore = defineStore('chat', () => {
             // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
           }
+          applyServerSessionTitle(sid, evt)
           updateSessionTitle(sid)
           break
         }
@@ -2522,6 +2536,14 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   onSessionCommand(handleGlobalSessionCommand)
+
+  function handleGlobalSessionTitleUpdated(evt: RunEvent) {
+    const sid = evt.session_id
+    if (!sid) return
+    applyServerSessionTitle(sid, evt)
+  }
+
+  onSessionTitleUpdated(handleGlobalSessionTitleUpdated)
 
   function stopStreaming() {
     const sid = activeSessionId.value

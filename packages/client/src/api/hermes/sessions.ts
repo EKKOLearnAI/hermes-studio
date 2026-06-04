@@ -202,7 +202,7 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
-export async function regenerateSessionTitle(id: string): Promise<string | null> {
+export async function suggestSessionTitle(id: string): Promise<string | null> {
   try {
     const res = await request<{ ok: boolean; title: string }>(`/api/hermes/sessions/${id}/title/regenerate`, {
       method: 'POST',

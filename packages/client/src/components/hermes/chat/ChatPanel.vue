@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { renameSession, regenerateSessionTitle, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
+import { renameSession, suggestSessionTitle, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -108,6 +108,7 @@ const showRenameModal = ref(false);
 const renameValue = ref("");
 const renameSessionId = ref<string | null>(null);
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const isSuggestingTitle = ref(false);
 const sessionProfileFilter = computed(() => chatStore.sessionProfileFilter);
 const profileFilterOptions = computed(() => [
   { label: t("chat.allProfiles"), value: "__all__" },
@@ -438,7 +439,6 @@ const contextMenuOptions = computed(() => {
     key: "pin",
   },
   { label: t("chat.rename"), key: "rename" },
-  { label: t("chat.regenerateTitle"), key: "regenerate-title" },
   { label: t("chat.setWorkspace"), key: "workspace" }]
 
   if (contextSession.value?.source === "cli") {
@@ -526,20 +526,6 @@ async function handleContextMenuSelect(key: string) {
     showWorkspaceModal.value = true;
   } else if (key === "model") {
     await openSessionModelModal(contextSessionId.value);
-  } else if (key === "regenerate-title") {
-    const title = await regenerateSessionTitle(contextSessionId.value);
-    if (title) {
-      const session = chatStore.sessions.find(
-        (s) => s.id === contextSessionId.value,
-      );
-      if (session) session.title = title;
-      if (chatStore.activeSession?.id === contextSessionId.value) {
-        chatStore.activeSession.title = title;
-      }
-      message.success(t("chat.titleRegenerated"));
-    } else {
-      message.error(t("chat.regenerateTitleFailed"));
-    }
   } else if (key === "rename") {
     const session = chatStore.sessions.find(
       (s) => s.id === contextSessionId.value,
@@ -555,6 +541,30 @@ async function handleContextMenuSelect(key: string) {
 
 function handleClickOutside() {
   showContextMenu.value = false;
+}
+
+async function handleSuggestTitle() {
+  if (!renameSessionId.value || isSuggestingTitle.value) return;
+  isSuggestingTitle.value = true;
+  try {
+    const title = await suggestSessionTitle(renameSessionId.value);
+    if (title) {
+      const previous = renameValue.value.trim();
+      const suggested = title.trim();
+      renameValue.value = title;
+      await nextTick();
+      renameInputRef.value?.focus();
+      if (suggested === previous) {
+        message.info(t("chat.suggestTitleUnchanged"));
+      } else {
+        message.success(t("chat.suggestTitleReady"));
+      }
+    } else {
+      message.error(t("chat.suggestTitleFailed"));
+    }
+  } finally {
+    isSuggestingTitle.value = false;
+  }
 }
 
 async function handleRenameConfirm() {
@@ -944,6 +954,11 @@ async function handleSessionModelCustomSubmit() {
         :placeholder="t('chat.enterNewTitle')"
         @keydown.enter="handleRenameConfirm"
       />
+      <div class="rename-dialog-actions">
+        <NButton size="small" tertiary :loading="isSuggestingTitle" @click="handleSuggestTitle">
+          {{ t('chat.suggestTitle') }}
+        </NButton>
+      </div>
     </NModal>
 
     <NModal
@@ -1382,6 +1397,12 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   height: 100%;
   position: relative;
+}
+
+.rename-dialog-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 10px;
 }
 
 .session-model-search {
