@@ -1721,7 +1721,11 @@ export const useChatStore = defineStore('chat', () => {
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : null
-              if (last?.role === 'assistant' && last.isStreaming) {
+              if (last?.role === 'assistant') {
+                // Resume streaming on a message paused by tool.started
+                if (!last.isStreaming) {
+                  updateMessage(sid, last.id, { isStreaming: true })
+                }
                 last.reasoning = (last.reasoning || '') + text
                 noteReasoningStart(last.id)
               } else {
@@ -1803,7 +1807,6 @@ export const useChatStore = defineStore('chat', () => {
               if (last?.isStreaming) {
                 updateMessage(sid, last.id, { isStreaming: false })
               }
-              activeAssistantMessageId = null
               const existingTool = toolCallId
                 ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
                 : null
@@ -2229,7 +2232,11 @@ export const useChatStore = defineStore('chat', () => {
           const last = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
             : null
-          if (last?.role === 'assistant' && last.isStreaming) {
+          if (last?.role === 'assistant') {
+            // Resume streaming on a message paused by tool.started
+            if (!last.isStreaming) {
+              updateMessage(sid, last.id, { isStreaming: true })
+            }
             last.reasoning = (last.reasoning || '') + text
             noteReasoningStart(last.id)
           } else {
@@ -2303,7 +2310,6 @@ export const useChatStore = defineStore('chat', () => {
           if (last?.isStreaming) {
             updateMessage(sid, last.id, { isStreaming: false })
           }
-          activeAssistantMessageId = null
           const existingTool = toolCallId
             ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : null
