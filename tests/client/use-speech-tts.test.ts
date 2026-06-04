@@ -29,6 +29,10 @@ class MockAudio {
 
 vi.stubGlobal('Audio', MockAudio)
 
+function flushPromises() {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
 function installSpeechSynthesisMock() {
   Object.defineProperty(window, 'speechSynthesis', {
     configurable: true,
@@ -146,7 +150,6 @@ describe('client TTS unified synthesize flow', () => {
         'X-TTS-Provider': 'mimo',
       },
     }))
-
     const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
     const speech = useSpeech()
 
@@ -173,6 +176,59 @@ describe('client TTS unified synthesize flow', () => {
         stylePrompt: 'warm and calm',
       },
     })
+  })
+
+  it('openaiPlay respects an explicit edge provider even when other fields look OpenAI-compatible', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['edge-audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'edge' },
+    }))
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-edge-explicit', 'Edge explicit', {
+      provider: 'edge',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'tts-1',
+      voice: 'zh-CN-XiaoxiaoNeural',
+    })
+
+    const [, options] = mockFetch.mock.calls[0]
+    expect(JSON.parse(options.body).provider).toBe('edge')
+  })
+
+  it('openaiPlay falls back to edge for the legacy /api/tts/proxy baseUrl', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['edge-audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'edge' },
+    }))
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-edge-fallback', 'Edge fallback', {
+      baseUrl: '/api/tts/proxy',
+      voice: 'zh-CN-XiaoxiaoNeural',
+    })
+
+    const [, options] = mockFetch.mock.calls[0]
+    expect(JSON.parse(options.body).provider).toBe('edge')
+  })
+
+  it('openaiPlay falls back to custom for non-proxy endpoints without a model', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['custom-audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'custom' },
+    }))
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-custom-fallback', 'Custom fallback', {
+      baseUrl: 'https://custom.example/v1',
+      apiKey: 'custom-key',
+    })
+
+    const [, options] = mockFetch.mock.calls[0]
+    expect(JSON.parse(options.body).provider).toBe('custom')
   })
 
   it('stop aborts a pending unified custom TTS request and clears custom state', async () => {
@@ -223,6 +279,56 @@ describe('client TTS unified synthesize flow', () => {
     expect(speech.isCustomPlaying.value).toBe(false)
     expect(speech.isCustomPaused.value).toBe(false)
     expect(speech.currentCustomMessageId.value).toBe(null)
+  })
+
+  it('openaiToggle handles request failures without an unhandled rejection', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockFetch.mockRejectedValue(new Error('upstream failed'))
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    speech.openaiToggle('msg-toggle-fail', 'Fail through toggle', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    await flushPromises()
+
+    expect(consoleError).toHaveBeenCalledWith('[useSpeech] OpenAI TTS 请求失败:', expect.any(Error))
+    expect(speech.isCustomPlaying.value).toBe(false)
+    expect(speech.isCustomPaused.value).toBe(false)
+    expect(speech.currentCustomMessageId.value).toBe(null)
+  })
+
+  it('handles custom audio resume play() rejection', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'custom' },
+    }))
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-resume', 'Audio to resume', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    const [audio] = audioInstances
+
+    speech.openaiToggle('msg-resume', 'Audio to resume', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    audio.play.mockRejectedValueOnce(new Error('play blocked'))
+    speech.openaiToggle('msg-resume', 'Audio to resume', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    await flushPromises()
+
+    expect(consoleWarn).toHaveBeenCalledWith('[useSpeech] Custom TTS audio resume failed:', expect.any(Error))
+    expect(speech.isCustomPaused.value).toBe(true)
   })
 
   it('revokes custom audio object URLs when stop() stops custom playback', async () => {

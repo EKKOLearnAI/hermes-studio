@@ -603,6 +603,7 @@ function handleSpeechToggle() {
       return
     }
     speech.openaiToggle(props.message.id, content, {
+      provider: 'openai',
       baseUrl: voiceSettings.openaiBaseUrl.value,
       apiKey: voiceSettings.openaiApiKey.value,
       model: voiceSettings.openaiModel.value,
@@ -619,6 +620,7 @@ function handleSpeechToggle() {
       return
     }
     speech.openaiToggle(props.message.id, content, {
+      provider: 'custom',
       baseUrl: voiceSettings.customUrl.value,
       apiKey: voiceSettings.customApiKey.value || undefined,
     })
@@ -630,6 +632,7 @@ function handleSpeechToggle() {
     // URL 为空时使用内建后端代理
     const apiUrl = voiceSettings.edgeUrl.value || '/api/tts/proxy'
     speech.openaiToggle(props.message.id, content, {
+      provider: 'edge',
       baseUrl: apiUrl,
       voice: voiceSettings.edgeVoice.value,
       rate: speedToEdgeRate(voiceSettings.edgeRate.value),
@@ -679,6 +682,7 @@ onMounted(() => {
       if (voiceSettings.provider.value === 'openai') {
         const apiUrl = voiceSettings.openaiBaseUrl.value
         if (apiUrl) speech.openaiPlay(props.message.id, content, {
+          provider: 'openai',
           baseUrl: voiceSettings.openaiBaseUrl.value,
           apiKey: voiceSettings.openaiApiKey.value,
           model: voiceSettings.openaiModel.value,
@@ -687,11 +691,13 @@ onMounted(() => {
       } else if (voiceSettings.provider.value === 'custom') {
         const apiUrl = voiceSettings.customUrl.value
         if (apiUrl) speech.openaiPlay(props.message.id, content, {
+          provider: 'custom',
           baseUrl: voiceSettings.customUrl.value,
           apiKey: voiceSettings.customApiKey.value || undefined,
         })
       } else if (voiceSettings.provider.value === 'edge') {
         speech.openaiPlay(props.message.id, content, {
+          provider: 'edge',
           baseUrl: '/api/tts/proxy',
           voice: voiceSettings.edgeVoice.value,
           rate: speedToEdgeRate(voiceSettings.edgeRate.value),

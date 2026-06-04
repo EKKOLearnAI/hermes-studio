@@ -397,13 +397,33 @@ export function useSpeech() {
     )
   }
 
+  function resumeCustomAudio() {
+    if (!customAudio) {
+      isCustomPaused.value = false
+      return
+    }
+
+    customAudio.play()
+      .then(() => {
+        isCustomPaused.value = false
+      })
+      .catch((err) => {
+        console.warn('[useSpeech] Custom TTS audio resume failed:', err)
+        isCustomPaused.value = true
+      })
+  }
+
+  function startCustomPlayback(promise: Promise<void>) {
+    void promise.catch(() => {
+      // openaiPlay/mimoPlay already log non-abort failures and clear state.
+      // Toggle callers are fire-and-forget UI actions; do not leak unhandled rejections.
+    })
+  }
+
   function openaiToggle(messageId: string, content: string, opts: OpenaiTtsOptions) {
     if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
       if (isCustomPaused.value) {
-        if (customAudio) {
-          customAudio.play()
-        }
-        isCustomPaused.value = false
+        resumeCustomAudio()
       } else {
         if (customAudio) {
           customAudio.pause()
@@ -412,7 +432,7 @@ export function useSpeech() {
       }
     } else {
       stop(false)
-      openaiPlay(messageId, content, opts)
+      startCustomPlayback(openaiPlay(messageId, content, opts))
     }
   }
 
@@ -442,10 +462,7 @@ export function useSpeech() {
   function mimoToggle(messageId: string, content: string, opts: MimoTtsOptions) {
     if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
       if (isCustomPaused.value) {
-        if (customAudio) {
-          customAudio.play()
-        }
-        isCustomPaused.value = false
+        resumeCustomAudio()
       } else {
         if (customAudio) {
           customAudio.pause()
@@ -454,7 +471,7 @@ export function useSpeech() {
       }
     } else {
       stop(false)
-      mimoPlay(messageId, content, opts)
+      startCustomPlayback(mimoPlay(messageId, content, opts))
     }
   }
 

@@ -360,6 +360,7 @@ function playSpeech(content: string, autoplay = false) {
         if (!voiceSettings.openaiBaseUrl.value) return
         const play = autoplay ? speech.openaiPlay : speech.openaiToggle
         play(props.message.id, content, {
+            provider: 'openai',
             baseUrl: voiceSettings.openaiBaseUrl.value,
             apiKey: voiceSettings.openaiApiKey.value,
             model: voiceSettings.openaiModel.value,
@@ -371,6 +372,7 @@ function playSpeech(content: string, autoplay = false) {
         if (!voiceSettings.customUrl.value) return
         const play = autoplay ? speech.openaiPlay : speech.openaiToggle
         play(props.message.id, content, {
+            provider: 'custom',
             baseUrl: voiceSettings.customUrl.value,
             apiKey: voiceSettings.customApiKey.value || undefined,
         })
@@ -379,6 +381,7 @@ function playSpeech(content: string, autoplay = false) {
     if (voiceSettings.provider.value === 'edge') {
         const play = autoplay ? speech.openaiPlay : speech.openaiToggle
         play(props.message.id, content, {
+            provider: 'edge',
             baseUrl: '/api/tts/proxy',
             voice: voiceSettings.edgeVoice.value,
             rate: speedToEdgeRate(voiceSettings.edgeRate.value),

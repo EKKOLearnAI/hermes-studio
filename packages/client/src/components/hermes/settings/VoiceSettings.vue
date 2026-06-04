@@ -115,6 +115,7 @@ async function handleTest() {
         return
       }
       await speech.openaiPlay('__test__', text, {
+        provider: 'openai',
         baseUrl: vs.openaiBaseUrl.value,
         apiKey: vs.openaiApiKey.value || undefined,
         model: vs.openaiModel.value,
@@ -126,11 +127,13 @@ async function handleTest() {
         return
       }
       await speech.openaiPlay('__test__', text, {
+        provider: 'custom',
         baseUrl: vs.customUrl.value,
         apiKey: vs.customApiKey.value || undefined,
       })
     } else if (vs.provider.value === 'edge') {
       await speech.openaiPlay('__test__', text, {
+        provider: 'edge',
         baseUrl: '/api/tts/proxy',
         voice: vs.edgeVoice.value,
         rate: speedToEdgeRate(vs.edgeRate.value),
