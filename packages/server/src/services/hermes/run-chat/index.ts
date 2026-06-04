@@ -371,7 +371,7 @@ export class ChatRunSocket {
       const runId = typeof status.current_run_id === 'string' ? status.current_run_id : ''
       if (!running || !runId) return
       state.isWorking = true
-      state.isAborting = false
+      state.isAborting = state.isAborting === true
       state.runId = runId
       state.profile = profile
       state.source = 'cli'

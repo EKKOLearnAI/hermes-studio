@@ -30,6 +30,7 @@ import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
+import { markAbortCompleted } from './abort'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
@@ -598,7 +599,7 @@ export async function resumeBridgeRun(
 
   const runMarker = state.activeRunMarker || `cli_resume_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   state.isWorking = true
-  state.isAborting = false
+  state.isAborting = state.isAborting === true
   state.profile = profile
   state.source = 'cli'
   state.runId = runId
@@ -1139,7 +1140,19 @@ async function applyBridgeChunkAsync(
       sessionId,
       runId: chunk.run_id,
       status: chunk.status,
-    }, '[chat-run-socket][abort] suppressing CLI bridge terminal chunk during abort')
+    }, '[chat-run-socket][abort] completing CLI bridge abort after terminal chunk')
+    await markAbortCompleted(
+      nsp,
+      socket,
+      sessionId,
+      chunk.run_id || runMarker,
+      sessionMap,
+      (queuedSocket, queuedSessionId, nextQueuedRun, fallbackProfile) => {
+        const queuedState = sessionMap.get(queuedSessionId)
+        if (queuedState) queuedState.queue.unshift(nextQueuedRun)
+        dequeueNextQueuedRun(queuedSocket, queuedSessionId, fallbackProfile)
+      },
+    )
     return
   }
 

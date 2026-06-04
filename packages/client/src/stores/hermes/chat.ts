@@ -444,6 +444,8 @@ export const useChatStore = defineStore('chat', () => {
   const abortState = ref<{
     aborting: boolean
     synced: boolean | null
+    timedOut?: boolean
+    message?: string
     error?: string
   } | null>(null)
   const isAborting = computed(() => abortState.value?.aborting === true)
@@ -670,6 +672,8 @@ export const useChatStore = defineStore('chat', () => {
                 if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
                 setAbortState({ aborting: true, synced: null })
+              } else if (e.event === 'abort.timeout') {
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
               } else if (e.event === 'abort.completed') {
                 setAbortState({ aborting: false, synced: e.synced ?? false })
               } else if (e.event === 'approval.requested') {
@@ -1541,6 +1545,9 @@ export const useChatStore = defineStore('chat', () => {
               case 'abort.started':
                 setAbortState({ aborting: true, synced: null })
                 break
+              case 'abort.timeout':
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
+                break
               case 'abort.completed':
                 setAbortState({ aborting: false, synced: (e as any).synced ?? false })
                 break
@@ -1647,6 +1654,11 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'abort.started': {
               setAbortState({ aborting: true, synced: null })
+              break
+            }
+
+            case 'abort.timeout': {
+              setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
               break
             }
 
@@ -2138,6 +2150,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'abort.timeout': {
+          setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+          break
+        }
+
         case 'abort.completed': {
           setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
           clearPendingInteractions(sid)
@@ -2467,6 +2484,7 @@ export const useChatStore = defineStore('chat', () => {
       onCompressionStarted: (evt) => handleEvent(evt),
       onCompressionCompleted: (evt) => handleEvent(evt),
       onAbortStarted: (evt) => handleEvent(evt),
+      onAbortTimeout: (evt) => handleEvent(evt),
       onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
       onAgentEvent: (evt) => handleEvent(evt),
@@ -2563,13 +2581,6 @@ export const useChatStore = defineStore('chat', () => {
       if (lastMsg?.isStreaming) {
         updateMessage(sid, lastMsg.id, { isStreaming: false })
       }
-      window.setTimeout(() => {
-        if (activeSessionId.value === sid && abortState.value?.aborting) {
-          streamStates.value.delete(sid)
-          serverWorking.value.delete(sid)
-          setAbortState(null)
-        }
-      }, 20_000)
     }
   }
 

@@ -123,6 +123,7 @@ const sessionEventHandlers = new Map<string, {
   onCompressionStarted: (event: RunEvent) => void
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
+  onAbortTimeout?: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
   onAgentEvent?: (event: RunEvent) => void
@@ -329,6 +330,19 @@ function globalAbortStartedHandler(event: RunEvent): void {
 }
 
 /**
+ * Global abort.timeout event handler
+ */
+function globalAbortTimeoutHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAbortTimeout) {
+    handlers.onAbortTimeout(event)
+  }
+}
+
+/**
  * Global abort.completed event handler
  */
 function globalAbortCompletedHandler(event: RunEvent): void {
@@ -473,6 +487,7 @@ export function registerSessionHandlers(
     onCompressionStarted: (event: RunEvent) => void
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
+    onAbortTimeout?: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
     onAgentEvent?: (event: RunEvent) => void
@@ -627,6 +642,7 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
     chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
     chatRunSocket.on('abort.started', globalAbortStartedHandler)
+    chatRunSocket.on('abort.timeout', globalAbortTimeoutHandler)
     chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
 
     // Usage events
@@ -831,6 +847,10 @@ export function startRunViaSocket(
       onEvent(evt)
     },
     onAbortStarted: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
+    onAbortTimeout: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
     },
