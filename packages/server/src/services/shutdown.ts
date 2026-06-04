@@ -2,6 +2,21 @@ import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
 
+const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
+const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 3_000
+
+function envPositiveInt(name: string): number | undefined {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+export function getShutdownForceExitMs(): number {
+  const override = envPositiveInt('HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS')
+  if (override) return override
+  const desktop = String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
+  return desktop ? DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS : DEFAULT_SHUTDOWN_FORCE_EXIT_MS
+}
+
 export function shouldStopAgentBridgeOnShutdown(signal: string): boolean {
   const raw = String(process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN || '').trim().toLowerCase()
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true
@@ -20,8 +35,9 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     if (isShuttingDown) return
     isShuttingDown = true
 
-    // Force exit after 3s no matter what
-    setTimeout(() => process.exit(0), 3000)
+    // Force exit only if graceful cleanup hangs. The bridge can take up to 10s
+    // to stop worker subprocesses, so this cap must be longer than that.
+    setTimeout(() => process.exit(0), getShutdownForceExitMs())
 
     logger.info('Shutting down (%s)...', signal)
     console.log(`[shutdown] Received signal: ${signal}`)

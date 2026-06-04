@@ -51,6 +51,7 @@ ChatPanel / ChatInput
 
 | 时间 | PR / commit | 动到的功能 | 链路影响 |
 | --- | --- | --- | --- |
+| 2026-06-04 | #1320 `237fd954` | Agent Bridge restart/resume；shutdown/stop timing | Web UI `restart`/页面内升级通过 `SIGUSR2` 保留 Agent Bridge，server 重启后 `ChatRunSocket.resume` 会查询 bridge status 并通过 `resumeBridgeRun()` 继续 poll 既有 `run_id` 的 delta/events。真实 `stop`/`SIGTERM` 仍会请求 bridge shutdown；非桌面 shutdown 兜底延长到 15s 以覆盖 worker 清理窗口，桌面 `HERMES_DESKTOP=true` 默认仍保持 3s。CLI `restart` 仍使用 5s grace，CLI `stop` 最长等 15s 且进程退出后立即返回。 |
 | 2026-06-04 | local | OpenRouter attribution title | `manager.ts` 的 bridge 默认 OpenRouter attribution title 从 `Hermes Web UI` 改为 `Hermes Studio`，与 `https://hermes-studio.ai` referer 品牌保持一致；只影响 OpenRouter dashboard attribution，不改变 `/chat-run` 协议、消息落库、模型调用或 run 生命周期。 |
 | 2026-06-04 | local | Hermes 原生 AI session title 回传 | `hermes_bridge.py` 在 bridge run 完成后后台调用 Hermes 原生 `maybe_auto_title()` 写入 Hermes `state.db`，并提示标题语言跟随用户首条消息；Node 在 `run.completed` 后后台按 `session_id` 短轮询 `get_session_title`，同步 Web UI 本地 `sessions.title` 并推给前端。只在本地标题仍为空或等于首条消息/preview fallback 时应用，用户手动改过的标题不会被覆盖；不阻塞最终回复、usage、goal continuation 或队列执行，也不改 run 生命周期。 |
 | 2026-06-03 | #1289 `7848256` | tool result / unified diff 展示 | `MessageItem.vue`、`GroupMessageItem.vue`、`MarkdownRenderer.vue` 和共享 highlighter 对 unified diff 走专门展示路径：tool result JSON 中的 diff 字段只显示 diff body，长段未改动上下文静态折叠，复制仍保留完整原始内容；不改变 `/chat-run` 协议、消息落库、工具审批或 group-chat agent 执行行为。 |
