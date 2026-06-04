@@ -197,6 +197,70 @@ const currentUserAvatar = ref('')
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredUserName() || '')
 
+    function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
+        members.value = res.members || []
+        if (res.agents) agents.value = res.agents
+        if (res.roomName) roomName.value = res.roomName
+        if (options.syncMessages && Array.isArray(res.messages)) {
+            const byId = new Map(messages.value.map(message => [message.id, message]))
+            for (const message of res.messages) {
+                const existing = byId.get(message.id)
+                byId.set(message.id, existing ? { ...existing, ...message } : message)
+            }
+            messages.value = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp)
+            if (typeof res.total === 'number' || typeof res.hasMore === 'boolean') {
+                applyMessagePaging(res)
+            } else {
+                loadedMessageCount.value = Math.max(loadedMessageCount.value, messages.value.length)
+                totalMessages.value = Math.max(totalMessages.value, loadedMessageCount.value)
+            }
+        }
+
+        // Restore typing state from server. Replace the local transient map so
+        // a reconnect cannot leave stale typers from the pre-reconnect socket.
+        for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
+        typingUsers.value.clear()
+        if (res.typingUsers) {
+            for (const u of res.typingUsers) {
+                const timer = setTimeout(() => typingUsers.value.delete(u.userId), 5000)
+                typingUsers.value.set(u.userId, { name: u.userName, timer })
+            }
+        }
+
+        // Restore context statuses from server
+        if (res.contextStatuses) {
+            contextStatuses.value = new Map(
+                res.contextStatuses.map((s: any) => [s.agentName, s])
+            )
+        } else {
+            contextStatuses.value.clear()
+        }
+    }
+
+    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean } = {}) {
+        const socket = getSocket()
+        if (!socket) return
+
+        await new Promise<void>((resolve) => {
+            socket.emit('join', {
+                roomId,
+                name: userName.value || undefined,
+                description: localStorage.getItem('gc_user_description') || undefined,
+            }, (res: any) => {
+                if (currentRoomId.value !== roomId) {
+                    resolve()
+                    return
+                }
+                if (!res?.error) {
+                    applyRealtimeJoinState(res, options)
+                } else {
+                    error.value = res.error
+                }
+                resolve()
+            })
+        })
+    }
+
     // ─── Computed ───────────────────────────────────────────
     const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => a.timestamp - b.timestamp)))
 
@@ -235,6 +299,12 @@ const currentUserAvatar = ref('')
             console.log('[GroupChat] connected, socket id:', socket.id)
             connected.value = true
             error.value = null
+            const roomId = currentRoomId.value
+            if (roomId) {
+                void joinRealtimeRoom(roomId, { syncMessages: true }).catch((err: any) => {
+                    error.value = err.message
+                })
+            }
         })
 
         socket.on('disconnect', (reason) => {
@@ -478,40 +548,9 @@ const currentUserAvatar = ref('')
             isJoining.value = false
         }
 
-        // Join via socket for real-time updates
-        const socket = getSocket()
-        if (socket) {
-            await new Promise<void>((resolve) => {
-                socket.emit('join', {
-                    roomId,
-                    name: userName.value || undefined,
-                    description: localStorage.getItem('gc_user_description') || undefined,
-                }, (res: any) => {
-                    if (!res?.error) {
-                        members.value = res.members || []
-                        if (res.agents) agents.value = res.agents
-
-                        // Restore typing state from server
-                        if (res.typingUsers) {
-                            for (const u of res.typingUsers) {
-                                if (!typingUsers.value.has(u.userId)) {
-                                    const timer = setTimeout(() => typingUsers.value.delete(u.userId), 5000)
-                                    typingUsers.value.set(u.userId, { name: u.userName, timer })
-                                }
-                            }
-                        }
-
-                        // Restore context statuses from server
-                        if (res.contextStatuses) {
-                            contextStatuses.value = new Map(
-                                res.contextStatuses.map((s: any) => [s.agentName, s])
-                            )
-                        }
-                    }
-                    resolve()
-                })
-            })
-        }
+        // Join via socket for real-time updates. Reconnect uses the same path
+        // so the browser socket is a room member before the next send.
+        await joinRealtimeRoom(roomId)
     }
 
     async function loadOlderMessages(): Promise<boolean> {
