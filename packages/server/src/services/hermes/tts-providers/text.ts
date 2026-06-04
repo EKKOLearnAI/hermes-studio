@@ -1,13 +1,21 @@
 const DEFAULT_MAX_TTS_CHARS = 1500
 
+const HIDDEN_REASONING_BLOCK_RE = /<(think|thinking)\b[^>]*>[\s\S]*?<\/\1>/gi
+const UNCLOSED_HIDDEN_REASONING_BLOCK_RE = /<(think|thinking)\b[^>]*>[\s\S]*/gi
+const FENCED_CODE_BLOCK_RE = /```[\s\S]*?```/g
+const UNCLOSED_FENCED_CODE_BLOCK_RE = /```[\s\S]*/g
+const INLINE_CODE_RE = /`[^`\n]+`/g
+const HTML_TAG_RE = /<\/?[a-zA-Z][\w:-]*(?:\s+[^<>]*)?>/g
+
 export function cleanTtsText(content: string): string {
   if (!content) return ''
   return content
-    .replace(/<thinking[^>]*>[\s\S]*?<\/thinking>/gi, '')
-    .replace(/<thinking[^>]*>[\s\S]*/gi, '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`]+`/g, '')
-    .replace(/<[^>]+>/g, '')
+    .replace(HIDDEN_REASONING_BLOCK_RE, '')
+    .replace(UNCLOSED_HIDDEN_REASONING_BLOCK_RE, '')
+    .replace(FENCED_CODE_BLOCK_RE, '')
+    .replace(UNCLOSED_FENCED_CODE_BLOCK_RE, '')
+    .replace(INLINE_CODE_RE, '')
+    .replace(HTML_TAG_RE, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
