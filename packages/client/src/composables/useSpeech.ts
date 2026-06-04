@@ -419,9 +419,13 @@ export function useSpeech() {
 
   function pauseCustomAudio() {
     if (!isCustomPlaying.value || isCustomPaused.value) return false
-    if (customAudio) {
-      customAudio.pause()
+    if (!customAudio) {
+      // Synthesis is still pending; pausing should interrupt instead of letting
+      // audio start later while the UI already shows a paused state.
+      stop(false)
+      return true
     }
+    customAudio.pause()
     isCustomPaused.value = true
     return true
   }

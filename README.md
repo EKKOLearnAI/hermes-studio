@@ -165,9 +165,9 @@ hermes-web-ui reset-default-login
 ### Voice / TTS
 
 - Read assistant replies aloud from chat and group-chat messages.
-- Providers: browser Web Speech, built-in Edge TTS, OpenAI-compatible `/audio/speech`, custom HTTP endpoints, and MiMo.
+- Providers: browser Web Speech, built-in Edge TTS, OpenAI-compatible `/audio/speech`, custom OpenAI-compatible TTS endpoints, and MiMo.
 - MiMo supports preset voices, voice design prompts, and voice clone reference audio (`.mp3`/`.wav`, max 10 MB) with selectable auth header mode (`Authorization`, `api-key`, or both).
-- Custom/OpenAI/MiMo playback uses the Web UI backend's unified `/api/hermes/tts/synthesize` endpoint, so stop/pause state is shared and in-flight fetches are aborted when possible.
+- Edge/OpenAI-compatible/custom/MiMo playback uses the Web UI backend's unified `/api/hermes/tts/synthesize` endpoint, so stop/pause state is shared and in-flight fetches are aborted when possible.
 - Limitation: external TTS providers may continue processing a request after the browser/server aborts; voice-clone reference audio is stored in browser settings as a data URI, so avoid large or sensitive samples.
 
 ### Web Terminal

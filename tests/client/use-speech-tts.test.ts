@@ -389,6 +389,39 @@ describe('client TTS unified synthesize flow', () => {
     expect(speech.currentCustomMessageId.value).toBe('msg-custom-resume')
   })
 
+  it('same-message toggle during pending custom synthesis aborts before audio playback starts', async () => {
+    const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' })
+    let capturedSignal: AbortSignal | undefined
+
+    mockFetch.mockImplementation((_url, options: RequestInit) => {
+      capturedSignal = options.signal as AbortSignal
+      return new Promise((_resolve, reject) => {
+        capturedSignal?.addEventListener('abort', () => reject(abortError), { once: true })
+      })
+    })
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    speech.openaiToggle('msg-pending-toggle', 'Audio still synthesizing', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    expect(speech.isCustomPlaying.value).toBe(true)
+
+    speech.openaiToggle('msg-pending-toggle', 'Audio still synthesizing', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    await flushPromises()
+
+    expect(capturedSignal?.aborted).toBe(true)
+    expect(audioInstances).toHaveLength(0)
+    expect(speech.isCustomPlaying.value).toBe(false)
+    expect(speech.isCustomPaused.value).toBe(false)
+    expect(speech.currentCustomMessageId.value).toBe(null)
+  })
+
   it('revokes custom audio object URLs when stop() stops custom playback', async () => {
     mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
       status: 200,

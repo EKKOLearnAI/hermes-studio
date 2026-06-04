@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { clampTtsText, cleanTtsText } from '../../packages/server/src/services/hermes/tts-providers/text'
-import { openaiTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/openai'
+import { customTtsProvider, openaiTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/openai'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -230,6 +230,30 @@ describe('openaiTtsProvider', () => {
     ).rejects.toThrow('OpenAI TTS text is empty after cleaning')
 
     expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('custom provider reuses OpenAI-compatible speech requests but reports provider=custom', async () => {
+    const audio = Buffer.from('custom-audio')
+    mockFetch.mockResolvedValueOnce(audioResponse(audio, { contentType: 'audio/mpeg' }))
+
+    const result = await customTtsProvider.synthesize(
+      { text: 'Hello custom' },
+      {
+        baseUrl: 'https://custom.example.com/v1',
+        apiKey: 'custom-secret',
+      },
+    )
+
+    expect(result).toEqual({
+      audio,
+      contentType: 'audio/mpeg',
+      engine: 'custom',
+      provider: 'custom',
+    })
+
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://custom.example.com/v1/audio/speech')
+    expect(getHeader(init?.headers, 'Authorization')).toBe('Bearer custom-secret')
   })
 
   it('falls back to audio/mpeg when content-type header is missing', async () => {

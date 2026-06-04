@@ -222,6 +222,42 @@ describe('mimoTtsProvider', () => {
     ])
   })
 
+  it('voiceClone mode rejects unsupported reference audio data URIs before fetch', async () => {
+    await expect(
+      mimoTtsProvider.synthesize(
+        { text: 'Hello world' },
+        {
+          baseUrl: 'https://mimo.example.com',
+          apiKey: 'secret',
+          model: 'mimo-v2.5-tts-voiceclone',
+          voiceCloneDataUri: 'data:audio/ogg;base64,ZmFrZQ==',
+          voiceCloneFormat: 'wav',
+        },
+      ),
+    ).rejects.toThrow('MiMo TTS voiceCloneDataUri must be an mp3 or wav data URI')
+
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('voiceClone mode rejects reference audio over 10 MiB before fetch', async () => {
+    const tooLargeBase64 = `${'A'.repeat(Math.ceil(((10 * 1024 * 1024) + 1) / 3) * 4)}`
+
+    await expect(
+      mimoTtsProvider.synthesize(
+        { text: 'Hello world' },
+        {
+          baseUrl: 'https://mimo.example.com',
+          apiKey: 'secret',
+          model: 'mimo-v2.5-tts-voiceclone',
+          voiceCloneDataUri: `data:audio/wav;base64,${tooLargeBase64}`,
+          voiceCloneFormat: 'wav',
+        },
+      ),
+    ).rejects.toThrow('MiMo TTS voiceCloneDataUri must be 10 MiB or smaller')
+
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
   it('voiceClone model rejects missing voiceCloneDataUri before fetch', async () => {
     await expect(
       mimoTtsProvider.synthesize(

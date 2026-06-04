@@ -1,12 +1,12 @@
 import { edgeTtsProvider } from './edge'
-import { openaiTtsProvider } from './openai'
+import { customTtsProvider, openaiTtsProvider } from './openai'
 import { mimoTtsProvider } from './mimo'
 import type { TtsProvider, TtsProviderId } from './types'
 
 const providers: Record<TtsProviderId, TtsProvider<any>> = {
   edge: edgeTtsProvider,
   openai: openaiTtsProvider,
-  custom: openaiTtsProvider,
+  custom: customTtsProvider,
   mimo: mimoTtsProvider,
 }
 

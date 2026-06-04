@@ -33,12 +33,12 @@ describe('getTtsProvider', () => {
   it('returns expected providers and undefined for unknown ids', async () => {
     const { getTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers')
     const { edgeTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/edge')
-    const { openaiTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/openai')
+    const { customTtsProvider, openaiTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/openai')
     const { mimoTtsProvider } = await import('../../packages/server/src/services/hermes/tts-providers/mimo')
 
     expect(getTtsProvider('edge')).toBe(edgeTtsProvider)
     expect(getTtsProvider('openai')).toBe(openaiTtsProvider)
-    expect(getTtsProvider('custom')).toBe(openaiTtsProvider)
+    expect(getTtsProvider('custom')).toBe(customTtsProvider)
     expect(getTtsProvider('mimo')).toBe(mimoTtsProvider)
     expect(getTtsProvider('unknown')).toBeUndefined()
   })
