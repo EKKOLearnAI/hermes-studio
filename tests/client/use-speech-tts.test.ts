@@ -340,6 +340,55 @@ describe('client TTS unified synthesize flow', () => {
     expect(speech.isCustomPaused.value).toBe(true)
   })
 
+  it('pause() pauses active custom audio and preserves the current custom message', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'custom' },
+    }))
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-custom-pause', 'Audio to pause', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    const [audio] = audioInstances
+
+    speech.pause()
+
+    expect(audio.pause).toHaveBeenCalledOnce()
+    expect(speech.isCustomPlaying.value).toBe(true)
+    expect(speech.isCustomPaused.value).toBe(true)
+    expect(speech.currentCustomMessageId.value).toBe('msg-custom-pause')
+  })
+
+  it('resume() resumes paused custom audio and clears the custom paused flag', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Provider': 'custom' },
+    }))
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    await speech.openaiPlay('msg-custom-resume', 'Audio to resume globally', {
+      provider: 'custom',
+      baseUrl: 'https://custom.example/v1',
+    })
+    const [audio] = audioInstances
+    speech.pause()
+    audio.play.mockClear()
+
+    speech.resume()
+    await flushPromises()
+
+    expect(audio.play).toHaveBeenCalledOnce()
+    expect(speech.isCustomPlaying.value).toBe(true)
+    expect(speech.isCustomPaused.value).toBe(false)
+    expect(speech.currentCustomMessageId.value).toBe('msg-custom-resume')
+  })
+
   it('revokes custom audio object URLs when stop() stops custom playback', async () => {
     mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
       status: 200,

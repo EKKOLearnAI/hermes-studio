@@ -403,7 +403,7 @@ export function useSpeech() {
 
   function resumeCustomAudio() {
     if (!customAudio) {
-      isCustomPaused.value = false
+      clearCustomPlaybackState()
       return
     }
 
@@ -415,6 +415,15 @@ export function useSpeech() {
         console.warn('[useSpeech] Custom TTS audio resume failed:', err)
         isCustomPaused.value = true
       })
+  }
+
+  function pauseCustomAudio() {
+    if (!isCustomPlaying.value || isCustomPaused.value) return false
+    if (customAudio) {
+      customAudio.pause()
+    }
+    isCustomPaused.value = true
+    return true
   }
 
   function startCustomPlayback(promise: Promise<void>) {
@@ -429,10 +438,7 @@ export function useSpeech() {
       if (isCustomPaused.value) {
         resumeCustomAudio()
       } else {
-        if (customAudio) {
-          customAudio.pause()
-        }
-        isCustomPaused.value = true
+        pauseCustomAudio()
       }
     } else {
       stop(false)
@@ -468,10 +474,7 @@ export function useSpeech() {
       if (isCustomPaused.value) {
         resumeCustomAudio()
       } else {
-        if (customAudio) {
-          customAudio.pause()
-        }
-        isCustomPaused.value = true
+        pauseCustomAudio()
       }
     } else {
       stop(false)
@@ -553,6 +556,7 @@ export function useSpeech() {
   }
 
   function pause() {
+    if (pauseCustomAudio()) return
     if (state.value.engine === 'tts' && currentAudio) {
       currentAudio.pause()
       state.value.isPaused = true
@@ -563,6 +567,10 @@ export function useSpeech() {
   }
 
   function resume() {
+    if (isCustomPlaying.value && isCustomPaused.value) {
+      resumeCustomAudio()
+      return
+    }
     if (state.value.isPaused) {
       if (state.value.engine === 'tts' && currentAudio) {
         currentAudio.play()
