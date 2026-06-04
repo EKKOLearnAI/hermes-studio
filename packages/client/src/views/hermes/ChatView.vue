@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AuroraOperatingLayer from '@/components/hermes/aurora/AuroraOperatingLayer.vue'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
@@ -17,6 +17,7 @@ const appWindowStore = useAuroraAppWindowStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
 const lastRouteAppLaunchKey = ref('')
+const originalTitle = typeof document === 'undefined' ? 'Hermes Studio' : document.title
 
 function queryText(value: unknown): string | undefined {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined
@@ -40,11 +41,18 @@ function openAuroraAppFromRoute() {
 function isAuroraDesktopRoute() {
   const appKind = queryText(route.query.app)
   const hashPath = typeof window === 'undefined' ? '' : window.location.hash
+  const fullPath = typeof route.fullPath === 'string' ? route.fullPath : ''
   const isAuroraPath =
     route.path === '/aurora' ||
-    route.fullPath.startsWith('/aurora') ||
+    fullPath.startsWith('/aurora') ||
     hashPath.startsWith('#/aurora')
   return isAuroraPath && !isAuroraAppKind(appKind)
+}
+
+function updateDocumentTitle() {
+  if (typeof document === 'undefined') return
+  const sessionTitle = chatStore.activeSession?.title?.trim()
+  document.title = sessionTitle || 'Hermes Studio'
 }
 
 async function requestAuroraDesktopFromRoute() {
@@ -74,6 +82,12 @@ watch(
     void requestAuroraDesktopFromRoute()
   },
 )
+
+watch(() => chatStore.activeSession?.title, updateDocumentTitle, { immediate: true })
+
+onUnmounted(() => {
+  if (typeof document !== 'undefined') document.title = originalTitle || 'Hermes Studio'
+})
 </script>
 
 <template>

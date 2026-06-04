@@ -19,6 +19,7 @@ const appStore = useAppStore();
 const { openSessionSearch } = useSessionSearch();
 const selectedKey = computed(() => route.name as string);
 const logoPath = '/logo.png';
+const groupLabelKey = (key: string) => `sidebar.${key}${appStore.sidebarCollapsed ? 'Short' : ''}`;
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
@@ -79,12 +80,12 @@ function openChangelog() {
       <!-- Conversation -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('conversation')">
-          <span>{{ t("sidebar.groupConversation") }}</span>
+          <span>{{ t(groupLabelKey("groupConversation")) }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('conversation') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('conversation')">
+        <div class="nav-group-items" v-show="!isGroupCollapsed('conversation')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -124,12 +125,12 @@ function openChangelog() {
       <!-- Agent -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('agent')">
-          <span>{{ t("sidebar.groupAgent") }}</span>
+          <span>{{ t(groupLabelKey("groupAgent")) }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('agent') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('agent')">
+        <div class="nav-group-items" v-show="!isGroupCollapsed('agent')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.jobs' }" @click="handleNav('hermes.jobs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -215,12 +216,12 @@ function openChangelog() {
       <!-- Monitoring -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('monitoring')">
-          <span>{{ t("sidebar.groupMonitoring") }}</span>
+          <span>{{ t(groupLabelKey("groupMonitoring")) }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('monitoring') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('monitoring')">
+        <div class="nav-group-items" v-show="!isGroupCollapsed('monitoring')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.logs' }" @click="handleNav('hermes.logs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -248,27 +249,39 @@ function openChangelog() {
         </div>
       </div>
 
-      <!-- System -->
+      <!-- Tools -->
       <div class="nav-group">
-        <div class="nav-group-label" @click="toggleGroup('system')">
-          <span>{{ t("sidebar.groupSystem") }}</span>
-          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="nav-group-label" @click="toggleGroup('tools')">
+          <span>{{ t(groupLabelKey("groupTools")) }}</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('tools') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('system')">
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.systemStatus' }" @click="handleNav('hermes.systemStatus')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 12h-4l-3 8L9 4l-3 8H2" />
-            </svg>
-            <span>{{ t("sidebar.systemStatus") }}</span>
-          </button>
+        <div class="nav-group-items" v-show="!isGroupCollapsed('tools')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.codeIntelligence' }" @click="handleNav('hermes.codeIntelligence')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="16 18 22 12 16 6" />
               <polyline points="8 6 2 12 8 18" />
             </svg>
             <span>{{ t("sidebar.codeIntelligence") }}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- System -->
+      <div class="nav-group">
+        <div class="nav-group-label" @click="toggleGroup('system')">
+          <span>{{ t(groupLabelKey("groupSystem")) }}</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </div>
+        <div class="nav-group-items" v-show="!isGroupCollapsed('system')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.systemStatus' }" @click="handleNav('hermes.systemStatus')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 12h-4l-3 8L9 4l-3 8H2" />
+            </svg>
+            <span>{{ t("sidebar.systemStatus") }}</span>
           </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.profiles' }" @click="handleNav('hermes.profiles')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

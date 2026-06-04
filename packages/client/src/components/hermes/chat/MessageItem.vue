@@ -666,9 +666,11 @@ function formatToolPayload(raw?: string, extractDiff = false): ToolPayload {
     const language = isUnifiedDiffContent(raw) ? "diff" : undefined;
     return {
       full: raw,
-      display: raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-        ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
-        : raw,
+      display: language === "diff"
+        ? raw
+        : raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : raw,
       language,
     };
   }

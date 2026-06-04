@@ -49,6 +49,36 @@ type ComposerMode = 'intent' | 'build' | 'automate'
 const composerMode = ref<ComposerMode>('intent')
 const isBuildMode = computed(() => composerMode.value === 'build')
 const isAutomateMode = computed(() => composerMode.value === 'automate')
+const CHAT_INPUT_DRAFTS_KEY = 'hermes_chat_input_drafts_v1'
+
+function readDrafts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(CHAT_INPUT_DRAFTS_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeDraft(sessionId: string | null | undefined, value: string) {
+  if (!sessionId) return
+  const drafts = readDrafts()
+  if (value) drafts[sessionId] = value
+  else delete drafts[sessionId]
+  localStorage.setItem(CHAT_INPUT_DRAFTS_KEY, JSON.stringify(drafts))
+  localStorage.removeItem('hermes_chat_input_draft_v1')
+}
+
+function restoreDraft(sessionId: string | null | undefined) {
+  inputText.value = sessionId ? readDrafts()[sessionId] || '' : ''
+}
+
+onMounted(() => restoreDraft(chatStore.activeSessionId))
+
+watch(inputText, value => writeDraft(chatStore.activeSessionId, value))
+
+watch(() => chatStore.activeSessionId, sessionId => restoreDraft(sessionId))
 
 const quantContextHint = computed(() => {
   if (!activeTicker.value) return ''

@@ -13,6 +13,10 @@ vi.mock('@/components/hermes/chat/ChatPanel.vue', () => ({
   default: { template: '<div data-testid="chat-panel" />' },
 }))
 
+vi.mock('@/components/hermes/aurora/AuroraOperatingLayer.vue', () => ({
+  default: { template: '<div data-testid="aurora-operating-layer"><slot /></div>' },
+}))
+
 const mockRoute = {
   name: 'hermes.session',
   params: {},
