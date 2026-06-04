@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -1315,6 +1315,20 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  function applyGeneratedSessionTitle(evt: RunEvent) {
+    const sid = evt.session_id
+    const title = typeof (evt as any).title === 'string' ? (evt as any).title.trim() : ''
+    if (!sid || !title) return
+    const target = sessions.value.find(s => s.id === sid)
+    if (target) {
+      target.title = title
+      target.updatedAt = Date.now()
+    }
+    if (activeSession.value?.id === sid) {
+      activeSession.value.title = title
+    }
+  }
+
   function primeCompletionBellIfEnabled() {
     if (useSettingsStore().display.bell_on_complete) {
       primeCompletionSound()
@@ -1732,6 +1746,11 @@ export const useChatStore = defineStore('chat', () => {
                 activeAssistantMessageId = newId
               }
 
+              break
+            }
+
+            case 'session.title.updated': {
+              applyGeneratedSessionTitle(evt)
               break
             }
 
@@ -2210,6 +2229,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'session.title.updated': {
+          applyGeneratedSessionTitle(evt)
+          break
+        }
+
         case 'tool.started': {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
@@ -2522,6 +2546,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   onSessionCommand(handleGlobalSessionCommand)
+
+  onSessionTitleUpdated(applyGeneratedSessionTitle)
 
   function stopStreaming() {
     const sid = activeSessionId.value

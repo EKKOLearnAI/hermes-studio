@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import { getSession, getSessionDetail, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
@@ -32,9 +32,77 @@ import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
+const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
+const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeTitleText(value: unknown): string {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function fallbackTitleFromText(text: string, limit: number, ellipsis: boolean): string {
+  const normalized = normalizeTitleText(text)
+  if (!normalized) return ''
+  if (normalized.length <= limit) return normalized
+  return ellipsis ? `${normalized.slice(0, limit)}...` : normalized.slice(0, limit)
+}
+
+function isReplaceableLocalTitle(sessionId: string): boolean {
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const current = normalizeTitleText(detail.title)
+  if (!current) return true
+  const variants = new Set<string>([''])
+  const preview = normalizeTitleText(detail.preview)
+  if (preview) {
+    variants.add(preview)
+    variants.add(fallbackTitleFromText(preview, 40, true))
+    variants.add(fallbackTitleFromText(preview, 63, false))
+    variants.add(fallbackTitleFromText(preview, 100, false))
+  }
+  const firstUser = detail.messages.find(message => message.role === 'user' && normalizeTitleText(message.content))
+  const firstUserText = normalizeTitleText(firstUser?.content)
+  if (firstUserText) {
+    variants.add(firstUserText)
+    variants.add(fallbackTitleFromText(firstUserText, 40, true))
+    variants.add(fallbackTitleFromText(firstUserText, 63, false))
+    variants.add(fallbackTitleFromText(firstUserText, 100, false))
+  }
+  return variants.has(current)
+}
+
+function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (event: string, payload: any) => void): boolean {
+  const nextTitle = normalizeTitleText(title)
+  if (!nextTitle) return false
+  const session = getSession(sessionId)
+  if (!session || session.source !== 'cli') return false
+  if (!isReplaceableLocalTitle(sessionId)) {
+    logger.info('[chat-run-socket] skipped Hermes generated title for manually titled session %s', sessionId)
+    return false
+  }
+  if (normalizeTitleText(session.title) === nextTitle) return false
+  updateSession(sessionId, {
+    title: nextTitle,
+    last_active: Math.floor(Date.now() / 1000),
+  } as any)
+  emit('session.title.updated', {
+    event: 'session.title.updated',
+    session_id: sessionId,
+    title: nextTitle,
+  })
+  return true
+}
+
+function shouldPollBridgeGeneratedTitle(sessionId: string): boolean {
+  const session = getSession(sessionId)
+  if (!session || session.source !== 'cli') return false
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const userMessageCount = detail.messages.filter(message => message.role === 'user').length
+  return userMessageCount <= 2 && isReplaceableLocalTitle(sessionId)
 }
 
 function looksLikeAgentFailure(value: string): boolean {
@@ -450,7 +518,10 @@ export async function handleBridgeRun(
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
       )
-      if (chunk.done) break
+      if (chunk.done) {
+        void pollBridgeGeneratedTitleAfterRun(bridge, session_id, profile, emit)
+        break
+      }
     }
   } catch (err: any) {
     if (state.activeRunMarker !== runMarker) return
@@ -621,7 +692,9 @@ async function applyBridgeChunkAsync(
       processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
       continue
     }
-    if (evType === 'bridge.context.ready') {
+    if (evType === 'session.title.updated') {
+      syncBridgeGeneratedTitle(sessionId, (ev as any).title, emit)
+    } else if (evType === 'bridge.context.ready') {
       cacheBridgeContext(state, ev)
       const usage = await calcAndUpdateUsage(sessionId, state, emit)
       const snapshotAware = await estimateSnapshotAwareMessageTokens({
@@ -1002,6 +1075,31 @@ async function applyBridgeChunkAsync(
   } else if (!state.activeRunMarker) {
     state.isWorking = false
     state.profile = undefined
+  }
+}
+
+async function pollBridgeGeneratedTitleAfterRun(
+  bridge: AgentBridgeClient,
+  sessionId: string,
+  profile: string,
+  emit: (event: string, payload: any) => void,
+) {
+  if (!shouldPollBridgeGeneratedTitle(sessionId)) return
+  const deadline = Date.now() + BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await delay(BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS)
+    let title = ''
+    try {
+      const result = await bridge.getSessionTitle(sessionId, profile, { timeoutMs: 2000 })
+      title = normalizeTitleText(result.title)
+    } catch (err) {
+      logger.debug(err, '[chat-run-socket] stopped polling bridge generated title for session %s', sessionId)
+      return
+    }
+    if (title) {
+      syncBridgeGeneratedTitle(sessionId, title, emit)
+      return
+    }
   }
 }
 
