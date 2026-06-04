@@ -28,7 +28,19 @@ function buildHeaders(opts: MimoTtsProviderOptions): Record<string, string> {
 }
 
 function inferVoiceMode(opts: MimoTtsProviderOptions) {
-  return opts.voiceMode || (opts.model === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : 'preset')
+  if (opts.voiceMode) {
+    return opts.voiceMode
+  }
+
+  if (opts.model === 'mimo-v2.5-tts-voicedesign') {
+    return 'voiceDesign'
+  }
+
+  if (opts.model === 'mimo-v2.5-tts-voiceclone') {
+    return 'voiceClone'
+  }
+
+  return 'preset'
 }
 
 function buildMessages(text: string, opts: MimoTtsProviderOptions) {

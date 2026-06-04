@@ -182,6 +182,60 @@ describe('mimoTtsProvider', () => {
     expect(body.messages[1]).toEqual({ role: 'assistant', content: 'Narrate this' })
   })
 
+  it('voiceClone model infers voiceClone mode and includes input_audio payload without audio.voice', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      choices: [{ message: { audio: { data: Buffer.from('ok').toString('base64') } } }],
+    }))
+
+    await mimoTtsProvider.synthesize(
+      { text: 'Hello <b>world</b>' },
+      {
+        baseUrl: 'https://mimo.example.com',
+        apiKey: 'secret',
+        model: 'mimo-v2.5-tts-voiceclone',
+        voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
+        stylePrompt: 'Match the cadence of the reference audio.',
+      },
+    )
+
+    const body = getJsonBody()
+    expect(body.audio).toEqual({ format: 'wav' })
+    expect(body.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Match the cadence of the reference audio.' },
+          {
+            type: 'input_audio',
+            input_audio: {
+              data: 'data:audio/wav;base64,ZmFrZQ==',
+              format: 'wav',
+            },
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: 'Hello world',
+      },
+    ])
+  })
+
+  it('voiceClone model rejects missing voiceCloneDataUri before fetch', async () => {
+    await expect(
+      mimoTtsProvider.synthesize(
+        { text: 'Hello world' },
+        {
+          baseUrl: 'https://mimo.example.com',
+          apiKey: 'secret',
+          model: 'mimo-v2.5-tts-voiceclone',
+        },
+      ),
+    ).rejects.toThrow('MiMo TTS voiceCloneDataUri is required for voiceClone mode')
+
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
   it('voiceClone mode includes voiceCloneDataUri in payload and assistant message content is synthesis text', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       choices: [{ message: { audio: { data: Buffer.from('ok').toString('base64') } } }],
