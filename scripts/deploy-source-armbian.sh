@@ -401,7 +401,12 @@ build_webui() {
 write_service_env() {
   step "Write service environment file"
   local hermes_bin
+  local hermes_agent_root
   hermes_bin="${APP_USER_HOME}/.local/bin/hermes"
+  hermes_agent_root=""
+  if [[ -z "${HERMES_AGENT_WHEEL_URL}" ]]; then
+    hermes_agent_root="${APP_USER_HOME}/.hermes/hermes-agent"
+  fi
 
   run tee "${SERVICE_ENV_FILE}" >/dev/null <<EOF
 PORT=${PORT}
@@ -411,7 +416,7 @@ HOME=${APP_USER_HOME}
 PATH=${NODE_INSTALL_DIR}/bin:${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 HERMES_HOME=${HERMES_HOME_DIR}
 HERMES_BIN=${hermes_bin}
-HERMES_AGENT_ROOT=${APP_USER_HOME}/.hermes/hermes-agent
+${hermes_agent_root:+HERMES_AGENT_ROOT=${hermes_agent_root}}
 HERMES_WEB_UI_HOME=${APP_USER_HOME}/.hermes-web-ui
 LANG=C.UTF-8
 LC_ALL=C.UTF-8
