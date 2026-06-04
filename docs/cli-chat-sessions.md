@@ -51,6 +51,7 @@ ChatPanel / ChatInput
 
 | 时间 | PR / commit | 动到的功能 | 链路影响 |
 | --- | --- | --- | --- |
+| 2026-06-05 | #1340 `18e7538` | Approval / clarify pending state | `/chat-run` approval/clarify replay state 在 bridge resolve 后清理、bridge reject 时恢复；前端 resume 缺失 pending request 时清理 stale badge/card。Chat UI 恢复 session list approval/needs-answer badge，并把 approval/clarify pending card 改为输入区上方的堆叠提示，避免同 session 双 pending 或多行输入时遮挡。 |
 | 2026-06-04 | local | CLI bridge abort 超时同步 | `/chat-run` abort 路径在 Hermes Agent 协作式 interrupt 未能在 bridge 同步窗口内完成时，不再提前清理 Web UI `isWorking/runId` 或启动队列，而是发送 `abort.timeout` 并保持 session locked/aborting；同会话新消息继续进入队列，避免旧 Agent run 尚未退出时触发 `session ... is already running`。当前端后续收到 bridge terminal chunk 时再发送 `abort.completed` 并释放状态。前端新增 `abort.timeout` 事件展示“仍在停止中”，并移除本地 20s 自动清 running 兜底。 |
 | 2026-06-04 | #1320 `237fd954` | Agent Bridge restart/resume；shutdown/stop timing | Web UI `restart`/页面内升级通过 `SIGUSR2` 保留 Agent Bridge，server 重启后 `ChatRunSocket.resume` 会查询 bridge status 并通过 `resumeBridgeRun()` 继续 poll 既有 `run_id` 的 delta/events。真实 `stop`/`SIGTERM` 仍会请求 bridge shutdown；非桌面 shutdown 兜底延长到 15s 以覆盖 worker 清理窗口，桌面 `HERMES_DESKTOP=true` 默认仍保持 3s。CLI `restart` 仍使用 5s grace，CLI `stop` 最长等 15s 且进程退出后立即返回。 |
 | 2026-06-04 | local | OpenRouter attribution title | `manager.ts` 的 bridge 默认 OpenRouter attribution title 从 `Hermes Web UI` 改为 `Hermes Studio`，与 `https://hermes-studio.ai` referer 品牌保持一致；只影响 OpenRouter dashboard attribution，不改变 `/chat-run` 协议、消息落库、模型调用或 run 生命周期。 |
