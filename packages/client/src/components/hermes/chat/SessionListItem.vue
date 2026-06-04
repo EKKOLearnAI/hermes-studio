@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   pinned: boolean
   canDelete: boolean
   streaming?: boolean
+  pendingInteraction?: 'approval' | 'clarify' | null
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
@@ -46,6 +47,11 @@ const profileHasModels = computed(() => {
 const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
+const pendingInteractionLabel = computed(() => {
+  if (props.pendingInteraction === 'approval') return t('chat.sessionNeedsApproval')
+  if (props.pendingInteraction === 'clarify') return t('chat.sessionNeedsClarify')
+  return ''
+})
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -136,6 +142,13 @@ onUnmounted(() => {
           </template>
           {{ t('chat.profileMissingModelsTip', { profile: profileName }) }}
         </NTooltip>
+        <span
+          v-if="pendingInteraction"
+          class="session-interaction-badge"
+          :class="`session-interaction-badge--${pendingInteraction}`"
+        >
+          {{ pendingInteractionLabel }}
+        </span>
       </span>
       <span class="session-item-meta">
         <span v-if="sessionModelName" class="session-item-model" :title="session.model">{{ sessionModelName }}</span>
@@ -192,5 +205,28 @@ onUnmounted(() => {
   font-weight: 700;
   line-height: 14px;
   cursor: pointer;
+}
+
+.session-interaction-badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.session-interaction-badge--approval {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.16);
+  border: 1px solid rgba(var(--warning-rgb), 0.28);
+}
+
+.session-interaction-badge--clarify {
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.16);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.28);
 }
 </style>

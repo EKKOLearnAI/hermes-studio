@@ -953,6 +953,7 @@ async function applyBridgeChunkAsync(
         choices: ev.choices,
         allow_permanent: ev.allow_permanent,
         timeout_ms: ev.timeout_ms,
+        requested_at_ms: ev.requested_at_ms || Date.now(),
       }
       replaceState(sessionMap, sessionId, 'approval.requested', payload)
       emit('approval.requested', payload)
@@ -963,7 +964,7 @@ async function applyBridgeChunkAsync(
         approval_id: ev.approval_id,
         choice: ev.choice,
       }
-      replaceState(sessionMap, sessionId, 'approval.resolved', payload)
+      clearApprovalEventState(sessionMap, sessionId, ev.approval_id)
       emit('approval.resolved', payload)
     } else if (evType === 'clarify.requested') {
       const payload = {
@@ -973,6 +974,7 @@ async function applyBridgeChunkAsync(
         question: ev.question,
         choices: Array.isArray(ev.choices) ? ev.choices : null,
         timeout_ms: ev.timeout_ms,
+        requested_at_ms: ev.requested_at_ms || Date.now(),
       }
       replaceState(sessionMap, sessionId, 'clarify.requested', payload)
       emit('clarify.requested', payload)
@@ -982,7 +984,7 @@ async function applyBridgeChunkAsync(
         run_id: chunk.run_id,
         clarify_id: ev.clarify_id,
       }
-      replaceState(sessionMap, sessionId, 'clarify.resolved', payload)
+      clearClarifyEventState(sessionMap, sessionId, ev.clarify_id)
       emit('clarify.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
@@ -1380,6 +1382,36 @@ function emitGoalStatus(
       message,
       terminal: false,
     })
+  }
+}
+
+function clearApprovalEventState(sessionMap: Map<string, SessionState>, sessionId: string, approvalId: unknown) {
+  const state = sessionMap.get(sessionId)
+  if (!state?.events.length) return
+  const id = String(approvalId || '')
+  if (!id) return
+
+  const nextEvents = state.events.filter(({ event, data }) => {
+    if (event !== 'approval.requested' && event !== 'approval.resolved') return true
+    return String(data?.approval_id || '') !== id
+  })
+  if (nextEvents.length !== state.events.length) {
+    state.events = nextEvents
+  }
+}
+
+function clearClarifyEventState(sessionMap: Map<string, SessionState>, sessionId: string, clarifyId: unknown) {
+  const state = sessionMap.get(sessionId)
+  if (!state?.events.length) return
+  const id = String(clarifyId || '')
+  if (!id) return
+
+  const nextEvents = state.events.filter(({ event, data }) => {
+    if (event !== 'clarify.requested' && event !== 'clarify.resolved') return true
+    return String(data?.clarify_id || '') !== id
+  })
+  if (nextEvents.length !== state.events.length) {
+    state.events = nextEvents
   }
 }
 

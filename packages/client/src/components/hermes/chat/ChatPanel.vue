@@ -59,7 +59,9 @@ const showSessions = ref(
     !window.matchMedia("(max-width: 768px)").matches,
 );
 let mobileQuery: MediaQueryList | null = null;
+let approvalCountdownTimer: number | null = null;
 const isMobile = ref(false);
+const approvalNow = ref(Date.now());
 
 function sessionHref(sessionId: string) {
   return router.resolve({
@@ -99,10 +101,17 @@ onMounted(() => {
   if (profilesStore.profiles.length === 0) {
     void profilesStore.fetchProfiles();
   }
+  approvalCountdownTimer = window.setInterval(() => {
+    approvalNow.value = Date.now();
+  }, 1000);
 });
 
 onUnmounted(() => {
   mobileQuery?.removeEventListener("change", handleMobileChange);
+  if (approvalCountdownTimer !== null) {
+    window.clearInterval(approvalCountdownTimer);
+    approvalCountdownTimer = null;
+  }
 });
 const showRenameModal = ref(false);
 const renameValue = ref("");
@@ -169,12 +178,41 @@ const headerTitle = computed(() =>
 
 const activeApproval = computed(() => chatStore.activePendingApproval);
 const visibleApproval = computed(() => activeApproval.value);
+const approvalRemainingMs = computed(() => {
+  const approval = visibleApproval.value;
+  if (!approval) return 0;
+  return Math.max(0, approval.requestedAt + approval.timeoutMs - approvalNow.value);
+});
+const approvalCountdownText = computed(() => {
+  if (!visibleApproval.value) return "";
+  const seconds = Math.ceil(approvalRemainingMs.value / 1000);
+  if (seconds <= 0) return t("chat.approvalExpired");
+  const minutesPart = Math.floor(seconds / 60);
+  const secondsPart = seconds % 60;
+  const time = `${minutesPart}:${String(secondsPart).padStart(2, "0")}`;
+  return t("chat.approvalExpiresIn", { time });
+});
 
 const activeClarify = computed(() => chatStore.activePendingClarify);
 const visibleClarify = computed(() => activeClarify.value);
+const clarifyRemainingMs = computed(() => {
+  const clarify = visibleClarify.value;
+  if (!clarify) return 0;
+  return Math.max(0, clarify.requestedAt + clarify.timeoutMs - approvalNow.value);
+});
+const clarifyCountdownText = computed(() => {
+  if (!visibleClarify.value) return "";
+  const seconds = Math.ceil(clarifyRemainingMs.value / 1000);
+  if (seconds <= 0) return t("chat.clarifyExpired");
+  const minutesPart = Math.floor(seconds / 60);
+  const secondsPart = seconds % 60;
+  const time = `${minutesPart}:${String(secondsPart).padStart(2, "0")}`;
+  return t("chat.clarifyExpiresIn", { time });
+});
 const clarifyResponse = ref('');
 
 function handleClarify(response?: string) {
+  if (clarifyRemainingMs.value <= 0) return;
   const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
   chatStore.respondToClarify(finalResponse);
   clarifyResponse.value = '';
@@ -275,21 +313,27 @@ function handleNewChatProviderChange(value: string) {
   newChatModel.value = newChatModelOptions.value[0]?.value || "";
 }
 
-async function confirmNewChat() {
+function confirmNewChat() {
   const session = chatStore.newChat({
     profile: newChatProfile.value,
     provider: newChatProvider.value,
     model: newChatModel.value,
   });
-  await router.push({
+  showNewChatModal.value = false;
+  void router.push({
     name: "hermes.session",
     params: { sessionId: session.id },
   });
-  showNewChatModal.value = false;
 }
 
 function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
+}
+
+function sessionPendingInteraction(sessionId: string): "approval" | "clarify" | null {
+  if (chatStore.pendingApprovals.has(sessionId)) return "approval";
+  if (chatStore.pendingClarifies.has(sessionId)) return "clarify";
+  return null;
 }
 
 function sessionProfile(sessionId: string): string | null {
@@ -870,6 +914,7 @@ async function handleSessionModelCustomSubmit() {
               chatStore.sessions.length > 1
             "
             :streaming="chatStore.isSessionLive(s.id)"
+            :pending-interaction="sessionPendingInteraction(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
             :show-profile="true"
@@ -892,6 +937,7 @@ async function handleSessionModelCustomSubmit() {
             chatStore.sessions.length > 1
           "
           :streaming="chatStore.isSessionLive(s.id)"
+          :pending-interaction="sessionPendingInteraction(s.id)"
           :selectable="isBatchMode"
           :selected="isSessionSelected(s)"
           :show-profile="true"
@@ -1214,8 +1260,9 @@ async function handleSessionModelCustomSubmit() {
             @navigate="handleOutlineNavigate"
           />
         </div>
-        <div v-if="visibleApproval" class="approval-bar">
-          <div class="approval-icon" aria-hidden="true">
+        <div v-if="visibleApproval || visibleClarify" class="pending-interaction-stack">
+          <div v-if="visibleApproval" class="approval-bar">
+            <div class="approval-icon" aria-hidden="true">
             <svg
               width="18"
               height="18"
@@ -1233,7 +1280,15 @@ async function handleSessionModelCustomSubmit() {
           <div class="approval-content">
             <div class="approval-main">
               <div class="approval-kicker">{{ t("chat.approvalKicker") }}</div>
-              <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
+              <div class="approval-title-row">
+                <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
+                <div
+                  class="approval-countdown"
+                  :class="{ 'approval-countdown-expired': approvalRemainingMs <= 0 }"
+                >
+                  {{ approvalCountdownText }}
+                </div>
+              </div>
               <div class="approval-desc">{{ visibleApproval.description }}</div>
               <code class="approval-command">{{ visibleApproval.command }}</code>
             </div>
@@ -1242,6 +1297,7 @@ async function handleSessionModelCustomSubmit() {
                 v-if="visibleApproval.choices.includes('once')"
                 size="small"
                 type="primary"
+                :disabled="approvalRemainingMs <= 0"
                 @click="handleApproval('once')"
               >
                 {{ t("chat.approvalAllowOnce") }}
@@ -1250,6 +1306,7 @@ async function handleSessionModelCustomSubmit() {
                 v-if="visibleApproval.choices.includes('session')"
                 size="small"
                 secondary
+                :disabled="approvalRemainingMs <= 0"
                 @click="handleApproval('session')"
               >
                 {{ t("chat.approvalAllowSession") }}
@@ -1258,6 +1315,7 @@ async function handleSessionModelCustomSubmit() {
                 v-if="visibleApproval.choices.includes('always')"
                 size="small"
                 secondary
+                :disabled="approvalRemainingMs <= 0"
                 @click="handleApproval('always')"
               >
                 {{ t("chat.approvalAlways") }}
@@ -1267,6 +1325,7 @@ async function handleSessionModelCustomSubmit() {
                 size="small"
                 type="error"
                 secondary
+                :disabled="approvalRemainingMs <= 0"
                 @click="handleApproval('deny')"
               >
                 {{ t("chat.approvalDeny") }}
@@ -1295,6 +1354,9 @@ async function handleSessionModelCustomSubmit() {
             <div class="clarify-main">
               <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
               <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
+              <div class="clarify-countdown" :class="{ expired: clarifyRemainingMs <= 0 }">
+                {{ clarifyCountdownText }}
+              </div>
               <div class="clarify-desc">{{ visibleClarify.question }}</div>
             </div>
             <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
@@ -1303,6 +1365,7 @@ async function handleSessionModelCustomSubmit() {
                 :key="choice"
                 size="small"
                 type="primary"
+                :disabled="clarifyRemainingMs <= 0"
                 @click="handleClarify(choice)"
               >
                 {{ choice }}
@@ -1311,6 +1374,7 @@ async function handleSessionModelCustomSubmit() {
                 size="small"
                 type="error"
                 secondary
+                :disabled="clarifyRemainingMs <= 0"
                 @click="handleClarify('')"
               >
                 {{ t('chat.clarifyDismiss') }}
@@ -1321,13 +1385,15 @@ async function handleSessionModelCustomSubmit() {
                 <NInput
                   v-model:value="clarifyResponse"
                   size="small"
+                  :disabled="clarifyRemainingMs <= 0"
                   :placeholder="t('chat.clarifyPlaceholder')"
                 />
-                <NButton size="small" type="primary" @click="handleClarify()">
+                <NButton size="small" type="primary" :disabled="clarifyRemainingMs <= 0" @click="handleClarify()">
                   {{ t('chat.clarifySubmit') }}
                 </NButton>
               </div>
             </div>
+          </div>
           </div>
         </div>
         <ChatInput />
@@ -1888,6 +1954,7 @@ async function handleSessionModelCustomSubmit() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  position: relative;
 }
 
 .chat-content-wrapper {
@@ -2022,16 +2089,38 @@ async function handleSessionModelCustomSubmit() {
   }
 }
 
+.pending-interaction-stack {
+  position: relative;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: calc(100% - 48px);
+  max-width: 960px;
+  margin: 0 auto 12px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.pending-interaction-stack > * {
+  pointer-events: auto;
+}
+
 .approval-bar {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin: 0 16px 12px;
-  padding: 12px;
-  border: 1px solid $border-color;
-  border-radius: 8px;
-  background: $bg-card;
-  box-shadow: none;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 1px solid rgba(var(--warning-rgb), 0.38);
+  border-radius: $radius-md;
+  background: color-mix(in srgb, #1f232a 88%, transparent);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(var(--warning-rgb), 0.12),
+    0 0 26px rgba(var(--warning-rgb), 0.12);
+  backdrop-filter: blur(14px) saturate(1.18);
 }
 
 .approval-icon {
@@ -2040,10 +2129,11 @@ async function handleSessionModelCustomSubmit() {
   flex: 0 0 32px;
   width: 32px;
   height: 32px;
-  color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
+  color: $warning;
+  background: rgba(var(--warning-rgb), 0.14);
+  border: 1px solid rgba(var(--warning-rgb), 0.24);
   border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(var(--warning-rgb), 0.1);
 }
 
 .approval-content {
@@ -2070,6 +2160,32 @@ async function handleSessionModelCustomSubmit() {
   font-weight: 700;
   line-height: 1.3;
   color: $text-primary;
+}
+
+.approval-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.approval-countdown {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid rgba(var(--warning-rgb), 0.34);
+  border-radius: 999px;
+  background: rgba(var(--warning-rgb), 0.14);
+  color: $warning;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.approval-countdown-expired {
+  border-color: rgba(var(--error-rgb), 0.32);
+  background: rgba(var(--error-rgb), 0.1);
+  color: var(--error);
 }
 
 .approval-desc {
@@ -2110,13 +2226,18 @@ async function handleSessionModelCustomSubmit() {
 .clarify-bar {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin: 0 16px 12px;
-  padding: 12px;
-  border: 1px solid $border-color;
-  border-radius: 8px;
-  background: $bg-card;
-  box-shadow: none;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.38);
+  border-radius: $radius-md;
+  background: color-mix(in srgb, #1f232a 88%, transparent);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(var(--accent-primary-rgb), 0.12),
+    0 0 26px rgba(var(--accent-primary-rgb), 0.12);
+  backdrop-filter: blur(14px) saturate(1.18);
 }
 
 .clarify-icon {
@@ -2126,9 +2247,10 @@ async function handleSessionModelCustomSubmit() {
   width: 32px;
   height: 32px;
   color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
+  background: rgba(var(--accent-primary-rgb), 0.14);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
   border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-primary-rgb), 0.1);
 }
 
 .clarify-content {
@@ -2155,6 +2277,24 @@ async function handleSessionModelCustomSubmit() {
   font-weight: 700;
   line-height: 1.3;
   color: $text-primary;
+}
+
+.clarify-countdown {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.clarify-countdown.expired {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--error-color, #ef4444);
 }
 
 .clarify-desc {
@@ -2196,6 +2336,11 @@ async function handleSessionModelCustomSubmit() {
   width: 100%;
 }
 @media (max-width: 768px) {
+  .pending-interaction-stack {
+    width: calc(100% - 20px);
+    margin-bottom: 10px;
+  }
+
   .approval-bar {
     margin: 0 10px 10px;
     padding: 10px;

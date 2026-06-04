@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const bridgeMock = vi.hoisted(() => ({
   clarifyRespond: vi.fn(),
+  approvalRespond: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
@@ -65,6 +66,7 @@ describe('ChatRunSocket clarify responses', () => {
   beforeEach(() => {
     vi.resetModules()
     bridgeMock.clarifyRespond.mockReset()
+    bridgeMock.approvalRespond.mockReset()
   })
 
   it('forwards clarify.respond events to the bridge and emits clarify.resolved', async () => {
@@ -132,7 +134,169 @@ describe('ChatRunSocket clarify responses', () => {
     }))
   })
 
-  it('emits an unresolved clarify result when the bridge rejects the response', async () => {
+  it('does not replay resolved approval prompts when the session resumes', async () => {
+    bridgeMock.approvalRespond.mockResolvedValue({ ok: true, resolved: true })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+    const toolEvent = {
+      event: 'tool.started',
+      data: { event: 'tool.started', tool_call_id: 'tool-1' },
+    }
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      events: [
+        {
+          event: 'approval.requested',
+          data: {
+            event: 'approval.requested',
+            approval_id: 'approval-1',
+            command: 'rm -rf /tmp/example',
+          },
+        },
+        toolEvent,
+      ],
+      queue: [],
+    })
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('approval.respond')?.({
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      choice: 'deny',
+    })
+    await handlers.get('resume')?.({ session_id: 'session-1' })
+
+    expect(bridgeMock.approvalRespond).toHaveBeenCalledWith('approval-1', 'deny')
+    expect((server as any).sessionMap.get('session-1').events).toEqual([toolEvent])
+    expect(socket.emit).toHaveBeenCalledWith('resumed', expect.objectContaining({
+      session_id: 'session-1',
+      isWorking: true,
+      events: [toolEvent],
+    }))
+  })
+
+  it('removes approval replay state while the bridge response is pending', async () => {
+    let resolveApproval!: (value: { ok: boolean; resolved: boolean }) => void
+    bridgeMock.approvalRespond.mockReturnValue(new Promise(resolve => { resolveApproval = resolve }))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+    const toolEvent = {
+      event: 'tool.started',
+      data: { event: 'tool.started', tool_call_id: 'tool-1' },
+    }
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      events: [
+        {
+          event: 'approval.requested',
+          data: {
+            event: 'approval.requested',
+            approval_id: 'approval-1',
+            command: 'rm -rf /tmp/example',
+          },
+        },
+        toolEvent,
+      ],
+      queue: [],
+    })
+
+    ;(server as any).onConnection(socket)
+    const pending = handlers.get('approval.respond')?.({
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      choice: 'deny',
+    })
+    await handlers.get('resume')?.({ session_id: 'session-1' })
+
+    expect((server as any).sessionMap.get('session-1').events).toEqual([toolEvent])
+    expect(socket.emit).toHaveBeenCalledWith('resumed', expect.objectContaining({
+      session_id: 'session-1',
+      events: [toolEvent],
+    }))
+
+    resolveApproval({ ok: true, resolved: true })
+    await pending
+  })
+
+  it('restores approval replay state when the bridge rejects the response', async () => {
+    bridgeMock.approvalRespond.mockRejectedValue(new Error('bridge offline'))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, namespaceEmit, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+    const approvalEvent = {
+      event: 'approval.requested',
+      data: {
+        event: 'approval.requested',
+        approval_id: 'approval-1',
+        command: 'rm -rf /tmp/example',
+        choices: ['once', 'deny'],
+      },
+    }
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      events: [approvalEvent],
+      queue: [],
+    })
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('approval.respond')?.({
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      choice: 'deny',
+    })
+
+    expect((server as any).sessionMap.get('session-1').events).toEqual([approvalEvent])
+    expect(namespaceEmit).toHaveBeenCalledWith('approval.requested', expect.objectContaining({
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      command: 'rm -rf /tmp/example',
+      error: 'bridge offline',
+    }))
+  })
+
+  it('restores clarify replay state when the bridge rejects the response', async () => {
+    bridgeMock.clarifyRespond.mockRejectedValue(new Error('bridge offline'))
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, namespaceEmit, socket } = createSocketHarness()
+    const server = new ChatRunSocket(io as any)
+    const clarifyEvent = {
+      event: 'clarify.requested',
+      data: {
+        event: 'clarify.requested',
+        clarify_id: 'clarify-1',
+        question: 'Pick one',
+        choices: ['A', 'B'],
+      },
+    }
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      events: [clarifyEvent],
+      queue: [],
+    })
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('clarify.respond')?.({
+      session_id: 'session-1',
+      clarify_id: 'clarify-1',
+      response: 'Use option B',
+    })
+
+    expect((server as any).sessionMap.get('session-1').events).toEqual([clarifyEvent])
+    expect(namespaceEmit).toHaveBeenCalledWith('clarify.requested', expect.objectContaining({
+      session_id: 'session-1',
+      clarify_id: 'clarify-1',
+      question: 'Pick one',
+      error: 'bridge offline',
+    }))
+  })
+
+  it('emits an unresolved clarify result when the bridge rejects a response without replay state', async () => {
     bridgeMock.clarifyRespond.mockRejectedValue(new Error('unknown clarify request'))
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { handlers, namespaceEmit, socket } = createSocketHarness()

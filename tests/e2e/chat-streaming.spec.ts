@@ -316,6 +316,7 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
       description: 'Allow write_file to create /tmp/approved.txt',
       choices: ['once', 'deny'],
       allow_permanent: false,
+      timeout_ms: 300000,
     })
   }, run.session_id)
 
@@ -326,6 +327,7 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toBeVisible()
   await expect(page.getByText('write_file /tmp/approved.txt')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Allow once' })).toBeVisible()
+  await expect(page.getByText(/Expires in (5:00|4:59)/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Allow session' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Deny' })).toBeVisible()
 
@@ -404,6 +406,340 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.getByText('Completion fallback should stay hidden.')).toHaveCount(0)
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('shows session-list badges for pending approval and clarify interactions', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Needs approval badge')
+  const first = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-approval-badge',
+      approval_id: 'approval-badge',
+      command: 'write_file /tmp/badge.txt',
+      description: 'Approval badge smoke',
+      choices: ['once', 'deny'],
+      timeout_ms: 300000,
+    })
+  }, first.run.session_id)
+
+  await expect(page.locator('.session-interaction-badge--approval')).toBeVisible()
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('approval.resolved', {
+      event: 'approval.resolved',
+      session_id: sid,
+      approval_id: 'approval-badge',
+      choice: 'once',
+      resolved: true,
+    })
+  }, first.run.session_id)
+  await expect(page.locator('.session-interaction-badge--approval')).toHaveCount(0)
+
+  await sendChatMessage(page, 'Needs clarify badge')
+  const second = await waitForRun(page, 1)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-clarify-badge',
+      clarify_id: 'clarify-badge',
+      question: 'Which badge?',
+      choices: ['A', 'B'],
+      timeout_ms: 300000,
+    })
+  }, second.run.session_id)
+
+  await expect(page.locator('.session-interaction-badge--clarify')).toBeVisible()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('stacks approval and clarify cards when the same session has both pending', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Same-session pending approval and clarify')
+  const { run } = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-both-pending',
+      approval_id: 'approval-both-pending',
+      command: 'write_file /tmp/both.txt',
+      description: 'Approval in the same session',
+      choices: ['once', 'deny'],
+      timeout_ms: 300000,
+    })
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-both-pending',
+      clarify_id: 'clarify-both-pending',
+      question: 'Clarify in the same session?',
+      choices: ['A', 'B'],
+      timeout_ms: 300000,
+    })
+  }, run.session_id)
+
+  await expect(page.locator('.approval-bar')).toBeVisible()
+  await expect(page.locator('.clarify-bar')).toBeVisible()
+  const rects = await page.evaluate(() => {
+    const approval = document.querySelector('.approval-bar')?.getBoundingClientRect()
+    const clarify = document.querySelector('.clarify-bar')?.getBoundingClientRect()
+    return approval && clarify
+      ? { approval: { top: approval.top, bottom: approval.bottom }, clarify: { top: clarify.top, bottom: clarify.bottom } }
+      : null
+  })
+  expect(rects).not.toBeNull()
+  expect(rects!.approval.bottom <= rects!.clarify.top || rects!.clarify.bottom <= rects!.approval.top).toBe(true)
+
+  await page.getByPlaceholder(inputPlaceholder).fill(Array.from({ length: 12 }, (_, i) => `draft line ${i + 1}`).join('\n'))
+  const expandedRects = await page.evaluate(() => {
+    const stack = document.querySelector('.pending-interaction-stack')?.getBoundingClientRect()
+    const input = document.querySelector('.chat-input-area')?.getBoundingClientRect()
+    return stack && input
+      ? { stack: { bottom: stack.bottom }, input: { top: input.top } }
+      : null
+  })
+  expect(expandedRects).not.toBeNull()
+  expect(expandedRects!.stack.bottom).toBeLessThanOrEqual(expandedRects!.input.top + 1)
+
+  await expect(page.locator('.session-interaction-badge--approval')).toBeVisible()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('closes the new chat modal after confirming while a pending interaction exists', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'default')
+  const api = await mockHermesApi(page, { initialProfileName: 'default' })
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Pending approval before new chat')
+  const { run } = await waitForRun(page)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-new-chat-modal',
+      approval_id: 'approval-new-chat-modal',
+      command: 'write_file /tmp/new-chat-modal.txt',
+      description: 'Approval stays pending while opening new chat',
+      choices: ['once', 'deny'],
+      timeout_ms: 300000,
+    })
+  }, run.session_id)
+  await expect(page.locator('.approval-bar')).toBeVisible()
+
+  await page.getByRole('button', { name: 'New Chat' }).click()
+  const modal = page.locator('.n-card').filter({ hasText: 'Profiles' })
+  await expect(modal).toBeVisible()
+  await modal.getByRole('button', { name: 'New Chat' }).click()
+
+  await expect(modal).toHaveCount(0)
+  await expect(page.locator('.approval-bar')).toHaveCount(0)
+  await expect(page.locator('.session-interaction-badge--approval')).toBeVisible()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('clears active approval card when a live run completes without resolve replay', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Approval should clear on completion')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-approval-clear' })
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-approval-clear',
+      approval_id: 'approval-clear',
+      command: 'write_file /tmp/clear.txt',
+      description: 'Approval that should not become stale',
+      choices: ['once', 'deny'],
+      allow_permanent: false,
+      timeout_ms: 300000,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Approval that should not become stale')).toBeVisible()
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.completed', {
+      event: 'run.completed',
+      session_id: sid,
+      run_id: 'run-approval-clear',
+      output: 'done',
+      queue_remaining: 0,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Approval that should not become stale')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Allow once' })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('clears active approval card when a live run fails without resolve replay', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Approval should clear on failure')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-approval-clear-failed' })
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-approval-clear-failed',
+      approval_id: 'approval-clear-failed',
+      command: 'write_file /tmp/clear-failed.txt',
+      description: 'Failed approval that should not become stale',
+      choices: ['once', 'deny'],
+      allow_permanent: false,
+      timeout_ms: 300000,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Failed approval that should not become stale')).toBeVisible()
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.failed', {
+      event: 'run.failed',
+      session_id: sid,
+      run_id: 'run-approval-clear-failed',
+      error: 'boom',
+      queue_remaining: 0,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Failed approval that should not become stale')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Allow once' })).toHaveCount(0)
+  await expect(page.getByText('Error: boom')).toBeVisible()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('disables expired approval decisions instead of sending stale responses', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Use write_file with expiring approval')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-approval-expired' })
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-approval-expired',
+      approval_id: 'approval-expired',
+      command: 'write_file /tmp/expired.txt',
+      description: 'Allow write_file after timeout',
+      choices: ['once', 'deny'],
+      allow_permanent: false,
+      timeout_ms: 1,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Allow write_file after timeout')).toBeVisible()
+  await expect(page.locator('.approval-countdown')).toHaveText('Expired')
+  await expect(page.getByRole('button', { name: 'Allow once' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Deny' })).toBeDisabled()
+  expect(await page.evaluate(() => {
+    const emitted = (window as any).__PW_CHAT_SOCKET__.emitted
+    return emitted.filter((item: any) => item.event === 'approval.respond')
+  })).toEqual([])
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('renders clarify countdown and disables expired clarify responses', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+
+  await sendChatMessage(page, 'Clarify countdown check')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-clarify-countdown' })
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-clarify-countdown',
+      clarify_id: 'clarify-countdown',
+      question: 'Pick a path before the timer expires',
+      choices: ['A', 'B'],
+      timeout_ms: 300000,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('Pick a path before the timer expires')).toBeVisible()
+  await expect(page.locator('.clarify-countdown')).toHaveText(/Expires in (5:00|4:59)/)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('clarify.resolved', {
+      event: 'clarify.resolved',
+      session_id: sid,
+      run_id: 'run-clarify-countdown',
+      clarify_id: 'clarify-countdown',
+      resolved: true,
+    })
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-clarify-countdown',
+      clarify_id: 'clarify-expired',
+      question: 'This clarify should be expired',
+      choices: ['A', 'B'],
+      timeout_ms: 1,
+    })
+  }, run.session_id)
+
+  await expect(page.getByText('This clarify should be expired')).toBeVisible()
+  await expect(page.locator('.clarify-countdown')).toHaveText('Expired')
+  await expect(page.getByRole('button', { name: 'A', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'B', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Dismiss' })).toBeDisabled()
+  expect(await page.evaluate(() => {
+    const emitted = (window as any).__PW_CHAT_SOCKET__.emitted
+    return emitted.filter((item: any) => item.event === 'clarify.respond')
+  })).toEqual([])
   expect(api.unexpectedRequests).toEqual([])
 })
 

@@ -237,6 +237,7 @@ export class ChatRunSocket {
 
     socket.on('approval.respond', async (data: { session_id?: string; approval_id?: string; choice?: string }) => {
       if (!data.session_id || !data.approval_id) return
+      const removedEvents = this.takeApprovalEventState(data.session_id, data.approval_id)
       try {
         const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
@@ -246,19 +247,30 @@ export class ChatRunSocket {
           resolved: Boolean(result.resolved),
         })
       } catch (err) {
-        this.emitToSession(socket, data.session_id, 'approval.resolved', {
-          event: 'approval.resolved',
-          approval_id: data.approval_id,
-          choice: data.choice || 'deny',
-          resolved: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        const error = err instanceof Error ? err.message : String(err)
+        this.restoreApprovalEventState(data.session_id, removedEvents)
+        const requested = removedEvents.find(({ event }) => event === 'approval.requested')
+        if (requested) {
+          this.emitToSession(socket, data.session_id, 'approval.requested', {
+            ...requested.data,
+            event: 'approval.requested',
+            error,
+          })
+        } else {
+          this.emitToSession(socket, data.session_id, 'approval.resolved', {
+            event: 'approval.resolved',
+            approval_id: data.approval_id,
+            choice: data.choice || 'deny',
+            resolved: false,
+            error,
+          })
+        }
       }
     })
 
     socket.on('clarify.respond', async (data: { session_id?: string; clarify_id?: string; response?: string }) => {
       if (!data.session_id || !data.clarify_id) return
-      this.clearClarifyEventState(data.session_id, data.clarify_id)
+      const removedEvents = this.takeClarifyEventState(data.session_id, data.clarify_id)
       try {
         const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {
@@ -267,12 +279,23 @@ export class ChatRunSocket {
           resolved: Boolean((result as any)?.resolved),
         })
       } catch (err) {
-        this.emitToSession(socket, data.session_id, 'clarify.resolved', {
-          event: 'clarify.resolved',
-          clarify_id: data.clarify_id,
-          resolved: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        const error = err instanceof Error ? err.message : String(err)
+        this.restoreClarifyEventState(data.session_id, removedEvents)
+        const requested = removedEvents.find(({ event }) => event === 'clarify.requested')
+        if (requested) {
+          this.emitToSession(socket, data.session_id, 'clarify.requested', {
+            ...requested.data,
+            event: 'clarify.requested',
+            error,
+          })
+        } else {
+          this.emitToSession(socket, data.session_id, 'clarify.resolved', {
+            event: 'clarify.resolved',
+            clarify_id: data.clarify_id,
+            resolved: false,
+            error,
+          })
+        }
       }
     })
   }
@@ -451,17 +474,78 @@ export class ChatRunSocket {
 
   // --- Helpers ---
 
-  private clearClarifyEventState(sessionId: string, clarifyId: string) {
+  private takeClarifyEventState(sessionId: string, clarifyId: string): SessionState['events'] {
     const state = this.sessionMap.get(sessionId)
-    if (!state?.events.length) return
+    if (!state?.events.length) return []
 
-    const nextEvents = state.events.filter(({ event, data }) => {
-      if (event !== 'clarify.requested' && event !== 'clarify.resolved') return true
-      return data?.clarify_id !== clarifyId
+    const removedEvents: SessionState['events'] = []
+    const nextEvents = state.events.filter((entry) => {
+      if (entry.event !== 'clarify.requested' && entry.event !== 'clarify.resolved') return true
+      if (entry.data?.clarify_id !== clarifyId) return true
+      removedEvents.push(entry)
+      return false
     })
     if (nextEvents.length !== state.events.length) {
       state.events = nextEvents
     }
+    return removedEvents
+  }
+
+  private restoreClarifyEventState(sessionId: string, events: SessionState['events']) {
+    if (!events.length) return
+    const state = this.sessionMap.get(sessionId)
+    if (!state) return
+    const existingIds = new Set(
+      state.events
+        .filter(({ event }) => event === 'clarify.requested' || event === 'clarify.resolved')
+        .map(({ data }) => data?.clarify_id)
+        .filter(Boolean),
+    )
+    const missingEvents = events.filter(({ data }) => !existingIds.has(data?.clarify_id))
+    if (missingEvents.length) {
+      state.events = [...missingEvents, ...state.events]
+    }
+  }
+
+  private clearClarifyEventState(sessionId: string, clarifyId: string) {
+    this.takeClarifyEventState(sessionId, clarifyId)
+  }
+
+  private takeApprovalEventState(sessionId: string, approvalId: string): SessionState['events'] {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.events.length) return []
+
+    const removedEvents: SessionState['events'] = []
+    const nextEvents = state.events.filter((entry) => {
+      if (entry.event !== 'approval.requested' && entry.event !== 'approval.resolved') return true
+      if (entry.data?.approval_id !== approvalId) return true
+      removedEvents.push(entry)
+      return false
+    })
+    if (nextEvents.length !== state.events.length) {
+      state.events = nextEvents
+    }
+    return removedEvents
+  }
+
+  private restoreApprovalEventState(sessionId: string, events: SessionState['events']) {
+    if (!events.length) return
+    const state = this.sessionMap.get(sessionId)
+    if (!state) return
+    const existingIds = new Set(
+      state.events
+        .filter(({ event }) => event === 'approval.requested' || event === 'approval.resolved')
+        .map(({ data }) => data?.approval_id)
+        .filter(Boolean),
+    )
+    const missingEvents = events.filter(({ data }) => !existingIds.has(data?.approval_id))
+    if (missingEvents.length) {
+      state.events = [...missingEvents, ...state.events]
+    }
+  }
+
+  private clearApprovalEventState(sessionId: string, approvalId: string) {
+    this.takeApprovalEventState(sessionId, approvalId)
   }
 
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {

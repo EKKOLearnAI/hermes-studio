@@ -54,6 +54,7 @@ export interface PendingApproval {
   description: string
   choices: Array<'once' | 'session' | 'always' | 'deny'>
   allowPermanent: boolean
+  timeoutMs: number
   requestedAt: number
 }
 
@@ -628,7 +629,10 @@ export const useChatStore = defineStore('chat', () => {
           } else if (!data.isWorking) {
             setAbortState(null)
           }
-          if (!data.isWorking) setCompressionState(sessionId, null)
+          if (!data.isWorking) {
+            setCompressionState(sessionId, null)
+            clearPendingInteractions(sessionId)
+          }
           if (data.inputTokens != null) target.inputTokens = data.inputTokens
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
@@ -648,7 +652,8 @@ export const useChatStore = defineStore('chat', () => {
           }
           activeSession.value = target
           // Process replayed events (compression state etc.)
-          if (data.events?.length) {
+          if (Array.isArray(data.events)) {
+            reconcilePendingInteractionsFromEvents(sessionId, data.events)
             for (const evt of data.events) {
               const e = evt.data as any
               if (e.event === 'compression.started') {
@@ -686,6 +691,7 @@ export const useChatStore = defineStore('chat', () => {
                 clearPendingClarify({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'run.failed') {
                 addAgentErrorMessage(sessionId, e.error)
+                clearPendingInteractions(sessionId)
                 serverWorking.value.delete(sessionId)
                 queueLengths.value.delete(sessionId)
               } else if (e.event === 'tool.started') {
@@ -1222,6 +1228,7 @@ export const useChatStore = defineStore('chat', () => {
     const choices = rawChoices
       .filter((choice: unknown): choice is PendingApproval['choices'][number] =>
         choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+    const requestedAt = Number((evt as any).requested_at_ms) || Date.now()
     pendingApprovals.value.set(sid, {
       sessionId: sid,
       approvalId,
@@ -1229,7 +1236,8 @@ export const useChatStore = defineStore('chat', () => {
       description: String((evt as any).description || ''),
       choices: choices.length ? choices : ['once', 'session', 'deny'],
       allowPermanent: Boolean((evt as any).allow_permanent),
-      requestedAt: Date.now(),
+      timeoutMs: Number((evt as any).timeout_ms) || 300000,
+      requestedAt,
     })
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
@@ -1249,13 +1257,14 @@ export const useChatStore = defineStore('chat', () => {
     const sid = evt.session_id
     const clarifyId = (evt as any).clarify_id as string | undefined
     if (!sid || !clarifyId) return
+    const requestedAt = Number((evt as any).requested_at_ms) || Date.now()
     pendingClarifies.value.set(sid, {
       sessionId: sid,
       clarifyId,
       question: String((evt as any).question || ''),
       choices: Array.isArray((evt as any).choices) ? (evt as any).choices : null,
       timeoutMs: Number((evt as any).timeout_ms) || 300000,
-      requestedAt: Date.now(),
+      requestedAt,
     })
     pendingClarifies.value = new Map(pendingClarifies.value)
   }
@@ -1278,6 +1287,24 @@ export const useChatStore = defineStore('chat', () => {
       changed = true
     }
     if (pendingClarifies.value.has(sessionId)) {
+      pendingClarifies.value.delete(sessionId)
+      changed = true
+    }
+    if (changed) {
+      pendingApprovals.value = new Map(pendingApprovals.value)
+      pendingClarifies.value = new Map(pendingClarifies.value)
+    }
+  }
+
+  function reconcilePendingInteractionsFromEvents(sessionId: string, events: Array<{ event: string; data: any }>) {
+    const hasApprovalRequest = events.some(({ data }) => data?.event === 'approval.requested' && data.approval_id)
+    const hasClarifyRequest = events.some(({ data }) => data?.event === 'clarify.requested' && data.clarify_id)
+    let changed = false
+    if (!hasApprovalRequest && pendingApprovals.value.has(sessionId)) {
+      pendingApprovals.value.delete(sessionId)
+      changed = true
+    }
+    if (!hasClarifyRequest && pendingClarifies.value.has(sessionId)) {
       pendingClarifies.value.delete(sessionId)
       changed = true
     }
@@ -1494,7 +1521,10 @@ export const useChatStore = defineStore('chat', () => {
         } else if (!data.isWorking) {
           setAbortState(null)
         }
-        if (!data.isWorking) setCompressionState(sid, null)
+        if (!data.isWorking) {
+          setCompressionState(sid, null)
+          clearPendingInteractions(sid)
+        }
 
         if (data.inputTokens != null) target.inputTokens = data.inputTokens
         if (data.outputTokens != null) target.outputTokens = data.outputTokens
@@ -1516,7 +1546,8 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
 
-        if (data.events?.length) {
+        if (Array.isArray(data.events)) {
+          reconcilePendingInteractionsFromEvents(sid, data.events)
           for (const evt of data.events) {
             const e = evt.data as RunEvent
             switch (e.event) {
@@ -1856,6 +1887,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.completed': {
+              clearPendingInteractions(sid)
               clearAgentEventMessages(sid)
               const msgs = getSessionMsgs(sid)
               const lastMsg = activeAssistantMessageId
@@ -1960,6 +1992,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'run.failed': {
+              clearPendingInteractions(sid)
               clearAgentEventMessages(sid)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
@@ -2339,6 +2372,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.completed': {
+          clearPendingInteractions(sid)
           clearAgentEventMessages(sid)
           const hasQueue = (evt as any).queue_remaining > 0
           if (hasQueue) {
@@ -2429,6 +2463,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.failed': {
+          clearPendingInteractions(sid)
           clearAgentEventMessages(sid)
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
@@ -2490,6 +2525,8 @@ export const useChatStore = defineStore('chat', () => {
       onAgentEvent: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onRunQueued: (evt) => handleEvent(evt),
+      onApprovalRequested: (evt) => handleEvent(evt),
+      onApprovalResolved: (evt) => handleEvent(evt),
       onClarifyRequested: (evt) => handleEvent(evt),
       onClarifyResolved: (evt) => handleEvent(evt),
     })
@@ -2699,6 +2736,7 @@ export const useChatStore = defineStore('chat', () => {
     queueLengths,
     queuedUserMessages,
     pendingApprovals,
+    pendingClarifies,
     activePendingApproval,
     activePendingClarify,
     removeQueuedMessage,

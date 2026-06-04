@@ -107,6 +107,89 @@ describe('chat store session.command fanout', () => {
     ])
   })
 
+  it('handles approval events for resumed runs and clears stale approvals on completion', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    chatApi.sessionCommandHandlers[0]({
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'goal',
+      action: 'resume',
+      message: 'Goal resumed',
+      started: true,
+      terminal: false,
+    })
+
+    const handlers = chatApi.registerSessionHandlers.mock.calls[0]?.[1]
+    expect(handlers?.onApprovalRequested).toEqual(expect.any(Function))
+    expect(handlers?.onApprovalResolved).toEqual(expect.any(Function))
+
+    handlers.onApprovalRequested({
+      event: 'approval.requested',
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      command: 'rm -rf /tmp/smoke',
+      description: 'delete in root path',
+      choices: ['deny'],
+      timeout_ms: 300000,
+    })
+
+    expect(store.activePendingApproval?.approvalId).toBe('approval-1')
+    expect(store.activePendingApproval?.timeoutMs).toBe(300000)
+
+    handlers.onRunCompleted({
+      event: 'run.completed',
+      session_id: 'session-1',
+      queue_remaining: 0,
+      output: 'done',
+    })
+
+    expect(store.activePendingApproval).toBeNull()
+  })
+
+  it('clears stale approvals when a resumed run fails', () => {
+    const store = useChatStore()
+    const session = makeSession()
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    chatApi.sessionCommandHandlers[0]({
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'goal',
+      action: 'resume',
+      message: 'Goal resumed',
+      started: true,
+      terminal: false,
+    })
+
+    const handlers = chatApi.registerSessionHandlers.mock.calls[0]?.[1]
+    handlers.onApprovalRequested({
+      event: 'approval.requested',
+      session_id: 'session-1',
+      approval_id: 'approval-1',
+      command: 'rm -rf /tmp/smoke',
+      description: 'delete in root path',
+      choices: ['deny'],
+    })
+
+    expect(store.activePendingApproval?.approvalId).toBe('approval-1')
+
+    handlers.onRunFailed({
+      event: 'run.failed',
+      session_id: 'session-1',
+      queue_remaining: 0,
+      error: 'failed',
+    })
+
+    expect(store.activePendingApproval).toBeNull()
+  })
+
   it('does not clear the transcript for goal done commands', () => {
     const store = useChatStore()
     const session = makeSession()

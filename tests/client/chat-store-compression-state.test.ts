@@ -94,4 +94,54 @@ describe('chat store compression state', () => {
       beforeTokens: 1234,
     }))
   })
+  it('clears stale pending interactions when resume omits replay events', async () => {
+    chatApi.resumeSession
+      .mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+        onResumed({
+          session_id: sessionId,
+          messages: [],
+          isWorking: true,
+          events: [
+            {
+              event: 'approval.requested',
+              data: {
+                event: 'approval.requested',
+                approval_id: 'approval-1',
+                command: 'rm -rf /tmp/example',
+              },
+            },
+            {
+              event: 'clarify.requested',
+              data: {
+                event: 'clarify.requested',
+                clarify_id: 'clarify-1',
+                question: 'Pick one',
+                choices: ['A', 'B'],
+              },
+            },
+          ],
+        })
+        return {} as any
+      })
+      .mockImplementationOnce((sessionId: string, onResumed: (data: any) => void) => {
+        onResumed({
+          session_id: sessionId,
+          messages: [],
+          isWorking: true,
+          events: [],
+        })
+        return {} as any
+      })
+
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+
+    await store.switchSession('session-1')
+    expect(store.activePendingApproval?.approvalId).toBe('approval-1')
+    expect(store.activePendingClarify?.clarifyId).toBe('clarify-1')
+
+    await store.switchSession('session-1')
+    expect(store.activePendingApproval).toBeNull()
+    expect(store.activePendingClarify).toBeNull()
+  })
 })
