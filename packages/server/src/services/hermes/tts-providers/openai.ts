@@ -7,20 +7,20 @@ function buildSpeechUrl(baseUrl: string): string {
     throw new Error('OpenAI TTS baseUrl must use http or https')
   }
 
-  url.search = ''
+  const search = url.search
   url.hash = ''
 
   const pathname = url.pathname.replace(/\/+$/, '')
 
   if (!pathname || pathname === '/') {
-    return `${url.origin}/audio/speech`
+    return `${url.origin}/audio/speech${search}`
   }
 
   if (pathname.endsWith('/audio/speech')) {
-    return `${url.origin}${pathname}`
+    return `${url.origin}${pathname}${search}`
   }
 
-  return `${url.origin}${pathname}/audio/speech`
+  return `${url.origin}${pathname}/audio/speech${search}`
 }
 
 export const openaiTtsProvider: OpenaiTtsProvider = {

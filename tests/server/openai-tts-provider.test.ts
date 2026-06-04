@@ -165,18 +165,32 @@ describe('openaiTtsProvider', () => {
     expect(url).toBe('https://api.example.com/v1/audio/speech')
   })
 
-  it('drops query strings and hashes before building the speech endpoint url', async () => {
+  it('preserves query strings and drops hashes when appending /audio/speech', async () => {
     mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('ok')))
 
     await openaiTtsProvider.synthesize(
       { text: 'Hello' },
       {
-        baseUrl: 'https://api.example.com/v1?token=ignored#frag',
+        baseUrl: 'https://api.example.com/v1?api-version=2024-01-01#frag',
       },
     )
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://api.example.com/v1/audio/speech')
+    expect(url).toBe('https://api.example.com/v1/audio/speech?api-version=2024-01-01')
+  })
+
+  it('preserves query strings and drops hashes when baseUrl already targets the speech endpoint', async () => {
+    mockFetch.mockResolvedValueOnce(audioResponse(Buffer.from('ok')))
+
+    await openaiTtsProvider.synthesize(
+      { text: 'Hello' },
+      {
+        baseUrl: 'https://api.example.com/v1/audio/speech?api-version=2024-01-01#frag',
+      },
+    )
+
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.example.com/v1/audio/speech?api-version=2024-01-01')
   })
 
   it('rejects invalid baseUrl protocols before fetch', async () => {
