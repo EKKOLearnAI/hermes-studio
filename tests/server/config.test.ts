@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
-import { getListenHost, getWebUiHome, shouldCreateWebUiDataDir } from '../../packages/server/src/config'
+import { getCorsOrigins, getListenHost, getWebUiHome, shouldCreateWebUiDataDir } from '../../packages/server/src/config'
 
 describe('server config', () => {
   it('defaults to an IPv4 bind host', () => {
@@ -31,5 +31,13 @@ describe('server config', () => {
   it('only creates the development data directory outside production', () => {
     expect(shouldCreateWebUiDataDir({ NODE_ENV: 'development' })).toBe(true)
     expect(shouldCreateWebUiDataDir({ NODE_ENV: 'production' })).toBe(false)
+  })
+
+  it('does not enable cross-origin requests by default', () => {
+    expect(getCorsOrigins({})).toBe('')
+  })
+
+  it('uses CORS_ORIGINS when provided', () => {
+    expect(getCorsOrigins({ CORS_ORIGINS: ' https://app.example, http://localhost:3000 ' })).toBe('https://app.example, http://localhost:3000')
   })
 })

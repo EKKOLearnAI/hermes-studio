@@ -7,7 +7,7 @@ import { homedir } from 'os'
  * Server/listen:
  * - PORT: Web UI listen port. Default: 8648.
  * - BIND_HOST: Web UI bind host. Default: 0.0.0.0.
- * - CORS_ORIGINS: Koa CORS origin setting. Default: *.
+ * - CORS_ORIGINS: Comma/space-separated cross-origin allowlist. Default: same host only.
  *
  * Web UI storage:
  * - HERMES_WEB_UI_HOME: Web UI data home for auth token, credentials, logs, DB, and default uploads.
@@ -46,6 +46,10 @@ export function shouldCreateWebUiDataDir(env: Record<string, string | undefined>
   return env.NODE_ENV !== 'production'
 }
 
+export function getCorsOrigins(env: Record<string, string | undefined> = process.env): string {
+  return env.CORS_ORIGINS?.trim() || ''
+}
+
 const appHome = getWebUiHome()
 
 export const config = {
@@ -55,5 +59,5 @@ export const config = {
   appHome,
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
-  corsOrigins: process.env.CORS_ORIGINS || '*',
+  corsOrigins: getCorsOrigins(),
 }

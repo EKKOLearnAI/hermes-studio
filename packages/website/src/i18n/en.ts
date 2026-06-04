@@ -210,7 +210,7 @@ export default {
           ['HERMES_WEB_UI_HOME', 'Hermes Studio data home for auth token, credentials, logs, DB, and default uploads'],
           ['HERMES_WEBUI_STATE_DIR', 'Compatibility alias for HERMES_WEB_UI_HOME'],
           ['UPLOAD_DIR', 'Custom upload root. Uploaded files are stored below profile-scoped subdirectories.'],
-          ['CORS_ORIGINS', 'CORS origin config (default: *)'],
+          ['CORS_ORIGINS', 'Cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests (default: same host only; set * only for intentional legacy wildcard CORS)'],
           ['AUTH_TOKEN', 'Custom bearer token; overrides the auto-generated token'],
           ['AUTH_JWT_SECRET', 'JWT signing secret override for username/password sessions'],
           ['PROFILE', 'Startup/default Hermes profile'],

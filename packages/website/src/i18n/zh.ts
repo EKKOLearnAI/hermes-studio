@@ -210,7 +210,7 @@ export default {
           ['HERMES_WEB_UI_HOME', 'Hermes Studio 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
           ['HERMES_WEBUI_STATE_DIR', 'HERMES_WEB_UI_HOME 的兼容别名'],
           ['UPLOAD_DIR', '自定义上传根目录。文件会保存在按 Profile 隔离的子目录下'],
-          ['CORS_ORIGINS', 'CORS 来源配置（默认：*）'],
+          ['CORS_ORIGINS', 'HTTP、Socket.IO、WebSocket 跨源 allowlist（默认：仅同 host；只有明确需要旧版 wildcard CORS 时才设置为 *）'],
           ['AUTH_TOKEN', '自定义 bearer token，会覆盖自动生成的 token'],
           ['AUTH_JWT_SECRET', '用户名/密码会话的 JWT 签名密钥覆盖'],
           ['PROFILE', '启动/默认 Hermes profile'],
