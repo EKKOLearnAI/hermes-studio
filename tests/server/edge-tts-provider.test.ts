@@ -59,4 +59,43 @@ describe('edgeTtsProvider', () => {
 
     expect(textToSpeech).not.toHaveBeenCalled()
   })
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      edgeTtsProvider.synthesize(
+        { text: 'Hello world', signal: controller.signal },
+        {
+          baseUrl: 'https://unused.example.com',
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(textToSpeech).not.toHaveBeenCalled()
+  })
+
+  it('rejects in-flight when the signal aborts before legacy textToSpeech resolves', async () => {
+    let resolveTextToSpeech: ((value: { audio: Buffer; engine: string }) => void) | undefined
+    textToSpeech.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveTextToSpeech = resolve
+    }))
+
+    const controller = new AbortController()
+    const pending = edgeTtsProvider.synthesize(
+      { text: 'Hello world', signal: controller.signal },
+      {
+        baseUrl: 'https://unused.example.com',
+      },
+    )
+
+    expect(textToSpeech).toHaveBeenCalledTimes(1)
+
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+
+    resolveTextToSpeech?.({ audio: Buffer.from('late-audio'), engine: 'legacy-edge' })
+  })
 })

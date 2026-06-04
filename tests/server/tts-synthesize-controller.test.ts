@@ -85,6 +85,27 @@ describe('tts synthesize controller', () => {
     expect(provider.synthesize).not.toHaveBeenCalled()
   })
 
+  it('returns 400 when options is not an object', async () => {
+    const provider = { synthesize: vi.fn() }
+    const getTtsProvider = vi.fn(() => provider)
+    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+      getTtsProvider,
+    }))
+
+    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+
+    for (const options of ['voice=verse', null, ['verse']]) {
+      const { ctx } = createMockCtx({ provider: 'mimo', text: 'hello', options })
+
+      await ctrl.synthesize(ctx)
+
+      expect(ctx.status).toBe(400)
+      expect(ctx.body).toEqual({ error: 'options must be an object' })
+    }
+
+    expect(provider.synthesize).not.toHaveBeenCalled()
+  })
+
   it('calls the provider, returns audio headers, and writes the audio buffer body', async () => {
     const audio = Buffer.from('mimo-audio')
     const provider = {
@@ -164,6 +185,45 @@ describe('tts synthesize controller', () => {
     resolveSynthesize?.()
     await pending
   })
+
+  it('returns 499 when the provider aborts', async () => {
+    const abortError = Object.assign(new Error('client went away'), { name: 'AbortError' })
+    const provider = {
+      synthesize: vi.fn().mockRejectedValue(abortError),
+    }
+    const getTtsProvider = vi.fn(() => provider)
+    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+      getTtsProvider,
+    }))
+
+    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const { ctx } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
+
+    await ctrl.synthesize(ctx)
+
+    expect(ctx.status).toBe(499)
+    expect(ctx.body).toEqual({ error: 'TTS request aborted' })
+    expect(JSON.stringify(ctx.body)).not.toContain('client went away')
+  })
+
+  it('returns 502 without leaking upstream details when the provider fails', async () => {
+    const provider = {
+      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: secret body')),
+    }
+    const getTtsProvider = vi.fn(() => provider)
+    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+      getTtsProvider,
+    }))
+
+    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const { ctx } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
+
+    await ctrl.synthesize(ctx)
+
+    expect(ctx.status).toBe(502)
+    expect(ctx.body).toEqual({ error: 'TTS synthesis failed' })
+    expect(JSON.stringify(ctx.body)).not.toContain('secret body')
+  })
 })
 
 describe('tts routes', () => {
@@ -174,7 +234,7 @@ describe('tts routes', () => {
     vi.doUnmock('../../packages/server/src/controllers/hermes/tts')
   })
 
-  it('registers the synthesize route and keeps the existing routes', async () => {
+  it('registers public legacy routes separately from the protected synthesize route', async () => {
     const generate = vi.fn(async (ctx: any) => { ctx.body = { route: 'generate' } })
     const openaiProxy = vi.fn(async (ctx: any) => { ctx.body = { route: 'openaiProxy' } })
     const synthesize = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesize' } })
@@ -185,21 +245,60 @@ describe('tts routes', () => {
       synthesize,
     }))
 
-    const { ttsRoutes } = await import('../../packages/server/src/routes/hermes/tts')
+    const { ttsRoutes, ttsProtectedRoutes } = await import('../../packages/server/src/routes/hermes/tts')
     const paths = ttsRoutes.stack.map((entry: any) => entry.path)
+    const protectedPaths = ttsProtectedRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
       '/api/hermes/tts',
-      '/api/hermes/tts/synthesize',
       '/api/tts/proxy/audio/speech',
     ]))
+    expect(paths).not.toContain('/api/hermes/tts/synthesize')
+    expect(protectedPaths).toEqual(['/api/hermes/tts/synthesize'])
 
-    const synthLayer: any = ttsRoutes.stack.find((entry: any) => entry.path === '/api/hermes/tts/synthesize')
+    const synthLayer: any = ttsProtectedRoutes.stack.find((entry: any) => entry.path === '/api/hermes/tts/synthesize')
     const ctx: any = { request: { body: {} }, body: null }
 
     await synthLayer.stack[0](ctx, undefined)
 
     expect(synthesize).toHaveBeenCalledWith(ctx, undefined)
     expect(ctx.body).toEqual({ route: 'synthesize' })
+  })
+})
+
+describe('route registration ordering', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    vi.doUnmock('../../packages/server/src/routes/index')
+  })
+
+  it('mounts protected synthesize routes after requireAuth', async () => {
+    const ttsPublicMiddleware = async () => {}
+    const ttsProtectedMiddleware = async () => {}
+    const proxyMiddleware = async () => {}
+
+    vi.doMock('../../packages/server/src/routes/hermes/tts', () => ({
+      ttsRoutes: { routes: vi.fn(() => ttsPublicMiddleware) },
+      ttsProtectedRoutes: { routes: vi.fn(() => ttsProtectedMiddleware) },
+    }))
+
+    vi.doMock('../../packages/server/src/routes/hermes/proxy', () => ({
+      proxyRoutes: { routes: vi.fn(() => async () => {}) },
+      proxyMiddleware,
+    }))
+
+    const { registerRoutes } = await import('../../packages/server/src/routes/index')
+    const use = vi.fn()
+    const app = { use }
+    const requireAuth = vi.fn(async () => {})
+
+    const returnedProxyMiddleware = registerRoutes(app as any, requireAuth as any)
+    const mountedMiddleware = use.mock.calls.map(([middleware]) => middleware)
+
+    expect(mountedMiddleware.indexOf(ttsPublicMiddleware)).toBeGreaterThanOrEqual(0)
+    expect(mountedMiddleware.indexOf(requireAuth)).toBeGreaterThan(mountedMiddleware.indexOf(ttsPublicMiddleware))
+    expect(mountedMiddleware.indexOf(ttsProtectedMiddleware)).toBeGreaterThan(mountedMiddleware.indexOf(requireAuth))
+    expect(returnedProxyMiddleware).toBe(proxyMiddleware)
   })
 })
