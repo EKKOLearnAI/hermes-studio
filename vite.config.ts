@@ -18,6 +18,10 @@ function createProxyConfig(): ProxyOptions {
         proxyReq.removeHeader('origin')
         proxyReq.removeHeader('referer')
       })
+      proxy.on('proxyReqWs', (proxyReq) => {
+        proxyReq.removeHeader('origin')
+        proxyReq.removeHeader('referer')
+      })
       proxy.on('proxyRes', (proxyRes) => {
         proxyRes.headers['cache-control'] = 'no-cache'
         proxyRes.headers['x-accel-buffering'] = 'no'
