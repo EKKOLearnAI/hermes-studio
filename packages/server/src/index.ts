@@ -20,6 +20,7 @@ import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
+import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
@@ -146,6 +147,7 @@ function startRuntimeServicesAfterListen(): void {
     } catch (err) {
       logger.warn(err, '[bootstrap] agent bridge failed to start')
       console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+      return
     }
   })()
 }
@@ -198,6 +200,13 @@ export async function bootstrap() {
       logger.warn(err, '[bootstrap] failed to inject bundled skills')
       console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
     }
+  }
+
+  try {
+    await injectBundledMcpServer()
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to inject bundled MCP server')
+    console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
   }
 
   if (!isDesktopRuntime()) {
