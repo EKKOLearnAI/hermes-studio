@@ -71,3 +71,14 @@ export function assertSafeTtsBaseUrl(url: URL, providerLabel: string) {
     throw new Error(`${providerLabel} TTS baseUrl cannot target localhost or private network addresses`)
   }
 }
+
+export function normalizeSafeTtsBaseUrl(baseUrl: string, providerLabel: string): string {
+  const value = String(baseUrl || '').trim()
+  if (!value) {
+    return ''
+  }
+
+  const url = new URL(value)
+  assertSafeTtsBaseUrl(url, providerLabel)
+  return url.toString()
+}

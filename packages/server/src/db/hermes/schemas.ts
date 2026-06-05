@@ -137,6 +137,21 @@ export const USER_PROFILES_INDEXES = {
   idx_user_profiles_default: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_default ON user_profiles(user_id) WHERE is_default = 1',
 }
 
+export const TTS_PROVIDER_SETTINGS_TABLE = 'tts_provider_settings'
+
+export const TTS_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const TTS_PROVIDER_SETTINGS_INDEXES = {
+  idx_tts_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_tts_provider_settings_user ON tts_provider_settings(user_id)',
+}
+
 // ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
 // ============================================================================
@@ -369,6 +384,10 @@ export function initAllHermesTables(): void {
     syncTable(USER_PROFILES_TABLE, USER_PROFILES_SCHEMA, {
       primaryKey: 'user_id, profile_name',
       indexes: USER_PROFILES_INDEXES,
+    })
+    syncTable(TTS_PROVIDER_SETTINGS_TABLE, TTS_PROVIDER_SETTINGS_SCHEMA, {
+      primaryKey: 'user_id, provider',
+      indexes: TTS_PROVIDER_SETTINGS_INDEXES,
     })
 
     // Group chat - basic tables

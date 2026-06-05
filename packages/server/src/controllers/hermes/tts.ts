@@ -1,6 +1,110 @@
 import type { Context } from 'koa'
-import { textToSpeech, openaiCompatibleTts, speedToEdgeRate } from '../../services/hermes/tts'
+import { textToSpeech, openaiCompatibleTts } from '../../services/hermes/tts'
 import { getTtsProvider } from '../../services/hermes/tts-providers'
+import {
+  assertStoredTtsProvider,
+  clearTtsProviderSecret,
+  getTtsProviderConfigForSynthesis,
+  listTtsProviderSettings,
+  type StoredTtsProvider,
+  TtsSettingsValidationError,
+  upsertTtsProviderSettings,
+} from '../../db/hermes/tts-settings-store'
+
+const CLIENT_SECRET_FIELDS = new Set(['apiKey', 'voiceCloneDataUri', 'voiceCloneFileName'])
+
+function requireAuthenticatedUserId(ctx: Context): number | null {
+  const rawUserId = ctx.state.user?.id
+  const userId = typeof rawUserId === 'number' ? rawUserId : Number.NaN
+  if (!Number.isInteger(userId) || userId <= 0) {
+    ctx.status = 401
+    ctx.body = { error: 'Unauthorized' }
+    return null
+  }
+  return userId
+}
+
+function asOptionsObject(value: unknown): Record<string, unknown> | null {
+  if (value === undefined) {
+    return {}
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
+function stripClientSecretFields(options: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(options)) {
+    if (CLIENT_SECRET_FIELDS.has(key)) continue
+    sanitized[key] = value
+  }
+  return sanitized
+}
+
+function handleTtsSettingsError(ctx: Context, error: unknown): boolean {
+  if (error instanceof TtsSettingsValidationError) {
+    ctx.status = 400
+    ctx.body = { error: error.message }
+    return true
+  }
+  return false
+}
+
+export async function listSettings(ctx: Context) {
+  const userId = requireAuthenticatedUserId(ctx)
+  if (!userId) return
+
+  try {
+    ctx.body = {
+      settings: listTtsProviderSettings(userId),
+    }
+  } catch (error) {
+    if (handleTtsSettingsError(ctx, error)) return
+    throw error
+  }
+}
+
+export async function saveSettings(ctx: Context) {
+  const userId = requireAuthenticatedUserId(ctx)
+  if (!userId) return
+
+  const provider = ctx.params.provider || ''
+  const body = ctx.request.body as {
+    settings?: unknown
+    secrets?: unknown
+  } | undefined
+
+  try {
+    const setting = upsertTtsProviderSettings(userId, assertStoredTtsProvider(provider), {
+      settings: body?.settings,
+      secrets: body?.secrets,
+      preserveExistingSecrets: true,
+    })
+
+    ctx.body = { setting }
+  } catch (error) {
+    if (handleTtsSettingsError(ctx, error)) return
+    throw error
+  }
+}
+
+export async function deleteSecret(ctx: Context) {
+  const userId = requireAuthenticatedUserId(ctx)
+  if (!userId) return
+
+  const provider = ctx.params.provider || ''
+  const secretName = ctx.params.secretName || ''
+
+  try {
+    const setting = clearTtsProviderSecret(userId, assertStoredTtsProvider(provider), secretName)
+    ctx.body = { success: true, setting }
+  } catch (error) {
+    if (handleTtsSettingsError(ctx, error)) return
+    throw error
+  }
+}
 
 export async function generate(ctx: Context) {
   const { text, lang } = ctx.request.body as {
@@ -29,6 +133,9 @@ export async function generate(ctx: Context) {
 }
 
 export async function synthesize(ctx: Context) {
+  const userId = requireAuthenticatedUserId(ctx)
+  if (!userId) return
+
   const body = ctx.request.body as {
     provider?: string
     text?: string
@@ -41,14 +148,22 @@ export async function synthesize(ctx: Context) {
     return
   }
 
-  const options = body.options === undefined ? {} : body.options
-  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+  const options = asOptionsObject(body.options)
+  if (!options) {
     ctx.status = 400
     ctx.body = { error: 'options must be an object' }
     return
   }
 
-  const provider = getTtsProvider(body.provider || '')
+  let providerId: StoredTtsProvider
+  try {
+    providerId = assertStoredTtsProvider(body.provider || '')
+  } catch (error) {
+    if (handleTtsSettingsError(ctx, error)) return
+    throw error
+  }
+
+  const provider = getTtsProvider(providerId)
   if (!provider) {
     ctx.status = 400
     ctx.body = { error: 'unknown TTS provider' }
@@ -61,9 +176,16 @@ export async function synthesize(ctx: Context) {
   }
 
   try {
+    const storedConfig = getTtsProviderConfigForSynthesis(userId, providerId)
+    const mergedOptions = {
+      ...(storedConfig?.settings || {}),
+      ...stripClientSecretFields(options),
+      ...(storedConfig?.secrets || {}),
+    }
+
     const result = await provider.synthesize(
       { text: body.text, signal: controller.signal },
-      options,
+      mergedOptions,
     )
 
     ctx.set('Content-Type', result.contentType)
@@ -72,6 +194,10 @@ export async function synthesize(ctx: Context) {
     ctx.set('X-TTS-Provider', result.provider)
     ctx.body = result.audio
   } catch (error) {
+    if (handleTtsSettingsError(ctx, error)) {
+      return
+    }
+
     if (isAbortError(error)) {
       ctx.status = 499
       ctx.body = { error: 'TTS request aborted' }

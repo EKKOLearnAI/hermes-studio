@@ -1,14 +1,11 @@
 import type { MimoTtsProviderOptions, MimoTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
-import { assertSafeTtsBaseUrl } from './url-safety'
+import { normalizeSafeTtsBaseUrl } from './url-safety'
 
-const MAX_VOICE_CLONE_AUDIO_BYTES = 10 * 1024 * 1024
+export const MAX_MIMO_VOICE_CLONE_AUDIO_BYTES = 10 * 1024 * 1024
 
 function normalizeBaseUrl(baseUrl: string): string {
-  const url = new URL(baseUrl)
-  assertSafeTtsBaseUrl(url, 'MiMo')
-
-  return url.toString().replace(/\/+$/, '')
+  return normalizeSafeTtsBaseUrl(baseUrl, 'MiMo').replace(/\/+$/, '')
 }
 
 function buildHeaders(opts: MimoTtsProviderOptions): Record<string, string> {
@@ -51,13 +48,13 @@ function estimateBase64DecodedBytes(base64: string): number {
   return Math.floor((trimmed.length * 3) / 4) - padding
 }
 
-function validateVoiceCloneDataUri(dataUri: string) {
+export function validateMimoVoiceCloneDataUri(dataUri: string) {
   const match = /^data:audio\/(?:mpeg|mp3|wav);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri)
   if (!match) {
     throw new Error('MiMo TTS voiceCloneDataUri must be an mp3 or wav data URI')
   }
 
-  if (estimateBase64DecodedBytes(match[1]) > MAX_VOICE_CLONE_AUDIO_BYTES) {
+  if (estimateBase64DecodedBytes(match[1]) > MAX_MIMO_VOICE_CLONE_AUDIO_BYTES) {
     throw new Error('MiMo TTS voiceCloneDataUri must be 10 MiB or smaller')
   }
 }
@@ -69,7 +66,7 @@ function buildMessages(text: string, opts: MimoTtsProviderOptions) {
     if (!opts.voiceCloneDataUri) {
       throw new Error('MiMo TTS voiceCloneDataUri is required for voiceClone mode')
     }
-    validateVoiceCloneDataUri(opts.voiceCloneDataUri)
+    validateMimoVoiceCloneDataUri(opts.voiceCloneDataUri)
 
     return [
       {
