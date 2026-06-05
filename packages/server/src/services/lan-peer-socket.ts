@@ -5,6 +5,7 @@ import { createReadStream, createWriteStream, type WriteStream } from 'fs'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, resolve as resolvePath } from 'path'
+import { spawn } from 'child_process'
 import { getDeviceRelation } from '../db/hermes/devices-store'
 import type { LanDeviceInfo } from './lan-discovery'
 import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from './system-info'
@@ -20,6 +21,8 @@ const FILE_CHUNK_SIZE = 64 * 1024
 const CLIENT_RECONNECT_LIMIT = 5
 const CLIENT_RECONNECT_BASE_MS = 1000
 const HEARTBEAT_INTERVAL_MS = 30000
+const EXEC_OUTPUT_LIMIT = 5 * 1024 * 1024
+const EXEC_TIMEOUT_MS = 30000
 
 let pty: any = null
 try {
@@ -38,10 +41,19 @@ type PeerJsonMessage = {
   transfer_id?: string
   path?: string
   data?: string
+  command?: string
+  args?: string[]
+  cwd?: string
   cols?: number
   rows?: number
   shell?: string
   size?: number
+  timeout_ms?: number
+  exit_code?: number
+  stdout?: string
+  stderr?: string
+  timed_out?: boolean
+  message?: string
 }
 
 type TerminalSession = {
@@ -71,6 +83,27 @@ type ClientPeerTarget = {
   disabled: boolean
 }
 
+type PendingRequest = {
+  resolve: (msg: PeerJsonMessage) => void
+  reject: (err: Error) => void
+  successTypes: Set<string>
+  errorTypes: Set<string>
+  timer: NodeJS.Timeout
+}
+
+type PendingDownload = {
+  chunks: Buffer[]
+  resolve: (data: Buffer) => void
+  reject: (err: Error) => void
+  timer: NodeJS.Timeout
+}
+
+type RemoteTerminal = {
+  id: string
+  buffer: string[]
+  exitCode: number | null
+}
+
 export type LanPeerConnectionInfo = {
   id: string
   role: PeerRole
@@ -79,6 +112,26 @@ export type LanPeerConnectionInfo = {
   url: string
   connected_at: number
   reconnect_attempts?: number
+}
+
+export type LanPeerTerminalInfo = {
+  terminal_id: string
+  pid: number
+  shell: string
+}
+
+export type LanPeerTerminalReadResult = {
+  terminal_id: string
+  data: string
+  exited: boolean
+  exit_code: number | null
+}
+
+export type LanPeerExecResult = {
+  stdout: string
+  stderr: string
+  exit_code: number | null
+  timed_out: boolean
 }
 
 function now() {
@@ -138,7 +191,10 @@ class LanPeerConnection {
   readonly id = randomUUID()
   readonly connectedAt = now()
   private terminalSessions = new Map<string, TerminalSession>()
+  private remoteTerminals = new Map<string, RemoteTerminal>()
   private uploads = new Map<string, UploadTransfer>()
+  private pendingRequests = new Map<string, PendingRequest>()
+  private pendingDownloads = new Map<string, PendingDownload>()
   private heartbeatTimer: NodeJS.Timeout | null = null
   private alive = true
   private closed = false
@@ -193,11 +249,24 @@ class LanPeerConnection {
       try { session.pty.kill() } catch { }
     }
     this.terminalSessions.clear()
+    this.remoteTerminals.clear()
 
     for (const upload of this.uploads.values()) {
       try { upload.stream.destroy() } catch { }
     }
     this.uploads.clear()
+
+    for (const pending of this.pendingRequests.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Peer connection closed'))
+    }
+    this.pendingRequests.clear()
+
+    for (const pending of this.pendingDownloads.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Peer connection closed'))
+    }
+    this.pendingDownloads.clear()
 
     if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
       try { this.ws.close() } catch { }
@@ -226,6 +295,130 @@ class LanPeerConnection {
     this.ws.send(JSON.stringify(payload))
   }
 
+  private request(
+    payload: Record<string, unknown>,
+    successTypes: string[],
+    errorTypes: string[] = ['error'],
+    timeoutMs = 30000,
+  ): Promise<PeerJsonMessage> {
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('Peer connection is not open'))
+    }
+
+    const requestId = randomUUID()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(requestId)
+        reject(new Error('Peer request timed out'))
+      }, timeoutMs)
+      timer.unref?.()
+      this.pendingRequests.set(requestId, {
+        resolve,
+        reject,
+        successTypes: new Set(successTypes),
+        errorTypes: new Set(errorTypes),
+        timer,
+      })
+      this.sendJson({ ...payload, request_id: requestId })
+    })
+  }
+
+  async createRemoteTerminal(options: { shell?: string; cols?: number; rows?: number } = {}): Promise<LanPeerTerminalInfo> {
+    const response = await this.request({
+      type: 'terminal.create',
+      shell: options.shell,
+      cols: options.cols,
+      rows: options.rows,
+    }, ['terminal.created'], ['terminal.error', 'error'])
+
+    const terminalId = response.terminal_id || ''
+    if (!terminalId) throw new Error('Peer did not return a terminal id')
+    this.remoteTerminals.set(terminalId, { id: terminalId, buffer: [], exitCode: null })
+    return {
+      terminal_id: terminalId,
+      pid: Number((response as any).pid || 0),
+      shell: String((response as any).shell || ''),
+    }
+  }
+
+  writeRemoteTerminal(terminalId: string, data: string) {
+    if (!this.remoteTerminals.has(terminalId)) throw new Error('Remote terminal not found')
+    this.sendJson({ type: 'terminal.input', terminal_id: terminalId, data })
+  }
+
+  resizeRemoteTerminal(terminalId: string, cols: number, rows: number) {
+    if (!this.remoteTerminals.has(terminalId)) throw new Error('Remote terminal not found')
+    this.sendJson({ type: 'terminal.resize', terminal_id: terminalId, cols, rows })
+  }
+
+  closeRemoteTerminal(terminalId: string) {
+    if (!this.remoteTerminals.has(terminalId)) throw new Error('Remote terminal not found')
+    this.sendJson({ type: 'terminal.close', terminal_id: terminalId })
+    this.remoteTerminals.delete(terminalId)
+  }
+
+  readRemoteTerminal(terminalId: string): LanPeerTerminalReadResult {
+    const terminal = this.remoteTerminals.get(terminalId)
+    if (!terminal) throw new Error('Remote terminal not found')
+    const data = terminal.buffer.join('')
+    terminal.buffer.length = 0
+    return {
+      terminal_id: terminalId,
+      data,
+      exited: terminal.exitCode !== null,
+      exit_code: terminal.exitCode,
+    }
+  }
+
+  async execRemoteCommand(options: {
+    command: string
+    args?: string[]
+    cwd?: string
+    timeoutMs?: number
+  }): Promise<LanPeerExecResult> {
+    const response = await this.request({
+      type: 'terminal.exec',
+      command: options.command,
+      args: options.args || [],
+      cwd: options.cwd,
+      timeout_ms: options.timeoutMs,
+    }, ['terminal.exec.result'], ['terminal.exec.error', 'error'], Math.max(1000, (options.timeoutMs || 30000) + 1000))
+    return {
+      stdout: String(response.stdout || ''),
+      stderr: String(response.stderr || ''),
+      exit_code: typeof response.exit_code === 'number' ? response.exit_code : null,
+      timed_out: Boolean(response.timed_out),
+    }
+  }
+
+  downloadFileToBuffer(path: string, timeoutMs = 60000): Promise<Buffer> {
+    if (this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Peer connection is not open'))
+    const transferId = randomUUID()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingDownloads.delete(transferId)
+        reject(new Error('Peer file download timed out'))
+      }, timeoutMs)
+      timer.unref?.()
+      this.pendingDownloads.set(transferId, { chunks: [], resolve, reject, timer })
+      this.sendJson({ type: 'file.download', transfer_id: transferId, path })
+    })
+  }
+
+  async uploadFileFromBuffer(path: string, data: Buffer, timeoutMs = 60000): Promise<{ path: string; size: number }> {
+    const transferId = randomUUID()
+    await this.request({ type: 'file.upload.start', transfer_id: transferId, path }, ['file.upload.ready'], ['file.error', 'error'], timeoutMs)
+    for (let offset = 0; offset < data.length; offset += FILE_CHUNK_SIZE) {
+      this.sendJson({
+        type: 'file.upload.chunk',
+        transfer_id: transferId,
+        data: data.subarray(offset, offset + FILE_CHUNK_SIZE).toString('base64'),
+      })
+    }
+    await this.request({ type: 'file.upload.complete', transfer_id: transferId }, ['file.upload.complete'], ['file.error', 'error'], timeoutMs)
+    return { path, size: data.length }
+  }
+
   private handleMessage(raw: RawData) {
     const msg = parseJsonMessage(raw)
     if (!msg?.type) {
@@ -233,7 +426,15 @@ class LanPeerConnection {
       return
     }
 
+    if (this.handlePendingMessage(msg)) return
+
     switch (msg.type) {
+      case 'terminal.data':
+        this.bufferRemoteTerminalData(msg)
+        break
+      case 'terminal.exit':
+        this.markRemoteTerminalExit(msg)
+        break
       case 'terminal.create':
         this.createTerminal(msg)
         break
@@ -246,8 +447,18 @@ class LanPeerConnection {
       case 'terminal.close':
         this.closeTerminal(msg)
         break
+      case 'terminal.exec':
+        this.execCommand(msg)
+        break
       case 'file.download':
         this.downloadFile(msg)
+        break
+      case 'file.download.started':
+        break
+      case 'file.download.chunk':
+      case 'file.download.complete':
+      case 'file.error':
+        this.handleFileTransferMessage(msg)
         break
       case 'file.upload.start':
         this.startUpload(msg)
@@ -261,6 +472,62 @@ class LanPeerConnection {
       default:
         this.sendJson({ type: 'error', request_id: msg.request_id, message: `Unsupported peer message: ${msg.type}` })
     }
+  }
+
+  private handlePendingMessage(msg: PeerJsonMessage): boolean {
+    if (msg.request_id) {
+      const pending = this.pendingRequests.get(msg.request_id)
+      if (pending) {
+        if (pending.successTypes.has(msg.type || '')) {
+          clearTimeout(pending.timer)
+          this.pendingRequests.delete(msg.request_id)
+          pending.resolve(msg)
+          return true
+        }
+        if (pending.errorTypes.has(msg.type || '')) {
+          clearTimeout(pending.timer)
+          this.pendingRequests.delete(msg.request_id)
+          pending.reject(new Error(msg.message || `Peer request failed: ${msg.type}`))
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  private bufferRemoteTerminalData(msg: PeerJsonMessage) {
+    const terminal = msg.terminal_id ? this.remoteTerminals.get(msg.terminal_id) : null
+    if (!terminal || typeof msg.data !== 'string') return
+    terminal.buffer.push(msg.data)
+  }
+
+  private markRemoteTerminalExit(msg: PeerJsonMessage) {
+    const terminal = msg.terminal_id ? this.remoteTerminals.get(msg.terminal_id) : null
+    if (!terminal) return
+    terminal.exitCode = typeof msg.exit_code === 'number' ? msg.exit_code : 0
+  }
+
+  private handleFileTransferMessage(msg: PeerJsonMessage): boolean {
+    const transfer = msg.transfer_id ? this.pendingDownloads.get(msg.transfer_id) : null
+    if (!transfer) return false
+
+    if (msg.type === 'file.download.chunk' && typeof msg.data === 'string') {
+      transfer.chunks.push(Buffer.from(msg.data, 'base64'))
+      return true
+    }
+    if (msg.type === 'file.download.complete') {
+      clearTimeout(transfer.timer)
+      this.pendingDownloads.delete(msg.transfer_id!)
+      transfer.resolve(Buffer.concat(transfer.chunks))
+      return true
+    }
+    if (msg.type === 'file.error') {
+      clearTimeout(transfer.timer)
+      this.pendingDownloads.delete(msg.transfer_id!)
+      transfer.reject(new Error(msg.message || 'Peer file transfer failed'))
+      return true
+    }
+    return false
   }
 
   private createTerminal(msg: PeerJsonMessage) {
@@ -323,6 +590,85 @@ class LanPeerConnection {
     if (!session) return
     try { session.pty.kill() } catch { }
     this.terminalSessions.delete(session.id)
+  }
+
+  private execCommand(msg: PeerJsonMessage) {
+    const command = typeof msg.command === 'string' ? msg.command.trim() : ''
+    const args = Array.isArray(msg.args) ? msg.args.filter(arg => typeof arg === 'string') : []
+    if (!command) {
+      this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: 'Missing command' })
+      return
+    }
+
+    let cwd = resolveTerminalCwd()
+    if (msg.cwd) {
+      try {
+        const resolved = validatePath(msg.cwd)
+        cwd = existsSync(resolved) ? resolved : cwd
+      } catch (err: any) {
+        this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: err?.message || 'Invalid cwd' })
+        return
+      }
+    }
+
+    const timeoutMs = Math.max(1000, Math.min(Number(msg.timeout_ms) || EXEC_TIMEOUT_MS, 10 * 60 * 1000))
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    let stdoutLength = 0
+    let stderrLength = 0
+    let settled = false
+    let timedOut = false
+
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(command, args, { cwd, shell: false, windowsHide: true })
+    } catch (err: any) {
+      this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: err?.message || 'Failed to start command' })
+      return
+    }
+
+    const finish = (exitCode: number | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      this.sendJson({
+        type: 'terminal.exec.result',
+        request_id: msg.request_id,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+        exit_code: exitCode,
+        timed_out: timedOut,
+      })
+    }
+
+    const append = (chunks: Buffer[], currentLength: number, chunk: Buffer): number => {
+      if (currentLength >= EXEC_OUTPUT_LIMIT) return currentLength
+      const remaining = EXEC_OUTPUT_LIMIT - currentLength
+      const next = chunk.subarray(0, remaining)
+      chunks.push(next)
+      return currentLength + next.length
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      try { child.kill() } catch { }
+      finish(null)
+    }, timeoutMs)
+    timer.unref?.()
+
+    child.stdout?.on('data', chunk => {
+      stdoutLength = append(stdoutChunks, stdoutLength, Buffer.from(chunk))
+    })
+    child.stderr?.on('data', chunk => {
+      stderrLength = append(stderrChunks, stderrLength, Buffer.from(chunk))
+    })
+    child.on('error', err => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message: err.message })
+    })
+    child.on('close', code => finish(code))
   }
 
   private downloadFile(msg: PeerJsonMessage) {
@@ -390,7 +736,7 @@ class LanPeerConnection {
     if (!upload) return
     upload.stream.end(() => {
       this.uploads.delete(upload.id)
-      this.sendJson({ type: 'file.upload.complete', transfer_id: upload.id, path: upload.path })
+      this.sendJson({ type: 'file.upload.complete', request_id: msg.request_id, transfer_id: upload.id, path: upload.path })
     })
   }
 }
@@ -495,6 +841,10 @@ export class LanPeerSocketManager {
     return [...this.connections.values()]
       .map(connection => connection.info())
       .sort((a, b) => b.connected_at - a.connected_at)
+  }
+
+  getConnection(connectionId: string): LanPeerConnection | null {
+    return this.connections.get(connectionId) || null
   }
 
   disconnect(connectionId: string): boolean {

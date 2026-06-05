@@ -30,7 +30,8 @@
     "typescript"
   ],
   "bin": {
-    "hermes-web-ui": "./bin/hermes-web-ui.mjs"
+    "hermes-web-ui": "./bin/hermes-web-ui.mjs",
+    "hermes-lan-peer-mcp": "./bin/hermes-lan-peer-mcp.mjs"
   },
   "scripts": {
     "start": "vite --host --port 8648",

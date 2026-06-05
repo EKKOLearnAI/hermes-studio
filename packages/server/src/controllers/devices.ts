@@ -12,6 +12,7 @@ import {
 } from '../db/hermes/devices-store'
 import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
 import { getLanPeerSocketManager } from '../services/lan-peer-socket'
+import { getLanPeerToolsService } from '../services/lan-peer-tools'
 import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
@@ -323,6 +324,124 @@ export async function disconnectPeerDevice(ctx: any) {
   }
   ctx.body = {
     connections: getLanPeerSocketManager().listConnections(),
+  }
+}
+
+function numberFromBody(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function handlePeerToolError(ctx: any, err: any) {
+  ctx.status = Number(err?.status) || 502
+  ctx.body = { error: err?.message || 'Peer operation failed' }
+}
+
+export async function createPeerTerminal(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    const terminal = await getLanPeerToolsService().createTerminal(ctx.params.connectionId, {
+      shell: typeof body?.shell === 'string' ? body.shell : undefined,
+      cols: numberFromBody(body?.cols, 80),
+      rows: numberFromBody(body?.rows, 24),
+    })
+    ctx.body = { terminal }
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function writePeerTerminal(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    ctx.body = getLanPeerToolsService().writeTerminal({
+      connectionId: ctx.params.connectionId,
+      terminalId: String(ctx.params.terminalId || ''),
+      data: String(body?.data || ''),
+    })
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function resizePeerTerminal(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    ctx.body = getLanPeerToolsService().resizeTerminal({
+      connectionId: ctx.params.connectionId,
+      terminalId: String(ctx.params.terminalId || ''),
+      cols: numberFromBody(body?.cols, 80),
+      rows: numberFromBody(body?.rows, 24),
+    })
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function readPeerTerminal(ctx: any) {
+  try {
+    ctx.body = {
+      terminal: getLanPeerToolsService().readTerminal({
+        connectionId: ctx.params.connectionId,
+        terminalId: String(ctx.params.terminalId || ''),
+      }),
+    }
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function closePeerTerminal(ctx: any) {
+  try {
+    ctx.body = getLanPeerToolsService().closeTerminal({
+      connectionId: ctx.params.connectionId,
+      terminalId: String(ctx.params.terminalId || ''),
+    })
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function execPeerCommand(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    const result = await getLanPeerToolsService().exec({
+      connectionId: ctx.params.connectionId,
+      command: String(body?.command || ''),
+      args: Array.isArray(body?.args) ? body.args.map(String) : [],
+      cwd: typeof body?.cwd === 'string' ? body.cwd : undefined,
+      timeoutMs: numberFromBody(body?.timeout_ms, 30000),
+    })
+    ctx.body = { result }
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function downloadPeerFile(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    ctx.body = await getLanPeerToolsService().downloadFile({
+      connectionId: ctx.params.connectionId,
+      path: String(body?.path || ''),
+      timeoutMs: numberFromBody(body?.timeout_ms, 60000),
+    })
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
+export async function uploadPeerFile(ctx: any) {
+  const body = ctx.request.body as any
+  try {
+    ctx.body = await getLanPeerToolsService().uploadFile({
+      connectionId: ctx.params.connectionId,
+      path: String(body?.path || ''),
+      dataBase64: String(body?.data_base64 || ''),
+      timeoutMs: numberFromBody(body?.timeout_ms, 60000),
+    })
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
   }
 }
 
