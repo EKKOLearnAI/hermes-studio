@@ -49,13 +49,13 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(authPublicRoutes.routes())
   app.use(claudeCodeProxyRoutes.routes())
   app.use(codexProxyRoutes.routes())
+  app.use(ttsRoutes.routes())
 
   // --- Auth middleware: all routes below require authentication ---
   authMiddleware.forEach((middleware) => app.use(middleware))
 
   // --- Protected routes (auth required) ---
   app.use(authProtectedRoutes.routes())
-  app.use(ttsRoutes.routes())
   app.use(uploadRoutes.routes())
   app.use(updateRoutes.routes())           // Must be before proxy (proxy catch-all matches everything)
   app.use(codingAgentRoutes.routes())
