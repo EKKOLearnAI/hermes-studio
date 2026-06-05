@@ -1,15 +1,18 @@
 import { getLanPeerSocketManager, type LanPeerExecResult, type LanPeerTerminalInfo, type LanPeerTerminalReadResult } from './lan-peer-socket'
+import { readFile, writeFile } from 'fs/promises'
+import { validatePath } from './hermes/file-provider'
 
 export type PeerToolUploadInput = {
   connectionId: string
-  path: string
-  dataBase64: string
+  localPath: string
+  remotePath: string
   timeoutMs?: number
 }
 
 export type PeerToolDownloadInput = {
   connectionId: string
-  path: string
+  remotePath: string
+  localPath: string
   timeoutMs?: number
 }
 
@@ -68,20 +71,29 @@ export class LanPeerToolsService {
   }
 
   async downloadFile(input: PeerToolDownloadInput) {
-    const data = await this.requireConnection(input.connectionId).downloadFileToBuffer(input.path, input.timeoutMs)
+    const localPath = validatePath(input.localPath)
+    const data = await this.requireConnection(input.connectionId).downloadFileToBuffer(input.remotePath, input.timeoutMs)
+    await writeFile(localPath, data)
     return {
-      path: input.path,
+      remote_path: input.remotePath,
+      local_path: localPath,
       size: data.length,
-      data_base64: data.toString('base64'),
     }
   }
 
   async uploadFile(input: PeerToolUploadInput) {
-    return this.requireConnection(input.connectionId).uploadFileFromBuffer(
-      input.path,
-      Buffer.from(input.dataBase64, 'base64'),
+    const localPath = validatePath(input.localPath)
+    const data = await readFile(localPath)
+    const result = await this.requireConnection(input.connectionId).uploadFileFromBuffer(
+      input.remotePath,
+      data,
       input.timeoutMs,
     )
+    return {
+      ...result,
+      local_path: localPath,
+      remote_path: input.remotePath,
+    }
   }
 
   private requireConnection(connectionId: string) {

@@ -190,30 +190,31 @@ const tools = [
   },
   {
     name: 'hermes_lan_file_download',
-    description: 'Download a file from a connected LAN peer and return base64 content.',
+    description: 'Download a file from a connected LAN peer remote path to a local path on this machine.',
     inputSchema: {
       type: 'object',
       properties: {
         connection_id: { type: 'string' },
-        path: { type: 'string' },
+        remote_path: { type: 'string' },
+        local_path: { type: 'string' },
         timeout_ms: { type: 'number' },
       },
-      required: ['connection_id', 'path'],
+      required: ['connection_id', 'remote_path', 'local_path'],
       additionalProperties: false,
     },
   },
   {
     name: 'hermes_lan_file_upload',
-    description: 'Upload base64 content to a file path on a connected LAN peer.',
+    description: 'Upload a local file path from this machine to a connected LAN peer remote path.',
     inputSchema: {
       type: 'object',
       properties: {
         connection_id: { type: 'string' },
-        path: { type: 'string' },
-        data_base64: { type: 'string' },
+        local_path: { type: 'string' },
+        remote_path: { type: 'string' },
         timeout_ms: { type: 'number' },
       },
-      required: ['connection_id', 'path', 'data_base64'],
+      required: ['connection_id', 'local_path', 'remote_path'],
       additionalProperties: false,
     },
   },
@@ -258,12 +259,12 @@ async function callTool(name, args = {}) {
     case 'hermes_lan_file_download':
       return jsonText(await request(`/api/devices/peer-connections/${encodeURIComponent(args.connection_id)}/download`, {
         method: 'POST',
-        body: { path: args.path, timeout_ms: args.timeout_ms },
+        body: { remote_path: args.remote_path, local_path: args.local_path, timeout_ms: args.timeout_ms },
       }))
     case 'hermes_lan_file_upload':
       return jsonText(await request(`/api/devices/peer-connections/${encodeURIComponent(args.connection_id)}/upload`, {
         method: 'POST',
-        body: { path: args.path, data_base64: args.data_base64, timeout_ms: args.timeout_ms },
+        body: { local_path: args.local_path, remote_path: args.remote_path, timeout_ms: args.timeout_ms },
       }))
     default:
       return errorText(`Unknown tool: ${name}`)

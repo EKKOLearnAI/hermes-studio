@@ -117,11 +117,14 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body).toEqual({ error: 'Profile is required' })
   })
 
-  it('allows server token for local MCP device endpoints', async () => {
+  it.each([
+    '/api/devices/peer-connections',
+    '/api/devices/peer-connections/conn-1/exec',
+  ])('allows server token for local MCP device endpoint %s', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')
     const { auth } = await initUsers()
     const ctx = {
-      path: '/api/devices/peer-connections/conn-1/exec',
+      path,
       headers: { authorization: 'Bearer server-token' },
       query: {},
       ip: '127.0.0.1',

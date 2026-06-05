@@ -75,6 +75,7 @@ const SERVER_TOKEN_EXACT_PATHS = new Set([
   '/api/hermes/media/grok-image-to-video',
   '/api/devices',
   '/api/devices/scan',
+  '/api/devices/peer-connections',
 ])
 
 function allowsServerTokenPath(path: string): boolean {

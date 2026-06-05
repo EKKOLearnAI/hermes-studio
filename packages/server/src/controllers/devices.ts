@@ -423,7 +423,8 @@ export async function downloadPeerFile(ctx: any) {
   try {
     ctx.body = await getLanPeerToolsService().downloadFile({
       connectionId: ctx.params.connectionId,
-      path: String(body?.path || ''),
+      remotePath: String(body?.remote_path || body?.path || ''),
+      localPath: String(body?.local_path || ''),
       timeoutMs: numberFromBody(body?.timeout_ms, 60000),
     })
   } catch (err: any) {
@@ -436,8 +437,8 @@ export async function uploadPeerFile(ctx: any) {
   try {
     ctx.body = await getLanPeerToolsService().uploadFile({
       connectionId: ctx.params.connectionId,
-      path: String(body?.path || ''),
-      dataBase64: String(body?.data_base64 || ''),
+      localPath: String(body?.local_path || ''),
+      remotePath: String(body?.remote_path || body?.path || ''),
       timeoutMs: numberFromBody(body?.timeout_ms, 60000),
     })
   } catch (err: any) {
