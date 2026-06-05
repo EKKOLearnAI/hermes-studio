@@ -42,6 +42,8 @@ function managedCommand(): string {
 function managedConfig(): Record<string, unknown> {
   const env: Record<string, string> = {
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
+    HERMES_WEB_UI_HOME: config.appHome,
+    HERMES_WEBUI_STATE_DIR: config.appHome,
     [MANAGED_ENV_KEY]: '1',
   }
 
@@ -72,6 +74,8 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     existing.enabled !== false &&
     isRecord(existing.env) &&
     existing.env.HERMES_WEB_UI_URL === desiredEnv.HERMES_WEB_UI_URL &&
+    existing.env.HERMES_WEB_UI_HOME === desiredEnv.HERMES_WEB_UI_HOME &&
+    existing.env.HERMES_WEBUI_STATE_DIR === desiredEnv.HERMES_WEBUI_STATE_DIR &&
     existing.env.HERMES_WEB_UI_TOKEN === desiredEnv.HERMES_WEB_UI_TOKEN &&
     existing.env[MANAGED_ENV_KEY] === desiredEnv[MANAGED_ENV_KEY]
 }

@@ -14,6 +14,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 vi.mock('../../packages/server/src/config', () => ({
   config: {
     port: 8648,
+    appHome: '/tmp/hermes-web-ui-home',
   },
 }))
 
@@ -50,6 +51,8 @@ describe('studio MCP autoinject', () => {
       command: 'hermes-web-ui-mcp',
       env: {
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
+        HERMES_WEB_UI_HOME: '/tmp/hermes-web-ui-home',
+        HERMES_WEBUI_STATE_DIR: '/tmp/hermes-web-ui-home',
         HERMES_WEB_UI_MANAGED_MCP: '1',
       },
       enabled: true,

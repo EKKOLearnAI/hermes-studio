@@ -24,6 +24,10 @@ function readToken() {
   }
 }
 
+function authHint() {
+  return `Web UI token was not accepted. Check HERMES_WEB_UI_TOKEN or ${join(appHome(), '.token')}.`
+}
+
 function baseUrl() {
   return (process.env.HERMES_WEB_UI_URL || DEFAULT_BASE_URL).replace(/\/$/, '')
 }
@@ -54,6 +58,9 @@ async function request(path, options = {}) {
   })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(`${data?.error || 'Unauthorized'}. ${authHint()}`)
+    }
     throw new Error(data?.error || `HTTP ${response.status}`)
   }
   return data
