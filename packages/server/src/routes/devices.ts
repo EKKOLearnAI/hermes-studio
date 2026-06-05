@@ -5,6 +5,7 @@ export const devicePublicRoutes = new Router()
 export const deviceRoutes = new Router()
 
 devicePublicRoutes.post('/api/devices/link-request', ctrl.requestDeviceLinkController)
+devicePublicRoutes.post('/api/devices/link-status', ctrl.requestDeviceLinkStatusController)
 
 deviceRoutes.get('/api/devices', ctrl.listDevices)
 deviceRoutes.post('/api/devices/scan', ctrl.scanDevices)
