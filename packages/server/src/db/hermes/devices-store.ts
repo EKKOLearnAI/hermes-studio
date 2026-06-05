@@ -1,4 +1,4 @@
-import { getDb, jsonGet, jsonGetAll, jsonSet } from '../index'
+import { getDb, jsonDelete, jsonGet, jsonGetAll, jsonSet } from '../index'
 import { DEVICES_TABLE } from './schemas'
 import type { LanDeviceInfo } from '../../services/lan-discovery'
 
@@ -269,20 +269,16 @@ export function updateOutboundStatus(id: string, status: DeviceOutboundStatus, s
   return saveRow(row)
 }
 
-export function hideInboundRequestHistory(id: string): DeviceRelationRecord {
+export function deleteDeviceRelation(id: string): boolean {
   const existing = getDeviceRelation(id)
-  if (!existing || !existing.requested_at) throw new Error('Device request not found')
-  const now = Date.now()
-  const row = deviceToRow(existing, existing, now)
-  if (row.inbound_status === 'pending') {
-    row.status = 'rejected'
-    row.inbound_status = 'rejected'
-    row.decided_at = now
-  } else if (row.inbound_status === 'approved') {
-    row.status = 'none'
-    row.inbound_status = 'none'
-    row.decided_at = now
+  if (!existing) return false
+
+  const db = getDb()
+  if (!db) {
+    jsonDelete(DEVICES_TABLE, id)
+    return true
   }
-  row.inbound_history_deleted_at = now
-  return saveRow(row)
+
+  const result = db.prepare(`DELETE FROM ${DEVICES_TABLE} WHERE id = ?`).run(id)
+  return result.changes > 0
 }

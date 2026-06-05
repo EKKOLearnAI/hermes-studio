@@ -1,7 +1,7 @@
 import {
   DuplicateDeviceRequestError,
+  deleteDeviceRelation,
   getDeviceRelation,
-  hideInboundRequestHistory,
   listInboundRequestHistory,
   listDeviceRelations,
   requestInboundDeviceLink,
@@ -275,14 +275,13 @@ export async function unblockDevice(ctx: any) {
 }
 
 export async function deleteDeviceRequestHistory(ctx: any) {
-  try {
-    hideInboundRequestHistory(ctx.params.id)
-    getLanPeerSocketManager().disconnectDevice(ctx.params.id)
-    ctx.body = await devicesPayload()
-  } catch {
+  if (!deleteDeviceRelation(ctx.params.id)) {
     ctx.status = 404
     ctx.body = { error: 'Device request not found' }
+    return
   }
+  getLanPeerSocketManager().disconnectDevice(ctx.params.id)
+  ctx.body = await devicesPayload()
 }
 
 export async function listPeerConnections(ctx: any) {
