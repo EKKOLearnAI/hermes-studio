@@ -419,6 +419,10 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
+        const listeningPid = recoverPidFromPort()
+        if (listeningPid) {
+          writePid(listeningPid)
+        }
         const url = `http://localhost:${port}`
         console.log(`  鉁?hermes-web-ui started`)
         console.log(`    ${url}`)
@@ -449,17 +453,21 @@ function startDaemon(port) {
   setTimeout(poll, interval)
 }
 
-function stopDaemon() {
+function stopDaemon(options = {}) {
+  const { restart = false } = options
   const stoppedPreviewPids = stopPreviewRuntimeFromCli()
-  const pidFromFile = readPidFile()
+  let pidFromFile = readPidFile()
+  let cleanedStalePid = false
   if (pidFromFile && !isRunning(pidFromFile)) {
     removePid()
-    console.log(`  鉁?hermes-web-ui was not running (cleaned stale PID: ${pidFromFile})`)
-    return
+    console.log(`  ✓ hermes-web-ui was not running (cleaned stale PID: ${pidFromFile})`)
+    pidFromFile = null
+    cleanedStalePid = true
   }
 
   const pid = pidFromFile ?? recoverPidFromPort()
   if (!pid) {
+    if (cleanedStalePid) return
     if (stoppedPreviewPids) {
       console.log(`  ✓ hermes-web-ui preview stopped`)
       return
@@ -476,11 +484,14 @@ function stopDaemon() {
 
   try {
     try {
-      process.kill(pid, 'SIGTERM')
-      // Wait briefly for graceful shutdown
-      for (let i = 0; i < 10; i++) {
+      process.kill(pid, restart ? 'SIGUSR2' : 'SIGTERM')
+      // Restart keeps the bridge alive and should be quick. Stop waits longer
+      // so the server can ask the bridge broker to stop worker subprocesses.
+      const graceMs = getDaemonStopGraceMs({ restart })
+      const attempts = Math.max(1, Math.ceil(graceMs / STOP_POLL_INTERVAL_MS))
+      for (let i = 0; i < attempts; i++) {
         if (!isRunning(pid)) break
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STOP_POLL_INTERVAL_MS)
       }
     } catch {}
     // Force kill if still alive
@@ -633,7 +644,7 @@ Options:
       stopDaemon()
       break
     case 'restart':
-      stopDaemon()
+      stopDaemon({ restart: true })
       setTimeout(() => startDaemon(getPort()), 500)
       break
     case 'status':
@@ -644,7 +655,7 @@ Options:
       const result = clearLoginLocks()
       if (restartAfterClear && result.serverRunning) {
         const port = getRunningPort() ?? getPort()
-        stopDaemon()
+        stopDaemon({ restart: true })
         setTimeout(() => startDaemon(port), 500)
       }
       break
@@ -745,6 +756,7 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
 export {
   clearLoginLocks,
   commandExists,
+  getDaemonStopGraceMs,
   getListeningPids,
   parseUnixNetstatListeningPids,
   resetDefaultLogin,

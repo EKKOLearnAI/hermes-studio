@@ -97,8 +97,8 @@ describe('agent bridge manager command resolution', () => {
     const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
     const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', '/tmp/hermes-agent')
 
-    expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://ekkolearnai.com')
-    expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Hermes Web UI')
+    expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://hermes-studio.ai')
+    expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Hermes Studio')
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('cli-agent,personal-agent')
   })
 
@@ -131,10 +131,17 @@ describe('agent bridge manager command resolution', () => {
     expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('ipc:///tmp/hermes-agent-bridge.sock')
   })
 
+  it('honors the bridge connect retry environment override', async () => {
+    process.env.HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS = '120000'
+
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1' })
+
+    expect(client.connectRetryMs).toBe(120000)
+  })
+
   it('waits briefly for a restarting bridge socket before failing', async () => {
-    const endpoint = process.platform === 'win32'
-      ? `tcp://127.0.0.1:${32000 + (process.pid % 10000)}`
-      : `ipc://${join(tempDir, 'late-bridge.sock')}`
+    const endpoint = `tcp://127.0.0.1:${32000 + (process.pid % 10000)}`
     let server: Server | undefined
 
     const ready = new Promise<void>((resolve) => {
@@ -160,6 +167,86 @@ describe('agent bridge manager command resolution', () => {
       await ready
     } finally {
       await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve())
+    }
+  })
+
+  it('attaches to an already running bridge instead of spawning a replacement', async () => {
+    const endpoint = `tcp://127.0.0.1:${34000 + (process.pid % 10000)}`
+    const actions: string[] = []
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString('utf8').trim())
+        actions.push(request.action)
+        socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
+      })
+    })
+
+    await new Promise<void>((resolve) => {
+      if (endpoint.startsWith('ipc://')) {
+        server.listen(endpoint.slice('ipc://'.length), resolve)
+      } else {
+        const url = new URL(endpoint)
+        server.listen(Number(url.port), url.hostname, resolve)
+      }
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
+
+      await manager.start()
+
+      expect(actions).toEqual(['ping'])
+      expect(manager.getRuntimeState()).toMatchObject({
+        endpoint,
+        ready: true,
+        running: true,
+        attached: true,
+        pid: undefined,
+      })
+      await manager.stop()
+      expect(actions).toEqual(['ping', 'shutdown'])
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        attached: false,
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('requests shutdown when stopping an attached bridge', async () => {
+    const endpoint = `tcp://127.0.0.1:${35000 + (process.pid % 10000)}`
+    const actions: string[] = []
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString('utf8').trim())
+        actions.push(request.action)
+        socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`)
+      })
+    })
+
+    await new Promise<void>((resolve) => {
+      const url = new URL(endpoint)
+      server.listen(Number(url.port), url.hostname, resolve)
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
+
+      await manager.start()
+      await manager.stop()
+
+      expect(actions).toEqual(['ping', 'shutdown'])
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        attached: false,
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 })

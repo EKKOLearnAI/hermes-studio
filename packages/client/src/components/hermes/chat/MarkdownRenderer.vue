@@ -70,13 +70,19 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 const message = useMessage()
 
+function diffFoldLabel(hiddenCount: number): string {
+  return t('chat.unchangedLines', { count: hiddenCount })
+}
+
 const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
   breaks: true,
   linkify: true,
   typographer: true,
   highlight(str: string, lang: string): string {
-    return renderHighlightedCodeBlock(str, lang, t('common.copy'))
+    return renderHighlightedCodeBlock(str, lang, t('common.copy'), {
+      formatDiffFoldLabel: diffFoldLabel,
+    })
   },
 })
 

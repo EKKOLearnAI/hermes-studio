@@ -15,6 +15,7 @@ vi.mock('@/router', () => ({
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStoredSuperAdmin, request } from '../../packages/client/src/api/client'
 import { getDownloadUrl } from '../../packages/client/src/api/hermes/download'
 import { uploadFiles } from '../../packages/client/src/api/hermes/files'
+import { importSkill } from '../../packages/client/src/api/hermes/skills'
 import { batchDeleteSessions, importHermesSession } from '../../packages/client/src/api/hermes/sessions'
 import router from '@/router'
 
@@ -197,6 +198,26 @@ describe('API Client', () => {
       expect(mockFetch).toHaveBeenCalledOnce()
       const [url, options] = mockFetch.mock.calls[0]
       expect(url).toBe('/api/hermes/files/upload?path=notes')
+      expect(options.method).toBe('POST')
+      expect(options.headers.Authorization).toBe('Bearer secret-key')
+      expect(options.headers['X-Hermes-Profile']).toBe('research')
+      expect(options.body).toBeInstanceOf(FormData)
+    })
+
+    it('adds auth and active profile headers when importing skills', async () => {
+      setApiKey('secret-key')
+      localStorage.setItem('hermes_active_profile_name', 'research')
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('{"name":"demo-skill"}'),
+      })
+
+      await importSkill([new File(['# Demo\n'], 'demo.zip', { type: 'application/zip' })])
+
+      expect(mockFetch).toHaveBeenCalledOnce()
+      const [url, options] = mockFetch.mock.calls[0]
+      expect(url).toBe('/api/hermes/skills/import')
       expect(options.method).toBe('POST')
       expect(options.headers.Authorization).toBe('Bearer secret-key')
       expect(options.headers['X-Hermes-Profile']).toBe('research')

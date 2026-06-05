@@ -175,6 +175,186 @@ describe('run chat compression trigger', () => {
     )
   })
 
+  it('uses the session model for compression when auxiliary compression is auto', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'session-model',
+      provider: 'session-provider',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      auxiliary: { compression: { provider: 'auto' } },
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 160_000, outputTokens: 0 })
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 9,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+    )
+
+    expect(compressorCompressMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      'http://upstream',
+      undefined,
+      'session-1',
+      expect.objectContaining({
+        model: 'session-model',
+        provider: 'session-provider',
+      }),
+    )
+  })
+
+  it('uses the profile default model for compression when auxiliary compression is main', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'session-model',
+      provider: 'session-provider',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      model: { default: 'main-model', provider: 'main-provider' },
+      auxiliary: { compression: { provider: 'main' } },
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 160_000, outputTokens: 0 })
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 9,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+    )
+
+    expect(compressorCompressMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      'http://upstream',
+      undefined,
+      'session-1',
+      expect.objectContaining({
+        model: 'main-model',
+        provider: 'main-provider',
+      }),
+    )
+  })
+
+  it('uses the configured auxiliary compression provider and model when set', async () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      session_id: 'session-1',
+      role: index === 9 ? 'user' : index % 2 === 0 ? 'user' : 'assistant',
+      content: `message ${index}`,
+      timestamp: index + 1,
+      tool_call_id: null,
+      tool_calls: null,
+      tool_name: null,
+      finish_reason: null,
+      reasoning_content: null,
+    }))
+    getSessionDetailMock.mockReturnValue({ messages })
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      model: 'session-model',
+      provider: 'session-provider',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      auxiliary: {
+        compression: {
+          provider: 'compress-provider',
+          model: 'compress-model',
+        },
+      },
+    })
+    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 160_000, outputTokens: 0 })
+    compressorCompressMock.mockResolvedValue({
+      messages: [{ role: 'user', content: 'compressed' }],
+      meta: {
+        compressed: true,
+        llmCompressed: true,
+        totalMessages: 9,
+        summaryTokenEstimate: 1,
+        verbatimCount: 0,
+        compressedStartIndex: 0,
+      },
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+    )
+
+    expect(compressorCompressMock).toHaveBeenCalledWith(
+      expect.any(Array),
+      'http://upstream',
+      undefined,
+      'session-1',
+      expect.objectContaining({
+        model: 'compress-model',
+        provider: 'compress-provider',
+      }),
+    )
+  })
+
   it('uses local context estimates for compression threshold decisions', async () => {
     const messages = Array.from({ length: 10 }, (_, index) => ({
       id: index + 1,

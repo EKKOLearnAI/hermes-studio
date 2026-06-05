@@ -66,18 +66,33 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-export function createShimContent(executablePath: string, platform: NodeJS.Platform = process.platform): string {
+function windowsRuntimePlatformKey(archName: string): string {
+  return `win-${archName}`
+}
+
+export function createShimContent(
+  executablePath: string,
+  platform: NodeJS.Platform = process.platform,
+  archName: string = process.arch,
+): string {
   if (platform === 'win32') {
+    const runtimePlatform = windowsRuntimePlatformKey(archName)
     return [
       '@echo off',
       `rem ${SHIM_MARKER}`,
       `set "APP=${executablePath}"`,
-      'if not exist "%APP%" (',
-      '  echo Hermes Studio executable not found at "%APP%" 1>&2',
+      'set "WEBUI_HOME=%HERMES_WEB_UI_HOME%"',
+      'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%HERMES_WEBUI_STATE_DIR%"',
+      'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%USERPROFILE%\\.hermes-web-ui"',
+      'set "RUNTIME=%HERMES_DESKTOP_RUNTIME_DIR%"',
+      `if "%RUNTIME%"=="" set "RUNTIME=%WEBUI_HOME%\\desktop-runtime\\${runtimePlatform}"`,
+      'set "PYTHON=%RUNTIME%\\python\\python.exe"',
+      'if not exist "%PYTHON%" (',
+      '  echo Hermes Studio Python runtime not found at "%PYTHON%" 1>&2',
+      '  echo Open Hermes Studio once to finish runtime setup, then retry hermes-studio. 1>&2',
       '  exit /b 127',
       ')',
-      'set ELECTRON_RUN_AS_NODE=',
-      `"${'%APP%'}" -- ${HERMES_CLI_ARG} %*`,
+      '"%PYTHON%" -m hermes_cli.main %*',
       'exit /b %ERRORLEVEL%',
       '',
     ].join('\r\n')
@@ -98,7 +113,7 @@ export function createShimContent(executablePath: string, platform: NodeJS.Platf
 }
 
 function isManagedShim(content: string): boolean {
-  return content.includes(SHIM_MARKER) && content.includes(HERMES_CLI_ARG)
+  return content.includes(SHIM_MARKER)
 }
 
 function writeShim(shimPath: string, content: string, platform: NodeJS.Platform): ShimInstallStatus {

@@ -7,7 +7,7 @@ import { homedir } from 'os'
  * Server/listen:
  * - PORT: Web UI listen port. Default: 8648.
  * - BIND_HOST: Web UI bind host. Default: 0.0.0.0.
- * - CORS_ORIGINS: Koa CORS origin setting. Default: *.
+ * - CORS_ORIGINS: Comma/space-separated cross-origin allowlist. Default: same host only.
  *
  * Web UI storage:
  * - HERMES_WEB_UI_HOME: Web UI data home for auth token, credentials, logs, DB, and default uploads.
@@ -62,6 +62,10 @@ export function shouldCreateWebUiDataDir(env: Record<string, string | undefined>
   return env.NODE_ENV !== 'production'
 }
 
+export function getCorsOrigins(env: Record<string, string | undefined> = process.env): string {
+  return env.CORS_ORIGINS?.trim() || ''
+}
+
 const appHome = getWebUiHome()
 
 export const config = {
@@ -71,22 +75,5 @@ export const config = {
   appHome,
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
-  corsOrigins: process.env.CORS_ORIGINS || '*',
-  /** Session store: 'local' (self-built SQLite) or 'remote' (Hermes CLI) */
-  sessionStore: (process.env.SESSION_STORE || 'local') as 'local' | 'remote',
-  update: {
-    enabled: parseBoolean(process.env.WEBUI_UPDATE_ENABLED, false),
-    packageName: (process.env.WEBUI_UPDATE_PACKAGE || '').trim(),
-    registry: normalizeUrl(process.env.WEBUI_UPDATE_REGISTRY),
-    sourceLabel: (process.env.WEBUI_UPDATE_SOURCE_LABEL || '').trim(),
-    cliBin: (process.env.WEBUI_UPDATE_CLI_BIN || '').trim(),
-  },
-}
-
-if (!config.update.sourceLabel && config.update.registry) {
-  config.update.sourceLabel = config.update.registry
-}
-
-if (!config.update.cliBin && config.update.packageName) {
-  config.update.cliBin = getDefaultUpdateCliBin(config.update.packageName)
+  corsOrigins: getCorsOrigins(),
 }

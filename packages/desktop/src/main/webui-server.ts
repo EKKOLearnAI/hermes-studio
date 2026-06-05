@@ -6,10 +6,25 @@ import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
-import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
+import {
+  bundledBrowserExecutable,
+  bundledGit,
+  bundledNode,
+  gitPathDirs,
+  webuiServerEntry,
+  webuiDir,
+  hermesBin,
+  webUiHome,
+  hermesHome,
+  nodeBinDir,
+  tokenFile,
+  pythonDir,
+} from './paths'
 
 const DEFAULT_PORT = 8748
-const DEFAULT_READY_TIMEOUT_MS = 30_000
+const DEFAULT_READY_TIMEOUT_MS = 120_000
+const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
+const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
 
 let serverProc: ChildProcess | null = null
@@ -45,6 +60,60 @@ function envPositiveInt(name: string): number | undefined {
 
 function readyTimeoutMs(): number {
   return envPositiveInt('HERMES_DESKTOP_READY_TIMEOUT_MS') || DEFAULT_READY_TIMEOUT_MS
+}
+
+function createAgentBridgeStartupTracker(): {
+  observe: (chunk: Buffer) => void
+  wait: (timeoutMs: number) => Promise<void>
+} {
+  let output = ''
+  let state: 'pending' | 'started' | 'failed' = 'pending'
+  let resolveReady: (() => void) | null = null
+  let rejectReady: ((err: Error) => void) | null = null
+
+  const settle = (nextState: 'started' | 'failed') => {
+    if (state !== 'pending') return
+    state = nextState
+    if (nextState === 'started') {
+      resolveReady?.()
+    } else {
+      rejectReady?.(new Error('Agent bridge failed to start'))
+    }
+  }
+
+  const observe = (chunk: Buffer) => {
+    if (state !== 'pending') return
+    output = (output + chunk.toString('utf-8')).slice(-4096)
+    if (output.includes(AGENT_BRIDGE_STARTED_MARKER)) {
+      settle('started')
+    } else if (output.includes(AGENT_BRIDGE_FAILED_MARKER)) {
+      settle('failed')
+    }
+  }
+
+  const wait = (timeoutMs: number) => {
+    if (state === 'started') return Promise.resolve()
+    if (state === 'failed') return Promise.reject(new Error('Agent bridge failed to start'))
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (state !== 'pending') return
+        state = 'failed'
+        reject(new Error(`Agent bridge did not become ready within ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      resolveReady = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      rejectReady = (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    })
+  }
+
+  return { observe, wait }
 }
 
 function ensureToken(): string {
@@ -231,17 +300,28 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
+  const bundledAgentBrowserBin = isWin
+    ? join(pythonDir(), 'node')
+    : join(pythonDir(), 'node', 'bin')
+  const bundledNodeBin = nodeBinDir()
+  const bundledGitPath = gitPathDirs().join(delimiter)
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
   const nvmNodeBinPaths = getNvmNodeBinPaths()
   const runtimePath = mergePathEntries(
     dirname(hermesBin()),
+    bundledAgentBrowserBin,
+    bundledNodeBin,
+    bundledGitPath,
     loginShellPath,
     nvmNodeBinPaths,
     process.env.PATH,
+    process.env.Path,
     COMMON_USER_BIN_DIRS.join(delimiter),
   )
+  const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
+  const gitBin = bundledGit()
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -256,11 +336,21 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
     HERMES_AGENT_CLI_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
+    HERMES_AGENT_NODE: bundledNode(),
+    HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
+    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(agentHome, 'agent-browser'),
+    ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
+    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
+    ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
     // SIGKILL of the bridge child within ~150ms). TCP on 127.0.0.1 works
     // identically and avoids the issue cross-platform.
     HERMES_AGENT_BRIDGE_ENDPOINT: `tcp://127.0.0.1:${bridgePort}`,
+    // Desktop opens the UI as soon as the Web UI HTTP server is ready, while
+    // the Python bridge starts in the background. Let the first chat/context
+    // request wait for broker readiness instead of failing during cold start.
+    HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS: process.env.HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS ?? '120000',
     // Force TCP for worker endpoints too (upstream #1106). Same EDR/sandbox
     // reason as above — default ipc:// unix sockets in /tmp get killed.
     HERMES_AGENT_BRIDGE_WORKER_TRANSPORT: 'tcp',
@@ -278,8 +368,9 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // HERMES_HOME/.env or by configuring per-platform allowlists.
     GATEWAY_ALLOW_ALL_USERS: process.env.GATEWAY_ALLOW_ALL_USERS ?? 'true',
     // Keep the bundled Hermes Agent, bridge, gateway, and Web UI path helpers
-    // on the same data directory. Native Windows uses %LOCALAPPDATA%\hermes;
-    // macOS/Linux keep the standard ~/.hermes layout.
+    // on the same data directory. Native Windows uses an existing
+    // %LOCALAPPDATA%\hermes or %APPDATA%\hermes; otherwise all platforms keep
+    // the standard ~/.hermes layout.
     HERMES_HOME: agentHome,
     HERMES_WEB_UI_HOME: home,
     HERMES_WEBUI_STATE_DIR: home,
@@ -295,10 +386,14 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     windowsHide: true,
   })
 
+  const bridgeStartup = createAgentBridgeStartupTracker()
+
   serverProc.stdout?.on('data', (chunk: Buffer) => {
+    bridgeStartup.observe(chunk)
     process.stdout.write(`[webui] ${chunk}`)
   })
   serverProc.stderr?.on('data', (chunk: Buffer) => {
+    bridgeStartup.observe(chunk)
     process.stderr.write(`[webui] ${chunk}`)
   })
   serverProc.on('exit', (code, signal) => {
@@ -309,7 +404,11 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     }
   })
 
-  await waitForReady(port, readyTimeoutMs())
+  const timeoutMs = readyTimeoutMs()
+  void bridgeStartup.wait(timeoutMs).catch(err => {
+    console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+  })
+  await waitForReady(port, timeoutMs)
   return getServerUrl(port)
 }
 

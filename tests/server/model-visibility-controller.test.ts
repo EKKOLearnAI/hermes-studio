@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync, mockListProfileNamesFromDisk, mockListUserProfiles, mockReadProviderModelCatalogCache, mockGetCachedProviderModels, mockRefreshConfiguredProviderModelCatalogs, mockWriteProviderModelCatalogEntry, mockGetCopilotModelsDetailed } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
   mockReadConfigYamlForProfile: vi.fn(),
@@ -12,6 +12,11 @@ const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetc
   mockReadFileSync: vi.fn(),
   mockListProfileNamesFromDisk: vi.fn(() => ['default']),
   mockListUserProfiles: vi.fn(() => []),
+  mockReadProviderModelCatalogCache: vi.fn(),
+  mockGetCachedProviderModels: vi.fn(),
+  mockRefreshConfiguredProviderModelCatalogs: vi.fn(),
+  mockWriteProviderModelCatalogEntry: vi.fn(),
+  mockGetCopilotModelsDetailed: vi.fn(async () => []),
 }))
 
 vi.mock('fs/promises', () => ({
@@ -47,6 +52,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
     lmstudio: { api_key_env: 'LM_API_KEY', base_url_env: 'LM_BASE_URL' },
     'xai-oauth': { api_key_env: '', base_url_env: '' },
     openrouter: {},
+    copilot: { api_key_env: 'GITHUB_TOKEN', base_url_env: '' },
   },
 }))
 
@@ -61,7 +67,7 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       value: 'fun-codex',
       label: 'Codex-apikey.fun',
       base_url: 'https://api.apikey.fun/v1',
-      models: ['gpt-5.5'],
+      models: ['gpt-5.5', 'gpt-5.4'],
       builtin: true,
     },
     {
@@ -92,17 +98,31 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
       models: ['grok-4.3', 'grok-4.20-0309-reasoning'],
       builtin: true,
     },
+    {
+      value: 'copilot',
+      label: 'GitHub Copilot',
+      base_url: 'https://api.githubcopilot.com',
+      models: ['gpt-5.5'],
+      builtin: true,
+    },
   ],
 }))
 
 vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
-  getCopilotModelsDetailed: vi.fn(async () => []),
+  getCopilotModelsDetailed: mockGetCopilotModelsDetailed,
   resolveCopilotOAuthToken: vi.fn(async () => ''),
 }))
 
 vi.mock('../../packages/server/src/services/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
+}))
+
+vi.mock('../../packages/server/src/services/hermes/model-catalog-cache', () => ({
+  readProviderModelCatalogCache: mockReadProviderModelCatalogCache,
+  getCachedProviderModels: mockGetCachedProviderModels,
+  refreshConfiguredProviderModelCatalogs: mockRefreshConfiguredProviderModelCatalogs,
+  writeProviderModelCatalogEntry: mockWriteProviderModelCatalogEntry,
 }))
 
 vi.mock('../../packages/server/src/db', () => ({
@@ -132,6 +152,11 @@ beforeEach(() => {
   mockReadFileSync.mockReturnValue('{}')
   mockListProfileNamesFromDisk.mockReturnValue(['default'])
   mockListUserProfiles.mockReturnValue([])
+  mockReadProviderModelCatalogCache.mockResolvedValue({ version: 1, updated_at: '1970-01-01T00:00:00.000Z', providers: {} })
+  mockGetCachedProviderModels.mockReturnValue(null)
+  mockRefreshConfiguredProviderModelCatalogs.mockResolvedValue(undefined)
+  mockWriteProviderModelCatalogEntry.mockResolvedValue({})
+  mockGetCopilotModelsDetailed.mockResolvedValue([])
 })
 
 describe('models controller — model visibility', () => {
@@ -178,6 +203,26 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.custom_models).toEqual({
       deepseek: ['gemma-4-26b-a4b-it', 'deepseek-chat'],
     })
+  })
+
+  it('prefers cached live provider catalogs over static built-in presets', async () => {
+    mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'deepseek-live', provider: 'deepseek' } })
+    mockGetCachedProviderModels.mockImplementation((_cache: unknown, provider: string) => {
+      return provider === 'deepseek' ? ['deepseek-live', 'deepseek-new'] : null
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'deepseek',
+        models: ['deepseek-live', 'deepseek-new'],
+        available_models: ['deepseek-live', 'deepseek-new'],
+      }),
+    ]))
+    expect(mockFetchProviderModels).not.toHaveBeenCalled()
   })
 
   it('limits the default available-models response to profiles bound to regular admins', async () => {
@@ -320,6 +365,7 @@ describe('models controller — model visibility', () => {
       expect.objectContaining({
         provider: 'custom:fun-codex',
         builtin: true,
+        models: ['gpt-5.5', 'gpt-5.4'],
       }),
     ]))
   })
@@ -344,6 +390,64 @@ describe('models controller — model visibility', () => {
     ]))
     expect(ctx.body.default).toBe('eee')
     expect(ctx.body.default_provider).toBe('lmstudio')
+  })
+
+  it('updates the provider model catalog cache after manual model fetch', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'nvidia/live-a' }, { id: 'nvidia/live-b' }, { id: '' }] }),
+    })) as any
+
+    try {
+      const ctx = makeCtx({
+        provider: 'nvidia',
+        label: 'NVIDIA',
+        base_url: 'https://integrate.api.nvidia.com/v1',
+        api_key: 'nvapi-test',
+        update_cache: true,
+      })
+      await ctrl.fetchProviderModelList(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toEqual({ models: ['nvidia/live-a', 'nvidia/live-b'] })
+      expect(mockWriteProviderModelCatalogEntry).toHaveBeenCalledWith({
+        provider: 'nvidia',
+        label: 'NVIDIA',
+        base_url: 'https://integrate.api.nvidia.com/v1',
+        models: ['nvidia/live-a', 'nvidia/live-b'],
+        source: 'live',
+        free_only: false,
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('refreshes configured provider model catalog cache on demand', async () => {
+    const ctx = makeCtx()
+    await ctrl.refreshProviderModelCatalogCache(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRefreshConfiguredProviderModelCatalogs).toHaveBeenCalledWith({ force: true })
+  })
+
+  it('does not fetch Copilot live models while serving available models', async () => {
+    mockReadFile.mockResolvedValue('GITHUB_TOKEN=ghu-test\n')
+    mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'gpt-5.5', provider: 'copilot' } })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'copilot',
+        models: ['gpt-5.5'],
+      }),
+    ]))
+    expect(mockGetCopilotModelsDetailed).not.toHaveBeenCalled()
   })
 
 

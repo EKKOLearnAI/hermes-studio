@@ -122,6 +122,19 @@ describe('getCopilotModels', () => {
     }) as any
   }
 
+  it('fallback 列表包含当前 Copilot 官方模型', () => {
+    const ids = COPILOT_FALLBACK_MODELS.map(m => m.id)
+    expect(ids).toEqual(expect.arrayContaining([
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-nano',
+      'claude-opus-4.8',
+      'gemini-3.5-flash',
+      'raptor-mini',
+    ]))
+    expect(ids).not.toContain('grok-code-fast-1')
+  })
+
   it('成功路径：返回 chat type 且 supports /chat/completions 的模型 id', async () => {
     process.env.GH_TOKEN = 'gho_token'
     mockFetchSequence([

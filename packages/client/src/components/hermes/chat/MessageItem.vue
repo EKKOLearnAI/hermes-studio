@@ -13,7 +13,9 @@ import { useSettingsStore } from "@/stores/hermes/settings";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
+  extractUnifiedDiffPayload,
   handleCodeBlockCopyClick,
+  inferStructuredLanguage,
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
@@ -439,36 +441,65 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
   return { [JSON_TRUNCATED_KEY]: marker };
 }
 
-function formatToolPayload(raw?: string): ToolPayload {
-  if (!raw) {
+function normalizeToolPayload(raw: unknown): string {
+  if (raw === null || raw === undefined || raw === "") return "";
+  if (typeof raw === "string") return raw;
+  try {
+    const serialized = JSON.stringify(raw);
+    if (serialized !== undefined) return serialized;
+  } catch {
+    // Fall through to String(raw) for non-serializable runtime payloads.
+  }
+  return String(raw);
+}
+
+function formatToolPayload(raw?: unknown, extractDiff = false): ToolPayload {
+  const text = normalizeToolPayload(raw);
+  if (!text) {
     return { full: "", display: "" };
   }
 
-  try {
-    const parsed = JSON.parse(raw);
-    const full = JSON.stringify(parsed, null, 2);
-    const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-      ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
-      : full;
-    return {
-      full,
-      display,
-      language: "json",
-    };
-  } catch {
-    return {
-      full: raw,
-      display:
-        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
-          : raw,
-    };
+  const shouldParseJson = typeof raw !== "string" || /^[\[{]/.test(text.trim());
+  if (shouldParseJson) {
+    try {
+      const parsed = JSON.parse(text);
+      const full = JSON.stringify(parsed, null, 2);
+      const extractedDiff = extractDiff ? extractUnifiedDiffPayload(parsed) : null;
+      if (extractedDiff) {
+        return {
+          full,
+          display: extractedDiff,
+          language: "diff",
+        };
+      }
+      const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+        ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
+        : full;
+      return {
+        full,
+        display,
+        language: "json",
+      };
+    } catch {
+      // Fall through to text rendering for non-JSON strings.
+    }
   }
+
+  const language = inferStructuredLanguage(text);
+  return {
+    full: text,
+    display:
+      language === "diff" || text.length <= TOOL_PAYLOAD_DISPLAY_LIMIT
+        ? text
+        : text.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated"),
+    language,
+  };
 }
 
 function renderToolPayload(content: string, language?: string): string {
   return renderHighlightedCodeBlock(content, language, t("common.copy"), {
     maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
+    formatDiffFoldLabel: (hiddenCount) => t("chat.unchangedLines", { count: hiddenCount }),
   });
 }
 
@@ -504,12 +535,12 @@ const hasAttachments = computed(
   () => (props.message.attachments?.length ?? 0) > 0,
 );
 
-const hasToolDetails = computed(
-  () => !!(props.message.toolArgs || props.message.toolResult),
-);
-
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
-const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
+
+const hasToolDetails = computed(
+  () => !!(toolArgsPayload.value.full || toolResultPayload.value.full),
+);
 
 const fullToolArgs = computed(() => toolArgsPayload.value.full);
 const formattedToolArgs = computed(() => toolArgsPayload.value.display);
@@ -627,13 +658,9 @@ function handleSpeechToggle() {
 
   // Web Speech API 模式
   if (voiceSettings.provider.value === 'webspeech') {
-    const text = speech.extractReadableText(content)
-    if (text) {
-      speech.stop(false)
-      speech.speakViaBrowser(props.message.id, text, {
-        voiceName: voiceSettings.webspeechVoice.value || undefined,
-      })
-    }
+    speech.toggleBrowser(props.message.id, content, {
+      voiceName: voiceSettings.webspeechVoice.value || undefined,
+    })
     return
   }
 
@@ -1551,6 +1578,13 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  :deep(.hljs-unified-diff code.hljs) {
+    max-height: none;
+    overflow-y: visible;
+    white-space: pre;
+    word-break: normal;
   }
 }
 

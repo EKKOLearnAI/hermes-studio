@@ -67,7 +67,7 @@ export default {
     },
     quickInstall: {
       title: 'One Command',
-      desc: 'Use the built-in deployment scripts to initialize data, start the bridge, and open the browser.',
+      desc: 'Install and start with a single command. Initializes Hermes Studio data, starts the bridge, and opens the browser.',
     },
     i18n: {
       title: '8 Languages',
@@ -167,10 +167,10 @@ export default {
         rows: [
           ['PORT', 'Server listen port (default: 8648)'],
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],
-          ['HERMES_WEB_UI_HOME', 'Web UI data home for auth token, credentials, logs, DB, and default uploads'],
+          ['HERMES_WEB_UI_HOME', 'Hermes Studio data home for auth token, credentials, logs, DB, and default uploads'],
           ['HERMES_WEBUI_STATE_DIR', 'Compatibility alias for HERMES_WEB_UI_HOME'],
           ['UPLOAD_DIR', 'Custom upload root. Uploaded files are stored below profile-scoped subdirectories.'],
-          ['CORS_ORIGINS', 'CORS origin config (default: *)'],
+          ['CORS_ORIGINS', 'Cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests (default: same host only; set * only for intentional legacy wildcard CORS)'],
           ['AUTH_TOKEN', 'Custom bearer token; overrides the auto-generated token'],
           ['AUTH_JWT_SECRET', 'JWT signing secret override for username/password sessions'],
           ['PROFILE', 'Startup/default Hermes profile'],
@@ -203,7 +203,9 @@ export default {
           ['HERMES_OPENROUTER_APP_TITLE', 'OpenRouter attribution title sent by bridge runs'],
           ['HERMES_OPENROUTER_APP_CATEGORIES', 'OpenRouter attribution categories sent by bridge runs'],
           ['HERMES_WEB_UI_MANAGED_GATEWAY', 'Force managed legacy gateway process handling'],
-          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Controls whether Web UI shutdown also stops managed gateway processes'],
+          ['HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART', 'Skip startup gateway checks/autostart for dashboard-only deployments where another service owns Hermes gateway lifecycle'],
+          ['HERMES_WEB_UI_DISABLE_SKILL_INJECTION', 'Skip startup bundled skill injection when skills are managed outside Web UI or target skill directories must not be overwritten'],
+          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Controls whether Hermes Studio shutdown also stops managed gateway processes'],
           ['GATEWAY_HOST', 'Default gateway host written into profile config for legacy gateway compatibility'],
           ['HERMES_WEB_UI_PREVIEW_REPO', 'GitHub repository used by Version Preview'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT', 'Version Preview broker endpoint transport. Set tcp to use loopback TCP for Preview on macOS/Linux; when unset, Preview follows HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp'],
@@ -214,7 +216,7 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. HERMES_AGENT_BRIDGE_ENDPOINT controls the Node-to-broker address, while HERMES_AGENT_BRIDGE_WORKER_TRANSPORT controls the broker-to-profile-worker transport. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
+        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Hermes Studio server and talks directly to the Hermes Agent runtime. HERMES_AGENT_BRIDGE_ENDPOINT controls the Node-to-broker address, while HERMES_AGENT_BRIDGE_WORKER_TRANSPORT controls the broker-to-profile-worker transport. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
       },
       profiles: {
         title: 'Profiles',
@@ -226,7 +228,7 @@ export default {
       intro: 'Explore the core features of QuantHermes Web UI.',
       chat: {
         title: 'AI Chat',
-        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Web UI local session database.',
+        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Hermes Studio local session database.',
       },
       kanban: {
         title: 'Kanban Board',

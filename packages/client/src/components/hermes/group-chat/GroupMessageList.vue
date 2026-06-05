@@ -93,6 +93,7 @@ defineExpose({ scrollToBottom })
             <GroupMessageItem
                 :message="msg"
                 :agents="store.agents"
+                :members="store.members"
                 :current-user-id="store.userId"
             />
         </template>

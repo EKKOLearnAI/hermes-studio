@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -30,8 +30,8 @@ export interface Message {
   toolName?: string
   toolCallId?: string
   toolPreview?: string
-  toolArgs?: string
-  toolResult?: string
+  toolArgs?: unknown
+  toolResult?: unknown
   toolStatus?: 'running' | 'done' | 'error'
   toolDuration?: number  // 工具执行时长（秒）
   isStreaming?: boolean
@@ -179,25 +179,49 @@ async function buildContentBlocks(
   return blocks
 }
 
+function hasRuntimeToolPayload(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== ''
+}
+
+function runtimeToolPayloadOrUndefined(value: unknown): unknown | undefined {
+  return hasRuntimeToolPayload(value) ? value : undefined
+}
+
+function runtimePayloadText(value: unknown): string {
+  if (!hasRuntimeToolPayload(value)) return ''
+  if (typeof value === 'string') return value
+  try {
+    const serialized = JSON.stringify(value)
+    if (serialized !== undefined) return serialized
+  } catch {
+    // Fall through to String(value) for non-serializable runtime payloads.
+  }
+  return String(value)
+}
+
+function runtimeToolOutputHasError(value: unknown): boolean {
+  return typeof value === 'string' && isToolOutputError(value)
+}
+
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   // Filter out assistant messages with no display content unless they carry tool call metadata
   // needed to name later tool result rows when resuming persisted history.
   const filteredMsgs = msgs.filter(m => {
     if (m.role === 'assistant') {
-      return (m.tool_calls?.length || 0) > 0 || (m.content && m.content.trim() !== '')
+      return (m.tool_calls?.length || 0) > 0 || runtimePayloadText((m as any).content).trim() !== ''
     }
     return true
   })
 
   // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
-  const toolArgsMap = new Map<string, string>()
+  const toolArgsMap = new Map<string, unknown>()
   for (const msg of filteredMsgs) {
     if (msg.role === 'assistant' && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         if (tc.id) {
           if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-          if (tc.function?.arguments) toolArgsMap.set(tc.id, tc.function.arguments)
+          if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
         }
       }
     }
@@ -206,7 +230,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   const result: Message[] = []
   for (const msg of filteredMsgs) {
     // Skip assistant messages that only contain tool_calls (no meaningful content)
-    if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
+    if (msg.role === 'assistant' && msg.tool_calls?.length && !runtimePayloadText((msg as any).content).trim()) {
       // Emit a tool.started message for each tool call
       for (const tc of msg.tool_calls) {
         result.push({
@@ -216,7 +240,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           timestamp: Math.round(msg.timestamp * 1000),
           toolName: tc.function?.name || undefined,
           toolCallId: tc.id,
-          toolArgs: tc.function?.arguments || undefined,
+          toolArgs: runtimeToolPayloadOrUndefined(tc.function?.arguments),
           toolStatus: 'done',
         })
       }
@@ -227,15 +251,18 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
     if (msg.role === 'tool') {
       const tcId = msg.tool_call_id || ''
       const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-      const toolArgs = toolArgsMap.get(tcId) || undefined
+      const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
       // Extract a short preview from the content
       let preview = ''
-      if (msg.content) {
+      const contentText = runtimePayloadText((msg as any).content)
+      if (contentText) {
         try {
-          const parsed = JSON.parse(msg.content)
-          preview = parsed.url || parsed.title || parsed.preview || parsed.summary || ''
+          const parsed = typeof (msg as any).content === 'string'
+            ? JSON.parse(contentText)
+            : (msg as any).content
+          preview = parsed?.url || parsed?.title || parsed?.preview || parsed?.summary || ''
         } catch {
-          preview = msg.content.slice(0, 80)
+          preview = contentText.slice(0, 80)
         }
       }
       // Find and remove the matching placeholder from tool_calls above
@@ -254,7 +281,7 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
         toolCallId: tcId || undefined,
         toolArgs,
         toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-        toolResult: msg.content || undefined,
+        toolResult: runtimeToolPayloadOrUndefined((msg as any).content),
         toolStatus: 'done',
       })
       continue
@@ -444,6 +471,8 @@ export const useChatStore = defineStore('chat', () => {
   const abortState = ref<{
     aborting: boolean
     synced: boolean | null
+    timedOut?: boolean
+    message?: string
     error?: string
   } | null>(null)
   const isAborting = computed(() => abortState.value?.aborting === true)
@@ -670,6 +699,8 @@ export const useChatStore = defineStore('chat', () => {
                 if (e.contextTokens != null) target.contextTokens = e.contextTokens
               } else if (e.event === 'abort.started') {
                 setAbortState({ aborting: true, synced: null })
+              } else if (e.event === 'abort.timeout') {
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
               } else if (e.event === 'abort.completed') {
                 setAbortState({ aborting: false, synced: e.synced ?? false })
               } else if (e.event === 'approval.requested') {
@@ -693,7 +724,7 @@ export const useChatStore = defineStore('chat', () => {
                 if (existingTool) {
                   updateMessage(sessionId, existingTool.id, {
                     toolName: e.tool || e.name,
-                    toolArgs: typeof e.arguments === 'string' ? e.arguments : existingTool.toolArgs,
+                    toolArgs: hasRuntimeToolPayload((e as any).arguments) ? (e as any).arguments : existingTool.toolArgs,
                     toolPreview: e.preview || existingTool.toolPreview,
                     toolStatus: existingTool.toolStatus || 'running',
                   })
@@ -706,7 +737,7 @@ export const useChatStore = defineStore('chat', () => {
                     toolName: e.tool || e.name,
                     toolCallId,
                     toolPreview: e.preview,
-                    toolArgs: typeof e.arguments === 'string' ? e.arguments : undefined,
+                    toolArgs: runtimeToolPayloadOrUndefined((e as any).arguments),
                     toolStatus: 'running',
                   })
                 }
@@ -717,9 +748,9 @@ export const useChatStore = defineStore('chat', () => {
                   ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
                   : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
                 if (toolMsgs.length > 0) {
-                  const output = typeof e.output === 'string' ? e.output : undefined
+                  const output = runtimeToolPayloadOrUndefined((e as any).output)
                   updateMessage(sessionId, toolMsgs[toolMsgs.length - 1].id, {
-                    toolStatus: e.error === true || isToolOutputError(output) ? 'error' : 'done',
+                    toolStatus: e.error === true || runtimeToolOutputHasError(output) ? 'error' : 'done',
                     toolDuration: e.duration,
                     toolResult: output,
                   })
@@ -1315,6 +1346,20 @@ export const useChatStore = defineStore('chat', () => {
     target.updatedAt = Date.now()
   }
 
+  function applyGeneratedSessionTitle(evt: RunEvent) {
+    const sid = evt.session_id
+    const title = typeof (evt as any).title === 'string' ? (evt as any).title.trim() : ''
+    if (!sid || !title) return
+    const target = sessions.value.find(s => s.id === sid)
+    if (target) {
+      target.title = title
+      target.updatedAt = Date.now()
+    }
+    if (activeSession.value?.id === sid) {
+      activeSession.value.title = title
+    }
+  }
+
   function primeCompletionBellIfEnabled() {
     if (useSettingsStore().display.bell_on_complete) {
       primeCompletionSound()
@@ -1440,6 +1485,7 @@ export const useChatStore = defineStore('chat', () => {
       let runProducedAssistantText = false
       let runHadToolActivity = false
       let activeAssistantMessageId: string | null = null
+      let reasoningAssistantMessageId: string | null = null
 
       const closeStreamingAssistant = () => {
         const msgs = getSessionMsgs(sid)
@@ -1449,6 +1495,7 @@ export const useChatStore = defineStore('chat', () => {
           }
         })
         activeAssistantMessageId = null
+        reasoningAssistantMessageId = null
       }
 
       const applyReconnectResume = (data: ResumeSessionPayload) => {
@@ -1492,9 +1539,11 @@ export const useChatStore = defineStore('chat', () => {
           if (data.isWorking && lastAssistant) {
             lastAssistant.isStreaming = true
             activeAssistantMessageId = lastAssistant.id
+            reasoningAssistantMessageId = lastAssistant.id
             if (lastAssistant.reasoning) noteReasoningStart(lastAssistant.id)
           } else {
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           }
         }
 
@@ -1526,6 +1575,9 @@ export const useChatStore = defineStore('chat', () => {
               }
               case 'abort.started':
                 setAbortState({ aborting: true, synced: null })
+                break
+              case 'abort.timeout':
+                setAbortState({ aborting: true, synced: false, timedOut: true, message: (e as any).message })
                 break
               case 'abort.completed':
                 setAbortState({ aborting: false, synced: (e as any).synced ?? false })
@@ -1636,6 +1688,11 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'abort.timeout': {
+              setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+              break
+            }
+
             case 'abort.completed': {
               setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
               clearPendingInteractions(sid)
@@ -1665,11 +1722,13 @@ export const useChatStore = defineStore('chat', () => {
               if (!text) break
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
-              const last = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
+              const reasoningTargetId = reasoningAssistantMessageId || activeAssistantMessageId
+              const last = reasoningTargetId
+                ? msgs.find(m => m.id === reasoningTargetId)
                 : null
-              if (last?.role === 'assistant' && last.isStreaming) {
+              if (last?.role === 'assistant') {
                 last.reasoning = (last.reasoning || '') + text
+                reasoningAssistantMessageId = last.id
                 noteReasoningStart(last.id)
               } else {
                 const newId = uid()
@@ -1682,6 +1741,7 @@ export const useChatStore = defineStore('chat', () => {
                   reasoning: text,
                 })
                 activeAssistantMessageId = newId
+                reasoningAssistantMessageId = newId
                 noteReasoningStart(newId)
               }
 
@@ -1735,6 +1795,11 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'session.title.updated': {
+              applyGeneratedSessionTitle(evt)
+              break
+            }
+
             case 'tool.started': {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
@@ -1752,7 +1817,7 @@ export const useChatStore = defineStore('chat', () => {
               if (existingTool) {
                 updateMessage(sid, existingTool.id, {
                   toolName: evt.tool || evt.name,
-                  toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : existingTool.toolArgs,
+                  toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
                   toolPreview: evt.preview || existingTool.toolPreview,
                   toolStatus: existingTool.toolStatus || 'running',
                 })
@@ -1766,7 +1831,7 @@ export const useChatStore = defineStore('chat', () => {
                 toolName: evt.tool || evt.name,
                 toolCallId,
                 toolPreview: evt.preview,
-                toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
+                toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
                 toolStatus: 'running',
               })
 
@@ -1782,8 +1847,8 @@ export const useChatStore = defineStore('chat', () => {
                 : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
-                const output = typeof (evt as any).output === 'string' ? (evt as any).output : undefined
-                const hasError = (evt as any).error === true || isToolOutputError(output)
+                const output = runtimeToolPayloadOrUndefined((evt as any).output)
+                const hasError = (evt as any).error === true || runtimeToolOutputHasError(output)
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
                   toolStatus: hasError ? 'error' : 'done',
@@ -1830,6 +1895,9 @@ export const useChatStore = defineStore('chat', () => {
               const lastMsg = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
                 : msgs[msgs.length - 1]
+              const completedAssistantMessageId = lastMsg?.role === 'assistant' && lastMsg.isStreaming
+                ? lastMsg.id
+                : null
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
@@ -1855,17 +1923,29 @@ export const useChatStore = defineStore('chat', () => {
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = activeAssistantMessageId
                   ? msgs.find(m => m.id === activeAssistantMessageId)
-                  : [...msgs].reverse().find(m => m.role === 'assistant')
+                  : completedAssistantMessageId
+                    ? msgs.find(m => m.id === completedAssistantMessageId)
+                    : undefined
                 if (lastAssistant) {
-                  updateMessage(sid, lastAssistant.id, {
-                    content: (evt as any).parsed_content || '',
-                  })
+                  const parsedContent = typeof (evt as any).parsed_content === 'string'
+                    ? (evt as any).parsed_content
+                    : ''
+                  const parsedContentTrimmed = parsedContent.trim()
+                  const existingContentTrimmed = lastAssistant.content?.trim() ?? ''
+                  if (parsedContentTrimmed || !existingContentTrimmed) {
+                    updateMessage(sid, lastAssistant.id, {
+                      content: parsedContent,
+                    })
+                    finalOutputTrimmed = parsedContentTrimmed
+                  } else {
+                    finalOutputTrimmed = existingContentTrimmed
+                    runProducedAssistantText = true
+                  }
                   if ((evt as any).parsed_reasoning) {
                     updateMessage(sid, lastAssistant.id, {
                       reasoning: (evt as any).parsed_reasoning,
                     })
                   }
-                  finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
                 }
               } else {
                 // Fallback to output field (legacy behavior)
@@ -1924,6 +2004,7 @@ export const useChatStore = defineStore('chat', () => {
                 cleanup()
               }
               activeAssistantMessageId = null
+              reasoningAssistantMessageId = null
               updateSessionTitle(sid)
               break
             }
@@ -2025,6 +2106,7 @@ export const useChatStore = defineStore('chat', () => {
     let runProducedAssistantText = false
     let runHadToolActivity = false
     let activeAssistantMessageId: string | null = null
+    let reasoningAssistantMessageId: string | null = null
 
     const cleanup = () => {
       if (closed) return
@@ -2043,6 +2125,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       })
       activeAssistantMessageId = null
+      reasoningAssistantMessageId = null
     }
 
     // Shared event handler — filters by session_id tag
@@ -2119,6 +2202,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'abort.timeout': {
+          setAbortState({ aborting: true, synced: false, timedOut: true, message: (evt as any).message })
+          break
+        }
+
         case 'abort.completed': {
           setAbortState({ aborting: false, synced: (evt as any).synced ?? false })
           clearPendingInteractions(sid)
@@ -2148,11 +2236,13 @@ export const useChatStore = defineStore('chat', () => {
           if (!text) break
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
-          const last = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
+          const reasoningTargetId = reasoningAssistantMessageId || activeAssistantMessageId
+          const last = reasoningTargetId
+            ? msgs.find(m => m.id === reasoningTargetId)
             : null
-          if (last?.role === 'assistant' && last.isStreaming) {
+          if (last?.role === 'assistant') {
             last.reasoning = (last.reasoning || '') + text
+            reasoningAssistantMessageId = last.id
             noteReasoningStart(last.id)
           } else {
             const newId = uid()
@@ -2165,6 +2255,7 @@ export const useChatStore = defineStore('chat', () => {
               reasoning: text,
             })
             activeAssistantMessageId = newId
+            reasoningAssistantMessageId = newId
             noteReasoningStart(newId)
           }
 
@@ -2210,6 +2301,11 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'session.title.updated': {
+          applyGeneratedSessionTitle(evt)
+          break
+        }
+
         case 'tool.started': {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
@@ -2227,7 +2323,7 @@ export const useChatStore = defineStore('chat', () => {
           if (existingTool) {
             updateMessage(sid, existingTool.id, {
               toolName: evt.tool || evt.name,
-              toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : existingTool.toolArgs,
+              toolArgs: hasRuntimeToolPayload((evt as any).arguments) ? (evt as any).arguments : existingTool.toolArgs,
               toolPreview: evt.preview || existingTool.toolPreview,
               toolStatus: existingTool.toolStatus || 'running',
             })
@@ -2241,7 +2337,7 @@ export const useChatStore = defineStore('chat', () => {
             toolName: evt.tool || evt.name,
             toolCallId,
             toolPreview: evt.preview,
-            toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
+            toolArgs: runtimeToolPayloadOrUndefined((evt as any).arguments),
             toolStatus: 'running',
           })
 
@@ -2256,8 +2352,8 @@ export const useChatStore = defineStore('chat', () => {
             ? msgs.filter(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
           if (toolMsgs.length > 0) {
-            const output = typeof (evt as any).output === 'string' ? (evt as any).output : undefined
-            const hasError = (evt as any).error === true || isToolOutputError(output)
+            const output = runtimeToolPayloadOrUndefined((evt as any).output)
+            const hasError = (evt as any).error === true || runtimeToolOutputHasError(output)
             updateMessage(sid, toolMsgs[toolMsgs.length - 1].id, {
               toolStatus: hasError ? 'error' : 'done',
               toolDuration: (evt as any).duration,
@@ -2309,6 +2405,9 @@ export const useChatStore = defineStore('chat', () => {
           const lastMsg = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
             : msgs[msgs.length - 1]
+          const completedAssistantMessageId = lastMsg?.role === 'assistant' && lastMsg.isStreaming
+            ? lastMsg.id
+            : null
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
           }
@@ -2328,17 +2427,29 @@ export const useChatStore = defineStore('chat', () => {
             const msgs = getSessionMsgs(sid)
             const lastAssistant = activeAssistantMessageId
               ? msgs.find(m => m.id === activeAssistantMessageId)
-              : [...msgs].reverse().find(m => m.role === 'assistant')
+              : completedAssistantMessageId
+                ? msgs.find(m => m.id === completedAssistantMessageId)
+                : undefined
             if (lastAssistant) {
-              updateMessage(sid, lastAssistant.id, {
-                content: (evt as any).parsed_content || '',
-              })
+              const parsedContent = typeof (evt as any).parsed_content === 'string'
+                ? (evt as any).parsed_content
+                : ''
+              const parsedContentTrimmed = parsedContent.trim()
+              const existingContentTrimmed = lastAssistant.content?.trim() ?? ''
+              if (parsedContentTrimmed || !existingContentTrimmed) {
+                updateMessage(sid, lastAssistant.id, {
+                  content: parsedContent,
+                })
+                finalOutputTrimmed = parsedContentTrimmed
+              } else {
+                finalOutputTrimmed = existingContentTrimmed
+                runProducedAssistantText = true
+              }
               if ((evt as any).parsed_reasoning) {
                 updateMessage(sid, lastAssistant.id, {
                   reasoning: (evt as any).parsed_reasoning,
                 })
               }
-              finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
             }
           } else {
             // Fallback to output field (legacy behavior)
@@ -2379,9 +2490,11 @@ export const useChatStore = defineStore('chat', () => {
           if (!hasQueue) {
             cleanup()
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           } else {
             // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           }
           updateSessionTitle(sid)
           break
@@ -2443,6 +2556,7 @@ export const useChatStore = defineStore('chat', () => {
       onCompressionStarted: (evt) => handleEvent(evt),
       onCompressionCompleted: (evt) => handleEvent(evt),
       onAbortStarted: (evt) => handleEvent(evt),
+      onAbortTimeout: (evt) => handleEvent(evt),
       onAbortCompleted: (evt) => handleEvent(evt),
       onUsageUpdated: (evt) => handleEvent(evt),
       onAgentEvent: (evt) => handleEvent(evt),
@@ -2523,6 +2637,8 @@ export const useChatStore = defineStore('chat', () => {
 
   onSessionCommand(handleGlobalSessionCommand)
 
+  onSessionTitleUpdated(applyGeneratedSessionTitle)
+
   function stopStreaming() {
     const sid = activeSessionId.value
     if (!sid) return
@@ -2537,13 +2653,6 @@ export const useChatStore = defineStore('chat', () => {
       if (lastMsg?.isStreaming) {
         updateMessage(sid, lastMsg.id, { isStreaming: false })
       }
-      window.setTimeout(() => {
-        if (activeSessionId.value === sid && abortState.value?.aborting) {
-          streamStates.value.delete(sid)
-          serverWorking.value.delete(sid)
-          setAbortState(null)
-        }
-      }, 20_000)
     }
   }
 

@@ -15,7 +15,7 @@ import { getSession } from '../../../db/hermes/session-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import { AgentBridgeClient } from '../agent-bridge'
 import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle-api-run'
-import { handleBridgeRun } from './handle-bridge-run'
+import { handleBridgeRun, resumeBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
@@ -26,11 +26,19 @@ import { userCanAccessProfile } from '../../../db/hermes/users-store'
 
 export type { ContentBlock } from './types'
 
+function currentProfileFromSocket(socket: Socket): string {
+  const socketProfile = typeof socket.handshake.query?.profile === 'string'
+    ? socket.handshake.query.profile.trim()
+    : ''
+  return socketProfile || getActiveProfileName() || 'default'
+}
+
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
   private bridge = new AgentBridgeClient()
   /** sessionId → session state (messages, working status, events, run tracking) */
   private sessionMap = new Map<string, SessionState>()
+  private bridgeResumePolls = new Set<string>()
 
   constructor(io: Server) {
     this.nsp = io.of('/chat-run')
@@ -218,7 +226,7 @@ export class ChatRunSocket {
       if (!data.session_id) return
       const sid = data.session_id
       socket.join(`session:${sid}`)
-      this.resumeSession(socket, sid)
+      await this.resumeSession(socket, sid)
     })
 
     socket.on('abort', (data: { session_id?: string }) => {
@@ -331,6 +339,7 @@ export class ChatRunSocket {
       state = await loadSessionStateFromDb(sid, this.sessionMap)
       this.sessionMap.set(sid, state)
     }
+    await this.reattachBridgeRun(socket, sid, state)
     socket.emit('resumed', {
       session_id: sid,
       messages: state.messages,
@@ -350,6 +359,57 @@ export class ChatRunSocket {
 
     logger.info('[chat-run-socket] socket %s resumed session %s (working: %s, messages: %d)',
       socket.id, sid, state.isWorking, state.messages.length)
+  }
+
+  private async reattachBridgeRun(socket: Socket, sid: string, state: SessionState) {
+    if (state.runId && state.isWorking) return
+    const session = getSession(sid)
+    const profile = session?.profile || currentProfileFromSocket(socket)
+    try {
+      const status = await this.bridge.statusIfLoaded(sid, profile) as Record<string, unknown>
+      const running = status.running === true
+      const runId = typeof status.current_run_id === 'string' ? status.current_run_id : ''
+      if (!running || !runId) return
+      state.isWorking = true
+      state.isAborting = state.isAborting === true
+      state.runId = runId
+      state.profile = profile
+      state.source = 'cli'
+      state.events = []
+      const pollKey = `${sid}:${runId}`
+      if (this.bridgeResumePolls.has(pollKey)) return
+      this.bridgeResumePolls.add(pollKey)
+      const instructions = this.resumeInstructionsForSession(sid)
+      void resumeBridgeRun(
+        this.nsp,
+        socket,
+        {
+          sessionId: sid,
+          runId,
+          profile,
+          instructions,
+          model: session?.model,
+          provider: session?.provider,
+        },
+        this.sessionMap,
+        this.bridge,
+        this.dequeueNextQueuedRun.bind(this),
+      ).finally(() => {
+        this.bridgeResumePolls.delete(pollKey)
+      })
+      logger.info('[chat-run-socket] reattached running bridge run %s for session %s', runId, sid)
+    } catch (err) {
+      logger.warn(err, '[chat-run-socket] bridge status lookup failed while resuming session %s', sid)
+    }
+  }
+
+  private resumeInstructionsForSession(sessionId: string): string {
+    let fullInstructions = getSystemPrompt()
+    const sessionRow = getSession(sessionId)
+    if (sessionRow?.workspace) {
+      fullInstructions = `\n[Current working directory: ${sessionRow.workspace}]\n${fullInstructions}`
+    }
+    return fullInstructions
   }
 
   // --- Queue ---

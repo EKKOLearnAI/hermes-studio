@@ -50,6 +50,8 @@ export interface RunEvent {
   }
   /** session_id tag added by server for client-side filtering */
   session_id?: string
+  /** Generated session title from session.title.updated. */
+  title?: string
   /** Queue length from run.queued event */
   queue_length?: number
   /** Queue item that was just removed because it is starting now. */
@@ -121,10 +123,12 @@ const sessionEventHandlers = new Map<string, {
   onCompressionStarted: (event: RunEvent) => void
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
+  onAbortTimeout?: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
   onAgentEvent?: (event: RunEvent) => void
   onSessionCommand?: (event: RunEvent) => void
+  onSessionTitleUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
@@ -135,6 +139,7 @@ const sessionEventHandlers = new Map<string, {
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
+const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -325,6 +330,19 @@ function globalAbortStartedHandler(event: RunEvent): void {
 }
 
 /**
+ * Global abort.timeout event handler
+ */
+function globalAbortTimeoutHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAbortTimeout) {
+    handlers.onAbortTimeout(event)
+  }
+}
+
+/**
  * Global abort.completed event handler
  */
 function globalAbortCompletedHandler(event: RunEvent): void {
@@ -365,6 +383,20 @@ function globalSessionCommandHandler(event: RunEvent): void {
   }
 
   for (const handler of sessionCommandHandlers) {
+    handler(event)
+  }
+}
+
+function globalSessionTitleUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers) {
+    handlers.onSessionTitleUpdated?.(event)
+  }
+
+  for (const handler of sessionTitleUpdatedHandlers) {
     handler(event)
   }
 }
@@ -455,10 +487,12 @@ export function registerSessionHandlers(
     onCompressionStarted: (event: RunEvent) => void
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
+    onAbortTimeout?: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
     onAgentEvent?: (event: RunEvent) => void
     onSessionCommand?: (event: RunEvent) => void
+    onSessionTitleUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
@@ -494,6 +528,13 @@ export function onSessionCommand(handler: (event: RunEvent) => void): () => void
   sessionCommandHandlers.add(handler)
   return () => {
     sessionCommandHandlers.delete(handler)
+  }
+}
+
+export function onSessionTitleUpdated(handler: (event: RunEvent) => void): () => void {
+  sessionTitleUpdatedHandlers.add(handler)
+  return () => {
+    sessionTitleUpdatedHandlers.delete(handler)
   }
 }
 
@@ -601,12 +642,14 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
     chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
     chatRunSocket.on('abort.started', globalAbortStartedHandler)
+    chatRunSocket.on('abort.timeout', globalAbortTimeoutHandler)
     chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
     chatRunSocket.on('agent.event', globalAgentEventHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)
+    chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
 
     globalListenersRegistered = true
   }
@@ -807,6 +850,10 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
     },
+    onAbortTimeout: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
     onAbortCompleted: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
@@ -831,6 +878,9 @@ export function startRunViaSocket(
       removeTerminalSocketListeners()
       sessionEventHandlers.delete(sid)
       onDone()
+    },
+    onSessionTitleUpdated: (evt: RunEvent) => {
+      onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {
       if (closed) return

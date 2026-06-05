@@ -428,9 +428,10 @@ function openChangelog() {
   overflow: hidden;
 
   .logo-text {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
     letter-spacing: 0.5px;
+    white-space: nowrap;
   }
 
   .logo-dance {

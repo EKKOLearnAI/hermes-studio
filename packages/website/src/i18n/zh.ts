@@ -67,7 +67,7 @@ export default {
     },
     quickInstall: {
       title: '一键安装',
-      desc: '使用内置部署脚本完成初始化、启动 bridge 并打开浏览器。',
+      desc: '一条命令安装启动。初始化 Hermes Studio 数据、启动 bridge 并打开浏览器。',
     },
     i18n: {
       title: '8 种语言',
@@ -163,10 +163,10 @@ export default {
         rows: [
           ['PORT', '服务器监听端口（默认：8648）'],
           ['BIND_HOST', '服务器绑定地址（默认：0.0.0.0）。如需 IPv6，请显式设置为 ::。'],
-          ['HERMES_WEB_UI_HOME', 'Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
+          ['HERMES_WEB_UI_HOME', 'Hermes Studio 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
           ['HERMES_WEBUI_STATE_DIR', 'HERMES_WEB_UI_HOME 的兼容别名'],
           ['UPLOAD_DIR', '自定义上传根目录。文件会保存在按 Profile 隔离的子目录下'],
-          ['CORS_ORIGINS', 'CORS 来源配置（默认：*）'],
+          ['CORS_ORIGINS', 'HTTP、Socket.IO、WebSocket 跨源 allowlist（默认：仅同 host；只有明确需要旧版 wildcard CORS 时才设置为 *）'],
           ['AUTH_TOKEN', '自定义 bearer token，会覆盖自动生成的 token'],
           ['AUTH_JWT_SECRET', '用户名/密码会话的 JWT 签名密钥覆盖'],
           ['PROFILE', '启动/默认 Hermes profile'],
@@ -199,7 +199,9 @@ export default {
           ['HERMES_OPENROUTER_APP_TITLE', 'bridge 运行发送给 OpenRouter 的 attribution title'],
           ['HERMES_OPENROUTER_APP_CATEGORIES', 'bridge 运行发送给 OpenRouter 的 attribution categories'],
           ['HERMES_WEB_UI_MANAGED_GATEWAY', '强制启用旧 gateway 进程托管'],
-          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Web UI 关闭时是否同时停止托管的 gateway 进程'],
+          ['HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART', '跳过启动时的 gateway 检查/自动启动；适用于由其它服务管理 Hermes gateway 的 dashboard-only 部署'],
+          ['HERMES_WEB_UI_DISABLE_SKILL_INJECTION', '跳过启动时的内置 skill 注入；适用于由 Web UI 外部管理 skills 或不希望覆盖同名目标目录的部署'],
+          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Hermes Studio 关闭时是否同时停止托管的 gateway 进程'],
           ['GATEWAY_HOST', '旧 gateway 兼容配置中写入 profile 的默认 gateway host'],
           ['HERMES_WEB_UI_PREVIEW_REPO', 'Version Preview 使用的 GitHub 仓库'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT', 'Version Preview 的 broker endpoint transport。设为 tcp 可让预览环境在 macOS/Linux 上也使用 loopback TCP；未设置时会跟随 HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp'],
@@ -210,7 +212,7 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge 运行时',
-        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 与 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 与各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
+        content: '聊天运行通过 Hermes agent bridge 处理。它随 Hermes Studio 服务一起运行，并直接连接 Hermes Agent runtime。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 与 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 与各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
       },
       profiles: {
         title: '配置文件',
@@ -222,7 +224,7 @@ export default {
       intro: '探索 QuantHermes Web UI 的核心功能。',
       chat: {
         title: 'AI 聊天',
-        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
+        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Hermes Studio 本地会话库。',
       },
       kanban: {
         title: '看板管理',

@@ -106,6 +106,56 @@
     }
   ],
   "paths": {
+    "/api/auth/avatar": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get avatar",
+        "description": "GET /api/auth/avatar",
+        "operationId": "getMyAvatar",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Update avatar",
+        "description": "PUT /api/auth/avatar",
+        "operationId": "updateMyAvatar",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/auth/change-password": {
       "post": {
         "tags": [
@@ -728,6 +778,56 @@
         "summary": "Update config",
         "description": "PUT /api/hermes/config",
         "operationId": "updateConfig",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/hermes/config/auxiliary-models": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Get auxiliary-models",
+        "description": "GET /api/hermes/config/auxiliary-models",
+        "operationId": "getAuxiliaryModels",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "Update auxiliary-models",
+        "description": "PUT /api/hermes/config/auxiliary-models",
+        "operationId": "updateAuxiliaryModels",
         "security": [
           {
             "BearerAuth": []
@@ -2332,6 +2432,32 @@
         }
       }
     },
+    "/api/hermes/provider-models/cache/refresh": {
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Create refresh",
+        "description": "POST /api/hermes/provider-models/cache/refresh",
+        "operationId": "refreshProviderModelCatalogCache",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/hermes/search/sessions": {
       "get": {
         "tags": [
@@ -2562,6 +2688,32 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/hermes/sessions/hermes/{id}/import": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create import",
+        "description": "POST /api/hermes/sessions/hermes/:id/import",
+        "operationId": "importHermesSession",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

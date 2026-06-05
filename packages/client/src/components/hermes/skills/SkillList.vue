@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NSwitch, useMessage } from 'naive-ui'
+import { NSwitch, useMessage, useDialog } from 'naive-ui'
 import type { SkillCategory, SkillSource, SkillInfo } from '@/api/hermes/skills'
-import { toggleSkill } from '@/api/hermes/skills'
+import { toggleSkill, deleteSkillApi } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 
 type SourceFilter = SkillSource | 'modified'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 
 const props = defineProps<{
     categories: SkillCategory[]
@@ -20,11 +21,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     select: [category: string, skill: string]
+    deleted: [category: string, skill: string]
 }>()
 
 const collapsedCategories = ref<Set<string>>(new Set())
 const archiveCollapsed = ref(true)
 const togglingSkills = ref<Set<string>>(new Set())
+const deletingSkills = ref<Set<string>>(new Set())
 
 const filteredArchived = computed(() => {
     let result = props.archived
@@ -70,6 +73,64 @@ const filteredCategories = computed(() => {
     return result
 })
 
+/**
+ * When the user filters down to "external", regroup the result so the outer
+ * level is the configured external dir (raw `~/...` form) and the inner level
+ * is the original category. This makes it easy to see which entries come from
+ * which external source — the path itself is what the user typed in the
+ * external-dirs config.
+ *
+ * Returns an array of { path, categories[] } groups; falsy when the filter
+ * isn't external, so the template falls back to the flat category list.
+ */
+interface ExternalGroup {
+    path: string
+    categories: { name: string; skills: typeof props.categories[number]['skills'] }[]
+}
+
+const externalGroups = computed<ExternalGroup[] | null>(() => {
+    if (props.sourceFilter !== 'external') return null
+    // Map<path, Map<categoryName, skills[]>>
+    const byPath = new Map<string, Map<string, typeof props.categories[number]['skills']>>()
+    const orderPath: string[] = []
+    const orderCat = new Map<string, string[]>()
+    for (const cat of filteredCategories.value) {
+        for (const skill of cat.skills) {
+            const path = skill.sourcePath || ''
+            if (!byPath.has(path)) {
+                byPath.set(path, new Map())
+                orderPath.push(path)
+                orderCat.set(path, [])
+            }
+            const catMap = byPath.get(path)!
+            if (!catMap.has(cat.name)) {
+                catMap.set(cat.name, [])
+                orderCat.get(path)!.push(cat.name)
+            }
+            catMap.get(cat.name)!.push(skill)
+        }
+    }
+    return orderPath.map(path => ({
+        path,
+        categories: orderCat.get(path)!.map(name => ({
+            name,
+            skills: byPath.get(path)!.get(name)!,
+        })),
+    }))
+})
+
+const collapsedPaths = ref<Set<string>>(new Set())
+
+function togglePath(path: string) {
+    if (collapsedPaths.value.has(path)) collapsedPaths.value.delete(path)
+    else collapsedPaths.value.add(path)
+}
+
+/** Display path verbatim. RTL trick in CSS truncates the start when too long. */
+function shortenPath(path: string): string {
+    return path || '(unknown)'
+}
+
 function toggleCategory(name: string) {
     if (collapsedCategories.value.has(name)) {
         collapsedCategories.value.delete(name)
@@ -103,6 +164,29 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
         togglingSkills.value.delete(skillName)
     }
 }
+
+function confirmDelete(category: string, skillName: string) {
+    if (deletingSkills.value.has(skillName)) return
+    dialog.warning({
+        title: t('skills.delete'),
+        content: t('skills.deleteConfirm', { name: skillName }),
+        positiveText: t('common.delete'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+            deletingSkills.value.add(skillName)
+            try {
+                await deleteSkillApi(category, skillName)
+                message.success(t('skills.deleteSuccess'))
+                message.info(t('skills.reloadHint'), { duration: 6000 })
+                emit('deleted', category, skillName)
+            } catch (err: any) {
+                message.error(t('skills.deleteFailed') + `: ${err.message}`)
+            } finally {
+                deletingSkills.value.delete(skillName)
+            }
+        },
+    })
+}
 </script>
 
 <template>
@@ -110,35 +194,107 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
         <div v-if="filteredCategories.length === 0" class="skill-empty">
             {{ searchQuery ? t('skills.noMatch') : t('skills.noSkills') }}
         </div>
-        <div v-for="cat in filteredCategories" :key="cat.name" class="skill-category">
-            <button class="category-header" @click="toggleCategory(cat.name)">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    class="category-arrow" :class="{ collapsed: collapsedCategories.has(cat.name) }">
-                    <polyline points="6 9 12 15 18 9" />
-                </svg>
-                <span class="category-name">{{ cat.name }}</span>
-                <span class="category-count">{{ cat.skills.length }}</span>
-            </button>
-            <div v-if="!collapsedCategories.has(cat.name)" class="category-skills">
-                <button v-for="skill in cat.skills" :key="skillKey(cat.name, skill)" class="skill-item" :class="[
-                    { active: selectedSkill === skillKey(cat.name, skill) },
-                    `source-${skill.source || 'local'}`,
-                ]" @click="handleSelect(cat.name, skill.name)">
-                    <div class="skill-info">
-                        <span class="skill-name">
-                            <span class="source-dot" :class="`dot-${skill.source || 'local'}`"
-                                :title="t(`skills.source.${skill.source || 'local'}`)" />
-                            {{ skill.name }}
-                            <span v-if="skill.modified" class="modified-badge"
-                                :title="t('skills.modified')">✎</span>
-                        </span>
-                        <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
-                    </div>
-                    <NSwitch size="small" :value="skill.enabled !== false" :loading="togglingSkills.has(skill.name)"
-                        @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
+
+        <!-- External filter: regroup as <path> → <category> → skill -->
+        <template v-if="externalGroups">
+            <div v-for="group in externalGroups" :key="group.path || '__unknown__'" class="skill-path-group">
+                <button class="path-header" :title="group.path || ''" @click="togglePath(group.path)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" class="category-arrow"
+                        :class="{ collapsed: collapsedPaths.has(group.path) }">
+                        <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                    <span class="path-header-icon">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                    </span>
+                    <span class="path-header-text">{{ shortenPath(group.path) }}</span>
+                    <span class="category-count">{{ group.categories.reduce((n, c) => n + c.skills.length, 0) }}</span>
                 </button>
+                <div v-if="!collapsedPaths.has(group.path)" class="path-group-body">
+                    <div v-for="cat in group.categories" :key="cat.name" class="skill-category">
+                        <button class="category-header sub" @click="toggleCategory(group.path + '::' + cat.name)">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" class="category-arrow"
+                                :class="{ collapsed: collapsedCategories.has(group.path + '::' + cat.name) }">
+                                <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                            <span class="category-name">{{ cat.name }}</span>
+                            <span class="category-count">{{ cat.skills.length }}</span>
+                        </button>
+                        <div v-if="!collapsedCategories.has(group.path + '::' + cat.name)" class="category-skills">
+                            <button v-for="skill in cat.skills" :key="skillKey(cat.name, skill)" class="skill-item"
+                                :class="[
+                                    { active: selectedSkill === skillKey(cat.name, skill) },
+                                    `source-${skill.source || 'local'}`,
+                                ]" @click="handleSelect(cat.name, skill.name)">
+                                <div class="skill-info">
+                                    <span class="skill-name">
+                                        <span class="source-dot" :class="`dot-${skill.source || 'local'}`"
+                                            :title="t(`skills.source.${skill.source || 'local'}`)" />
+                                        {{ skill.name }}
+                                        <span v-if="skill.modified" class="modified-badge"
+                                            :title="t('skills.modified')">✎</span>
+                                    </span>
+                                    <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
+                                </div>
+                                <NSwitch size="small" :value="skill.enabled !== false"
+                                    :loading="togglingSkills.has(skill.name)"
+                                    @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
+        </template>
+
+        <!-- Default flat category list -->
+        <template v-else>
+            <div v-for="cat in filteredCategories" :key="cat.name" class="skill-category">
+                <button class="category-header" @click="toggleCategory(cat.name)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        class="category-arrow" :class="{ collapsed: collapsedCategories.has(cat.name) }">
+                        <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                    <span class="category-name">{{ cat.name }}</span>
+                    <span class="category-count">{{ cat.skills.length }}</span>
+                </button>
+                <div v-if="!collapsedCategories.has(cat.name)" class="category-skills">
+                    <button v-for="skill in cat.skills" :key="skillKey(cat.name, skill)" class="skill-item" :class="[
+                        { active: selectedSkill === skillKey(cat.name, skill) },
+                        `source-${skill.source || 'local'}`,
+                    ]" @click="handleSelect(cat.name, skill.name)">
+                        <div class="skill-info">
+                            <span class="skill-name">
+                                <span class="source-dot" :class="`dot-${skill.source || 'local'}`"
+                                    :title="t(`skills.source.${skill.source || 'local'}`)" />
+                                {{ skill.name }}
+                                <span v-if="skill.modified" class="modified-badge"
+                                    :title="t('skills.modified')">✎</span>
+                            </span>
+                            <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
+                        </div>
+                        <button v-if="(skill.source ?? 'local') === 'local'" class="skill-action-btn"
+                            :title="t('skills.delete')" :disabled="deletingSkills.has(skill.name)"
+                            @click.stop="confirmDelete(cat.name, skill.name)">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6" />
+                                <path d="M14 11v6" />
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                            </svg>
+                        </button>
+                        <NSwitch size="small" :value="skill.enabled !== false"
+                            :loading="togglingSkills.has(skill.name)"
+                            @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
+                    </button>
+                </div>
+            </div>
+        </template>
 
         <!-- Archived skills (separate section) -->
         <div v-if="filteredArchived.length > 0 || archived.length > 0" class="skill-category archive-section">
@@ -207,6 +363,59 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
     &:hover {
         background: rgba(var(--accent-primary-rgb), 0.04);
     }
+
+    &.sub {
+        padding-left: 22px;
+        font-size: 11px;
+        text-transform: none;
+        letter-spacing: 0;
+    }
+}
+
+// External-filter path group (outer level)
+.skill-path-group {
+    margin-bottom: 8px;
+}
+
+.path-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    background: none;
+    color: #f59e0b;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: $radius-sm;
+    text-align: left;
+
+    &:hover {
+        background: rgba(245, 158, 11, 0.08);
+    }
+}
+
+.path-header-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: #f59e0b;
+}
+
+.path-header-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    direction: rtl;
+    text-align: left;
+}
+
+.path-group-body {
+    padding-left: 4px;
 }
 
 .category-arrow {
@@ -335,5 +544,31 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
 .skill-archived {
     opacity: 0.6;
     padding-left: 28px;
+}
+
+.skill-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: $text-muted;
+    border-radius: $radius-sm;
+    cursor: pointer;
+    padding: 0;
+    transition: background $transition-fast, color $transition-fast;
+
+    &:hover:not(:disabled) {
+        background: rgba(220, 38, 38, 0.12);
+        color: #dc2626;
+    }
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
 }
 </style>

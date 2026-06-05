@@ -119,6 +119,7 @@ export const USERS_SCHEMA: Record<string, string> = {
   created_at: 'INTEGER NOT NULL',
   updated_at: 'INTEGER NOT NULL',
   last_login_at: 'INTEGER',
+  avatar: "TEXT NOT NULL DEFAULT ''",
 }
 
 export const USER_PROFILES_TABLE = 'user_profiles'
@@ -204,6 +205,8 @@ export const GC_ROOM_MEMBERS_SCHEMA: Record<string, string> = {
   description: "TEXT NOT NULL DEFAULT ''",
   joinedAt: 'INTEGER NOT NULL',
   updatedAt: 'INTEGER NOT NULL',
+  avatar: "TEXT NOT NULL DEFAULT ''",
+  authUserId: 'INTEGER',
 }
 
 export const GC_PENDING_SESSION_DELETES_TABLE = 'gc_pending_session_deletes'

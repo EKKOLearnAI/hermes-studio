@@ -9,6 +9,13 @@ import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../s
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import {
+  getCachedProviderModels,
+  readProviderModelCatalogCache,
+  refreshConfiguredProviderModelCatalogs,
+  writeProviderModelCatalogEntry,
+  type ProviderModelCatalogCache,
+} from '../../services/hermes/model-catalog-cache'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
@@ -195,7 +202,8 @@ function providerShouldFetchLiveModels(providerKey: string): boolean {
   return providerKey === 'openrouter' ||
     providerKey === 'cliproxyapi' ||
     providerKey === 'ollama-cloud' ||
-    providerKey === 'lmstudio'
+    providerKey === 'lmstudio' ||
+    providerKey === 'nvidia'
 }
 
 function includeConfiguredDefaultModel(providerKey: string, modelsList: string[], currentDefault: string, currentDefaultProvider: string): string[] {
@@ -278,7 +286,7 @@ async function isCopilotAuthorized(envContent: string): Promise<boolean> {
 
 async function buildAvailableForProfile(
   profile: string,
-  fetchCache: ProviderFetchCache,
+  modelCatalogCache: ProviderModelCatalogCache,
   appConfig: Awaited<ReturnType<typeof readAppConfig>>,
 ): Promise<{
   profile: string
@@ -324,14 +332,6 @@ async function buildAvailableForProfile(
     } catch { return false }
   }
 
-  let copilotLiveModels: CopilotModelMeta[] | null = null
-  const getCopilotLive = async (): Promise<CopilotModelMeta[]> => {
-    if (copilotLiveModels !== null) return copilotLiveModels
-    try { copilotLiveModels = await getCopilotModelsDetailed(envContent) }
-    catch { copilotLiveModels = [] }
-    return copilotLiveModels
-  }
-
   const groups: AvailableGroup[] = []
   const seenProviders = new Set<string>()
   const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
@@ -364,38 +364,13 @@ async function buildAvailableForProfile(
       baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
     }
     const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
-    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
-    let modelMeta: Record<string, ModelMeta> | undefined
-    if (providerKey === 'copilot') {
-      const live = await getCopilotLive()
-      if (live.length > 0) {
-        modelsList = live.map((m) => m.id)
-        modelMeta = {}
-        for (const m of live) {
-          if (m.preview || m.disabled) {
-            modelMeta[m.id] = {
-              ...(m.preview ? { preview: true } : {}),
-              ...(m.disabled ? { disabled: true } : {}),
-            }
-          }
-        }
-        if (Object.keys(modelMeta).length === 0) modelMeta = undefined
-      }
-    } else if (providerShouldFetchLiveModels(providerKey)) {
-      if (envMapping.api_key_env) {
-        const apiKey = envGetValue(envMapping.api_key_env)
-        if (apiKey) {
-          try {
-            const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey, providerKey === 'openrouter')
-            if (fetched.length > 0) modelsList = fetched
-          } catch { /* ignore live catalog failures */ }
-        }
-      }
-    }
+    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : [...(preset?.models || [])]
+    const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl, providerKey === 'openrouter')
+    if (cachedModels) modelsList = [...cachedModels]
     modelsList = includeConfiguredDefaultModel(providerKey, modelsList, currentDefault, currentDefaultProvider)
     if (modelsList.length > 0) {
       const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
-      addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
+      addGroup(providerKey, label, baseUrl, modelsList, apiKey, true)
     }
   }
 
@@ -407,11 +382,14 @@ async function buildAvailableForProfile(
       if (!cp.base_url) return null
       const providerKey = providerKeyForCustom(cp.name)
       const baseUrl = cp.base_url.replace(/\/+$/, '')
-      let models = [cp.model].filter(Boolean)
-      if (cp.api_key) {
-        const fetched = await cachedProviderModels(fetchCache, baseUrl, cp.api_key)
-        if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
-      }
+      const builtinProviderKey = providerKeyWithoutCustomPrefix(providerKey)
+      const builtinPreset = PROVIDER_PRESETS.find((preset: any) => preset.value === builtinProviderKey)
+      const builtinCatalogModels = isBuiltinProviderKey(providerKey)
+        ? PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset?.models || []
+        : []
+      let models = [...new Set([cp.model, ...builtinCatalogModels].filter(Boolean))]
+      const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl)
+      if (cachedModels) models = [...new Set([...models, ...cachedModels])]
       return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
     }),
   )
@@ -448,10 +426,10 @@ export async function getAvailable(ctx: any) {
       const modelAliases = normalizeAliases(appConfig.modelAliases)
       const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
       const customModels = normalizeCustomModels(appConfig.customModels)
-      const fetchCache: ProviderFetchCache = new Map()
+      const modelCatalogCache = await readProviderModelCatalogCache()
       const visibleProfiles = visibleProfileNamesForUser(ctx)
       const profileResults = await Promise.all(
-        visibleProfiles.map(profile => buildAvailableForProfile(profile, fetchCache, appConfig)),
+        visibleProfiles.map(profile => buildAvailableForProfile(profile, modelCatalogCache, appConfig)),
       )
       const mergedGroups = mergeAvailableGroups(profileResults.flatMap(result => result.groups))
       const groupsWithAliases = applyModelAliases(mergedGroups, modelAliases)
@@ -465,7 +443,10 @@ export async function getAvailable(ctx: any) {
         defaultProfile?.default_provider || '',
         visibleGroups,
       )
-      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p))
+      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
+        p,
+        getCachedProviderModels(modelCatalogCache, p.value, p.base_url, p.value === 'openrouter') || p.models,
+      ))
       ctx.body = {
         default: visibleDefault.defaultModel,
         default_provider: visibleDefault.defaultProvider,
@@ -488,7 +469,8 @@ export async function getAvailable(ctx: any) {
     const modelAliasesForProfile = normalizeAliases(appConfigForProfile.modelAliases)
     const modelVisibilityForProfile = normalizeModelVisibility(appConfigForProfile.modelVisibility)
     const customModelsForProfile = normalizeCustomModels(appConfigForProfile.customModels)
-    const profileResult = await buildAvailableForProfile(requestedProfile, new Map(), appConfigForProfile)
+    const modelCatalogCacheForProfile = await readProviderModelCatalogCache()
+    const profileResult = await buildAvailableForProfile(requestedProfile, modelCatalogCacheForProfile, appConfigForProfile)
     const profileGroupsWithAliases = applyModelAliases(profileResult.groups, modelAliasesForProfile)
     const visibleProfileGroups = applyModelVisibility(profileGroupsWithAliases, modelVisibilityForProfile)
     const visibleProfileDefault = resolveVisibleDefault(profileResult.default, profileResult.default_provider, visibleProfileGroups)
@@ -496,7 +478,10 @@ export async function getAvailable(ctx: any) {
       default: visibleProfileDefault.defaultModel,
       default_provider: visibleProfileDefault.defaultProvider,
       groups: visibleProfileGroups,
-      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p)), modelAliasesForProfile),
+      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
+        p,
+        getCachedProviderModels(modelCatalogCacheForProfile, p.value, p.base_url, p.value === 'openrouter') || p.models,
+      )), modelAliasesForProfile),
       model_aliases: modelAliasesForProfile,
       model_visibility: modelVisibilityForProfile,
       custom_models: customModelsForProfile,
@@ -786,10 +771,12 @@ export async function removeCustomModel(ctx: any) {
 
 export async function fetchProviderModelList(ctx: any) {
   try {
-    const body = ctx.request.body as { base_url?: string; api_key?: string; freeOnly?: boolean }
+    const body = ctx.request.body as { base_url?: string; api_key?: string; freeOnly?: boolean; provider?: string; label?: string; update_cache?: boolean }
     const baseUrl = String(body?.base_url || '').trim()
     const apiKey = String(body?.api_key || '').trim()
     const freeOnly = body?.freeOnly === true
+    const provider = String(body?.provider || '').trim()
+    const label = String(body?.label || provider).trim()
 
     if (!baseUrl) {
       ctx.status = 400
@@ -837,10 +824,31 @@ export async function fetchProviderModelList(ctx: any) {
       .map(m => String(m?.id || '').trim())
       .filter(Boolean)
     if (freeOnly) models = models.filter(m => m.endsWith(':free'))
-    ctx.body = { models: Array.from(new Set(models)).sort() }
+    const uniqueModels = Array.from(new Set(models)).sort()
+    if (body?.update_cache === true && provider) {
+      await writeProviderModelCatalogEntry({
+        provider,
+        label,
+        base_url: baseUrl,
+        models: uniqueModels,
+        source: 'live',
+        free_only: freeOnly,
+      })
+    }
+    ctx.body = { models: uniqueModels }
   } catch (err: any) {
     ctx.status = err?.name === 'TimeoutError' ? 504 : 502
     ctx.body = { error: err?.message || 'Failed to fetch provider models' }
+  }
+}
+
+export async function refreshProviderModelCatalogCache(ctx: any) {
+  try {
+    await refreshConfiguredProviderModelCatalogs({ force: true })
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to refresh provider model cache' }
   }
 }
 

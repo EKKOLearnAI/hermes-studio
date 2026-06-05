@@ -22,7 +22,8 @@ files:
   - "!**/node_modules/.bin"
   - "!**/{.DS_Store,.git,.gitignore,.eslintrc*,.prettierrc*,*.map,tsconfig.json}"
 
-# Web UI source (built dist) and bundled Python live outside the asar.
+# Web UI source (built dist) lives outside the asar. Python/Node/Git runtime
+# assets are downloaded into the user's Web UI home on first launch.
 # This package lives at packages/desktop, so ../.. is the hermes-web-ui repo root.
 extraResources:
   - from: "build"
@@ -32,6 +33,7 @@ extraResources:
       - "icon.ico"
       - "trayTemplate.png"
       - "trayWindows.png"
+      - "runtime-release.json"
   - from: "../.."
     to: "webui"
     filter:
@@ -44,10 +46,6 @@ extraResources:
       - "!packages/desktop/**"
       - "!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}"
       - "!node_modules/**/*.md"
-  - from: "resources/python/${os}-${arch}"
-    to: "python"
-    filter:
-      - "**/*"
 
 asarUnpack:
   - "**/*.node"

@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'fs'
+import { execFile } from 'child_process'
+import { existsSync, readFileSync, readdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
+import { promisify } from 'util'
 import { stripLegacyApiServerGatewayConfig } from '../config-helpers'
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
@@ -7,6 +9,9 @@ import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
 import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
 import { execHermesWithBin } from './hermes-process'
+
+const execFileAsync = promisify(execFile)
+const GATEWAY_RUNTIME_FILES = ['gateway.pid', 'gateway.lock', 'gateway_state.json'] as const
 
 const RESERVED_PROFILE_NAMES = new Set([
   'hermes', 'test', 'tmp', 'root', 'sudo',
@@ -41,8 +46,172 @@ function isTermuxRuntime(): boolean {
 }
 
 function envFlagEnabled(name: string): boolean {
-  const value = String(process.env[name] || '').trim().toLowerCase()
+  return envValueFlagEnabled(process.env[name])
+}
+
+function envValueFlagEnabled(value: unknown): boolean {
+  const normalized = String(value || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+function envFlagEnabledIn(env: NodeJS.ProcessEnv, name: string): boolean {
+  return envValueFlagEnabled(env[name])
+}
+
+function envFlagDisabledIn(env: NodeJS.ProcessEnv, name: string): boolean {
+  const value = String(env[name] || '').trim().toLowerCase()
   return ['1', 'true', 'yes', 'on'].includes(value)
+}
+
+export function shouldRecoverWindowsDesktopGatewayOrphans(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (platform !== 'win32') return false
+  if (!envFlagEnabledIn(env, 'HERMES_DESKTOP')) return false
+  return !envFlagDisabledIn(env, 'HERMES_WEB_UI_DISABLE_GATEWAY_STARTUP_RECOVERY')
+}
+
+function listGatewayRuntimeProfileDirs(hermesHome?: string): string[] {
+  const base = hermesHome || getProfileDir('default')
+  const dirs = new Set<string>([base])
+  const profilesRoot = join(base, 'profiles')
+  try {
+    for (const entry of readdirSync(profilesRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.trim()) {
+        dirs.add(join(profilesRoot, entry.name))
+      }
+    }
+  } catch {}
+  return [...dirs]
+}
+
+function readGatewayRuntimePid(path: string, fileName: string): number | null {
+  if (!existsSync(path)) return null
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf-8'))
+    if (fileName === 'gateway_state.json') {
+      const state = String(data?.gateway_state || '').toLowerCase()
+      if (state && state !== 'running' && state !== 'starting') return null
+    }
+    const pid = typeof data?.pid === 'number' ? data.pid : parseInt(String(data?.pid || ''), 10)
+    return Number.isFinite(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+async function taskkillWindowsProcessTree(pid: number): Promise<void> {
+  await execFileAsync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+    timeout: 5000,
+    windowsHide: true,
+  })
+}
+
+export interface GatewayStartupRecoveryResult {
+  attempted: boolean
+  profileDirs: string[]
+  stoppedProfileDirs: string[]
+  killedPids: number[]
+  deletedFiles: string[]
+  errors: number
+}
+
+export async function recoverWindowsDesktopGatewayOrphans(opts: {
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
+  hermesHome?: string
+  isAlive?: (pid: number) => boolean
+  stopGateway?: (profileDir: string) => Promise<void>
+  execTaskkill?: (pid: number) => Promise<void>
+  unlinkFile?: (path: string) => void
+} = {}): Promise<GatewayStartupRecoveryResult> {
+  const platform = opts.platform || process.platform
+  const env = opts.env || process.env
+  if (!shouldRecoverWindowsDesktopGatewayOrphans(platform, env)) {
+    return { attempted: false, profileDirs: [], stoppedProfileDirs: [], killedPids: [], deletedFiles: [], errors: 0 }
+  }
+
+  const isAlive = opts.isAlive || isProcessAlive
+  const stopGateway = opts.stopGateway || (async (profileDir: string) => {
+    await execHermesWithBin(resolveHermesBin(), ['gateway', 'stop'], {
+      timeout: 10000,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        HERMES_HOME: profileDir,
+      },
+    })
+  })
+  const execTaskkill = opts.execTaskkill || taskkillWindowsProcessTree
+  const unlinkFile = opts.unlinkFile || unlinkSync
+  const profileDirs = listGatewayRuntimeProfileDirs(opts.hermesHome)
+  const pids = new Set<number>()
+
+  for (const profileDir of profileDirs) {
+    for (const fileName of GATEWAY_RUNTIME_FILES) {
+      const pid = readGatewayRuntimePid(join(profileDir, fileName), fileName)
+      if (pid !== null) pids.add(pid)
+    }
+  }
+
+  const stoppedProfileDirs: string[] = []
+  const killedPids: number[] = []
+  const deletedFiles: string[] = []
+  let errors = 0
+
+  for (const profileDir of profileDirs) {
+    try {
+      await stopGateway(profileDir)
+      stoppedProfileDirs.push(profileDir)
+    } catch (err) {
+      errors += 1
+      logger.warn(err, '[gateway-autostart] Hermes gateway stop failed during Windows desktop startup recovery profileDir=%s', profileDir)
+    }
+  }
+
+  for (const pid of pids) {
+    if (!isAlive(pid)) continue
+    try {
+      await execTaskkill(pid)
+      killedPids.push(pid)
+    } catch (err) {
+      errors += 1
+      logger.warn(err, '[gateway-autostart] failed to recover orphan Windows gateway PID %d', pid)
+    }
+  }
+
+  for (const profileDir of profileDirs) {
+    for (const fileName of GATEWAY_RUNTIME_FILES) {
+      const filePath = join(profileDir, fileName)
+      if (!existsSync(filePath)) continue
+      try {
+        unlinkFile(filePath)
+        deletedFiles.push(filePath)
+      } catch (err) {
+        errors += 1
+        logger.warn(err, '[gateway-autostart] failed to remove gateway runtime file %s', filePath)
+      }
+    }
+  }
+
+  if (killedPids.length || deletedFiles.length) {
+    logger.warn(
+      '[gateway-autostart] recovered Windows desktop gateway runtime before startup killedPids=%s deletedFiles=%s',
+      killedPids.join(',') || 'none',
+      deletedFiles.length,
+    )
+  }
+
+  return { attempted: true, profileDirs, stoppedProfileDirs, killedPids, deletedFiles, errors }
+}
+
+let windowsDesktopGatewayRecoveryAttempted = false
+
+async function recoverWindowsDesktopGatewayOrphansOnce(): Promise<void> {
+  if (windowsDesktopGatewayRecoveryAttempted) return
+  windowsDesktopGatewayRecoveryAttempted = true
+  await recoverWindowsDesktopGatewayOrphans()
 }
 
 export function shouldUseManagedGatewayRun(): boolean {
@@ -259,6 +428,8 @@ export async function clearApiServerForProfile(profileDir: string): Promise<void
 }
 
 export async function ensureProfileGatewaysRunning(): Promise<void> {
+  await recoverWindowsDesktopGatewayOrphansOnce()
+
   const hermesBin = resolveHermesBin()
   const profiles = listProfileNamesFromDisk()
   let gatewayStatuses: Map<string, string> | undefined

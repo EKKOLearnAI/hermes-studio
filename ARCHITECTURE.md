@@ -70,8 +70,9 @@ Frontend rules:
 
 Desktop packaging is intentionally split:
 
-- Pull requests run a Linux desktop smoke test in `.github/workflows/build.yml`.
-- Published releases and manual dispatches run `.github/workflows/desktop-release.yml`.
+- Pull requests run the web UI build and tests in `.github/workflows/build.yml`.
+- Published releases and manual dispatches run desktop artifact packaging in `.github/workflows/desktop-release.yml`
+  and `.github/workflows/desktop-manual-build.yml`.
 - Each release matrix target uploads only the artifact globs for its own platform.
 
 Do not make a Windows job require macOS `.dmg` files or a Linux job require
