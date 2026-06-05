@@ -1,10 +1,10 @@
 import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
-import { desktopIcon, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin } from './paths'
+import { bundledNode, desktopIcon, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
-import { installHermesStudioCliShim } from './cli-shim'
+import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-shim'
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import {
   cachedRuntimeNeedsPackagedReleaseUpdate,
@@ -450,6 +450,16 @@ function runDesktopApp() {
         }
       }).catch(err => {
         console.warn(`[cli-shim] failed to install hermes-studio command: ${err instanceof Error ? err.message : String(err)}`)
+      })
+      installHermesStudioMcpShim({
+        nodePath: bundledNode(),
+        scriptPath: join(webuiDir(), 'bin', 'hermes-web-ui-mcp.mjs'),
+      }).then(result => {
+        if (result.status === 'skipped') {
+          console.warn(`[cli-shim] ${result.reason}: ${result.shimPath}`)
+        }
+      }).catch(err => {
+        console.warn(`[cli-shim] failed to install hermes-studio-mcp command: ${err instanceof Error ? err.message : String(err)}`)
       })
     }
     createTray()

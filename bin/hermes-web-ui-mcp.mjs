@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 const DEFAULT_PORT = process.env.HERMES_WEB_UI_PORT || process.env.PORT || '8648'
 const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`
+const SERVER_NAME = process.env.HERMES_MCP_SERVER_NAME || 'hermes-web-ui-mcp'
 
 function appHome() {
   return process.env.HERMES_WEB_UI_HOME ||
@@ -274,7 +275,7 @@ async function handle(message) {
           result: {
             protocolVersion: message.params?.protocolVersion || '2024-11-05',
             capabilities: { tools: {} },
-            serverInfo: { name: 'hermes-lan-peer-mcp', version: '0.1.0' },
+            serverInfo: { name: SERVER_NAME, version: '0.1.0' },
           },
         }
       case 'tools/list':
