@@ -178,6 +178,7 @@ watch(currentToolCalls, () => {
           aria-hidden="true"
           class="thinking-video"
         >
+        <span class="thinking-spinner" aria-hidden="true"></span>
         <div v-if="visibleToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
           <!-- Abort indicator -->
           <div v-if="chatStore.abortState" class="tool-call-item compression-item">
@@ -620,12 +621,54 @@ watch(currentToolCalls, () => {
   align-items: flex-start;
   gap: 12px;
   padding: 4px;
+
   .thinking-video {
     width: 120px;
     height: 213px;
     border-radius: $radius-md;
     object-fit: contain;
     flex-shrink: 0;
+  }
+
+  .thinking-spinner {
+    display: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 8px;
+    border: 2px solid rgba(128, 128, 128, 0.35);
+    border-top-color: var(--accent-primary, #18a058);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .streaming-indicator {
+    align-items: flex-start;
+    gap: 8px;
+
+    .thinking-video {
+      display: none;
+    }
+
+    .thinking-spinner {
+      display: inline-block;
+    }
+  }
+
+  .tool-calls-panel {
+    min-width: 0;
+    flex: 1;
+    max-height: none;
+  }
+
+  .tool-call-item {
+    min-width: 0;
+  }
+
+  .tool-call-preview {
+    max-width: none;
   }
 }
 
