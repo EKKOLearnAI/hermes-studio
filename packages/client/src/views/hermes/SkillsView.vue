@@ -341,6 +341,14 @@ function handlePinToggled(name: string, pinned: boolean) {
   .header-action-btn {
     width: 30px;
     padding: 0;
+
+    :deep(.n-button__content) {
+      justify-content: center;
+    }
+
+    :deep(.n-button__icon) {
+      margin: 0;
+    }
   }
 }
 
