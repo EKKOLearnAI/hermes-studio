@@ -51,6 +51,12 @@ export interface ApprovalConfig {
   timeout?: number
 }
 
+export interface GatewayAutoStartConfig {
+  enabled?: boolean
+  include?: string[]
+  exclude?: string[]
+}
+
 export interface AppConfig {
   display?: DisplayConfig
   agent?: AgentConfig
@@ -59,6 +65,7 @@ export interface AppConfig {
   session_reset?: SessionResetConfig
   privacy?: PrivacyConfig
   approvals?: ApprovalConfig
+  gatewayAutoStart?: GatewayAutoStartConfig
   telegram?: Record<string, any>
   discord?: Record<string, any>
   slack?: Record<string, any>

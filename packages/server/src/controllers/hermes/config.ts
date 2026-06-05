@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { restartGatewayForProfile } from '../../services/hermes/gateway-autostart'
+import { readAppConfig, writeAppConfig, normalizeGatewayAutoStartConfig } from '../../services/app-config'
 import { saveEnvValueForProfile } from '../../services/config-helpers'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
@@ -11,6 +12,8 @@ const PLATFORM_SECTIONS = new Set([
   'weixin', 'wecom', 'feishu', 'dingtalk', 'qqbot',
   'approvals',
 ])
+
+const APP_CONFIG_SECTIONS = new Set(['gatewayAutoStart'])
 
 function requestedProfile(ctx: any): string {
   const headerProfile = typeof ctx.get === 'function' ? ctx.get('x-hermes-profile') : ''
@@ -183,6 +186,8 @@ export async function getConfig(ctx: any) {
   try {
     const profile = requestedProfile(ctx)
     const config = await readConfig(profile)
+    const appConfig = await readAppConfig()
+    const gatewayAutoStart = normalizeGatewayAutoStartConfig(appConfig.gatewayAutoStart)
     const envPlatforms = await readEnvPlatforms(profile)
     if (Object.keys(envPlatforms).length > 0) {
       const existing = config.platforms || {}
@@ -193,14 +198,22 @@ export async function getConfig(ctx: any) {
     }
     const { section, sections } = ctx.query
     if (section) {
-      ctx.body = { [section as string]: config[section as string] || {} }
+      const key = section as string
+      if (key === 'gatewayAutoStart') {
+        ctx.body = { gatewayAutoStart }
+        return
+      }
+      ctx.body = { [key]: config[key] || {} }
     } else if (sections) {
       const keys = (sections as string).split(',')
       const result: Record<string, any> = {}
-      for (const key of keys) { result[key.trim()] = config[key.trim()] || {} }
+      for (const key of keys) {
+        const trimmed = key.trim()
+        result[trimmed] = trimmed === 'gatewayAutoStart' ? gatewayAutoStart : (config[trimmed] || {})
+      }
       ctx.body = result
     } else {
-      ctx.body = config
+      ctx.body = { ...config, gatewayAutoStart }
     }
   } catch (err: any) {
     ctx.status = 500; ctx.body = { error: err.message }
@@ -213,6 +226,20 @@ export async function updateConfig(ctx: any) {
     ctx.status = 400; ctx.body = { error: 'Missing section or values' }; return
   }
   try {
+    if (APP_CONFIG_SECTIONS.has(section)) {
+      if (section === 'gatewayAutoStart') {
+        const appConfig = await readAppConfig()
+        const next: Record<string, any> = { ...(appConfig.gatewayAutoStart || {}), ...values }
+        if ('include' in values && !Array.isArray(values.include)) delete next.include
+        if ('exclude' in values && !Array.isArray(values.exclude)) delete next.exclude
+        if ('enabled' in values && typeof values.enabled !== 'boolean') delete next.enabled
+        const gatewayAutoStart = normalizeGatewayAutoStartConfig(next)
+        await writeAppConfig({ gatewayAutoStart })
+        ctx.body = { success: true, gatewayAutoStart }
+        return
+      }
+    }
+
     const profile = requestedProfile(ctx)
     await safeFileStore.updateYaml(configPath(profile), (config) => {
       config[section] = deepMerge(config[section] || {}, values)

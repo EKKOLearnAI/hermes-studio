@@ -16,6 +16,31 @@ export interface GatewayAutoStartConfig {
   exclude?: string[]
 }
 
+function normalizeProfileList(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const value of values) {
+    const name = String(value || '').trim()
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    names.push(name)
+  }
+  return names
+}
+
+export function normalizeGatewayAutoStartConfig(value: unknown): GatewayAutoStartConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const raw = value as Record<string, unknown>
+  const normalized: GatewayAutoStartConfig = {}
+
+  if (typeof raw.enabled === 'boolean') normalized.enabled = raw.enabled
+  if (Array.isArray(raw.include)) normalized.include = normalizeProfileList(raw.include)
+  if (Array.isArray(raw.exclude)) normalized.exclude = normalizeProfileList(raw.exclude)
+
+  return normalized
+}
+
 export interface AppConfig {
   // Whether GitHub Copilot has been explicitly added by the user in web-ui.
   // Default false: even when COPILOT_GITHUB_TOKEN / gh-cli / apps.json can

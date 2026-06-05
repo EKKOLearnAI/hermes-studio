@@ -10,6 +10,7 @@ import { useI18n } from "vue-i18n";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import DisplaySettings from "@/components/hermes/settings/DisplaySettings.vue";
 import AgentSettings from "@/components/hermes/settings/AgentSettings.vue";
+import GatewayAutoStartSettings from "@/components/hermes/settings/GatewayAutoStartSettings.vue";
 import MemorySettings from "@/components/hermes/settings/MemorySettings.vue";
 import CompressionSettings from "@/components/hermes/settings/CompressionSettings.vue";
 import SessionSettings from "@/components/hermes/settings/SessionSettings.vue";
@@ -97,6 +98,7 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="agent" :tab="t('settings.tabs.agent')">
             <AgentSettings />
+            <GatewayAutoStartSettings />
           </NTabPane>
           <NTabPane name="memory" :tab="t('settings.tabs.memory')">
             <MemorySettings />
