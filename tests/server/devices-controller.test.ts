@@ -104,4 +104,66 @@ describe('devices controller', () => {
     expect(ctx.status).toBe(403)
     expect(ctx.body).toEqual({ error: 'Device pairing has not been approved' })
   })
+
+  it('records outbound status when requesting pairing from a device with inbound history', async () => {
+    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
+        '../../packages/server/src/services/lan-discovery',
+      )
+      return {
+        ...actual,
+        getLanDiscoveryCache: () => ({
+          scanning: false,
+          last_scanned_at: new Date().toISOString(),
+          devices: [device],
+        }),
+      }
+    })
+    vi.doMock('../../packages/server/src/services/system-info', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/system-info')>(
+        '../../packages/server/src/services/system-info',
+      )
+      return {
+        ...actual,
+        getPublicSystemInfo: async () => ({
+          device_id: 'hwui_local',
+          device_public_key: keyPair.publicKey,
+          computer_name: 'local',
+          os: { type: 'TestOS', platform: 'linux', release: '1', arch: 'x64' },
+          hermes_agent_version: 'v1',
+          hermes_web_ui_version: '1',
+        }),
+        createDeviceSignature: async () => 'signature',
+      }
+    })
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'pending' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { requestInboundDeviceLink, updateInboundStatus, getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    requestInboundDeviceLink(device)
+    updateInboundStatus(device.id, 'approved')
+
+    const { requestDevicePairing } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      params: { id: device.id },
+      request: { body: {} },
+    }
+
+    await requestDevicePairing(ctx)
+
+    const relation = getDeviceRelation(device.id)
+    expect(ctx.status).toBeUndefined()
+    expect(relation?.inbound_status).toBe('approved')
+    expect(relation?.outbound_status).toBe('pending')
+    expect(relation?.outbound_requested_at).toBeGreaterThan(0)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://192.168.1.20:8648/api/devices/link-request',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
 })

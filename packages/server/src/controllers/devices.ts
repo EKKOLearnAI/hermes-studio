@@ -489,9 +489,8 @@ export async function requestDevicePairing(ctx: any) {
       ctx.body = { error: typeof data.error === 'string' ? data.error : `Request failed: ${response.status}` }
       return
     }
-    if (parseRemoteStatus(data.status) === 'approved') {
-      updateOutboundStatus(target.id, 'approved', target)
-    }
+    const remoteStatus = parseRemoteStatus(data.status) || 'pending'
+    if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
     ctx.body = await devicesPayload()
   } catch (err: any) {
     ctx.status = 502
