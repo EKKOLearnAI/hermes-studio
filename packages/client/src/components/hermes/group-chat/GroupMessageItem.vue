@@ -366,8 +366,7 @@ function playSpeech(content: string, autoplay = false) {
         const options = {
             provider: 'openai' as const,
             baseUrl: voiceSettings.openaiBaseUrl.value,
-            apiKey: voiceSettings.openaiApiKey.value,
-            model: voiceSettings.openaiModel.value,
+                  model: voiceSettings.openaiModel.value,
             voice: voiceSettings.openaiVoice.value,
         }
         if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
@@ -379,8 +378,7 @@ function playSpeech(content: string, autoplay = false) {
         const options = {
             provider: 'custom' as const,
             baseUrl: voiceSettings.customUrl.value,
-            apiKey: voiceSettings.customApiKey.value || undefined,
-        }
+              }
         if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
         else speech.openaiToggle(props.message.id, content, options)
         return
@@ -398,17 +396,14 @@ function playSpeech(content: string, autoplay = false) {
         return
     }
     if (voiceSettings.provider.value === 'mimo') {
-        if (!voiceSettings.mimoApiKey.value) return
         const options = {
             baseUrl: voiceSettings.mimoBaseUrl.value,
-            apiKey: voiceSettings.mimoApiKey.value,
             authMode: voiceSettings.mimoAuthMode.value,
             model: voiceSettings.mimoModel.value,
             voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' as const : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' as const : 'preset' as const,
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-            voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
-            voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
+                  voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
         }
         if (autoplay) void speech.mimoPlay(props.message.id, content, options).catch(handleAutoplayTtsError)

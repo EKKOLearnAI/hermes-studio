@@ -605,7 +605,6 @@ function handleSpeechToggle() {
     speech.openaiToggle(props.message.id, content, {
       provider: 'openai',
       baseUrl: voiceSettings.openaiBaseUrl.value,
-      apiKey: voiceSettings.openaiApiKey.value,
       model: voiceSettings.openaiModel.value,
       voice: voiceSettings.openaiVoice.value,
     })
@@ -622,7 +621,6 @@ function handleSpeechToggle() {
     speech.openaiToggle(props.message.id, content, {
       provider: 'custom',
       baseUrl: voiceSettings.customUrl.value,
-      apiKey: voiceSettings.customApiKey.value || undefined,
     })
     return
   }
@@ -643,20 +641,13 @@ function handleSpeechToggle() {
 
   // MiMo TTS 模式
   if (voiceSettings.provider.value === 'mimo') {
-    const apiKey = voiceSettings.mimoApiKey.value
-    if (!apiKey) {
-      console.warn('[MessageItem] MiMo TTS API Key 为空')
-      return
-    }
     speech.mimoToggle(props.message.id, content, {
       baseUrl: voiceSettings.mimoBaseUrl.value,
-      apiKey,
       authMode: voiceSettings.mimoAuthMode.value,
       model: voiceSettings.mimoModel.value,
       voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
       voice: voiceSettings.mimoVoice.value,
       voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-      voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
       voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
       stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
     })
@@ -693,8 +684,7 @@ onMounted(() => {
         if (apiUrl) void speech.openaiPlay(props.message.id, content, {
           provider: 'openai',
           baseUrl: voiceSettings.openaiBaseUrl.value,
-          apiKey: voiceSettings.openaiApiKey.value,
-          model: voiceSettings.openaiModel.value,
+              model: voiceSettings.openaiModel.value,
           voice: voiceSettings.openaiVoice.value,
         }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'custom') {
@@ -702,8 +692,7 @@ onMounted(() => {
         if (apiUrl) void speech.openaiPlay(props.message.id, content, {
           provider: 'custom',
           baseUrl: voiceSettings.customUrl.value,
-          apiKey: voiceSettings.customApiKey.value || undefined,
-        }).catch(handleAutoplayTtsError)
+            }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'edge') {
         void speech.openaiPlay(props.message.id, content, {
           provider: 'edge',
@@ -713,21 +702,16 @@ onMounted(() => {
           pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
         }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'mimo') {
-        const apiKey = voiceSettings.mimoApiKey.value
-        if (apiKey) {
-          void speech.mimoPlay(props.message.id, content, {
+        void speech.mimoPlay(props.message.id, content, {
             baseUrl: voiceSettings.mimoBaseUrl.value,
-            apiKey,
             authMode: voiceSettings.mimoAuthMode.value,
             model: voiceSettings.mimoModel.value,
             voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
             voice: voiceSettings.mimoVoice.value,
             voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-            voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
-            voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
+                  voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
             stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
           }).catch(handleAutoplayTtsError)
-        }
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)
         if (text) {

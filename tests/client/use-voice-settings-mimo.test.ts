@@ -20,7 +20,7 @@ describe('useVoiceSettings MiMo settings', () => {
     expect(settings.mimoVoiceCloneFormat.value).toBe('wav')
   })
 
-  it('persists MiMo auth mode and voice clone fields', async () => {
+  it('persists MiMo auth mode and voice clone metadata without clone audio data', async () => {
     const { useVoiceSettings } = await import('../../packages/client/src/composables/useVoiceSettings')
     const settings = useVoiceSettings()
 
@@ -31,10 +31,11 @@ describe('useVoiceSettings MiMo settings', () => {
     settings.setMimoVoiceCloneFormat('mp3')
     await nextTick()
 
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).toMatchObject({
+    const raw = localStorage.getItem(STORAGE_KEY) || '{}'
+    expect(raw).not.toContain('data:audio/mp3')
+    expect(JSON.parse(raw)).toMatchObject({
       mimoAuthMode: 'api-key',
       mimoModel: 'mimo-v2.5-tts-voiceclone',
-      mimoVoiceCloneDataUri: 'data:audio/mp3;base64,ZmFrZQ==',
       mimoVoiceCloneFileName: 'sample.mp3',
       mimoVoiceCloneFormat: 'mp3',
     })

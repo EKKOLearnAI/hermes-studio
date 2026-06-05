@@ -13,7 +13,6 @@ export interface SpeechOptions {
 
 export interface OpenaiTtsOptions {
   baseUrl: string
-  apiKey?: string
   model?: string
   voice?: string
   rate?: string   // Edge TTS rate format, e.g. "+20%"
@@ -23,7 +22,6 @@ export interface OpenaiTtsOptions {
 
 export interface MimoTtsOptions {
   baseUrl: string
-  apiKey: string
   authMode?: 'api-key' | 'bearer' | 'both'
   model: string
   voice?: string              // preset voice ID (preset mode)
@@ -328,6 +326,11 @@ export function useSpeech() {
     }
   }
 
+  function stripClientSecrets(options: Record<string, unknown>): Record<string, unknown> {
+    const { apiKey: _apiKey, voiceCloneDataUri: _voiceCloneDataUri, voiceCloneFileName: _voiceCloneFileName, ...safeOptions } = options
+    return safeOptions
+  }
+
   async function playUnifiedCustomTts(
     messageId: string,
     text: string,
@@ -351,7 +354,7 @@ export function useSpeech() {
       const { audio } = await synthesizeSpeech({
         provider,
         text,
-        options,
+        options: stripClientSecrets(options),
         signal: abortController.signal,
       })
 

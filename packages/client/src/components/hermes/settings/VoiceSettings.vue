@@ -4,6 +4,8 @@ import { NSelect, NInput, NButton, NSlider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { useSpeech } from '@/composables/useSpeech'
+import { fetchTtsSettings, saveTtsSettings } from '@/api/hermes/tts-settings'
+import type { StoredTtsProvider, TtsStoredSecretsInput, TtsStoredSettings } from '@/api/hermes/tts-settings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import SettingRow from './SettingRow.vue'
 
@@ -119,13 +121,11 @@ function buildMimoTtsOptions() {
   const voiceMode = getMimoVoiceMode()
   return {
     baseUrl: vs.mimoBaseUrl.value,
-    apiKey: vs.mimoApiKey.value,
     authMode: vs.mimoAuthMode.value,
     model: vs.mimoModel.value,
     voiceMode,
     voice: voiceMode === 'preset' ? vs.mimoVoice.value : undefined,
     voiceDesignDesc: voiceMode === 'voiceDesign' ? vs.mimoVoiceDesignDesc.value || undefined : undefined,
-    voiceCloneDataUri: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneDataUri.value || undefined : undefined,
     voiceCloneFormat: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneFormat.value : undefined,
     stylePrompt: vs.mimoStylePrompt.value || undefined,
   }
@@ -181,9 +181,98 @@ function clearMimoCloneAudio() {
   if (mimoCloneAudioInput.value) mimoCloneAudioInput.value.value = ''
 }
 
+const settingsSaving = ref(false)
+const settingsStatus = ref('')
+
+onMounted(async () => {
+  try {
+    vs.applyServerTtsSettings(await fetchTtsSettings())
+  } catch (err) {
+    console.warn('[VoiceSettings] Failed to load server TTS settings:', err)
+  }
+})
+
+function buildProviderSettings(provider: StoredTtsProvider): TtsStoredSettings {
+  if (provider === 'openai') {
+    return {
+      baseUrl: vs.openaiBaseUrl.value,
+      model: vs.openaiModel.value,
+      voice: vs.openaiVoice.value,
+    }
+  }
+  if (provider === 'custom') {
+    return {
+      baseUrl: vs.customUrl.value,
+    }
+  }
+  if (provider === 'edge') {
+    return {
+      voice: vs.edgeVoice.value,
+      rate: speedToEdgeRate(vs.edgeRate.value),
+      pitch: hzToEdgePitch(vs.edgePitchHz.value),
+    }
+  }
+  const voiceMode = getMimoVoiceMode()
+  return {
+    baseUrl: vs.mimoBaseUrl.value,
+    authMode: vs.mimoAuthMode.value,
+    model: vs.mimoModel.value,
+    voiceMode,
+    voice: voiceMode === 'preset' ? vs.mimoVoice.value : undefined,
+    voiceDesignDesc: voiceMode === 'voiceDesign' ? vs.mimoVoiceDesignDesc.value || undefined : undefined,
+    voiceCloneFormat: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneFormat.value : undefined,
+    stylePrompt: vs.mimoStylePrompt.value || undefined,
+  }
+}
+
+function buildProviderSecrets(provider: StoredTtsProvider): TtsStoredSecretsInput {
+  if (provider === 'openai') {
+    return vs.openaiApiKey.value ? { apiKey: vs.openaiApiKey.value } : {}
+  }
+  if (provider === 'custom') {
+    return vs.customApiKey.value ? { apiKey: vs.customApiKey.value } : {}
+  }
+  if (provider === 'mimo') {
+    const secrets: TtsStoredSecretsInput = {}
+    if (vs.mimoApiKey.value) secrets.apiKey = vs.mimoApiKey.value
+    if (vs.mimoVoiceCloneDataUri.value) {
+      secrets.voiceCloneDataUri = vs.mimoVoiceCloneDataUri.value
+      if (vs.mimoVoiceCloneFileName.value) secrets.voiceCloneFileName = vs.mimoVoiceCloneFileName.value
+    }
+    return secrets
+  }
+  return {}
+}
+
+async function saveCurrentProviderSettings(): Promise<boolean> {
+  if (vs.provider.value === 'webspeech') {
+    settingsStatus.value = 'WebSpeech settings saved locally.'
+    return true
+  }
+  const provider = vs.provider.value as StoredTtsProvider
+  settingsSaving.value = true
+  settingsStatus.value = ''
+  try {
+    const setting = await saveTtsSettings(provider, {
+      settings: buildProviderSettings(provider),
+      secrets: buildProviderSecrets(provider),
+    })
+    vs.applyServerTtsSettings([setting])
+    settingsStatus.value = 'TTS settings saved on server.'
+    return true
+  } catch (err) {
+    console.error('[VoiceSettings] Failed to save server TTS settings:', err)
+    settingsStatus.value = 'Failed to save TTS settings.'
+    return false
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
 async function handleTest() {
   const text = testText.value.trim()
   if (!text) return
+  if (vs.provider.value !== 'webspeech' && !(await saveCurrentProviderSettings())) return
   testPlaying.value = true
   try {
     if (vs.provider.value === 'webspeech') {
@@ -199,7 +288,6 @@ async function handleTest() {
       await speech.openaiPlay('__test__', text, {
         provider: 'openai',
         baseUrl: vs.openaiBaseUrl.value,
-        apiKey: vs.openaiApiKey.value || undefined,
         model: vs.openaiModel.value,
         voice: vs.openaiVoice.value,
       })
@@ -211,7 +299,6 @@ async function handleTest() {
       await speech.openaiPlay('__test__', text, {
         provider: 'custom',
         baseUrl: vs.customUrl.value,
-        apiKey: vs.customApiKey.value || undefined,
       })
     } else if (vs.provider.value === 'edge') {
       await speech.openaiPlay('__test__', text, {
@@ -222,10 +309,6 @@ async function handleTest() {
         pitch: hzToEdgePitch(vs.edgePitchHz.value),
       })
     } else if (vs.provider.value === 'mimo') {
-      if (!vs.mimoApiKey.value) {
-        console.warn('[VoiceSettings] MiMo API Key empty')
-        return
-      }
       await speech.mimoPlay('__test__', text, buildMimoTtsOptions())
     }
   } catch (err) {
@@ -289,6 +372,9 @@ async function handleTest() {
           placeholder="sk-..."
           @update:value="vs.setOpenaiApiKey"
         />
+        <div v-if="vs.openaiHasApiKey.value || vs.openaiApiKey.value" class="secret-status">
+          Stored server key: {{ vs.openaiApiKey.value ? 'will be updated on save' : vs.openaiApiKeyPreview.value }}
+        </div>
       </SettingRow>
 
       <SettingRow
@@ -364,6 +450,9 @@ async function handleTest() {
           :placeholder="t('settings.voice.customApiKeyPlaceholder')"
           @update:value="vs.setCustomApiKey"
         />
+        <div v-if="vs.customHasApiKey.value || vs.customApiKey.value" class="secret-status">
+          Stored server key: {{ vs.customApiKey.value ? 'will be updated on save' : vs.customApiKeyPreview.value }}
+        </div>
       </SettingRow>
 
 
@@ -445,6 +534,9 @@ async function handleTest() {
           :placeholder="t('settings.voice.mimoApiKeyPlaceholder')"
           @update:value="vs.setMimoApiKey"
         />
+        <div v-if="vs.mimoHasApiKey.value || vs.mimoApiKey.value" class="secret-status">
+          Stored server key: {{ vs.mimoApiKey.value ? 'will be updated on save' : vs.mimoApiKeyPreview.value }}
+        </div>
       </SettingRow>
 
       <SettingRow
@@ -540,6 +632,9 @@ async function handleTest() {
           <span v-if="vs.mimoVoiceCloneFileName.value" class="clone-audio-name">
             {{ vs.mimoVoiceCloneFileName.value }} · {{ vs.mimoVoiceCloneFormat.value }}
           </span>
+          <span v-else-if="vs.mimoHasVoiceCloneData.value" class="clone-audio-name">
+            Stored on server
+          </span>
           <NButton
             v-if="vs.mimoVoiceCloneDataUri.value"
             size="small"
@@ -571,6 +666,18 @@ async function handleTest() {
     <!-- ─── Test / Audition ─── -->
     <div class="test-section">
       <h4 class="test-title">{{ t('settings.voice.testTitle') }}</h4>
+      <div class="test-row">
+        <NButton
+          size="small"
+          secondary
+          :loading="settingsSaving"
+          :disabled="settingsSaving"
+          @click="saveCurrentProviderSettings"
+        >
+          Save TTS settings
+        </NButton>
+        <span v-if="settingsStatus" class="settings-status">{{ settingsStatus }}</span>
+      </div>
       <div class="test-row">
         <NInput
           v-model:value="testText"
@@ -646,6 +753,13 @@ async function handleTest() {
 
 .hidden-file-input {
   display: none;
+}
+
+.secret-status,
+.settings-status {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
 }
 
 .clone-audio-name {
