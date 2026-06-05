@@ -6,8 +6,9 @@
 >
 > 最后重建时间：2026-06-03。
 >
-> 维护要求：后续 PR 如果修改本文列出的普通 Chat 链路核心文件，需要同步更新
-> “最近链路变更记录”，写清楚修改时间、PR/commit、动到的功能和行为影响。
+> 维护要求：后续 PR 如果修改本文列出的普通 Chat 链路核心文件，需要新增
+> `docs/chat-chain-changes/` 下的独立变更片段。每个 PR 一个变更片段，写清楚
+> 修改时间、PR/commit、动到的功能和行为影响，避免多个 PR 同时改本文产生冲突。
 > `packages/server/src/services/hermes/agent-bridge/` 是普通 Chat 的核心链路，
 > 该目录下任何改动都算 Chat 链路改动；即使只是启动、环境变量、日志或品牌
 > attribution，也要记录影响范围，必要时明确“运行行为无变化”。
@@ -49,30 +50,25 @@ ChatPanel / ChatInput
 
 ### 最近链路变更记录
 
-| 时间 | PR / commit | 动到的功能 | 链路影响 |
-| --- | --- | --- | --- |
-| 2026-06-05 | #1344 | Chat resume bridge status 探测 | `ChatRunSocket.resume` 改用 broker 的 `status_if_loaded` 查询，只在对应 profile worker 已存在时转发为 worker `status`，不会因为进入/切换会话而冷启动 profile worker。若 worker 已加载且原 run 仍在运行，仍会通过 `resumeBridgeRun()` 继续接回 `run_id` 的 delta/events；不存在的 session status 不会污染 broker session route。 |
-| 2026-06-05 | #1339 `9c1bbbf` | Web UI origin policy 和安全响应头 | `/chat-run` 与 `/group-chat` 共用的 Socket.IO server 改用统一 origin allowlist；默认只允许同 host 浏览器来源，显式 `CORS_ORIGINS=*` 才保留 wildcard。只影响浏览器 origin 握手边界和响应头，不改变 run 协议、消息落库、resume、approval、queue 或 group-chat agent 执行逻辑。 |
-| 2026-06-04 | #1337 | Group Chat socket reconnect/rejoin | `/group-chat` 前端 store 在 socket reconnect 后会重新 join 当前 room，并合并 join ack 中返回的消息以补回断线期间错过的内容；同时恢复 members/agents/typing/context status。若用户在 ack 返回前切换房间，会忽略旧 room ack；join ack 中的 `rooms` 字符串列表不会覆盖前端 `RoomInfo[]` 房间列表，避免路由和侧边栏状态被污染。 |
-| 2026-06-04 | #1333 | reasoning 多轮合并为单条 assistant 消息 | `chat.ts` 用独立的 reasoning 目标合并 `reasoning.delta` / `thinking.delta`，所以同一 run 内跨 tool cycle 的 thinking 会收敛到同一条 assistant 气泡；`tool.started` 仍会切断正文流目标，后续 `message.delta` 会在 tool 后新建 assistant，避免最终正文插回工具前。 |
-| 2026-06-04 | local | CLI bridge abort 超时同步 | `/chat-run` abort 路径在 Hermes Agent 协作式 interrupt 未能在 bridge 同步窗口内完成时，不再提前清理 Web UI `isWorking/runId` 或启动队列，而是发送 `abort.timeout` 并保持 session locked/aborting；同会话新消息继续进入队列，避免旧 Agent run 尚未退出时触发 `session ... is already running`。当前端后续收到 bridge terminal chunk 时再发送 `abort.completed` 并释放状态。前端新增 `abort.timeout` 事件展示“仍在停止中”，并移除本地 20s 自动清 running 兜底。 |
-| 2026-06-04 | #1320 `237fd954` | Agent Bridge restart/resume；shutdown/stop timing | Web UI `restart`/页面内升级通过 `SIGUSR2` 保留 Agent Bridge，server 重启后 `ChatRunSocket.resume` 会查询 bridge status 并通过 `resumeBridgeRun()` 继续 poll 既有 `run_id` 的 delta/events。真实 `stop`/`SIGTERM` 仍会请求 bridge shutdown；非桌面 shutdown 兜底延长到 15s 以覆盖 worker 清理窗口，桌面 `HERMES_DESKTOP=true` 默认仍保持 3s。CLI `restart` 仍使用 5s grace，CLI `stop` 最长等 15s 且进程退出后立即返回。 |
-| 2026-06-04 | #1303 | Chat / Group Chat 工具详情与完成事件边界 | 前端 message item 和 store mapping 现在保留 object / array / number / boolean 工具 payload，`0` / `false` 不再因为 falsy 判断被隐藏；普通文本结果继续按 TEXT 展示。空 `run.completed.parsed_content` 只会保留当前流式 assistant 内容，不会把旧 assistant 消息误当成本次输出。 |
-| 2026-06-04 | local | OpenRouter attribution title | `manager.ts` 的 bridge 默认 OpenRouter attribution title 从 `Hermes Web UI` 改为 `Hermes Studio`，与 `https://hermes-studio.ai` referer 品牌保持一致；只影响 OpenRouter dashboard attribution，不改变 `/chat-run` 协议、消息落库、模型调用或 run 生命周期。 |
-| 2026-06-04 | local | Hermes 原生 AI session title 回传 | `hermes_bridge.py` 在 bridge run 完成后后台调用 Hermes 原生 `maybe_auto_title()` 写入 Hermes `state.db`，并提示标题语言跟随用户首条消息；Node 在 `run.completed` 后后台按 `session_id` 短轮询 `get_session_title`，同步 Web UI 本地 `sessions.title` 并推给前端。只在本地标题仍为空或等于首条消息/preview fallback 时应用，用户手动改过的标题不会被覆盖；不阻塞最终回复、usage、goal continuation 或队列执行，也不改 run 生命周期。 |
-| 2026-06-03 | #1289 `7848256` | tool result / unified diff 展示 | `MessageItem.vue`、`GroupMessageItem.vue`、`MarkdownRenderer.vue` 和共享 highlighter 对 unified diff 走专门展示路径：tool result JSON 中的 diff 字段只显示 diff body，长段未改动上下文静态折叠，复制仍保留完整原始内容；不改变 `/chat-run` 协议、消息落库、工具审批或 group-chat agent 执行行为。 |
-| 2026-06-03 | #1284 `2aeed108` | Windows Agent Bridge 子进程输出解码 | `hermes_bridge.py` 的 Windows parent PID 探测和 stale bridge 进程清理改用平台文本编码读取 `tasklist.exe` / `taskkill.exe` 输出，并忽略不可解码字节；修复本地 code page 输出导致 subprocess reader 线程抛 `UnicodeDecodeError` 的问题，不改变 `/chat-run` 协议、消息落库或工具审批行为。 |
-| 2026-06-03 | #1273 `91bb68dc` | 用户头像上传；group-chat 成员头像同步 | auth 用户头像进入 group-chat 成员展示链路，`/group-chat` handshake 携带 `authUserId`，服务端按用户 id/name 查头像并同步给 room members；不改变普通 Chat run，但改变 group-chat 成员元数据和消息展示。 |
-| 2026-06-03 | #1272 `2f1686da` | Bridge 工具审批 allowlist；Bridge 文本/turn boundary 回调 | `hermes_bridge.py` 在 agent 创建和每次 run 开始时刷新 `tools.approval` 的 `command_allowlist` 进程内缓存，保证“始终允许”写入配置后，后续同 profile run 能读到。`stream_delta_callback` 现在只转发 turn boundary，不再把 agent 的文本 delta 再追加一遍，避免和 `stream_callback` 重复。 |
-| 2026-06-03 | #1263 `e6648456` | 上下文压缩辅助模型配置 | 新增 profile 级 `auxiliary.compression` 设置。Chat 压缩链路在 `buildCompressedHistory()`、bridge forced compression 和运行中 compression request 中都会解析 compression 专用 provider/model；`auto` 使用当前 session model/provider，`main` 使用 profile 默认模型，显式配置则使用 compression 专用模型。 |
-| 2026-06-02 | #1240 `6792a451` | 消息语音播放 | 普通 Chat 的 `MessageItem.vue` 使用 `useSpeech.toggleBrowser()` 处理 Web Speech 播放/暂停，修复浏览器语音无法按同一消息切换暂停/继续的问题；同时更新 bridge OpenRouter attribution 环境变量品牌值。 |
-| 2026-05-30 | #1145 `cb410e50` | Bridge 文本和工具事件顺序 | Bridge 将每个文本 chunk 同步写入 `events` 中的 `stream.delta`，Node 端在事件循环内按顺序处理 `stream.delta`，并在同一 chunk 已有 ordered delta 时跳过聚合 `chunk.delta`，避免“文本 -> tool -> 文本”场景把字拆开或重复输出。 |
-| 2026-05-28 | #1080 `a6b3bec2` | 历史消息分页和虚拟列表 | 前端 session 状态新增 `messageTotal`、`loadedMessageCount`、`hasMoreBefore` 等字段；HTTP session API 新增分页消息读取；`resume` payload 携带分页元数据。刷新、切换、多 tab resume 时不再一次性加载全部历史消息。 |
+变更记录按 PR 拆分保存在 `docs/chat-chain-changes/`。新增 Chat session chain、
+Agent Bridge、compression 或 Group Chat 核心链路改动时，新增一个 fragment 文件，
+不要继续修改本文维护集中表格。
 
-近期不属于本文普通 Chat 主链路的 PR：
+每个 fragment 至少包含：
 
-- #1266 `98bdc257`：provider base URL preset 映射，影响模型配置表单，不改变 `/chat-run` 执行链路。
-- #1262 `fd2b42ac`：workspace 文件预览，影响文件浏览/预览，不改变 Chat run、resume、approval 或 compression 链路。
+```md
+---
+date: YYYY-MM-DD
+pr: 1234
+feature: 改动功能
+impact: 行为影响
+---
+
+补充说明。
+```
+
+开 PR 前还没有编号时可以先写 `pr: pending`，PR 创建后再把该 fragment 改成实际
+PR 号。
 
 ## 2. 主要文件
 

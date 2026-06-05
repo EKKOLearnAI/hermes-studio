@@ -27,7 +27,7 @@ npm run build
 | Server controller/service/db | focused `npm run test -- tests/server/<file>` |
 | Auth, profile, or credential behavior | focused server tests plus relevant e2e auth tests |
 | Chat, Socket.IO, group chat | focused server tests plus relevant e2e chat tests |
-| Chat session chain, Agent Bridge, compression, or Group Chat | Update `docs/cli-chat-sessions.md` "最近链路变更记录" with date, PR/commit, touched feature, and behavior impact; then run `npm run harness:check` plus focused chat/bridge/group-chat tests |
+| Chat session chain, Agent Bridge, compression, or Group Chat | Add one `docs/chat-chain-changes/*.md` fragment with date, PR/commit, touched feature, and behavior impact; then run `npm run harness:check` plus focused chat/bridge/group-chat tests |
 | Desktop packaging | `npm run harness:check`, `npm run build`, and a platform-specific desktop build when practical |
 | GitHub workflow | `npm run harness:check` and `actionlint` when available |
 | Package manifests | `npm ci --ignore-scripts` and lockfile workflow expectations |
