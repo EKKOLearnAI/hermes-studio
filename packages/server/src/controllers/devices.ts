@@ -11,6 +11,7 @@ import {
   type DeviceOutboundStatus,
 } from '../db/hermes/devices-store'
 import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
+import { getLanPeerSocketManager } from '../services/lan-peer-socket'
 import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
@@ -280,6 +281,40 @@ export async function deleteDeviceRequestHistory(ctx: any) {
   } catch {
     ctx.status = 404
     ctx.body = { error: 'Device request not found' }
+  }
+}
+
+export async function listPeerConnections(ctx: any) {
+  ctx.body = {
+    connections: getLanPeerSocketManager().listConnections(),
+  }
+}
+
+export async function connectPeerDevice(ctx: any) {
+  const target = findDiscoveredDevice(ctx.params.id)
+  if (!target) {
+    ctx.status = 404
+    ctx.body = { error: 'Device not found' }
+    return
+  }
+
+  try {
+    const connection = await getLanPeerSocketManager().connectToDevice(target)
+    ctx.body = { connection }
+  } catch (err: any) {
+    ctx.status = 502
+    ctx.body = { error: err?.message || 'Failed to connect peer device' }
+  }
+}
+
+export async function disconnectPeerDevice(ctx: any) {
+  if (!getLanPeerSocketManager().disconnect(ctx.params.connectionId)) {
+    ctx.status = 404
+    ctx.body = { error: 'Peer connection not found' }
+    return
+  }
+  ctx.body = {
+    connections: getLanPeerSocketManager().listConnections(),
   }
 }
 

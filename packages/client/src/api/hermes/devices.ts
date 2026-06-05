@@ -40,6 +40,15 @@ export interface LanDiscoveryState {
   requests: LanDeviceInfo[]
 }
 
+export interface LanPeerConnectionInfo {
+  id: string
+  role: 'server' | 'client'
+  device_id: string
+  computer_name: string
+  url: string
+  connected_at: number
+}
+
 export async function fetchLanDevices(): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>('/api/devices')
 }
@@ -70,4 +79,19 @@ export async function unblockDevice(id: string): Promise<LanDiscoveryState> {
 
 export async function deleteDeviceRequestHistory(id: string): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/request-history`, { method: 'DELETE' })
+}
+
+export async function fetchLanPeerConnections(): Promise<{ connections: LanPeerConnectionInfo[] }> {
+  return request<{ connections: LanPeerConnectionInfo[] }>('/api/devices/peer-connections')
+}
+
+export async function connectLanPeerDevice(id: string): Promise<{ connection: LanPeerConnectionInfo }> {
+  return request<{ connection: LanPeerConnectionInfo }>(`/api/devices/${encodeURIComponent(id)}/connect`, { method: 'POST' })
+}
+
+export async function disconnectLanPeerDevice(connectionId: string): Promise<{ connections: LanPeerConnectionInfo[] }> {
+  return request<{ connections: LanPeerConnectionInfo[] }>(
+    `/api/devices/peer-connections/${encodeURIComponent(connectionId)}/disconnect`,
+    { method: 'POST' },
+  )
 }

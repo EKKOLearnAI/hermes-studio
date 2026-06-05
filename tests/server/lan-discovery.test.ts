@@ -118,6 +118,7 @@ describe('LAN discovery', () => {
   it('registers device request routes before auth and management routes behind auth', () => {
     const source = readFileSync('packages/server/src/routes/index.ts', 'utf8')
     const deviceRoutesSource = readFileSync('packages/server/src/routes/devices.ts', 'utf8')
+    const bootstrapSource = readFileSync('packages/server/src/index.ts', 'utf8')
 
     const authIndex = source.indexOf('authMiddleware.forEach')
     const publicDeviceIndex = source.indexOf('app.use(devicePublicRoutes.routes())')
@@ -128,6 +129,9 @@ describe('LAN discovery', () => {
     expect(deviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceRoutesSource).toContain("devicePublicRoutes.post('/api/devices/link-status'")
     expect(deviceRoutesSource).toContain("deviceRoutes.delete('/api/devices/:id/request-history'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/:id/connect'")
+    expect(bootstrapSource).toContain('getLanPeerSocketPath()')
     expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)
   })

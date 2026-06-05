@@ -23,6 +23,7 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
+import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
@@ -246,7 +247,8 @@ export async function bootstrap() {
 
   setupTerminalWebSocket(servers)
   setupKanbanEventsWebSocket(servers)
-  console.log('[bootstrap] terminal + kanban websocket setup')
+  getLanPeerSocketManager().setupServer(servers)
+  console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -268,7 +270,10 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
+      if (url.pathname !== '/api/hermes/terminal' &&
+        url.pathname !== '/api/hermes/kanban/events' &&
+        url.pathname !== getLanPeerSocketPath() &&
+        !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }
     })
