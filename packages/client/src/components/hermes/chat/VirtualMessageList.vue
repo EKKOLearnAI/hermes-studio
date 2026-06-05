@@ -67,6 +67,7 @@ let bottomFrame: number | null = null;
 let bottomFrameRemaining = 0;
 let bottomFrameAttempts = 0;
 let programmaticScrollUntil = 0;
+let userDetachedFromBottom = false;
 let anchorFrame: number | null = null;
 let anchorToken = 0;
 let activeAnchorTarget: AnchorTarget | null = null;
@@ -109,9 +110,18 @@ function cancelBottomScroll() {
 }
 
 function handleScroll() {
+  const previousScrollTop = scrollTop.value;
   syncViewport();
-  if (!isProgrammaticScroll() && !isNearBottom(96)) {
-    cancelBottomScroll();
+  if (!isProgrammaticScroll()) {
+    const delta = scrollTop.value - previousScrollTop;
+    if (delta < -1) {
+      userDetachedFromBottom = true;
+    } else if (isNearBottom(32)) {
+      userDetachedFromBottom = false;
+    }
+    if (userDetachedFromBottom || !isNearBottom(96)) {
+      cancelBottomScroll();
+    }
   }
   emit("scroll");
   if (scrollTop.value <= props.topThreshold) emit("topReach");
@@ -129,9 +139,14 @@ function isNearBottom(threshold = 200): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
+function shouldAutoFollowBottom(threshold = 200): boolean {
+  return !userDetachedFromBottom && isNearBottom(threshold);
+}
+
 function scrollToBottom(options: BottomScrollOptions = {}) {
   const frames = typeof options === "number" ? options : options.frames ?? 2;
   const keepAliveMs = typeof options === "number" ? 400 : options.keepAliveMs ?? 400;
+  userDetachedFromBottom = false;
   keepBottomUntil = Date.now() + keepAliveMs;
   nextTick(() => {
     scheduleScrollToBottom(frames);
@@ -332,6 +347,7 @@ function captureViewportPosition(): ViewportScrollSnapshot | null {
 function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames = 4) {
   if (!snapshot) return;
   cancelBottomScroll();
+  userDetachedFromBottom = !snapshot.wasNearBottom;
   if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
 
   nextTick(() => {
@@ -387,6 +403,7 @@ watch(messageKeys, () => {
 
 defineExpose({
   isNearBottom,
+  shouldAutoFollowBottom,
   scrollToBottom,
   scrollToMessage,
   scrollToAnchor,

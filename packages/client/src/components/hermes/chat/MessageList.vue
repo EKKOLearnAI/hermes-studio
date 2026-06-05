@@ -101,8 +101,8 @@ function queuedPreview(content: string): string {
   return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
 }
 
-function isNearBottom(threshold = 200): boolean {
-  return listRef.value?.isNearBottom(threshold) ?? true;
+function shouldAutoFollowBottom(threshold = 200): boolean {
+  return listRef.value?.shouldAutoFollowBottom(threshold) ?? true;
 }
 
 function scrollToBottom(options?: BottomScrollOptions) {
@@ -202,7 +202,7 @@ watch(
       scrollToMessage(chatStore.focusMessageId);
       return;
     }
-    if (!isNearBottom()) return;
+    if (!shouldAutoFollowBottom()) return;
     scrollToBottom({ frames: 1, keepAliveMs: 0 });
   },
 );
@@ -212,7 +212,7 @@ watch(currentToolCalls, () => {
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
-  if (!isNearBottom()) return;
+  if (!shouldAutoFollowBottom()) return;
   scrollToBottom({ frames: 1, keepAliveMs: 0 });
 });
 

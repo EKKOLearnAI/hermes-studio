@@ -12,6 +12,7 @@ const mockRestoreViewportPosition = vi.hoisted(() => vi.fn())
 const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
 const mockRestoreScrollPosition = vi.hoisted(() => vi.fn())
 const mockIsNearBottom = vi.hoisted(() => vi.fn(() => true))
+const mockShouldAutoFollowBottom = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -40,6 +41,7 @@ vi.mock('@/components/hermes/chat/VirtualMessageList.vue', () => ({
         restoreScrollPosition: mockRestoreScrollPosition,
         captureViewportPosition: mockCaptureViewportPosition,
         restoreViewportPosition: mockRestoreViewportPosition,
+        shouldAutoFollowBottom: mockShouldAutoFollowBottom,
       })
     },
     template: `
@@ -85,6 +87,7 @@ describe('MessageList session scroll position', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mockIsNearBottom.mockReturnValue(true)
+    mockShouldAutoFollowBottom.mockReturnValue(true)
   })
 
   it('restores a previous session scroll position instead of forcing the bottom', async () => {
@@ -137,7 +140,7 @@ describe('MessageList session scroll position', () => {
       makeMessage('user-message'),
       { id: 'assistant-message', role: 'assistant', content: 'first', timestamp: Date.now(), isStreaming: true },
     ]
-    mockIsNearBottom.mockReturnValue(false)
+    mockShouldAutoFollowBottom.mockReturnValue(false)
 
     mount(MessageList, {
       global: {
@@ -150,7 +153,7 @@ describe('MessageList session scroll position', () => {
     chatStore.activeSession.messages[1].content = 'first second'
     await nextTick()
 
-    expect(mockIsNearBottom).toHaveBeenCalled()
+    expect(mockShouldAutoFollowBottom).toHaveBeenCalled()
     expect(mockScrollToBottom).not.toHaveBeenCalled()
   })
 

@@ -92,4 +92,35 @@ describe('VirtualMessageList scroll behavior', () => {
     expect(dynamicScrollToBottomMock).not.toHaveBeenCalled()
     expect(scroller.element.scrollTop).toBe(120)
   })
+
+  it('locks auto-follow as soon as the user scrolls upward during streaming', async () => {
+    const wrapper = mount(VirtualMessageList, {
+      props: {
+        messages: [{ id: 'message-1' }],
+      },
+      slots: {
+        item: '<div>message</div>',
+      },
+    })
+    await nextTick()
+
+    const scroller = wrapper.find<HTMLElement>('.virtual-message-list')
+    setScrollerMetrics(scroller.element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 600,
+    })
+    await scroller.trigger('scroll')
+
+    scroller.element.scrollTop = 580
+    await scroller.trigger('scroll')
+
+    expect((wrapper.vm as any).isNearBottom(200)).toBe(true)
+    expect((wrapper.vm as any).shouldAutoFollowBottom(200)).toBe(false)
+
+    scroller.element.scrollTop = 600
+    await scroller.trigger('scroll')
+
+    expect((wrapper.vm as any).shouldAutoFollowBottom(200)).toBe(true)
+  })
 })
