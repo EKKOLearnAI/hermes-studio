@@ -131,7 +131,7 @@ function isNearBottom(threshold = 200): boolean {
 
 function scrollToBottom(options: BottomScrollOptions = {}) {
   const frames = typeof options === "number" ? options : options.frames ?? 2;
-  const keepAliveMs = typeof options === "number" ? 250 : options.keepAliveMs ?? 250;
+  const keepAliveMs = typeof options === "number" ? 400 : options.keepAliveMs ?? 400;
   keepBottomUntil = Date.now() + keepAliveMs;
   nextTick(() => {
     scheduleScrollToBottom(frames);

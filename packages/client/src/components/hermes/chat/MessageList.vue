@@ -135,14 +135,14 @@ function applyInitialSessionScroll(sessionId: string) {
   if (snapshot) {
     pendingInitialScrollSessionId.value = null;
     if (snapshot.wasNearBottom) {
-      scrollToBottom({ frames: 3, keepAliveMs: 200 });
+      scrollToBottom({ frames: 4, keepAliveMs: 400 });
     } else {
       listRef.value?.restoreViewportPosition(snapshot);
     }
     return;
   }
 
-  scrollToBottom({ frames: 3, keepAliveMs: 200 });
+  scrollToBottom({ frames: 4, keepAliveMs: 400 });
   if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
 }
 
@@ -189,7 +189,7 @@ watch(
 watch(
   () => chatStore.isRunActive,
   (v) => {
-    if (v) scrollToBottom({ frames: 2, keepAliveMs: 180 });
+    if (v) scrollToBottom({ frames: 3, keepAliveMs: 400 });
   },
 );
 
