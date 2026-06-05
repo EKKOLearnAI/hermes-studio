@@ -44,12 +44,11 @@ describe('devices store', () => {
     vi.resetModules()
   })
 
-  it('keeps inbound approvals and outbound pairings independent', async () => {
+  it('keeps inbound requests independent from outbound pairing state', async () => {
     const {
       getDeviceRelation,
       requestInboundDeviceLink,
       updateInboundStatus,
-      updateOutboundStatus,
     } = await import('../../packages/server/src/db/hermes/devices-store')
 
     requestInboundDeviceLink(device)
@@ -63,11 +62,20 @@ describe('devices store', () => {
       inbound_status: 'approved',
       outbound_status: 'none',
     })
+  })
 
-    updateOutboundStatus(device.id, 'approved', device)
+  it('rejects duplicate inbound requests while one is pending', async () => {
+    const {
+      DuplicateDeviceRequestError,
+      getDeviceRelation,
+      requestInboundDeviceLink,
+    } = await import('../../packages/server/src/db/hermes/devices-store')
+
+    requestInboundDeviceLink(device)
+    expect(() => requestInboundDeviceLink(device)).toThrow(DuplicateDeviceRequestError)
     expect(getDeviceRelation(device.id)).toMatchObject({
-      inbound_status: 'approved',
-      outbound_status: 'approved',
+      inbound_status: 'pending',
+      outbound_status: 'none',
     })
   })
 })

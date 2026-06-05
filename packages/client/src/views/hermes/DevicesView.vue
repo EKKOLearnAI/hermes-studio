@@ -146,6 +146,10 @@ async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve'
       : await unblockDevice(device.id)
     state.value = next
   } catch (err: any) {
+    if (action === 'request' && String(err?.message || '').includes('Duplicate pairing request')) {
+      message.warning(t('devices.duplicateRequest'))
+      return
+    }
     message.error(err?.message || t('devices.updateFailed'))
   } finally {
     updatingDeviceId.value = ''

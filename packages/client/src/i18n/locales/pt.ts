@@ -252,6 +252,7 @@ export default {
     loadFailed: 'Failed to load devices',
     scanFailed: 'Failed to scan devices',
     updateFailed: 'Failed to update device',
+    duplicateRequest: 'A pending pairing request already exists',
     requests: 'Requests',
     requestsWithCount: 'Requests ({count})',
     noRequests: 'No requests',

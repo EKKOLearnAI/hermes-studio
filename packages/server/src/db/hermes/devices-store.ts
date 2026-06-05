@@ -16,6 +16,13 @@ export type DeviceRelationRecord = Omit<LanDeviceInfo, 'last_seen_at'> & {
   updated_at: number
 }
 
+export class DuplicateDeviceRequestError extends Error {
+  constructor() {
+    super('Duplicate pairing request')
+    this.name = 'DuplicateDeviceRequestError'
+  }
+}
+
 type StoredDeviceRow = {
   id: string
   status?: DeviceInboundStatus
@@ -205,6 +212,10 @@ export function requestInboundDeviceLink(device: LanDeviceInfo): DeviceRelationR
   const now = Date.now()
   const existing = getDeviceRelation(device.id)
   const row = deviceToRow(device, existing, now)
+
+  if (existing?.inbound_status === 'pending') {
+    throw new DuplicateDeviceRequestError()
+  }
 
   if (existing?.inbound_status === 'blocked' || existing?.inbound_status === 'approved') {
     return saveRow(row)

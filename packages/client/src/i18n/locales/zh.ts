@@ -252,6 +252,7 @@ export default {
     loadFailed: '加载设备失败',
     scanFailed: '扫描设备失败',
     updateFailed: '更新设备失败',
+    duplicateRequest: '已存在待处理的配对申请',
     requests: '申请列表',
     requestsWithCount: '申请列表（{count}）',
     noRequests: '暂无申请',

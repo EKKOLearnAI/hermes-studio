@@ -1,5 +1,5 @@
 import {
-  getDeviceRelation,
+  DuplicateDeviceRequestError,
   listDeviceRelations,
   listPendingInboundRequests,
   requestInboundDeviceLink,
@@ -135,8 +135,17 @@ export async function requestDeviceLinkController(ctx: any) {
     return
   }
 
-  const record = requestInboundDeviceLink(device)
-  ctx.body = { status: record.inbound_status }
+  try {
+    const record = requestInboundDeviceLink(device)
+    ctx.body = { status: record.inbound_status }
+  } catch (err) {
+    if (err instanceof DuplicateDeviceRequestError) {
+      ctx.status = 409
+      ctx.body = { error: 'Duplicate pairing request' }
+      return
+    }
+    throw err
+  }
 }
 
 function transitionInboundDevice(ctx: any, status: DeviceInboundStatus) {
@@ -201,15 +210,15 @@ export async function requestDevicePairing(ctx: any) {
     })
     const data = await response.json().catch(() => ({})) as { status?: unknown; error?: unknown }
     if (!response.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : `Request failed: ${response.status}`)
+      ctx.status = response.status === 409 ? 409 : 502
+      ctx.body = { error: typeof data.error === 'string' ? data.error : `Request failed: ${response.status}` }
+      return
     }
-    updateOutboundStatus(target.id, normalizeRemoteStatus(data.status), target)
+    if (normalizeRemoteStatus(data.status) === 'approved') {
+      updateOutboundStatus(target.id, 'approved', target)
+    }
     ctx.body = devicesPayload()
   } catch (err: any) {
-    const existing = getDeviceRelation(target.id)
-    if (!existing || existing.outbound_status === 'none') {
-      updateOutboundStatus(target.id, 'pending', target)
-    }
     ctx.status = 502
     ctx.body = { error: err?.message || 'Failed to request device pairing' }
   } finally {

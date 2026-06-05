@@ -252,6 +252,7 @@ export default {
     loadFailed: '載入裝置失敗',
     scanFailed: '掃描裝置失敗',
     updateFailed: '更新裝置失敗',
+    duplicateRequest: '已存在待處理的配對申請',
     requests: '申請列表',
     requestsWithCount: '申請列表（{count}）',
     noRequests: '暫無申請',
