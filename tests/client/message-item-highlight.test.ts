@@ -82,6 +82,113 @@ describe('MessageItem tool details', () => {
     expect(blocks[1].find('.code-lang').text()).toBe('json')
   })
 
+  it('renders patch tool results with diff highlighting instead of plain text', async () => {
+    const patchResult = [
+      '*** Begin Patch',
+      '*** Update File: src/demo.ts',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n')
+
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'patch-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'patch',
+          toolResult: patchResult,
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const code = wrapper.find('.tool-details code.hljs')
+    expect(wrapper.find('.tool-details .code-lang').text()).toBe('diff')
+    expect(code.findAll('span').length).toBeGreaterThan(0)
+  })
+
+  it('normalizes non-string runtime tool payloads before rendering', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-object-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolArgs: { query: 'object args' },
+          toolResult: 42,
+          toolStatus: 'done',
+        } as unknown as Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const blocks = wrapper.findAll('.tool-details .hljs-code-block')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].find('.code-lang').text()).toBe('json')
+    expect(blocks[0].find('code').text()).toContain('object args')
+    expect(blocks[1].find('.code-lang').text()).toBe('json')
+    expect(blocks[1].find('code').text()).toBe('42')
+  })
+
+  it('renders falsy non-string runtime tool payloads', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-zero-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolResult: 0,
+          toolStatus: 'done',
+        } as unknown as Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const block = wrapper.find('.tool-details .hljs-code-block')
+    expect(block.exists()).toBe(true)
+    expect(block.find('.code-lang').text()).toBe('json')
+    expect(block.find('code').text()).toBe('0')
+  })
+
+  it('keeps plain string false payloads as text', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-text-false-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolResult: 'false',
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const block = wrapper.find('.tool-details .hljs-code-block')
+    expect(block.exists()).toBe(true)
+    expect(block.find('.code-lang').text()).toBe('text')
+    expect(block.find('code').text()).toBe('false')
+  })
+
   it('copies tool detail code through the delegated click handler', async () => {
     const writeText = vi.mocked(navigator.clipboard.writeText)
     const wrapper = mount(MessageItem, {
