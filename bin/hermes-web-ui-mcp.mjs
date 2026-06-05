@@ -7,6 +7,38 @@ import { join } from 'node:path'
 const DEFAULT_PORT = process.env.HERMES_WEB_UI_PORT || process.env.PORT || '8648'
 const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`
 const SERVER_NAME = process.env.HERMES_MCP_SERVER_NAME || 'hermes-web-ui-mcp'
+const VERSION = '0.1.0'
+
+function printHelp() {
+  process.stdout.write(`hermes-web-ui-mcp v${VERSION}
+
+Hermes Web UI MCP stdio server.
+
+Usage:
+  hermes-web-ui-mcp
+  hermes-web-ui-mcp --help
+  hermes-web-ui-mcp --version
+
+Environment:
+  HERMES_WEB_UI_URL       Web UI base URL. Default: ${DEFAULT_BASE_URL}
+  HERMES_WEB_UI_HOME      Web UI state directory. Default: ~/.hermes-web-ui
+  HERMES_WEBUI_STATE_DIR  Fallback Web UI state directory.
+  HERMES_WEB_UI_TOKEN     Optional explicit API token.
+  AUTH_TOKEN              Optional explicit API token fallback.
+
+When run without options, this process waits for MCP JSON-RPC messages on stdin.
+`)
+}
+
+if (process.argv.includes('-h') || process.argv.includes('--help')) {
+  printHelp()
+  process.exit(0)
+}
+
+if (process.argv.includes('-v') || process.argv.includes('--version')) {
+  process.stdout.write(`${SERVER_NAME} v${VERSION}\n`)
+  process.exit(0)
+}
 
 function appHome() {
   return process.env.HERMES_WEB_UI_HOME ||
@@ -283,7 +315,7 @@ async function handle(message) {
           result: {
             protocolVersion: message.params?.protocolVersion || '2024-11-05',
             capabilities: { tools: {} },
-            serverInfo: { name: SERVER_NAME, version: '0.1.0' },
+            serverInfo: { name: SERVER_NAME, version: VERSION },
           },
         }
       case 'tools/list':
