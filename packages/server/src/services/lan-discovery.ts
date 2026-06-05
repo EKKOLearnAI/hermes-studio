@@ -263,7 +263,7 @@ function normalizeDevice(data: any, sourceAddress: string, responseMs: number, s
   const endpointKind = data.endpoint_kind === 'web' || data.endpoint_kind === 'desktop' || data.endpoint_kind === 'custom'
     ? data.endpoint_kind
     : getLanEndpointKind(httpPort)
-  const url = typeof data.url === 'string' && data.url ? data.url : `http://${sourceAddress}:${httpPort}`
+  const url = `http://${sourceAddress}:${httpPort}`
   return {
     id: deviceId,
     device_id: deviceId,

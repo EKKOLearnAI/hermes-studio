@@ -77,4 +77,31 @@ describe('devices controller', () => {
     expect(ctx.status).toBeUndefined()
     expect(ctx.body).toEqual({ status: 'approved' })
   })
+
+  it('rejects peer socket connections until outbound pairing is approved locally', async () => {
+    vi.doMock('../../packages/server/src/services/lan-discovery', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/lan-discovery')>(
+        '../../packages/server/src/services/lan-discovery',
+      )
+      return {
+        ...actual,
+        getLanDiscoveryCache: () => ({
+          scanning: false,
+          last_scanned_at: new Date().toISOString(),
+          devices: [device],
+        }),
+      }
+    })
+
+    const { connectPeerDevice } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      params: { id: device.id },
+      request: { body: {} },
+    }
+
+    await connectPeerDevice(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Device pairing has not been approved' })
+  })
 })

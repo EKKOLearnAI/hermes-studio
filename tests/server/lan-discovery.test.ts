@@ -89,11 +89,39 @@ describe('LAN discovery', () => {
       device_id: fakeDeviceId,
       ip: '127.0.0.1',
       http_port: httpPort,
+      url: `http://127.0.0.1:${httpPort}`,
       endpoint_kind: 'custom',
       computer_name: 'test-machine',
       hermes_agent_version: 'v1.2.3',
       hermes_web_ui_version: '9.9.9',
     })
+  })
+
+  it('builds device URLs from the UDP source address instead of announced URLs', async () => {
+    const httpPort = 19003
+    const socket = startLanDiscoveryResponder({
+      httpPort,
+      getSystemInfo: async () => fakeInfo,
+    })
+    if (!socket) throw new Error('expected discovery responder socket')
+    await new Promise<void>(resolve => socket.once('listening', () => resolve()))
+
+    const originalSend = socket.send.bind(socket)
+    socket.send = ((message: any, port: any, address: any, callback?: any) => {
+      const announced = JSON.parse(Buffer.from(message).toString('utf8'))
+      announced.url = 'http://127.0.0.1:1'
+      return originalSend(Buffer.from(JSON.stringify(announced)), port, address, callback)
+    }) as typeof socket.send
+
+    const result = await scanLanDevices({
+      httpPorts: [httpPort],
+      targetAddresses: ['127.0.0.1'],
+      timeoutMs: 300,
+      includeSelf: true,
+    })
+
+    expect(result.devices).toHaveLength(1)
+    expect(result.devices[0].url).toBe(`http://127.0.0.1:${httpPort}`)
   })
 
   it('excludes the local machine from scan results by default', async () => {

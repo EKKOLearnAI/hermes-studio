@@ -307,6 +307,13 @@ export async function connectPeerDevice(ctx: any) {
     return
   }
 
+  const relation = getDeviceRelation(ctx.params.id)
+  if (relation?.outbound_status !== 'approved') {
+    ctx.status = 403
+    ctx.body = { error: 'Device pairing has not been approved' }
+    return
+  }
+
   try {
     const connection = await getLanPeerSocketManager().connectToDevice(target)
     ctx.body = { connection }
