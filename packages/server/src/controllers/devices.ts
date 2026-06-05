@@ -71,7 +71,7 @@ function normalizeIp(ctx: any): string {
 
 function bodyToDevice(ctx: any, body: any): LanDeviceInfo | null {
   const deviceId = typeof body?.device_id === 'string' ? body.device_id.trim() : ''
-  const publicKey = typeof body?.device_public_key === 'string' ? body.device_public_key.trim() : ''
+  const publicKey = typeof body?.device_public_key === 'string' ? body.device_public_key : ''
   const httpPort = Number(body?.http_port)
   if (!deviceId || !publicKey || !Number.isInteger(httpPort) || httpPort <= 0 || httpPort > 65535) return null
   const ip = normalizeIp(ctx)

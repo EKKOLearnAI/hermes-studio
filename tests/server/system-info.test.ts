@@ -101,6 +101,13 @@ describe('public system info', () => {
         timestamp,
         signature,
       })).toBe(false)
+      expect(verifyDeviceSignature({
+        device_id: deviceId,
+        device_public_key: first.publicKey.trim(),
+        nonce,
+        timestamp,
+        signature,
+      })).toBe(false)
     } finally {
       rmSync(appHome, { recursive: true, force: true })
     }
