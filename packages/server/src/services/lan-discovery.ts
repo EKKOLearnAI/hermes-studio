@@ -2,7 +2,7 @@ import dgram from 'dgram'
 import { networkInterfaces } from 'os'
 import { config } from '../config'
 import { logger } from './logger'
-import { getPublicSystemInfo, type PublicSystemInfo } from './system-info'
+import { deviceIdFromPublicKey, getPublicSystemInfo, type PublicSystemInfo } from './system-info'
 
 const DISCOVERY_VERSION = 1
 const DISCOVERY_PORT_OFFSET = 40_000
@@ -257,12 +257,17 @@ function normalizeDevice(data: any, sourceAddress: string, responseMs: number, s
   if (!data || data.type !== 'hermes.announce' || data.version !== DISCOVERY_VERSION) return null
   const httpPort = Number(data.http_port)
   if (!Number.isInteger(httpPort) || httpPort <= 0 || httpPort > 65535) return null
+  const deviceId = typeof data.device_id === 'string' && data.device_id ? data.device_id : ''
+  const devicePublicKey = typeof data.device_public_key === 'string' ? data.device_public_key : ''
+  if (!deviceId || !devicePublicKey || deviceIdFromPublicKey(devicePublicKey) !== deviceId) return null
   const endpointKind = data.endpoint_kind === 'web' || data.endpoint_kind === 'desktop' || data.endpoint_kind === 'custom'
     ? data.endpoint_kind
     : getLanEndpointKind(httpPort)
   const url = typeof data.url === 'string' && data.url ? data.url : `http://${sourceAddress}:${httpPort}`
   return {
-    id: `${sourceAddress}:${httpPort}`,
+    id: deviceId,
+    device_id: deviceId,
+    device_public_key: devicePublicKey,
     ip: sourceAddress,
     http_port: httpPort,
     endpoint_kind: endpointKind,

@@ -3,8 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { NButton, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
+  approveDevice,
+  blockDevice,
   fetchLanDevices,
+  rejectDevice,
   scanLanDevices,
+  unblockDevice,
+  type DeviceStatus,
   type LanDeviceInfo,
   type LanDiscoveryState,
   type LanEndpointKind,
@@ -15,6 +20,7 @@ const message = useMessage()
 
 const loading = ref(false)
 const scanning = ref(false)
+const updatingDeviceId = ref('')
 const state = ref<LanDiscoveryState>({
   scanning: false,
   last_scanned_at: null,
@@ -45,16 +51,27 @@ function endpointTagType(kind: LanEndpointKind) {
   return 'default'
 }
 
+function statusLabel(status: DeviceStatus): string {
+  return t(`devices.status.${status}`)
+}
+
+function statusTagType(status: DeviceStatus) {
+  if (status === 'approved') return 'success'
+  if (status === 'blocked') return 'error'
+  if (status === 'rejected') return 'warning'
+  return 'info'
+}
+
 function formatOs(device: LanDeviceInfo): string {
   const parts = [device.os.type || device.os.platform, device.os.release, device.os.arch]
     .filter(Boolean)
   return parts.join(' ')
 }
 
-function formatTime(value: string | null): string {
+function formatTime(value: string | number | null): string {
   if (!value) return t('devices.never')
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
+  if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleString()
 }
 
@@ -85,6 +102,31 @@ async function refreshDevices() {
     message.error(err?.message || t('devices.scanFailed'))
   } finally {
     scanning.value = false
+  }
+}
+
+function replaceDevice(updated: LanDeviceInfo) {
+  state.value = {
+    ...state.value,
+    devices: state.value.devices.map(device => device.id === updated.id ? updated : device),
+  }
+}
+
+async function updateDevice(device: LanDeviceInfo, action: 'approve' | 'reject' | 'block' | 'unblock') {
+  updatingDeviceId.value = device.id
+  try {
+    const next = action === 'approve'
+      ? await approveDevice(device.id)
+      : action === 'reject'
+      ? await rejectDevice(device.id)
+      : action === 'block'
+      ? await blockDevice(device.id)
+      : await unblockDevice(device.id)
+    replaceDevice(next)
+  } catch (err: any) {
+    message.error(err?.message || t('devices.updateFailed'))
+  } finally {
+    updatingDeviceId.value = ''
   }
 }
 
@@ -123,6 +165,7 @@ onMounted(() => {
               <tr>
                 <th>{{ t('devices.computer') }}</th>
                 <th>{{ t('devices.endpointLabel') }}</th>
+                <th>{{ t('devices.statusLabel') }}</th>
                 <th>{{ t('devices.address') }}</th>
                 <th>{{ t('devices.os') }}</th>
                 <th>{{ t('devices.agentVersion') }}</th>
@@ -141,6 +184,11 @@ onMounted(() => {
                   </NTag>
                 </td>
                 <td>
+                  <NTag size="small" :type="statusTagType(device.status)" round>
+                    {{ statusLabel(device.status) }}
+                  </NTag>
+                </td>
+                <td>
                   <a class="device-link" :href="device.url" target="_blank" rel="noopener noreferrer">
                     {{ device.ip }}:{{ device.http_port }}
                   </a>
@@ -153,6 +201,45 @@ onMounted(() => {
                 <td class="actions-col">
                   <NButton size="tiny" quaternary @click="openDevice(device)">
                     {{ t('devices.open') }}
+                  </NButton>
+                  <NButton
+                    v-if="device.status !== 'approved' && device.status !== 'blocked'"
+                    size="tiny"
+                    quaternary
+                    type="success"
+                    :loading="updatingDeviceId === device.id"
+                    @click="updateDevice(device, 'approve')"
+                  >
+                    {{ t('devices.approve') }}
+                  </NButton>
+                  <NButton
+                    v-if="device.status === 'pending'"
+                    size="tiny"
+                    quaternary
+                    type="warning"
+                    :loading="updatingDeviceId === device.id"
+                    @click="updateDevice(device, 'reject')"
+                  >
+                    {{ t('devices.reject') }}
+                  </NButton>
+                  <NButton
+                    v-if="device.status !== 'blocked'"
+                    size="tiny"
+                    quaternary
+                    type="error"
+                    :loading="updatingDeviceId === device.id"
+                    @click="updateDevice(device, 'block')"
+                  >
+                    {{ t('devices.block') }}
+                  </NButton>
+                  <NButton
+                    v-else
+                    size="tiny"
+                    quaternary
+                    :loading="updatingDeviceId === device.id"
+                    @click="updateDevice(device, 'unblock')"
+                  >
+                    {{ t('devices.unblock') }}
                   </NButton>
                 </td>
               </tr>
@@ -282,8 +369,14 @@ onMounted(() => {
 }
 
 .actions-col {
-  width: 72px;
+  width: 220px;
   text-align: right;
+}
+
+td.actions-col {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 @media (max-width: $breakpoint-mobile) {

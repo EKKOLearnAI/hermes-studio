@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs'
+import { createHash, generateKeyPairSync } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   discoveryPortForHttpPort,
@@ -11,7 +12,15 @@ import {
 } from '../../packages/server/src/services/lan-discovery'
 import type { PublicSystemInfo } from '../../packages/server/src/services/system-info'
 
+const fakeKeyPair = generateKeyPairSync('ed25519', {
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+})
+const fakeDeviceId = `hwui_${createHash('sha256').update(fakeKeyPair.publicKey).digest('base64url').slice(0, 32)}`
+
 const fakeInfo: PublicSystemInfo = {
+  device_id: fakeDeviceId,
+  device_public_key: fakeKeyPair.publicKey,
   computer_name: 'test-machine',
   os: {
     type: 'TestOS',
@@ -76,6 +85,8 @@ describe('LAN discovery', () => {
     expect(result.scanning).toBe(false)
     expect(result.devices).toHaveLength(1)
     expect(result.devices[0]).toMatchObject({
+      id: fakeDeviceId,
+      device_id: fakeDeviceId,
       ip: '127.0.0.1',
       http_port: httpPort,
       endpoint_kind: 'custom',
@@ -104,14 +115,17 @@ describe('LAN discovery', () => {
     expect(result.devices).toEqual([])
   })
 
-  it('registers device routes behind auth middleware', () => {
+  it('registers device request routes before auth and management routes behind auth', () => {
     const source = readFileSync('packages/server/src/routes/index.ts', 'utf8')
 
     const authIndex = source.indexOf('authMiddleware.forEach')
+    const publicDeviceIndex = source.indexOf('app.use(devicePublicRoutes.routes())')
     const deviceIndex = source.indexOf('app.use(deviceRoutes.routes())')
 
     expect(authIndex).toBeGreaterThanOrEqual(0)
+    expect(publicDeviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceIndex).toBeGreaterThanOrEqual(0)
+    expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)
   })
 })
