@@ -1,6 +1,6 @@
 ---
 date: 2026-06-05
-pr: pending
+pr: 1347
 feature: Chat 流式滚动和桌面启动淡入
 impact: 用户滚离底部后流式输出不再强制拉回底部，Windows 桌面窗口显示恢复 ready 后淡入。
 ---
