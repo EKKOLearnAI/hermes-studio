@@ -327,6 +327,35 @@ EOF
   info "Hermes installed at: ${hermes_bin_candidate}"
 }
 
+configure_app_user_shell_path() {
+  step "Configure Hermes shell PATH"
+  local profile_file
+  profile_file="${APP_USER_HOME}/.profile"
+
+  run touch "${profile_file}"
+  if ! run grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "${profile_file}"; then
+    run tee -a "${profile_file}" >/dev/null <<'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+  fi
+
+  run chown "${APP_USER}:${APP_USER}" "${profile_file}"
+  info "Ensured ${APP_USER} login shells include ~/.local/bin in PATH."
+}
+
+install_root_hermes_wrapper() {
+  step "Install root Hermes wrapper"
+  run tee /usr/local/bin/hermes >/dev/null <<EOF
+#!/usr/bin/env bash
+exec sudo -u ${APP_USER} -H env \\
+  HERMES_HOME=${HERMES_HOME_DIR} \\
+  PATH=${APP_USER_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
+  ${APP_USER_HOME}/.local/bin/hermes "\$@"
+EOF
+  run chmod 0755 /usr/local/bin/hermes
+  info "Installed /usr/local/bin/hermes wrapper for root and admin shells."
+}
+
 write_npmrc() {
   step "Write npm mirror configuration"
   run tee "${APP_USER_HOME}/.npmrc" >/dev/null <<EOF
@@ -457,6 +486,8 @@ check_runtime_artifacts() {
   step "Check runtime artifacts"
   run test -x "${NODE_BIN}"
   run_as_app_user "test -x '${hermes_bin}' && '${hermes_bin}' --version >/dev/null"
+  run test -x /usr/local/bin/hermes
+  run /usr/local/bin/hermes --version >/dev/null
   run test -f "${DEPLOY_DIR}/dist/server/index.js"
   run test -f "${DEPLOY_DIR}/dist/client/index.html"
   info "Node, Hermes, and build artifacts look good."
@@ -561,6 +592,12 @@ show_summary() {
   echo "  sudo -u ${APP_USER} -H env HERMES_HOME=${HERMES_HOME_DIR} ${APP_USER_HOME}/.local/bin/hermes setup"
   echo "  sudo -u ${APP_USER} -H env HERMES_HOME=${HERMES_HOME_DIR} ${APP_USER_HOME}/.local/bin/hermes model"
   echo
+  echo "CLI usage:"
+  echo "  hermes version"
+  echo "  su - ${APP_USER}"
+  echo "  hermes version"
+  echo "  # Avoid: su ${APP_USER}  (non-login shell may miss ~/.local/bin)"
+  echo
   echo "Common commands:"
   echo "  sudo systemctl status ${SYSTEMD_SERVICE_NAME}"
   echo "  sudo journalctl -u ${SYSTEMD_SERVICE_NAME} -f"
@@ -613,6 +650,8 @@ resolve_repo_dir
 prepare_deploy_dirs
 install_node
 install_hermes_agent
+configure_app_user_shell_path
+install_root_hermes_wrapper
 write_npmrc
 install_webui_dependencies
 check_webui_dependencies

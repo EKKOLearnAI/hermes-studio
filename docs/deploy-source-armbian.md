@@ -179,6 +179,28 @@ sudo -u hermesui -H env HERMES_HOME=/opt/hermes-web-ui/hermes_data /home/hermesu
 sudo systemctl restart hermes-web-ui.service
 ```
 
+部署脚本还会自动完成两项 CLI 入口配置：
+
+- 为 `root` 安装安全包装命令 `/usr/local/bin/hermes`
+- 为 `hermesui` 的登录 shell 写入 `~/.local/bin` PATH
+
+部署完成后，推荐这样使用：
+
+```bash
+hermes version
+su - hermesui
+hermes version
+```
+
+不要用下面这种方式验证：
+
+```bash
+su hermesui
+hermes version
+```
+
+`su hermesui` 是非登录 shell，可能不会加载 `~/.profile`，从而导致 `hermes: command not found`。
+
 ## 脚本默认行为
 
 脚本默认会按顺序执行：
@@ -208,9 +230,11 @@ sudo systemctl restart hermes-web-ui.service
    - `node_modules/vue-tsc/package.json`
    - `node_modules/vite/package.json`
 11. 执行 `npm run build`
-12. 生成 `/etc/default/hermes-web-ui`
-13. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
-14. 启动并设置 `hermes-web-ui.service` 开机自启
+12. 为 `hermesui` 的登录 shell 配置 `~/.local/bin` PATH
+13. 安装 `root` 可直接使用的 `/usr/local/bin/hermes` 包装命令
+14. 生成 `/etc/default/hermes-web-ui`
+15. 根据模板生成 `/etc/systemd/system/hermes-web-ui.service`
+16. 启动并设置 `hermes-web-ui.service` 开机自启
 
 ## 默认参数
 
@@ -519,6 +543,24 @@ sudo -u hermesui -H ls -lah /tmp/hermes-agent-bridge.sock
 5. 重启 `hermes-web-ui.service`
 
 详细过程见 [`docs/work-log.md`](./work-log.md) 中 `2026-05-19 - Armbian 源码部署排障补充`。
+
+补充说明：
+
+- 新版本部署脚本会安装 `/usr/local/bin/hermes` 包装命令，因此 `root` shell 里可以直接执行 `hermes`；实际运行身份仍然是 `hermesui`，不会把 Hermes 状态目录污染成 `root` 所有。
+- 如果你手工切换用户，请使用 `su - hermesui`，不要用 `su hermesui`。前者会加载登录环境，后者可能导致 `hermes: command not found`。
+- 如果使用 `HERMES_AGENT_WHEEL_URL` 的 wheel/venv 安装模式，旧版本 Web UI 可能给 agent bridge 或其 profile worker 传入默认源码目录 `~/.hermes/hermes-agent`，导致日志出现：
+  - `agent bridge exited before ready`
+  - `profile worker default exited before ready`
+  - `RuntimeError: hermes-agent run_agent.py not found`
+- 这类情况下，可先临时在 `/etc/default/hermes-web-ui` 增加下面两行再重启服务：
+
+```bash
+HERMES_AGENT_ROOT=
+HERMES_AGENT_BRIDGE_PYTHON=/home/hermesui/.hermes/hermes-agent-venv/bin/python3
+```
+
+- 修复后的仓库版本会自动兼容 wheel/venv 安装，不再要求存在源码目录 `run_agent.py`。
+- 包装命令不会保存、推导或依赖任何默认 root 密码；不要把设备默认密码写入部署脚本。
 
 ### 8. 想重新部署
 
