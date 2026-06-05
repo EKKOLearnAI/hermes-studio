@@ -22,6 +22,7 @@ import { getAgentBridgeManager, startAgentBridgeManager } from './services/herme
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
+import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
@@ -148,6 +149,24 @@ function startRuntimeServicesAfterListen(): void {
   })()
 }
 
+function startLanDiscovery(): void {
+  const discoverySocket = startLanDiscoveryResponder({ httpPort: config.port })
+  let initialScanStarted = false
+  const runInitialScan = () => {
+    if (initialScanStarted) return
+    initialScanStarted = true
+    void scanLanDevices().catch(err => logger.warn(err, '[lan-discovery] initial scan failed'))
+  }
+
+  if (discoverySocket) {
+    discoverySocket.once('listening', runInitialScan)
+    const fallbackTimer = setTimeout(runInitialScan, 500)
+    fallbackTimer.unref?.()
+  } else {
+    runInitialScan()
+  }
+}
+
 export async function bootstrap() {
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
@@ -260,6 +279,7 @@ export async function bootstrap() {
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+  startLanDiscovery()
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
 
   if (isDesktopRuntime()) {
