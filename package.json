@@ -65,7 +65,6 @@
   ],
   "dependencies": {
     "@vscode/markdown-it-katex": "^1.1.2",
-    "adm-zip": "^0.5.17",
     "eventsource": "^4.1.0",
     "js-tiktoken": "^1.0.21",
     "katex": "^0.17.0",
@@ -81,7 +80,6 @@
     "@multiavatar/multiavatar": "^1.0.7",
     "@pinia/testing": "^1.0.3",
     "@playwright/test": "^1.60.0",
-    "@types/adm-zip": "^0.5.8",
     "@types/eventsource": "^1.1.15",
     "@types/js-yaml": "^4.0.9",
     "@types/katex": "^0.16.8",
