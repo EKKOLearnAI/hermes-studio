@@ -4,7 +4,7 @@ import { NSelect, NInput, NButton, NSlider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { useSpeech } from '@/composables/useSpeech'
-import { fetchTtsSettings, saveTtsSettings } from '@/api/hermes/tts-settings'
+import { clearTtsSecret, saveTtsSettings } from '@/api/hermes/tts-settings'
 import type { StoredTtsProvider, TtsStoredSecretsInput, TtsStoredSettings } from '@/api/hermes/tts-settings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import SettingRow from './SettingRow.vue'
@@ -174,11 +174,23 @@ async function handleMimoCloneAudioChange(event: Event) {
   vs.setMimoVoiceCloneFormat(inferCloneAudioFormat(file))
 }
 
-function clearMimoCloneAudio() {
+async function clearMimoCloneAudio() {
+  const hadStoredClone = vs.mimoHasVoiceCloneData.value
   vs.setMimoVoiceCloneDataUri('')
   vs.setMimoVoiceCloneFileName('')
   vs.setMimoVoiceCloneFormat('wav')
   if (mimoCloneAudioInput.value) mimoCloneAudioInput.value.value = ''
+  if (!hadStoredClone) return
+  try {
+    const setting = await clearTtsSecret('mimo', 'voiceCloneDataUri')
+    await clearTtsSecret('mimo', 'voiceCloneFileName')
+    if (setting) vs.applyServerTtsSettings([setting])
+    vs.mimoHasVoiceCloneData.value = false
+    settingsStatus.value = 'Stored MiMo clone audio cleared from server.'
+  } catch (err) {
+    console.error('[VoiceSettings] Failed to clear stored MiMo clone audio:', err)
+    settingsStatus.value = 'Failed to clear stored MiMo clone audio.'
+  }
 }
 
 const settingsSaving = ref(false)
@@ -186,7 +198,7 @@ const settingsStatus = ref('')
 
 onMounted(async () => {
   try {
-    vs.applyServerTtsSettings(await fetchTtsSettings())
+    await vs.loadServerTtsSettings(true)
   } catch (err) {
     console.warn('[VoiceSettings] Failed to load server TTS settings:', err)
   }
@@ -242,6 +254,36 @@ function buildProviderSecrets(provider: StoredTtsProvider): TtsStoredSecretsInpu
     return secrets
   }
   return {}
+}
+
+async function clearStoredProviderSecret(provider: StoredTtsProvider, secretName: keyof TtsStoredSecretsInput) {
+  settingsSaving.value = true
+  settingsStatus.value = ''
+  try {
+    const setting = await clearTtsSecret(provider, secretName)
+    if (setting) vs.applyServerTtsSettings([setting])
+    if (provider === 'openai' && secretName === 'apiKey') {
+      vs.setOpenaiApiKey('')
+      vs.openaiHasApiKey.value = false
+      vs.openaiApiKeyPreview.value = ''
+    }
+    if (provider === 'custom' && secretName === 'apiKey') {
+      vs.setCustomApiKey('')
+      vs.customHasApiKey.value = false
+      vs.customApiKeyPreview.value = ''
+    }
+    if (provider === 'mimo' && secretName === 'apiKey') {
+      vs.setMimoApiKey('')
+      vs.mimoHasApiKey.value = false
+      vs.mimoApiKeyPreview.value = ''
+    }
+    settingsStatus.value = 'Stored TTS secret cleared from server.'
+  } catch (err) {
+    console.error('[VoiceSettings] Failed to clear stored TTS secret:', err)
+    settingsStatus.value = 'Failed to clear stored TTS secret.'
+  } finally {
+    settingsSaving.value = false
+  }
 }
 
 async function saveCurrentProviderSettings(): Promise<boolean> {
@@ -374,6 +416,15 @@ async function handleTest() {
         />
         <div v-if="vs.openaiHasApiKey.value || vs.openaiApiKey.value" class="secret-status">
           Stored server key: {{ vs.openaiApiKey.value ? 'will be updated on save' : vs.openaiApiKeyPreview.value }}
+          <NButton
+            v-if="vs.openaiHasApiKey.value"
+            size="tiny"
+            tertiary
+            :disabled="settingsSaving"
+            @click="clearStoredProviderSecret('openai', 'apiKey')"
+          >
+            Clear stored key
+          </NButton>
         </div>
       </SettingRow>
 
@@ -452,6 +503,15 @@ async function handleTest() {
         />
         <div v-if="vs.customHasApiKey.value || vs.customApiKey.value" class="secret-status">
           Stored server key: {{ vs.customApiKey.value ? 'will be updated on save' : vs.customApiKeyPreview.value }}
+          <NButton
+            v-if="vs.customHasApiKey.value"
+            size="tiny"
+            tertiary
+            :disabled="settingsSaving"
+            @click="clearStoredProviderSecret('custom', 'apiKey')"
+          >
+            Clear stored key
+          </NButton>
         </div>
       </SettingRow>
 
@@ -536,6 +596,15 @@ async function handleTest() {
         />
         <div v-if="vs.mimoHasApiKey.value || vs.mimoApiKey.value" class="secret-status">
           Stored server key: {{ vs.mimoApiKey.value ? 'will be updated on save' : vs.mimoApiKeyPreview.value }}
+          <NButton
+            v-if="vs.mimoHasApiKey.value"
+            size="tiny"
+            tertiary
+            :disabled="settingsSaving"
+            @click="clearStoredProviderSecret('mimo', 'apiKey')"
+          >
+            Clear stored key
+          </NButton>
         </div>
       </SettingRow>
 
@@ -636,7 +705,7 @@ async function handleTest() {
             Stored on server
           </span>
           <NButton
-            v-if="vs.mimoVoiceCloneDataUri.value"
+            v-if="vs.mimoVoiceCloneDataUri.value || vs.mimoHasVoiceCloneData.value"
             size="small"
             tertiary
             @click="clearMimoCloneAudio"

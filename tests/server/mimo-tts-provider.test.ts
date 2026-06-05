@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mimoTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/mimo'
+import { setTtsDnsLookupForTests } from '../../packages/server/src/services/hermes/tts-providers/url-safety'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -56,6 +57,7 @@ function getJsonBody() {
 describe('mimoTtsProvider', () => {
   beforeEach(() => {
     mockFetch.mockReset()
+    setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
   })
 
   it('bearer mode calls /chat/completions, sends Authorization bearer, and returns decoded audio buffer', async () => {
@@ -87,6 +89,7 @@ describe('mimoTtsProvider', () => {
     expect(url).toBe('https://mimo.example.com/chat/completions')
     expect(init?.method).toBe('POST')
     expect(init?.signal).toBe(signal)
+    expect(init?.redirect).toBe('manual')
     expect(getHeader(init?.headers, 'Authorization')).toBe('Bearer secret')
     expect(getHeader(init?.headers, 'api-key')).toBeUndefined()
 

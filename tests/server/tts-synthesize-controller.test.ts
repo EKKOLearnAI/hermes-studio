@@ -196,6 +196,48 @@ describe('tts synthesize controller', () => {
     )
   })
 
+  it('does not let client baseUrl override a stored secret boundary', async () => {
+    const provider = {
+      synthesize: vi.fn().mockResolvedValue({
+        audio: Buffer.from('openai-audio'),
+        contentType: 'audio/mpeg',
+        engine: 'openai',
+        provider: 'openai',
+      }),
+    }
+    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+      getTtsProvider: vi.fn(() => provider),
+    }))
+    const store = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    vi.mocked(store.getTtsProviderConfigForSynthesis).mockReturnValue({
+      provider: 'openai',
+      settings: { baseUrl: 'https://trusted.example/v1', model: 'tts-1', voice: 'alloy' },
+      secrets: { apiKey: 'server-side-key' },
+    })
+
+    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const { ctx } = createMockCtx({
+      provider: 'openai',
+      text: 'Hello world',
+      options: {
+        baseUrl: 'https://attacker.example/v1',
+        voice: 'verse',
+      },
+    })
+
+    await ctrl.synthesize(ctx)
+
+    expect(provider.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello world' }),
+      expect.objectContaining({
+        baseUrl: 'https://trusted.example/v1',
+        voice: 'verse',
+        apiKey: 'server-side-key',
+      }),
+    )
+    expect(JSON.stringify(provider.synthesize.mock.calls[0][1])).not.toContain('attacker.example')
+  })
+
   it('ignores client-supplied secret fields during protected synthesis', async () => {
     const provider = {
       synthesize: vi.fn().mockResolvedValue({

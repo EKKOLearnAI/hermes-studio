@@ -1,6 +1,6 @@
 import type { MimoTtsProviderOptions, MimoTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
-import { normalizeSafeTtsBaseUrl } from './url-safety'
+import { assertSafeResolvedTtsBaseUrl, normalizeSafeTtsBaseUrl } from './url-safety'
 
 export const MAX_MIMO_VOICE_CLONE_AUDIO_BYTES = 10 * 1024 * 1024
 
@@ -128,14 +128,19 @@ export const mimoTtsProvider: MimoTtsProvider = {
       throw new Error('MiMo TTS text is empty after cleaning')
     }
 
+    const messages = buildMessages(text, opts)
+    const audio = buildAudio(opts)
+    await assertSafeResolvedTtsBaseUrl(new URL(baseUrl), 'MiMo')
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: buildHeaders(opts),
       body: JSON.stringify({
         model: opts.model,
-        messages: buildMessages(text, opts),
-        audio: buildAudio(opts),
+        messages,
+        audio,
       }),
+      redirect: 'manual',
       signal: req.signal,
     })
 

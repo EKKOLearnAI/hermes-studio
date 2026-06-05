@@ -27,6 +27,9 @@ export function setApiKey(key: string) {
 
 export function clearApiKey() {
   localStorage.removeItem('hermes_api_key')
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('hermes-auth-cleared'))
+  }
 }
 
 export function hasApiKey(): boolean {

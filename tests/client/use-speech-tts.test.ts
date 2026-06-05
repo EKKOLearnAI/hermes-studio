@@ -125,22 +125,23 @@ describe('client TTS unified synthesize flow', () => {
       apiKey: 'provider-key',
       model: 'tts-1',
       voice: 'alloy',
-    })
+    } as any)
 
     expect(mockFetch).toHaveBeenCalledOnce()
     const [url, options] = mockFetch.mock.calls[0]
     expect(url).toBe('https://hermes.example/api/hermes/tts/synthesize')
     expect(url).not.toContain('/audio/speech')
-    expect(JSON.parse(options.body)).toEqual({
+    const body = JSON.parse(options.body)
+    expect(body).toEqual({
       provider: 'openai',
       text: 'Hello from OpenAI',
       options: {
         baseUrl: 'https://api.openai.com/v1',
-        apiKey: 'provider-key',
         model: 'tts-1',
         voice: 'alloy',
       },
     })
+    expect(JSON.stringify(body)).not.toContain('provider-key')
   })
 
   it('mimoPlay routes through the unified synthesize endpoint with provider=mimo', async () => {
@@ -164,27 +165,28 @@ describe('client TTS unified synthesize flow', () => {
       voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
       voiceCloneFormat: 'wav',
       stylePrompt: 'warm and calm',
-    })
+    } as any)
 
     expect(mockFetch).toHaveBeenCalledOnce()
     const [url, options] = mockFetch.mock.calls[0]
     expect(url).toBe('https://hermes.example/api/hermes/tts/synthesize')
     expect(url).not.toContain('/chat/completions')
-    expect(JSON.parse(options.body)).toEqual({
+    const body = JSON.parse(options.body)
+    expect(body).toEqual({
       provider: 'mimo',
       text: 'Hello from MiMo',
       options: {
         baseUrl: 'https://mimo.example/v1',
-        apiKey: 'mimo-key',
         authMode: 'api-key',
         model: 'mimo-v2.5-tts',
         voiceMode: 'voiceClone',
         voice: 'verse',
-        voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==',
         voiceCloneFormat: 'wav',
         stylePrompt: 'warm and calm',
       },
     })
+    expect(JSON.stringify(body)).not.toContain('mimo-key')
+    expect(JSON.stringify(body)).not.toContain('voiceCloneDataUri')
   })
 
   it('openaiPlay respects an explicit edge provider even when other fields look OpenAI-compatible', async () => {
@@ -234,10 +236,12 @@ describe('client TTS unified synthesize flow', () => {
     await speech.openaiPlay('msg-custom-fallback', 'Custom fallback', {
       baseUrl: 'https://custom.example/v1',
       apiKey: 'custom-key',
-    })
+    } as any)
 
     const [, options] = mockFetch.mock.calls[0]
-    expect(JSON.parse(options.body).provider).toBe('custom')
+    const body = JSON.parse(options.body)
+    expect(body.provider).toBe('custom')
+    expect(JSON.stringify(body)).not.toContain('custom-key')
   })
 
   it('stop aborts a pending unified custom TTS request and clears custom state', async () => {

@@ -1,6 +1,6 @@
 import type { OpenaiTtsProvider } from './types'
 import { cleanTtsText, clampTtsText } from './text'
-import { assertSafeTtsBaseUrl } from './url-safety'
+import { assertSafeResolvedTtsBaseUrl, assertSafeTtsBaseUrl } from './url-safety'
 
 function buildSpeechUrl(baseUrl: string): string {
   const url = new URL(baseUrl)
@@ -33,6 +33,8 @@ function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id)
         throw new Error('OpenAI TTS text is empty after cleaning')
       }
 
+      await assertSafeResolvedTtsBaseUrl(new URL(speechUrl), 'OpenAI')
+
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       }
@@ -51,6 +53,7 @@ function createOpenaiCompatibleTtsProvider(id: 'openai' | 'custom', engine = id)
           ...(opts.rate ? { rate: opts.rate } : {}),
           ...(opts.pitch ? { pitch: opts.pitch } : {}),
         }),
+        redirect: 'manual',
         signal: req.signal,
       })
 

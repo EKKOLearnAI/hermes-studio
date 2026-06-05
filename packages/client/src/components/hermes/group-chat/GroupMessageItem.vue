@@ -420,8 +420,14 @@ function playSpeech(content: string, autoplay = false) {
     else speech.toggle(props.message.id, content)
 }
 
-function handleSpeechToggle() {
-    if (canPlaySpeech.value) playSpeech(assistantBody.value)
+async function handleSpeechToggle() {
+    if (!canPlaySpeech.value) return
+    try {
+        await voiceSettings.loadServerTtsSettings()
+    } catch (err) {
+        console.warn('[GroupMessageItem] Failed to load server TTS settings:', err)
+    }
+    playSpeech(assistantBody.value)
 }
 
 async function copyBubbleContent() {
@@ -449,9 +455,14 @@ function formatSize(bytes: number): string {
 let autoPlayHandler: ((e: Event) => void) | null = null
 
 onMounted(() => {
-    autoPlayHandler = (e: Event) => {
+    autoPlayHandler = async (e: Event) => {
         const event = e as CustomEvent<{ messageId: string; content: string }>
         if (event.detail?.messageId === props.message.id && canPlaySpeech.value) {
+            try {
+                await voiceSettings.loadServerTtsSettings()
+            } catch (err) {
+                console.warn('[GroupMessageItem] Failed to load server TTS settings:', err)
+            }
             playSpeech(event.detail.content || assistantBody.value, true)
         }
     }

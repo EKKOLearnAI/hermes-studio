@@ -43,6 +43,17 @@ function stripClientSecretFields(options: Record<string, unknown>): Record<strin
   return sanitized
 }
 
+function sanitizeClientPlaybackOptions(
+  options: Record<string, unknown>,
+  storedConfig: { secrets: Record<string, string> } | null,
+): Record<string, unknown> {
+  const sanitized = stripClientSecretFields(options)
+  if (storedConfig && Object.keys(storedConfig.secrets || {}).length > 0) {
+    delete sanitized.baseUrl
+  }
+  return sanitized
+}
+
 function handleTtsSettingsError(ctx: Context, error: unknown): boolean {
   if (error instanceof TtsSettingsValidationError) {
     ctx.status = 400
@@ -179,7 +190,7 @@ export async function synthesize(ctx: Context) {
     const storedConfig = getTtsProviderConfigForSynthesis(userId, providerId)
     const mergedOptions = {
       ...(storedConfig?.settings || {}),
-      ...stripClientSecretFields(options),
+      ...sanitizeClientPlaybackOptions(options, storedConfig),
       ...(storedConfig?.secrets || {}),
     }
 

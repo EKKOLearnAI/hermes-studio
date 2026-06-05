@@ -589,9 +589,14 @@ const isPausedThisMessage = computed(() => {
   return speech.currentMessageId.value === props.message.id && speech.isPaused.value
 })
 
-function handleSpeechToggle() {
+async function handleSpeechToggle() {
   if (!canPlaySpeech.value) {
     return
+  }
+  try {
+    await voiceSettings.loadServerTtsSettings()
+  } catch (err) {
+    console.warn('[MessageItem] Failed to load server TTS settings:', err)
   }
   const content = props.message.content || ''
 
@@ -675,9 +680,14 @@ function handleAutoplayTtsError(err: unknown) {
 }
 
 onMounted(() => {
-  autoPlayHandler = (e: Event) => {
+  autoPlayHandler = async (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
     if (customEvent.detail.messageId === props.message.id && canPlaySpeech.value) {
+      try {
+        await voiceSettings.loadServerTtsSettings()
+      } catch (err) {
+        console.warn('[MessageItem] Failed to load server TTS settings:', err)
+      }
       const content = customEvent.detail.content || props.message.content || ''
       if (voiceSettings.provider.value === 'openai') {
         const apiUrl = voiceSettings.openaiBaseUrl.value

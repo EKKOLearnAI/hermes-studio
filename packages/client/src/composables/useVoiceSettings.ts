@@ -1,4 +1,5 @@
 import { ref, watch } from 'vue'
+import { fetchTtsSettings } from '@/api/hermes/tts-settings'
 import type { TtsProviderSettingsResponse } from '@/api/hermes/tts-settings'
 
 export type TtsProvider = 'webspeech' | 'openai' | 'custom' | 'edge' | 'mimo'
@@ -210,6 +211,55 @@ const customHasApiKey = ref(false)
 const mimoHasApiKey = ref(false)
 const mimoHasVoiceCloneData = ref(false)
 
+function resetServerBackedTtsState() {
+  openaiApiKey.value = ''
+  openaiApiKeyPreview.value = ''
+  openaiHasApiKey.value = false
+  openaiBaseUrl.value = DEFAULT.openaiBaseUrl
+  openaiModel.value = DEFAULT.openaiModel
+  openaiVoice.value = DEFAULT.openaiVoice
+
+  customUrl.value = DEFAULT.customUrl
+  customApiKey.value = ''
+  customApiKeyPreview.value = ''
+  customHasApiKey.value = false
+
+  edgeUrl.value = DEFAULT.edgeUrl
+  edgeVoice.value = DEFAULT.edgeVoice
+  edgeRate.value = DEFAULT.edgeRate
+  edgePitchHz.value = DEFAULT.edgePitchHz
+
+  mimoApiKey.value = ''
+  mimoApiKeyPreview.value = ''
+  mimoHasApiKey.value = false
+  mimoHasVoiceCloneData.value = false
+  mimoAuthMode.value = DEFAULT.mimoAuthMode
+  mimoBaseUrl.value = DEFAULT.mimoBaseUrl
+  mimoModel.value = DEFAULT.mimoModel
+  mimoVoice.value = DEFAULT.mimoVoice
+  mimoVoiceDesignDesc.value = DEFAULT.mimoVoiceDesignDesc
+  mimoVoiceCloneDataUri.value = ''
+  mimoVoiceCloneFileName.value = DEFAULT.mimoVoiceCloneFileName
+  mimoVoiceCloneFormat.value = DEFAULT.mimoVoiceCloneFormat
+  mimoStylePrompt.value = DEFAULT.mimoStylePrompt
+}
+
+export function clearVoiceSettingsAuthState() {
+  serverSettingsGeneration += 1
+  serverSettingsLoaded = false
+  serverSettingsPromise = null
+  provider.value = DEFAULT.provider
+  webspeechVoice.value = DEFAULT.webspeechVoice
+  resetServerBackedTtsState()
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch { /* ignore */ }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('hermes-auth-cleared', clearVoiceSettingsAuthState)
+}
+
 // Auto-persist on non-secret changes. Secret refs intentionally omitted.
 watch(
   [provider, webspeechVoice, openaiBaseUrl, openaiModel, openaiVoice,
@@ -219,7 +269,49 @@ watch(
   persist,
 )
 
-function applyServerTtsSettings(rows: TtsProviderSettingsResponse[]) {
+function edgeRateToSpeed(rate: unknown): number | null {
+  if (typeof rate !== 'string') return null
+  const match = rate.trim().match(/^([+-]?\d+)%$/)
+  if (!match) return null
+  const speed = 1 + Number(match[1]) / 100
+  return Number.isFinite(speed) ? Math.min(2, Math.max(0.5, speed)) : null
+}
+
+function edgePitchToHz(pitch: unknown): number | null {
+  if (typeof pitch !== 'string') return null
+  const match = pitch.trim().match(/^([+-]?\d+)Hz$/i)
+  if (!match) return null
+  const hz = Number(match[1])
+  return Number.isFinite(hz) ? Math.min(20, Math.max(-20, hz)) : null
+}
+
+let serverSettingsLoaded = false
+let serverSettingsPromise: Promise<void> | null = null
+let serverSettingsGeneration = 0
+
+async function loadServerTtsSettings(force = false): Promise<void> {
+  if (serverSettingsLoaded && !force) return
+  if (serverSettingsPromise && !force) return serverSettingsPromise
+  const generation = serverSettingsGeneration
+  const promise = fetchTtsSettings()
+    .then(rows => {
+      if (generation !== serverSettingsGeneration) return
+      applyServerTtsSettings(rows, true)
+      serverSettingsLoaded = true
+    })
+    .finally(() => {
+      if (serverSettingsPromise === promise) {
+        serverSettingsPromise = null
+      }
+    })
+  serverSettingsPromise = promise
+  return promise
+}
+
+function applyServerTtsSettings(rows: TtsProviderSettingsResponse[], authoritative = false) {
+  if (authoritative) {
+    resetServerBackedTtsState()
+  }
   for (const row of rows) {
     if (row.provider === 'openai') {
       openaiBaseUrl.value = typeof row.settings.baseUrl === 'string' ? row.settings.baseUrl : openaiBaseUrl.value
@@ -237,6 +329,8 @@ function applyServerTtsSettings(rows: TtsProviderSettingsResponse[]) {
     }
     if (row.provider === 'edge') {
       edgeVoice.value = typeof row.settings.voice === 'string' ? row.settings.voice : edgeVoice.value
+      edgeRate.value = edgeRateToSpeed(row.settings.rate) ?? edgeRate.value
+      edgePitchHz.value = edgePitchToHz(row.settings.pitch) ?? edgePitchHz.value
     }
     if (row.provider === 'mimo') {
       mimoBaseUrl.value = typeof row.settings.baseUrl === 'string' ? row.settings.baseUrl : mimoBaseUrl.value
@@ -315,37 +409,10 @@ export function useVoiceSettings() {
     setMimoVoiceCloneFormat(v: 'mp3' | 'wav') { mimoVoiceCloneFormat.value = v },
     setMimoStylePrompt(v: string) { mimoStylePrompt.value = v },
     applyServerTtsSettings,
+    loadServerTtsSettings,
 
     reset() {
-      provider.value = DEFAULT.provider
-      webspeechVoice.value = DEFAULT.webspeechVoice
-      openaiApiKey.value = ''
-      openaiApiKeyPreview.value = ''
-      openaiHasApiKey.value = false
-      openaiBaseUrl.value = DEFAULT.openaiBaseUrl
-      openaiModel.value = DEFAULT.openaiModel
-      openaiVoice.value = DEFAULT.openaiVoice
-      customUrl.value = DEFAULT.customUrl
-      customApiKey.value = ''
-      customApiKeyPreview.value = ''
-      customHasApiKey.value = false
-      edgeUrl.value = DEFAULT.edgeUrl
-      edgeVoice.value = DEFAULT.edgeVoice
-      edgeRate.value = DEFAULT.edgeRate
-      edgePitchHz.value = DEFAULT.edgePitchHz
-      mimoApiKey.value = ''
-      mimoApiKeyPreview.value = ''
-      mimoHasApiKey.value = false
-      mimoHasVoiceCloneData.value = false
-      mimoAuthMode.value = DEFAULT.mimoAuthMode
-      mimoBaseUrl.value = DEFAULT.mimoBaseUrl
-      mimoModel.value = DEFAULT.mimoModel
-      mimoVoice.value = DEFAULT.mimoVoice
-      mimoVoiceDesignDesc.value = DEFAULT.mimoVoiceDesignDesc
-      mimoVoiceCloneDataUri.value = ''
-      mimoVoiceCloneFileName.value = DEFAULT.mimoVoiceCloneFileName
-      mimoVoiceCloneFormat.value = DEFAULT.mimoVoiceCloneFormat
-      mimoStylePrompt.value = DEFAULT.mimoStylePrompt
+      clearVoiceSettingsAuthState()
     },
   }
 }

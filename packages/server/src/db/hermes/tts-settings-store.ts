@@ -317,15 +317,14 @@ export function upsertTtsProviderSettings(
   const mergedSecrets = mergeStoredSecrets(provider, existingSecrets, secretsPatch, input.preserveExistingSecrets === true)
   const now = Date.now()
 
-  if (existing) {
-    db.prepare(
-      `UPDATE ${TTS_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE user_id = ? AND provider = ?`
-    ).run(JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), now, id, provider)
-  } else {
-    db.prepare(
-      `INSERT INTO ${TTS_PROVIDER_SETTINGS_TABLE} (user_id, provider, settings_json, secrets_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, provider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), now, now)
-  }
+  db.prepare(
+    `INSERT INTO ${TTS_PROVIDER_SETTINGS_TABLE} (user_id, provider, settings_json, secrets_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, provider) DO UPDATE SET
+       settings_json = excluded.settings_json,
+       secrets_json = excluded.secrets_json,
+       updated_at = excluded.updated_at`
+  ).run(id, provider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), existing?.created_at || now, now)
 
   return getTtsProviderPublicSettings(id, provider) as StoredTtsProviderRow
 }

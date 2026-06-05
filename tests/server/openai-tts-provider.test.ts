@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { clampTtsText, cleanTtsText } from '../../packages/server/src/services/hermes/tts-providers/text'
 import { customTtsProvider, openaiTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/openai'
+import { setTtsDnsLookupForTests } from '../../packages/server/src/services/hermes/tts-providers/url-safety'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -73,6 +74,7 @@ function getJsonBody() {
 describe('openaiTtsProvider', () => {
   beforeEach(() => {
     mockFetch.mockReset()
+    setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
   })
 
   it('normalizes baseUrl, posts to /audio/speech, sends bearer auth, and defaults model/voice with cleaned text', async () => {
@@ -101,6 +103,7 @@ describe('openaiTtsProvider', () => {
     expect(url).toBe('https://api.example.com/audio/speech')
     expect(init?.method).toBe('POST')
     expect(init?.signal).toBe(signal)
+    expect(init?.redirect).toBe('manual')
     expect(getHeader(init?.headers, 'Content-Type')).toBe('application/json')
     expect(getHeader(init?.headers, 'Authorization')).toBe('Bearer secret')
 
@@ -209,6 +212,19 @@ describe('openaiTtsProvider', () => {
         ),
       ).rejects.toThrow(/OpenAI TTS baseUrl/)
     }
+
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects DNS results that resolve to private network addresses before fetch', async () => {
+    setTtsDnsLookupForTests(vi.fn(async () => [{ address: '10.0.0.4', family: 4 }]) as any)
+
+    await expect(
+      openaiTtsProvider.synthesize(
+        { text: 'Hello' },
+        { baseUrl: 'https://api.example.com/v1' },
+      ),
+    ).rejects.toThrow('OpenAI TTS baseUrl resolved to localhost or private network addresses')
 
     expect(mockFetch).not.toHaveBeenCalled()
   })

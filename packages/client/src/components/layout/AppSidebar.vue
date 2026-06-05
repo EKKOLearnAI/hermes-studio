@@ -70,6 +70,7 @@ function handleReloadClient() {
 
 function handleLogout() {
   localStorage.clear();
+  window.dispatchEvent(new Event('hermes-auth-cleared'));
   router.replace({ name: 'login' });
 }
 
