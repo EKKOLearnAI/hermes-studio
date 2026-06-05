@@ -256,7 +256,7 @@ export default {
     processed: '已處理',
     unprocessed: '未處理',
     deleteHistory: '刪除記錄',
-    deleteHistoryConfirm: '確認刪除這條申請記錄？',
+    deleteHistoryConfirm: '確認刪除這條申請記錄並撤銷該裝置連線權限？',
     requests: '申請列表',
     requestsWithCount: '申請列表（{count}）',
     noRequests: '暫無申請',

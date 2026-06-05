@@ -447,6 +447,12 @@ export class LanPeerSocketManager {
     return true
   }
 
+  disconnectDevice(deviceId: string): number {
+    const connections = [...this.connections.values()].filter(connection => connection.deviceId === deviceId)
+    connections.forEach(connection => connection.close())
+    return connections.length
+  }
+
   removeConnection(connectionId: string) {
     this.connections.delete(connectionId)
   }

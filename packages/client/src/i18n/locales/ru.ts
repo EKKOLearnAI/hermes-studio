@@ -178,7 +178,7 @@ export default {
     processed: 'Processed',
     unprocessed: 'Unprocessed',
     deleteHistory: 'Delete record',
-    deleteHistoryConfirm: 'Delete this request record?',
+    deleteHistoryConfirm: 'Delete this request record and revoke this device connection access?',
     requests: 'Requests',
     requestsWithCount: 'Requests ({count})',
     noRequests: 'No requests',

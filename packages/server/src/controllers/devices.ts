@@ -277,6 +277,7 @@ export async function unblockDevice(ctx: any) {
 export async function deleteDeviceRequestHistory(ctx: any) {
   try {
     hideInboundRequestHistory(ctx.params.id)
+    getLanPeerSocketManager().disconnectDevice(ctx.params.id)
     ctx.body = await devicesPayload()
   } catch {
     ctx.status = 404

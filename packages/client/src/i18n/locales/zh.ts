@@ -256,7 +256,7 @@ export default {
     processed: '已处理',
     unprocessed: '未处理',
     deleteHistory: '删除记录',
-    deleteHistoryConfirm: '确认删除这条申请记录？',
+    deleteHistoryConfirm: '确认删除这条申请记录并撤销该设备连接权限？',
     requests: '申请列表',
     requestsWithCount: '申请列表（{count}）',
     noRequests: '暂无申请',

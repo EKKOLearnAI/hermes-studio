@@ -278,6 +278,10 @@ export function hideInboundRequestHistory(id: string): DeviceRelationRecord {
     row.status = 'rejected'
     row.inbound_status = 'rejected'
     row.decided_at = now
+  } else if (row.inbound_status === 'approved') {
+    row.status = 'none'
+    row.inbound_status = 'none'
+    row.decided_at = now
   }
   row.inbound_history_deleted_at = now
   return saveRow(row)

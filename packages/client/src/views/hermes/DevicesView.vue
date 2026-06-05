@@ -119,10 +119,6 @@ function formatVersion(value: string): string {
   return value || t('devices.unknown')
 }
 
-function openDevice(device: LanDeviceInfo) {
-  window.open(device.url, '_blank', 'noopener,noreferrer')
-}
-
 async function loadDevices() {
   loading.value = true
   try {
@@ -250,9 +246,6 @@ onMounted(() => {
             <div class="device-actions">
               <NButton v-if="canRequestPairing(device)" size="tiny" type="primary" :loading="updatingDeviceId === device.id" @click="updateDevice(device, 'request')">
                 {{ t('devices.requestPairing') }}
-              </NButton>
-              <NButton size="tiny" quaternary @click="openDevice(device)">
-                {{ t('devices.open') }}
               </NButton>
               <NButton
                 v-if="canBlock(device)"

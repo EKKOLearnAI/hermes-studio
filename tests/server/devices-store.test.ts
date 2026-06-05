@@ -79,7 +79,7 @@ describe('devices store', () => {
     })
   })
 
-  it('lists processed inbound request history and hides it without clearing approval', async () => {
+  it('deletes processed inbound request history and clears approval', async () => {
     const {
       getDeviceRelation,
       hideInboundRequestHistory,
@@ -99,7 +99,7 @@ describe('devices store', () => {
     hideInboundRequestHistory(device.id)
     expect(listInboundRequestHistory()).toEqual([])
     expect(getDeviceRelation(device.id)).toMatchObject({
-      inbound_status: 'approved',
+      inbound_status: 'none',
       outbound_status: 'none',
     })
   })
