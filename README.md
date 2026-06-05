@@ -4,14 +4,12 @@
 </p>
 
 <p align="center">
-  A full-featured desktop app and web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
+  A full-featured web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
   Manage AI chat sessions, monitor usage & costs, configure platform channels,<br/>
   schedule cron jobs, browse skills — all from a clean, responsive web interface.
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">Download Hermes Studio Desktop</a>
-  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -173,22 +171,7 @@ hermes-web-ui reset-default-login
 
 ## Quick Start
 
-### Desktop App (Recommended)
-
-Download the latest **Hermes Studio** desktop installer from
-[GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest).
-
-Desktop builds are published for macOS, Windows, and Linux, with separate
-architecture assets where applicable. The desktop app bundles the Web UI
-runtime and stores Hermes Agent data in the native Hermes location:
-
-- Windows: `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes`)
-- macOS/Linux: `~/.hermes`
-
-The desktop wrapper stores its own Web UI state separately in
-`~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
-
-### npm
+### npm (Recommended)
 
 ```bash
 npm install -g hermes-web-ui
@@ -196,6 +179,23 @@ hermes-web-ui start
 ```
 
 Open **http://localhost:8648**
+
+### One-line Setup (Auto-detect OS)
+
+Automatically installs Node.js (if missing) and hermes-web-ui on Debian/Ubuntu/macOS:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+```
+
+### WSL
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/EKKOLearnAI/hermes-web-ui/main/scripts/setup.sh)
+hermes-web-ui start
+```
+
+> WSL uses the same Web UI daemon startup flow as other local installs; no separate gateway service is started by Web UI.
 
 ### Docker Compose
 
@@ -220,6 +220,14 @@ Open **http://localhost:6060**
 
 For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md).
 
+### Source Deployment Note
+
+For Armbian / Ubuntu host-level source deployment, review [`docs/work-log.md`](./docs/work-log.md) before following deployment steps.
+
+- The 2026-05-19 log records a real failure where Hermes was installed under `root` while `hermes-web-ui.service` ran as `hermesui`
+- That mismatch caused the agent bridge to fail with `run_agent.py not found`, and chat requests then hit `ENOENT /tmp/hermes-agent-bridge.sock`
+- After source deployment, verify that `/home/hermesui/.local/bin/hermes` belongs to `hermesui` rather than linking into `/root/.local/...`
+
 ### Hermes Agent Runtime Discovery
 
 When Web UI starts backend chat features, it prefers a source checkout that
@@ -230,18 +238,16 @@ and package installs such as `pip install hermes-agent`.
 
 ## Web UI Environment Variables
 
-These variables configure Hermes Web UI, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
+These variables configure Hermes Web UI itself. Provider API keys and Hermes Agent settings are managed separately through Hermes profiles.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8648` | Web UI listen port. |
 | `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
-| `HERMES_WEBUI_STATE_DIR` | unset | Compatibility alias for `HERMES_WEB_UI_HOME`. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
-| `AUTH_JWT_SECRET` | `AUTH_TOKEN` | JWT signing secret override for username/password sessions. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
@@ -317,8 +323,8 @@ npm install
 npm run dev
 ```
 
-- Frontend: http://localhost:8649
-- BFF Server: http://localhost:8647
+- Frontend: http://localhost:5173
+- BFF Server: http://localhost:8648
 
 ```bash
 npm run build   # outputs to dist/

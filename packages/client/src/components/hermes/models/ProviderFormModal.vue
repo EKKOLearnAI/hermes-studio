@@ -415,12 +415,6 @@ function handleClose() {
           :placeholder="t('models.chooseProvider')"
           filterable
         />
-        <div v-if="selectedPreset && funProviderLink" class="fun-provider-hint">
-          <a :href="funProviderLink" target="_blank" rel="noopener noreferrer">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            {{ t('models.getApiKey') }}
-          </a>
-        </div>
       </NFormItem>
 
       <NFormItem v-if="providerType === 'custom'" :label="t('models.name')">
@@ -522,29 +516,6 @@ function handleClose() {
 </template>
 
 <style scoped lang="scss">
-.fun-provider-hint {
-  margin-top: 6px;
-  font-size: 12px;
-
-  a {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    white-space: nowrap;
-    color: var(--accent-primary);
-    text-decoration: none;
-    opacity: 0.7;
-    transition: opacity 0.2s;
-
-    svg {
-      flex-shrink: 0;
-    }
-
-    &:hover { opacity: 1; }
-  }
-}
-
 .modal-footer {
   display: flex;
   justify-content: flex-end;

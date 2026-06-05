@@ -2,7 +2,7 @@
 """Hermes in-process agent bridge.
 
 This service intentionally lives outside the existing Web UI chat path. It
-imports hermes-agent from HERMES_AGENT_ROOT (default: ~/.hermes/hermes-agent),
+imports hermes-agent from HERMES_AGENT_ROOT when available,
 keeps AIAgent instances in memory by session_id, and exposes a small newline-
 delimited JSON request/response protocol over a local socket.
 """
@@ -2952,6 +2952,9 @@ class WorkerProcess:
                 "HERMES_AGENT_BRIDGE_ENDPOINT": self.endpoint,
                 "HERMES_AGENT_BRIDGE_WORKER_PROFILE": self.profile,
                 "HERMES_AGENT_BRIDGE_BROKER_PID": str(os.getpid()),
+                # Prevent worker CLI defaults from reviving stale source roots
+                # when Hermes is installed from a wheel/venv.
+                "HERMES_AGENT_ROOT": self.agent_root or "",
             }
             self.process = subprocess.Popen(
                 args,
@@ -3713,7 +3716,7 @@ class BridgeBroker:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Hermes AIAgent in-process bridge")
     parser.add_argument("--endpoint", default=os.environ.get("HERMES_AGENT_BRIDGE_ENDPOINT", DEFAULT_ENDPOINT))
-    parser.add_argument("--agent-root", default=os.environ.get("HERMES_AGENT_ROOT", DEFAULT_AGENT_ROOT))
+    parser.add_argument("--agent-root", default=os.environ.get("HERMES_AGENT_ROOT"))
     parser.add_argument("--hermes-home", default=os.environ.get("HERMES_HOME", DEFAULT_HERMES_HOME))
     parser.add_argument("--worker-profile", default=os.environ.get("HERMES_AGENT_BRIDGE_WORKER_PROFILE"))
     args = parser.parse_args(argv)

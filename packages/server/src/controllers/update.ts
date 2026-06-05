@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
 import { delimiter, dirname, extname, join, resolve } from 'path'
-import { getWebUiHome } from '../config'
+import { config, getWebUiHome } from '../config'
 
 let updateInProgress = false
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
@@ -1002,21 +1002,21 @@ function getGlobalRoot() {
 }
 
 function getGlobalCliScript() {
+  const packageName = config.update.packageName
+  const cliBin = config.update.cliBin
   const cli = getGlobalPackageBin(getGlobalRoot())
   if (!existsSync(cli)) {
-    throw new Error(`Updated hermes-web-ui CLI not found: ${cli}`)
+    throw new Error(`Updated package CLI not found: ${cli}`)
   }
   return cli
 }
 
 function runUpdateInstall() {
-  try {
-    runNpm(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
-  } catch (err) {
-    console.warn('[update] failed to clean npm cache, continuing update:', err)
-  }
-
-  return runNpm(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
+  const packageName = config.update.packageName
+  return runNpm(
+    ['install', '-g', `${packageName}@latest`, '--registry', config.update.registry],
+    { timeout: 10 * 60 * 1000 },
+  )
 }
 
 function spawnRestart(port: string) {
@@ -1031,6 +1031,24 @@ function spawnRestart(port: string) {
 }
 
 export async function handleUpdate(ctx: any) {
+  if (!config.update.enabled) {
+    ctx.status = 403
+    ctx.body = {
+      success: false,
+      message: 'In-app update is disabled for this customized build',
+    }
+    return
+  }
+
+  if (!config.update.packageName || !config.update.registry || !config.update.cliBin) {
+    ctx.status = 500
+    ctx.body = {
+      success: false,
+      message: 'Update source is not fully configured. Set WEBUI_UPDATE_PACKAGE, WEBUI_UPDATE_REGISTRY, and WEBUI_UPDATE_CLI_BIN.',
+    }
+    return
+  }
+
   if (updateInProgress) {
     ctx.status = 409
     ctx.body = {

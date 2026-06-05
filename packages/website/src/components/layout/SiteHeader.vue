@@ -84,7 +84,6 @@ function goHome() {
       <div class="mobile-menu-inner" @click.stop>
         <a class="mobile-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
-        <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-web-ui" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
         <div class="mobile-actions">
           <button class="mobile-action-btn" @click="switchLocale">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="action-icon">
@@ -182,11 +181,6 @@ function goHome() {
     color: var(--text-primary);
     background: var(--bg-secondary);
   }
-}
-
-.external-icon {
-  width: 12px;
-  height: 12px;
 }
 
 .icon-btn {

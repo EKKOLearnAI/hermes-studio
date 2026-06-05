@@ -38,8 +38,24 @@ export function getListenHost(env: Record<string, string | undefined> = process.
 }
 
 export function getWebUiHome(env: Record<string, string | undefined> = process.env): string {
-  const appHome = env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()
-  return appHome ? resolve(appHome) : join(homedir(), '.hermes-web-ui')
+  const configuredHome = env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()
+  return configuredHome ? resolve(configuredHome) : join(homedir(), '.hermes-web-ui')
+}
+
+function parseBoolean(value: string | undefined, fallback = false): boolean {
+  if (value == null) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return fallback
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+function normalizeUrl(value: string | undefined): string {
+  return (value || '').trim().replace(/\/+$/, '')
+}
+
+function getDefaultUpdateCliBin(packageName: string): string {
+  const packageBasename = packageName.split('/').filter(Boolean).pop() || packageName
+  return `${packageBasename}.mjs`
 }
 
 export function shouldCreateWebUiDataDir(env: Record<string, string | undefined> = process.env): boolean {

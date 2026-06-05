@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto'
+﻿import { randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { getDb } from '../index'
 import { USER_PROFILES_TABLE, USERS_TABLE } from './schemas'
 
@@ -37,8 +37,8 @@ export interface UserSummary {
   last_login_at: number | null
 }
 
-export const DEFAULT_USERNAME = 'admin'
-export const DEFAULT_PASSWORD = '123456'
+export const DEFAULT_USERNAME = 'quanthermes'
+export const DEFAULT_PASSWORD = '12345678'
 export const DEFAULT_PROFILE_NAME = 'default'
 
 const SCRYPT_KEY_LEN = 64

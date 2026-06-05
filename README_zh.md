@@ -4,14 +4,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能桌面应用和 Web 管理面板。<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能 Web 管理面板。<br/>
   管理 AI 聊天会话、监控用量与成本、配置平台渠道、<br/>
   管理定时任务、浏览技能 —— 全部在一个简洁响应式的 Web 界面中完成。
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">下载 Hermes Studio 桌面版</a>
-  ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
@@ -181,21 +179,7 @@ hermes-web-ui reset-default-login
 
 ## 快速开始
 
-### 桌面应用（推荐）
-
-从 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest)
-下载最新的 **Hermes Studio** 桌面安装包。
-
-桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
-桌面应用内置 Web UI 运行时，Hermes Agent 数据会保存到原生 Hermes 目录：
-
-- Windows：`%LOCALAPPDATA%\hermes`（找不到时回退到 `%APPDATA%\hermes`）
-- macOS/Linux：`~/.hermes`
-
-桌面壳自身的 Web UI 状态会单独保存到 `~/.hermes-web-ui`，除非设置了
-`HERMES_WEB_UI_HOME`。
-
-### npm 安装
+### npm 安装（推荐）
 
 ```bash
 npm install -g hermes-web-ui
@@ -203,6 +187,23 @@ hermes-web-ui start
 ```
 
 打开 **http://localhost:8648**
+
+### 一键安装（自动检测系统）
+
+自动安装 Node.js（如未安装）和 hermes-web-ui，支持 Debian/Ubuntu/macOS：
+
+```bash
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
+```
+
+### WSL
+
+```bash
+bash <(curl -fsSL https://cdn.jsdelivr.net/gh/EKKOLearnAI/hermes-web-ui@main/scripts/setup.sh)
+hermes-web-ui start
+```
+
+> WSL 使用与其他本地安装相同的 Web UI 后台启动流程；Web UI 不再单独启动 gateway 服务。
 
 ### Docker Compose
 
@@ -227,6 +228,14 @@ docker compose logs -f hermes-webui
 
 更详细的说明与排错见：[`docs/docker.md`](./docs/docker.md)
 
+### 源码部署提醒
+
+如果你要在 Armbian / Ubuntu 上走宿主机源码部署，请先阅读 [`docs/work-log.md`](./docs/work-log.md) 再开始执行部署步骤。
+
+- `2026-05-19` 的工作日志记录了一个真实坑点：Hermes 被装到了 `root` 目录下，但 `hermes-web-ui.service` 实际以 `hermesui` 用户运行
+- 这种安装归属错位会导致 agent bridge 报 `run_agent.py not found`，随后聊天链路出现 `ENOENT /tmp/hermes-agent-bridge.sock`
+- 源码部署完成后，请优先检查 `/home/hermesui/.local/bin/hermes` 是否归属 `hermesui`，不要链接到 `/root/.local/...`
+
 ### Hermes Agent 运行时发现
 
 Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源码目录，例如
@@ -236,18 +245,16 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 ## Web UI 环境变量
 
-这些变量用于配置 Hermes Web UI、本地 Hermes runtime 集成以及开发/预览辅助能力。Provider API Key 和 Hermes Agent 相关设置通常仍通过 Hermes profile 管理；这里列出的变量是进程级覆盖项。
+这些变量只用于配置 Hermes Web UI 自身。Provider API Key 和 Hermes Agent 相关设置仍通过 Hermes profile 管理。
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `PORT` | `8648` | Web UI 监听端口。 |
 | `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
-| `HERMES_WEBUI_STATE_DIR` | 未设置 | `HERMES_WEB_UI_HOME` 的兼容别名。 |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传根目录。文件会保存在按 Profile 隔离的子目录下。 |
 | `CORS_ORIGINS` | 仅同 host | HTTP、Socket.IO、WebSocket 跨源 allowlist，支持逗号或空格分隔。只有明确需要旧版 wildcard CORS 时才设置为 `*`。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
-| `AUTH_JWT_SECRET` | `AUTH_TOKEN` | 用户名/密码会话的 JWT 签名密钥覆盖。 |
 | `PROFILE` | `default` | 启动/默认 Hermes profile。运行时请求使用前端当前选择且当前账号有权限访问的 Profile。 |
 | `LOG_LEVEL` | `info` | Server 日志级别。 |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |
@@ -323,8 +330,8 @@ npm install
 npm run dev
 ```
 
-- 前端：http://localhost:8649
-- BFF 服务器：http://localhost:8647
+- 前端：http://localhost:5173
+- BFF 服务器：http://localhost:8648
 
 ```bash
 npm run build   # 构建输出到 dist/

@@ -77,9 +77,9 @@ defineExpose({ scrollToBottom })
     >
         <template #empty>
             <div class="empty-state">
-            <img src="/logo.png" alt="Hermes" class="empty-logo" />
-            <p>{{ t("chat.emptyState") }}</p>
-        </div>
+                <img src="/logo.png" alt="Quanthermes" class="empty-logo" />
+                <p>{{ t("chat.emptyState") }}</p>
+            </div>
         </template>
         <template #before>
             <div

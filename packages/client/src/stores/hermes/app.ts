@@ -7,7 +7,6 @@ import {
   removeCustomModel as deletePersistedCustomModel,
   updateDefaultModel,
   updateModelVisibility,
-  triggerUpdate,
   updateModelAlias,
   type AvailableModelGroup,
   type AvailableModelsResponse,
@@ -31,7 +30,9 @@ export const useAppStore = defineStore('app', () => {
   const connected = ref(false)
   const serverVersion = ref(WEB_UI_VERSION)
   const latestVersion = ref('')
+  const updateEnabled = ref(false)
   const updateAvailable = ref(false)
+  const updateSourceLabel = ref('')
   const clientOutdated = ref(false)
   const updating = ref(false)
   const modelGroups = ref<AvailableModelGroup[]>([])
@@ -52,20 +53,10 @@ export const useAppStore = defineStore('app', () => {
   let modelsLastRequestedAt = 0
 
   async function doUpdate(): Promise<boolean> {
-    updating.value = true
-    try {
-      const res = await triggerUpdate()
-      if (res.success) {
-        updateAvailable.value = false
-        await checkConnection()
-      }
-      return res.success
-    } catch (err) {
-      console.error('Failed to update Hermes Web UI:', err)
-      return false
-    } finally {
-      updating.value = false
-    }
+    updateAvailable.value = false
+    clientOutdated.value = false
+    latestVersion.value = ''
+    return false
   }
 
   async function checkConnection() {
@@ -75,11 +66,17 @@ export const useAppStore = defineStore('app', () => {
       if (res.webui_version) serverVersion.value = res.webui_version
       clientOutdated.value = !!res.webui_version && res.webui_version !== WEB_UI_VERSION
       if (res.webui_latest) latestVersion.value = res.webui_latest
-      updateAvailable.value = !!res.webui_update_available
+      else latestVersion.value = ''
+      updateEnabled.value = !!res.webui_update_enabled
+      updateSourceLabel.value = res.webui_update_source_label || ''
+      updateAvailable.value = !!res.webui_update_enabled && !!res.webui_update_available
       if (res.node_version) nodeVersion.value = res.node_version
     } catch {
       connected.value = false
       clientOutdated.value = false
+      updateEnabled.value = false
+      updateAvailable.value = false
+      updateSourceLabel.value = ''
     }
   }
 
@@ -331,7 +328,9 @@ export const useAppStore = defineStore('app', () => {
     serverVersion,
     latestVersion,
     nodeVersion,
+    updateEnabled,
     updateAvailable,
+    updateSourceLabel,
     clientOutdated,
     updating,
     doUpdate,

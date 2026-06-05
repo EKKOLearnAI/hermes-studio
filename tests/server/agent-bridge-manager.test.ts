@@ -115,6 +115,15 @@ describe('agent bridge manager command resolution', () => {
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('custom-category')
   })
 
+  it('clears inherited HERMES_AGENT_ROOT when no source root is resolved', async () => {
+    process.env.HERMES_AGENT_ROOT = '/tmp/stale-hermes-agent'
+
+    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', undefined)
+
+    expect(env.HERMES_AGENT_ROOT).toBe('')
+  })
+
   it('uses an isolated default bridge endpoint while running under Vitest', async () => {
     const { DEFAULT_AGENT_BRIDGE_ENDPOINT } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
 

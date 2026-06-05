@@ -1,27 +1,30 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
+import { config } from '../config'
 
 declare const __APP_VERSION__: string
 
-type PackageInfo = {
+const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : ''
+
+let cachedLatestVersion = ''
+
+interface PackageInfo {
   name: string
   version: string
 }
 
 function readPackageInfo(): PackageInfo | null {
   const candidatePaths = [
-    // ts-node dev: packages/server/src/controllers -> repo root
-    resolve(__dirname, '../../../../package.json'),
-    // bundled server: dist/server -> repo root/package root
     resolve(__dirname, '../../package.json'),
-    // fallback for dev/test processes started at the repo root
+    resolve(__dirname, '../../../../package.json'),
     resolve(process.cwd(), 'package.json'),
   ]
 
   for (const packagePath of candidatePaths) {
     if (!existsSync(packagePath)) continue
-
     try {
       const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'))
       if (pkg?.name && pkg?.version) {
@@ -30,20 +33,12 @@ function readPackageInfo(): PackageInfo | null {
           version: String(pkg.version),
         }
       }
-    } catch {
-      // Try the next candidate path.
-    }
+    } catch {}
   }
-
   return null
 }
 
 const PACKAGE_INFO = readPackageInfo()
-const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
-  ? __APP_VERSION__
-  : PACKAGE_INFO?.version || ''
-
-let cachedLatestVersion = ''
 
 /**
  * Whether the periodic npm-registry version check is disabled.
@@ -56,21 +51,30 @@ let cachedLatestVersion = ''
  * Set HERMES_WEB_UI_DISABLE_UPDATE_CHECK=true (or 1, on, yes) to disable.
  */
 function isUpdateCheckDisabled(): boolean {
+  if (config.update.enabled) return false
   const raw = (process.env.HERMES_WEB_UI_DISABLE_UPDATE_CHECK || '').trim().toLowerCase()
   return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes'
 }
 
 export async function checkLatestVersion(): Promise<void> {
-  if (isUpdateCheckDisabled()) return
+  if (isUpdateCheckDisabled() && !config.update.enabled) return
   try {
-    const packageName = PACKAGE_INFO?.name || 'hermes-web-ui'
+    const packageName = config.update.packageName || PACKAGE_INFO?.name || 'hermes-web-ui'
+    const registry = config.update.registry || 'https://registry.npmjs.org'
     const registryName = encodeURIComponent(packageName)
-    const res = await fetch(`https://registry.npmjs.org/${registryName}/latest`, { signal: AbortSignal.timeout(10000) })
+    const url = registry.includes('registry.npmjs.org')
+      ? `${registry}/${registryName}/latest`
+      : `${registry}/${registryName}`
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
     if (res.ok) {
-      const data = await res.json() as { version: string }
-      cachedLatestVersion = data.version
-      if (LOCAL_VERSION && cachedLatestVersion !== LOCAL_VERSION) {
-        console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
+      const data = await res.json() as { version: string; 'dist-tags'?: Record<string, string> }
+      const version = data.version || data['dist-tags']?.latest
+      if (version) {
+        cachedLatestVersion = version
+        if (LOCAL_VERSION && cachedLatestVersion !== LOCAL_VERSION) {
+          console.log(`Update available: ${LOCAL_VERSION} → ${cachedLatestVersion}`)
+        }
       }
     }
   } catch { /* ignore */ }
