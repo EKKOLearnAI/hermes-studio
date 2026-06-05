@@ -66,6 +66,7 @@ let keepBottomUntil = 0;
 let bottomFrame: number | null = null;
 let bottomFrameRemaining = 0;
 let bottomFrameAttempts = 0;
+let programmaticScrollUntil = 0;
 let anchorFrame: number | null = null;
 let anchorToken = 0;
 let activeAnchorTarget: AnchorTarget | null = null;
@@ -89,8 +90,29 @@ function syncViewport() {
   viewportHeight.value = el.clientHeight;
 }
 
+function markProgrammaticScroll(ms = 120) {
+  programmaticScrollUntil = Date.now() + ms;
+}
+
+function isProgrammaticScroll(): boolean {
+  return Date.now() < programmaticScrollUntil;
+}
+
+function cancelBottomScroll() {
+  keepBottomUntil = 0;
+  if (bottomFrame != null) {
+    cancelAnimationFrame(bottomFrame);
+    bottomFrame = null;
+  }
+  bottomFrameRemaining = 0;
+  bottomFrameAttempts = 0;
+}
+
 function handleScroll() {
   syncViewport();
+  if (!isProgrammaticScroll() && !isNearBottom(96)) {
+    cancelBottomScroll();
+  }
   emit("scroll");
   if (scrollTop.value <= props.topThreshold) emit("topReach");
 }
@@ -108,8 +130,8 @@ function isNearBottom(threshold = 200): boolean {
 }
 
 function scrollToBottom(options: BottomScrollOptions = {}) {
-  const frames = typeof options === "number" ? options : options.frames ?? 5;
-  const keepAliveMs = typeof options === "number" ? 700 : options.keepAliveMs ?? 700;
+  const frames = typeof options === "number" ? options : options.frames ?? 2;
+  const keepAliveMs = typeof options === "number" ? 250 : options.keepAliveMs ?? 250;
   keepBottomUntil = Date.now() + keepAliveMs;
   nextTick(() => {
     scheduleScrollToBottom(frames);
@@ -118,6 +140,7 @@ function scrollToBottom(options: BottomScrollOptions = {}) {
 
 function setScrollToBottomNow(): boolean {
   const el = getScrollerElement();
+  markProgrammaticScroll();
   scrollerRef.value?.scrollToBottom();
   if (el) {
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -181,12 +204,14 @@ function alignElement(targetEl: HTMLElement, align: AnchorAlign) {
     : targetRect.top - scrollerRect.top - 24;
 
   if (Math.abs(delta) > 1) {
+    markProgrammaticScroll();
     el.scrollTop = Math.max(0, el.scrollTop + delta);
   }
   syncViewport();
 }
 
 function scrollToItem(index: number, options?: ScrollToOptions) {
+  markProgrammaticScroll();
   scrollerRef.value?.scrollToItem(index, options);
   syncViewport();
 }
@@ -286,6 +311,7 @@ function restoreScrollPosition(snapshot: { scrollTop: number; scrollHeight: numb
     const el = getScrollerElement();
     if (!el) return;
     const nextScrollTop = Math.max(0, el.scrollHeight - snapshot.scrollHeight + snapshot.scrollTop);
+    markProgrammaticScroll();
     scrollerRef.value?.scrollToPosition(nextScrollTop);
     el.scrollTop = nextScrollTop;
     syncViewport();
@@ -305,13 +331,7 @@ function captureViewportPosition(): ViewportScrollSnapshot | null {
 
 function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames = 4) {
   if (!snapshot) return;
-  keepBottomUntil = 0;
-  if (bottomFrame != null) {
-    cancelAnimationFrame(bottomFrame);
-    bottomFrame = null;
-    bottomFrameRemaining = 0;
-    bottomFrameAttempts = 0;
-  }
+  cancelBottomScroll();
   if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
 
   nextTick(() => {
@@ -324,6 +344,7 @@ function restoreViewportPosition(snapshot: ViewportScrollSnapshot | null, frames
       }
       const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
       const nextScrollTop = Math.min(maxScrollTop, Math.max(0, snapshot.scrollTop));
+      markProgrammaticScroll();
       scrollerRef.value?.scrollToPosition(nextScrollTop);
       el.scrollTop = nextScrollTop;
       syncViewport();
@@ -353,9 +374,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  if (bottomFrame != null) cancelAnimationFrame(bottomFrame);
-  bottomFrameRemaining = 0;
-  bottomFrameAttempts = 0;
+  cancelBottomScroll();
   if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
   if (viewportRestoreFrame != null) cancelAnimationFrame(viewportRestoreFrame);
   resizeObserver?.disconnect();

@@ -128,4 +128,53 @@ describe('MessageList session scroll position', () => {
     expect(mockRestoreViewportPosition).toHaveBeenCalledWith(sessionASnapshot)
     expect(mockScrollToBottom).not.toHaveBeenCalled()
   })
+
+  it('does not force the bottom while streaming after the user scrolls away', async () => {
+    const chatStore = useChatStore()
+    chatStore.activeSessionId = 'stream-session'
+    chatStore.activeSession = makeSession('stream-session')
+    chatStore.activeSession.messages = [
+      makeMessage('user-message'),
+      { id: 'assistant-message', role: 'assistant', content: 'first', timestamp: Date.now(), isStreaming: true },
+    ]
+    mockIsNearBottom.mockReturnValue(false)
+
+    mount(MessageList, {
+      global: {
+        stubs: { Transition: false },
+      },
+    })
+    await flushSessionScroll()
+    vi.clearAllMocks()
+
+    chatStore.activeSession.messages[1].content = 'first second'
+    await nextTick()
+
+    expect(mockIsNearBottom).toHaveBeenCalled()
+    expect(mockScrollToBottom).not.toHaveBeenCalled()
+  })
+
+  it('uses a single non-sticky bottom scroll for streaming updates near the bottom', async () => {
+    const chatStore = useChatStore()
+    chatStore.activeSessionId = 'stream-bottom-session'
+    chatStore.activeSession = makeSession('stream-bottom-session')
+    chatStore.activeSession.messages = [
+      makeMessage('user-message'),
+      { id: 'assistant-message', role: 'assistant', content: 'first', timestamp: Date.now(), isStreaming: true },
+    ]
+    mockIsNearBottom.mockReturnValue(true)
+
+    mount(MessageList, {
+      global: {
+        stubs: { Transition: false },
+      },
+    })
+    await flushSessionScroll()
+    vi.clearAllMocks()
+
+    chatStore.activeSession.messages[1].content = 'first second'
+    await nextTick()
+
+    expect(mockScrollToBottom).toHaveBeenCalledWith({ frames: 1, keepAliveMs: 0 })
+  })
 })

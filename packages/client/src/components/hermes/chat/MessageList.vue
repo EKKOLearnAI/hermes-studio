@@ -6,6 +6,11 @@ type SessionScrollSnapshot = {
   wasNearBottom: boolean;
 }
 
+type BottomScrollOptions = number | {
+  frames?: number;
+  keepAliveMs?: number;
+}
+
 const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
 </script>
 
@@ -100,8 +105,8 @@ function isNearBottom(threshold = 200): boolean {
   return listRef.value?.isNearBottom(threshold) ?? true;
 }
 
-function scrollToBottom() {
-  listRef.value?.scrollToBottom();
+function scrollToBottom(options?: BottomScrollOptions) {
+  listRef.value?.scrollToBottom(options);
 }
 
 function scrollToMessage(messageId: string) {
@@ -130,14 +135,14 @@ function applyInitialSessionScroll(sessionId: string) {
   if (snapshot) {
     pendingInitialScrollSessionId.value = null;
     if (snapshot.wasNearBottom) {
-      scrollToBottom();
+      scrollToBottom({ frames: 3, keepAliveMs: 200 });
     } else {
       listRef.value?.restoreViewportPosition(snapshot);
     }
     return;
   }
 
-  scrollToBottom();
+  scrollToBottom({ frames: 3, keepAliveMs: 200 });
   if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
 }
 
@@ -184,7 +189,7 @@ watch(
 watch(
   () => chatStore.isRunActive,
   (v) => {
-    if (v) scrollToBottom();
+    if (v) scrollToBottom({ frames: 2, keepAliveMs: 180 });
   },
 );
 
@@ -198,7 +203,7 @@ watch(
       return;
     }
     if (!isNearBottom()) return;
-    scrollToBottom();
+    scrollToBottom({ frames: 1, keepAliveMs: 0 });
   },
 );
 watch(currentToolCalls, () => {
@@ -208,7 +213,7 @@ watch(currentToolCalls, () => {
     return;
   }
   if (!isNearBottom()) return;
-  scrollToBottom();
+  scrollToBottom({ frames: 1, keepAliveMs: 0 });
 });
 
 onBeforeUnmount(() => {
