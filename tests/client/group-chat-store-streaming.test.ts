@@ -97,7 +97,11 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.getStoredUserId.mockReturnValue('user-1')
     groupChatApiMock.getStoredUserName.mockReturnValue('tester')
     groupChatApiMock.socket.on.mockClear()
-    groupChatApiMock.socket.emit.mockClear()
+    groupChatApiMock.socket.emit.mockReset()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      return groupChatApiMock.socket
+    })
     groupChatApiMock.socket.disconnect.mockClear()
   })
 
@@ -220,5 +224,118 @@ describe('group chat store streaming merge', () => {
       reasoning: 'thinking...',
       isStreaming: false,
     })
+  })
+
+  it('maps non-string and falsy tool payloads from room history', async () => {
+    const store = await createJoinedStore([
+      assistantMessage({
+        id: 'msg-tool-call',
+        content: '',
+        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'lookup', arguments: false } }],
+      } as unknown as Partial<ChatMessage>),
+      assistantMessage({
+        id: 'msg-tool-result',
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: { ok: true },
+      } as unknown as Partial<ChatMessage>),
+    ])
+
+    expect(store.sortedMessages).toHaveLength(1)
+    expect(store.sortedMessages[0]).toMatchObject({
+      role: 'tool',
+      toolName: 'lookup',
+      toolArgs: false,
+      toolResult: { ok: true },
+      toolStatus: 'done',
+    })
+  })
+
+  it('rejoins the active room after socket reconnect and restores transient room state', async () => {
+    const store = await createJoinedStore()
+    store.loadedMessageCount = 300
+    store.totalMessages = 500
+    store.hasMoreBefore = true
+    store.rooms = [room]
+    groupChatApiMock.socket.emit.mockClear()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        ack({
+          members: [{ id: 'human-1', name: 'Human', online: true }],
+          agents: [{ id: 'agent-row-1', agentId: 'agent-1', profile: 'worker', name: 'Worker' }],
+          rooms: ['room-1', 'room-2'],
+          messages: [assistantMessage({ id: 'missed-1', content: 'missed while offline', timestamp: 2 })],
+          typingUsers: [{ userId: 'agent-1', userName: 'Worker' }],
+          contextStatuses: [{ agentName: 'Worker', status: 'replying' }],
+        })
+      }
+      return groupChatApiMock.socket
+    })
+
+    emitSocket('connect', undefined)
+    await Promise.resolve()
+
+    expect(groupChatApiMock.socket.emit).toHaveBeenCalledWith(
+      'join',
+      expect.objectContaining({ roomId: 'room-1', name: 'tester' }),
+      expect.any(Function),
+    )
+    expect(store.members).toEqual([expect.objectContaining({ id: 'human-1', name: 'Human' })])
+    expect(store.agents).toEqual([expect.objectContaining({ profile: 'worker', name: 'Worker' })])
+    expect(store.rooms).toEqual([room])
+    expect(store.messages).toEqual([expect.objectContaining({ id: 'missed-1', content: 'missed while offline' })])
+    expect(store.loadedMessageCount).toBe(300)
+    expect(store.totalMessages).toBe(500)
+    expect(store.hasMoreBefore).toBe(true)
+    expect(store.typingNames).toEqual(['Worker'])
+    expect(store.contextStatus).toEqual(expect.objectContaining({ agentName: 'Worker', status: 'replying' }))
+  })
+
+  it('ignores a stale reconnect join ack after the user switches rooms', async () => {
+    const store = await createJoinedStore()
+    let joinAck: Function | undefined
+    groupChatApiMock.socket.emit.mockClear()
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join') joinAck = ack
+      return groupChatApiMock.socket
+    })
+
+    emitSocket('connect', undefined)
+    await Promise.resolve()
+    expect(joinAck).toBeDefined()
+
+    const roomTwoMessage = assistantMessage({ id: 'room-2-msg', roomId: 'room-2', content: 'current room', timestamp: 3 })
+    store.currentRoomId = 'room-2'
+    store.members = [{ id: 'human-2', name: 'Room 2 Human', online: true }]
+    store.messages = [roomTwoMessage]
+
+    joinAck?.({
+      members: [{ id: 'human-1', name: 'Old Room Human', online: true }],
+      messages: [assistantMessage({ id: 'old-room-msg', content: 'old room', timestamp: 2 })],
+      typingUsers: [{ userId: 'agent-1', userName: 'Worker' }],
+      contextStatuses: [{ agentName: 'Worker', status: 'replying' }],
+    })
+    await Promise.resolve()
+
+    expect(store.currentRoomId).toBe('room-2')
+    expect(store.members).toEqual([expect.objectContaining({ id: 'human-2', name: 'Room 2 Human' })])
+    expect(store.messages).toEqual([roomTwoMessage])
+    expect(store.typingNames).toEqual([])
+  })
+
+  it('does not rejoin when socket connects without an active room', async () => {
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+    await store.connect()
+    groupChatApiMock.socket.emit.mockClear()
+
+    emitSocket('connect', undefined)
+    await Promise.resolve()
+
+    expect(groupChatApiMock.socket.emit).not.toHaveBeenCalledWith(
+      'join',
+      expect.anything(),
+      expect.any(Function),
+    )
   })
 })

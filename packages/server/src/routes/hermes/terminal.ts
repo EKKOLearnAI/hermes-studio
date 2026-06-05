@@ -7,6 +7,8 @@ import { getActiveProfileDir } from '../../services/hermes/hermes-profile'
 import { getTerminalConfig, type TerminalConfig } from '../../services/hermes/file-provider'
 import { authenticateUserToken, isAuthEnabled } from '../../middleware/user-auth'
 import { logger } from '../../services/logger'
+import { config } from '../../config'
+import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../security'
 
 let pty: any = null
 
@@ -147,6 +149,11 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
     httpServer.on('upgrade', async (req, socket, head) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
       if (url.pathname !== '/api/hermes/terminal') {
+        return
+      }
+
+      if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
+        writeForbiddenOrigin(socket)
         return
       }
 

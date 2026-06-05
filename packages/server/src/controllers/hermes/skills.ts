@@ -1,7 +1,8 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises'
-import { homedir } from 'os'
-import { join, resolve } from 'path'
-import { createHash } from 'crypto'
+import { mkdir, readdir, readFile, rm, stat, writeFile, cp } from 'fs/promises'
+import { homedir, tmpdir } from 'os'
+import { dirname, join, resolve } from 'path'
+import { createHash, randomBytes } from 'crypto'
+import AdmZip from 'adm-zip'
 import {
   readConfigYamlForProfile, updateConfigYamlForProfile,
   safeReadFile, extractDescription, listFilesRecursive,
@@ -30,6 +31,46 @@ function expandConfiguredPath(value: string): string {
   if (expandedEnv === '~') return homedir()
   if (expandedEnv.startsWith('~/')) return join(homedir(), expandedEnv.slice(2))
   return expandedEnv
+}
+
+/** Read `config.skills.external_dirs` verbatim (after trim, dropping empties),
+ *  preserving `~`/`$VAR` so the UI can show what the user typed. */
+function readRawExternalDirs(config: Record<string, any>): string[] {
+  const rawDirs = config.skills?.external_dirs
+  const entries = typeof rawDirs === 'string'
+    ? [rawDirs]
+    : Array.isArray(rawDirs)
+      ? rawDirs
+      : []
+  const out: string[] = []
+  for (const entry of entries) {
+    const trimmed = String(entry || '').trim()
+    if (trimmed) out.push(trimmed)
+  }
+  return out
+}
+
+interface ExternalDirEntryDto {
+  raw: string
+  expanded: string
+  exists: boolean
+  isDir: boolean
+}
+
+/** Read raw entries and stat each one. Order preserved. */
+async function describeRawExternalDirs(config: Record<string, any>): Promise<ExternalDirEntryDto[]> {
+  const rawEntries = readRawExternalDirs(config)
+  return Promise.all(rawEntries.map(async (raw) => {
+    const expanded = resolve(expandConfiguredPath(raw))
+    let exists = false
+    let isDir = false
+    try {
+      const info = await stat(expanded)
+      exists = true
+      isDir = info.isDirectory()
+    } catch { /* missing → exists=false */ }
+    return { raw, expanded, exists, isDir }
+  }))
 }
 
 async function resolveExternalSkillsDirs(config: Record<string, any>, localSkillsDir: string): Promise<string[]> {
@@ -314,7 +355,12 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
   return categories
 }
 
-async function scanExternalSkillsDir(skillsDir: string, disabledList: string[], usageStats: Map<string, UsageStats>) {
+async function scanExternalSkillsDir(
+  skillsDir: string,
+  disabledList: string[],
+  usageStats: Map<string, UsageStats>,
+  sourcePath: string,
+) {
   return scanSkillsDir(skillsDir, new Map(), new Set(), disabledList, usageStats).then(categories =>
     categories.map(category => ({
       ...category,
@@ -322,6 +368,7 @@ async function scanExternalSkillsDir(skillsDir: string, disabledList: string[], 
         ...skill,
         source: 'external' as SkillSource,
         modified: undefined,
+        sourcePath,
       })),
     })),
   )
@@ -380,8 +427,16 @@ export async function list(ctx: any) {
 
     // Scan all skills (supports both two-level and three-level directory structures)
     let categories = await scanSkillsDir(skillsDir, bundledManifest, hubNames, disabledList, usageStats)
+    // Map resolved → raw so we can attach the user-written path (e.g. ~/...) to
+    // each external skill — the SkillsView groups by this when the external
+    // filter is active.
+    const rawByResolved = new Map<string, string>()
+    for (const entry of await describeRawExternalDirs(config)) {
+      if (!rawByResolved.has(entry.expanded)) rawByResolved.set(entry.expanded, entry.raw)
+    }
     for (const externalDir of await resolveExternalSkillsDirs(config, skillsDir)) {
-      const externalCategories = await scanExternalSkillsDir(externalDir, disabledList, usageStats)
+      const sourcePath = rawByResolved.get(externalDir) || externalDir
+      const externalCategories = await scanExternalSkillsDir(externalDir, disabledList, usageStats, sourcePath)
       categories = mergeExternalCategories(categories, externalCategories)
     }
 
@@ -407,7 +462,13 @@ export async function list(ctx: any) {
     }
     archived.sort((a: any, b: any) => a.name.localeCompare(b.name))
 
-    ctx.body = { categories, archived }
+    const externalDirs = await resolveExternalSkillsDirs(config, skillsDir)
+    const externalRaw = await describeRawExternalDirs(config)
+    ctx.body = {
+      categories,
+      archived,
+      paths: { local: skillsDir, external: externalDirs, externalRaw },
+    }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skills directory: ${err.message}` }
@@ -423,6 +484,77 @@ export async function usageStats(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+  }
+}
+
+const MAX_EXTERNAL_DIR_LEN = 2048
+
+/** GET /api/hermes/skills/external-dirs — return the raw list with existence flags */
+export async function listExternalDirs(ctx: any) {
+  try {
+    const config = await readConfigYamlForProfile(requestedProfile(ctx))
+    ctx.body = { dirs: await describeRawExternalDirs(config) }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+/** PUT /api/hermes/skills/external-dirs — replace the list verbatim. */
+export async function updateExternalDirs(ctx: any) {
+  const body = (ctx.request.body || {}) as { dirs?: unknown }
+  if (!Array.isArray(body.dirs)) {
+    ctx.status = 400
+    ctx.body = { error: 'dirs must be an array of strings' }
+    return
+  }
+  const cleaned: string[] = []
+  for (const entry of body.dirs) {
+    if (typeof entry !== 'string') {
+      ctx.status = 400
+      ctx.body = { error: 'dirs entries must be strings' }
+      return
+    }
+    if (entry.length > MAX_EXTERNAL_DIR_LEN) {
+      ctx.status = 400
+      ctx.body = { error: `Path too long (max ${MAX_EXTERNAL_DIR_LEN} chars)` }
+      return
+    }
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f]/.test(entry)) {
+      ctx.status = 400
+      ctx.body = { error: 'Path contains control characters' }
+      return
+    }
+    const trimmed = entry.trim()
+    if (trimmed) cleaned.push(trimmed)
+  }
+
+  // Dedupe verbatim (case-sensitive). Two different `~`/`$VAR` strings that
+  // resolve to the same dir are kept — the user wrote both intentionally.
+  const seen = new Set<string>()
+  const deduped: string[] = []
+  for (const entry of cleaned) {
+    if (seen.has(entry)) continue
+    seen.add(entry)
+    deduped.push(entry)
+  }
+
+  try {
+    await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
+      if (!config.skills) config.skills = {}
+      if (deduped.length === 0) {
+        delete config.skills.external_dirs
+      } else {
+        // Always normalise to array form even if the previous value was a string.
+        config.skills.external_dirs = deduped
+      }
+      return config
+    })
+    ctx.body = { success: true, dirs: deduped }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
   }
 }
 
@@ -544,5 +676,375 @@ export async function pin_(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
+  }
+}
+
+const MAX_SKILL_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
+
+function isValidSkillName(name: string): boolean {
+  // Reject empty / path traversal / absolute paths
+  if (!name) return false
+  if (name === '.' || name === '..') return false
+  if (name.includes('/') || name.includes('\\') || name.includes('\0')) return false
+  return true
+}
+
+function splitMultipart(raw: Buffer, boundary: Buffer): Buffer[] {
+  const parts: Buffer[] = []
+  let start = 0
+  while (true) {
+    const idx = raw.indexOf(boundary, start)
+    if (idx === -1) break
+    if (start > 0) { parts.push(raw.subarray(start + 2, idx)) }
+    start = idx + boundary.length
+  }
+  return parts
+}
+
+interface ParsedPart {
+  fieldName: string
+  filename: string | null
+  data: Buffer
+}
+
+function parsePart(part: Buffer): ParsedPart | null {
+  const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'))
+  if (headerEnd === -1) return null
+  const headerBuf = part.subarray(0, headerEnd)
+  const header = headerBuf.toString('utf-8')
+  const data = part.subarray(headerEnd + 4, part.length - 2)
+
+  const dispMatch = header.match(/Content-Disposition:\s*form-data;([^\r\n]*)/i)
+  if (!dispMatch) return null
+  const disp = dispMatch[1]
+  const nameMatch = disp.match(/\bname="([^"]+)"/)
+  if (!nameMatch) return null
+  const fieldName = nameMatch[1]
+
+  let filename: string | null = null
+  const fnStarMatch = disp.match(/filename\*=UTF-8''([^;]+)/i)
+  if (fnStarMatch) {
+    filename = decodeURIComponent(fnStarMatch[1].trim().replace(/^"|"$/g, ''))
+  } else {
+    const fnMatch = disp.match(/\bfilename="([^"]*)"/)
+    if (fnMatch) filename = fnMatch[1]
+  }
+  return { fieldName, filename, data }
+}
+
+export async function deleteSkill(ctx: any) {
+  const category = String((ctx.params as any)?.category || '')
+  const name = String((ctx.params as any)?.skill || '')
+  if (!isValidSkillName(category) || !isValidSkillName(name)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid category or skill name' }
+    return
+  }
+
+  const skillsDir = requestSkillsDir(ctx)
+  try {
+    // Determine source — only allow deleting `local` skills
+    const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
+    const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
+    const source = getSkillSource(name, bundledManifest, hubNames)
+    if (source !== 'local') {
+      ctx.status = 403
+      ctx.body = { error: `Only local skills can be deleted (this skill is ${source})` }
+      return
+    }
+
+    // Resolve via the same category-aware path used by list/listFiles/readFile_
+    // so two skills sharing a name in different categories don't collide.
+    // Skip `external_dirs` here — only the local profile dir is deletable.
+    const localSkillDir = await findSkillDirInRoot(skillsDir, category, name)
+    if (!localSkillDir) {
+      ctx.status = 404
+      ctx.body = { error: 'Skill not found' }
+      return
+    }
+    if (!isPathWithin(localSkillDir, skillsDir)) {
+      ctx.status = 403
+      ctx.body = { error: 'Access denied' }
+      return
+    }
+
+    await rm(localSkillDir, { recursive: true, force: true })
+
+    // Cleanup `disabled` list in profile config so the deleted name doesn't linger
+    try {
+      await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
+        const list = config?.skills?.disabled
+        if (Array.isArray(list)) {
+          const idx = list.indexOf(name)
+          if (idx !== -1) list.splice(idx, 1)
+        }
+        return config
+      })
+    } catch { /* config cleanup is best-effort */ }
+
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  }
+}
+
+async function readMultipartBody(ctx: any): Promise<{ parts: ParsedPart[] } | { error: string; status: number }> {
+  const contentType = ctx.get('content-type') || ''
+  if (!contentType.startsWith('multipart/form-data')) {
+    return { error: 'Expected multipart/form-data', status: 400 }
+  }
+  const boundaryStr = contentType.split('boundary=')[1]
+  if (!boundaryStr) return { error: 'Missing boundary', status: 400 }
+  const boundary = '--' + boundaryStr.split(';')[0].trim()
+
+  const chunks: Buffer[] = []
+  let totalSize = 0
+  for await (const chunk of ctx.req) {
+    totalSize += chunk.length
+    if (totalSize > MAX_SKILL_UPLOAD_SIZE) {
+      return { error: `Upload too large (max ${MAX_SKILL_UPLOAD_SIZE / 1024 / 1024}MB)`, status: 413 }
+    }
+    chunks.push(chunk)
+  }
+  const raw = Buffer.concat(chunks)
+  const rawParts = splitMultipart(raw, Buffer.from(boundary))
+  const parts: ParsedPart[] = []
+  for (const p of rawParts) {
+    const parsed = parsePart(p)
+    if (parsed) parts.push(parsed)
+  }
+  return { parts }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try { await stat(p); return true } catch { return false }
+}
+
+export async function importSkill(ctx: any) {
+  const parsed = await readMultipartBody(ctx)
+  if ('error' in parsed) {
+    ctx.status = parsed.status
+    ctx.body = { error: parsed.error }
+    return
+  }
+
+  const filePartsAll = parsed.parts.filter(p => p.fieldName === 'file' && p.filename !== null)
+  const categoryPart = parsed.parts.find(p => p.fieldName === 'category' && p.filename === null)
+  const category = categoryPart ? categoryPart.data.toString('utf-8').trim() : ''
+
+  if (filePartsAll.length === 0) {
+    ctx.status = 400
+    ctx.body = { error: 'No files received' }
+    return
+  }
+
+  // Sanity-check optional category — must be a single safe segment if provided
+  if (category && !isValidSkillName(category)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid category name' }
+    return
+  }
+
+  const skillsDir = requestSkillsDir(ctx)
+  await mkdir(skillsDir, { recursive: true })
+  const targetRoot = category ? join(skillsDir, category) : skillsDir
+
+  // Provenance for conflict detection (cannot shadow builtin/hub)
+  const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
+  const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
+
+  // Decide between "zip" and "folder" mode
+  const isSingleZip = filePartsAll.length === 1 &&
+    (filePartsAll[0].filename || '').toLowerCase().endsWith('.zip') &&
+    !(filePartsAll[0].filename || '').includes('/')
+
+  let skillName = ''
+  let stagingDir = ''
+
+  try {
+    if (isSingleZip) {
+      // ============ ZIP MODE ============
+      // Extract in pure Node (adm-zip) so the server doesn't depend on a system
+      // `unzip` binary — which is missing on Windows and on slim Linux images.
+      const zipPart = filePartsAll[0]
+      stagingDir = join(tmpdir(), `hermes-skill-import-${randomBytes(6).toString('hex')}`)
+      const extractDir = join(stagingDir, 'extracted')
+      await mkdir(extractDir, { recursive: true })
+
+      let zip: AdmZip
+      try {
+        zip = new AdmZip(zipPart.data)
+      } catch (err: any) {
+        ctx.status = 400
+        ctx.body = { error: `Failed to read zip archive: ${err?.message || err}` }
+        return
+      }
+
+      try {
+        for (const entry of zip.getEntries()) {
+          // Normalise to forward slashes; adm-zip uses POSIX separators internally
+          // but be defensive.
+          const rel = entry.entryName.replace(/\\/g, '/')
+          if (!rel || rel.startsWith('/')) continue
+          // Skip macOS metadata and dotfile noise at the top level
+          const top = rel.split('/')[0]
+          if (top === '__MACOSX' || top.startsWith('.')) continue
+
+          const dest = resolve(join(extractDir, rel))
+          if (!isPathWithin(dest, extractDir)) {
+            ctx.status = 400
+            ctx.body = { error: `Path traversal detected in zip entry: ${rel}` }
+            return
+          }
+
+          if (entry.isDirectory) {
+            await mkdir(dest, { recursive: true })
+            continue
+          }
+          await mkdir(dirname(dest), { recursive: true })
+          await writeFile(dest, entry.getData())
+        }
+      } catch (err: any) {
+        ctx.status = 400
+        ctx.body = { error: `Failed to unzip archive: ${err?.message || err}` }
+        return
+      }
+
+      // Locate the skill root inside the extracted tree
+      const topEntries = (await readdir(extractDir, { withFileTypes: true })).filter(e => !e.name.startsWith('.') && !e.name.startsWith('__MACOSX'))
+      let skillSrcDir: string
+      const zipBaseName = (zipPart.filename || 'skill').replace(/\.zip$/i, '')
+      const rootSkillMd = await safeReadFile(join(extractDir, 'SKILL.md'))
+      if (rootSkillMd !== null) {
+        // Zip extracted directly with SKILL.md at root → use zip basename
+        skillName = zipBaseName
+        skillSrcDir = extractDir
+      } else {
+        const dirs = topEntries.filter(e => e.isDirectory())
+        if (dirs.length !== 1) {
+          ctx.status = 400
+          ctx.body = { error: 'Zip must contain a single top-level skill directory with SKILL.md (or SKILL.md at root)' }
+          return
+        }
+        skillName = dirs[0].name
+        skillSrcDir = join(extractDir, skillName)
+        const innerSkillMd = await safeReadFile(join(skillSrcDir, 'SKILL.md'))
+        if (innerSkillMd === null) {
+          ctx.status = 400
+          ctx.body = { error: `Skill directory "${skillName}" must contain a SKILL.md file` }
+          return
+        }
+      }
+
+      if (!isValidSkillName(skillName)) {
+        ctx.status = 400
+        ctx.body = { error: `Invalid skill name "${skillName}"` }
+        return
+      }
+      if (bundledManifest.has(skillName) || hubNames.has(skillName)) {
+        ctx.status = 409
+        ctx.body = { error: `Skill "${skillName}" conflicts with a builtin or hub-managed skill` }
+        return
+      }
+
+      const targetDir = join(targetRoot, skillName)
+      if (!isPathWithin(targetDir, skillsDir)) {
+        ctx.status = 400
+        ctx.body = { error: 'Resolved target path escapes skills directory' }
+        return
+      }
+      if (await pathExists(targetDir)) {
+        ctx.status = 409
+        ctx.body = { error: `Skill "${skillName}" already exists` }
+        return
+      }
+      await mkdir(targetRoot, { recursive: true })
+      await cp(skillSrcDir, targetDir, { recursive: true })
+    } else {
+      // ============ FOLDER MODE (multiple files with relative paths) ============
+      // Determine top-level dir name from the first segment of every relative path
+      const tops = new Set<string>()
+      for (const part of filePartsAll) {
+        const rel = (part.filename || '').replace(/\\/g, '/').replace(/^\.?\//, '')
+        const seg = rel.split('/')[0]
+        if (seg) tops.add(seg)
+      }
+      if (tops.size === 0) {
+        ctx.status = 400
+        ctx.body = { error: 'No valid file paths in upload' }
+        return
+      }
+      if (tops.size > 1) {
+        ctx.status = 400
+        ctx.body = { error: 'All files must share a common top-level directory (the skill folder)' }
+        return
+      }
+      skillName = [...tops][0]
+      if (!isValidSkillName(skillName)) {
+        ctx.status = 400
+        ctx.body = { error: `Invalid skill name "${skillName}"` }
+        return
+      }
+      // Must include SKILL.md
+      const hasSkillMd = filePartsAll.some(p => {
+        const rel = (p.filename || '').replace(/\\/g, '/')
+        return rel === `${skillName}/SKILL.md`
+      })
+      if (!hasSkillMd) {
+        ctx.status = 400
+        ctx.body = { error: `Skill folder "${skillName}" must contain a SKILL.md file at its root` }
+        return
+      }
+      if (bundledManifest.has(skillName) || hubNames.has(skillName)) {
+        ctx.status = 409
+        ctx.body = { error: `Skill "${skillName}" conflicts with a builtin or hub-managed skill` }
+        return
+      }
+
+      const targetDir = join(targetRoot, skillName)
+      if (!isPathWithin(targetDir, skillsDir)) {
+        ctx.status = 400
+        ctx.body = { error: 'Resolved target path escapes skills directory' }
+        return
+      }
+      if (await pathExists(targetDir)) {
+        ctx.status = 409
+        ctx.body = { error: `Skill "${skillName}" already exists` }
+        return
+      }
+      await mkdir(targetRoot, { recursive: true })
+
+      // Stage to a temp dir first, then move/copy atomically (ish) so a failed
+      // partial write doesn't leave half a skill in the live directory.
+      stagingDir = join(tmpdir(), `hermes-skill-import-${randomBytes(6).toString('hex')}`)
+      const stagingSkillDir = join(stagingDir, skillName)
+      await mkdir(stagingSkillDir, { recursive: true })
+
+      for (const part of filePartsAll) {
+        const rel = (part.filename || '').replace(/\\/g, '/').replace(/^\.?\//, '')
+        const relInsideSkill = rel.slice(skillName.length + 1) // strip "<skillName>/"
+        if (!relInsideSkill) continue // the bare folder marker
+        const dest = resolve(join(stagingSkillDir, relInsideSkill))
+        if (!isPathWithin(dest, stagingSkillDir)) {
+          ctx.status = 400
+          ctx.body = { error: `Path traversal detected in: ${rel}` }
+          return
+        }
+        await mkdir(dirname(dest), { recursive: true })
+        await writeFile(dest, part.data)
+      }
+
+      await cp(stagingSkillDir, targetDir, { recursive: true })
+    }
+
+    ctx.body = { success: true, name: skillName }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err.message }
+  } finally {
+    if (stagingDir) {
+      try { await rm(stagingDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    }
   }
 }
