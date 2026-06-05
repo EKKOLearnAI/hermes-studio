@@ -1253,148 +1253,148 @@ async function handleSessionModelCustomSubmit() {
         <div class="chat-content-wrapper">
           <div class="chat-main-content">
             <MessageList ref="messageListRef" />
+            <div v-if="visibleApproval || visibleClarify" class="pending-interaction-stack">
+              <div v-if="visibleApproval" class="approval-bar">
+                <div class="approval-icon" aria-hidden="true">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+              </div>
+              <div class="approval-content">
+                <div class="approval-main">
+                  <div class="approval-kicker">{{ t("chat.approvalKicker") }}</div>
+                  <div class="approval-title-row">
+                    <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
+                    <div
+                      class="approval-countdown"
+                      :class="{ 'approval-countdown-expired': approvalRemainingMs <= 0 }"
+                    >
+                      {{ approvalCountdownText }}
+                    </div>
+                  </div>
+                  <div class="approval-desc">{{ visibleApproval.description }}</div>
+                  <code class="approval-command">{{ visibleApproval.command }}</code>
+                </div>
+                <div class="approval-actions">
+                  <NButton
+                    v-if="visibleApproval.choices.includes('once')"
+                    size="small"
+                    type="primary"
+                    :disabled="approvalRemainingMs <= 0"
+                    @click="handleApproval('once')"
+                  >
+                    {{ t("chat.approvalAllowOnce") }}
+                  </NButton>
+                  <NButton
+                    v-if="visibleApproval.choices.includes('session')"
+                    size="small"
+                    secondary
+                    :disabled="approvalRemainingMs <= 0"
+                    @click="handleApproval('session')"
+                  >
+                    {{ t("chat.approvalAllowSession") }}
+                  </NButton>
+                  <NButton
+                    v-if="visibleApproval.choices.includes('always')"
+                    size="small"
+                    secondary
+                    :disabled="approvalRemainingMs <= 0"
+                    @click="handleApproval('always')"
+                  >
+                    {{ t("chat.approvalAlways") }}
+                  </NButton>
+                  <NButton
+                    v-if="visibleApproval.choices.includes('deny')"
+                    size="small"
+                    type="error"
+                    secondary
+                    :disabled="approvalRemainingMs <= 0"
+                    @click="handleApproval('deny')"
+                  >
+                    {{ t("chat.approvalDeny") }}
+                  </NButton>
+                </div>
+              </div>
+            </div>
+            <div v-if="visibleClarify" class="clarify-bar">
+              <div class="clarify-icon" aria-hidden="true">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div class="clarify-content">
+                <div class="clarify-main">
+                  <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
+                  <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
+                  <div class="clarify-countdown" :class="{ expired: clarifyRemainingMs <= 0 }">
+                    {{ clarifyCountdownText }}
+                  </div>
+                  <div class="clarify-desc">{{ visibleClarify.question }}</div>
+                </div>
+                <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
+                  <NButton
+                    v-for="choice in visibleClarify.choices"
+                    :key="choice"
+                    size="small"
+                    type="primary"
+                    :disabled="clarifyRemainingMs <= 0"
+                    @click="handleClarify(choice)"
+                  >
+                    {{ choice }}
+                  </NButton>
+                  <NButton
+                    size="small"
+                    type="error"
+                    secondary
+                    :disabled="clarifyRemainingMs <= 0"
+                    @click="handleClarify('')"
+                  >
+                    {{ t('chat.clarifyDismiss') }}
+                  </NButton>
+                </div>
+                <div v-else class="clarify-actions clarify-actions-open">
+                  <div class="clarify-input-row">
+                    <NInput
+                      v-model:value="clarifyResponse"
+                      size="small"
+                      :disabled="clarifyRemainingMs <= 0"
+                      :placeholder="t('chat.clarifyPlaceholder')"
+                    />
+                    <NButton size="small" type="primary" :disabled="clarifyRemainingMs <= 0" @click="handleClarify()">
+                      {{ t('chat.clarifySubmit') }}
+                    </NButton>
+                  </div>
+                </div>
+              </div>
+              </div>
+            </div>
           </div>
           <OutlinePanel
             v-if="showOutline"
             :messages="chatStore.messages"
             @navigate="handleOutlineNavigate"
           />
-        </div>
-        <div v-if="visibleApproval || visibleClarify" class="pending-interaction-stack">
-          <div v-if="visibleApproval" class="approval-bar">
-            <div class="approval-icon" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-              <path d="m9 12 2 2 4-4" />
-            </svg>
-          </div>
-          <div class="approval-content">
-            <div class="approval-main">
-              <div class="approval-kicker">{{ t("chat.approvalKicker") }}</div>
-              <div class="approval-title-row">
-                <div class="approval-title">{{ t("chat.approvalTitle") }}</div>
-                <div
-                  class="approval-countdown"
-                  :class="{ 'approval-countdown-expired': approvalRemainingMs <= 0 }"
-                >
-                  {{ approvalCountdownText }}
-                </div>
-              </div>
-              <div class="approval-desc">{{ visibleApproval.description }}</div>
-              <code class="approval-command">{{ visibleApproval.command }}</code>
-            </div>
-            <div class="approval-actions">
-              <NButton
-                v-if="visibleApproval.choices.includes('once')"
-                size="small"
-                type="primary"
-                :disabled="approvalRemainingMs <= 0"
-                @click="handleApproval('once')"
-              >
-                {{ t("chat.approvalAllowOnce") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('session')"
-                size="small"
-                secondary
-                :disabled="approvalRemainingMs <= 0"
-                @click="handleApproval('session')"
-              >
-                {{ t("chat.approvalAllowSession") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('always')"
-                size="small"
-                secondary
-                :disabled="approvalRemainingMs <= 0"
-                @click="handleApproval('always')"
-              >
-                {{ t("chat.approvalAlways") }}
-              </NButton>
-              <NButton
-                v-if="visibleApproval.choices.includes('deny')"
-                size="small"
-                type="error"
-                secondary
-                :disabled="approvalRemainingMs <= 0"
-                @click="handleApproval('deny')"
-              >
-                {{ t("chat.approvalDeny") }}
-              </NButton>
-            </div>
-          </div>
-        </div>
-        <div v-if="visibleClarify" class="clarify-bar">
-          <div class="clarify-icon" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-          </div>
-          <div class="clarify-content">
-            <div class="clarify-main">
-              <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
-              <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
-              <div class="clarify-countdown" :class="{ expired: clarifyRemainingMs <= 0 }">
-                {{ clarifyCountdownText }}
-              </div>
-              <div class="clarify-desc">{{ visibleClarify.question }}</div>
-            </div>
-            <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
-              <NButton
-                v-for="choice in visibleClarify.choices"
-                :key="choice"
-                size="small"
-                type="primary"
-                :disabled="clarifyRemainingMs <= 0"
-                @click="handleClarify(choice)"
-              >
-                {{ choice }}
-              </NButton>
-              <NButton
-                size="small"
-                type="error"
-                secondary
-                :disabled="clarifyRemainingMs <= 0"
-                @click="handleClarify('')"
-              >
-                {{ t('chat.clarifyDismiss') }}
-              </NButton>
-            </div>
-            <div v-else class="clarify-actions clarify-actions-open">
-              <div class="clarify-input-row">
-                <NInput
-                  v-model:value="clarifyResponse"
-                  size="small"
-                  :disabled="clarifyRemainingMs <= 0"
-                  :placeholder="t('chat.clarifyPlaceholder')"
-                />
-                <NButton size="small" type="primary" :disabled="clarifyRemainingMs <= 0" @click="handleClarify()">
-                  {{ t('chat.clarifySubmit') }}
-                </NButton>
-              </div>
-            </div>
-          </div>
-          </div>
         </div>
         <ChatInput />
       </template>
@@ -1970,6 +1970,7 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
 }
 
 .chat-header {
@@ -2090,15 +2091,18 @@ async function handleSessionModelCustomSubmit() {
 }
 
 .pending-interaction-stack {
-  position: relative;
-  z-index: 120;
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 140;
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: calc(100% - 48px);
   max-width: 960px;
-  margin: 0 auto 12px;
-  flex-shrink: 0;
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
@@ -2113,11 +2117,16 @@ async function handleSessionModelCustomSubmit() {
   max-width: 960px;
   margin: 0 auto;
   padding: 12px 14px;
-  border: 1px solid $border-color;
-  border-left: 3px solid rgba(var(--warning-rgb), 0.72);
+  border: 1px solid rgba(var(--text-muted-rgb), 0.22);
+  border-left: 3px solid rgba(var(--warning-rgb), 0.68);
   border-radius: $radius-md;
   background: $bg-card;
-  box-shadow: 0 10px 28px rgba(var(--text-primary-rgb), 0.08);
+  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
 }
 
 .approval-icon {
@@ -2202,8 +2211,8 @@ async function handleSessionModelCustomSubmit() {
   font-size: 11px;
   line-height: 1.45;
   color: $text-primary;
-  background: $bg-secondary;
-  border: 1px solid $border-color;
+  background: rgba(var(--text-muted-rgb), 0.08);
+  border: 1px solid rgba(var(--text-muted-rgb), 0.18);
   border-radius: 6px;
   padding: 8px 10px;
 }
@@ -2215,7 +2224,7 @@ async function handleSessionModelCustomSubmit() {
   gap: 8px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid $border-color;
+  border-top: 1px solid rgba(var(--text-muted-rgb), 0.16);
 }
 
 
@@ -2226,11 +2235,16 @@ async function handleSessionModelCustomSubmit() {
   max-width: 960px;
   margin: 0 auto;
   padding: 12px 14px;
-  border: 1px solid $border-color;
-  border-left: 3px solid rgba(var(--accent-primary-rgb), 0.45);
+  border: 1px solid rgba(var(--text-muted-rgb), 0.2);
+  border-left: 3px solid rgba(var(--accent-primary-rgb), 0.42);
   border-radius: $radius-md;
   background: $bg-card;
-  box-shadow: 0 10px 28px rgba(var(--text-primary-rgb), 0.08);
+  background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
 }
 
 .clarify-icon {
@@ -2304,7 +2318,7 @@ async function handleSessionModelCustomSubmit() {
   gap: 8px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid $border-color;
+  border-top: 1px solid rgba(var(--text-muted-rgb), 0.16);
 }
 
 .clarify-input-row {
@@ -2332,11 +2346,12 @@ async function handleSessionModelCustomSubmit() {
 @media (max-width: 768px) {
   .pending-interaction-stack {
     width: calc(100% - 20px);
-    margin-bottom: 10px;
+    bottom: 10px;
+    max-height: calc(100% - 20px);
   }
 
   .approval-bar {
-    margin: 0 10px 10px;
+    margin: 0;
     padding: 10px;
   }
 
@@ -2356,7 +2371,7 @@ async function handleSessionModelCustomSubmit() {
   }
 
   .clarify-bar {
-    margin: 0 10px 10px;
+    margin: 0;
     padding: 10px;
   }
 
