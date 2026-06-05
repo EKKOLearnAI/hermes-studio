@@ -47,10 +47,6 @@ function managedConfig(): Record<string, unknown> {
     [MANAGED_ENV_KEY]: '1',
   }
 
-  if (process.env.AUTH_TOKEN?.trim()) {
-    env.HERMES_WEB_UI_TOKEN = process.env.AUTH_TOKEN.trim()
-  }
-
   return {
     command: managedCommand(),
     env,
@@ -76,7 +72,7 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     existing.env.HERMES_WEB_UI_URL === desiredEnv.HERMES_WEB_UI_URL &&
     existing.env.HERMES_WEB_UI_HOME === desiredEnv.HERMES_WEB_UI_HOME &&
     existing.env.HERMES_WEBUI_STATE_DIR === desiredEnv.HERMES_WEBUI_STATE_DIR &&
-    existing.env.HERMES_WEB_UI_TOKEN === desiredEnv.HERMES_WEB_UI_TOKEN &&
+    existing.env.HERMES_WEB_UI_TOKEN === undefined &&
     existing.env[MANAGED_ENV_KEY] === desiredEnv[MANAGED_ENV_KEY]
 }
 

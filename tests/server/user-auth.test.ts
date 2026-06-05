@@ -117,6 +117,51 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body).toEqual({ error: 'Profile is required' })
   })
 
+  it('allows server token for local MCP device endpoints', async () => {
+    vi.stubEnv('AUTH_TOKEN', 'server-token')
+    const { auth } = await initUsers()
+    const ctx = {
+      path: '/api/devices/peer-connections/conn-1/exec',
+      headers: { authorization: 'Bearer server-token' },
+      query: {},
+      ip: '127.0.0.1',
+      request: { ip: '127.0.0.1', body: {} },
+      req: { socket: { remoteAddress: '127.0.0.1' } },
+      state: {},
+      status: 200,
+      body: null,
+    } as any
+    const next = vi.fn(async () => {})
+
+    await auth.requireUserJwt(ctx, next)
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(ctx.state.serverTokenAuth).toBe(true)
+  })
+
+  it('rejects server token for MCP device endpoints from non-loopback clients', async () => {
+    vi.stubEnv('AUTH_TOKEN', 'server-token')
+    const { auth } = await initUsers()
+    const ctx = {
+      path: '/api/devices/peer-connections/conn-1/exec',
+      headers: { authorization: 'Bearer server-token' },
+      query: {},
+      ip: '192.168.1.50',
+      request: { ip: '192.168.1.50', body: {} },
+      req: { socket: { remoteAddress: '192.168.1.50' } },
+      state: {},
+      status: 200,
+      body: null,
+    } as any
+    const next = vi.fn(async () => {})
+
+    await auth.requireUserJwt(ctx, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({ error: 'Unauthorized' })
+  })
+
   it('ignores stale profile headers for the aggregate available-models endpoint', async () => {
     const { auth } = await initUsers()
     const ctx = {

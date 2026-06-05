@@ -69,6 +69,30 @@ describe('studio MCP autoinject', () => {
     expect(injected.data.mcp_servers['hermes-studio'].command).toBe('hermes-studio-mcp')
   })
 
+  it('removes stale injected tokens from managed server config', async () => {
+    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+
+    await injectBundledMcpServer()
+
+    const updated = await updateConfigYamlForProfileMock.mock.calls[0][1]({
+      mcp_servers: {
+        'hermes-studio': {
+          command: 'hermes-web-ui-mcp',
+          env: {
+            HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
+            HERMES_WEB_UI_HOME: '/tmp/hermes-web-ui-home',
+            HERMES_WEBUI_STATE_DIR: '/tmp/hermes-web-ui-home',
+            HERMES_WEB_UI_MANAGED_MCP: '1',
+            HERMES_WEB_UI_TOKEN: 'old-token',
+          },
+          enabled: true,
+        },
+      },
+    })
+    expect(updated.result.status).toBe('updated')
+    expect(updated.data.mcp_servers['hermes-studio'].env.HERMES_WEB_UI_TOKEN).toBeUndefined()
+  })
+
   it('skips an unmanaged existing server entry', async () => {
     const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
 
