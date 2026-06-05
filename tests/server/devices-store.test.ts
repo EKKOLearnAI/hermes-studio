@@ -115,4 +115,33 @@ describe('devices store', () => {
     expect(listInboundRequestHistory()).toEqual([])
     expect(getDeviceRelation(device.id)).toBeNull()
   })
+
+  it('lists inbound relation records even when they were not created by a request', async () => {
+    const {
+      listInboundRequestHistory,
+      updateInboundStatus,
+    } = await import('../../packages/server/src/db/hermes/devices-store')
+
+    updateInboundStatus(device.id, 'blocked', device)
+
+    expect(listInboundRequestHistory()).toHaveLength(1)
+    expect(listInboundRequestHistory()[0]).toMatchObject({
+      inbound_status: 'blocked',
+      requested_at: 0,
+    })
+  })
+
+  it('purges old soft-deleted device relation rows when listing relations', async () => {
+    const {
+      getDeviceRelation,
+      listDeviceRelations,
+      requestInboundDeviceLink,
+    } = await import('../../packages/server/src/db/hermes/devices-store')
+
+    requestInboundDeviceLink(device)
+    db.prepare('UPDATE devices SET inbound_history_deleted_at = ? WHERE id = ?').run(Date.now(), device.id)
+
+    expect(listDeviceRelations()).toEqual([])
+    expect(getDeviceRelation(device.id)).toBeNull()
+  })
 })

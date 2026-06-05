@@ -185,6 +185,8 @@ function saveRow(row: StoredDeviceRow): DeviceRelationRecord {
 }
 
 export function listDeviceRelations(): DeviceRelationRecord[] {
+  purgeHiddenDeviceRelations()
+
   const db = getDb()
   if (!db) {
     return Object.values(jsonGetAll(DEVICES_TABLE))
@@ -207,14 +209,32 @@ export function getDeviceRelation(id: string): DeviceRelationRecord | null {
   return row ? rowToRecord(row) : null
 }
 
+export function purgeHiddenDeviceRelations(): number {
+  const db = getDb()
+  if (!db) {
+    const rows = jsonGetAll(DEVICES_TABLE)
+    let count = 0
+    for (const [id, row] of Object.entries(rows)) {
+      if (row.inbound_history_deleted_at != null) {
+        jsonDelete(DEVICES_TABLE, id)
+        count += 1
+      }
+    }
+    return count
+  }
+
+  const result = db.prepare(`DELETE FROM ${DEVICES_TABLE} WHERE inbound_history_deleted_at IS NOT NULL`).run()
+  return Number(result.changes)
+}
+
 export function listPendingInboundRequests(): DeviceRelationRecord[] {
   return listDeviceRelations().filter(device => device.inbound_status === 'pending')
 }
 
 export function listInboundRequestHistory(): DeviceRelationRecord[] {
   return listDeviceRelations()
-    .filter(device => device.requested_at > 0 && device.inbound_history_deleted_at == null)
-    .sort((a, b) => b.requested_at - a.requested_at)
+    .filter(device => device.inbound_status !== 'none' && device.inbound_history_deleted_at == null)
+    .sort((a, b) => (b.requested_at || b.updated_at) - (a.requested_at || a.updated_at))
 }
 
 export function mergeDeviceRelation(device: LanDeviceInfo): DeviceRelationRecord {
