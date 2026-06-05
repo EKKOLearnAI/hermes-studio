@@ -17,6 +17,9 @@ import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../security'
 const PEER_SOCKET_PATH = '/api/devices/peer-socket'
 const REQUEST_TTL_MS = 5 * 60 * 1000
 const FILE_CHUNK_SIZE = 64 * 1024
+const CLIENT_RECONNECT_LIMIT = 5
+const CLIENT_RECONNECT_BASE_MS = 1000
+const HEARTBEAT_INTERVAL_MS = 30000
 
 let pty: any = null
 try {
@@ -61,6 +64,13 @@ type UploadTransfer = {
   stream: WriteStream
 }
 
+type ClientPeerTarget = {
+  device: LanDeviceInfo
+  attempts: number
+  reconnectTimer: NodeJS.Timeout | null
+  disabled: boolean
+}
+
 export type LanPeerConnectionInfo = {
   id: string
   role: PeerRole
@@ -68,6 +78,7 @@ export type LanPeerConnectionInfo = {
   computer_name: string
   url: string
   connected_at: number
+  reconnect_attempts?: number
 }
 
 function now() {
@@ -128,6 +139,9 @@ class LanPeerConnection {
   readonly connectedAt = now()
   private terminalSessions = new Map<string, TerminalSession>()
   private uploads = new Map<string, UploadTransfer>()
+  private heartbeatTimer: NodeJS.Timeout | null = null
+  private alive = true
+  private closed = false
 
   constructor(
     private readonly manager: LanPeerSocketManager,
@@ -137,12 +151,16 @@ class LanPeerConnection {
     private readonly computerName: string,
     private readonly url: string,
   ) {
+    this.ws.on('pong', () => {
+      this.alive = true
+    })
     this.ws.on('message', raw => this.handleMessage(raw))
-    this.ws.on('close', () => this.close())
+    this.ws.on('close', () => this.close({ intentional: false }))
     this.ws.on('error', err => {
       logger.warn(err, '[lan-peer] websocket error')
-      this.close()
+      this.close({ intentional: false })
     })
+    this.startHeartbeat()
     this.sendJson({
       type: 'peer.ready',
       connection_id: this.id,
@@ -159,10 +177,18 @@ class LanPeerConnection {
       computer_name: this.computerName,
       url: this.url,
       connected_at: this.connectedAt,
+      reconnect_attempts: this.role === 'client' ? this.manager.getReconnectAttempts(this.deviceId) : undefined,
     }
   }
 
-  close() {
+  close(options: { intentional?: boolean } = {}) {
+    if (this.closed) return
+    this.closed = true
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+
     for (const session of this.terminalSessions.values()) {
       try { session.pty.kill() } catch { }
     }
@@ -177,6 +203,22 @@ class LanPeerConnection {
       try { this.ws.close() } catch { }
     }
     this.manager.removeConnection(this.id)
+    if (this.role === 'client' && !options.intentional) {
+      this.manager.scheduleReconnect(this.deviceId)
+    }
+  }
+
+  private startHeartbeat() {
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws.readyState !== WebSocket.OPEN) return
+      if (!this.alive) {
+        try { this.ws.terminate() } catch { }
+        return
+      }
+      this.alive = false
+      try { this.ws.ping() } catch { }
+    }, HEARTBEAT_INTERVAL_MS)
+    this.heartbeatTimer.unref?.()
   }
 
   private sendJson(payload: Record<string, unknown>) {
@@ -356,6 +398,7 @@ class LanPeerConnection {
 export class LanPeerSocketManager {
   private readonly wss = new WebSocketServer({ noServer: true })
   private readonly connections = new Map<string, LanPeerConnection>()
+  private readonly clientTargets = new Map<string, ClientPeerTarget>()
   private readonly seenNonces = new Map<string, number>()
   private setupDone = false
 
@@ -401,6 +444,20 @@ export class LanPeerSocketManager {
     const existing = this.findConnectionByDevice(device.id, 'client')
     if (existing) return existing.info()
 
+    const target = this.getOrCreateClientTarget(device)
+    target.device = device
+    target.disabled = false
+    if (target.reconnectTimer) {
+      clearTimeout(target.reconnectTimer)
+      target.reconnectTimer = null
+    }
+
+    const connection = await this.openClientConnection(device)
+    target.attempts = 0
+    return connection.info()
+  }
+
+  private async openClientConnection(device: LanDeviceInfo): Promise<LanPeerConnection> {
     const localInfo = await getPublicSystemInfo()
     const timestamp = now()
     const nonce = randomUUID()
@@ -431,7 +488,7 @@ export class LanPeerSocketManager {
 
     const connection = new LanPeerConnection(this, ws, 'client', device.id, device.computer_name, device.url)
     this.connections.set(connection.id, connection)
-    return connection.info()
+    return connection
   }
 
   listConnections(): LanPeerConnectionInfo[] {
@@ -443,18 +500,74 @@ export class LanPeerSocketManager {
   disconnect(connectionId: string): boolean {
     const connection = this.connections.get(connectionId)
     if (!connection) return false
-    connection.close()
+    if (connection.role === 'client') this.disableClientReconnect(connection.deviceId)
+    connection.close({ intentional: true })
     return true
   }
 
   disconnectDevice(deviceId: string): number {
+    this.disableClientReconnect(deviceId)
     const connections = [...this.connections.values()].filter(connection => connection.deviceId === deviceId)
-    connections.forEach(connection => connection.close())
+    connections.forEach(connection => connection.close({ intentional: true }))
     return connections.length
   }
 
   removeConnection(connectionId: string) {
     this.connections.delete(connectionId)
+  }
+
+  getReconnectAttempts(deviceId: string): number {
+    return this.clientTargets.get(deviceId)?.attempts || 0
+  }
+
+  scheduleReconnect(deviceId: string) {
+    const target = this.clientTargets.get(deviceId)
+    if (!target || target.disabled) return
+    if (this.findConnectionByDevice(deviceId, 'client')) return
+    if (target.reconnectTimer) return
+    if (target.attempts >= CLIENT_RECONNECT_LIMIT) {
+      logger.warn({ deviceId }, '[lan-peer] client reconnect limit reached')
+      return
+    }
+
+    target.attempts += 1
+    const delay = CLIENT_RECONNECT_BASE_MS * 2 ** (target.attempts - 1)
+    target.reconnectTimer = setTimeout(() => {
+      target.reconnectTimer = null
+      void this.openClientConnection(target.device)
+        .then(() => {
+          target.attempts = 0
+        })
+        .catch(err => {
+          logger.warn({ err, deviceId, attempt: target.attempts }, '[lan-peer] client reconnect failed')
+          this.scheduleReconnect(deviceId)
+        })
+    }, delay)
+    target.reconnectTimer.unref?.()
+  }
+
+  private getOrCreateClientTarget(device: LanDeviceInfo): ClientPeerTarget {
+    let target = this.clientTargets.get(device.id)
+    if (!target) {
+      target = {
+        device,
+        attempts: 0,
+        reconnectTimer: null,
+        disabled: false,
+      }
+      this.clientTargets.set(device.id, target)
+    }
+    return target
+  }
+
+  private disableClientReconnect(deviceId: string) {
+    const target = this.clientTargets.get(deviceId)
+    if (!target) return
+    target.disabled = true
+    if (target.reconnectTimer) {
+      clearTimeout(target.reconnectTimer)
+      target.reconnectTimer = null
+    }
   }
 
   private findConnectionByDevice(deviceId: string, role?: PeerRole): LanPeerConnection | null {

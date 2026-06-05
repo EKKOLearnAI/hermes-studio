@@ -91,22 +91,30 @@ async function devicesPayload() {
   const cache = getLanDiscoveryCache()
   const remoteStatuses = await syncOutboundStatuses(cache.devices)
   const relations = new Map(listDeviceRelations().map(device => [device.id, device]))
+  const devices = cache.devices.map(device => {
+    const relation = relations.get(device.id)
+    const outboundStatus = remoteStatuses.get(device.id) || relation?.outbound_status || 'none'
+    if (outboundStatus === 'approved') {
+      void getLanPeerSocketManager().connectToDevice(device).catch(err => {
+        console.warn('[lan-peer] failed to connect paired device:', err?.message || err)
+      })
+    }
+    return {
+      ...device,
+      inbound_status: relation?.inbound_status || 'none',
+      outbound_status: outboundStatus,
+      requested_at: relation?.requested_at || 0,
+      decided_at: relation?.decided_at || null,
+      outbound_requested_at: relation?.outbound_requested_at || 0,
+      outbound_decided_at: relation?.outbound_decided_at || null,
+      updated_at: relation?.updated_at || 0,
+    }
+  })
+
   return {
     scanning: cache.scanning,
     last_scanned_at: cache.last_scanned_at,
-    devices: cache.devices.map(device => {
-      const relation = relations.get(device.id)
-      return {
-        ...device,
-        inbound_status: relation?.inbound_status || 'none',
-        outbound_status: remoteStatuses.get(device.id) || relation?.outbound_status || 'none',
-        requested_at: relation?.requested_at || 0,
-        decided_at: relation?.decided_at || null,
-        outbound_requested_at: relation?.outbound_requested_at || 0,
-        outbound_decided_at: relation?.outbound_decided_at || null,
-        updated_at: relation?.updated_at || 0,
-      }
-    }),
+    devices,
     requests: listInboundRequestHistory(),
   }
 }
