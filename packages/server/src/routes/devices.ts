@@ -8,6 +8,7 @@ devicePublicRoutes.post('/api/devices/link-request', ctrl.requestDeviceLinkContr
 
 deviceRoutes.get('/api/devices', ctrl.listDevices)
 deviceRoutes.post('/api/devices/scan', ctrl.scanDevices)
+deviceRoutes.post('/api/devices/:id/request', ctrl.requestDevicePairing)
 deviceRoutes.post('/api/devices/:id/approve', ctrl.approveDevice)
 deviceRoutes.post('/api/devices/:id/reject', ctrl.rejectDevice)
 deviceRoutes.post('/api/devices/:id/block', ctrl.blockDevice)

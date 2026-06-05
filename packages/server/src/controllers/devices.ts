@@ -1,12 +1,17 @@
 import {
-  listDeviceRecords,
-  requestDeviceLink,
-  updateDeviceStatus,
-  upsertDiscoveredDevices,
-  type DeviceStatus,
+  getDeviceRelation,
+  listDeviceRelations,
+  listPendingInboundRequests,
+  requestInboundDeviceLink,
+  updateInboundStatus,
+  updateOutboundStatus,
+  type DeviceInboundStatus,
+  type DeviceOutboundStatus,
 } from '../db/hermes/devices-store'
 import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
-import { verifyDeviceSignature } from '../services/system-info'
+import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
+import { config } from '../config'
+import { randomUUID } from 'crypto'
 
 const REQUEST_TTL_MS = 5 * 60 * 1000
 const seenRequestNonces = new Map<string, number>()
@@ -25,10 +30,24 @@ function rememberNonce(deviceId: string, nonce: string, timestamp: number): bool
 
 function devicesPayload() {
   const cache = getLanDiscoveryCache()
+  const relations = new Map(listDeviceRelations().map(device => [device.id, device]))
   return {
     scanning: cache.scanning,
     last_scanned_at: cache.last_scanned_at,
-    devices: listDeviceRecords(),
+    devices: cache.devices.map(device => {
+      const relation = relations.get(device.id)
+      return {
+        ...device,
+        inbound_status: relation?.inbound_status || 'none',
+        outbound_status: relation?.outbound_status || 'none',
+        requested_at: relation?.requested_at || 0,
+        decided_at: relation?.decided_at || null,
+        outbound_requested_at: relation?.outbound_requested_at || 0,
+        outbound_decided_at: relation?.outbound_decided_at || null,
+        updated_at: relation?.updated_at || 0,
+      }
+    }),
+    requests: listPendingInboundRequests(),
   }
 }
 
@@ -37,9 +56,12 @@ export async function listDevices(ctx: any) {
 }
 
 export async function scanDevices(ctx: any) {
-  const result = await scanLanDevices()
-  upsertDiscoveredDevices(result.devices)
+  await scanLanDevices()
   ctx.body = devicesPayload()
+}
+
+function findDiscoveredDevice(id: string): LanDeviceInfo | null {
+  return getLanDiscoveryCache().devices.find(device => device.id === id) || null
 }
 
 function normalizeIp(ctx: any): string {
@@ -113,13 +135,14 @@ export async function requestDeviceLinkController(ctx: any) {
     return
   }
 
-  const record = requestDeviceLink(device)
-  ctx.body = { status: record.status }
+  const record = requestInboundDeviceLink(device)
+  ctx.body = { status: record.inbound_status }
 }
 
-function transitionDevice(ctx: any, status: DeviceStatus) {
+function transitionInboundDevice(ctx: any, status: DeviceInboundStatus) {
   try {
-    ctx.body = updateDeviceStatus(ctx.params.id, status)
+    updateInboundStatus(ctx.params.id, status, findDiscoveredDevice(ctx.params.id) || undefined)
+    ctx.body = devicesPayload()
   } catch {
     ctx.status = 404
     ctx.body = { error: 'Device not found' }
@@ -127,17 +150,69 @@ function transitionDevice(ctx: any, status: DeviceStatus) {
 }
 
 export async function approveDevice(ctx: any) {
-  transitionDevice(ctx, 'approved')
+  transitionInboundDevice(ctx, 'approved')
 }
 
 export async function rejectDevice(ctx: any) {
-  transitionDevice(ctx, 'rejected')
+  transitionInboundDevice(ctx, 'rejected')
 }
 
 export async function blockDevice(ctx: any) {
-  transitionDevice(ctx, 'blocked')
+  transitionInboundDevice(ctx, 'blocked')
 }
 
 export async function unblockDevice(ctx: any) {
-  transitionDevice(ctx, 'pending')
+  transitionInboundDevice(ctx, 'none')
+}
+
+function normalizeRemoteStatus(status: unknown): DeviceOutboundStatus {
+  return status === 'approved' || status === 'rejected' || status === 'blocked' ? status : 'pending'
+}
+
+export async function requestDevicePairing(ctx: any) {
+  const target = findDiscoveredDevice(ctx.params.id)
+  if (!target) {
+    ctx.status = 404
+    ctx.body = { error: 'Device not found' }
+    return
+  }
+
+  const timestamp = Date.now()
+  const nonce = randomUUID()
+  const localInfo = await getPublicSystemInfo()
+  const signature = await createDeviceSignature(nonce, timestamp)
+  const body = {
+    ...localInfo,
+    http_port: config.port,
+    endpoint_kind: getLanEndpointKind(config.port),
+    timestamp,
+    nonce,
+    signature,
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+  try {
+    const response = await fetch(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    const data = await response.json().catch(() => ({})) as { status?: unknown; error?: unknown }
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : `Request failed: ${response.status}`)
+    }
+    updateOutboundStatus(target.id, normalizeRemoteStatus(data.status), target)
+    ctx.body = devicesPayload()
+  } catch (err: any) {
+    const existing = getDeviceRelation(target.id)
+    if (!existing || existing.outbound_status === 'none') {
+      updateOutboundStatus(target.id, 'pending', target)
+    }
+    ctx.status = 502
+    ctx.body = { error: err?.message || 'Failed to request device pairing' }
+  } finally {
+    clearTimeout(timeout)
+  }
 }

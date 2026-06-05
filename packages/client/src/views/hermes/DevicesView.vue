@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   approveDevice,
   blockDevice,
   fetchLanDevices,
   rejectDevice,
+  requestDevicePairing,
   scanLanDevices,
   unblockDevice,
-  type DeviceStatus,
+  type DeviceInboundStatus,
+  type DeviceOutboundStatus,
   type LanDeviceInfo,
   type LanDiscoveryState,
   type LanEndpointKind,
@@ -21,10 +23,12 @@ const message = useMessage()
 const loading = ref(false)
 const scanning = ref(false)
 const updatingDeviceId = ref('')
+const showRequests = ref(false)
 const state = ref<LanDiscoveryState>({
   scanning: false,
   last_scanned_at: null,
   devices: [],
+  requests: [],
 })
 
 const devices = computed(() =>
@@ -51,15 +55,38 @@ function endpointTagType(kind: LanEndpointKind) {
   return 'default'
 }
 
-function statusLabel(status: DeviceStatus): string {
-  return t(`devices.status.${status}`)
+function inboundStatusLabel(status: DeviceInboundStatus): string {
+  return t(`devices.inboundStatus.${status}`)
 }
 
-function statusTagType(status: DeviceStatus) {
-  if (status === 'approved') return 'success'
-  if (status === 'blocked') return 'error'
-  if (status === 'rejected') return 'warning'
-  return 'info'
+function outboundStatusLabel(status: DeviceOutboundStatus): string {
+  return t(`devices.outboundStatus.${status}`)
+}
+
+function pairedLabel(device: LanDeviceInfo): string {
+  return device.outbound_status === 'approved' ? t('devices.paired') : outboundStatusLabel(device.outbound_status)
+}
+
+function pairedTagType(device: LanDeviceInfo) {
+  if (device.outbound_status === 'approved') return 'success'
+  if (device.outbound_status === 'pending') return 'info'
+  if (device.outbound_status === 'blocked') return 'error'
+  if (device.outbound_status === 'rejected') return 'warning'
+  return 'default'
+}
+
+function canRequestPairing(device: LanDeviceInfo): boolean {
+  return device.outbound_status === 'none' || device.outbound_status === 'rejected'
+}
+
+function canBlock(device: LanDeviceInfo): boolean {
+  return device.inbound_status !== 'blocked'
+}
+
+function requestCountLabel(): string {
+  return state.value.requests.length > 0
+    ? t('devices.requestsWithCount', { count: state.value.requests.length })
+    : t('devices.requests')
 }
 
 function formatOs(device: LanDeviceInfo): string {
@@ -105,24 +132,19 @@ async function refreshDevices() {
   }
 }
 
-function replaceDevice(updated: LanDeviceInfo) {
-  state.value = {
-    ...state.value,
-    devices: state.value.devices.map(device => device.id === updated.id ? updated : device),
-  }
-}
-
-async function updateDevice(device: LanDeviceInfo, action: 'approve' | 'reject' | 'block' | 'unblock') {
+async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve' | 'reject' | 'block' | 'unblock') {
   updatingDeviceId.value = device.id
   try {
-    const next = action === 'approve'
+    const next = action === 'request'
+      ? await requestDevicePairing(device.id)
+      : action === 'approve'
       ? await approveDevice(device.id)
       : action === 'reject'
       ? await rejectDevice(device.id)
       : action === 'block'
       ? await blockDevice(device.id)
       : await unblockDevice(device.id)
-    replaceDevice(next)
+    state.value = next
   } catch (err: any) {
     message.error(err?.message || t('devices.updateFailed'))
   } finally {
@@ -145,9 +167,14 @@ onMounted(() => {
           <span>{{ t('devices.lastScanned', { time: formatTime(state.last_scanned_at) }) }}</span>
         </div>
       </div>
-      <NButton size="small" type="primary" :loading="scanning || state.scanning" @click="refreshDevices">
-        {{ t('devices.refresh') }}
-      </NButton>
+      <div class="header-actions">
+        <NButton size="small" @click="showRequests = true">
+          {{ requestCountLabel() }}
+        </NButton>
+        <NButton size="small" type="primary" :loading="scanning || state.scanning" @click="refreshDevices">
+          {{ t('devices.refresh') }}
+        </NButton>
+      </div>
     </header>
 
     <NSpin :show="loading" class="devices-spin">
@@ -159,95 +186,106 @@ onMounted(() => {
           </NButton>
         </div>
 
-        <div v-else class="devices-table-wrap">
-          <table class="devices-table">
-            <thead>
-              <tr>
-                <th>{{ t('devices.computer') }}</th>
-                <th>{{ t('devices.endpointLabel') }}</th>
-                <th>{{ t('devices.statusLabel') }}</th>
-                <th>{{ t('devices.address') }}</th>
-                <th>{{ t('devices.os') }}</th>
-                <th>{{ t('devices.agentVersion') }}</th>
-                <th>{{ t('devices.webUiVersion') }}</th>
-                <th>{{ t('devices.responseMs') }}</th>
-                <th>{{ t('devices.lastSeen') }}</th>
-                <th class="actions-col"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="device in devices" :key="device.id">
-                <td class="primary-cell">{{ device.computer_name || device.ip }}</td>
-                <td>
-                  <NTag size="small" :type="endpointTagType(device.endpoint_kind)" round>
+        <div v-else class="device-grid">
+          <article v-for="device in devices" :key="device.id" class="device-card">
+            <div class="device-card-header">
+              <div class="device-title-block">
+                <div class="device-name">{{ device.computer_name || device.ip }}</div>
+                <a class="device-link" :href="device.url" target="_blank" rel="noopener noreferrer">
+                  {{ device.ip }}:{{ device.http_port }}
+                </a>
+              </div>
+              <NTag size="small" :type="endpointTagType(device.endpoint_kind)" round>
                     {{ endpointLabel(device.endpoint_kind) }}
-                  </NTag>
-                </td>
-                <td>
-                  <NTag size="small" :type="statusTagType(device.status)" round>
-                    {{ statusLabel(device.status) }}
-                  </NTag>
-                </td>
-                <td>
-                  <a class="device-link" :href="device.url" target="_blank" rel="noopener noreferrer">
-                    {{ device.ip }}:{{ device.http_port }}
-                  </a>
-                </td>
-                <td>{{ formatOs(device) || t('devices.unknown') }}</td>
-                <td>{{ formatVersion(device.hermes_agent_version) }}</td>
-                <td>{{ formatVersion(device.hermes_web_ui_version) }}</td>
-                <td>{{ device.response_ms }}ms</td>
-                <td>{{ formatTime(device.last_seen_at) }}</td>
-                <td class="actions-col">
-                  <NButton size="tiny" quaternary @click="openDevice(device)">
-                    {{ t('devices.open') }}
-                  </NButton>
-                  <NButton
-                    v-if="device.status !== 'approved' && device.status !== 'blocked'"
-                    size="tiny"
-                    quaternary
-                    type="success"
-                    :loading="updatingDeviceId === device.id"
-                    @click="updateDevice(device, 'approve')"
-                  >
-                    {{ t('devices.approve') }}
-                  </NButton>
-                  <NButton
-                    v-if="device.status === 'pending'"
-                    size="tiny"
-                    quaternary
-                    type="warning"
-                    :loading="updatingDeviceId === device.id"
-                    @click="updateDevice(device, 'reject')"
-                  >
-                    {{ t('devices.reject') }}
-                  </NButton>
-                  <NButton
-                    v-if="device.status !== 'blocked'"
-                    size="tiny"
-                    quaternary
-                    type="error"
-                    :loading="updatingDeviceId === device.id"
-                    @click="updateDevice(device, 'block')"
-                  >
-                    {{ t('devices.block') }}
-                  </NButton>
-                  <NButton
-                    v-else
-                    size="tiny"
-                    quaternary
-                    :loading="updatingDeviceId === device.id"
-                    @click="updateDevice(device, 'unblock')"
-                  >
-                    {{ t('devices.unblock') }}
-                  </NButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              </NTag>
+            </div>
+
+            <div class="device-status-row">
+              <NTag size="small" :type="pairedTagType(device)" round>
+                {{ pairedLabel(device) }}
+              </NTag>
+              <NTag v-if="device.inbound_status === 'blocked'" size="small" type="error" round>
+                {{ inboundStatusLabel(device.inbound_status) }}
+              </NTag>
+            </div>
+
+            <dl class="device-meta-list">
+              <div>
+                <dt>{{ t('devices.os') }}</dt>
+                <dd>{{ formatOs(device) || t('devices.unknown') }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('devices.agentVersion') }}</dt>
+                <dd>{{ formatVersion(device.hermes_agent_version) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('devices.webUiVersion') }}</dt>
+                <dd>{{ formatVersion(device.hermes_web_ui_version) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('devices.responseMs') }}</dt>
+                <dd>{{ device.response_ms }}ms</dd>
+              </div>
+            </dl>
+
+            <div class="device-actions">
+              <NButton v-if="canRequestPairing(device)" size="tiny" type="primary" :loading="updatingDeviceId === device.id" @click="updateDevice(device, 'request')">
+                {{ t('devices.requestPairing') }}
+              </NButton>
+              <NButton size="tiny" quaternary @click="openDevice(device)">
+                {{ t('devices.open') }}
+              </NButton>
+              <NButton
+                v-if="canBlock(device)"
+                size="tiny"
+                quaternary
+                type="error"
+                :loading="updatingDeviceId === device.id"
+                @click="updateDevice(device, 'block')"
+              >
+                {{ t('devices.block') }}
+              </NButton>
+              <NButton
+                v-else
+                size="tiny"
+                quaternary
+                :loading="updatingDeviceId === device.id"
+                @click="updateDevice(device, 'unblock')"
+              >
+                {{ t('devices.unblock') }}
+              </NButton>
+            </div>
+          </article>
         </div>
       </div>
     </NSpin>
+
+    <NDrawer v-model:show="showRequests" :width="420" placement="right">
+      <NDrawerContent :title="t('devices.requests')">
+        <div v-if="state.requests.length === 0" class="request-empty">
+          {{ t('devices.noRequests') }}
+        </div>
+        <div v-else class="request-list">
+          <article v-for="requestDevice in state.requests" :key="requestDevice.id" class="request-item">
+            <div>
+              <div class="request-name">{{ requestDevice.computer_name || requestDevice.ip }}</div>
+              <div class="request-meta">{{ requestDevice.ip }}:{{ requestDevice.http_port }}</div>
+            </div>
+            <div class="request-actions">
+              <NButton size="tiny" type="success" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'approve')">
+                {{ t('devices.approve') }}
+              </NButton>
+              <NButton size="tiny" quaternary type="warning" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'reject')">
+                {{ t('devices.reject') }}
+              </NButton>
+              <NButton size="tiny" quaternary type="error" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'block')">
+                {{ t('devices.block') }}
+              </NButton>
+            </div>
+          </article>
+        </div>
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 
@@ -268,6 +306,12 @@ onMounted(() => {
   gap: 12px;
   padding: 21px 20px;
   border-bottom: 1px solid $border-color;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .header-title {
@@ -317,50 +361,51 @@ onMounted(() => {
   font-size: 14px;
 }
 
-.devices-table-wrap {
-  overflow-x: auto;
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.device-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 220px;
+  padding: 14px;
   border: 1px solid $border-color;
   border-radius: $radius-sm;
   background: $bg-card;
 }
 
-.devices-table {
-  width: 100%;
-  min-width: 980px;
-  border-collapse: collapse;
-  font-size: 13px;
-
-  th,
-  td {
-    padding: 12px 14px;
-    border-bottom: 1px solid $border-color;
-    color: $text-secondary;
-    text-align: left;
-    white-space: nowrap;
-  }
-
-  th {
-    background: $bg-secondary;
-    color: $text-muted;
-    font-weight: 600;
-  }
-
-  tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  tbody tr:hover td {
-    background: rgba(var(--accent-primary-rgb), 0.04);
-  }
+.device-card-header,
+.device-status-row,
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.primary-cell {
+.device-card-header {
+  justify-content: space-between;
+}
+
+.device-title-block {
+  min-width: 0;
+}
+
+.device-name {
   color: $text-primary;
+  font-size: 14px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .device-link {
   color: $accent-primary;
+  font-size: 12px;
   text-decoration: none;
 
   &:hover {
@@ -368,15 +413,70 @@ onMounted(() => {
   }
 }
 
-.actions-col {
-  width: 220px;
-  text-align: right;
+.device-meta-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+
+  div {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  dt {
+    color: $text-muted;
+    font-size: 12px;
+  }
+
+  dd {
+    margin: 0;
+    color: $text-secondary;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-td.actions-col {
+.device-actions {
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.request-empty {
+  padding: 40px 0;
+  color: $text-muted;
+  text-align: center;
+}
+
+.request-list {
+  display: grid;
+  gap: 10px;
+}
+
+.request-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+}
+
+.request-name {
+  color: $text-primary;
+  font-weight: 600;
+}
+
+.request-meta {
+  color: $text-muted;
+  font-size: 12px;
+}
+
+.request-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 @media (max-width: $breakpoint-mobile) {
@@ -387,6 +487,11 @@ td.actions-col {
 
   .devices-content {
     padding: 12px;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }
 </style>

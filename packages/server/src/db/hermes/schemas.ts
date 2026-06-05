@@ -145,7 +145,9 @@ export const DEVICES_TABLE = 'devices'
 
 export const DEVICES_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
-  status: "TEXT NOT NULL DEFAULT 'pending'",
+  status: "TEXT NOT NULL DEFAULT 'none'",
+  inbound_status: "TEXT NOT NULL DEFAULT 'none'",
+  outbound_status: "TEXT NOT NULL DEFAULT 'none'",
   device_public_key: "TEXT NOT NULL DEFAULT ''",
   computer_name: "TEXT NOT NULL DEFAULT ''",
   endpoint_kind: "TEXT NOT NULL DEFAULT 'custom'",
@@ -158,6 +160,8 @@ export const DEVICES_SCHEMA: Record<string, string> = {
   response_ms: 'INTEGER NOT NULL DEFAULT 0',
   requested_at: 'INTEGER NOT NULL DEFAULT 0',
   decided_at: 'INTEGER',
+  outbound_requested_at: 'INTEGER NOT NULL DEFAULT 0',
+  outbound_decided_at: 'INTEGER',
   last_seen_at: 'INTEGER NOT NULL DEFAULT 0',
   updated_at: 'INTEGER NOT NULL',
 }

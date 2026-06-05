@@ -8,7 +8,6 @@ import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
 import { config, shouldCreateWebUiDataDir } from './config'
-import { upsertDiscoveredDevices } from './db/hermes/devices-store'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
@@ -156,9 +155,7 @@ function startLanDiscovery(): void {
   const runInitialScan = () => {
     if (initialScanStarted) return
     initialScanStarted = true
-    void scanLanDevices()
-      .then(result => upsertDiscoveredDevices(result.devices))
-      .catch(err => logger.warn(err, '[lan-discovery] initial scan failed'))
+    void scanLanDevices().catch(err => logger.warn(err, '[lan-discovery] initial scan failed'))
   }
 
   if (discoverySocket) {
