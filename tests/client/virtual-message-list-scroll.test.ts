@@ -115,12 +115,12 @@ describe('VirtualMessageList scroll behavior', () => {
     scroller.element.scrollTop = 580
     await scroller.trigger('scroll')
 
-    expect((wrapper.vm as any).isNearBottom(200)).toBe(true)
-    expect((wrapper.vm as any).shouldAutoFollowBottom(200)).toBe(false)
+    expect((wrapper.vm as any).isNearBottom(100)).toBe(true)
+    expect((wrapper.vm as any).shouldAutoFollowBottom(100)).toBe(false)
 
     scroller.element.scrollTop = 600
     await scroller.trigger('scroll')
 
-    expect((wrapper.vm as any).shouldAutoFollowBottom(200)).toBe(true)
+    expect((wrapper.vm as any).shouldAutoFollowBottom(100)).toBe(true)
   })
 })

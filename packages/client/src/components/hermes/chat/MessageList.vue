@@ -101,7 +101,7 @@ function queuedPreview(content: string): string {
   return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
 }
 
-function shouldAutoFollowBottom(threshold = 200): boolean {
+function shouldAutoFollowBottom(threshold = 100): boolean {
   return listRef.value?.shouldAutoFollowBottom(threshold) ?? true;
 }
 
