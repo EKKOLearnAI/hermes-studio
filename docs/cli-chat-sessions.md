@@ -51,7 +51,7 @@ ChatPanel / ChatInput
 
 | 时间 | PR / commit | 动到的功能 | 链路影响 |
 | --- | --- | --- | --- |
-| 2026-06-04 | #1333 | reasoning 多轮合并为单条 assistant 消息 | `chat.ts` 不再在 `tool.started` 时清空 `activeAssistantMessageId`；`reasoning.delta` / `thinking.delta` 回退跳过 `isStreaming` 检查，对同一条 assistant 消息持续追加 reasoning。一个 run 内所有 thinking 收敛到同一条 assistant 气泡，不再拆分。不影响 run boundary 或历史消息回放协议。 |
+| 2026-06-04 | #1333 | reasoning 多轮合并为单条 assistant 消息 | `chat.ts` 用独立的 reasoning 目标合并 `reasoning.delta` / `thinking.delta`，所以同一 run 内跨 tool cycle 的 thinking 会收敛到同一条 assistant 气泡；`tool.started` 仍会切断正文流目标，后续 `message.delta` 会在 tool 后新建 assistant，避免最终正文插回工具前。 |
 | 2026-06-04 | local | CLI bridge abort 超时同步 | `/chat-run` abort 路径在 Hermes Agent 协作式 interrupt 未能在 bridge 同步窗口内完成时，不再提前清理 Web UI `isWorking/runId` 或启动队列，而是发送 `abort.timeout` 并保持 session locked/aborting；同会话新消息继续进入队列，避免旧 Agent run 尚未退出时触发 `session ... is already running`。当前端后续收到 bridge terminal chunk 时再发送 `abort.completed` 并释放状态。前端新增 `abort.timeout` 事件展示“仍在停止中”，并移除本地 20s 自动清 running 兜底。 |
 | 2026-06-04 | #1320 `237fd954` | Agent Bridge restart/resume；shutdown/stop timing | Web UI `restart`/页面内升级通过 `SIGUSR2` 保留 Agent Bridge，server 重启后 `ChatRunSocket.resume` 会查询 bridge status 并通过 `resumeBridgeRun()` 继续 poll 既有 `run_id` 的 delta/events。真实 `stop`/`SIGTERM` 仍会请求 bridge shutdown；非桌面 shutdown 兜底延长到 15s 以覆盖 worker 清理窗口，桌面 `HERMES_DESKTOP=true` 默认仍保持 3s。CLI `restart` 仍使用 5s grace，CLI `stop` 最长等 15s 且进程退出后立即返回。 |
 | 2026-06-04 | #1303 | Chat / Group Chat 工具详情与完成事件边界 | 前端 message item 和 store mapping 现在保留 object / array / number / boolean 工具 payload，`0` / `false` 不再因为 falsy 判断被隐藏；普通文本结果继续按 TEXT 展示。空 `run.completed.parsed_content` 只会保留当前流式 assistant 内容，不会把旧 assistant 消息误当成本次输出。 |

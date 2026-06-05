@@ -1485,6 +1485,7 @@ export const useChatStore = defineStore('chat', () => {
       let runProducedAssistantText = false
       let runHadToolActivity = false
       let activeAssistantMessageId: string | null = null
+      let reasoningAssistantMessageId: string | null = null
 
       const closeStreamingAssistant = () => {
         const msgs = getSessionMsgs(sid)
@@ -1494,6 +1495,7 @@ export const useChatStore = defineStore('chat', () => {
           }
         })
         activeAssistantMessageId = null
+        reasoningAssistantMessageId = null
       }
 
       const applyReconnectResume = (data: ResumeSessionPayload) => {
@@ -1537,9 +1539,11 @@ export const useChatStore = defineStore('chat', () => {
           if (data.isWorking && lastAssistant) {
             lastAssistant.isStreaming = true
             activeAssistantMessageId = lastAssistant.id
+            reasoningAssistantMessageId = lastAssistant.id
             if (lastAssistant.reasoning) noteReasoningStart(lastAssistant.id)
           } else {
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           }
         }
 
@@ -1718,15 +1722,13 @@ export const useChatStore = defineStore('chat', () => {
               if (!text) break
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
-              const last = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
+              const reasoningTargetId = reasoningAssistantMessageId || activeAssistantMessageId
+              const last = reasoningTargetId
+                ? msgs.find(m => m.id === reasoningTargetId)
                 : null
               if (last?.role === 'assistant') {
-                // Resume streaming on a message paused by tool.started
-                if (!last.isStreaming) {
-                  updateMessage(sid, last.id, { isStreaming: true })
-                }
                 last.reasoning = (last.reasoning || '') + text
+                reasoningAssistantMessageId = last.id
                 noteReasoningStart(last.id)
               } else {
                 const newId = uid()
@@ -1739,6 +1741,7 @@ export const useChatStore = defineStore('chat', () => {
                   reasoning: text,
                 })
                 activeAssistantMessageId = newId
+                reasoningAssistantMessageId = newId
                 noteReasoningStart(newId)
               }
 
@@ -1807,6 +1810,7 @@ export const useChatStore = defineStore('chat', () => {
               if (last?.isStreaming) {
                 updateMessage(sid, last.id, { isStreaming: false })
               }
+              activeAssistantMessageId = null
               const existingTool = toolCallId
                 ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
                 : null
@@ -2000,6 +2004,7 @@ export const useChatStore = defineStore('chat', () => {
                 cleanup()
               }
               activeAssistantMessageId = null
+              reasoningAssistantMessageId = null
               updateSessionTitle(sid)
               break
             }
@@ -2101,6 +2106,7 @@ export const useChatStore = defineStore('chat', () => {
     let runProducedAssistantText = false
     let runHadToolActivity = false
     let activeAssistantMessageId: string | null = null
+    let reasoningAssistantMessageId: string | null = null
 
     const cleanup = () => {
       if (closed) return
@@ -2119,6 +2125,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       })
       activeAssistantMessageId = null
+      reasoningAssistantMessageId = null
     }
 
     // Shared event handler — filters by session_id tag
@@ -2229,15 +2236,13 @@ export const useChatStore = defineStore('chat', () => {
           if (!text) break
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
-          const last = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
+          const reasoningTargetId = reasoningAssistantMessageId || activeAssistantMessageId
+          const last = reasoningTargetId
+            ? msgs.find(m => m.id === reasoningTargetId)
             : null
           if (last?.role === 'assistant') {
-            // Resume streaming on a message paused by tool.started
-            if (!last.isStreaming) {
-              updateMessage(sid, last.id, { isStreaming: true })
-            }
             last.reasoning = (last.reasoning || '') + text
+            reasoningAssistantMessageId = last.id
             noteReasoningStart(last.id)
           } else {
             const newId = uid()
@@ -2250,6 +2255,7 @@ export const useChatStore = defineStore('chat', () => {
               reasoning: text,
             })
             activeAssistantMessageId = newId
+            reasoningAssistantMessageId = newId
             noteReasoningStart(newId)
           }
 
@@ -2310,6 +2316,7 @@ export const useChatStore = defineStore('chat', () => {
           if (last?.isStreaming) {
             updateMessage(sid, last.id, { isStreaming: false })
           }
+          activeAssistantMessageId = null
           const existingTool = toolCallId
             ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : null
@@ -2483,9 +2490,11 @@ export const useChatStore = defineStore('chat', () => {
           if (!hasQueue) {
             cleanup()
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           } else {
             // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
+            reasoningAssistantMessageId = null
           }
           updateSessionTitle(sid)
           break
