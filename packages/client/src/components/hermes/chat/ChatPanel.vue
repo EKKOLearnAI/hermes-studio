@@ -2112,15 +2112,12 @@ async function handleSessionModelCustomSubmit() {
   gap: 12px;
   max-width: 960px;
   margin: 0 auto;
-  padding: 14px;
-  border: 1px solid rgba(var(--warning-rgb), 0.38);
+  padding: 12px 14px;
+  border: 1px solid $border-color;
+  border-left: 3px solid rgba(var(--warning-rgb), 0.72);
   border-radius: $radius-md;
-  background: color-mix(in srgb, #1f232a 88%, transparent);
-  box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.36),
-    0 0 0 1px rgba(var(--warning-rgb), 0.12),
-    0 0 26px rgba(var(--warning-rgb), 0.12);
-  backdrop-filter: blur(14px) saturate(1.18);
+  background: $bg-card;
+  box-shadow: 0 10px 28px rgba(var(--text-primary-rgb), 0.08);
 }
 
 .approval-icon {
@@ -2130,10 +2127,9 @@ async function handleSessionModelCustomSubmit() {
   width: 32px;
   height: 32px;
   color: $warning;
-  background: rgba(var(--warning-rgb), 0.14);
-  border: 1px solid rgba(var(--warning-rgb), 0.24);
+  background: rgba(var(--warning-rgb), 0.1);
+  border: 1px solid rgba(var(--warning-rgb), 0.28);
   border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(var(--warning-rgb), 0.1);
 }
 
 .approval-content {
@@ -2152,7 +2148,7 @@ async function handleSessionModelCustomSubmit() {
   line-height: 1.2;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--accent-primary);
+  color: $warning;
 }
 
 .approval-title {
@@ -2172,9 +2168,9 @@ async function handleSessionModelCustomSubmit() {
 .approval-countdown {
   flex: 0 0 auto;
   padding: 2px 8px;
-  border: 1px solid rgba(var(--warning-rgb), 0.34);
+  border: 1px solid rgba(var(--warning-rgb), 0.26);
   border-radius: 999px;
-  background: rgba(var(--warning-rgb), 0.14);
+  background: rgba(var(--warning-rgb), 0.1);
   color: $warning;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -2229,15 +2225,12 @@ async function handleSessionModelCustomSubmit() {
   gap: 12px;
   max-width: 960px;
   margin: 0 auto;
-  padding: 14px;
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.38);
+  padding: 12px 14px;
+  border: 1px solid $border-color;
+  border-left: 3px solid rgba(var(--accent-primary-rgb), 0.45);
   border-radius: $radius-md;
-  background: color-mix(in srgb, #1f232a 88%, transparent);
-  box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.36),
-    0 0 0 1px rgba(var(--accent-primary-rgb), 0.12),
-    0 0 26px rgba(var(--accent-primary-rgb), 0.12);
-  backdrop-filter: blur(14px) saturate(1.18);
+  background: $bg-card;
+  box-shadow: 0 10px 28px rgba(var(--text-primary-rgb), 0.08);
 }
 
 .clarify-icon {
@@ -2247,10 +2240,9 @@ async function handleSessionModelCustomSubmit() {
   width: 32px;
   height: 32px;
   color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.14);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.18);
   border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(var(--accent-primary-rgb), 0.1);
 }
 
 .clarify-content {
@@ -2284,8 +2276,9 @@ async function handleSessionModelCustomSubmit() {
   align-items: center;
   margin-top: 4px;
   padding: 2px 7px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.18);
   border-radius: 999px;
-  background: rgba(var(--accent-primary-rgb), 0.12);
+  background: rgba(var(--accent-primary-rgb), 0.08);
   color: var(--accent-primary);
   font-size: 11px;
   font-weight: 700;
@@ -2293,8 +2286,9 @@ async function handleSessionModelCustomSubmit() {
 }
 
 .clarify-countdown.expired {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--error-color, #ef4444);
+  border-color: rgba(var(--error-rgb), 0.24);
+  background: rgba(var(--error-rgb), 0.08);
+  color: var(--error);
 }
 
 .clarify-desc {

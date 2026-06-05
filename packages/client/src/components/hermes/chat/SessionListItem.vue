@@ -213,20 +213,20 @@ onUnmounted(() => {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.25;
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
 .session-interaction-badge--approval {
   color: var(--warning);
-  background: rgba(var(--warning-rgb), 0.16);
-  border: 1px solid rgba(var(--warning-rgb), 0.28);
+  background: rgba(var(--warning-rgb), 0.1);
+  border: 1px solid rgba(var(--warning-rgb), 0.24);
 }
 
 .session-interaction-badge--clarify {
   color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.16);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.28);
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.16);
 }
 </style>

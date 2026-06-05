@@ -390,6 +390,108 @@ assert resp["running_sessions_by_profile"] == {"default": 1}
 `)
   })
 
+  it('does not start a worker for unloaded broker status checks', () => {
+    runPython(String.raw`
+${harness}
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "session-a",
+    "profile": "default",
+})
+
+assert resp["session_id"] == "session-a"
+assert resp["running"] is False
+assert resp["loaded"] is False
+assert broker._workers == {}
+`)
+  })
+
+  it('forwards unloaded-safe status checks to an existing routed worker', () => {
+    runPython(String.raw`
+${harness}
+
+class StatusWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+
+    def __init__(self):
+        self.profile = "default"
+        self.key = "default"
+        self.requests = []
+
+    def request(self, req, timeout=None):
+        self.requests.append(req)
+        assert req["action"] == "status"
+        assert "worker_key" not in req
+        return {
+            "ok": True,
+            "session_id": req["session_id"],
+            "exists": True,
+            "running": True,
+            "current_run_id": "run-a",
+        }
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+worker = StatusWorker()
+broker._workers["default"] = worker
+broker._session_profile["session-a"] = "default"
+broker._session_worker_key["session-a"] = "default"
+
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "session-a",
+    "profile": "default",
+})
+
+assert resp["running"] is True
+assert resp["current_run_id"] == "run-a"
+assert resp["loaded"] is True
+assert len(worker.requests) == 1
+assert len(broker._workers) == 1
+`)
+  })
+
+  it('does not record a route for missing sessions during unloaded-safe status checks', () => {
+    runPython(String.raw`
+${harness}
+
+class StatusWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+    profile = "default"
+    key = "default"
+
+    def request(self, req, timeout=None):
+        return {
+            "ok": True,
+            "session_id": req["session_id"],
+            "exists": False,
+            "running": False,
+            "message_count": 0,
+        }
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+broker._workers["default"] = StatusWorker()
+
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "missing-session",
+    "profile": "default",
+})
+
+assert resp["exists"] is False
+assert resp["loaded"] is True
+assert broker._session_profile == {}
+assert broker._session_worker_key == {}
+`)
+  })
+
   it('routes worker-keyed broker requests without stopping the worker on session destroy', () => {
     runPython(String.raw`
 ${harness}

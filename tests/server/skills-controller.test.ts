@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { Readable } from 'stream'
 
 const mockGetSkillUsageStatsFromDb = vi.hoisted(() => vi.fn())
 const mockGetActiveProfileName = vi.hoisted(() => vi.fn())
@@ -32,6 +33,21 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
 async function loadController() {
   vi.resetModules()
   return import('../../packages/server/src/controllers/hermes/skills')
+}
+
+function multipartBody(boundary: string, parts: Array<{ name: string; value: string; filename?: string; contentType?: string }>): Buffer {
+  const chunks: Buffer[] = []
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`))
+    const filename = part.filename ? `; filename="${part.filename}"` : ''
+    chunks.push(Buffer.from(`Content-Disposition: form-data; name="${part.name}"${filename}\r\n`))
+    if (part.contentType) chunks.push(Buffer.from(`Content-Type: ${part.contentType}\r\n`))
+    chunks.push(Buffer.from('\r\n'))
+    chunks.push(Buffer.from(part.value))
+    chunks.push(Buffer.from('\r\n'))
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`))
+  return Buffer.concat(chunks)
 }
 
 describe('skills controller', () => {
@@ -139,6 +155,89 @@ describe('skills controller', () => {
         expect.objectContaining({ name: 'dupe-skill', source: 'local', description: 'local copy' }),
         expect.objectContaining({ name: 'external-skill', source: 'external', description: 'external copy' }),
       ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('updates external skill directories in the request-scoped profile config', async () => {
+    let updatedConfig: Record<string, any> | undefined
+    mockUpdateConfigYamlForProfile.mockImplementation(async (_profile: string, updater: (config: Record<string, any>) => Record<string, any>) => {
+      updatedConfig = await updater({ skills: { disabled: ['old-skill'] }, model: { default: 'glm-5.1' } })
+      return undefined
+    })
+    const { updateExternalDirs } = await loadController()
+    const ctx: any = {
+      request: { body: { dirs: [' ~/research-skills ', '', '~/research-skills', '$HOME/shared-skills'] } },
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    await updateExternalDirs(ctx)
+
+    expect(mockUpdateConfigYamlForProfile).toHaveBeenCalledWith('research', expect.any(Function))
+    expect(updatedConfig).toEqual({
+      skills: { disabled: ['old-skill'], external_dirs: ['~/research-skills', '$HOME/shared-skills'] },
+      model: { default: 'glm-5.1' },
+    })
+    expect(ctx.body).toEqual({ success: true, dirs: ['~/research-skills', '$HOME/shared-skills'] })
+  })
+
+  it('imports skills into the request-scoped profile directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-import-profile-'))
+    const defaultProfileDir = join(root, 'default')
+    const researchProfileDir = join(root, 'research')
+    mockGetProfileDir.mockImplementation((profile: string) => profile === 'research' ? researchProfileDir : defaultProfileDir)
+
+    const boundary = '----hermes-skill-import-test'
+    const ctx: any = {
+      get: vi.fn((header: string) => header.toLowerCase() === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
+      req: Readable.from([multipartBody(boundary, [
+        { name: 'file', filename: 'demo-skill/SKILL.md', contentType: 'text/markdown', value: '# Demo Skill\nresearch copy\n' },
+      ])]),
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    try {
+      const { importSkill } = await loadController()
+
+      await importSkill(ctx)
+
+      await expect(readFile(join(researchProfileDir, 'skills', 'demo-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Demo Skill\nresearch copy\n')
+      await expect(readFile(join(defaultProfileDir, 'skills', 'demo-skill', 'SKILL.md'), 'utf-8')).rejects.toThrow()
+      expect(ctx.body).toEqual({ success: true, name: 'demo-skill' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes local skills only from the request-scoped profile directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-delete-profile-'))
+    const defaultProfileDir = join(root, 'default')
+    const researchProfileDir = join(root, 'research')
+    const defaultSkillDir = join(defaultProfileDir, 'skills', 'tools', 'dupe-skill')
+    const researchSkillDir = join(researchProfileDir, 'skills', 'tools', 'dupe-skill')
+    await mkdir(defaultSkillDir, { recursive: true })
+    await mkdir(researchSkillDir, { recursive: true })
+    await writeFile(join(defaultSkillDir, 'SKILL.md'), '# Default Copy\n', 'utf-8')
+    await writeFile(join(researchSkillDir, 'SKILL.md'), '# Research Copy\n', 'utf-8')
+    mockGetProfileDir.mockImplementation((profile: string) => profile === 'research' ? researchProfileDir : defaultProfileDir)
+
+    const ctx: any = {
+      params: { category: 'tools', skill: 'dupe-skill' },
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    try {
+      const { deleteSkill } = await loadController()
+
+      await deleteSkill(ctx)
+
+      await expect(readFile(join(defaultSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# Default Copy\n')
+      await expect(readFile(join(researchSkillDir, 'SKILL.md'), 'utf-8')).rejects.toThrow()
+      expect(ctx.body).toEqual({ success: true })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

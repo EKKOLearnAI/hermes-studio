@@ -197,6 +197,70 @@ const currentUserAvatar = ref('')
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredUserName() || '')
 
+    function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
+        members.value = res.members || []
+        if (res.agents) agents.value = res.agents
+        if (res.roomName) roomName.value = res.roomName
+        if (options.syncMessages && Array.isArray(res.messages)) {
+            const byId = new Map(messages.value.map(message => [message.id, message]))
+            for (const message of res.messages) {
+                const existing = byId.get(message.id)
+                byId.set(message.id, existing ? { ...existing, ...message } : message)
+            }
+            messages.value = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp)
+            if (typeof res.total === 'number' || typeof res.hasMore === 'boolean') {
+                applyMessagePaging(res)
+            } else {
+                loadedMessageCount.value = Math.max(loadedMessageCount.value, messages.value.length)
+                totalMessages.value = Math.max(totalMessages.value, loadedMessageCount.value)
+            }
+        }
+
+        // Restore typing state from server. Replace the local transient map so
+        // a reconnect cannot leave stale typers from the pre-reconnect socket.
+        for (const entry of typingUsers.value.values()) clearTimeout(entry.timer)
+        typingUsers.value.clear()
+        if (res.typingUsers) {
+            for (const u of res.typingUsers) {
+                const timer = setTimeout(() => typingUsers.value.delete(u.userId), 5000)
+                typingUsers.value.set(u.userId, { name: u.userName, timer })
+            }
+        }
+
+        // Restore context statuses from server
+        if (res.contextStatuses) {
+            contextStatuses.value = new Map(
+                res.contextStatuses.map((s: any) => [s.agentName, s])
+            )
+        } else {
+            contextStatuses.value.clear()
+        }
+    }
+
+    async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean } = {}) {
+        const socket = getSocket()
+        if (!socket) return
+
+        await new Promise<void>((resolve) => {
+            socket.emit('join', {
+                roomId,
+                name: userName.value || undefined,
+                description: localStorage.getItem('gc_user_description') || undefined,
+            }, (res: any) => {
+                if (currentRoomId.value !== roomId) {
+                    resolve()
+                    return
+                }
+                if (!res?.error) {
+                    applyRealtimeJoinState(res, options)
+                } else {
+                    error.value = res.error
+                }
+                resolve()
+            })
+        })
+    }
+
     // ─── Computed ───────────────────────────────────────────
     const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => a.timestamp - b.timestamp)))
 
@@ -235,6 +299,12 @@ const currentUserAvatar = ref('')
             console.log('[GroupChat] connected, socket id:', socket.id)
             connected.value = true
             error.value = null
+            const roomId = currentRoomId.value
+            if (roomId) {
+                void joinRealtimeRoom(roomId, { syncMessages: true }).catch((err: any) => {
+                    error.value = err.message
+                })
+            }
         })
 
         socket.on('disconnect', (reason) => {
@@ -478,40 +548,9 @@ const currentUserAvatar = ref('')
             isJoining.value = false
         }
 
-        // Join via socket for real-time updates
-        const socket = getSocket()
-        if (socket) {
-            await new Promise<void>((resolve) => {
-                socket.emit('join', {
-                    roomId,
-                    name: userName.value || undefined,
-                    description: localStorage.getItem('gc_user_description') || undefined,
-                }, (res: any) => {
-                    if (!res?.error) {
-                        members.value = res.members || []
-                        if (res.agents) agents.value = res.agents
-
-                        // Restore typing state from server
-                        if (res.typingUsers) {
-                            for (const u of res.typingUsers) {
-                                if (!typingUsers.value.has(u.userId)) {
-                                    const timer = setTimeout(() => typingUsers.value.delete(u.userId), 5000)
-                                    typingUsers.value.set(u.userId, { name: u.userName, timer })
-                                }
-                            }
-                        }
-
-                        // Restore context statuses from server
-                        if (res.contextStatuses) {
-                            contextStatuses.value = new Map(
-                                res.contextStatuses.map((s: any) => [s.agentName, s])
-                            )
-                        }
-                    }
-                    resolve()
-                })
-            })
-        }
+        // Join via socket for real-time updates. Reconnect uses the same path
+        // so the browser socket is a room member before the next send.
+        await joinRealtimeRoom(roomId)
     }
 
     async function loadOlderMessages(): Promise<boolean> {
@@ -785,15 +824,35 @@ const currentUserAvatar = ref('')
     }
 })
 
+function hasRuntimeToolPayload(value: unknown): boolean {
+    return value !== null && value !== undefined && value !== ''
+}
+
+function runtimeToolPayloadOrUndefined(value: unknown): unknown | undefined {
+    return hasRuntimeToolPayload(value) ? value : undefined
+}
+
+function runtimePayloadText(value: unknown): string {
+    if (!hasRuntimeToolPayload(value)) return ''
+    if (typeof value === 'string') return value
+    try {
+        const serialized = JSON.stringify(value)
+        if (serialized !== undefined) return serialized
+    } catch {
+        // Fall through to String(value) for non-serializable runtime payloads.
+    }
+    return String(value)
+}
+
 function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
     const toolNameMap = new Map<string, string>()
-    const toolArgsMap = new Map<string, string>()
+    const toolArgsMap = new Map<string, unknown>()
     for (const msg of msgs) {
         if (msg.role === 'assistant' && msg.tool_calls?.length) {
             for (const tc of msg.tool_calls) {
                 if (!tc?.id) continue
                 if (tc.function?.name) toolNameMap.set(tc.id, tc.function.name)
-                if (tc.function?.arguments) toolArgsMap.set(tc.id, tc.function.arguments)
+                if (hasRuntimeToolPayload(tc.function?.arguments)) toolArgsMap.set(tc.id, tc.function.arguments)
             }
         }
     }
@@ -803,14 +862,14 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
         if (
             msg.role !== 'tool' &&
             !msg.tool_calls?.length &&
-            !msg.content?.trim() &&
+            !runtimePayloadText((msg as any).content).trim() &&
             !msg.reasoning?.trim() &&
             (!msg.isStreaming || msg.finish_reason === 'streaming')
         ) {
             continue
         }
 
-        if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
+        if (msg.role === 'assistant' && msg.tool_calls?.length && !runtimePayloadText((msg as any).content).trim()) {
             for (const tc of msg.tool_calls) {
                 result.push({
                     ...msg,
@@ -819,7 +878,7 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                     content: '',
                     toolName: tc.function?.name || undefined,
                     toolCallId: tc.id,
-                    toolArgs: tc.function?.arguments || undefined,
+                    toolArgs: runtimeToolPayloadOrUndefined(tc.function?.arguments),
                     toolStatus: 'running',
                 })
             }
@@ -829,14 +888,17 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
         if (msg.role === 'tool') {
             const tcId = msg.tool_call_id || ''
             const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
-            const toolArgs = toolArgsMap.get(tcId) || undefined
+            const toolArgs = toolArgsMap.has(tcId) ? toolArgsMap.get(tcId) : undefined
             let preview = ''
-            if (msg.content) {
+            const contentText = runtimePayloadText((msg as any).content)
+            if (contentText) {
                 try {
-                    const parsed = JSON.parse(msg.content)
-                    preview = parsed.url || parsed.title || parsed.preview || parsed.summary || ''
+                    const parsed = typeof (msg as any).content === 'string'
+                        ? JSON.parse(contentText)
+                        : (msg as any).content
+                    preview = parsed?.url || parsed?.title || parsed?.preview || parsed?.summary || ''
                 } catch {
-                    preview = msg.content.slice(0, 80)
+                    preview = contentText.slice(0, 80)
                 }
             }
             const placeholderIdx = result.findIndex(
@@ -852,9 +914,9 @@ function mapGroupMessages(msgs: ChatMessage[]): ChatMessage[] {
                 content: '',
                 toolName: toolName || (placeholderIdx !== -1 ? result[placeholderIdx].toolName : undefined),
                 toolCallId: tcId || undefined,
-                toolArgs: toolArgs || (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
+                toolArgs: toolArgs !== undefined ? toolArgs : (placeholderIdx !== -1 ? result[placeholderIdx].toolArgs : undefined),
                 toolPreview: typeof preview === 'string' ? preview.slice(0, 100) || undefined : undefined,
-                toolResult: msg.content || undefined,
+                toolResult: runtimeToolPayloadOrUndefined((msg as any).content),
                 toolStatus: 'done',
             }
             if (placeholderIdx !== -1) result[placeholderIdx] = merged

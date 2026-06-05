@@ -10,6 +10,8 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
 import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
 import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
+import { config } from '../../../config'
+import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -752,7 +754,14 @@ export class GroupChatServer {
         const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
         this.io = new Server(servers[0], {
-            cors: { origin: '*' },
+            cors: { origin: createSocketIoCorsOrigin(config.corsOrigins) },
+            allowRequest: (req, callback) => {
+                if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
+                    callback('origin not allowed', false)
+                    return
+                }
+                callback(null, true)
+            },
             pingInterval: 25_000,
             pingTimeout: 90_000,
             connectionStateRecovery: {

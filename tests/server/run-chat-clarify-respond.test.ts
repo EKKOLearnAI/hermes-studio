@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const bridgeMock = vi.hoisted(() => ({
   clarifyRespond: vi.fn(),
   approvalRespond: vi.fn(),
+  statusIfLoaded: vi.fn(),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
@@ -67,6 +68,8 @@ describe('ChatRunSocket clarify responses', () => {
     vi.resetModules()
     bridgeMock.clarifyRespond.mockReset()
     bridgeMock.approvalRespond.mockReset()
+    bridgeMock.statusIfLoaded.mockReset()
+    bridgeMock.statusIfLoaded.mockResolvedValue({ ok: true, exists: false, running: false, loaded: false })
   })
 
   it('forwards clarify.respond events to the bridge and emits clarify.resolved', async () => {

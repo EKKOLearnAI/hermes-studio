@@ -3387,6 +3387,37 @@ class BridgeBroker:
             return WorkerProcess.REQUEST_TIMEOUT_SECONDS
         return max(WorkerProcess.REQUEST_TIMEOUT_SECONDS, timeout + 10)
 
+    def _status_if_loaded(self, req: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(req.get("session_id") or "")
+        with self._lock:
+            profile = self._session_profile.get(session_id)
+            worker_key = self._session_worker_key.get(session_id)
+            if profile:
+                key = self._normalize_worker_key(profile, req.get("worker_key")) if "worker_key" in req else worker_key
+            else:
+                fallback_profile = req.get("profile")
+                if fallback_profile is None:
+                    return {"ok": True, "session_id": session_id, "exists": False, "running": False, "loaded": False}
+                profile = self._normalize_profile(fallback_profile)
+                key = self._normalize_worker_key(profile, req.get("worker_key") if "worker_key" in req else None)
+            worker = self._workers.get(key or profile)
+
+        if worker is None or not getattr(worker, "running", False):
+            return {"ok": True, "session_id": session_id, "exists": False, "running": False, "loaded": False}
+
+        forwarded = dict(req)
+        forwarded["action"] = "status"
+        forwarded["profile"] = profile
+        forwarded.pop("worker_key", None)
+        try:
+            resp = worker.request(forwarded, self._worker_request_timeout(req))
+            if resp.get("exists") is not False:
+                self._record_response_routes(profile, key or profile, resp)
+            resp.setdefault("loaded", True)
+            return resp
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
+
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
         action = str(req.get("action") or "").strip()
         if not action:
@@ -3448,6 +3479,9 @@ class BridgeBroker:
         if action in {"get_result", "get_output"}:
             profile, worker_key = self._route_for_run(str(req.get("run_id") or ""))
             return self._forward(profile, req, worker_key)
+
+        if action == "status_if_loaded":
+            return self._status_if_loaded(req)
 
         if action in {"interrupt", "steer", "command", "goal_evaluate", "goal_pause", "status", "get_history", "get_session_title", "destroy"}:
             session_id = str(req.get("session_id") or "")

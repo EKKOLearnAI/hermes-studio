@@ -216,13 +216,25 @@ export function normalizeHighlightLanguage(lang?: string): string {
   return LANGUAGE_ALIASES[normalized] || normalized
 }
 
+function looksLikeDiff(content: string): boolean {
+  const trimmed = content.trimStart()
+  if (/^\*\*\* Begin Patch/m.test(trimmed)) return true
+  if (/^\*\*\* (Update|Add|Delete) File:/m.test(trimmed)) return true
+  if (/^---\s+[^\n]+\n\+\+\+\s+[^\n]+\n@@/m.test(trimmed)) return true
+  return false
+}
+
 export function inferStructuredLanguage(content: string): string | undefined {
-  try {
-    JSON.parse(content)
-    return 'json'
-  } catch {
-    return undefined
+  const trimmed = content.trimStart()
+  if (/^[\[{]/.test(trimmed)) {
+    try {
+      JSON.parse(content)
+      return 'json'
+    } catch {
+      // Fall through to diff/text detection.
+    }
   }
+  return looksLikeDiff(content) ? 'diff' : undefined
 }
 
 export function isUnifiedDiffContent(content: string, lang?: string): boolean {

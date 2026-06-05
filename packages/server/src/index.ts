@@ -24,6 +24,7 @@ import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostar
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
+import { createCorsOriginResolver, securityHeaders } from './security'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -192,7 +193,8 @@ export async function bootstrap() {
   await new Promise(resolve => setTimeout(resolve, 1000))
   console.log('[bootstrap] all stores initialized')
 
-  app.use(cors({ origin: config.corsOrigins }))
+  app.use(securityHeaders())
+  app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
   // Raise JSON/text limits above the default 1mb: profile avatars are posted
   // as base64 data URLs (up to ~1MB raw → ~1.37MB base64), which otherwise
   // tripped a 413 in the body parser before reaching the handler.

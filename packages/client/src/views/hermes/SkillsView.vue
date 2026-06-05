@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NInput } from 'naive-ui'
+import { NInput, NButton } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
+import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
+import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -21,6 +23,8 @@ const searchQuery = ref('')
 const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
 const recommendations = ref('')
+const showImportModal = ref(false)
+const showExternalDirsModal = ref(false)
 let mobileQuery: MediaQueryList | null = null
 let recommendationsRequestSeq = 0
 
@@ -110,6 +114,24 @@ function handleSelect(category: string, skill: string) {
   }
 }
 
+function handleSkillDeleted(category: string, skillName: string) {
+  if (selectedCategory.value === category && selectedSkill.value === skillName) {
+    selectedCategory.value = ''
+    selectedSkill.value = ''
+  }
+  loadSkills()
+}
+
+function handleImported() {
+  showImportModal.value = false
+  loadSkills()
+}
+
+function handleExternalDirsSaved() {
+  showExternalDirsModal.value = false
+  loadSkills()
+}
+
 function handlePinToggled(name: string, pinned: boolean) {
   // Update local state so the pin icon updates immediately
   if (selectedCategory.value === '.archive') {
@@ -149,14 +171,50 @@ function handlePinToggled(name: string, pinned: boolean) {
           <span class="modified-icon">✎</span>{{ t('skills.modified') }}
         </button>
       </div>
-      <NInput
-        v-model:value="searchQuery"
-        :placeholder="t('skills.searchPlaceholder')"
-        size="small"
-        clearable
-        style="width: 160px"
-      />
+      <div class="header-actions">
+        <NButton
+          class="header-action-btn"
+          size="small"
+          :title="t('skills.import')"
+          @click="showImportModal = true"
+        >
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </template>
+          <span class="header-action-label">{{ t('skills.import') }}</span>
+        </NButton>
+        <NButton
+          class="header-action-btn"
+          size="small"
+          :title="t('skills.externalDirs.manage')"
+          @click="showExternalDirsModal = true"
+        >
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </template>
+          <span class="header-action-label">{{ t('skills.externalDirs.manage') }}</span>
+        </NButton>
+        <NInput
+          v-model:value="searchQuery"
+          :placeholder="t('skills.searchPlaceholder')"
+          size="small"
+          clearable
+          style="width: 160px"
+        />
+      </div>
     </header>
+
+    <SkillImportModal v-if="showImportModal" @close="showImportModal = false" @saved="handleImported" />
+    <SkillExternalDirsModal v-if="showExternalDirsModal"
+      @close="showExternalDirsModal = false" @saved="handleExternalDirsSaved" />
 
     <div class="skills-content">
       <div v-if="loading && categories.length === 0" class="skills-loading">{{ t('common.loading') }}</div>
@@ -170,6 +228,7 @@ function handlePinToggled(name: string, pinned: boolean) {
               :search-query="searchQuery"
               :source-filter="sourceFilter"
               @select="handleSelect"
+              @deleted="handleSkillDeleted"
             />
           </div>
           <div class="skills-main">
@@ -217,6 +276,12 @@ function handlePinToggled(name: string, pinned: boolean) {
   flex: 1;
   flex-wrap: wrap;
   margin-left: 16px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .legend-item {
@@ -267,6 +332,23 @@ function handlePinToggled(name: string, pinned: boolean) {
 @media (max-width: $breakpoint-mobile) {
   .source-legend {
     display: none;
+  }
+
+  .header-action-label {
+    display: none;
+  }
+
+  .header-action-btn {
+    width: 30px;
+    padding: 0;
+
+    :deep(.n-button__content) {
+      justify-content: center;
+    }
+
+    :deep(.n-button__icon) {
+      margin: 0;
+    }
   }
 }
 

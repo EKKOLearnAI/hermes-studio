@@ -23,15 +23,52 @@ let serverUrl: string | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let isBootstrapping = false
+let windowFadeTimer: NodeJS.Timeout | null = null
+
+function cancelWindowFade() {
+  if (windowFadeTimer) {
+    clearInterval(windowFadeTimer)
+    windowFadeTimer = null
+  }
+}
+
+function showWindowWithFade(focus = true) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+
+  cancelWindowFade()
+  if (process.platform !== 'win32' || mainWindow.isVisible()) {
+    mainWindow.setOpacity(1)
+    mainWindow.show()
+    if (focus) mainWindow.focus()
+    return
+  }
+
+  const durationMs = 180
+  const startedAt = Date.now()
+  mainWindow.setOpacity(0)
+  mainWindow.show()
+  if (focus) mainWindow.focus()
+  windowFadeTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      cancelWindowFade()
+      return
+    }
+    const progress = Math.min(1, (Date.now() - startedAt) / durationMs)
+    mainWindow.setOpacity(progress)
+    if (progress >= 1) {
+      mainWindow.setOpacity(1)
+      cancelWindowFade()
+    }
+  }, 16)
+}
 
 function showMainWindow() {
   if (!mainWindow) {
     createWindow()
   }
   if (!mainWindow) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  showWindowWithFade(true)
 }
 
 function quitApp() {
@@ -132,7 +169,7 @@ function createWindow() {
     title: 'Hermes Studio',
     backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
-    show: !START_HIDDEN,
+    show: false,
     ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
@@ -142,9 +179,14 @@ function createWindow() {
     },
   })
 
+  mainWindow.once('ready-to-show', () => {
+    if (!START_HIDDEN) showWindowWithFade(true)
+  })
+
   mainWindow.on('close', (event) => {
     if (isQuitting) return
     event.preventDefault()
+    cancelWindowFade()
     mainWindow?.hide()
     updateTrayMenu()
   })
@@ -439,6 +481,7 @@ function runDesktopApp() {
       return
     }
     e.preventDefault()
+    cancelWindowFade()
     await stopWebUiServer().catch(() => undefined)
     app.exit(0)
   })

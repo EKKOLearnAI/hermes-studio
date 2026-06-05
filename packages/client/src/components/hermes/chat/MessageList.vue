@@ -6,6 +6,11 @@ type SessionScrollSnapshot = {
   wasNearBottom: boolean;
 }
 
+type BottomScrollOptions = number | {
+  frames?: number;
+  keepAliveMs?: number;
+}
+
 const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
 </script>
 
@@ -96,12 +101,12 @@ function queuedPreview(content: string): string {
   return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
 }
 
-function isNearBottom(threshold = 200): boolean {
-  return listRef.value?.isNearBottom(threshold) ?? true;
+function shouldAutoFollowBottom(threshold = 100): boolean {
+  return listRef.value?.shouldAutoFollowBottom(threshold) ?? true;
 }
 
-function scrollToBottom() {
-  listRef.value?.scrollToBottom();
+function scrollToBottom(options?: BottomScrollOptions) {
+  listRef.value?.scrollToBottom(options);
 }
 
 function scrollToMessage(messageId: string) {
@@ -130,14 +135,14 @@ function applyInitialSessionScroll(sessionId: string) {
   if (snapshot) {
     pendingInitialScrollSessionId.value = null;
     if (snapshot.wasNearBottom) {
-      scrollToBottom();
+      scrollToBottom({ frames: 4, keepAliveMs: 400 });
     } else {
       listRef.value?.restoreViewportPosition(snapshot);
     }
     return;
   }
 
-  scrollToBottom();
+  scrollToBottom({ frames: 4, keepAliveMs: 400 });
   if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
 }
 
@@ -184,7 +189,7 @@ watch(
 watch(
   () => chatStore.isRunActive,
   (v) => {
-    if (v) scrollToBottom();
+    if (v) scrollToBottom({ frames: 3, keepAliveMs: 400 });
   },
 );
 
@@ -197,8 +202,8 @@ watch(
       scrollToMessage(chatStore.focusMessageId);
       return;
     }
-    if (!isNearBottom()) return;
-    scrollToBottom();
+    if (!shouldAutoFollowBottom()) return;
+    scrollToBottom({ frames: 1, keepAliveMs: 0 });
   },
 );
 watch(currentToolCalls, () => {
@@ -207,8 +212,8 @@ watch(currentToolCalls, () => {
     scrollToMessage(chatStore.focusMessageId);
     return;
   }
-  if (!isNearBottom()) return;
-  scrollToBottom();
+  if (!shouldAutoFollowBottom()) return;
+  scrollToBottom({ frames: 1, keepAliveMs: 0 });
 });
 
 onBeforeUnmount(() => {
