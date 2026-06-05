@@ -38,6 +38,7 @@ interface CliShimInstallOptions {
 interface McpShimInstallOptions extends CliShimInstallOptions {
   nodePath?: string
   scriptPath?: string
+  webUiUrl?: string
 }
 
 function platformDelimiter(platform: NodeJS.Platform): string {
@@ -125,6 +126,7 @@ export function createShimContent(
 export function createMcpShimContent(
   nodePath: string,
   scriptPath: string,
+  webUiUrl = 'http://127.0.0.1:8748',
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform === 'win32') {
@@ -141,6 +143,13 @@ export function createMcpShimContent(
       'if not exist "%SCRIPT%" (',
       '  echo Hermes Studio MCP script not found at "%SCRIPT%" 1>&2',
       '  exit /b 127',
+      ')',
+      'if "%HERMES_WEB_UI_URL%"=="" (',
+      '  if "%HERMES_DESKTOP_PORT%"=="" (',
+      `    set "HERMES_WEB_UI_URL=${webUiUrl}"`,
+      '  ) else (',
+      '    set "HERMES_WEB_UI_URL=http://127.0.0.1:%HERMES_DESKTOP_PORT%"',
+      '  )',
       ')',
       'set "HERMES_MCP_SERVER_NAME=hermes-studio-mcp"',
       '"%NODE%" "%SCRIPT%" %*',
@@ -163,6 +172,14 @@ export function createMcpShimContent(
     '  echo "Hermes Studio MCP script not found at $SCRIPT" >&2',
     '  exit 127',
     'fi',
+    'if [ -z "${HERMES_WEB_UI_URL:-}" ]; then',
+    '  if [ -n "${HERMES_DESKTOP_PORT:-}" ]; then',
+    '    HERMES_WEB_UI_URL="http://127.0.0.1:${HERMES_DESKTOP_PORT}"',
+    '  else',
+    `    HERMES_WEB_UI_URL=${shellQuote(webUiUrl)}`,
+    '  fi',
+    'fi',
+    'export HERMES_WEB_UI_URL',
     'export HERMES_MCP_SERVER_NAME=hermes-studio-mcp',
     'exec "$NODE" "$SCRIPT" "$@"',
     '',
@@ -311,9 +328,10 @@ export async function installHermesStudioMcpShim(options: McpShimInstallOptions 
   const shimPath = mcpShimPathForPlatform(binDir, platform)
   const nodePath = options.nodePath || process.execPath
   const scriptPath = options.scriptPath || resolve(process.cwd(), 'bin', 'hermes-web-ui-mcp.mjs')
+  const webUiUrl = options.webUiUrl || 'http://127.0.0.1:8748'
 
   mkdirSync(binDir, { recursive: true })
-  const status = writeShim(shimPath, createMcpShimContent(nodePath, scriptPath, platform), platform, MCP_SHIM_MARKER)
+  const status = writeShim(shimPath, createMcpShimContent(nodePath, scriptPath, webUiUrl, platform), platform, MCP_SHIM_MARKER)
   const pathUpdated = await ensureUserBinOnPath(homeDir, binDir, platform, env).catch((err) => {
     console.warn(`[cli-shim] failed to update PATH: ${err instanceof Error ? err.message : String(err)}`)
     return false
