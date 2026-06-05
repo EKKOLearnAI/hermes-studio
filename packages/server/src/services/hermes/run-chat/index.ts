@@ -366,7 +366,7 @@ export class ChatRunSocket {
     const session = getSession(sid)
     const profile = session?.profile || currentProfileFromSocket(socket)
     try {
-      const status = await this.bridge.status(sid, profile) as Record<string, unknown>
+      const status = await this.bridge.statusIfLoaded(sid, profile) as Record<string, unknown>
       const running = status.running === true
       const runId = typeof status.current_run_id === 'string' ? status.current_run_id : ''
       if (!running || !runId) return

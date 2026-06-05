@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handleBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
+const resumeBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleApiRunMock = vi.hoisted(() => vi.fn(async () => {}))
+const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
+const bridgeMock = vi.hoisted(() => ({
+  status: vi.fn(),
+  statusIfLoaded: vi.fn(),
+}))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
   handleBridgeRun: handleBridgeRunMock,
+  resumeBridgeRun: resumeBridgeRunMock,
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/handle-api-run', () => ({
   handleApiRun: handleApiRunMock,
-  loadSessionStateFromDb: vi.fn(),
+  loadSessionStateFromDb: loadSessionStateFromDbMock,
   resolveRunSource: vi.fn((source?: string) => source || 'cli'),
 }))
 
@@ -20,7 +27,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/session-command', ()
 }))
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
-  AgentBridgeClient: vi.fn(() => ({})),
+  AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
 
 vi.mock('../../packages/server/src/services/logger', () => ({
@@ -51,6 +58,7 @@ vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
 }))
 
 function makeServerHarness() {
+  const handlers = new Map<string, Function>()
   const namespace = {
     adapter: { rooms: new Map() },
     to: vi.fn(() => ({ emit: vi.fn() })),
@@ -66,14 +74,24 @@ function makeServerHarness() {
     emit: vi.fn(),
     join: vi.fn(),
     to: vi.fn(() => ({ emit: vi.fn() })),
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: Function) => {
+      handlers.set(event, handler)
+    }),
   }
-  return { io, namespace, socket }
+  return { handlers, io, namespace, socket }
 }
 
 describe('ChatRunSocket queued bridge runs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    bridgeMock.statusIfLoaded.mockResolvedValue({ ok: true, exists: false, running: false, loaded: false })
+    loadSessionStateFromDbMock.mockResolvedValue({
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    })
   })
 
   it('persists normal queued bridge messages when they are dequeued', async () => {
@@ -124,5 +142,51 @@ describe('ChatRunSocket queued bridge runs', () => {
       queue_id: 'queue-plan',
     }))
     expect(call[6]).toBe(false)
+  })
+
+  it('checks bridge resume status without cold-starting the profile worker', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('resume')?.({ session_id: 'session-1' })
+
+    expect(bridgeMock.statusIfLoaded).toHaveBeenCalledWith('session-1', 'default')
+    expect(bridgeMock.status).not.toHaveBeenCalled()
+    expect(resumeBridgeRunMock).not.toHaveBeenCalled()
+    expect(socket.emit).toHaveBeenCalledWith('resumed', expect.objectContaining({
+      session_id: 'session-1',
+      isWorking: false,
+    }))
+  })
+
+  it('reattaches a loaded running bridge run during resume', async () => {
+    bridgeMock.statusIfLoaded.mockResolvedValueOnce({
+      ok: true,
+      exists: true,
+      running: true,
+      current_run_id: 'run-1',
+      loaded: true,
+    })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).onConnection(socket)
+    await handlers.get('resume')?.({ session_id: 'session-1' })
+
+    expect(resumeBridgeRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      socket,
+      expect.objectContaining({
+        sessionId: 'session-1',
+        runId: 'run-1',
+        profile: 'default',
+      }),
+      expect.any(Map),
+      bridgeMock,
+      expect.any(Function),
+    )
   })
 })
