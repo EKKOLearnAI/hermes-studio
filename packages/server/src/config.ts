@@ -76,4 +76,10 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: getCorsOrigins(),
+  update: {
+    enabled: parseBoolean(process.env.WEBUI_UPDATE_ENABLED),
+    packageName: process.env.WEBUI_UPDATE_PACKAGE || '',
+    registry: normalizeUrl(process.env.WEBUI_UPDATE_REGISTRY),
+    cliBin: process.env.WEBUI_UPDATE_CLI_BIN || getDefaultUpdateCliBin(process.env.WEBUI_UPDATE_PACKAGE || 'hermes-web-ui'),
+  },
 }
