@@ -293,7 +293,7 @@ describe('route registration ordering', () => {
     const app = { use }
     const requireAuth = vi.fn(async () => {})
 
-    const returnedProxyMiddleware = registerRoutes(app as any, requireAuth as any)
+    const returnedProxyMiddleware = registerRoutes(app as any, [requireAuth] as any)
     const mountedMiddleware = use.mock.calls.map(([middleware]) => middleware)
 
     expect(mountedMiddleware.indexOf(ttsPublicMiddleware)).toBeGreaterThanOrEqual(0)
