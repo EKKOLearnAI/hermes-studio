@@ -28,6 +28,7 @@ export interface LanDeviceInfo {
   decided_at: number | null
   outbound_requested_at: number
   outbound_decided_at: number | null
+  inbound_history_deleted_at: number | null
   last_seen_at: number
   updated_at: number
 }
@@ -65,4 +66,8 @@ export async function blockDevice(id: string): Promise<LanDiscoveryState> {
 
 export async function unblockDevice(id: string): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/unblock`, { method: 'POST' })
+}
+
+export async function deleteDeviceRequestHistory(id: string): Promise<LanDiscoveryState> {
+  return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/request-history`, { method: 'DELETE' })
 }

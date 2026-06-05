@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NDrawer, NDrawerContent, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   approveDevice,
   blockDevice,
+  deleteDeviceRequestHistory,
   fetchLanDevices,
   rejectDevice,
   requestDevicePairing,
@@ -89,6 +90,18 @@ function requestCountLabel(): string {
     : t('devices.requests')
 }
 
+function requestProcessed(device: LanDeviceInfo): boolean {
+  return device.inbound_status !== 'pending'
+}
+
+function requestProcessLabel(device: LanDeviceInfo): string {
+  return requestProcessed(device) ? t('devices.processed') : t('devices.unprocessed')
+}
+
+function requestProcessTagType(device: LanDeviceInfo) {
+  return requestProcessed(device) ? 'success' : 'warning'
+}
+
 function formatOs(device: LanDeviceInfo): string {
   const parts = [device.os.type || device.os.platform, device.os.release, device.os.arch]
     .filter(Boolean)
@@ -132,7 +145,7 @@ async function refreshDevices() {
   }
 }
 
-async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve' | 'reject' | 'block' | 'unblock') {
+async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve' | 'reject' | 'block' | 'unblock' | 'deleteHistory') {
   updatingDeviceId.value = device.id
   try {
     const next = action === 'request'
@@ -143,6 +156,8 @@ async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve'
       ? await rejectDevice(device.id)
       : action === 'block'
       ? await blockDevice(device.id)
+      : action === 'deleteHistory'
+      ? await deleteDeviceRequestHistory(device.id)
       : await unblockDevice(device.id)
     state.value = next
   } catch (err: any) {
@@ -274,17 +289,33 @@ onMounted(() => {
             <div>
               <div class="request-name">{{ requestDevice.computer_name || requestDevice.ip }}</div>
               <div class="request-meta">{{ requestDevice.ip }}:{{ requestDevice.http_port }}</div>
+              <div class="request-status-row">
+                <NTag size="small" :type="requestProcessTagType(requestDevice)" round>
+                  {{ requestProcessLabel(requestDevice) }}
+                </NTag>
+                <NTag size="small" :type="requestDevice.inbound_status === 'blocked' ? 'error' : requestDevice.inbound_status === 'rejected' ? 'warning' : requestDevice.inbound_status === 'approved' ? 'success' : 'info'" round>
+                  {{ inboundStatusLabel(requestDevice.inbound_status) }}
+                </NTag>
+              </div>
             </div>
             <div class="request-actions">
-              <NButton size="tiny" type="success" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'approve')">
+              <NButton v-if="requestDevice.inbound_status === 'pending'" size="tiny" type="success" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'approve')">
                 {{ t('devices.approve') }}
               </NButton>
-              <NButton size="tiny" quaternary type="warning" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'reject')">
+              <NButton v-if="requestDevice.inbound_status === 'pending'" size="tiny" quaternary type="warning" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'reject')">
                 {{ t('devices.reject') }}
               </NButton>
-              <NButton size="tiny" quaternary type="error" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'block')">
+              <NButton v-if="requestDevice.inbound_status === 'pending'" size="tiny" quaternary type="error" :loading="updatingDeviceId === requestDevice.id" @click="updateDevice(requestDevice, 'block')">
                 {{ t('devices.block') }}
               </NButton>
+              <NPopconfirm @positive-click="updateDevice(requestDevice, 'deleteHistory')">
+                <template #trigger>
+                  <NButton size="tiny" quaternary type="error" :loading="updatingDeviceId === requestDevice.id">
+                    {{ t('devices.deleteHistory') }}
+                  </NButton>
+                </template>
+                {{ t('devices.deleteHistoryConfirm') }}
+              </NPopconfirm>
             </div>
           </article>
         </div>
@@ -475,6 +506,13 @@ onMounted(() => {
 .request-meta {
   color: $text-muted;
   font-size: 12px;
+}
+
+.request-status-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 .request-actions {

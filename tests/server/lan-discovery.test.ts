@@ -127,6 +127,7 @@ describe('LAN discovery', () => {
     expect(publicDeviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceRoutesSource).toContain("devicePublicRoutes.post('/api/devices/link-status'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.delete('/api/devices/:id/request-history'")
     expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)
   })

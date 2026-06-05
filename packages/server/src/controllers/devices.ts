@@ -1,8 +1,9 @@
 import {
   DuplicateDeviceRequestError,
   getDeviceRelation,
+  hideInboundRequestHistory,
+  listInboundRequestHistory,
   listDeviceRelations,
-  listPendingInboundRequests,
   requestInboundDeviceLink,
   updateInboundStatus,
   updateOutboundStatus,
@@ -105,7 +106,7 @@ async function devicesPayload() {
         updated_at: relation?.updated_at || 0,
       }
     }),
-    requests: listPendingInboundRequests(),
+    requests: listInboundRequestHistory(),
   }
 }
 
@@ -270,6 +271,16 @@ export async function blockDevice(ctx: any) {
 
 export async function unblockDevice(ctx: any) {
   await transitionInboundDevice(ctx, 'none')
+}
+
+export async function deleteDeviceRequestHistory(ctx: any) {
+  try {
+    hideInboundRequestHistory(ctx.params.id)
+    ctx.body = await devicesPayload()
+  } catch {
+    ctx.status = 404
+    ctx.body = { error: 'Device request not found' }
+  }
 }
 
 export async function requestDevicePairing(ctx: any) {

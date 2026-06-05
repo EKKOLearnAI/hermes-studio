@@ -78,4 +78,47 @@ describe('devices store', () => {
       outbound_status: 'none',
     })
   })
+
+  it('lists processed inbound request history and hides it without clearing approval', async () => {
+    const {
+      getDeviceRelation,
+      hideInboundRequestHistory,
+      listInboundRequestHistory,
+      requestInboundDeviceLink,
+      updateInboundStatus,
+    } = await import('../../packages/server/src/db/hermes/devices-store')
+
+    requestInboundDeviceLink(device)
+    updateInboundStatus(device.id, 'approved')
+    expect(listInboundRequestHistory()).toHaveLength(1)
+    expect(listInboundRequestHistory()[0]).toMatchObject({
+      inbound_status: 'approved',
+      outbound_status: 'none',
+    })
+
+    hideInboundRequestHistory(device.id)
+    expect(listInboundRequestHistory()).toEqual([])
+    expect(getDeviceRelation(device.id)).toMatchObject({
+      inbound_status: 'approved',
+      outbound_status: 'none',
+    })
+  })
+
+  it('marks pending inbound request rejected when deleting its history', async () => {
+    const {
+      getDeviceRelation,
+      hideInboundRequestHistory,
+      listInboundRequestHistory,
+      requestInboundDeviceLink,
+    } = await import('../../packages/server/src/db/hermes/devices-store')
+
+    requestInboundDeviceLink(device)
+    hideInboundRequestHistory(device.id)
+
+    expect(listInboundRequestHistory()).toEqual([])
+    expect(getDeviceRelation(device.id)).toMatchObject({
+      inbound_status: 'rejected',
+      outbound_status: 'none',
+    })
+  })
 })

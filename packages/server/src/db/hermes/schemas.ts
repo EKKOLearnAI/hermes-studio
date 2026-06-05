@@ -162,6 +162,7 @@ export const DEVICES_SCHEMA: Record<string, string> = {
   decided_at: 'INTEGER',
   outbound_requested_at: 'INTEGER NOT NULL DEFAULT 0',
   outbound_decided_at: 'INTEGER',
+  inbound_history_deleted_at: 'INTEGER',
   last_seen_at: 'INTEGER NOT NULL DEFAULT 0',
   updated_at: 'INTEGER NOT NULL',
 }

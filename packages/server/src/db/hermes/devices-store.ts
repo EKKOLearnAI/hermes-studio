@@ -12,6 +12,7 @@ export type DeviceRelationRecord = Omit<LanDeviceInfo, 'last_seen_at'> & {
   decided_at: number | null
   outbound_requested_at: number
   outbound_decided_at: number | null
+  inbound_history_deleted_at: number | null
   last_seen_at: number
   updated_at: number
 }
@@ -42,6 +43,7 @@ type StoredDeviceRow = {
   decided_at: number | null
   outbound_requested_at?: number
   outbound_decided_at?: number | null
+  inbound_history_deleted_at?: number | null
   last_seen_at: number
   updated_at: number
 }
@@ -88,6 +90,7 @@ function rowToRecord(row: StoredDeviceRow | Record<string, any>): DeviceRelation
     decided_at: row.decided_at == null ? null : Number(row.decided_at),
     outbound_requested_at: Number(row.outbound_requested_at || 0),
     outbound_decided_at: row.outbound_decided_at == null ? null : Number(row.outbound_decided_at),
+    inbound_history_deleted_at: row.inbound_history_deleted_at == null ? null : Number(row.inbound_history_deleted_at),
     last_seen_at: Number(row.last_seen_at || 0),
     updated_at: Number(row.updated_at || 0),
   }
@@ -113,6 +116,7 @@ function deviceToRow(device: LanDeviceInfo | DeviceRelationRecord, existing: Dev
     decided_at: existing?.decided_at || null,
     outbound_requested_at: existing?.outbound_requested_at || 0,
     outbound_decided_at: existing?.outbound_decided_at || null,
+    inbound_history_deleted_at: existing?.inbound_history_deleted_at || null,
     last_seen_at: parseTime(device.last_seen_at),
     updated_at: now,
   }
@@ -130,8 +134,9 @@ function saveRow(row: StoredDeviceRow): DeviceRelationRecord {
       id, status, inbound_status, outbound_status, computer_name, endpoint_kind,
       ip, http_port, url, os_json, hermes_agent_version, hermes_web_ui_version,
       response_ms, device_public_key, requested_at, decided_at,
-      outbound_requested_at, outbound_decided_at, last_seen_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      outbound_requested_at, outbound_decided_at, inbound_history_deleted_at,
+      last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       inbound_status = excluded.inbound_status,
@@ -150,6 +155,7 @@ function saveRow(row: StoredDeviceRow): DeviceRelationRecord {
       decided_at = excluded.decided_at,
       outbound_requested_at = excluded.outbound_requested_at,
       outbound_decided_at = excluded.outbound_decided_at,
+      inbound_history_deleted_at = excluded.inbound_history_deleted_at,
       last_seen_at = excluded.last_seen_at,
       updated_at = excluded.updated_at
   `).run(
@@ -171,6 +177,7 @@ function saveRow(row: StoredDeviceRow): DeviceRelationRecord {
     row.decided_at,
     row.outbound_requested_at || 0,
     row.outbound_decided_at || null,
+    row.inbound_history_deleted_at || null,
     row.last_seen_at,
     row.updated_at,
   )
@@ -204,6 +211,12 @@ export function listPendingInboundRequests(): DeviceRelationRecord[] {
   return listDeviceRelations().filter(device => device.inbound_status === 'pending')
 }
 
+export function listInboundRequestHistory(): DeviceRelationRecord[] {
+  return listDeviceRelations()
+    .filter(device => device.requested_at > 0 && device.inbound_history_deleted_at == null)
+    .sort((a, b) => b.requested_at - a.requested_at)
+}
+
 export function mergeDeviceRelation(device: LanDeviceInfo): DeviceRelationRecord {
   return saveRow(deviceToRow(device, getDeviceRelation(device.id), Date.now()))
 }
@@ -225,6 +238,7 @@ export function requestInboundDeviceLink(device: LanDeviceInfo): DeviceRelationR
   row.inbound_status = 'pending'
   row.requested_at = now
   row.decided_at = null
+  row.inbound_history_deleted_at = null
   return saveRow(row)
 }
 
@@ -237,6 +251,7 @@ export function updateInboundStatus(id: string, status: DeviceInboundStatus, sna
   row.inbound_status = status
   row.decided_at = status === 'pending' || status === 'none' ? null : now
   if (status === 'pending' && !row.requested_at) row.requested_at = now
+  if (status === 'pending') row.inbound_history_deleted_at = null
   return saveRow(row)
 }
 
@@ -251,5 +266,19 @@ export function updateOutboundStatus(id: string, status: DeviceOutboundStatus, s
   } else {
     row.outbound_decided_at = now
   }
+  return saveRow(row)
+}
+
+export function hideInboundRequestHistory(id: string): DeviceRelationRecord {
+  const existing = getDeviceRelation(id)
+  if (!existing || !existing.requested_at) throw new Error('Device request not found')
+  const now = Date.now()
+  const row = deviceToRow(existing, existing, now)
+  if (row.inbound_status === 'pending') {
+    row.status = 'rejected'
+    row.inbound_status = 'rejected'
+    row.decided_at = now
+  }
+  row.inbound_history_deleted_at = now
   return saveRow(row)
 }
