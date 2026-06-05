@@ -172,7 +172,12 @@ function handlePinToggled(name: string, pinned: boolean) {
         </button>
       </div>
       <div class="header-actions">
-        <NButton size="small" @click="showImportModal = true">
+        <NButton
+          class="header-action-btn"
+          size="small"
+          :title="t('skills.import')"
+          @click="showImportModal = true"
+        >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -181,16 +186,21 @@ function handlePinToggled(name: string, pinned: boolean) {
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
           </template>
-          {{ t('skills.import') }}
+          <span class="header-action-label">{{ t('skills.import') }}</span>
         </NButton>
-        <NButton size="small" @click="showExternalDirsModal = true">
+        <NButton
+          class="header-action-btn"
+          size="small"
+          :title="t('skills.externalDirs.manage')"
+          @click="showExternalDirsModal = true"
+        >
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
           </template>
-          {{ t('skills.externalDirs.manage') }}
+          <span class="header-action-label">{{ t('skills.externalDirs.manage') }}</span>
         </NButton>
         <NInput
           v-model:value="searchQuery"
@@ -322,6 +332,15 @@ function handlePinToggled(name: string, pinned: boolean) {
 @media (max-width: $breakpoint-mobile) {
   .source-legend {
     display: none;
+  }
+
+  .header-action-label {
+    display: none;
+  }
+
+  .header-action-btn {
+    width: 30px;
+    padding: 0;
   }
 }
 
