@@ -321,8 +321,21 @@ function getPreviewViteHostArg() {
   return isTermuxRuntime() ? '127.0.0.1' : ''
 }
 
-function getGlobalPackageBin(root: string) {
-  return join(root, 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+function getGlobalPackageDir(root: string, packageName: string) {
+  return join(root, ...packageName.split('/').filter(Boolean))
+}
+
+function normalizeCliRelativePath(cliBin: string) {
+  return cliBin.replace(/^[./\\]+/, '')
+}
+
+function getGlobalPackageBin(root: string, packageName: string, cliBin: string) {
+  const packageDir = getGlobalPackageDir(root, packageName)
+  const normalizedCli = normalizeCliRelativePath(cliBin)
+  return [
+    join(packageDir, 'bin', normalizedCli),
+    join(packageDir, normalizedCli),
+  ].find(existsSync) || join(packageDir, 'bin', normalizedCli)
 }
 
 function getCurrentNodeEnv() {
@@ -1004,7 +1017,7 @@ function getGlobalRoot() {
 function getGlobalCliScript() {
   const packageName = config.update.packageName
   const cliBin = config.update.cliBin
-  const cli = getGlobalPackageBin(getGlobalRoot())
+  const cli = getGlobalPackageBin(getGlobalRoot(), packageName, cliBin)
   if (!existsSync(cli)) {
     throw new Error(`Updated package CLI not found: ${cli}`)
   }
@@ -1013,8 +1026,9 @@ function getGlobalCliScript() {
 
 function runUpdateInstall() {
   const packageName = config.update.packageName
+  const distTag = config.update.distTag || 'latest'
   return runNpm(
-    ['install', '-g', `${packageName}@latest`, '--registry', config.update.registry],
+    ['install', '-g', `${packageName}@${distTag}`, '--registry', config.update.registry, '--ignore-scripts', '--no-audit', '--no-fund'],
     { timeout: 10 * 60 * 1000 },
   )
 }
@@ -1061,6 +1075,7 @@ export async function handleUpdate(ctx: any) {
   updateInProgress = true
 
   try {
+    console.info(`[update] installing ${config.update.packageName}@${config.update.distTag || 'latest'} from ${config.update.registry}`)
     const output = runUpdateInstall()
 
     ctx.body = {

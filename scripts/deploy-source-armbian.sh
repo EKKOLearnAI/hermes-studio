@@ -263,12 +263,28 @@ install_node() {
   info "Node.js installation completed: $("${NODE_BIN}" -v)"
 }
 
+ensure_wheel_anthropic_pin() {
+  local venv_dir="${APP_USER_HOME}/.hermes/hermes-agent-venv"
+  if [[ ! -x "${venv_dir}/bin/pip" ]]; then
+    warn "Wheel venv not found at ${venv_dir}; skipping Anthropic SDK pin."
+    return 0
+  fi
+
+  step "Pin Anthropic SDK for Anthropic-compatible providers"
+  run_as_app_user "'${venv_dir}/bin/pip' install --force-reinstall 'anthropic==${HERMES_ANTHROPIC_VERSION}'"
+  run_as_app_user "'${venv_dir}/bin/python3' -c \"import anthropic; print(anthropic.__version__)\" >/dev/null"
+  info "Pinned Anthropic SDK to ${HERMES_ANTHROPIC_VERSION} in ${venv_dir}"
+}
+
 install_hermes_agent() {
   step "Install Hermes Agent"
 
   local hermes_bin_candidate
   hermes_bin_candidate="${APP_USER_HOME}/.local/bin/hermes"
   if run_as_app_user "test -x '${hermes_bin_candidate}'"; then
+    if [[ -n "${HERMES_AGENT_WHEEL_URL}" ]]; then
+      ensure_wheel_anthropic_pin
+    fi
     info "Hermes is already installed. Skipping installation."
     return 0
   fi
@@ -283,6 +299,7 @@ install_hermes_agent() {
     run_as_app_user "python3 -m venv '${venv_dir}'"
     run_as_app_user "'${venv_dir}/bin/pip' install --upgrade pip"
     run_as_app_user "'${venv_dir}/bin/pip' install '${HERMES_AGENT_WHEEL_URL}'"
+    ensure_wheel_anthropic_pin
 
     # Link the command
     run_as_app_user "ln -sf '${venv_dir}/bin/hermes' '${bin_dir}/hermes'"
@@ -622,6 +639,7 @@ NPM_BINARY_MIRROR_PREFIX="${NPM_BINARY_MIRROR_PREFIX:-https://cdn.npmmirror.com/
 HERMES_INSTALLER_MIRROR="${HERMES_INSTALLER_MIRROR:-https://cdn.jsdelivr.net/gh/NousResearch/hermes-agent@main/scripts/install.sh}"
 HERMES_INSTALLER_FALLBACK="${HERMES_INSTALLER_FALLBACK:-https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh}"
 HERMES_AGENT_WHEEL_URL="${HERMES_AGENT_WHEEL_URL:-https://github.com/NousResearch/hermes-agent/releases/download/v2026.5.29.2/hermes_agent-0.15.2-py3-none-any.whl}"
+HERMES_ANTHROPIC_VERSION="${HERMES_ANTHROPIC_VERSION:-0.87.0}"
 WEBUI_BUNDLE_URL="${WEBUI_BUNDLE_URL:-}"
 HERMES_INSTALL_FLAGS="${HERMES_INSTALL_FLAGS:---skip-setup --skip-browser}"
 SERVICE_TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermes-web-ui.service"

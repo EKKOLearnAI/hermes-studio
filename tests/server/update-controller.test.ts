@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { delimiter, dirname, join } from 'path'
 
+const UPDATE_PACKAGE = '@company/hermes-web-ui'
+const UPDATE_REGISTRY = 'https://registry.npmjs.org'
+const UPDATE_CLI_BIN = 'hermes-web-ui.mjs'
+
 type UpdateControllerMocks = {
   execFile: ReturnType<typeof vi.fn>
   execFileSync: ReturnType<typeof vi.fn>
@@ -68,17 +72,25 @@ function getNpmCliPath() {
 
 function getGlobalCliScript(prefix: string) {
   return process.platform === 'win32'
-    ? join(prefix, 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
-    : join(prefix, 'lib', 'node_modules', 'hermes-web-ui', 'bin', 'hermes-web-ui.mjs')
+    ? join(prefix, 'node_modules', '@company', 'hermes-web-ui', 'bin', UPDATE_CLI_BIN)
+    : join(prefix, 'lib', 'node_modules', '@company', 'hermes-web-ui', 'bin', UPDATE_CLI_BIN)
 }
 
 describe('update controller', () => {
   const originalPort = process.env.PORT
+  const originalUpdateEnabled = process.env.WEBUI_UPDATE_ENABLED
+  const originalUpdatePackage = process.env.WEBUI_UPDATE_PACKAGE
+  const originalUpdateRegistry = process.env.WEBUI_UPDATE_REGISTRY
+  const originalUpdateCliBin = process.env.WEBUI_UPDATE_CLI_BIN
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
 
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    process.env.WEBUI_UPDATE_ENABLED = 'true'
+    process.env.WEBUI_UPDATE_PACKAGE = UPDATE_PACKAGE
+    process.env.WEBUI_UPDATE_REGISTRY = UPDATE_REGISTRY
+    process.env.WEBUI_UPDATE_CLI_BIN = UPDATE_CLI_BIN
   })
 
   afterEach(() => {
@@ -91,6 +103,14 @@ describe('update controller', () => {
     } else {
       process.env.PORT = originalPort
     }
+    if (originalUpdateEnabled === undefined) delete process.env.WEBUI_UPDATE_ENABLED
+    else process.env.WEBUI_UPDATE_ENABLED = originalUpdateEnabled
+    if (originalUpdatePackage === undefined) delete process.env.WEBUI_UPDATE_PACKAGE
+    else process.env.WEBUI_UPDATE_PACKAGE = originalUpdatePackage
+    if (originalUpdateRegistry === undefined) delete process.env.WEBUI_UPDATE_REGISTRY
+    else process.env.WEBUI_UPDATE_REGISTRY = originalUpdateRegistry
+    if (originalUpdateCliBin === undefined) delete process.env.WEBUI_UPDATE_CLI_BIN
+    else process.env.WEBUI_UPDATE_CLI_BIN = originalUpdateCliBin
     delete process.env.HERMES_WEB_UI_PREVIEW_REPO
   })
 
@@ -115,7 +135,7 @@ describe('update controller', () => {
 
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       process.execPath,
-      [npmCli, 'install', '-g', 'hermes-web-ui@latest'],
+      [npmCli, 'install', '-g', `${UPDATE_PACKAGE}@latest`, '--registry', UPDATE_REGISTRY, '--ignore-scripts', '--no-audit', '--no-fund'],
       expect.objectContaining({
         encoding: 'utf-8',
         timeout: 10 * 60 * 1000,
@@ -167,6 +187,21 @@ describe('update controller', () => {
       [expect.any(String), 'restart', '--port', '8648'],
       expect.objectContaining({ detached: true, stdio: 'ignore', windowsHide: true }),
     )
+  })
+
+  it('rejects updates when the update source is not fully configured', async () => {
+    delete process.env.WEBUI_UPDATE_REGISTRY
+    const { handleUpdate, mocks } = await loadUpdateController()
+    const ctx = createMockCtx()
+
+    await handleUpdate(ctx)
+
+    expect(ctx.status).toBe(500)
+    expect(ctx.body).toEqual({
+      success: false,
+      message: 'Update source is not fully configured. Set WEBUI_UPDATE_PACKAGE, WEBUI_UPDATE_REGISTRY, and WEBUI_UPDATE_CLI_BIN.',
+    })
+    expect(mocks.spawn).not.toHaveBeenCalled()
   })
 
   it('does not log a restart error when the restart helper exits successfully', async () => {

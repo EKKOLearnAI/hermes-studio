@@ -4,7 +4,7 @@ import { requireSuperAdmin } from '../middleware/user-auth'
 
 export const updateRoutes = new Router()
 
-updateRoutes.post('/api/hermes/update', ctrl.handleUpdate)
+updateRoutes.post('/api/hermes/update', requireSuperAdmin, ctrl.handleUpdate)
 updateRoutes.get('/api/hermes/update/preview', requireSuperAdmin, ctrl.previewStatus)
 updateRoutes.get('/api/hermes/update/preview/tags', requireSuperAdmin, ctrl.previewTags)
 updateRoutes.post('/api/hermes/update/preview/prepare', requireSuperAdmin, ctrl.preparePreview)

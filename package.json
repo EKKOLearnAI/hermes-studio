@@ -56,12 +56,17 @@
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
     "build:desktop:linux": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
+    "prepublishOnly": "npm run build",
+    "release:npm": "npm publish --access public",
     "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
     "bin/",
     "dist/"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@vscode/markdown-it-katex": "^1.1.2",
     "adm-zip": "^0.5.17",

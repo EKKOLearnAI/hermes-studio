@@ -5,6 +5,7 @@ import {
   fetchAvailableModels,
   addCustomModel as persistCustomModel,
   removeCustomModel as deletePersistedCustomModel,
+  triggerUpdate,
   updateDefaultModel,
   updateModelVisibility,
   updateModelAlias,
@@ -21,6 +22,8 @@ const WEB_UI_VERSION = __APP_VERSION__
 const SIDEBAR_COLLAPSED_KEY = 'hermes_sidebar_collapsed'
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
 const MODELS_CACHE_TTL_MS = 30000
+const UPDATE_RELOAD_TIMEOUT_MS = 2 * 60 * 1000
+const UPDATE_POLL_INTERVAL_MS = 3000
 
 export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
@@ -52,11 +55,36 @@ export const useAppStore = defineStore('app', () => {
   let modelsLoadPromise: Promise<void> | null = null
   let modelsLastRequestedAt = 0
 
+  function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
   async function doUpdate(): Promise<boolean> {
-    updateAvailable.value = false
-    clientOutdated.value = false
-    latestVersion.value = ''
-    return false
+    if (updating.value || !updateEnabled.value) return false
+
+    updating.value = true
+    try {
+      await triggerUpdate()
+      updateAvailable.value = false
+      latestVersion.value = ''
+
+      const deadline = Date.now() + UPDATE_RELOAD_TIMEOUT_MS
+      while (Date.now() < deadline) {
+        await sleep(UPDATE_POLL_INTERVAL_MS)
+        await checkConnection()
+        if (clientOutdated.value) {
+          reloadClient()
+          return true
+        }
+      }
+
+      return true
+    } catch (err) {
+      console.error('Failed to update Hermes Web UI:', err)
+      return false
+    } finally {
+      updating.value = false
+    }
   }
 
   async function checkConnection() {
