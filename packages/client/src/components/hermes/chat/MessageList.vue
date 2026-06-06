@@ -144,6 +144,9 @@ function applyInitialSessionScroll(sessionId: string) {
   }
 
   scrollToBottom(initialBottomScrollOptions);
+  if (chatStore.messages.length > 0 && !chatStore.isLoadingMessages) {
+    pendingInitialScrollSessionId.value = null;
+  }
 }
 
 async function handleTopReach() {
