@@ -175,14 +175,12 @@ onMounted(() => {
 <template>
   <div class="devices-view">
     <header class="page-header">
-      <div>
-        <h2 class="header-title">{{ t('devices.title') }}</h2>
+      <h2 class="header-title">{{ t('devices.title') }}</h2>
+      <div class="header-actions">
         <div class="header-meta">
           <span>{{ t('devices.count', { count: devices.length }) }}</span>
           <span>{{ t('devices.lastScanned', { time: formatTime(state.last_scanned_at) }) }}</span>
         </div>
-      </div>
-      <div class="header-actions">
         <NButton size="small" @click="showRequests = true">
           {{ requestCountLabel() }}
         </NButton>
@@ -272,8 +270,8 @@ onMounted(() => {
       </div>
     </NSpin>
 
-    <NDrawer v-model:show="showRequests" :width="420" placement="right">
-      <NDrawerContent :title="t('devices.requests')">
+    <NDrawer v-model:show="showRequests" width="min(420px, 100vw)" placement="right">
+      <NDrawerContent :title="t('devices.requests')" closable>
         <div v-if="state.requests.length === 0" class="request-empty">
           {{ t('devices.noRequests') }}
         </div>
@@ -340,6 +338,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .header-title {
@@ -353,9 +353,10 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 6px;
+  align-items: center;
   color: $text-muted;
   font-size: 12px;
+  line-height: 1.2;
 }
 
 .devices-spin {
@@ -527,6 +528,11 @@ onMounted(() => {
   .header-actions {
     width: 100%;
     flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .header-meta {
+    flex-basis: 100%;
   }
 }
 </style>
