@@ -267,6 +267,24 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.find('.markdown-video-footer .att-name').text()).toBe('录屏2026-05-08 15.19.46.mov')
   })
 
+  it('renders local mp3 links as inline audio players', () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[song.mp3](/tmp/song.mp3)',
+      },
+    })
+
+    const audio = wrapper.find('audio.markdown-audio')
+    expect(audio.exists()).toBe(true)
+    expect(audio.attributes('controls')).toBeDefined()
+    expect(audio.attributes('preload')).toBe('metadata')
+    expect(audio.attributes('src')).toContain('/api/hermes/download?path=')
+    const src = new URL(audio.attributes('src'))
+    expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/tmp/song.mp3')
+    expect(wrapper.find('.markdown-audio-footer .att-name').text()).toBe('song.mp3')
+    expect(wrapper.find('.markdown-file-card').exists()).toBe(false)
+  })
+
   it('renders MSYS-style Windows image paths through the download endpoint', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {
