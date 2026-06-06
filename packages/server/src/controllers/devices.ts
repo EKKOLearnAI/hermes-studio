@@ -358,6 +358,16 @@ export async function createPeerTerminal(ctx: any) {
   }
 }
 
+export async function listPeerTerminals(ctx: any) {
+  try {
+    ctx.body = {
+      terminals: getLanPeerToolsService().listTerminals(ctx.params.connectionId),
+    }
+  } catch (err: any) {
+    handlePeerToolError(ctx, err)
+  }
+}
+
 export async function writePeerTerminal(ctx: any) {
   const body = ctx.request.body as any
   try {

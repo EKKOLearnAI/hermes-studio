@@ -1,4 +1,4 @@
-import { getLanPeerSocketManager, type LanPeerExecResult, type LanPeerTerminalInfo, type LanPeerTerminalReadResult } from './lan-peer-socket'
+import { getLanPeerSocketManager, type LanPeerExecResult, type LanPeerTerminalInfo, type LanPeerTerminalList, type LanPeerTerminalReadResult } from './lan-peer-socket'
 import { readFile, writeFile } from 'fs/promises'
 import { validatePath } from './hermes/file-provider'
 
@@ -40,6 +40,10 @@ export class LanPeerToolsService {
 
   async createTerminal(connectionId: string, options: { shell?: string; cols?: number; rows?: number } = {}): Promise<LanPeerTerminalInfo> {
     return this.requireConnection(connectionId).createRemoteTerminal(options)
+  }
+
+  listTerminals(connectionId: string): LanPeerTerminalList {
+    return this.requireConnection(connectionId).listTerminals()
   }
 
   writeTerminal(input: PeerToolTerminalInput & { data: string }) {

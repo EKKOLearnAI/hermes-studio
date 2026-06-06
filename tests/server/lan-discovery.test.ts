@@ -159,6 +159,7 @@ describe('LAN discovery', () => {
     expect(deviceRoutesSource).toContain("deviceRoutes.delete('/api/devices/:id/request-history'")
     expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections'")
     expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/:id/connect'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections/:connectionId/terminals'")
     expect(bootstrapSource).toContain('getLanPeerSocketPath()')
     expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)
@@ -173,5 +174,12 @@ describe('LAN discovery', () => {
     expect(peerSocketSource).toContain('Terminal limit reached')
     expect(peerSocketSource).toContain('[lan-peer] closing idle terminal')
     expect(peerSocketSource).toContain('this.disposeTerminalSession(session, { notify: false })')
+  })
+
+  it('exposes an MCP terminal list tool so agents can recover forgotten terminal ids', () => {
+    const mcpSource = readFileSync('bin/hermes-web-ui-mcp.mjs', 'utf8')
+
+    expect(mcpSource).toContain("name: 'hermes_lan_terminal_list'")
+    expect(mcpSource).toContain('/terminals`))')
   })
 })

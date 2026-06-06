@@ -119,6 +119,7 @@ describe('user auth tables and middleware', () => {
 
   it.each([
     '/api/devices/peer-connections',
+    '/api/devices/peer-connections/conn-1/terminals',
     '/api/devices/peer-connections/conn-1/exec',
   ])('allows server token for local MCP device endpoint %s', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')

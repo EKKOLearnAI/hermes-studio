@@ -150,6 +150,18 @@ const tools = [
     },
   },
   {
+    name: 'hermes_lan_terminal_list',
+    description: 'List interactive terminals tracked for a connected LAN peer, including IDs that can be read or closed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection_id: { type: 'string' },
+      },
+      required: ['connection_id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'hermes_lan_terminal_input',
     description: 'Write input to an interactive terminal on a connected LAN peer.',
     inputSchema: {
@@ -269,6 +281,8 @@ async function callTool(name, args = {}) {
         method: 'POST',
         body: { shell: args.shell, cols: args.cols, rows: args.rows },
       }))
+    case 'hermes_lan_terminal_list':
+      return jsonText(await request(`/api/devices/peer-connections/${encodeURIComponent(args.connection_id)}/terminals`))
     case 'hermes_lan_terminal_input':
       return jsonText(await request(`/api/devices/peer-connections/${encodeURIComponent(args.connection_id)}/terminal/${encodeURIComponent(args.terminal_id)}/input`, {
         method: 'POST',

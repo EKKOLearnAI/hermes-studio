@@ -83,6 +83,7 @@ function allowsServerTokenPath(path: string): boolean {
   return /^\/api\/devices\/[^/]+\/connect$/.test(path) ||
     /^\/api\/devices\/peer-connections\/[^/]+\/disconnect$/.test(path) ||
     /^\/api\/devices\/peer-connections\/[^/]+\/terminal$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/terminals$/.test(path) ||
     /^\/api\/devices\/peer-connections\/[^/]+\/terminal\/[^/]+\/(read|input|resize|close)$/.test(path) ||
     /^\/api\/devices\/peer-connections\/[^/]+\/(exec|download|upload)$/.test(path)
 }

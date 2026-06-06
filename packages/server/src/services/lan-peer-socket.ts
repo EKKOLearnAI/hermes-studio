@@ -128,6 +128,27 @@ export type LanPeerTerminalInfo = {
   shell: string
 }
 
+export type LanPeerRemoteTerminalSummary = {
+  terminal_id: string
+  buffered_bytes: number
+  buffered_chunks: number
+  exited: boolean
+  exit_code: number | null
+}
+
+export type LanPeerLocalTerminalSummary = {
+  terminal_id: string
+  pid: number
+  shell: string
+  last_active_at: number
+  idle_timeout_ms: number
+}
+
+export type LanPeerTerminalList = {
+  remote_terminals: LanPeerRemoteTerminalSummary[]
+  local_terminal_sessions: LanPeerLocalTerminalSummary[]
+}
+
 export type LanPeerTerminalReadResult = {
   terminal_id: string
   data: string
@@ -388,6 +409,25 @@ class LanPeerConnection {
       terminal_id: terminalId,
       pid: Number((response as any).pid || 0),
       shell: String((response as any).shell || ''),
+    }
+  }
+
+  listTerminals(): LanPeerTerminalList {
+    return {
+      remote_terminals: [...this.remoteTerminals.values()].map(terminal => ({
+        terminal_id: terminal.id,
+        buffered_bytes: terminal.bufferBytes,
+        buffered_chunks: terminal.buffer.length,
+        exited: terminal.exitCode !== null,
+        exit_code: terminal.exitCode,
+      })),
+      local_terminal_sessions: [...this.terminalSessions.values()].map(session => ({
+        terminal_id: session.id,
+        pid: session.pid,
+        shell: shellName(session.shell),
+        last_active_at: session.lastActiveAt,
+        idle_timeout_ms: PEER_TERMINAL_IDLE_MS,
+      })),
     }
   }
 
