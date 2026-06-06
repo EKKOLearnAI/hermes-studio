@@ -82,7 +82,7 @@ async function handleDownload(entry: FileEntry) {
     <NSpin :show="filesStore.loading">
       <NEmpty v-if="!filesStore.loading && filesStore.sortedEntries.length === 0" :description="t('files.emptyDir')" />
       <div v-else class="file-list-items">
-        <div class="file-list-header">
+        <div class="file-list-header file-list-grid">
           <div class="file-name sort-header" @click="filesStore.setSort('name')">
             {{ t('files.name') }}
             <span v-if="filesStore.sortBy === 'name'" class="sort-indicator">{{ filesStore.sortOrder === 'asc' ? '↑' : '↓' }}</span>
@@ -100,13 +100,13 @@ async function handleDownload(entry: FileEntry) {
         <div
           v-for="entry in filesStore.sortedEntries"
           :key="entry.path"
-          class="file-list-row"
+          class="file-list-row file-list-grid"
           @dblclick="handleDoubleClick(entry)"
           @contextmenu="handleContextMenu($event, entry)"
         >
           <div class="file-name">
             <span class="file-icon">{{ getFileIcon(entry) }}</span>
-            <span>{{ entry.name }}</span>
+            <span class="file-label">{{ entry.name }}</span>
           </div>
           <div class="file-size">{{ entry.isDir ? '—' : formatSize(entry.size) }}</div>
           <div class="file-date">{{ formatDate(entry.modTime) }}</div>
@@ -128,11 +128,15 @@ async function handleDownload(entry: FileEntry) {
   padding: 8px 16px;
 }
 
-.file-list-header {
-  display: flex;
+.file-list-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 160px 60px;
   align-items: center;
+  column-gap: 16px;
+}
+
+.file-list-header {
   padding: 6px 12px;
-  gap: 16px;
   font-size: 12px;
   font-weight: 500;
   color: $text-muted;
@@ -155,17 +159,13 @@ async function handleDownload(entry: FileEntry) {
 }
 
 .file-actions-placeholder {
-  width: 60px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .file-list-row {
-  display: flex;
-  align-items: center;
   padding: 8px 12px;
   border-radius: $radius-sm;
   cursor: pointer;
-  gap: 16px;
   font-size: 13px;
 
   &:hover {
@@ -178,43 +178,47 @@ async function handleDownload(entry: FileEntry) {
 }
 
 .file-name {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .file-icon {
   flex-shrink: 0;
 }
 
+.file-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-size {
-  width: 80px;
   text-align: right;
   color: $text-secondary;
-  flex-shrink: 0;
 }
 
 .file-date {
-  width: 160px;
   color: $text-secondary;
-  flex-shrink: 0;
 }
 
 .file-actions {
   opacity: 0;
   transition: opacity $transition-fast;
   display: flex;
+  justify-content: flex-end;
   gap: 4px;
-  flex-shrink: 0;
 }
 
 @media (max-width: $breakpoint-mobile) {
-  .file-size, .file-date {
+  .file-list-grid {
+    grid-template-columns: minmax(0, 1fr) 60px;
+  }
+
+  .file-size,
+  .file-date {
     display: none;
   }
 }
