@@ -14,6 +14,7 @@ import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDevic
 import { getLanPeerSocketManager } from '../services/lan-peer-socket'
 import { getLanPeerToolsService } from '../services/lan-peer-tools'
 import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
+import { describeLanJsonPostError, postLanJson } from '../services/lan-http-client'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
 
@@ -47,28 +48,18 @@ async function fetchRemoteLinkStatus(device: LanDeviceInfo): Promise<DeviceOutbo
   const nonce = randomUUID()
   const localInfo = await getPublicSystemInfo()
   const signature = await createDeviceSignature(nonce, timestamp)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 1500)
   try {
-    const response = await fetch(`${device.url.replace(/\/$/, '')}/api/devices/link-status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: localInfo.device_id,
-        device_public_key: localInfo.device_public_key,
-        timestamp,
-        nonce,
-        signature,
-      }),
-      signal: controller.signal,
-    })
-    const data = await response.json().catch(() => ({})) as { status?: unknown }
+    const response = await postLanJson(`${device.url.replace(/\/$/, '')}/api/devices/link-status`, {
+      device_id: localInfo.device_id,
+      device_public_key: localInfo.device_public_key,
+      timestamp,
+      nonce,
+      signature,
+    }, 1500)
     if (!response.ok) return null
-    return parseRemoteStatus(data.status)
+    return parseRemoteStatus(response.data.status)
   } catch {
     return null
-  } finally {
-    clearTimeout(timeout)
   }
 }
 
@@ -484,16 +475,9 @@ export async function requestDevicePairing(ctx: any) {
     signature,
   }
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
   try {
-    const response = await fetch(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-    const data = await response.json().catch(() => ({})) as { status?: unknown; error?: unknown }
+    const response = await postLanJson(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, body, 5000)
+    const data = response.data as { status?: unknown; error?: unknown }
     if (!response.ok) {
       ctx.status = response.status === 409 ? 409 : 502
       ctx.body = { error: typeof data.error === 'string' ? data.error : `Request failed: ${response.status}` }
@@ -503,9 +487,11 @@ export async function requestDevicePairing(ctx: any) {
     if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
     ctx.body = await devicesPayload()
   } catch (err: any) {
+    const detail = describeLanJsonPostError(err)
     ctx.status = 502
-    ctx.body = { error: err?.message || 'Failed to request device pairing' }
-  } finally {
-    clearTimeout(timeout)
+    ctx.body = {
+      error: err?.message ? `Failed to request device pairing: ${err.message}` : 'Failed to request device pairing',
+      detail,
+    }
   }
 }
