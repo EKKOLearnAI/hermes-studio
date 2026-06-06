@@ -1657,6 +1657,16 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_6_11_1: 'LAN 裝置發現新增配對審批、申請歷史、重複申請處理、狀態同步，以及撤銷裝置權限時的清理邏輯',
+    new_0_6_11_2: 'LAN Peer 已接入 MCP，包含內建 MCP 啟動、命令 shim、Peer Socket 重連、本地連線列表，以及終端會話數量限制',
+    new_0_6_11_3: '統一後端 TTS 合成和 MiMo 音色複刻設定已可用，並支援保存設定前試聽',
+    new_0_6_11_4: 'Gateway 自動啟動設定現在支援按 Profile 多選過濾、白名單行為和啟動 Profile 選擇測試',
+    new_0_6_11_5: '聊天滾動和動效更穩定，修復初次進入滾動到底部、滾動鎖定、底部跟隨時機和 reduced-motion 淡入處理',
+    new_0_6_11_6: 'Agent Bridge 和運行時流程更可靠，修復 abort 超時、恢復時誤啟動、execute-code 授權記憶、Windows Gateway 恢復和開發終端代理',
+    new_0_6_11_7: '安全性增強：加固 Web UI Origin 策略、安全回應標頭，並限制 server token 只能走本地回環訪問',
+    new_0_6_11_8: '群聊和工具結果渲染更穩定，支援重連後重新加入房間、保留 reasoning/tool 邊界、加固工具 payload 渲染並優化 diff 展示',
+    new_0_6_11_9: '技能和 Workspace 流程支援外部技能目錄、匯入/刪除自動刷新、按 sourcePath 分組、本地化資料夾選擇文案和移動端技能操作圖示',
+    new_0_6_11_10: '裝置頁布局、原生會話標題、瀏覽器分頁標題、Kanban 父任務 ID 和 OpenRouter 歸屬文案做了介面優化',
     new_0_6_10_1: '桌面運行時啟動更可靠，支援下載來源選擇、更安全的壓縮包解壓、修正運行時快取路徑、Windows CLI 啟動修復，以及本地化進度和錯誤介面',
     new_0_6_10_2: '輔助壓縮模型設定允許每個 Profile 為聊天上下文壓縮選擇專用 provider/model，不再只能使用目前聊天模型',
     new_0_6_10_3: 'Provider 模型目錄現在可在介面中手動刷新',

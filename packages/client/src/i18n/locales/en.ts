@@ -1652,6 +1652,16 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_11_1: 'LAN device discovery now includes pairing approvals, request history, duplicate request handling, status sync, and cleanup when device access is revoked',
+    new_0_6_11_2: 'LAN peer access is available through MCP with bundled MCP startup, command shims, reconnecting peer sockets, local connection listing, and capped terminal sessions',
+    new_0_6_11_3: 'Unified backend TTS synthesis and MiMo voice cloning settings are now available, including playback support before saving settings',
+    new_0_6_11_4: 'Gateway autostart settings now expose profile filtering with multi-select controls, whitelist behavior, and focused tests for startup profile selection',
+    new_0_6_11_5: 'Chat scrolling and motion are steadier with bottom-follow tuning, initial bottom scroll fixes, scroll lock updates, and reduced-motion fade handling',
+    new_0_6_11_6: 'Agent Bridge and runtime flows are more reliable with abort timeout handling, resume startup guards, execute-code approval memory, Windows gateway recovery, and dev terminal proxy fixes',
+    new_0_6_11_7: 'Security is tighter with Web UI origin policy and security header hardening plus server-token loopback access guards',
+    new_0_6_11_8: 'Group chat and tool output rendering are more stable with room rejoin after reconnect, preserved reasoning/tool boundaries, safer tool payload rendering, and improved diff display',
+    new_0_6_11_9: 'Skills and workspace flows now support external skill directories, import/delete refresh, source-path grouping, localized folder picker text, and mobile skill action icons',
+    new_0_6_11_10: 'Device layout, session titles, browser tab titles, Kanban parent task IDs, and OpenRouter attribution text received UI polish',
     new_0_6_10_1: 'Desktop runtime startup is more resilient with download source selection, safer archive extraction, corrected runtime cache paths, Windows CLI launch fixes, and localized progress/error screens',
     new_0_6_10_2: 'Auxiliary compression model settings let each Profile choose a dedicated provider/model for chat context compression instead of always using the active chat model',
     new_0_6_10_3: 'Provider model catalogs can now be refreshed from the UI',
