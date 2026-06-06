@@ -70,7 +70,7 @@ function handleReloadClient() {
 
 function handleLogout() {
   localStorage.clear();
-  router.replace({ name: 'login' });
+  window.location.href = '';
 }
 
 // Changelog
