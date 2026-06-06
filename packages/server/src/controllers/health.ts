@@ -48,8 +48,8 @@ function hasConfiguredUpdateSource(): boolean {
 /**
  * Whether the periodic npm-registry version check is disabled.
  *
- * Useful when hermes-web-ui is bundled inside a packaged distribution
- * (e.g. a desktop app) where the user can't `npm install -g hermes-web-ui@latest`
+ * Useful when the Web UI is bundled inside a packaged distribution
+ * (e.g. a desktop app) where the user can't `npm install -g <your-package>@latest`
  * to upgrade — the "update available" prompt would be misleading and
  * the periodic outbound HTTP request to the npm registry is unnecessary.
  *

@@ -1067,7 +1067,7 @@ export async function handleUpdate(ctx: any) {
     ctx.status = 409
     ctx.body = {
       success: false,
-      message: 'hermes-web-ui update is already in progress',
+      message: `${config.update.packageName || 'Hermes Web UI'} update is already in progress`,
     }
     return
   }
@@ -1080,7 +1080,7 @@ export async function handleUpdate(ctx: any) {
 
     ctx.body = {
       success: true,
-      message: output.trim() || 'hermes-web-ui updated successfully',
+      message: output.trim() || `${config.update.packageName || 'Hermes Web UI'} updated successfully`,
     }
 
     setTimeout(() => {

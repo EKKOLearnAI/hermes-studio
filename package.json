@@ -1,5 +1,5 @@
 {
-  "name": "hermes-web-ui",
+  "name": "@quanthermes/hermes-web-ui",
   "version": "0.6.10",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {

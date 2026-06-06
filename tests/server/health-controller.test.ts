@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
-const UPDATE_PACKAGE = '@company/hermes-web-ui'
+const UPDATE_PACKAGE = '@quanthermes/hermes-web-ui'
 const UPDATE_REGISTRY = 'https://registry.npmjs.org'
 const UPDATE_SOURCE_LABEL = 'Company npm registry'
 

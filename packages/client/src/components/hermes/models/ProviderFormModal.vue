@@ -81,13 +81,6 @@ const canFetchProviderCatalog = computed(() =>
   )),
 )
 
-const FUN_LINK_MAP: Record<string, string> = {
-  'fun-codex': 'https://apikey.fun/register?aff=LIBAPI',
-  'fun-claude': 'https://apikey.fun/register?aff=LIBAPI',
-}
-
-const funProviderLink = computed(() => selectedPreset.value ? FUN_LINK_MAP[selectedPreset.value] || '' : '')
-
 async function switchToApiKeyFunPreset(providerKey: ApiKeyFunPresetProvider, preferredModel: string) {
   const apiKey = formData.value.api_key
   const contextLength = formData.value.context_length
