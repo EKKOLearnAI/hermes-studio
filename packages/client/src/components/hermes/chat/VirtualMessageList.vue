@@ -127,6 +127,13 @@ function handleScroll() {
   if (scrollTop.value <= props.topThreshold) emit("topReach");
 }
 
+function handleWheel(event: WheelEvent) {
+  if (event.deltaY < -1) {
+    userDetachedFromBottom = true;
+    cancelBottomScroll();
+  }
+}
+
 function handleResize() {
   syncViewport();
   if (Date.now() < keepBottomUntil || isNearBottom(64)) scheduleScrollToBottom(2);
@@ -177,7 +184,7 @@ function scheduleScrollToBottom(frames = 1) {
     } else {
       bottomFrameAttempts += 1;
     }
-    if (bottomFrameRemaining <= 0) {
+    if (bottomFrameRemaining <= 0 && Date.now() >= keepBottomUntil) {
       bottomFrame = null;
       bottomFrameRemaining = 0;
       bottomFrameAttempts = 0;
@@ -430,6 +437,7 @@ defineExpose({
       :flow-mode="true"
       :prerender="overscan"
       @scroll.passive="handleScroll"
+      @wheel.passive="handleWheel"
       @resize="handleResize"
       @visible="syncViewport"
     >
