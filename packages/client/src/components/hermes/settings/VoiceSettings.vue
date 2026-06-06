@@ -736,18 +736,6 @@ async function handleTest() {
     <div class="test-section">
       <h4 class="test-title">{{ t('settings.voice.testTitle') }}</h4>
       <div class="test-row">
-        <NButton
-          size="small"
-          secondary
-          :loading="settingsSaving"
-          :disabled="settingsSaving"
-          @click="saveCurrentProviderSettings"
-        >
-          Save TTS settings
-        </NButton>
-        <span v-if="settingsStatus" class="settings-status">{{ settingsStatus }}</span>
-      </div>
-      <div class="test-row">
         <NInput
           v-model:value="testText"
           size="small"
@@ -765,6 +753,18 @@ async function handleTest() {
         >
           {{ testPlaying ? t('settings.voice.testButtonPlaying') : t('settings.voice.testButton') }}
         </NButton>
+      </div>
+      <div class="test-row">
+        <NButton
+          size="small"
+          secondary
+          :loading="settingsSaving"
+          :disabled="settingsSaving"
+          @click="saveCurrentProviderSettings"
+        >
+          Save TTS settings
+        </NButton>
+        <span v-if="settingsStatus" class="settings-status">{{ settingsStatus }}</span>
       </div>
     </div>
   </div>
