@@ -163,4 +163,15 @@ describe('LAN discovery', () => {
     expect(publicDeviceIndex).toBeLessThan(authIndex)
     expect(deviceIndex).toBeGreaterThan(authIndex)
   })
+
+  it('keeps LAN peer terminals bounded and idle-reclaimable', () => {
+    const peerSocketSource = readFileSync('packages/server/src/services/lan-peer-socket.ts', 'utf8')
+
+    expect(peerSocketSource).toContain("boundedEnvInt('HERMES_LAN_PEER_MAX_TERMINALS', 4")
+    expect(peerSocketSource).toContain("boundedEnvInt('HERMES_LAN_PEER_TERMINAL_IDLE_MS', 10 * 60 * 1000")
+    expect(peerSocketSource).toContain("boundedEnvInt('HERMES_LAN_PEER_TERMINAL_BUFFER_BYTES', 1024 * 1024")
+    expect(peerSocketSource).toContain('Terminal limit reached')
+    expect(peerSocketSource).toContain('[lan-peer] closing idle terminal')
+    expect(peerSocketSource).toContain('this.disposeTerminalSession(session, { notify: false })')
+  })
 })

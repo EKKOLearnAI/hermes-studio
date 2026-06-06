@@ -23,6 +23,9 @@ const CLIENT_RECONNECT_BASE_MS = 1000
 const HEARTBEAT_INTERVAL_MS = 30000
 const EXEC_OUTPUT_LIMIT = 5 * 1024 * 1024
 const EXEC_TIMEOUT_MS = 30000
+const PEER_TERMINAL_MAX_PER_CONNECTION = boundedEnvInt('HERMES_LAN_PEER_MAX_TERMINALS', 4, 1, 32)
+const PEER_TERMINAL_IDLE_MS = boundedEnvInt('HERMES_LAN_PEER_TERMINAL_IDLE_MS', 10 * 60 * 1000, 30_000, 24 * 60 * 60 * 1000)
+const PEER_TERMINAL_BUFFER_BYTES = boundedEnvInt('HERMES_LAN_PEER_TERMINAL_BUFFER_BYTES', 1024 * 1024, 64 * 1024, 16 * 1024 * 1024)
 
 let pty: any = null
 try {
@@ -68,6 +71,8 @@ type TerminalSession = {
   }
   shell: string
   pid: number
+  lastActiveAt: number
+  idleTimer: NodeJS.Timeout | null
 }
 
 type UploadTransfer = {
@@ -101,6 +106,7 @@ type PendingDownload = {
 type RemoteTerminal = {
   id: string
   buffer: string[]
+  bufferBytes: number
   exitCode: number | null
 }
 
@@ -111,6 +117,8 @@ export type LanPeerConnectionInfo = {
   computer_name: string
   url: string
   connected_at: number
+  local_terminal_sessions: number
+  remote_terminal_sessions: number
   reconnect_attempts?: number
 }
 
@@ -136,6 +144,12 @@ export type LanPeerExecResult = {
 
 function now() {
   return Date.now()
+}
+
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name])
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(parsed)))
 }
 
 function rememberNonce(seenNonces: Map<string, number>, deviceId: string, nonce: string, timestamp: number): boolean {
@@ -233,6 +247,8 @@ class LanPeerConnection {
       computer_name: this.computerName,
       url: this.url,
       connected_at: this.connectedAt,
+      local_terminal_sessions: this.terminalSessions.size,
+      remote_terminal_sessions: this.remoteTerminals.size,
       reconnect_attempts: this.role === 'client' ? this.manager.getReconnectAttempts(this.deviceId) : undefined,
     }
   }
@@ -245,9 +261,7 @@ class LanPeerConnection {
       this.heartbeatTimer = null
     }
 
-    for (const session of this.terminalSessions.values()) {
-      try { session.pty.kill() } catch { }
-    }
+    for (const session of this.terminalSessions.values()) this.disposeTerminalSession(session, { notify: false })
     this.terminalSessions.clear()
     this.remoteTerminals.clear()
 
@@ -295,6 +309,42 @@ class LanPeerConnection {
     this.ws.send(JSON.stringify(payload))
   }
 
+  private disposeTerminalSession(session: TerminalSession, options: { notify?: boolean; exitCode?: number } = {}) {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      session.idleTimer = null
+    }
+    this.terminalSessions.delete(session.id)
+    try { session.pty.kill() } catch { }
+    if (options.notify) {
+      this.sendJson({ type: 'terminal.exit', terminal_id: session.id, exit_code: options.exitCode ?? 0 })
+    }
+  }
+
+  private touchTerminalSession(session: TerminalSession) {
+    session.lastActiveAt = now()
+    this.scheduleTerminalIdleTimeout(session, PEER_TERMINAL_IDLE_MS)
+  }
+
+  private scheduleTerminalIdleTimeout(session: TerminalSession, delayMs: number) {
+    if (session.idleTimer) clearTimeout(session.idleTimer)
+    session.idleTimer = setTimeout(() => {
+      const current = this.terminalSessions.get(session.id)
+      if (!current) return
+      const remainingMs = PEER_TERMINAL_IDLE_MS - (now() - current.lastActiveAt)
+      if (remainingMs > 0) {
+        this.scheduleTerminalIdleTimeout(current, remainingMs)
+        return
+      }
+      logger.info(
+        { connectionId: this.id, terminalId: current.id, idleMs: PEER_TERMINAL_IDLE_MS },
+        '[lan-peer] closing idle terminal',
+      )
+      this.disposeTerminalSession(current, { notify: true, exitCode: 0 })
+    }, delayMs)
+    session.idleTimer.unref?.()
+  }
+
   private request(
     payload: Record<string, unknown>,
     successTypes: string[],
@@ -333,7 +383,7 @@ class LanPeerConnection {
 
     const terminalId = response.terminal_id || ''
     if (!terminalId) throw new Error('Peer did not return a terminal id')
-    this.remoteTerminals.set(terminalId, { id: terminalId, buffer: [], exitCode: null })
+    this.remoteTerminals.set(terminalId, { id: terminalId, buffer: [], bufferBytes: 0, exitCode: null })
     return {
       terminal_id: terminalId,
       pid: Number((response as any).pid || 0),
@@ -362,6 +412,7 @@ class LanPeerConnection {
     if (!terminal) throw new Error('Remote terminal not found')
     const data = terminal.buffer.join('')
     terminal.buffer.length = 0
+    terminal.bufferBytes = 0
     return {
       terminal_id: terminalId,
       data,
@@ -498,7 +549,13 @@ class LanPeerConnection {
   private bufferRemoteTerminalData(msg: PeerJsonMessage) {
     const terminal = msg.terminal_id ? this.remoteTerminals.get(msg.terminal_id) : null
     if (!terminal || typeof msg.data !== 'string') return
+    const bytes = Buffer.byteLength(msg.data, 'utf8')
     terminal.buffer.push(msg.data)
+    terminal.bufferBytes += bytes
+    while (terminal.bufferBytes > PEER_TERMINAL_BUFFER_BYTES && terminal.buffer.length > 1) {
+      const removed = terminal.buffer.shift() || ''
+      terminal.bufferBytes -= Buffer.byteLength(removed, 'utf8')
+    }
   }
 
   private markRemoteTerminalExit(msg: PeerJsonMessage) {
@@ -535,6 +592,14 @@ class LanPeerConnection {
       this.sendJson({ type: 'terminal.error', request_id: msg.request_id, message: 'Terminal is not available' })
       return
     }
+    if (this.terminalSessions.size >= PEER_TERMINAL_MAX_PER_CONNECTION) {
+      this.sendJson({
+        type: 'terminal.error',
+        request_id: msg.request_id,
+        message: `Terminal limit reached (${PEER_TERMINAL_MAX_PER_CONNECTION} per peer connection)`,
+      })
+      return
+    }
 
     const shell = msg.shell || findShell()
     let ptyProcess: TerminalSession['pty']
@@ -551,13 +616,25 @@ class LanPeerConnection {
     }
 
     const id = randomUUID()
-    const session: TerminalSession = { id, pty: ptyProcess, shell, pid: ptyProcess.pid }
+    const session: TerminalSession = {
+      id,
+      pty: ptyProcess,
+      shell,
+      pid: ptyProcess.pid,
+      lastActiveAt: now(),
+      idleTimer: null,
+    }
     this.terminalSessions.set(id, session)
+    this.touchTerminalSession(session)
 
     session.pty.onData((data: string) => {
+      if (!this.terminalSessions.has(id)) return
+      this.touchTerminalSession(session)
       this.sendJson({ type: 'terminal.data', terminal_id: id, data })
     })
     session.pty.onExit(({ exitCode }) => {
+      if (!this.terminalSessions.has(id)) return
+      if (session.idleTimer) clearTimeout(session.idleTimer)
       this.terminalSessions.delete(id)
       this.sendJson({ type: 'terminal.exit', terminal_id: id, exit_code: exitCode })
     })
@@ -574,12 +651,14 @@ class LanPeerConnection {
   private writeTerminal(msg: PeerJsonMessage) {
     const session = msg.terminal_id ? this.terminalSessions.get(msg.terminal_id) : null
     if (!session || typeof msg.data !== 'string') return
+    this.touchTerminalSession(session)
     session.pty.write(msg.data)
   }
 
   private resizeTerminal(msg: PeerJsonMessage) {
     const session = msg.terminal_id ? this.terminalSessions.get(msg.terminal_id) : null
     if (!session) return
+    this.touchTerminalSession(session)
     try {
       session.pty.resize(Math.max(1, msg.cols || 80), Math.max(1, msg.rows || 24))
     } catch { }
@@ -588,8 +667,7 @@ class LanPeerConnection {
   private closeTerminal(msg: PeerJsonMessage) {
     const session = msg.terminal_id ? this.terminalSessions.get(msg.terminal_id) : null
     if (!session) return
-    try { session.pty.kill() } catch { }
-    this.terminalSessions.delete(session.id)
+    this.disposeTerminalSession(session, { notify: false })
   }
 
   private execCommand(msg: PeerJsonMessage) {
