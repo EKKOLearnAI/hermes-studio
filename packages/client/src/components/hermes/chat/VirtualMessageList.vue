@@ -510,9 +510,4 @@ defineExpose({
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .virtual-message-list-host {
-    animation: none;
-  }
-}
 </style>
