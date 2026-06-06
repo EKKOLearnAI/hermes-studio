@@ -13,6 +13,9 @@ const speech = useSpeech()
 
 const testText = ref(t('settings.voice.testTextDefault'))
 const testPlaying = ref(false)
+const mimoCloneAudioInput = ref<HTMLInputElement | null>(null)
+const MIMO_CLONE_AUDIO_MAX_BYTES = 10 * 1024 * 1024
+const MIMO_CLONE_AUDIO_ACCEPT = 'audio/mpeg,audio/mp3,audio/wav,.mp3,.wav'
 
 const providerOptions = [
   { label: t('settings.voice.providerWebSpeech'), value: 'webspeech' },
@@ -83,9 +86,16 @@ const mimoBaseUrlOptions = [
   { label: 'https://token-plan-cn.xiaomimimo.com/v1', value: 'https://token-plan-cn.xiaomimimo.com/v1' },
 ]
 
+const mimoAuthModeOptions = [
+  { label: t('settings.voice.mimoAuthModeBearer'), value: 'bearer' },
+  { label: t('settings.voice.mimoAuthModeApiKey'), value: 'api-key' },
+  { label: t('settings.voice.mimoAuthModeBoth'), value: 'both' },
+]
+
 const mimoModelOptions = [
   { label: t('settings.voice.mimoModelPreset'), value: 'mimo-v2.5-tts' },
   { label: t('settings.voice.mimoModelVoiceDesign'), value: 'mimo-v2.5-tts-voicedesign' },
+  { label: t('settings.voice.mimoModelVoiceClone'), value: 'mimo-v2.5-tts-voiceclone' },
 ]
 
 const mimoVoiceOptions = [
@@ -98,6 +108,78 @@ const mimoVoiceOptions = [
   { label: 'Milo (English·Male)', value: 'Milo' },
   { label: 'Dean (English·Male)', value: 'Dean' },
 ]
+
+function getMimoVoiceMode(): 'preset' | 'voiceDesign' | 'voiceClone' {
+  if (vs.mimoModel.value === 'mimo-v2.5-tts-voicedesign') return 'voiceDesign'
+  if (vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone') return 'voiceClone'
+  return 'preset'
+}
+
+function buildMimoTtsOptions() {
+  const voiceMode = getMimoVoiceMode()
+  return {
+    baseUrl: vs.mimoBaseUrl.value,
+    apiKey: vs.mimoApiKey.value,
+    authMode: vs.mimoAuthMode.value,
+    model: vs.mimoModel.value,
+    voiceMode,
+    voice: voiceMode === 'preset' ? vs.mimoVoice.value : undefined,
+    voiceDesignDesc: voiceMode === 'voiceDesign' ? vs.mimoVoiceDesignDesc.value || undefined : undefined,
+    voiceCloneDataUri: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneDataUri.value || undefined : undefined,
+    voiceCloneFormat: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneFormat.value : undefined,
+    stylePrompt: vs.mimoStylePrompt.value || undefined,
+  }
+}
+
+function inferCloneAudioFormat(file: File): 'mp3' | 'wav' {
+  const name = file.name.toLowerCase()
+  if (file.type.includes('mpeg') || file.type.includes('mp3') || name.endsWith('.mp3')) return 'mp3'
+  return 'wav'
+}
+
+function readFileAsDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleMimoCloneAudioChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  const lowerName = file.name.toLowerCase()
+  const validType = file.type === 'audio/wav'
+    || file.type === 'audio/mpeg'
+    || file.type === 'audio/mp3'
+    || lowerName.endsWith('.wav')
+    || lowerName.endsWith('.mp3')
+  if (!validType) {
+    console.warn('[VoiceSettings] MiMo clone audio must be mp3 or wav')
+    input.value = ''
+    return
+  }
+  if (file.size > MIMO_CLONE_AUDIO_MAX_BYTES) {
+    console.warn('[VoiceSettings] MiMo clone audio is too large')
+    input.value = ''
+    return
+  }
+
+  const dataUri = await readFileAsDataUri(file)
+  vs.setMimoVoiceCloneDataUri(dataUri)
+  vs.setMimoVoiceCloneFileName(file.name)
+  vs.setMimoVoiceCloneFormat(inferCloneAudioFormat(file))
+}
+
+function clearMimoCloneAudio() {
+  vs.setMimoVoiceCloneDataUri('')
+  vs.setMimoVoiceCloneFileName('')
+  vs.setMimoVoiceCloneFormat('wav')
+  if (mimoCloneAudioInput.value) mimoCloneAudioInput.value.value = ''
+}
 
 async function handleTest() {
   const text = testText.value.trim()
@@ -115,6 +197,7 @@ async function handleTest() {
         return
       }
       await speech.openaiPlay('__test__', text, {
+        provider: 'openai',
         baseUrl: vs.openaiBaseUrl.value,
         apiKey: vs.openaiApiKey.value || undefined,
         model: vs.openaiModel.value,
@@ -126,11 +209,13 @@ async function handleTest() {
         return
       }
       await speech.openaiPlay('__test__', text, {
+        provider: 'custom',
         baseUrl: vs.customUrl.value,
         apiKey: vs.customApiKey.value || undefined,
       })
     } else if (vs.provider.value === 'edge') {
       await speech.openaiPlay('__test__', text, {
+        provider: 'edge',
         baseUrl: '/api/tts/proxy',
         voice: vs.edgeVoice.value,
         rate: speedToEdgeRate(vs.edgeRate.value),
@@ -141,14 +226,7 @@ async function handleTest() {
         console.warn('[VoiceSettings] MiMo API Key empty')
         return
       }
-      await speech.mimoPlay('__test__', text, {
-        baseUrl: vs.mimoBaseUrl.value,
-        apiKey: vs.mimoApiKey.value,
-        model: vs.mimoModel.value,
-        voice: vs.mimoVoice.value,
-        voiceDesignDesc: vs.mimoVoiceDesignDesc.value || undefined,
-        stylePrompt: vs.mimoStylePrompt.value || undefined,
-      })
+      await speech.mimoPlay('__test__', text, buildMimoTtsOptions())
     }
   } catch (err) {
     console.error('[VoiceSettings] Test failed:', err)
@@ -370,6 +448,19 @@ async function handleTest() {
       </SettingRow>
 
       <SettingRow
+        :label="t('settings.voice.mimoAuthMode')"
+        :hint="t('settings.voice.mimoAuthModeHint')"
+      >
+        <NSelect
+          :value="vs.mimoAuthMode.value"
+          :options="mimoAuthModeOptions"
+          size="small"
+          style="width: 240px"
+          @update:value="vs.setMimoAuthMode"
+        />
+      </SettingRow>
+
+      <SettingRow
         :label="t('settings.voice.mimoBaseUrl')"
         :hint="t('settings.voice.mimoBaseUrlHint')"
       >
@@ -427,6 +518,37 @@ async function handleTest() {
           :placeholder="t('settings.voice.mimoVoiceDesignPromptPlaceholder')"
           @update:value="vs.setMimoVoiceDesignDesc"
         />
+      </SettingRow>
+
+      <!-- Voice clone mode -->
+      <SettingRow
+        v-if="vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone'"
+        :label="t('settings.voice.mimoCloneAudio')"
+        :hint="t('settings.voice.mimoCloneAudioHint')"
+      >
+        <div class="clone-audio-row">
+          <input
+            ref="mimoCloneAudioInput"
+            type="file"
+            :accept="MIMO_CLONE_AUDIO_ACCEPT"
+            class="hidden-file-input"
+            @change="handleMimoCloneAudioChange"
+          />
+          <NButton size="small" @click="mimoCloneAudioInput?.click()">
+            {{ t('settings.voice.mimoCloneAudioUpload') }}
+          </NButton>
+          <span v-if="vs.mimoVoiceCloneFileName.value" class="clone-audio-name">
+            {{ vs.mimoVoiceCloneFileName.value }} · {{ vs.mimoVoiceCloneFormat.value }}
+          </span>
+          <NButton
+            v-if="vs.mimoVoiceCloneDataUri.value"
+            size="small"
+            tertiary
+            @click="clearMimoCloneAudio"
+          >
+            {{ t('settings.voice.mimoCloneAudioClear') }}
+          </NButton>
+        </div>
       </SettingRow>
 
       <!-- Style prompt (available for all models) -->
@@ -513,5 +635,25 @@ async function handleTest() {
   color: #999;
   white-space: nowrap;
   min-width: 120px;
+}
+
+.clone-audio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.clone-audio-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #888;
 }
 </style>

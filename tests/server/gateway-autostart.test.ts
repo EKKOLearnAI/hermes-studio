@@ -8,12 +8,37 @@ import {
   gatewayStateLooksRunningForProfile,
   parseGatewayStatusesFromProfileListOutput,
   recoverWindowsDesktopGatewayOrphans,
+  selectProfilesForGatewayAutostart,
   shouldRecoverWindowsDesktopGatewayOrphans,
   shouldUseManagedGatewayRun,
   shouldUseManagedGatewayRunForAutostart,
 } from '../../packages/server/src/services/hermes/gateway-autostart'
 
 describe('gateway autostart status parsing', () => {
+  it('selects all profiles by default for gateway autostart', () => {
+    expect(selectProfilesForGatewayAutostart(['default', 'work', 'test'])).toEqual(['default', 'work', 'test'])
+  })
+
+  it('honors gateway autostart include, exclude, disabled, and unknown profiles', () => {
+    const profiles = ['default', 'work', 'reviewer', 'scratch']
+
+    expect(selectProfilesForGatewayAutostart(profiles, { include: ['work', 'missing', 'work', ' reviewer '] })).toEqual([
+      'work',
+      'reviewer',
+    ])
+    expect(selectProfilesForGatewayAutostart(profiles, { exclude: ['scratch', 'missing'] })).toEqual([
+      'default',
+      'work',
+      'reviewer',
+    ])
+    expect(selectProfilesForGatewayAutostart(profiles, { include: ['work', 'scratch'], exclude: ['scratch'] })).toEqual([
+      'work',
+    ])
+    expect(selectProfilesForGatewayAutostart(profiles, { include: ['missing'] })).toEqual([])
+    expect(selectProfilesForGatewayAutostart(profiles, { include: [] })).toEqual([])
+    expect(selectProfilesForGatewayAutostart(profiles, { enabled: false, include: ['default'] })).toEqual([])
+  })
+
   it('treats runtime lock conflicts as an already-running gateway', () => {
     expect(gatewayStatusLooksRuntimeLocked(
       'Gateway runtime lock is already held by another instance. Exiting.',

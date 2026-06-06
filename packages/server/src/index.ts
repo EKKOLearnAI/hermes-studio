@@ -20,8 +20,11 @@ import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { getAgentBridgeManager, startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
+import { injectBundledMcpServer } from './services/hermes/studio-mcp-autoinject'
 import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
+import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
+import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
 import { logger } from './services/logger'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
 import { createCorsOriginResolver, securityHeaders } from './security'
@@ -144,8 +147,27 @@ function startRuntimeServicesAfterListen(): void {
     } catch (err) {
       logger.warn(err, '[bootstrap] agent bridge failed to start')
       console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+      return
     }
   })()
+}
+
+function startLanDiscovery(): void {
+  const discoverySocket = startLanDiscoveryResponder({ httpPort: config.port })
+  let initialScanStarted = false
+  const runInitialScan = () => {
+    if (initialScanStarted) return
+    initialScanStarted = true
+    void scanLanDevices().catch(err => logger.warn(err, '[lan-discovery] initial scan failed'))
+  }
+
+  if (discoverySocket) {
+    discoverySocket.once('listening', runInitialScan)
+    const fallbackTimer = setTimeout(runInitialScan, 500)
+    fallbackTimer.unref?.()
+  } else {
+    runInitialScan()
+  }
 }
 
 export async function bootstrap() {
@@ -180,6 +202,13 @@ export async function bootstrap() {
     }
   }
 
+  try {
+    await injectBundledMcpServer()
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to inject bundled MCP server')
+    console.warn('[bootstrap] failed to inject bundled MCP server:', err instanceof Error ? err.message : err)
+  }
+
   if (!isDesktopRuntime()) {
     await startRuntimeServicesBeforeListen()
   }
@@ -195,10 +224,9 @@ export async function bootstrap() {
 
   app.use(securityHeaders())
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
-  // Raise JSON/text limits above the default 1mb: profile avatars are posted
-  // as base64 data URLs (up to ~1MB raw → ~1.37MB base64), which otherwise
-  // tripped a 413 in the body parser before reaching the handler.
-  app.use(bodyParser({ encoding: 'utf-8', jsonLimit: '4mb', textLimit: '4mb' }))
+  // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
+  // reference audio are posted as base64 data URLs before reaching handlers.
+  app.use(bodyParser({ encoding: 'utf-8', jsonLimit: '20mb', formLimit: '20mb', textLimit: '20mb' }))
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)
@@ -227,7 +255,8 @@ export async function bootstrap() {
 
   setupTerminalWebSocket(servers)
   setupKanbanEventsWebSocket(servers)
-  console.log('[bootstrap] terminal + kanban websocket setup')
+  getLanPeerSocketManager().setupServer(servers)
+  console.log('[bootstrap] terminal + kanban + LAN peer websocket setup')
 
   // Group chat Socket.IO (must be after server is created)
   const groupChatServer = new GroupChatServer(servers)
@@ -249,7 +278,10 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
+      if (url.pathname !== '/api/hermes/terminal' &&
+        url.pathname !== '/api/hermes/kanban/events' &&
+        url.pathname !== getLanPeerSocketPath() &&
+        !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }
     })
@@ -260,6 +292,7 @@ export async function bootstrap() {
   console.log(`Server: http://localhost:${config.port} (LAN: http://${localIp}:${config.port})`)
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
+  startLanDiscovery()
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
 
   if (isDesktopRuntime()) {

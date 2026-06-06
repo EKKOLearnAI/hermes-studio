@@ -1,6 +1,7 @@
 import { getActiveProfileDir, getProfileDir } from '../../services/hermes/hermes-profile'
 import { join } from 'path'
 import type { LocalUsageStats } from './usage-store'
+import { getDb } from '../index'
 
 const SQLITE_AVAILABLE = (() => {
   const [major, minor] = process.versions.node.split('.').map(Number)
@@ -1013,147 +1014,152 @@ export async function getSkillUsageStatsFromDb(
   const normalizedDays = Number.isFinite(days) ? days : 7
   const safeDays = Math.max(1, Math.floor(normalizedDays))
   const since = nowSeconds - safeDays * 24 * 60 * 60
-  const db = await openSessionDb(profile)
+  const db = getDb()
+  if (!db) throw new Error('SQLite is not available')
 
-  try {
-    const hasStartedIndex = db.prepare("PRAGMA index_list(sessions)").all()
-      .some(index => String(index.name || '') === 'idx_sessions_started')
-    const hasMessagesIndex = db.prepare("PRAGMA index_list(messages)").all()
-      .some(index => String(index.name || '') === 'idx_messages_session')
-    const sessionsTable = hasStartedIndex ? 'sessions s INDEXED BY idx_sessions_started' : 'sessions s'
-    const messagesTable = hasMessagesIndex ? 'messages m INDEXED BY idx_messages_session' : 'messages m'
-    const toolPredicate = `
-      m.role = 'tool'
-      AND (
-        m.tool_name IN ('skill_view', 'skill_manage')
+  const profileName = profile?.trim()
+  const profilePredicate = profileName ? 'AND s.profile = ?' : ''
+  const profileParams = profileName ? [profileName] : []
+  const skillContentExpression = `
+    CASE
+      WHEN m.tool_name IN ('skill_view', 'skill_manage')
         OR m.content LIKE '[skill_view]%'
         OR m.content LIKE '[skill_manage]%'
-        OR m.tool_call_id IS NOT NULL
-      )
-    `
-    const recentRows = db.prepare(`
-      SELECT
-        m.tool_name,
-        m.tool_call_id,
-        SUBSTR(m.content, 1, 300) AS content,
-        COALESCE(m.timestamp, s.started_at) AS timestamp,
-        (
-          SELECT a.tool_calls
-          FROM messages a
-          WHERE a.session_id = m.session_id
-            AND a.role = 'assistant'
-            AND m.tool_call_id IS NOT NULL
-            AND a.tool_calls LIKE '%' || m.tool_call_id || '%'
-          ORDER BY a.timestamp DESC
-          LIMIT 1
-        ) AS assistant_tool_calls
-      FROM ${sessionsTable}
-      JOIN ${messagesTable} ON m.session_id = s.id
-      WHERE s.started_at > ?
-        AND ${toolPredicate}
-    `).all(since) as Record<string, unknown>[]
-    const lateRows = db.prepare(`
-      SELECT
-        m.tool_name,
-        m.tool_call_id,
-        SUBSTR(m.content, 1, 300) AS content,
-        COALESCE(m.timestamp, s.started_at) AS timestamp,
-        (
-          SELECT a.tool_calls
-          FROM messages a
-          WHERE a.session_id = m.session_id
-            AND a.role = 'assistant'
-            AND m.tool_call_id IS NOT NULL
-            AND a.tool_calls LIKE '%' || m.tool_call_id || '%'
-          ORDER BY a.timestamp DESC
-          LIMIT 1
-        ) AS assistant_tool_calls
-      FROM ${sessionsTable}
-      JOIN ${messagesTable} ON m.session_id = s.id
-      WHERE s.started_at <= ?
-        AND COALESCE(m.timestamp, s.started_at) > ?
-        AND ${toolPredicate}
-    `).all(since, since) as Record<string, unknown>[]
+      THEN m.content
+      ELSE ''
+    END
+  `
+  const toolPredicate = `
+    m.role = 'tool'
+    AND (
+      m.tool_name IN ('skill_view', 'skill_manage')
+      OR m.content LIKE '[skill_view]%'
+      OR m.content LIKE '[skill_manage]%'
+      OR m.tool_call_id IS NOT NULL
+    )
+  `
+  const recentRows = db.prepare(`
+    SELECT
+      m.tool_name,
+      m.tool_call_id,
+      ${skillContentExpression} AS content,
+      COALESCE(m.timestamp, s.started_at) AS timestamp,
+      (
+        SELECT a.tool_calls
+        FROM messages a
+        WHERE a.session_id = m.session_id
+          AND a.role = 'assistant'
+          AND m.tool_call_id IS NOT NULL
+          AND a.tool_calls LIKE '%' || m.tool_call_id || '%'
+        ORDER BY a.timestamp DESC
+        LIMIT 1
+      ) AS assistant_tool_calls
+    FROM sessions s
+    JOIN messages m ON m.session_id = s.id
+    WHERE ${toolPredicate}
+      ${profilePredicate}
+      AND s.started_at > ?
+  `).all(...profileParams, since) as Record<string, unknown>[]
+  const lateRows = db.prepare(`
+    SELECT
+      m.tool_name,
+      m.tool_call_id,
+      ${skillContentExpression} AS content,
+      COALESCE(m.timestamp, s.started_at) AS timestamp,
+      (
+        SELECT a.tool_calls
+        FROM messages a
+        WHERE a.session_id = m.session_id
+          AND a.role = 'assistant'
+          AND m.tool_call_id IS NOT NULL
+          AND a.tool_calls LIKE '%' || m.tool_call_id || '%'
+        ORDER BY a.timestamp DESC
+        LIMIT 1
+      ) AS assistant_tool_calls
+    FROM sessions s
+    JOIN messages m ON m.session_id = s.id
+    WHERE ${toolPredicate}
+      ${profilePredicate}
+      AND s.started_at <= ?
+      AND COALESCE(m.timestamp, s.started_at) > ?
+  `).all(...profileParams, since, since) as Record<string, unknown>[]
 
-    const skillMap = new Map<string, { skill: string; view_count: number; manage_count: number; last_used_at: number | null }>()
-    const dayMap = new Map<string, { date: string; view_count: number; manage_count: number }>()
-    const daySkillMap = new Map<string, Map<string, { skill: string; view_count: number; manage_count: number }>>()
+  const skillMap = new Map<string, { skill: string; view_count: number; manage_count: number; last_used_at: number | null }>()
+  const dayMap = new Map<string, { date: string; view_count: number; manage_count: number }>()
+  const daySkillMap = new Map<string, Map<string, { skill: string; view_count: number; manage_count: number }>>()
 
-    for (const row of [...recentRows, ...lateRows]) {
-      const event = mapSkillUsageEvent(row)
-      if (!event) continue
+  for (const row of [...recentRows, ...lateRows]) {
+    const event = mapSkillUsageEvent(row)
+    if (!event) continue
 
-      const entry = skillMap.get(event.skill) || {
-        skill: event.skill,
-        view_count: 0,
-        manage_count: 0,
-        last_used_at: null,
-      }
-      if (event.action === 'view') entry.view_count += 1
-      else entry.manage_count += 1
-      if (event.timestamp != null && (entry.last_used_at == null || event.timestamp > entry.last_used_at)) {
-        entry.last_used_at = event.timestamp
-      }
-      skillMap.set(event.skill, entry)
-
-      const date = formatUnixDate(event.timestamp)
-      if (date) {
-        const day = dayMap.get(date) || { date, view_count: 0, manage_count: 0 }
-        if (event.action === 'view') day.view_count += 1
-        else day.manage_count += 1
-        dayMap.set(date, day)
-
-        const skillsForDay = daySkillMap.get(date) || new Map<string, { skill: string; view_count: number; manage_count: number }>()
-        const skillForDay = skillsForDay.get(event.skill) || { skill: event.skill, view_count: 0, manage_count: 0 }
-        if (event.action === 'view') skillForDay.view_count += 1
-        else skillForDay.manage_count += 1
-        skillsForDay.set(event.skill, skillForDay)
-        daySkillMap.set(date, skillsForDay)
-      }
+    const entry = skillMap.get(event.skill) || {
+      skill: event.skill,
+      view_count: 0,
+      manage_count: 0,
+      last_used_at: null,
     }
-
-    const totalLoads = [...skillMap.values()].reduce((sum, skill) => sum + skill.view_count, 0)
-    const totalEdits = [...skillMap.values()].reduce((sum, skill) => sum + skill.manage_count, 0)
-    const totalActions = totalLoads + totalEdits
-    const byDay = [...dayMap.values()]
-      .map(day => ({
-        ...day,
-        total_count: day.view_count + day.manage_count,
-        skills: [...(daySkillMap.get(day.date)?.values() || [])]
-          .map(skill => ({
-            ...skill,
-            total_count: skill.view_count + skill.manage_count,
-          }))
-          .sort((a, b) => b.total_count - a.total_count || a.skill.localeCompare(b.skill)),
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-    const topSkills = [...skillMap.values()]
-      .map(skill => ({
-        ...skill,
-        total_count: skill.view_count + skill.manage_count,
-        percentage: totalActions > 0 ? (skill.view_count + skill.manage_count) / totalActions * 100 : 0,
-      }))
-      .sort((a, b) =>
-        b.total_count - a.total_count ||
-        b.view_count - a.view_count ||
-        b.manage_count - a.manage_count ||
-        (b.last_used_at || 0) - (a.last_used_at || 0) ||
-        a.skill.localeCompare(b.skill),
-      )
-
-    return {
-      period_days: safeDays,
-      summary: {
-        total_skill_loads: totalLoads,
-        total_skill_edits: totalEdits,
-        total_skill_actions: totalActions,
-        distinct_skills_used: skillMap.size,
-      },
-      by_day: byDay,
-      top_skills: topSkills,
+    if (event.action === 'view') entry.view_count += 1
+    else entry.manage_count += 1
+    if (event.timestamp != null && (entry.last_used_at == null || event.timestamp > entry.last_used_at)) {
+      entry.last_used_at = event.timestamp
     }
-  } finally {
-    db.close()
+    skillMap.set(event.skill, entry)
+
+    const date = formatUnixDate(event.timestamp)
+    if (date) {
+      const day = dayMap.get(date) || { date, view_count: 0, manage_count: 0 }
+      if (event.action === 'view') day.view_count += 1
+      else day.manage_count += 1
+      dayMap.set(date, day)
+
+      const skillsForDay = daySkillMap.get(date) || new Map<string, { skill: string; view_count: number; manage_count: number }>()
+      const skillForDay = skillsForDay.get(event.skill) || { skill: event.skill, view_count: 0, manage_count: 0 }
+      if (event.action === 'view') skillForDay.view_count += 1
+      else skillForDay.manage_count += 1
+      skillsForDay.set(event.skill, skillForDay)
+      daySkillMap.set(date, skillsForDay)
+    }
+  }
+
+  const totalLoads = [...skillMap.values()].reduce((sum, skill) => sum + skill.view_count, 0)
+  const totalEdits = [...skillMap.values()].reduce((sum, skill) => sum + skill.manage_count, 0)
+  const totalActions = totalLoads + totalEdits
+  const byDay = [...dayMap.values()]
+    .map(day => ({
+      ...day,
+      total_count: day.view_count + day.manage_count,
+      skills: [...(daySkillMap.get(day.date)?.values() || [])]
+        .map(skill => ({
+          ...skill,
+          total_count: skill.view_count + skill.manage_count,
+        }))
+        .sort((a, b) => b.total_count - a.total_count || a.skill.localeCompare(b.skill)),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const topSkills = [...skillMap.values()]
+    .map(skill => ({
+      ...skill,
+      total_count: skill.view_count + skill.manage_count,
+      percentage: totalActions > 0 ? (skill.view_count + skill.manage_count) / totalActions * 100 : 0,
+    }))
+    .sort((a, b) =>
+      b.total_count - a.total_count ||
+      b.view_count - a.view_count ||
+      b.manage_count - a.manage_count ||
+      (b.last_used_at || 0) - (a.last_used_at || 0) ||
+      a.skill.localeCompare(b.skill),
+    )
+
+  return {
+    period_days: safeDays,
+    summary: {
+      total_skill_loads: totalLoads,
+      total_skill_edits: totalEdits,
+      total_skill_actions: totalActions,
+      distinct_skills_used: skillMap.size,
+    },
+    by_day: byDay,
+    top_skills: topSkills,
   }
 }
 

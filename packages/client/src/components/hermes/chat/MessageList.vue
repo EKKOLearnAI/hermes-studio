@@ -31,6 +31,7 @@ const { isDark } = useTheme();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
 const pendingInitialScrollSessionId = ref<string | null>(null);
+const initialBottomScrollOptions = { frames: 8, keepAliveMs: 1200 };
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -135,15 +136,17 @@ function applyInitialSessionScroll(sessionId: string) {
   if (snapshot) {
     pendingInitialScrollSessionId.value = null;
     if (snapshot.wasNearBottom) {
-      scrollToBottom({ frames: 4, keepAliveMs: 400 });
+      scrollToBottom(initialBottomScrollOptions);
     } else {
       listRef.value?.restoreViewportPosition(snapshot);
     }
     return;
   }
 
-  scrollToBottom({ frames: 4, keepAliveMs: 400 });
-  if (chatStore.messages.length > 0) pendingInitialScrollSessionId.value = null;
+  scrollToBottom(initialBottomScrollOptions);
+  if (chatStore.messages.length > 0 && !chatStore.isLoadingMessages) {
+    pendingInitialScrollSessionId.value = null;
+  }
 }
 
 async function handleTopReach() {
@@ -173,6 +176,24 @@ watch(
   ([id, length]) => {
     if (!id || pendingInitialScrollSessionId.value !== id || length === 0) return;
     applyInitialSessionScroll(id);
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => chatStore.isLoadingMessages,
+  async (isLoading, wasLoading) => {
+    if (isLoading || !wasLoading) return;
+    const id = chatStore.activeSessionId;
+    if (!id || pendingInitialScrollSessionId.value !== id) return;
+    if (chatStore.focusMessageId) {
+      pendingInitialScrollSessionId.value = null;
+      return;
+    }
+    await nextTick();
+    if (chatStore.activeSessionId !== id) return;
+    scrollToBottom(initialBottomScrollOptions);
+    pendingInitialScrollSessionId.value = null;
   },
   { flush: "post" },
 );

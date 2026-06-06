@@ -70,13 +70,39 @@ function requestToken(ctx: Context): string {
   return typeof ctx.query.token === 'string' ? ctx.query.token.trim() : ''
 }
 
-const SERVER_TOKEN_MEDIA_PATHS = new Set([
+const SERVER_TOKEN_EXACT_PATHS = new Set([
   '/api/hermes/media/apikey-image-generate',
   '/api/hermes/media/grok-image-to-video',
+  '/api/devices',
+  '/api/devices/scan',
+  '/api/devices/peer-connections',
 ])
 
-async function allowServerTokenForMedia(ctx: Context, token: string): Promise<boolean> {
-  if (!token || !SERVER_TOKEN_MEDIA_PATHS.has(ctx.path)) return false
+function allowsServerTokenPath(path: string): boolean {
+  if (SERVER_TOKEN_EXACT_PATHS.has(path)) return true
+  return /^\/api\/devices\/[^/]+\/connect$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/disconnect$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/terminal$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/terminals$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/terminal\/[^/]+\/(read|input|resize|close)$/.test(path) ||
+    /^\/api\/devices\/peer-connections\/[^/]+\/(exec|download|upload)$/.test(path)
+}
+
+function isLoopbackRequest(ctx: Context): boolean {
+  const ip = String(ctx.ip || ctx.request.ip || '').trim()
+  const remote = String(ctx.req.socket.remoteAddress || '').trim()
+  const values = [ip, remote].map(value => value.startsWith('::ffff:') ? value.slice(7) : value)
+  return values.some(value => (
+    value === '127.0.0.1' ||
+    value === '::1' ||
+    value === 'localhost' ||
+    value.startsWith('127.')
+  ))
+}
+
+async function allowServerTokenForAgentEndpoint(ctx: Context, token: string): Promise<boolean> {
+  if (!token || !allowsServerTokenPath(ctx.path)) return false
+  if (!isLoopbackRequest(ctx)) return false
   const serverToken = await getToken()
   if (token !== serverToken) return false
   ctx.state.serverTokenAuth = true
@@ -169,7 +195,7 @@ export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
   const token = requestToken(ctx)
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) {
-    if (await allowServerTokenForMedia(ctx, token)) {
+    if (await allowServerTokenForAgentEndpoint(ctx, token)) {
       await next()
       return
     }

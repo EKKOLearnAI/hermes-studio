@@ -38,6 +38,7 @@ extraResources:
     to: "webui"
     filter:
       - "package.json"
+      - "bin/**"
       - "dist/**"
       - "node_modules/**"
       # Drop other-platform node-pty prebuilds (saves ~45MB)
