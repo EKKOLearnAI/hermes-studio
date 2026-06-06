@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { promisify } from 'util'
+import { readAppConfig, type GatewayAutoStartConfig } from '../app-config'
 import { stripLegacyApiServerGatewayConfig } from '../config-helpers'
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
@@ -32,6 +33,34 @@ function isReservedProfileName(profile: string): boolean {
   const normalized = String(profile || '').trim().toLowerCase()
   if (!normalized || normalized === 'default') return false
   return RESERVED_PROFILE_NAMES.has(normalized) || HERMES_SUBCOMMAND_PROFILE_NAMES.has(normalized)
+}
+
+function normalizedProfileList(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const value of values) {
+    const name = String(value || '').trim()
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    names.push(name)
+  }
+  return names
+}
+
+export function selectProfilesForGatewayAutostart(
+  profiles: string[],
+  policy?: GatewayAutoStartConfig,
+): string[] {
+  const known = new Set(profiles)
+  if (policy?.enabled === false) return []
+
+  const hasIncludePolicy = Array.isArray(policy?.include)
+  const include = normalizedProfileList(policy?.include).filter(name => known.has(name))
+  const exclude = new Set(normalizedProfileList(policy?.exclude))
+  const candidates = hasIncludePolicy ? include : profiles
+
+  return candidates.filter(name => !exclude.has(name))
 }
 
 function isDockerRuntime(): boolean {
@@ -431,7 +460,16 @@ export async function ensureProfileGatewaysRunning(): Promise<void> {
   await recoverWindowsDesktopGatewayOrphansOnce()
 
   const hermesBin = resolveHermesBin()
-  const profiles = listProfileNamesFromDisk()
+  const discoveredProfiles = listProfileNamesFromDisk()
+  const { gatewayAutoStart } = await readAppConfig()
+  const profiles = selectProfilesForGatewayAutostart(discoveredProfiles, gatewayAutoStart)
+  const skippedProfiles = discoveredProfiles.filter(profile => !profiles.includes(profile))
+  if (skippedProfiles.length > 0) {
+    logger.info(
+      '[gateway-autostart] skipping profiles excluded by gatewayAutoStart policy profiles=%s',
+      skippedProfiles.join(','),
+    )
+  }
   let gatewayStatuses: Map<string, string> | undefined
   try {
     gatewayStatuses = await listGatewayStatusesFromProfileList(hermesBin)

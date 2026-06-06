@@ -15,6 +15,7 @@ import { HERMES_CLI_ARG } from './cli-constants'
 const execFileAsync = promisify(execFile)
 
 const SHIM_MARKER = 'HERMES_STUDIO_CLI_SHIM'
+const MCP_SHIM_MARKER = 'HERMES_STUDIO_MCP_SHIM'
 const PATH_MARKER_START = '# >>> Hermes Studio CLI shim >>>'
 const PATH_MARKER_END = '# <<< Hermes Studio CLI shim <<<'
 
@@ -32,6 +33,12 @@ interface CliShimInstallOptions {
   executablePath?: string
   homeDir?: string
   platform?: NodeJS.Platform
+}
+
+interface McpShimInstallOptions extends CliShimInstallOptions {
+  nodePath?: string
+  scriptPath?: string
+  webUiUrl?: string
 }
 
 function platformDelimiter(platform: NodeJS.Platform): string {
@@ -60,6 +67,10 @@ function executableForShim(options: Required<Pick<CliShimInstallOptions, 'env' |
 
 export function shimPathForPlatform(binDir: string, platform: NodeJS.Platform = process.platform): string {
   return join(binDir, platform === 'win32' ? 'hermes-studio.cmd' : 'hermes-studio')
+}
+
+export function mcpShimPathForPlatform(binDir: string, platform: NodeJS.Platform = process.platform): string {
+  return join(binDir, platform === 'win32' ? 'hermes-studio-mcp.cmd' : 'hermes-studio-mcp')
 }
 
 function shellQuote(value: string): string {
@@ -112,15 +123,78 @@ export function createShimContent(
   ].join('\n')
 }
 
-function isManagedShim(content: string): boolean {
-  return content.includes(SHIM_MARKER)
+export function createMcpShimContent(
+  nodePath: string,
+  scriptPath: string,
+  webUiUrl = 'http://127.0.0.1:8748',
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === 'win32') {
+    return [
+      '@echo off',
+      `rem ${MCP_SHIM_MARKER}`,
+      `set "NODE=${nodePath}"`,
+      `set "SCRIPT=${scriptPath}"`,
+      'if not exist "%NODE%" (',
+      '  echo Hermes Studio Node runtime not found at "%NODE%" 1>&2',
+      '  echo Open Hermes Studio once to finish runtime setup, then retry hermes-studio-mcp. 1>&2',
+      '  exit /b 127',
+      ')',
+      'if not exist "%SCRIPT%" (',
+      '  echo Hermes Studio MCP script not found at "%SCRIPT%" 1>&2',
+      '  exit /b 127',
+      ')',
+      'if "%HERMES_WEB_UI_URL%"=="" (',
+      '  if "%HERMES_DESKTOP_PORT%"=="" (',
+      `    set "HERMES_WEB_UI_URL=${webUiUrl}"`,
+      '  ) else (',
+      '    set "HERMES_WEB_UI_URL=http://127.0.0.1:%HERMES_DESKTOP_PORT%"',
+      '  )',
+      ')',
+      'set "HERMES_MCP_SERVER_NAME=hermes-studio-mcp"',
+      '"%NODE%" "%SCRIPT%" %*',
+      'exit /b %ERRORLEVEL%',
+      '',
+    ].join('\r\n')
+  }
+
+  return [
+    '#!/bin/sh',
+    `# ${MCP_SHIM_MARKER}`,
+    `NODE=${shellQuote(nodePath)}`,
+    `SCRIPT=${shellQuote(scriptPath)}`,
+    'if [ ! -x "$NODE" ]; then',
+    '  echo "Hermes Studio Node runtime not found at $NODE" >&2',
+    '  echo "Open Hermes Studio once to finish runtime setup, then retry hermes-studio-mcp." >&2',
+    '  exit 127',
+    'fi',
+    'if [ ! -f "$SCRIPT" ]; then',
+    '  echo "Hermes Studio MCP script not found at $SCRIPT" >&2',
+    '  exit 127',
+    'fi',
+    'if [ -z "${HERMES_WEB_UI_URL:-}" ]; then',
+    '  if [ -n "${HERMES_DESKTOP_PORT:-}" ]; then',
+    '    HERMES_WEB_UI_URL="http://127.0.0.1:${HERMES_DESKTOP_PORT}"',
+    '  else',
+    `    HERMES_WEB_UI_URL=${shellQuote(webUiUrl)}`,
+    '  fi',
+    'fi',
+    'export HERMES_WEB_UI_URL',
+    'export HERMES_MCP_SERVER_NAME=hermes-studio-mcp',
+    'exec "$NODE" "$SCRIPT" "$@"',
+    '',
+  ].join('\n')
 }
 
-function writeShim(shimPath: string, content: string, platform: NodeJS.Platform): ShimInstallStatus {
+function isManagedShim(content: string, marker: string): boolean {
+  return content.includes(marker)
+}
+
+function writeShim(shimPath: string, content: string, platform: NodeJS.Platform, marker = SHIM_MARKER): ShimInstallStatus {
   if (existsSync(shimPath)) {
     const existing = readFileSync(shimPath, 'utf-8')
     if (existing === content) return 'unchanged'
-    if (!isManagedShim(existing)) return 'skipped'
+    if (!isManagedShim(existing, marker)) return 'skipped'
     writeFileSync(shimPath, content, 'utf-8')
     if (platform !== 'win32') chmodSync(shimPath, 0o755)
     return 'updated'
@@ -243,5 +317,30 @@ export async function installHermesStudioCliShim(options: CliShimInstallOptions 
     status,
     pathUpdated,
     reason: status === 'skipped' ? 'existing hermes-studio shim is not managed by Hermes Studio' : undefined,
+  }
+}
+
+export async function installHermesStudioMcpShim(options: McpShimInstallOptions = {}): Promise<CliShimInstallResult> {
+  const platform = options.platform || process.platform
+  const env = options.env || process.env
+  const homeDir = options.homeDir || homedir()
+  const binDir = resolve(homeDir, 'bin')
+  const shimPath = mcpShimPathForPlatform(binDir, platform)
+  const nodePath = options.nodePath || process.execPath
+  const scriptPath = options.scriptPath || resolve(process.cwd(), 'bin', 'hermes-web-ui-mcp.mjs')
+  const webUiUrl = options.webUiUrl || 'http://127.0.0.1:8748'
+
+  mkdirSync(binDir, { recursive: true })
+  const status = writeShim(shimPath, createMcpShimContent(nodePath, scriptPath, webUiUrl, platform), platform, MCP_SHIM_MARKER)
+  const pathUpdated = await ensureUserBinOnPath(homeDir, binDir, platform, env).catch((err) => {
+    console.warn(`[cli-shim] failed to update PATH: ${err instanceof Error ? err.message : String(err)}`)
+    return false
+  })
+
+  return {
+    shimPath,
+    status,
+    pathUpdated,
+    reason: status === 'skipped' ? 'existing hermes-studio-mcp shim is not managed by Hermes Studio' : undefined,
   }
 }
