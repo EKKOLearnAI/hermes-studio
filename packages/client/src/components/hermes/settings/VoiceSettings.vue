@@ -141,9 +141,13 @@ function readFileAsDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error || new Error('Failed to read audio file'))
+    reader.onerror = () => reject(reader.error || new Error(t('settings.voice.mimoCloneAudioReadFailed')))
     reader.readAsDataURL(file)
   })
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 async function handleMimoCloneAudioChange(event: Event) {
@@ -159,19 +163,28 @@ async function handleMimoCloneAudioChange(event: Event) {
     || lowerName.endsWith('.mp3')
   if (!validType) {
     console.warn('[VoiceSettings] MiMo clone audio must be mp3 or wav')
+    settingsStatus.value = t('settings.voice.mimoCloneAudioInvalid')
     input.value = ''
     return
   }
   if (file.size > MIMO_CLONE_AUDIO_MAX_BYTES) {
     console.warn('[VoiceSettings] MiMo clone audio is too large')
+    settingsStatus.value = t('settings.voice.mimoCloneAudioTooLarge')
     input.value = ''
     return
   }
 
-  const dataUri = await readFileAsDataUri(file)
-  vs.setMimoVoiceCloneDataUri(dataUri)
-  vs.setMimoVoiceCloneFileName(file.name)
-  vs.setMimoVoiceCloneFormat(inferCloneAudioFormat(file))
+  try {
+    const dataUri = await readFileAsDataUri(file)
+    vs.setMimoVoiceCloneDataUri(dataUri)
+    vs.setMimoVoiceCloneFileName(file.name)
+    vs.setMimoVoiceCloneFormat(inferCloneAudioFormat(file))
+    settingsStatus.value = ''
+  } catch (err) {
+    console.error('[VoiceSettings] Failed to read MiMo clone audio:', err)
+    settingsStatus.value = t('settings.voice.mimoCloneAudioReadFailed')
+    input.value = ''
+  }
 }
 
 async function clearMimoCloneAudio() {
@@ -186,10 +199,10 @@ async function clearMimoCloneAudio() {
     await clearTtsSecret('mimo', 'voiceCloneFileName')
     if (setting) vs.applyServerTtsSettings([setting])
     vs.mimoHasVoiceCloneData.value = false
-    settingsStatus.value = 'Stored MiMo clone audio cleared from server.'
+    settingsStatus.value = t('settings.voice.mimoCloneAudioCleared')
   } catch (err) {
     console.error('[VoiceSettings] Failed to clear stored MiMo clone audio:', err)
-    settingsStatus.value = 'Failed to clear stored MiMo clone audio.'
+    settingsStatus.value = t('settings.voice.mimoCloneAudioClearFailed')
   }
 }
 
@@ -277,10 +290,10 @@ async function clearStoredProviderSecret(provider: StoredTtsProvider, secretName
       vs.mimoHasApiKey.value = false
       vs.mimoApiKeyPreview.value = ''
     }
-    settingsStatus.value = 'Stored TTS secret cleared from server.'
+    settingsStatus.value = t('settings.voice.storedSecretCleared')
   } catch (err) {
     console.error('[VoiceSettings] Failed to clear stored TTS secret:', err)
-    settingsStatus.value = 'Failed to clear stored TTS secret.'
+    settingsStatus.value = t('settings.voice.storedSecretClearFailed')
   } finally {
     settingsSaving.value = false
   }
@@ -288,7 +301,7 @@ async function clearStoredProviderSecret(provider: StoredTtsProvider, secretName
 
 async function saveCurrentProviderSettings(): Promise<boolean> {
   if (vs.provider.value === 'webspeech') {
-    settingsStatus.value = 'WebSpeech settings saved locally.'
+    settingsStatus.value = t('settings.voice.webspeechSettingsSaved')
     return true
   }
   const provider = vs.provider.value as StoredTtsProvider
@@ -300,11 +313,11 @@ async function saveCurrentProviderSettings(): Promise<boolean> {
       secrets: buildProviderSecrets(provider),
     })
     vs.applyServerTtsSettings([setting])
-    settingsStatus.value = 'TTS settings saved on server.'
+    settingsStatus.value = t('settings.voice.ttsSettingsSaved')
     return true
   } catch (err) {
     console.error('[VoiceSettings] Failed to save server TTS settings:', err)
-    settingsStatus.value = 'Failed to save TTS settings.'
+    settingsStatus.value = t('settings.voice.ttsSettingsSaveFailed')
     return false
   } finally {
     settingsSaving.value = false
@@ -355,6 +368,7 @@ async function handleTest() {
     }
   } catch (err) {
     console.error('[VoiceSettings] Test failed:', err)
+    settingsStatus.value = t('settings.voice.testFailed', { error: getErrorMessage(err) })
   } finally {
     testPlaying.value = false
   }
@@ -415,7 +429,7 @@ async function handleTest() {
           @update:value="vs.setOpenaiApiKey"
         />
         <div v-if="vs.openaiHasApiKey.value || vs.openaiApiKey.value" class="secret-status">
-          Stored server key: {{ vs.openaiApiKey.value ? 'will be updated on save' : vs.openaiApiKeyPreview.value }}
+          {{ t('settings.voice.storedServerKey', { value: vs.openaiApiKey.value ? t('settings.voice.secretPendingSave') : vs.openaiApiKeyPreview.value }) }}
           <NButton
             v-if="vs.openaiHasApiKey.value"
             size="tiny"
@@ -423,7 +437,7 @@ async function handleTest() {
             :disabled="settingsSaving"
             @click="clearStoredProviderSecret('openai', 'apiKey')"
           >
-            Clear stored key
+            {{ t('settings.voice.clearStoredKey') }}
           </NButton>
         </div>
       </SettingRow>
@@ -502,7 +516,7 @@ async function handleTest() {
           @update:value="vs.setCustomApiKey"
         />
         <div v-if="vs.customHasApiKey.value || vs.customApiKey.value" class="secret-status">
-          Stored server key: {{ vs.customApiKey.value ? 'will be updated on save' : vs.customApiKeyPreview.value }}
+          {{ t('settings.voice.storedServerKey', { value: vs.customApiKey.value ? t('settings.voice.secretPendingSave') : vs.customApiKeyPreview.value }) }}
           <NButton
             v-if="vs.customHasApiKey.value"
             size="tiny"
@@ -510,7 +524,7 @@ async function handleTest() {
             :disabled="settingsSaving"
             @click="clearStoredProviderSecret('custom', 'apiKey')"
           >
-            Clear stored key
+            {{ t('settings.voice.clearStoredKey') }}
           </NButton>
         </div>
       </SettingRow>
@@ -595,7 +609,7 @@ async function handleTest() {
           @update:value="vs.setMimoApiKey"
         />
         <div v-if="vs.mimoHasApiKey.value || vs.mimoApiKey.value" class="secret-status">
-          Stored server key: {{ vs.mimoApiKey.value ? 'will be updated on save' : vs.mimoApiKeyPreview.value }}
+          {{ t('settings.voice.storedServerKey', { value: vs.mimoApiKey.value ? t('settings.voice.secretPendingSave') : vs.mimoApiKeyPreview.value }) }}
           <NButton
             v-if="vs.mimoHasApiKey.value"
             size="tiny"
@@ -603,7 +617,7 @@ async function handleTest() {
             :disabled="settingsSaving"
             @click="clearStoredProviderSecret('mimo', 'apiKey')"
           >
-            Clear stored key
+            {{ t('settings.voice.clearStoredKey') }}
           </NButton>
         </div>
       </SettingRow>
@@ -702,7 +716,7 @@ async function handleTest() {
             {{ vs.mimoVoiceCloneFileName.value }} · {{ vs.mimoVoiceCloneFormat.value }}
           </span>
           <span v-else-if="vs.mimoHasVoiceCloneData.value" class="clone-audio-name">
-            Stored on server
+            {{ t('settings.voice.storedOnServer') }}
           </span>
           <NButton
             v-if="vs.mimoVoiceCloneDataUri.value || vs.mimoHasVoiceCloneData.value"
@@ -762,7 +776,7 @@ async function handleTest() {
           :disabled="settingsSaving"
           @click="saveCurrentProviderSettings"
         >
-          Save TTS settings
+          {{ t('settings.voice.saveTtsSettings') }}
         </NButton>
         <span v-if="settingsStatus" class="settings-status">{{ settingsStatus }}</span>
       </div>

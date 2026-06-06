@@ -48,7 +48,7 @@ function estimateBase64DecodedBytes(base64: string): number {
   return Math.floor((trimmed.length * 3) / 4) - padding
 }
 
-export function validateMimoVoiceCloneDataUri(dataUri: string) {
+function parseMimoVoiceCloneDataUri(dataUri: string): string {
   const match = /^data:audio\/(?:mpeg|mp3|wav);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUri)
   if (!match) {
     throw new Error('MiMo TTS voiceCloneDataUri must be an mp3 or wav data URI')
@@ -57,52 +57,27 @@ export function validateMimoVoiceCloneDataUri(dataUri: string) {
   if (estimateBase64DecodedBytes(match[1]) > MAX_MIMO_VOICE_CLONE_AUDIO_BYTES) {
     throw new Error('MiMo TTS voiceCloneDataUri must be 10 MiB or smaller')
   }
+
+  return match[1]
+}
+
+export function validateMimoVoiceCloneDataUri(dataUri: string) {
+  parseMimoVoiceCloneDataUri(dataUri)
 }
 
 function buildMessages(text: string, opts: MimoTtsProviderOptions) {
   const mode = inferVoiceMode(opts)
 
-  if (mode === 'voiceClone') {
-    if (!opts.voiceCloneDataUri) {
-      throw new Error('MiMo TTS voiceCloneDataUri is required for voiceClone mode')
-    }
-    validateMimoVoiceCloneDataUri(opts.voiceCloneDataUri)
-
-    return [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: opts.stylePrompt || '' },
-          {
-            type: 'input_audio',
-            input_audio: {
-              data: opts.voiceCloneDataUri,
-              format: opts.voiceCloneFormat || 'wav',
-            },
-          },
-        ],
-      },
-      {
-        role: 'assistant',
-        content: text,
-      },
-    ]
-  }
-
   const userContent = mode === 'voiceDesign'
     ? [opts.voiceDesignDesc || '', opts.stylePrompt || ''].filter(Boolean).join('\n\n')
     : opts.stylePrompt || ''
 
-  return [
-    {
-      role: 'user',
-      content: userContent,
-    },
-    {
-      role: 'assistant',
-      content: text,
-    },
-  ]
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  if (userContent) {
+    messages.push({ role: 'user', content: userContent })
+  }
+  messages.push({ role: 'assistant', content: text })
+  return messages
 }
 
 function buildAudio(opts: MimoTtsProviderOptions): Record<string, string> {
@@ -113,6 +88,13 @@ function buildAudio(opts: MimoTtsProviderOptions): Record<string, string> {
 
   if (mode === 'preset' && opts.voice) {
     audio.voice = opts.voice
+  }
+
+  if (mode === 'voiceClone') {
+    if (!opts.voiceCloneDataUri) {
+      throw new Error('MiMo TTS voiceCloneDataUri is required for voiceClone mode')
+    }
+    audio.voice = parseMimoVoiceCloneDataUri(opts.voiceCloneDataUri)
   }
 
   return audio

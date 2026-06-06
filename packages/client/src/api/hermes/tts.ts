@@ -14,6 +14,21 @@ export interface SynthesizeSpeechRequest {
   signal?: AbortSignal
 }
 
+async function readTtsError(res: Response): Promise<string> {
+  const fallback = `TTS request failed: ${res.status}`
+  try {
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await res.json() as { error?: unknown }
+      return typeof body.error === 'string' && body.error ? `${fallback}: ${body.error}` : fallback
+    }
+    const text = await res.text()
+    return text ? `${fallback}: ${text}` : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export async function generateSpeech(opts: TtsOptions): Promise<{ audio: Blob; engine: string }> {
   const res = await fetch(
     `${localStorage.getItem('hermes_server_url') || ''}/api/hermes/tts`,
@@ -28,7 +43,7 @@ export async function generateSpeech(opts: TtsOptions): Promise<{ audio: Blob; e
   )
 
   if (!res.ok) {
-    throw new Error(`TTS request failed: ${res.status}`)
+    throw new Error(await readTtsError(res))
   }
 
   const audio = await res.blob()
@@ -57,7 +72,7 @@ export async function synthesizeSpeech(
   )
 
   if (!res.ok) {
-    throw new Error(`TTS request failed: ${res.status}`)
+    throw new Error(await readTtsError(res))
   }
 
   const audio = await res.blob()
