@@ -338,9 +338,9 @@ describe('tts synthesize controller', () => {
     expect(JSON.stringify(ctx.body)).not.toContain('client went away')
   })
 
-  it('returns 502 without leaking upstream details when the provider fails', async () => {
+  it('returns 502 with sanitized provider details when the provider fails', async () => {
     const provider = {
-      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: secret body')),
+      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: Bearer sk-secret-token invalid')),
     }
     const getTtsProvider = vi.fn(() => provider)
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
@@ -353,8 +353,40 @@ describe('tts synthesize controller', () => {
     await ctrl.synthesize(ctx)
 
     expect(ctx.status).toBe(502)
-    expect(ctx.body).toEqual({ error: 'TTS synthesis failed' })
-    expect(JSON.stringify(ctx.body)).not.toContain('secret body')
+    expect(ctx.body).toEqual({ error: 'TTS synthesis failed: MiMo TTS returned 401: Bearer [REDACTED] invalid' })
+    expect(JSON.stringify(ctx.body)).toContain('MiMo TTS returned 401')
+    expect(JSON.stringify(ctx.body)).not.toContain('sk-secret-token')
+  })
+
+  it('redacts stored MiMo clone audio when upstream echoes audio.voice', async () => {
+    vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>()
+      return {
+        ...actual,
+        getTtsProviderConfigForSynthesis: vi.fn(() => ({
+          settings: {},
+          secrets: { voiceCloneDataUri: 'data:audio/wav;base64,ZmFrZQ==' },
+        })),
+      }
+    })
+
+    const provider = {
+      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 400: {"audio":{"voice":"ZmFrZQ=="}}')),
+    }
+    const getTtsProvider = vi.fn(() => provider)
+    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+      getTtsProvider,
+    }))
+
+    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const { ctx } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
+
+    await ctrl.synthesize(ctx)
+
+    expect(ctx.status).toBe(502)
+    expect(ctx.body).toEqual({ error: 'TTS synthesis failed: MiMo TTS returned 400: {"audio":{"voice":"[REDACTED]"}}' })
+    expect(JSON.stringify(ctx.body)).not.toContain('ZmFrZQ==')
+    expect(JSON.stringify(ctx.body)).not.toContain('data:audio/wav')
   })
 })
 

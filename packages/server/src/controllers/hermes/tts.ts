@@ -12,6 +12,38 @@ import {
 } from '../../db/hermes/tts-settings-store'
 
 const CLIENT_SECRET_FIELDS = new Set(['apiKey', 'voiceCloneDataUri', 'voiceCloneFileName'])
+const MAX_TTS_ERROR_MESSAGE_LENGTH = 500
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function redactTtsErrorMessage(message: string, options: Record<string, unknown>): string {
+  let redacted = message
+  for (const key of CLIENT_SECRET_FIELDS) {
+    const value = options[key]
+    if (typeof value === 'string' && value.length >= 4) {
+      redacted = redacted.replace(new RegExp(escapeRegExp(value), 'g'), '[REDACTED]')
+      const dataUriMatch = /^data:audio\/(?:mpeg|mp3|wav);base64,([A-Za-z0-9+/=]+)$/i.exec(value)
+      if (dataUriMatch?.[1] && dataUriMatch[1].length >= 4) {
+        redacted = redacted.replace(new RegExp(escapeRegExp(dataUriMatch[1]), 'g'), '[REDACTED]')
+      }
+    }
+  }
+
+  redacted = redacted
+    .replace(/Bearer\s+[^\s"'}]+/gi, 'Bearer [REDACTED]')
+    .replace(/(api[-_ ]?key["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, '$1[REDACTED]')
+    .replace(/data:audio\/(?:mpeg|mp3|wav);base64,[A-Za-z0-9+/=]+/gi, 'data:audio/[REDACTED]')
+
+  return redacted.length > MAX_TTS_ERROR_MESSAGE_LENGTH
+    ? `${redacted.slice(0, MAX_TTS_ERROR_MESSAGE_LENGTH)}…`
+    : redacted
+}
 
 function requireAuthenticatedUserId(ctx: Context): number | null {
   const rawUserId = ctx.state.user?.id
@@ -186,9 +218,11 @@ export async function synthesize(ctx: Context) {
     ctx.req.on('close', () => controller.abort())
   }
 
+  let mergedOptions: Record<string, unknown> = {}
+
   try {
     const storedConfig = getTtsProviderConfigForSynthesis(userId, providerId)
-    const mergedOptions = {
+    mergedOptions = {
       ...(storedConfig?.settings || {}),
       ...sanitizeClientPlaybackOptions(options, storedConfig),
       ...(storedConfig?.secrets || {}),
@@ -215,8 +249,9 @@ export async function synthesize(ctx: Context) {
       return
     }
 
+    const message = redactTtsErrorMessage(getErrorMessage(error), mergedOptions)
     ctx.status = 502
-    ctx.body = { error: 'TTS synthesis failed' }
+    ctx.body = { error: message ? `TTS synthesis failed: ${message}` : 'TTS synthesis failed' }
   }
 }
 
