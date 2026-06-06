@@ -1,28 +1,36 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NInput, NSelect, NSwitch, useMessage } from 'naive-ui'
+import { NSelect, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
+const profilesStore = useProfilesStore()
 const message = useMessage()
 const { t } = useI18n()
 
 const enabled = computed(() => settingsStore.gatewayAutoStart.enabled !== false)
 const mode = computed(() => Array.isArray(settingsStore.gatewayAutoStart.include) ? 'include' : 'all')
-const includeText = computed(() => (settingsStore.gatewayAutoStart.include || []).join(', '))
-const excludeText = computed(() => (settingsStore.gatewayAutoStart.exclude || []).join(', '))
+const includeProfiles = computed(() => settingsStore.gatewayAutoStart.include || [])
+const excludeProfiles = computed(() => settingsStore.gatewayAutoStart.exclude || [])
+const profileOptions = computed(() =>
+  profilesStore.profiles.map(profile => ({
+    label: profile.name,
+    value: profile.name,
+  })),
+)
 const modeOptions = computed(() => [
   { label: t('settings.gatewayAutoStart.modeAll'), value: 'all' },
   { label: t('settings.gatewayAutoStart.modeInclude'), value: 'include' },
 ])
 
-function parseProfileList(raw: string): string[] {
+function normalizeProfileList(raw: string[]): string[] {
   const seen = new Set<string>()
   const names: string[] = []
-  for (const part of raw.split(',')) {
-    const name = part.trim()
+  for (const part of raw) {
+    const name = String(part || '').trim()
     if (!name || seen.has(name)) continue
     seen.add(name)
     names.push(name)
@@ -44,12 +52,12 @@ function saveMode(value: string) {
   void save({ include: value === 'include' ? (settingsStore.gatewayAutoStart.include || []) : null })
 }
 
-function saveInclude(raw: string) {
-  void save({ include: parseProfileList(raw) })
+function saveInclude(value: string[]) {
+  void save({ include: normalizeProfileList(value) })
 }
 
-function saveExclude(raw: string) {
-  const exclude = parseProfileList(raw)
+function saveExclude(value: string[]) {
+  const exclude = normalizeProfileList(value)
   void save({ exclude: exclude.length > 0 ? exclude : null })
 }
 </script>
@@ -78,20 +86,26 @@ function saveExclude(raw: string) {
       :label="t('settings.gatewayAutoStart.include')"
       :hint="t('settings.gatewayAutoStart.includeHint')"
     >
-      <NInput
-        :value="includeText"
-        type="textarea"
-        :autosize="{ minRows: 1, maxRows: 3 }"
+      <NSelect
+        multiple
+        filterable
+        :value="includeProfiles"
+        :options="profileOptions"
+        size="small"
+        class="input-md"
         :placeholder="t('settings.gatewayAutoStart.profileListPlaceholder')"
         @update:value="saveInclude"
       />
     </SettingRow>
 
     <SettingRow :label="t('settings.gatewayAutoStart.exclude')" :hint="t('settings.gatewayAutoStart.excludeHint')">
-      <NInput
-        :value="excludeText"
-        type="textarea"
-        :autosize="{ minRows: 1, maxRows: 3 }"
+      <NSelect
+        multiple
+        filterable
+        :value="excludeProfiles"
+        :options="profileOptions"
+        size="small"
+        class="input-md"
         :placeholder="t('settings.gatewayAutoStart.profileListPlaceholder')"
         @update:value="saveExclude"
       />
