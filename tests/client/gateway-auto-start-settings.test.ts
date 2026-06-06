@@ -12,8 +12,16 @@ const mockSettingsStore = vi.hoisted(() => ({
   }),
 }))
 
+const mockProfilesStore = vi.hoisted(() => ({
+  profiles: [{ name: 'default' }, { name: 'reviewer' }, { name: 'scratch' }],
+}))
+
 vi.mock('@/stores/hermes/settings', () => ({
   useSettingsStore: () => mockSettingsStore,
+}))
+
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => mockProfilesStore,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -26,6 +34,24 @@ vi.mock('naive-ui', async () => {
   const actual = await vi.importActual<any>('naive-ui')
   return {
     ...actual,
+    NSwitch: {
+      props: ['value'],
+      emits: ['update:value'],
+      template: `<button class="gateway-enabled" @click="$emit('update:value', !value)"></button>`,
+    },
+    NSelect: {
+      props: {
+        value: [String, Array],
+        multiple: Boolean,
+      },
+      emits: ['update:value'],
+      template: `
+        <button
+          :class="multiple ? 'gateway-profile-select' : 'gateway-mode'"
+          @click="$emit('update:value', multiple ? ['default', 'reviewer', 'default'] : (value === 'include' ? 'all' : 'include'))"
+        ></button>
+      `,
+    },
     useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
   }
 })
@@ -46,39 +72,32 @@ describe('GatewayAutoStartSettings', () => {
             props: ['label', 'hint'],
             template: '<div class="setting-row"><span class="setting-row-label">{{ label }}</span><slot /></div>',
           },
-          'n-switch': {
-            props: ['value'],
-            emits: ['update:value'],
-            template: `<button class="gateway-enabled" @click="$emit('update:value', !value)"></button>`,
-          },
-          'n-select': {
-            props: ['value'],
-            emits: ['update:value'],
-            template: `<button class="gateway-mode" @click="$emit('update:value', value === 'include' ? 'all' : 'include')"></button>`,
-          },
-          'n-input': {
-            props: ['value'],
-            emits: ['update:value'],
-            template: `<input class="gateway-list-input" :value="value" @input="$emit('update:value', ($event.target as HTMLInputElement).value)" />`,
-          },
         },
       },
     })
 
     expect(wrapper.text()).toContain('settings.gatewayAutoStart.title')
 
-    await wrapper.find('.n-switch').trigger('click')
+    await wrapper.find('.gateway-enabled').trigger('click')
     await Promise.resolve()
     expect(mockSettingsStore.updateLocal).toHaveBeenCalledWith('gatewayAutoStart', { enabled: false })
     expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('gatewayAutoStart', { enabled: false }, { restart: false })
 
-    const inputs = wrapper.findAll('textarea')
-    expect(inputs.length).toBe(2)
-    await inputs[0].setValue('default, reviewer, default')
+    const profileSelects = wrapper.findAll('.gateway-profile-select')
+    expect(profileSelects.length).toBe(1)
+    await profileSelects[0].trigger('click')
     await Promise.resolve()
     expect(mockSettingsStore.saveSection).toHaveBeenLastCalledWith(
       'gatewayAutoStart',
-      { include: ['default', 'reviewer'] },
+      { include: ['default', 'reviewer'], exclude: null },
+      { restart: false },
+    )
+
+    await wrapper.find('.gateway-mode').trigger('click')
+    await Promise.resolve()
+    expect(mockSettingsStore.saveSection).toHaveBeenLastCalledWith(
+      'gatewayAutoStart',
+      { include: null },
       { restart: false },
     )
   })
