@@ -143,11 +143,28 @@ describe('user auth tables and middleware', () => {
     expect(ctx.state.serverTokenAuth).toBe(true)
   })
 
-  it('rejects server token for MCP device endpoints from non-loopback clients', async () => {
+  it.each([
+    '/api/hermes/media/apikey-image-generate',
+    '/api/hermes/media/grok-image-to-video',
+    '/api/devices',
+    '/api/devices/scan',
+    '/api/devices/device-1/connect',
+    '/api/devices/peer-connections',
+    '/api/devices/peer-connections/conn-1/disconnect',
+    '/api/devices/peer-connections/conn-1/terminal',
+    '/api/devices/peer-connections/conn-1/terminals',
+    '/api/devices/peer-connections/conn-1/terminal/term-1/read',
+    '/api/devices/peer-connections/conn-1/terminal/term-1/input',
+    '/api/devices/peer-connections/conn-1/terminal/term-1/resize',
+    '/api/devices/peer-connections/conn-1/terminal/term-1/close',
+    '/api/devices/peer-connections/conn-1/exec',
+    '/api/devices/peer-connections/conn-1/download',
+    '/api/devices/peer-connections/conn-1/upload',
+  ])('rejects server token for local-only endpoint %s from non-loopback clients', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')
     const { auth } = await initUsers()
     const ctx = {
-      path: '/api/devices/peer-connections/conn-1/exec',
+      path,
       headers: { authorization: 'Bearer server-token' },
       query: {},
       ip: '192.168.1.50',
