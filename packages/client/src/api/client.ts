@@ -124,7 +124,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     clearApiKey()
     emitAuthNotice('expired')
     if (router.currentRoute.value.name !== 'login') {
-      router.replace({ name: 'login' })
+      window.location.href = ''
     }
     throw new Error('Unauthorized')
   }
@@ -136,7 +136,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
         clearApiKey()
         emitAuthNotice('expired')
         if (router.currentRoute.value.name !== 'login') {
-          router.replace({ name: 'login' })
+          window.location.href = ''
         }
       } else {
         emitAuthNotice('forbidden')
