@@ -20,6 +20,9 @@ jobs:
     name: Generate and upload latest-mac.yml
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download macOS release assets
         shell: bash
         env:
@@ -109,3 +112,15 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             "$asset_url" > /tmp/latest-mac-uploaded.yml
           diff -u /tmp/latest-mac.yml /tmp/latest-mac-uploaded.yml
+
+      - name: Upload merged macOS update manifest to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ github.event.inputs.tag }}
+          R2_FILES: /tmp/latest-mac.yml
+        run: bash scripts/upload-r2-artifacts.sh

@@ -121,3 +121,31 @@ jobs:
             packages/desktop/release/runtime/${{ steps.names.outputs.asset }}
             packages/desktop/release/runtime/${{ steps.names.outputs.asset }}.sha256
             packages/desktop/release/runtime/${{ steps.names.outputs.manifest }}
+
+      - name: Download existing runtime assets for R2
+        if: steps.check.outputs.missing == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p packages/desktop/release/runtime
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '${{ steps.names.outputs.asset }}' --dir packages/desktop/release/runtime
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '${{ steps.names.outputs.asset }}.sha256' --dir packages/desktop/release/runtime
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '${{ steps.names.outputs.manifest }}' --dir packages/desktop/release/runtime
+
+      - name: Upload runtime assets to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET || secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          R2_FILES: |
+            packages/desktop/release/runtime/${{ steps.names.outputs.asset }}
+            packages/desktop/release/runtime/${{ steps.names.outputs.asset }}.sha256
+            packages/desktop/release/runtime/${{ steps.names.outputs.manifest }}
+        run: bash scripts/upload-r2-artifacts.sh
