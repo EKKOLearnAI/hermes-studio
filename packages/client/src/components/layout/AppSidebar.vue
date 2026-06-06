@@ -12,7 +12,7 @@ import { useSessionSearch } from '@/composables/useSessionSearch'
 import { usePersistentRecord } from '@/composables/usePersistentRecord'
 import RouteLinkItem from '@/components/common/RouteLinkItem.vue'
 import { changelog } from "@/data/changelog";
-import { isStoredSuperAdmin } from "@/api/client";
+import { isStoredSuperAdmin, getStoredUsername } from "@/api/client";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -27,6 +27,7 @@ const selectedKey = computed(() => {
   return route.name as string;
 });
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
+const currentUsername = computed(() => getStoredUsername());
 const isVersionPreview = import.meta.env.VITE_HERMES_PREVIEW === '1';
 
 function isNavActive(...names: string[]) {
@@ -345,6 +346,7 @@ function openChangelog() {
           <line x1="21" y1="12" x2="9" y2="12" />
         </svg>
         <span>{{ t("sidebar.logout") }}</span>
+        <span v-if="currentUsername" class="logout-username" :title="currentUsername">{{ currentUsername }}</span>
       </button>
       <div class="status-row">
         <div
@@ -581,6 +583,16 @@ function openChangelog() {
   &:hover {
     color: $error;
     background: rgba(var(--error-rgb, 239, 68, 68), 0.06);
+  }
+
+  .logout-username {
+    margin-left: auto;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: $text-muted;
   }
 }
 

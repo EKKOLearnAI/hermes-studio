@@ -53,6 +53,20 @@ export function isStoredSuperAdmin(): boolean {
   return getStoredUserRole() === 'super_admin'
 }
 
+export function getStoredUsername(): string | null {
+  const token = getApiKey()
+  const payload = token.split('.')[1]
+  if (!payload) return null
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const data = JSON.parse(atob(padded)) as { username?: unknown }
+    return typeof data.username === 'string' && data.username.length > 0 ? data.username : null
+  } catch {
+    return null
+  }
+}
+
 export function getActiveProfileName(): string | null {
   return localStorage.getItem('hermes_active_profile_name')
 }
