@@ -153,6 +153,29 @@ describe('AppSidebar search entry', () => {
     expect(mockAppStore.reloadClient).toHaveBeenCalledTimes(1)
   })
 
+  it('surfaces Memory with the primary conversation links instead of burying it in Agent', () => {
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          ProfileSelector: true,
+          ModelSelector: true,
+          LanguageSwitch: true,
+          ThemeSwitch: true,
+          NButton: true,
+        },
+      },
+    })
+
+    const groups = wrapper.findAll('.nav-group')
+    const conversationLinks = groups[0].findAll('.nav-item span').map(node => node.text())
+    const agentLinks = groups[1].findAll('.nav-item span').map(node => node.text())
+
+    expect(conversationLinks).toContain('sidebar.memory')
+    expect(conversationLinks.indexOf('sidebar.memory')).toBeGreaterThan(conversationLinks.indexOf('sidebar.history'))
+    expect(conversationLinks.indexOf('sidebar.memory')).toBeLessThan(conversationLinks.indexOf('sidebar.groupChat(beta)'))
+    expect(agentLinks).not.toContain('sidebar.memory')
+  })
+
   it('uses short group labels and keeps group folding active when collapsed', async () => {
     mockAppStore.sidebarCollapsed = true
     const wrapper = mount(AppSidebar, {
