@@ -53,9 +53,23 @@ function normalizeUrl(value: string | undefined): string {
   return (value || '').trim().replace(/\/+$/, '')
 }
 
+function normalizePackageName(value: string | undefined): string {
+  return (value || '').trim()
+}
+
 function getDefaultUpdateCliBin(packageName: string): string {
   const packageBasename = packageName.split('/').filter(Boolean).pop() || packageName
   return `${packageBasename}.mjs`
+}
+
+function getDefaultUpdateSourceLabel(packageName: string, registry: string): string {
+  if (!packageName || !registry) return ''
+  try {
+    const host = new URL(registry).host
+    return `${packageName} @ ${host}`
+  } catch {
+    return `${packageName} @ ${registry}`
+  }
 }
 
 export function shouldCreateWebUiDataDir(env: Record<string, string | undefined> = process.env): boolean {
@@ -67,6 +81,8 @@ export function getCorsOrigins(env: Record<string, string | undefined> = process
 }
 
 const appHome = getWebUiHome()
+const updatePackageName = normalizePackageName(process.env.WEBUI_UPDATE_PACKAGE)
+const updateRegistry = normalizeUrl(process.env.WEBUI_UPDATE_REGISTRY)
 
 export const config = {
   port: parseInt(process.env.PORT || '8648', 10),
@@ -76,4 +92,12 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: getCorsOrigins(),
+  update: {
+    enabled: parseBoolean(process.env.WEBUI_UPDATE_ENABLED),
+    packageName: updatePackageName,
+    registry: updateRegistry,
+    sourceLabel: (process.env.WEBUI_UPDATE_SOURCE_LABEL || '').trim() || getDefaultUpdateSourceLabel(updatePackageName, updateRegistry),
+    distTag: (process.env.WEBUI_UPDATE_DIST_TAG || 'latest').trim() || 'latest',
+    cliBin: (process.env.WEBUI_UPDATE_CLI_BIN || '').trim() || getDefaultUpdateCliBin(updatePackageName || 'hermes-web-ui'),
+  },
 }

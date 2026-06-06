@@ -19,6 +19,15 @@ npm run build
 - `npm run test:e2e` runs Playwright browser tests against a mocked BFF API.
 - `npm run build` type-checks and builds both client and server.
 
+## npm Release
+
+- Published package name is `@quanthermes/hermes-web-ui`.
+- Global install command is `npm install -g @quanthermes/hermes-web-ui`.
+- Runtime command remains `hermes-web-ui start`.
+- Push a `v*` tag to trigger `npm-publish.yml`.
+- Store a valid `NPM_TOKEN` in GitHub Actions secrets before the first release.
+- Follow `docs/npm-release.md` for the release checklist and rollback notes.
+
 ## Architecture
 
 - Frontend code lives under `packages/client/src`.

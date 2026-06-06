@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
+  <code>npm install -g @quanthermes/hermes-web-ui && hermes-web-ui start</code>
 </p>
 
 <p align="center">
@@ -30,8 +30,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/hermes-web-ui"><img src="https://img.shields.io/npm/v/hermes-web-ui?style=flat-square&color=blue" alt="npm 版本"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="许可证"/></a>
+  <a href="https://www.npmjs.com/package/@quanthermes/hermes-web-ui"><img src="https://img.shields.io/npm/v/%40quanthermes%2Fhermes-web-ui?style=flat-square&color=blue" alt="npm 版本"/></a>
+  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/%40quanthermes%2Fhermes-web-ui?style=flat-square" alt="许可证"/></a>
   <a href="https://github.com/EKKOLearnAI/hermes-web-ui/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-web-ui?style=flat-square" alt="Star"/></a>
 </p>
 
@@ -182,7 +182,7 @@ hermes-web-ui reset-default-login
 ### npm 安装（推荐）
 
 ```bash
-npm install -g hermes-web-ui
+npm install -g @quanthermes/hermes-web-ui
 hermes-web-ui start
 ```
 
@@ -309,7 +309,15 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `hermes-web-ui -v` | 显示版本号 |
 | `hermes-web-ui -h` | 显示帮助信息 |
 
-`update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再执行 `npm install -g hermes-web-ui@latest` 并重启。缓存清理是 best-effort；如果清理失败，只提示 warning，升级安装会继续执行。
+`update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再执行 `npm install -g @quanthermes/hermes-web-ui@latest` 并重启。缓存清理是 best-effort；如果清理失败，只提示 warning，升级安装会继续执行。
+
+## npm 发布
+
+- 发布包名：`@quanthermes/hermes-web-ui`
+- 全局安装：`npm install -g @quanthermes/hermes-web-ui`
+- 运行命令：`hermes-web-ui start`
+- 发布工作流：推送 `v*` tag 后触发 [`.github/workflows/npm-publish.yml`](./.github/workflows/npm-publish.yml)
+- 发布说明：[`docs/npm-release.md`](./docs/npm-release.md)
 
 ### 自动配置
 

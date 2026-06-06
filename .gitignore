@@ -53,3 +53,6 @@ packages/client/src/**/*.js
 .runtime-hermes/state.db-wal
 
 .hermes/
+
+# Local error logs
+docs/erro.txt

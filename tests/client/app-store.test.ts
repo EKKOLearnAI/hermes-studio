@@ -178,6 +178,30 @@ describe('App Store', () => {
     expect(store.updateAvailable).toBe(false)
   })
 
+  it('waits for the restarted server after triggering self-update', async () => {
+    vi.useFakeTimers()
+    mockSystemApi.triggerUpdate.mockResolvedValue({ success: true, message: 'ok' })
+    mockSystemApi.checkHealth.mockResolvedValue({
+      status: 'ok',
+      webui_version: 'test',
+      webui_latest: 'test',
+      webui_update_enabled: true,
+      webui_update_available: false,
+      webui_update_source_label: 'Company npm registry',
+    })
+    const store = useAppStore()
+    store.updateEnabled = true
+
+    const updatePromise = store.doUpdate()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+    const ok = await updatePromise
+
+    expect(ok).toBe(true)
+    expect(store.updating).toBe(false)
+    expect(mockSystemApi.triggerUpdate).toHaveBeenCalledTimes(1)
+    expect(mockSystemApi.checkHealth).toHaveBeenCalled()
+  })
+
   it('does not mark the client stale when the served Web UI version matches this bundle', async () => {
     mockSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
@@ -197,6 +221,7 @@ describe('App Store', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))
     const store = useAppStore()
+    store.updateEnabled = true
 
     const ok = await store.doUpdate()
 

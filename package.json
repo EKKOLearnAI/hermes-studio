@@ -1,5 +1,5 @@
 {
-  "name": "hermes-web-ui",
+  "name": "@quanthermes/hermes-web-ui",
   "version": "0.6.10",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
@@ -56,12 +56,17 @@
     "build:desktop:win": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --win --publish never",
     "build:desktop:linux": "npm run build && npm run desktop:install && npm --prefix packages/desktop run dist -- --linux --publish never",
     "openapi:generate": "node scripts/generate-openapi.mjs",
+    "prepublishOnly": "npm run build",
+    "release:npm": "npm publish --access public",
     "claude": "claude --dangerously-skip-permissions"
   },
   "files": [
     "bin/",
     "dist/"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@vscode/markdown-it-katex": "^1.1.2",
     "adm-zip": "^0.5.17",

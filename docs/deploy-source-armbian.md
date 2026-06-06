@@ -142,6 +142,12 @@ sudo PORT=8080 \
 export HERMES_AGENT_WHEEL_URL="https://github.com/NousResearch/hermes-agent/releases/download/v2026.5.29.2/hermes_agent-0.15.2-py3-none-any.whl"
 ```
 
+如果你要使用 `MiniMax / MiniMax CN` 这类 Anthropic 兼容 provider，建议同时固定 Anthropic SDK 版本。部署脚本现在默认会在 wheel venv 中预装 `anthropic==0.87.0`；如需覆盖，可显式传入：
+
+```bash
+export HERMES_ANTHROPIC_VERSION="0.87.0"
+```
+
 #### 2. 准备 Web UI Bundle (可选)
 在高性能电脑上执行 `npm run build`，然后将 `dist` 目录打包：
 
@@ -154,12 +160,14 @@ tar -czf hermes-webui-dist.tar.gz dist/
 #### 3. 执行安装
 ```bash
 sudo HERMES_AGENT_WHEEL_URL="https://.../hermes_agent-0.15.2-py3-none-any.whl" \
+     HERMES_ANTHROPIC_VERSION="0.87.0" \
      WEBUI_BUNDLE_URL="https://.../hermes-webui-dist.tar.gz" \
      ./scripts/deploy-source-armbian.sh
 ```
 
 **极速模式优势**：
 - **Agent**: 跳过 `git clone`，直接 `pip install` 二进制包，速度提升 5-10 倍。
+- **Anthropic 兼容 provider**: wheel 模式会额外固定安装 `anthropic==0.87.0`，避免 MiniMax 等 Anthropic 兼容端点因为手工执行 `pip install anthropic` 拉到过新 SDK 而出现兼容问题。
 - **Web UI**: 跳过 `npm install` (100MB+) 和 `npm build` (极耗 CPU)，直接解压产物，速度提升 20 倍以上，且彻底解决超时问题。
 
 ## 部署完成后的首次配置
@@ -251,6 +259,7 @@ NPM_REGISTRY=https://registry.npmmirror.com
 NODE_MIRROR_URL=https://npmmirror.com/mirrors/node
 HERMES_INSTALL_FLAGS="--skip-setup --skip-browser"
 HERMES_AGENT_WHEEL_URL="https://github.com/NousResearch/hermes-agent/releases/download/v2026.5.29.2/hermes_agent-0.15.2-py3-none-any.whl"
+HERMES_ANTHROPIC_VERSION="0.87.0"
 ```
 
 ## 自定义参数

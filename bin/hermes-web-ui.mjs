@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 import { spawn, execSync, execFileSync } from 'child_process'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url)
 const serverEntry = resolve(__dirname, '..', 'dist', 'server', 'index.js')
 const pkgDir = resolve(__dirname, '..')
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf-8'))
+const PACKAGE_NAME = pkg.name || 'hermes-web-ui'
 const VERSION = pkg.version
 const WEB_UI_HOME = process.env.HERMES_WEB_UI_HOME?.trim()
   ? resolve(process.env.HERMES_WEB_UI_HOME.trim())
@@ -692,7 +693,7 @@ Options:
 }
 
 function doUpdate() {
-  console.log('  猬?Updating hermes-web-ui...')
+  console.log(`  Updating ${PACKAGE_NAME}...`)
 
   const npm = getNpmBin()
   try {
@@ -709,7 +710,7 @@ function doUpdate() {
 }
 
 function runUpdateInstall(npm) {
-  const child = spawnCli(npm, ['install', '-g', 'hermes-web-ui@latest'], {
+  const child = spawnCli(npm, ['install', '-g', `${PACKAGE_NAME}@latest`], {
     stdio: 'inherit',
     windowsHide: true,
     env: getCurrentNodeEnv(),

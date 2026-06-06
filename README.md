@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
+  <code>npm install -g @quanthermes/hermes-web-ui && hermes-web-ui start</code>
 </p>
 
 <p align="center">
@@ -22,8 +22,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/hermes-web-ui"><img src="https://img.shields.io/npm/v/hermes-web-ui?style=flat-square&color=blue" alt="npm version"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="license"/></a>
+  <a href="https://www.npmjs.com/package/@quanthermes/hermes-web-ui"><img src="https://img.shields.io/npm/v/%40quanthermes%2Fhermes-web-ui?style=flat-square&color=blue" alt="npm version"/></a>
+  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/%40quanthermes%2Fhermes-web-ui?style=flat-square" alt="license"/></a>
   <a href="https://github.com/EKKOLearnAI/hermes-web-ui/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-web-ui?style=flat-square" alt="stars"/></a>
 </p>
 
@@ -174,7 +174,7 @@ hermes-web-ui reset-default-login
 ### npm (Recommended)
 
 ```bash
-npm install -g hermes-web-ui
+npm install -g @quanthermes/hermes-web-ui
 hermes-web-ui start
 ```
 
@@ -302,7 +302,15 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `hermes-web-ui -v`                | Show version number                |
 | `hermes-web-ui -h`                | Show help message                  |
 
-`update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
+`update` / `upgrade` first attempt `npm cache clean --force`, then run `npm install -g @quanthermes/hermes-web-ui@latest` and restart. Cache cleanup is best-effort; if it fails, the updater continues with the install.
+
+## npm Release
+
+- Publish package: `@quanthermes/hermes-web-ui`
+- Install globally: `npm install -g @quanthermes/hermes-web-ui`
+- Runtime command: `hermes-web-ui start`
+- Release workflow: push a `v*` tag to trigger [`.github/workflows/npm-publish.yml`](./.github/workflows/npm-publish.yml)
+- Release runbook: [`docs/npm-release.md`](./docs/npm-release.md)
 
 ### Auto Configuration
 
