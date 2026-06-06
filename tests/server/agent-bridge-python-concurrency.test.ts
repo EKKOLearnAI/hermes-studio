@@ -52,6 +52,10 @@ approval = types.ModuleType("tools.approval")
 approval._session_key = contextvars.ContextVar("approval_session_key", default="")
 approval._notify = {}
 approval._resolved_gateway = []
+approval._session_approved = {}
+approval._permanent_approved = set()
+approval._saved_permanent = set()
+approval._check_execute_code_calls = []
 
 def set_current_session_key(session_key):
     return approval._session_key.set(session_key or "")
@@ -72,12 +76,40 @@ def resolve_gateway_approval(session_key, choice):
     approval._resolved_gateway.append((session_key, choice))
     return 1
 
+def is_approved(session_key, pattern_key):
+    return (
+        pattern_key in approval._permanent_approved or
+        pattern_key in approval._session_approved.get(session_key, set())
+    )
+
+def approve_session(session_key, pattern_key):
+    approval._session_approved.setdefault(session_key, set()).add(pattern_key)
+
+def approve_permanent(pattern_key):
+    approval._permanent_approved.add(pattern_key)
+
+def save_permanent_allowlist(patterns):
+    approval._saved_permanent = set(patterns)
+
+def load_permanent_allowlist():
+    return set(approval._permanent_approved)
+
+def check_execute_code_guard(code, env_type):
+    approval._check_execute_code_calls.append((code, env_type))
+    return {"approved": False, "message": "upstream prompt"}
+
 approval.set_current_session_key = set_current_session_key
 approval.reset_current_session_key = reset_current_session_key
 approval.get_current_session_key = get_current_session_key
 approval.register_gateway_notify = register_gateway_notify
 approval.unregister_gateway_notify = unregister_gateway_notify
 approval.resolve_gateway_approval = resolve_gateway_approval
+approval.is_approved = is_approved
+approval.approve_session = approve_session
+approval.approve_permanent = approve_permanent
+approval.save_permanent_allowlist = save_permanent_allowlist
+approval.load_permanent_allowlist = load_permanent_allowlist
+approval.check_execute_code_guard = check_execute_code_guard
 sys.modules["tools.approval"] = approval
 
 path = Path("packages/server/src/services/hermes/agent-bridge/hermes_bridge.py")
@@ -151,6 +183,51 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('remembers execute_code approvals inside the bridge without patching upstream files', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+
+notify = pool._gateway_approval_notify("session-a")
+notify({
+    "command": "execute_code <<'PY'\nprint(1)\nPY",
+    "description": "execute_code script execution",
+    "pattern_key": "execute_code",
+    "pattern_keys": ["execute_code"],
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+result = pool.respond_approval(approval_id, "session")
+assert result["resolved"] is True
+assert approval.is_approved("session-a", "execute_code") is True
+assert approval._saved_permanent == set()
+
+notify = pool._gateway_approval_notify("session-b")
+notify({
+    "command": "execute_code <<'PY'\nprint(2)\nPY",
+    "description": "execute_code script execution",
+    "pattern_key": "execute_code",
+    "pattern_keys": ["execute_code"],
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+result = pool.respond_approval(approval_id, "always")
+assert result["resolved"] is True
+assert approval.is_approved("session-b", "execute_code") is True
+assert "execute_code" in approval._permanent_approved
+assert "execute_code" in approval._saved_permanent
+
+bridge._install_execute_code_approval_memory_patch()
+token = approval.set_current_session_key("session-c")
+try:
+    approval.approve_session("session-c", "execute_code")
+    check_result = approval.check_execute_code_guard("print(3)", "local")
+    assert check_result["approved"] is True
+    assert approval._check_execute_code_calls == []
+finally:
+    approval.reset_current_session_key(token)
+`)
+  })
+
   it('routes terminal/gateway approvals and stream callbacks per concurrent session', () => {
     runPython(String.raw`
 ${harness}
