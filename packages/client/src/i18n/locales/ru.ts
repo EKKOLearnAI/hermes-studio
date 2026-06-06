@@ -933,8 +933,6 @@ export default {
       inlineDiffsHint: 'Отображать изменения в коде внутри строки',
       bellOnComplete: 'Звук завершения',
       bellOnCompleteHint: 'Воспроизводить звук по окончании ответа AI',
-      busyInputMode: 'Режим ввода во время занятости',
-      busyInputModeHint: 'Разрешить ввод, пока AI обрабатывает запрос',
       theme: 'Тема',
       themeHint: 'Выберите светлую, тёмную или системную тему',
       themeLight: 'Светлая',

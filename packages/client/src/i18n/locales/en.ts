@@ -1081,8 +1081,6 @@ export default {
       inlineDiffsHint: 'Show code changes inline',
       bellOnComplete: 'Completion Sound',
       bellOnCompleteHint: 'Play sound when AI finishes',
-      busyInputMode: 'Busy Input Mode',
-      busyInputModeHint: 'Allow input while AI is processing',
       theme: 'Theme',
       themeHint: 'Choose light, dark, or follow system preference',
       themeLight: 'Light',

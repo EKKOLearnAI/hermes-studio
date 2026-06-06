@@ -970,8 +970,6 @@ export default {
       inlineDiffsHint: 'コード変更をインラインで表示',
       bellOnComplete: '完了通知音',
       bellOnCompleteHint: 'AI の応答完了時に通知音を再生',
-      busyInputMode: '処理中入力モード',
-      busyInputModeHint: 'AI 処理中でも入力を許可',
       theme: 'テーマ',
       themeHint: 'ライト、ダーク、またはシステム設定に従う',
       themeLight: 'ライト',

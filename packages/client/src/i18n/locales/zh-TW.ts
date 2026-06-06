@@ -1073,8 +1073,6 @@ export default {
       inlineDiffsHint: '程式碼變更以內嵌方式顯示',
       bellOnComplete: '完成提示音',
       bellOnCompleteHint: 'AI 回覆完成時播放提示音',
-      busyInputMode: '忙碌輸入模式',
-      busyInputModeHint: 'AI 處理中仍可輸入',
       theme: '主題',
       themeHint: '選擇淺色、暗色或跟隨系統',
       themeLight: '淺色',
