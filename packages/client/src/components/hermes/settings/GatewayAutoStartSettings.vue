@@ -49,11 +49,13 @@ async function save(values: Record<string, any>) {
 }
 
 function saveMode(value: string) {
-  void save({ include: value === 'include' ? (settingsStore.gatewayAutoStart.include || []) : null })
+  void save(value === 'include'
+    ? { include: settingsStore.gatewayAutoStart.include || [], exclude: null }
+    : { include: null })
 }
 
 function saveInclude(value: string[]) {
-  void save({ include: normalizeProfileList(value) })
+  void save({ include: normalizeProfileList(value), exclude: null })
 }
 
 function saveExclude(value: string[]) {
@@ -98,7 +100,11 @@ function saveExclude(value: string[]) {
       />
     </SettingRow>
 
-    <SettingRow :label="t('settings.gatewayAutoStart.exclude')" :hint="t('settings.gatewayAutoStart.excludeHint')">
+    <SettingRow
+      v-if="mode === 'all'"
+      :label="t('settings.gatewayAutoStart.exclude')"
+      :hint="t('settings.gatewayAutoStart.excludeHint')"
+    >
       <NSelect
         multiple
         filterable
