@@ -1,6 +1,6 @@
 ---
 date: 2026-06-07
-pr: pending
+pr: 1393
 feature: Agent Bridge runtime readiness
 impact: Chat resume and new CLI runs now distinguish bridge readiness from base server health, surface sanitized bridge failures, and avoid destructive recovery on chat-path checks.
 ---
