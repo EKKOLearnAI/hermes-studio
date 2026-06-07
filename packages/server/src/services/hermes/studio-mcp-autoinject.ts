@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config } from '../../config'
 import { updateConfigYamlForProfile } from '../config-helpers'
@@ -28,9 +29,32 @@ export interface BundledMcpInjectionResult {
   targets: BundledMcpInjectionTargetResult[]
 }
 
+function isEnabledEnv(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase())
+}
+
 function isDisabled(): boolean {
-  const value = String(process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT || '').trim().toLowerCase()
-  return ['1', 'true', 'yes', 'on'].includes(value)
+  return isEnabledEnv(process.env.HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT)
+}
+
+function allowTransientAutoinject(): boolean {
+  return isEnabledEnv(process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT)
+}
+
+function normalizedPathPrefix(pathname: string): string {
+  return pathname.replace(/\/+$/, '') + '/'
+}
+
+function isTransientAppHome(appHome: string): boolean {
+  const normalized = normalizedPathPrefix(appHome)
+  const transientRoots = [tmpdir(), '/tmp', '/private/tmp']
+    .filter(Boolean)
+    .map(root => normalizedPathPrefix(root))
+  return transientRoots.some(root => normalized.startsWith(root))
+}
+
+function shouldSkipTransientAutoinject(): boolean {
+  return isTransientAppHome(config.appHome) && !allowTransientAutoinject()
 }
 
 function isDesktopRuntime(): boolean {
@@ -133,6 +157,18 @@ async function injectIntoProfile(profile: string, desired: Record<string, unknow
       }
     }
 
+    if (isRecord(existing) && existing.enabled === false) {
+      return {
+        data: cfg,
+        write: false,
+        result: {
+          profile,
+          status: 'skipped',
+          reason: `existing ${SERVER_NAME} MCP server is disabled by user`,
+        } satisfies BundledMcpInjectionTargetResult,
+      }
+    }
+
     if (sameConfig(existing, desired)) {
       return {
         data: cfg,
@@ -156,6 +192,11 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
 
   if (isDisabled()) {
     logger.info('[mcp-autoinject] disabled by HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT')
+    return result
+  }
+
+  if (shouldSkipTransientAutoinject()) {
+    logger.info({ appHome: config.appHome }, '[mcp-autoinject] skipped for transient Web UI home')
     return result
   }
 
