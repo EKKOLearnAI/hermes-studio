@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
+import { getAgentBridgeManager } from '../services/hermes/agent-bridge/manager'
 
 declare const __APP_VERSION__: string
 
@@ -82,9 +83,66 @@ export function startVersionCheck(): void {
   setInterval(checkLatestVersion, 30 * 60 * 1000)
 }
 
+async function getAgentBridgeHealth() {
+  const manager = getAgentBridgeManager()
+  const endpoint = typeof manager.getRuntimeState === 'function'
+    ? manager.getRuntimeState().endpoint
+    : undefined
+
+  try {
+    const readiness = await manager.checkReadiness({ timeoutMs: 750, connectRetryMs: 0 })
+    const error = redactAgentBridgeError(readiness.error, readiness.endpoint)
+    return {
+      status: readiness.status,
+      reachable: readiness.reachable,
+      ready: readiness.ready,
+      running: readiness.running,
+      attached: readiness.attached,
+      starting: readiness.starting,
+      stopping: readiness.stopping,
+      restart_scheduled: readiness.restartScheduled,
+      restart_attempts: readiness.restartAttempts,
+      endpoint_kind: readiness.endpointKind,
+      pid: readiness.pid,
+      error,
+    }
+  } catch (err) {
+    return {
+      status: 'unknown',
+      reachable: false,
+      error: redactAgentBridgeError(err instanceof Error ? err.message : String(err), endpoint),
+    }
+  }
+}
+
+function redactAgentBridgeError(error: string | undefined, endpoint?: string): string | undefined {
+  if (!error) return undefined
+  if (!endpoint) return error
+
+  const candidates = [endpoint]
+
+  if (endpoint.startsWith('ipc://')) {
+    candidates.push(endpoint.slice('ipc://'.length))
+  }
+
+  if (endpoint.startsWith('tcp://')) {
+    try {
+      const url = new URL(endpoint)
+      candidates.push(url.host)
+    } catch {
+      // Ignore malformed endpoints and fall back to the original string.
+    }
+  }
+
+  return candidates
+    .filter(candidate => candidate)
+    .reduce((message, candidate) => message.split(candidate).join('[redacted endpoint]'), error)
+}
+
 export async function healthCheck(ctx: any) {
   const raw = await hermesCli.getVersion()
   const hermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
+  const agentBridge = await getAgentBridgeHealth()
   ctx.body = {
     status: 'ok',
     platform: 'hermes-agent',
@@ -96,5 +154,6 @@ export async function healthCheck(ctx: any) {
       ? false
       : Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
     node_version: process.versions.node,
+    agent_bridge: agentBridge,
   }
 }
