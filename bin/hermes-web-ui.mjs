@@ -183,6 +183,11 @@ function getPort() {
   return argPort ?? DEFAULT_PORT
 }
 
+function enableClientMode() {
+  process.env.HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART = '1'
+  process.env.CORS_ORIGINS = '*'
+}
+
 function commandExists(command) {
   try {
     if (process.platform === 'win32') {
@@ -637,6 +642,7 @@ Usage: hermes-web-ui <command> [options]
 
 Commands:
   start [port]       Start the server (default port: ${DEFAULT_PORT})
+  client [port]      Start server for a remote client (disable gateway autostart, allow all CORS)
   stop               Stop the server
   restart [port]     Restart the server
   status             Show server status
@@ -649,7 +655,7 @@ Commands:
 Options:
   -v, --version      Show version number
   -h, --help         Show this help message
-  --port <port>      Specify port (used with start/restart)
+  --port <port>      Specify port (used with start/client/restart)
   --restart          Restart after clear-login-locks
 `)
     process.exit(0)
@@ -657,6 +663,10 @@ Options:
 
   switch (command) {
     case 'start':
+      startDaemon(getPort())
+      break
+    case 'client':
+      enableClientMode()
       startDaemon(getPort())
       break
     case 'stop':

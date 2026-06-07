@@ -10,6 +10,7 @@ export interface LanDeviceInfo {
   inbound_status: DeviceInboundStatus
   outbound_status: DeviceOutboundStatus
   device_public_key: string
+  online?: boolean
   ip: string
   http_port: number
   endpoint_kind: LanEndpointKind
@@ -59,6 +60,13 @@ export async function scanLanDevices(): Promise<LanDiscoveryState> {
 
 export async function requestDevicePairing(id: string): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/request`, { method: 'POST' })
+}
+
+export async function requestDevicePairingByUrl(url: string): Promise<LanDiscoveryState> {
+  return request<LanDiscoveryState>('/api/devices/manual-request', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  })
 }
 
 export async function approveDevice(id: string): Promise<LanDiscoveryState> {

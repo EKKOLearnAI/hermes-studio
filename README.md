@@ -296,6 +296,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | --------------------------------- | ---------------------------------- |
 | `hermes-web-ui start`             | Start in background (daemon mode)  |
 | `hermes-web-ui start --port 9000` | Start on custom port               |
+| `hermes-web-ui client`            | Start for a remote client (`HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`, `CORS_ORIGINS=*`) |
 | `hermes-web-ui stop`              | Stop background process            |
 | `hermes-web-ui restart`           | Restart background process         |
 | `hermes-web-ui status`            | Check if running                   |

@@ -6,9 +6,11 @@ export const deviceRoutes = new Router()
 
 devicePublicRoutes.post('/api/devices/link-request', ctrl.requestDeviceLinkController)
 devicePublicRoutes.post('/api/devices/link-status', ctrl.requestDeviceLinkStatusController)
+devicePublicRoutes.get('/api/devices/link-info', ctrl.deviceLinkInfoController)
 
 deviceRoutes.get('/api/devices', ctrl.listDevices)
 deviceRoutes.post('/api/devices/scan', ctrl.scanDevices)
+deviceRoutes.post('/api/devices/manual-request', ctrl.requestManualDevicePairing)
 deviceRoutes.post('/api/devices/:id/request', ctrl.requestDevicePairing)
 deviceRoutes.post('/api/devices/:id/approve', ctrl.approveDevice)
 deviceRoutes.post('/api/devices/:id/reject', ctrl.rejectDevice)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NInput, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   approveDevice,
@@ -9,6 +9,7 @@ import {
   fetchLanDevices,
   rejectDevice,
   requestDevicePairing,
+  requestDevicePairingByUrl,
   scanLanDevices,
   unblockDevice,
   type DeviceInboundStatus,
@@ -23,6 +24,8 @@ const message = useMessage()
 
 const loading = ref(false)
 const scanning = ref(false)
+const manualPairing = ref(false)
+const manualPairingUrl = ref('')
 const updatingDeviceId = ref('')
 const showRequests = ref(false)
 const state = ref<LanDiscoveryState>({
@@ -34,6 +37,8 @@ const state = ref<LanDiscoveryState>({
 
 const devices = computed(() =>
   [...state.value.devices].sort((a, b) => {
+    const onlineOrder = Number(Boolean(b.online)) - Number(Boolean(a.online))
+    if (onlineOrder !== 0) return onlineOrder
     const kindOrder = endpointOrder(a.endpoint_kind) - endpointOrder(b.endpoint_kind)
     if (kindOrder !== 0) return kindOrder
     return a.id.localeCompare(b.id)
@@ -76,8 +81,16 @@ function pairedTagType(device: LanDeviceInfo) {
   return 'default'
 }
 
+function onlineLabel(device: LanDeviceInfo): string {
+  return device.online ? t('devices.online') : t('devices.offline')
+}
+
+function onlineTagType(device: LanDeviceInfo) {
+  return device.online ? 'success' : 'default'
+}
+
 function canRequestPairing(device: LanDeviceInfo): boolean {
-  return device.outbound_status === 'none' || device.outbound_status === 'rejected'
+  return Boolean(device.online) && (device.outbound_status === 'none' || device.outbound_status === 'rejected')
 }
 
 function canBlock(device: LanDeviceInfo): boolean {
@@ -167,6 +180,24 @@ async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve'
   }
 }
 
+async function requestManualPairing() {
+  const url = manualPairingUrl.value.trim()
+  if (!url) {
+    message.warning(t('devices.manualUrlRequired'))
+    return
+  }
+  manualPairing.value = true
+  try {
+    state.value = await requestDevicePairingByUrl(url)
+    manualPairingUrl.value = ''
+    message.success(t('devices.manualRequestSent'))
+  } catch (err: any) {
+    message.error(err?.message || t('devices.manualRequestFailed'))
+  } finally {
+    manualPairing.value = false
+  }
+}
+
 onMounted(() => {
   void loadDevices()
 })
@@ -177,6 +208,18 @@ onMounted(() => {
     <header class="page-header">
       <h2 class="header-title">{{ t('devices.title') }}</h2>
       <div class="header-actions">
+        <NInput
+          v-model:value="manualPairingUrl"
+          class="manual-pairing-input"
+          size="small"
+          clearable
+          :placeholder="t('devices.manualUrlPlaceholder')"
+          :disabled="manualPairing"
+          @keyup.enter="requestManualPairing"
+        />
+        <NButton size="small" :loading="manualPairing" @click="requestManualPairing">
+          {{ t('devices.manualPairing') }}
+        </NButton>
         <div class="header-meta">
           <span>{{ t('devices.count', { count: devices.length }) }}</span>
           <span>{{ t('devices.lastScanned', { time: formatTime(state.last_scanned_at) }) }}</span>
@@ -214,6 +257,9 @@ onMounted(() => {
             </div>
 
             <div class="device-status-row">
+              <NTag size="small" :type="onlineTagType(device)" round>
+                {{ onlineLabel(device) }}
+              </NTag>
               <NTag size="small" :type="pairedTagType(device)" round>
                 {{ pairedLabel(device) }}
               </NTag>
@@ -340,6 +386,11 @@ onMounted(() => {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.manual-pairing-input {
+  width: 280px;
+  max-width: min(280px, 100%);
 }
 
 .header-title {

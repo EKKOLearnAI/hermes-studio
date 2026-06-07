@@ -101,12 +101,12 @@ async function request(path, options = {}) {
 const tools = [
   {
     name: 'hermes_lan_devices_list',
-    description: 'List LAN devices discovered by Hermes Web UI, including pairing status.',
+    description: 'List known LAN and remote devices from Hermes Web UI, including pairing and online status.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'hermes_lan_devices_scan',
-    description: 'Refresh LAN device discovery cache and return the latest devices.',
+    description: 'Refresh LAN device discovery cache and return known devices with pairing and online status.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {

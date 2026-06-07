@@ -302,6 +302,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 |---|---|
 | `hermes-web-ui start` | 后台启动（守护进程模式） |
 | `hermes-web-ui start --port 9000` | 自定义端口启动 |
+| `hermes-web-ui client` | 远程客户端模式启动（等同设置 `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`、`CORS_ORIGINS=*` 后执行 `start`） |
 | `hermes-web-ui stop` | 停止后台进程 |
 | `hermes-web-ui restart` | 重启后台进程 |
 | `hermes-web-ui status` | 查看运行状态 |

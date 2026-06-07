@@ -43,14 +43,16 @@ function networkErrorDetail(err: any): LanNetworkErrorDetail {
   }
 }
 
-async function postJsonWithFetch(url: string, body: unknown, timeoutMs: number): Promise<LanJsonPostResponse> {
+async function jsonWithFetch(url: string, method: 'GET' | 'POST', body: unknown, timeoutMs: number): Promise<LanJsonPostResponse> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers: method === 'POST'
+        ? { 'Content-Type': 'application/json' }
+        : { Accept: 'application/json' },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     })
     const data = await response.json().catch(() => ({})) as Record<string, unknown>
@@ -75,18 +77,22 @@ function parseJsonObject(raw: string): Record<string, unknown> {
   }
 }
 
-function postJsonWithNodeHttp(url: string, body: unknown, timeoutMs: number, primaryError: LanNetworkErrorDetail): Promise<LanJsonPostResponse> {
+function jsonWithNodeHttp(url: string, method: 'GET' | 'POST', body: unknown, timeoutMs: number, primaryError: LanNetworkErrorDetail): Promise<LanJsonPostResponse> {
   const target = new URL(url)
-  const payload = JSON.stringify(body)
+  const payload = method === 'POST' ? JSON.stringify(body) : ''
   const client = target.protocol === 'https:' ? https : http
 
   return new Promise((resolve, reject) => {
     const req = client.request(target, {
-      method: 'POST',
+      method,
       headers: {
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
+        ...(method === 'POST'
+          ? {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+            }
+          : {}),
       },
       timeout: timeoutMs,
     }, (res) => {
@@ -110,21 +116,29 @@ function postJsonWithNodeHttp(url: string, body: unknown, timeoutMs: number, pri
       req.destroy(err)
     })
     req.on('error', reject)
-    req.end(payload)
+    req.end(payload || undefined)
   })
 }
 
-export async function postLanJson(url: string, body: unknown, timeoutMs = 5000): Promise<LanJsonPostResponse> {
+async function lanJson(url: string, method: 'GET' | 'POST', body: unknown, timeoutMs: number): Promise<LanJsonPostResponse> {
   try {
-    return await postJsonWithFetch(url, body, timeoutMs)
+    return await jsonWithFetch(url, method, body, timeoutMs)
   } catch (err: any) {
     const primaryError = networkErrorDetail(err)
     try {
-      return await postJsonWithNodeHttp(url, body, timeoutMs, primaryError)
+      return await jsonWithNodeHttp(url, method, body, timeoutMs, primaryError)
     } catch (fallbackErr: any) {
       throw new LanJsonPostError(primaryError, networkErrorDetail(fallbackErr))
     }
   }
+}
+
+export async function getLanJson(url: string, timeoutMs = 5000): Promise<LanJsonPostResponse> {
+  return lanJson(url, 'GET', undefined, timeoutMs)
+}
+
+export async function postLanJson(url: string, body: unknown, timeoutMs = 5000): Promise<LanJsonPostResponse> {
+  return lanJson(url, 'POST', body, timeoutMs)
 }
 
 export function describeLanJsonPostError(err: any): Record<string, unknown> | null {

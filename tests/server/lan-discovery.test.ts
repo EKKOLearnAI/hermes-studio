@@ -156,6 +156,8 @@ describe('LAN discovery', () => {
     expect(publicDeviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceRoutesSource).toContain("devicePublicRoutes.post('/api/devices/link-status'")
+    expect(deviceRoutesSource).toContain("devicePublicRoutes.get('/api/devices/link-info'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/manual-request'")
     expect(deviceRoutesSource).toContain("deviceRoutes.delete('/api/devices/:id/request-history'")
     expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections'")
     expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/:id/connect'")
@@ -179,6 +181,8 @@ describe('LAN discovery', () => {
   it('exposes an MCP terminal list tool so agents can recover forgotten terminal ids', () => {
     const mcpSource = readFileSync('bin/hermes-web-ui-mcp.mjs', 'utf8')
 
+    expect(mcpSource).toContain("name: 'hermes_lan_devices_list'")
+    expect(mcpSource).toContain('online status')
     expect(mcpSource).toContain("name: 'hermes_lan_terminal_list'")
     expect(mcpSource).toContain('/terminals`))')
   })

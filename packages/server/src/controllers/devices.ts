@@ -7,19 +7,36 @@ import {
   requestInboundDeviceLink,
   updateInboundStatus,
   updateOutboundStatus,
+  type DeviceRelationRecord,
   type DeviceInboundStatus,
   type DeviceOutboundStatus,
 } from '../db/hermes/devices-store'
 import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
 import { getLanPeerSocketManager } from '../services/lan-peer-socket'
 import { getLanPeerToolsService } from '../services/lan-peer-tools'
-import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
-import { describeLanJsonPostError, postLanJson } from '../services/lan-http-client'
+import { createDeviceSignature, deviceIdFromPublicKey, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
+import { describeLanJsonPostError, getLanJson, postLanJson } from '../services/lan-http-client'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
 
 const REQUEST_TTL_MS = 5 * 60 * 1000
 const seenRequestNonces = new Map<string, number>()
+
+type LinkInfoResponse = {
+  device_id?: unknown
+  device_public_key?: unknown
+  computer_name?: unknown
+  os?: {
+    type?: unknown
+    platform?: unknown
+    release?: unknown
+    arch?: unknown
+  }
+  hermes_agent_version?: unknown
+  hermes_web_ui_version?: unknown
+  http_port?: unknown
+  endpoint_kind?: unknown
+}
 
 function rememberNonce(deviceId: string, nonce: string, timestamp: number): boolean {
   const now = Date.now()
@@ -79,20 +96,54 @@ async function syncOutboundStatuses(devices: LanDeviceInfo[]): Promise<Map<strin
   return statuses
 }
 
+function relationToDevice(relation: DeviceRelationRecord): LanDeviceInfo {
+  return {
+    id: relation.id,
+    device_id: relation.device_id,
+    device_public_key: relation.device_public_key,
+    ip: relation.ip,
+    http_port: relation.http_port,
+    endpoint_kind: relation.endpoint_kind,
+    url: relation.url,
+    computer_name: relation.computer_name,
+    os: relation.os,
+    hermes_agent_version: relation.hermes_agent_version,
+    hermes_web_ui_version: relation.hermes_web_ui_version,
+    response_ms: relation.response_ms,
+    last_seen_at: new Date(relation.last_seen_at || relation.updated_at || Date.now()).toISOString(),
+  }
+}
+
+function mergeKnownDevices(discoveredDevices: LanDeviceInfo[], relations: DeviceRelationRecord[]): LanDeviceInfo[] {
+  const devicesById = new Map(discoveredDevices.map(device => [device.id, device]))
+  for (const relation of relations) {
+    if (devicesById.has(relation.id)) continue
+    if (relation.inbound_status === 'none' && relation.outbound_status === 'none') continue
+    if (!relation.device_public_key || !relation.url || !relation.http_port) continue
+    devicesById.set(relation.id, relationToDevice(relation))
+  }
+  return [...devicesById.values()]
+}
+
 async function devicesPayload() {
   const cache = getLanDiscoveryCache()
-  const remoteStatuses = await syncOutboundStatuses(cache.devices)
+  const knownRelations = listDeviceRelations()
+  const discoveredDeviceIds = new Set(cache.devices.map(device => device.id))
+  const knownDevices = mergeKnownDevices(cache.devices, knownRelations)
+  const remoteStatuses = await syncOutboundStatuses(knownDevices)
   const relations = new Map(listDeviceRelations().map(device => [device.id, device]))
-  const devices = cache.devices.map(device => {
+  const devices = knownDevices.map(device => {
     const relation = relations.get(device.id)
     const outboundStatus = remoteStatuses.get(device.id) || relation?.outbound_status || 'none'
-    if (outboundStatus === 'approved') {
+    const online = discoveredDeviceIds.has(device.id) || remoteStatuses.has(device.id)
+    if (online && outboundStatus === 'approved') {
       void getLanPeerSocketManager().connectToDevice(device).catch(err => {
         console.warn('[lan-peer] failed to connect paired device:', err?.message || err)
       })
     }
     return {
       ...device,
+      online,
       inbound_status: relation?.inbound_status || 'none',
       outbound_status: outboundStatus,
       requested_at: relation?.requested_at || 0,
@@ -115,13 +166,136 @@ export async function listDevices(ctx: any) {
   ctx.body = await devicesPayload()
 }
 
+function normalizedManualDeviceUrl(input: unknown): URL | null {
+  const raw = String(input || '').trim()
+  if (!raw) return null
+  try {
+    const url = new URL(raw.includes('://') ? raw : `http://${raw}`)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    url.username = ''
+    url.password = ''
+    url.pathname = ''
+    url.search = ''
+    url.hash = ''
+    return url
+  } catch {
+    return null
+  }
+}
+
+function responseMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt)
+}
+
+function deviceFromLinkInfo(baseUrl: URL, info: LinkInfoResponse, latencyMs: number): LanDeviceInfo | null {
+  const deviceId = typeof info.device_id === 'string' ? info.device_id.trim() : ''
+  const publicKey = typeof info.device_public_key === 'string' ? info.device_public_key : ''
+  if (!deviceId || !publicKey) return null
+  if (deviceIdFromPublicKey(publicKey) !== deviceId) return null
+  const httpPort = Number(info.http_port) || Number(baseUrl.port) || (baseUrl.protocol === 'https:' ? 443 : 80)
+  if (!Number.isInteger(httpPort) || httpPort <= 0 || httpPort > 65535) return null
+  const endpointKind = info.endpoint_kind === 'web' || info.endpoint_kind === 'desktop' || info.endpoint_kind === 'custom'
+    ? info.endpoint_kind
+    : getLanEndpointKind(httpPort)
+
+  return {
+    id: deviceId,
+    device_id: deviceId,
+    device_public_key: publicKey,
+    ip: baseUrl.hostname,
+    http_port: httpPort,
+    endpoint_kind: endpointKind,
+    url: baseUrl.origin,
+    computer_name: String(info.computer_name || ''),
+    os: {
+      type: String(info.os?.type || ''),
+      platform: String(info.os?.platform || '') as NodeJS.Platform,
+      release: String(info.os?.release || ''),
+      arch: String(info.os?.arch || ''),
+    },
+    hermes_agent_version: String(info.hermes_agent_version || ''),
+    hermes_web_ui_version: String(info.hermes_web_ui_version || ''),
+    response_ms: latencyMs,
+    last_seen_at: new Date().toISOString(),
+  }
+}
+
+async function fetchManualDevice(baseUrl: URL): Promise<LanDeviceInfo> {
+  const startedAt = Date.now()
+  const response = await getLanJson(`${baseUrl.origin}/api/devices/link-info`, 5000)
+  if (!response.ok) {
+    throw new Error(`Device info request failed: ${response.status}`)
+  }
+  const device = deviceFromLinkInfo(baseUrl, response.data as LinkInfoResponse, responseMs(startedAt))
+  if (!device) throw new Error('Remote URL did not return valid device info')
+  return device
+}
+
+async function requestPairingWithDevice(target: LanDeviceInfo): Promise<DeviceOutboundStatus> {
+  const timestamp = Date.now()
+  const nonce = randomUUID()
+  const localInfo = await getPublicSystemInfo()
+  const signature = await createDeviceSignature(nonce, timestamp)
+  const body = {
+    ...localInfo,
+    http_port: config.port,
+    endpoint_kind: getLanEndpointKind(config.port),
+    timestamp,
+    nonce,
+    signature,
+  }
+
+  const response = await postLanJson(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, body, 5000)
+  const data = response.data as { status?: unknown; error?: unknown }
+  if (!response.ok) {
+    const err = new Error(typeof data.error === 'string' ? data.error : `Request failed: ${response.status}`) as Error & { status?: number }
+    err.status = response.status === 409 ? 409 : 502
+    throw err
+  }
+  return parseRemoteStatus(data.status) || 'pending'
+}
+
+export async function deviceLinkInfoController(ctx: any) {
+  const info = await getPublicSystemInfo()
+  ctx.body = {
+    ...info,
+    http_port: config.port,
+    endpoint_kind: getLanEndpointKind(config.port),
+  }
+}
+
+export async function requestManualDevicePairing(ctx: any) {
+  const baseUrl = normalizedManualDeviceUrl((ctx.request.body as any)?.url)
+  if (!baseUrl) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid device URL' }
+    return
+  }
+
+  try {
+    const target = await fetchManualDevice(baseUrl)
+    const remoteStatus = await requestPairingWithDevice(target)
+    if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
+    ctx.body = await devicesPayload()
+  } catch (err: any) {
+    ctx.status = Number(err?.status) || 502
+    ctx.body = {
+      error: err?.message ? `Failed to request device pairing: ${err.message}` : 'Failed to request device pairing',
+      detail: describeLanJsonPostError(err),
+    }
+  }
+}
+
 export async function scanDevices(ctx: any) {
   await scanLanDevices()
   ctx.body = await devicesPayload()
 }
 
 function findDiscoveredDevice(id: string): LanDeviceInfo | null {
-  return getLanDiscoveryCache().devices.find(device => device.id === id) || null
+  const discovered = getLanDiscoveryCache().devices.find(device => device.id === id)
+  if (discovered) return discovered
+  const relation = getDeviceRelation(id)
+  return relation ? relationToDevice(relation) : null
 }
 
 function normalizeIp(ctx: any): string {
@@ -462,33 +636,13 @@ export async function requestDevicePairing(ctx: any) {
     return
   }
 
-  const timestamp = Date.now()
-  const nonce = randomUUID()
-  const localInfo = await getPublicSystemInfo()
-  const signature = await createDeviceSignature(nonce, timestamp)
-  const body = {
-    ...localInfo,
-    http_port: config.port,
-    endpoint_kind: getLanEndpointKind(config.port),
-    timestamp,
-    nonce,
-    signature,
-  }
-
   try {
-    const response = await postLanJson(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, body, 5000)
-    const data = response.data as { status?: unknown; error?: unknown }
-    if (!response.ok) {
-      ctx.status = response.status === 409 ? 409 : 502
-      ctx.body = { error: typeof data.error === 'string' ? data.error : `Request failed: ${response.status}` }
-      return
-    }
-    const remoteStatus = parseRemoteStatus(data.status) || 'pending'
+    const remoteStatus = await requestPairingWithDevice(target)
     if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
     ctx.body = await devicesPayload()
   } catch (err: any) {
     const detail = describeLanJsonPostError(err)
-    ctx.status = 502
+    ctx.status = Number(err?.status) || 502
     ctx.body = {
       error: err?.message ? `Failed to request device pairing: ${err.message}` : 'Failed to request device pairing',
       detail,
