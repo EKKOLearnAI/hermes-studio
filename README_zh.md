@@ -269,7 +269,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_AGENT_BRIDGE_UV` | 自动发现 | 可用时用于启动 agent bridge 的 `uv` 可执行文件。 |
 | `UV` | 自动发现 | `uv` 可执行文件 fallback。 |
 | `PYTHON` | 自动发现 | agent bridge 的 Python 可执行文件 fallback。 |
-| `HERMES_AGENT_BRIDGE_ENDPOINT` | 运行目录派生默认值 | 显式 agent bridge broker endpoint 覆盖；未设置时 Web UI 会从 `HERMES_WEB_UI_HOME` 派生 endpoint，避免跨实例 bridge 串接。 |
+| `HERMES_AGENT_BRIDGE_ENDPOINT` | 运行目录派生默认值 | 显式覆盖 Agent Bridge 代理地址；未设置时 Web UI 会从 `HERMES_WEB_UI_HOME` 派生地址，避免跨实例串接到同一个 bridge。 |
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Node 请求 bridge broker 的响应超时。 |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | 连接 bridge socket 失败时的短重试窗口。 |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | 等待 Python bridge ready 的超时。 |

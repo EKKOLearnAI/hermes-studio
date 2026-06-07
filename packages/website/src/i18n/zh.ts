@@ -226,7 +226,7 @@ export default {
           ['HERMES_AGENT_BRIDGE_UV', '可用时用于启动 agent bridge 的 uv 可执行文件'],
           ['UV', 'uv 可执行文件 fallback'],
           ['PYTHON', 'agent bridge 的 Python 可执行文件 fallback'],
-          ['HERMES_AGENT_BRIDGE_ENDPOINT', '显式 agent bridge broker endpoint 覆盖；未设置时 Web UI 会按运行目录派生 endpoint，避免跨实例 bridge 串接'],
+          ['HERMES_AGENT_BRIDGE_ENDPOINT', '显式覆盖 Agent Bridge 代理地址；未设置时 Web UI 会按运行目录派生地址，避免跨实例串接到同一个 bridge'],
           ['HERMES_AGENT_BRIDGE_TIMEOUT_MS', 'Node 请求 bridge broker 的响应超时'],
           ['HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS', '连接 bridge socket 失败时的短重试窗口'],
           ['HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS', '等待 Python bridge ready 的超时'],
@@ -256,7 +256,7 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge 运行时',
-        content: '聊天运行通过 Hermes agent bridge 处理。它随 Hermes Studio 服务一起运行，并直接连接 Hermes Agent runtime。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 与 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 与各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
+        content: '聊天运行通过 Hermes Agent Bridge 处理。它随 Hermes Studio 服务一起运行，并直接连接 Hermes Agent 运行时。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 到 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 到各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
       },
       profiles: {
         title: '配置文件',
