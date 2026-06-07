@@ -161,6 +161,143 @@ describe('agent bridge manager command resolution', () => {
     }
   })
 
+  it('reports readiness when a fake TCP server answers ping with pong', async () => {
+    const endpoint = `tcp://127.0.0.1:${33000 + (process.pid % 10000)}`
+    const server = createServer((socket) => {
+      socket.once('data', () => {
+        socket.end(`${JSON.stringify({ ok: true, pong: true })}\n`)
+      })
+    })
+
+    await new Promise<void>((resolve) => {
+      const url = new URL(endpoint)
+      server.listen(Number(url.port), url.hostname, resolve)
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint })
+
+      await expect(manager.checkReadiness({ timeoutMs: 250, connectRetryMs: 0 })).resolves.toMatchObject({
+        endpoint,
+        endpointKind: 'tcp',
+        status: 'ready',
+        reachable: true,
+        ready: true,
+        running: true,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+      })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('reports unreachable instead of throwing when endpoint is missing', async () => {
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const manager = new AgentBridgeManager()
+    manager.endpoint = ''
+
+    await expect(manager.checkReadiness()).resolves.toMatchObject({
+      endpoint: '',
+      endpointKind: 'unknown',
+      status: 'unreachable',
+      reachable: false,
+      ready: false,
+      running: false,
+      attached: false,
+      starting: false,
+      stopping: false,
+      restartScheduled: false,
+      restartAttempts: 0,
+      error: 'agent bridge endpoint is not configured',
+    })
+  })
+
+  it('reports starting readiness without pinging the bridge', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
+    const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6553' })
+
+    ;(manager as any).starting = Promise.resolve()
+
+    await expect(manager.checkReadiness()).resolves.toMatchObject({
+      endpoint: 'tcp://127.0.0.1:6553',
+      endpointKind: 'tcp',
+      status: 'starting',
+      reachable: false,
+      ready: false,
+      running: false,
+      attached: false,
+      starting: true,
+      stopping: false,
+      restartScheduled: false,
+      restartAttempts: 0,
+    })
+    expect(pingSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports stopping readiness without pinging the bridge', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
+    const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6554' })
+
+    ;(manager as any).attached = true
+    ;(manager as any).ready = true
+    ;(manager as any).stopping = true
+
+    await expect(manager.checkReadiness()).resolves.toMatchObject({
+      endpoint: 'tcp://127.0.0.1:6554',
+      endpointKind: 'tcp',
+      status: 'stopping',
+      reachable: false,
+      ready: false,
+      running: false,
+      attached: true,
+      starting: false,
+      stopping: true,
+      restartScheduled: false,
+      restartAttempts: 0,
+    })
+    expect(pingSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports restarting readiness without pinging the bridge', async () => {
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
+    const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6555' })
+
+    ;(manager as any).restartAttempts = 2
+    ;(manager as any).restartTimer = setTimeout(() => undefined, 1000)
+
+    try {
+      await expect(manager.checkReadiness()).resolves.toMatchObject({
+        endpoint: 'tcp://127.0.0.1:6555',
+        endpointKind: 'tcp',
+        status: 'restarting',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: true,
+        restartAttempts: 2,
+      })
+    } finally {
+      clearTimeout((manager as any).restartTimer)
+      ;(manager as any).restartTimer = null
+    }
+
+    expect(pingSpy).not.toHaveBeenCalled()
+  })
+
   it('attaches to an already running bridge instead of spawning a replacement', async () => {
     const endpoint = `tcp://127.0.0.1:${34000 + (process.pid % 10000)}`
     const actions: string[] = []
@@ -238,6 +375,62 @@ describe('agent bridge manager command resolution', () => {
       })
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('clears stopping after stop completes for an attached bridge', async () => {
+    const endpoint = `tcp://127.0.0.1:${36000 + (process.pid % 10000)}`
+    const actions: string[] = []
+    const server = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        const request = JSON.parse(chunk.toString('utf8').trim())
+        actions.push(request.action)
+        socket.end(`${JSON.stringify({ ok: true, pong: request.action === 'ping' })}\n`, () => {
+          if (request.action === 'shutdown') {
+            server.close()
+          }
+        })
+      })
+    })
+    const serverClosed = new Promise<void>((resolve) => server.once('close', () => resolve()))
+
+    await new Promise<void>((resolve) => {
+      const url = new URL(endpoint)
+      server.listen(Number(url.port), url.hostname, resolve)
+    })
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
+
+      await manager.start()
+      await manager.stop()
+      await serverClosed
+
+      expect(actions).toEqual(['ping', 'shutdown'])
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        attached: false,
+        stopping: false,
+      })
+      await expect(manager.checkReadiness({ timeoutMs: 250, connectRetryMs: 0 })).resolves.toMatchObject({
+        endpoint,
+        endpointKind: 'tcp',
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+      })
+    } finally {
+      if (server.listening) {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      }
     }
   })
 })

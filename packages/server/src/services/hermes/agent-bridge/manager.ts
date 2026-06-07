@@ -42,6 +42,31 @@ export interface AgentBridgeManagerRuntimeState {
   restartAttempts: number
 }
 
+export type AgentBridgeEndpointKind = 'ipc' | 'tcp' | 'unknown'
+
+export type AgentBridgeReadinessStatus = 'ready' | 'starting' | 'stopping' | 'restarting' | 'unreachable'
+
+export interface AgentBridgeReadinessOptions {
+  timeoutMs?: number
+  connectRetryMs?: number
+}
+
+export interface AgentBridgeReadiness {
+  endpoint: string
+  endpointKind: AgentBridgeEndpointKind
+  status: AgentBridgeReadinessStatus
+  reachable: boolean
+  ready: boolean
+  running: boolean
+  attached: boolean
+  starting: boolean
+  stopping: boolean
+  restartScheduled: boolean
+  restartAttempts: number
+  pid?: number
+  error?: string
+}
+
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
@@ -246,6 +271,23 @@ function isTcpEndpoint(endpoint: string): boolean {
   return endpoint.startsWith('tcp://')
 }
 
+function classifyEndpointKind(endpoint: string): AgentBridgeEndpointKind {
+  if (endpoint.startsWith('ipc://')) return 'ipc'
+  if (endpoint.startsWith('tcp://')) return 'tcp'
+  return 'unknown'
+}
+
+function normalizeReadinessError(endpoint: string, err: unknown): string {
+  if (!endpoint.trim()) return 'agent bridge endpoint is not configured'
+  const message = err instanceof Error
+    ? err.message
+    : typeof err === 'string'
+      ? err
+      : undefined
+  const normalized = message?.replace(/^Error:\s*/, '').trim()
+  return normalized || 'agent bridge is unreachable'
+}
+
 function isDesktopRuntime(): boolean {
   return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
 }
@@ -440,6 +482,88 @@ export class AgentBridgeManager {
       stopping: this.stopping,
       restartScheduled: !!this.restartTimer,
       restartAttempts: this.restartAttempts,
+    }
+  }
+
+  async checkReadiness(options: AgentBridgeReadinessOptions = {}): Promise<AgentBridgeReadiness> {
+    const state = this.getRuntimeState()
+    const endpoint = state.endpoint
+    const endpointKind = classifyEndpointKind(endpoint)
+    const readiness: AgentBridgeReadiness = {
+      endpoint,
+      endpointKind,
+      status: 'unreachable',
+      reachable: false,
+      ready: state.ready,
+      running: state.running,
+      attached: state.attached,
+      starting: state.starting,
+      stopping: state.stopping,
+      restartScheduled: state.restartScheduled,
+      restartAttempts: state.restartAttempts,
+      pid: state.pid,
+    }
+
+    if (state.stopping) {
+      return {
+        ...readiness,
+        status: 'stopping',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (state.starting) {
+      return {
+        ...readiness,
+        status: 'starting',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (state.restartScheduled) {
+      return {
+        ...readiness,
+        status: 'restarting',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (!endpoint.trim()) {
+      return {
+        ...readiness,
+        ready: false,
+        running: false,
+        error: normalizeReadinessError(endpoint, undefined),
+      }
+    }
+
+    try {
+      const client = new AgentBridgeClient({
+        endpoint,
+        timeoutMs: options.timeoutMs ?? 1000,
+        connectRetryMs: options.connectRetryMs ?? 0,
+      })
+      await client.ping()
+      return {
+        ...readiness,
+        status: 'ready',
+        reachable: true,
+        ready: true,
+        running: true,
+      }
+    } catch (err) {
+      return {
+        ...readiness,
+        ready: false,
+        running: false,
+        error: normalizeReadinessError(endpoint, err),
+      }
     }
   }
 
@@ -648,6 +772,7 @@ export class AgentBridgeManager {
       }
       this.ready = false
       this.attached = false
+      this.stopping = false
       return
     }
     this.ready = false
@@ -669,6 +794,7 @@ export class AgentBridgeManager {
         child.kill('SIGTERM')
       }
     })
+    this.stopping = false
   }
 }
 
