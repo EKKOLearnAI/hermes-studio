@@ -53,7 +53,18 @@ interface SpeechQueueItem {
  * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis
+  const synth = window.speechSynthesis ?? {
+    getVoices: () => [],
+    speak: () => {},
+    cancel: () => {},
+    pause: () => {},
+    resume: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    speaking: false,
+    pending: false,
+    paused: false,
+  } as unknown as SpeechSynthesis
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
