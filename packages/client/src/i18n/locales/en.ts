@@ -407,6 +407,7 @@ export default {
     searchEnterHint: 'Enter to open · Esc to close',
     searchFailed: 'Failed to search sessions',
     newChat: 'New Chat',
+    agent: 'Agent',
     approvalKicker: 'Terminal permission',
     approvalTitle: 'Review command before running',
     approvalAllowOnce: 'Allow once',

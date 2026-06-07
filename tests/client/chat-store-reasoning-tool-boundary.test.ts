@@ -123,4 +123,78 @@ describe('chat store reasoning/tool boundaries', () => {
       isStreaming: true,
     }))
   })
+
+  it('settles running coding-agent tools when the run completes without a tool.completed event', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'claude'
+    session.codingAgentId = 'claude-code'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('run pwd')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({ event: 'run.started', session_id: 'session-1' })
+    onEvent({
+      event: 'tool.started',
+      session_id: 'session-1',
+      tool_call_id: 'tool-1',
+      tool: 'Bash',
+      arguments: '{"command":"pwd"}',
+    } as RunEvent)
+    expect(store.messages.find(message => message.role === 'tool')).toEqual(expect.objectContaining({
+      toolStatus: 'running',
+    }))
+
+    onEvent({ event: 'run.completed', session_id: 'session-1', output: 'done' })
+
+    expect(store.messages.find(message => message.role === 'tool')).toEqual(expect.objectContaining({
+      toolStatus: 'done',
+    }))
+  })
+
+  it('does not queue or command-style coding agent follow-up messages', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'claude'
+    session.codingAgentId = 'claude-code'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('first input')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({
+      event: 'agent.event',
+      session_id: 'session-1',
+      source: 'coding_agent',
+      kind: 'status',
+      text: 'Input sent to coding agent.',
+    })
+    expect(store.messages).toHaveLength(1)
+
+    onEvent({ event: 'run.started', session_id: 'session-1' })
+
+    await store.sendMessage('/not-a-hermes-command')
+
+    expect(chatApi.startRunViaSocket).toHaveBeenCalledTimes(2)
+    expect(store.queuedUserMessages.get('session-1')).toBeUndefined()
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'first input',
+        queued: false,
+      }),
+      expect.objectContaining({
+        role: 'user',
+        content: '/not-a-hermes-command',
+        queued: false,
+      }),
+    ])
+    expect(store.messages[1].systemType).toBeUndefined()
+  })
 })

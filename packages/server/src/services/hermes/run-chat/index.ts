@@ -16,6 +16,7 @@ import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '.
 import { AgentBridgeClient } from '../agent-bridge'
 import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle-api-run'
 import { handleBridgeRun, resumeBridgeRun } from './handle-bridge-run'
+import { handleCodingAgentRun } from './handle-coding-agent-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
@@ -117,6 +118,15 @@ export class ChatRunSocket {
       model_groups?: Array<{ provider: string; models: string[] }>
       queue_id?: string
       source?: string
+      coding_agent_id?: 'claude-code' | 'codex'
+      agent_id?: 'claude-code' | 'codex'
+      mode?: 'scoped' | 'global'
+      baseUrl?: string
+      base_url?: string
+      apiKey?: string
+      api_key?: string
+      apiMode?: string
+      api_mode?: string
       profile?: string
     }) => {
       let runProfile: string
@@ -160,7 +170,7 @@ export class ChatRunSocket {
           }
           return
         }
-        if (state.isWorking) {
+        if (state.isWorking && source !== 'coding_agent') {
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
           state.queue.push({
             queue_id: queueId,
@@ -171,6 +181,15 @@ export class ChatRunSocket {
             instructions: data.instructions,
             profile: runProfile,
             source,
+            codingAgentId: data.coding_agent_id,
+            agentId: data.agent_id,
+            mode: data.mode,
+            baseUrl: data.baseUrl,
+            base_url: data.base_url,
+            apiKey: data.apiKey,
+            api_key: data.api_key,
+            apiMode: data.apiMode,
+            api_mode: data.api_mode,
             originSocketId: socket.id,
           })
           this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
@@ -183,7 +202,7 @@ export class ChatRunSocket {
           return
         }
         state.events = []
-        state.isWorking = true
+        state.isWorking = source !== 'coding_agent'
         state.profile = runProfile
         state.source = source
       }
@@ -294,6 +313,15 @@ export class ChatRunSocket {
       source?: string
       queue_id?: string
       peerExcludeSocketId?: string
+      coding_agent_id?: 'claude-code' | 'codex'
+      agent_id?: 'claude-code' | 'codex'
+      mode?: 'scoped' | 'global'
+      baseUrl?: string
+      base_url?: string
+      apiKey?: string
+      api_key?: string
+      apiMode?: string
+      api_mode?: string
     },
     profile: string,
     skipUserMessage = false,
@@ -319,6 +347,17 @@ export class ChatRunSocket {
         skipUserMessage,
         loadSessionStateFromDb,
         this.dequeueNextQueuedRun.bind(this),
+      )
+      return
+    }
+
+    if (source === 'coding_agent') {
+      await handleCodingAgentRun(
+        this.nsp,
+        socket,
+        data,
+        profile,
+        this.sessionMap,
       )
       return
     }
@@ -446,10 +485,42 @@ export class ChatRunSocket {
       source: next.source,
       queue_id: next.queue_id,
       peerExcludeSocketId: next.originSocketId,
+      coding_agent_id: next.codingAgentId,
+      agent_id: next.agentId,
+      mode: next.mode,
+      baseUrl: next.baseUrl,
+      base_url: next.base_url,
+      apiKey: next.apiKey,
+      api_key: next.api_key,
+      apiMode: next.apiMode,
+      api_mode: next.api_mode,
     }, next.profile || fallbackProfile, skipUserMessage)
   }
 
   // --- Helpers ---
+
+  emitExternalEvent(sessionId: string, event: string, payload: any) {
+    const tagged = { ...payload, session_id: sessionId }
+    const state = this.sessionMap.get(sessionId)
+    if (state?.isWorking) {
+      state.events.push({ event, data: tagged })
+      if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
+    }
+    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+  }
+
+  markExternalRunCompleted(sessionId: string, event: string) {
+    const state = this.sessionMap.get(sessionId)
+    if (!state) return
+    state.isWorking = false
+    state.abortController = undefined
+    state.runId = undefined
+    state.activeRunMarker = undefined
+    state.events = []
+    state.responseRun = undefined
+    state.profile = undefined
+    logger.info('[chat-run-socket] external run completed for session %s (%s)', sessionId, event)
+  }
 
   private clearClarifyEventState(sessionId: string, clarifyId: string) {
     const state = this.sessionMap.get(sessionId)

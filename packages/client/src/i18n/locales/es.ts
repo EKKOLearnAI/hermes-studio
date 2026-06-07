@@ -392,6 +392,7 @@ export default {
     historyScopeHint: 'Sesiones del historial de Hermes del perfil actual, de solo lectura y agrupadas por origen.',
     noSessions: 'Sin sesiones',
     newChat: 'Nuevo chat',
+    agent: 'Agent',
     approvalKicker: 'Permiso de terminal',
     approvalTitle: 'Revisar comando antes de ejecutar',
     approvalAllowOnce: 'Permitir una vez',

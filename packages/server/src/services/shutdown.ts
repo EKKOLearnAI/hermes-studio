@@ -1,6 +1,7 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
+import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 3_000
@@ -67,6 +68,9 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
         chatRunServer.close()
         logger.info('ChatRunSocket closed')
       }
+
+      codingAgentRunManager.shutdown()
+      logger.info('Coding agent hidden sessions closed')
 
       // Disconnect Socket.IO before HTTP server to prevent hanging
       if (groupChatServer) {

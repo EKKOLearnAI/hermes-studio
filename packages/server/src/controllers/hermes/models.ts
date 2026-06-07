@@ -20,7 +20,7 @@ import {
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
-type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string }
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string }
 type ModelVisibility = Record<string, ModelVisibilityRule>
 type CustomModels = Record<string, string[]>
 
@@ -100,12 +100,14 @@ function applyCustomModels(groups: AvailableGroup[], customModels: CustomModels)
 
 function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
   const envMapping = PROVIDER_ENV_MAP[p.value]
+  const apiMode = providerApiMode(p.value)
   return {
     provider: p.value,
     label: p.label,
     base_url: p.base_url,
     models: models || p.models,
     api_key: '',
+    ...(apiMode ? { api_mode: apiMode } : {}),
     ...(p.builtin ? { builtin: true } : {}),
     ...(envMapping?.base_url_env ? { base_url_env: envMapping.base_url_env } : {}),
   }
@@ -196,6 +198,15 @@ function providerKeyWithoutCustomPrefix(providerKey: string): string {
 function isBuiltinProviderKey(providerKey: string): boolean {
   const normalized = providerKeyWithoutCustomPrefix(providerKey)
   return PROVIDER_PRESETS.some((preset: any) => preset.value === normalized && preset.builtin === true)
+}
+
+function providerApiMode(providerKey: string): AvailableGroup['api_mode'] {
+  const normalized = providerKeyWithoutCustomPrefix(providerKey)
+  const preset = PROVIDER_PRESETS.find((item: any) => item.value === normalized)
+  const mode = preset?.api_mode
+  return mode === 'chat_completions' || mode === 'codex_responses' || mode === 'anthropic_messages'
+    ? mode
+    : undefined
 }
 
 function providerShouldFetchLiveModels(providerKey: string): boolean {
@@ -338,7 +349,8 @@ async function buildAvailableForProfile(
     if (seenProviders.has(provider)) return
     seenProviders.add(provider)
     const availableModels = [...new Set(models)]
-    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
+    const apiMode = providerApiMode(provider)
+    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
   }
 
   const copilotEnabled = appConfig.copilotEnabled === true
@@ -537,7 +549,8 @@ export async function getAvailable(ctx: any) {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
       const availableModels = [...models]
-      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
+      const apiMode = providerApiMode(provider)
+      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
     }
 
     const isOAuthAuthorized = (providerKey: string): boolean => {
@@ -682,6 +695,7 @@ export async function getAvailable(ctx: any) {
       const fallback = buildModelGroups(config)
       const fallbackGroups: AvailableGroup[] = fallback.groups.map(group => {
         const models = group.models.map(model => model.id)
+        const apiMode = providerApiMode(group.provider)
         return {
           provider: group.provider,
           label: group.provider,
@@ -689,6 +703,7 @@ export async function getAvailable(ctx: any) {
           models,
           available_models: models,
           api_key: '',
+          ...(apiMode ? { api_mode: apiMode } : {}),
         }
       })
       const fallbackGroupsWithAliases = applyModelAliases(fallbackGroups, modelAliases)

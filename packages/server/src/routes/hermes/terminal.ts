@@ -312,6 +312,11 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
           try { session.pty.resize(cols, rows) } catch { }
           break
         }
+
+        case 'input': {
+          if (typeof parsed.data === 'string') writeRaw(parsed.data)
+          break
+        }
       }
     }
 

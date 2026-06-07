@@ -75,6 +75,12 @@ export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
   terminal: string
 }
 
+export interface CodingAgentRunStartResult extends CodingAgentLaunchResult {
+  agentSessionId: string
+  sessionId: string
+  pid: number
+}
+
 export async function fetchCodingAgentsStatus(): Promise<CodingAgentsStatus> {
   return request<CodingAgentsStatus>('/api/coding-agents')
 }
@@ -130,5 +136,28 @@ export async function launchCodingAgentNativeTerminal(
   return request<CodingAgentNativeLaunchResult>(`/api/coding-agents/${id}/launch/native`, {
     method: 'POST',
     body: JSON.stringify(data),
+  })
+}
+
+export async function startCodingAgentRun(
+  id: CodingAgentId,
+  data: CodingAgentLaunchRequest & { sessionId: string },
+): Promise<CodingAgentRunStartResult> {
+  return request<CodingAgentRunStartResult>(`/api/coding-agents/${id}/runs`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function sendCodingAgentRunInput(sessionId: string, input: string): Promise<{ runId: string }> {
+  return request<{ runId: string }>(`/api/coding-agents/runs/${encodeURIComponent(sessionId)}/input`, {
+    method: 'POST',
+    body: JSON.stringify({ input }),
+  })
+}
+
+export async function stopCodingAgentRun(sessionId: string): Promise<{ stopped: boolean }> {
+  return request<{ stopped: boolean }>(`/api/coding-agents/runs/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
   })
 }

@@ -406,6 +406,7 @@ export default {
     searchEnterHint: 'Enter 開啟 · Esc 關閉',
     searchFailed: '搜尋工作階段失敗',
     newChat: '新增對話',
+    agent: 'Agent',
     approvalKicker: '終端授權',
     approvalTitle: '執行前請確認命令',
     approvalAllowOnce: '僅本次允許',

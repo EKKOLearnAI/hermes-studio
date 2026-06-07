@@ -20,7 +20,16 @@ export interface StartRunRequest {
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   queue_id?: string
-  source?: 'api_server' | 'cli'
+  source?: 'api_server' | 'cli' | 'coding_agent'
+  coding_agent_id?: 'claude-code' | 'codex'
+  agent_id?: 'claude-code' | 'codex'
+  mode?: 'scoped' | 'global'
+  baseUrl?: string
+  base_url?: string
+  apiKey?: string
+  api_key?: string
+  apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
 }
 
 export interface StartRunResponse {

@@ -320,6 +320,7 @@ export default {
     searchEnterHint: 'Enter — открыть · Esc — закрыть',
     searchFailed: 'Ошибка поиска сеансов',
     newChat: 'Новый диалог',
+    agent: 'Agent',
     approvalKicker: 'Авторизация в терминале',
     approvalTitle: 'Подтвердите команду перед выполнением',
     approvalAllowOnce: 'Разрешить однократно',

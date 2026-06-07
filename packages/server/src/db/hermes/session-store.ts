@@ -11,6 +11,9 @@ export interface HermesSessionRow {
   id: string
   profile: string
   source: string
+  agent: string
+  agent_session_id: string
+  agent_native_session_id: string
   user_id: string | null
   model: string
   provider: string
@@ -85,6 +88,9 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     id: String(row.id || ''),
     profile: String(row.profile || 'default'),
     source: String(row.source || 'api_server'),
+    agent: String(row.agent || ''),
+    agent_session_id: String(row.agent_session_id || ''),
+    agent_native_session_id: String(row.agent_native_session_id || ''),
     user_id: row.user_id != null ? String(row.user_id) : null,
     model: String(row.model || ''),
     provider: String(row.provider || ''),
@@ -133,6 +139,9 @@ export function createSession(data: {
   id: string
   profile?: string
   source?: string
+  agent?: string
+  agent_session_id?: string
+  agent_native_session_id?: string
   model?: string
   provider?: string
   title?: string
@@ -140,9 +149,11 @@ export function createSession(data: {
 }): HermesSessionRow {
   const now = Math.floor(Date.now() / 1000)
   const source = data.source || 'api_server'
+  const agent = data.agent || (source === 'cli' ? 'hermes' : '')
   if (!isSqliteAvailable()) {
     return {
-      id: data.id, profile: data.profile || 'default', source,
+      id: data.id, profile: data.profile || 'default', source, agent,
+      agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
       user_id: null, model: data.model || '', provider: data.provider || '', title: data.title || null,
       started_at: now, ended_at: null, end_reason: null,
       message_count: 0, tool_call_count: 0,
@@ -153,9 +164,22 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, provider, title, started_at, last_active, workspace)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(data.id, data.profile || 'default', source, data.model || '', data.provider || '', data.title || null, now, now, data.workspace || null)
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_session_id, agent_native_session_id, model, provider, title, started_at, last_active, workspace)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    data.id,
+    data.profile || 'default',
+    source,
+    agent,
+    data.agent_session_id || '',
+    data.agent_native_session_id || '',
+    data.model || '',
+    data.provider || '',
+    data.title || null,
+    now,
+    now,
+    data.workspace || null,
+  )
   return getSession(data.id)!
 }
 

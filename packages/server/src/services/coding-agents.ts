@@ -1,14 +1,21 @@
 import { execFile } from 'child_process'
+import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
-import { mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { chmod, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, extname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
-import { registerClaudeCodeProxyTarget, type ApiMode } from './claude-code-proxy'
-import { registerCodexProxyTarget } from './codex-proxy'
+import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
+import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
+import { registerCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
+import type { ApiMode } from './agent-runner/types'
 import { PROVIDER_PRESETS } from '../shared/providers'
 import { getModelContextLength } from './hermes/model-context'
+import { getProfileDir } from './hermes/hermes-profile'
+import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
+import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
+import type { SessionState } from './hermes/run-chat/types'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -16,6 +23,8 @@ const CODING_AGENT_HOME_DIR = 'coding-agent'
 const CODEX_MODEL_CATALOG_FILE = 'codex-model-catalog.json'
 const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be precise, safe, and helpful.'
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
+const POSIX_LAUNCHER_FILE = 'launch.sh'
+const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 
 export type CodingAgentId = 'claude-code' | 'codex'
 
@@ -72,6 +81,10 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   baseUrl?: string
   apiKey?: string
   apiMode?: ApiMode
+  sessionId?: string
+  agentSessionId?: string
+  agentNativeSessionId?: string
+  isolateSettings?: boolean
 }
 
 export interface CodingAgentLaunchResult {
@@ -92,6 +105,12 @@ export interface CodingAgentLaunchResult {
 export interface CodingAgentNativeLaunchResult extends CodingAgentLaunchResult {
   nativeTerminal: true
   terminal: string
+}
+
+export interface CodingAgentRunStartResult extends CodingAgentLaunchResult {
+  agentSessionId: string
+  sessionId: string
+  pid: number
 }
 
 const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
@@ -260,6 +279,144 @@ function normalizeConfigScope(scope: CodingAgentConfigScope = {}): Required<Codi
   }
 }
 
+function slugProviderName(value: string): string {
+  return String(value || '').trim().toLowerCase().replace(/ /g, '-')
+}
+
+function providerKeyWithoutCustomPrefix(providerKey: string): string {
+  if (providerKey.startsWith('custom:')) return providerKey.slice('custom:'.length)
+  if (providerKey.startsWith('custom_')) return providerKey.slice('custom_'.length)
+  return providerKey
+}
+
+function providerLookupCandidates(provider: string): string[] {
+  const trimmed = String(provider || '').trim()
+  const withoutCustom = providerKeyWithoutCustomPrefix(trimmed)
+  return [...new Set([
+    trimmed,
+    withoutCustom,
+    withoutCustom ? `custom:${withoutCustom}` : '',
+    withoutCustom ? `custom_${withoutCustom}` : '',
+  ].filter(Boolean))]
+}
+
+function parseEnvValue(envContent: string, key: string): string {
+  if (!key) return ''
+  const lines = envContent.split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eqIndex = trimmed.indexOf('=')
+    if (eqIndex === -1) continue
+    if (trimmed.slice(0, eqIndex).trim() !== key) continue
+    const raw = trimmed.slice(eqIndex + 1).trim()
+    if (
+      (raw.startsWith('"') && raw.endsWith('"')) ||
+      (raw.startsWith("'") && raw.endsWith("'"))
+    ) {
+      return raw.slice(1, -1)
+    }
+    return raw
+  }
+  return ''
+}
+
+function inferLaunchApiMode(provider: string, baseUrl: string, fallback: ApiMode = 'chat_completions'): ApiMode {
+  const providerKey = String(provider || '').toLowerCase()
+  const normalizedBaseUrl = String(baseUrl || '').toLowerCase()
+  if (
+    providerKey.includes('claude') ||
+    providerKey === 'anthropic' ||
+    normalizedBaseUrl.includes('anthropic') ||
+    normalizedBaseUrl.includes('/anthropic')
+  ) {
+    return 'anthropic_messages'
+  }
+  if (
+    providerKey === 'deepseek' ||
+    providerKey === 'lmstudio' ||
+    normalizedBaseUrl.includes('deepseek') ||
+    normalizedBaseUrl.includes('127.0.0.1') ||
+    normalizedBaseUrl.includes('localhost')
+  ) {
+    return 'chat_completions'
+  }
+  return fallback
+}
+
+async function resolveStoredProviderLaunchInput(
+  input: CodingAgentLaunchInput & { sessionId: string },
+  existingSession: HermesSessionRow | null,
+): Promise<CodingAgentLaunchInput & { sessionId: string }> {
+  if (input.mode === 'global') return input
+
+  const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
+  const provider = String(input.provider || existingSession?.provider || '').trim()
+  const model = String(input.model || existingSession?.model || '').trim()
+  let baseUrl = String(input.baseUrl || '').trim()
+  let apiKey = String(input.apiKey || '').trim()
+  let apiMode = input.apiMode
+  let canonicalProvider = provider
+
+  if (!provider || (baseUrl && apiKey && apiMode)) {
+    return { ...input, profile, provider: provider || input.provider, model: model || input.model, baseUrl, apiKey, apiMode }
+  }
+
+  let config: Record<string, any> = {}
+  try {
+    config = await readConfigYamlForProfile(profile)
+  } catch {}
+  const envContent = await safeReadFile(join(getProfileDir(profile), '.env')) || ''
+  const normalizedProvider = providerKeyWithoutCustomPrefix(provider)
+  const preset = PROVIDER_PRESETS.find(item => item.value === normalizedProvider)
+  const candidates = providerLookupCandidates(provider)
+
+  const customProviders = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+  const customEntry = customProviders.find((entry) => {
+    const name = slugProviderName(String(entry?.name || ''))
+    return candidates.includes(`custom:${name}`) || candidates.includes(`custom_${name}`) || candidates.includes(name)
+  })
+  if (customEntry) {
+    canonicalProvider = `custom:${slugProviderName(String(customEntry.name || normalizedProvider))}`
+    if (!baseUrl) baseUrl = String(customEntry.base_url || '').trim()
+    if (!apiKey) apiKey = String(customEntry.api_key || '').trim()
+    if (!apiMode) {
+      apiMode = normalizeLaunchApiMode(
+        customEntry.api_mode,
+        preset?.api_mode || inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
+      )
+    }
+  }
+
+  const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
+  const canonicalPreset = PROVIDER_PRESETS.find(item => item.value === canonicalProviderKey) || preset
+  const envMapping = PROVIDER_ENV_MAP[canonicalProviderKey]
+  if (!baseUrl) {
+    baseUrl = envMapping?.base_url_env
+      ? parseEnvValue(envContent, envMapping.base_url_env) || canonicalPreset?.base_url || ''
+      : canonicalPreset?.base_url || ''
+  }
+  if (!apiKey && envMapping?.api_key_env) {
+    apiKey = parseEnvValue(envContent, envMapping.api_key_env)
+  }
+  if (!apiMode) {
+    apiMode = normalizeLaunchApiMode(
+      canonicalPreset?.api_mode,
+      inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
+    )
+  }
+
+  return {
+    ...input,
+    profile,
+    provider: canonicalProvider,
+    model: model || input.model,
+    baseUrl: baseUrl || input.baseUrl,
+    apiKey: apiKey || input.apiKey,
+    apiMode,
+  }
+}
+
 function normalizeLaunchApiMode(value: unknown, fallback: ApiMode): ApiMode {
   if (!value) return fallback
   const mode = String(value).trim() as ApiMode
@@ -269,6 +426,10 @@ function normalizeLaunchApiMode(value: unknown, fallback: ApiMode): ApiMode {
     throw err
   }
   return mode
+}
+
+function makeAgentSessionId(): string {
+  return `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
 function getScopedConfigRoot(id: CodingAgentId, scope: Required<CodingAgentConfigScope>): string {
@@ -398,10 +559,88 @@ function buildLaunchShellCommand(input: {
   const envPrefix = Object.entries(input.env).map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ')
   const runCommand = [
     envPrefix,
-    input.command,
+    shellQuote(input.command),
     ...input.args.map(shellQuote),
   ].filter(Boolean).join(' ')
   return `cd ${shellQuote(input.workspaceDir)} && ${runCommand}`
+}
+
+function buildPosixLauncherScript(input: {
+  workspaceDir: string
+  env: Record<string, string>
+  command: string
+  args: string[]
+}): string {
+  const exports = Object.entries(input.env)
+    .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+  const command = [
+    shellQuote(input.command),
+    ...input.args.map(shellQuote),
+  ].join(' ')
+  return [
+    '#!/usr/bin/env bash',
+    'set -e',
+    `cd ${shellQuote(input.workspaceDir)}`,
+    ...exports,
+    `exec ${command}`,
+    '',
+  ].join('\n')
+}
+
+function buildPowerShellLauncherScript(input: {
+  workspaceDir: string
+  env: Record<string, string>
+  command: string
+  args: string[]
+}): string {
+  const envAssignments = Object.entries(input.env)
+    .map(([key, value]) => `$env:${key} = ${powerShellQuote(value)}`)
+  const command = [
+    `& ${powerShellQuote(input.command)}`,
+    ...input.args.map(powerShellQuote),
+  ].join(' ')
+  return [
+    '$ErrorActionPreference = "Stop"',
+    `Set-Location -LiteralPath ${powerShellQuote(input.workspaceDir)}`,
+    ...envAssignments,
+    command,
+    'exit $LASTEXITCODE',
+    '',
+  ].join('\r\n')
+}
+
+async function writeLauncherScript(input: {
+  rootDir: string
+  workspaceDir: string
+  env: Record<string, string>
+  command: string
+  args: string[]
+}): Promise<string> {
+  const isWindows = process.platform === 'win32'
+  const launcherPath = join(input.rootDir, isWindows ? WINDOWS_LAUNCHER_FILE : POSIX_LAUNCHER_FILE)
+  await writeFile(
+    launcherPath,
+    isWindows ? buildPowerShellLauncherScript(input) : buildPosixLauncherScript(input),
+    'utf-8',
+  )
+  if (!isWindows) await chmod(launcherPath, 0o700)
+  return launcherPath
+}
+
+function buildLauncherShellCommand(workspaceDir: string, launcherPath: string): string {
+  return process.platform === 'win32'
+    ? buildLaunchShellCommand({
+        workspaceDir,
+        env: {},
+        command: 'powershell.exe',
+        args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', launcherPath],
+      })
+    : buildLaunchShellCommand({
+        workspaceDir,
+        env: {},
+        command: launcherPath,
+        args: [],
+      })
 }
 
 function appleScriptString(value: string): string {
@@ -942,12 +1181,13 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = getScopedWorkspaceRoot(scope)
+    const args = tool.id === 'claude-code' ? ['--dangerously-skip-permissions'] : []
     await mkdir(workspaceDir, { recursive: true })
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
       env: {},
       command: tool.command,
-      args: [],
+      args,
     })
     return {
       agentId: tool.id,
@@ -958,7 +1198,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       rootDir: workspaceDir,
       workspaceDir,
       command: tool.command,
-      args: [],
+      args,
       env: {},
       shellCommand,
       files: [],
@@ -997,7 +1237,16 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
   if (tool.id === 'claude-code') {
     const proxyTarget = baseUrl && apiKey
-      ? registerClaudeCodeProxyTarget({ provider, model, baseUrl, apiKey, apiMode })
+      ? registerClaudeCodeProxyTarget({
+          provider,
+          model,
+          baseUrl,
+          apiKey,
+          apiMode,
+          agentId: tool.id,
+          agentSessionId: input.agentSessionId,
+          chatSessionId: input.sessionId,
+        })
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
     const claudeApiKey = proxyTarget?.token || apiKey
@@ -1006,6 +1255,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       model,
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
+        ...(claudeApiKey ? { ANTHROPIC_AUTH_TOKEN: claudeApiKey } : {}),
         ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
         ANTHROPIC_MODEL: model,
         ANTHROPIC_CUSTOM_MODEL_OPTION: model,
@@ -1018,20 +1268,39 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: modelName,
       },
     }
+    env = settings.env
     await writeScopedFile('settings', `${JSON.stringify(settings, null, 2)}\n`)
     await writeScopedFile('mcp', `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`)
 
     const settingsPath = join(rootDir, 'settings.json')
     const mcpPath = join(rootDir, 'mcp.json')
-    args = ['--settings', settingsPath, '--mcp-config', mcpPath]
+    args = [
+      '--settings',
+      settingsPath,
+      ...(input.isolateSettings ? ['--setting-sources', 'local'] : []),
+      '--mcp-config',
+      mcpPath,
+      '--dangerously-skip-permissions',
+      '--bare',
+    ]
   } else {
     if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {
       const err = new Error('Codex launch only supports OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages providers')
       ;(err as any).status = 400
       throw err
     }
-    const proxyTarget = apiMode !== 'codex_responses' && baseUrl && apiKey
-      ? registerCodexProxyTarget({ profile: scope.profile, provider, model, baseUrl, apiKey, apiMode })
+    const proxyTarget = baseUrl && apiKey
+      ? registerCodexProxyTarget({
+          profile: scope.profile,
+          provider,
+          model,
+          baseUrl,
+          apiKey,
+          apiMode,
+          agentId: tool.id,
+          agentSessionId: input.agentSessionId,
+          chatSessionId: input.sessionId,
+        })
       : null
     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
     const codexApiKey = proxyTarget?.token || apiKey
@@ -1066,12 +1335,25 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     args = ['--model', model]
   }
 
-  const shellCommand = buildLaunchShellCommand({
+  let shellCommand = buildLaunchShellCommand({
     workspaceDir,
     env,
     command: tool.command,
     args,
   })
+  const launcherPath = await writeLauncherScript({
+    rootDir,
+    workspaceDir,
+    env,
+    command: tool.command,
+    args,
+  })
+  files.push({
+    key: 'launcher',
+    path: process.platform === 'win32' ? WINDOWS_LAUNCHER_FILE : POSIX_LAUNCHER_FILE,
+    absolutePath: launcherPath,
+  })
+  shellCommand = buildLauncherShellCommand(workspaceDir, launcherPath)
 
   return {
     agentId: tool.id,
@@ -1087,6 +1369,77 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     shellCommand,
     files,
   }
+}
+
+export async function startCodingAgentRun(
+  id: string,
+  input: CodingAgentLaunchInput & { sessionId: string },
+  state?: SessionState,
+): Promise<CodingAgentRunStartResult> {
+  const sessionId = String(input.sessionId || '').trim()
+  if (!sessionId) {
+    const err = new Error('sessionId is required')
+    ;(err as any).status = 400
+    throw err
+  }
+  const existingSession = getSession(sessionId)
+  const existingAgentSessionId = existingSession?.agent_session_id || ''
+  const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
+  if (resolvedInput.mode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
+    const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
+    ;(err as any).status = 400
+    throw err
+  }
+  const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
+  const existingNativeSessionId = existingSession?.agent_native_session_id || ''
+  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
+  const launch = await prepareCodingAgentLaunch(id, {
+    ...resolvedInput,
+    sessionId,
+    agentSessionId,
+    isolateSettings: true,
+  })
+  const persistedProvider = String(resolvedInput.provider || launch.provider || '').trim() || launch.provider
+  const started = codingAgentRunManager.start({
+    agentSessionId,
+    agentId: launch.agentId,
+    profile: launch.profile,
+    provider: persistedProvider,
+    model: launch.model,
+    sessionId,
+    agentNativeSessionId,
+    nativeResume: Boolean(existingNativeSessionId),
+    command: launch.command,
+    args: launch.args,
+    shellCommand: launch.shellCommand,
+    workspaceDir: launch.workspaceDir,
+    env: launch.env,
+    state,
+  })
+  updateSession(sessionId, {
+    source: 'coding_agent',
+    agent: launch.agentId === 'codex' ? 'codex' : 'claude',
+    agent_session_id: agentSessionId,
+    ...(agentNativeSessionId ? { agent_native_session_id: agentNativeSessionId } : {}),
+    model: launch.model,
+    provider: persistedProvider,
+    workspace: launch.workspaceDir,
+  })
+  return {
+    ...launch,
+    provider: persistedProvider,
+    agentSessionId,
+    sessionId,
+    pid: started.pid,
+  }
+}
+
+export function sendCodingAgentRunInput(sessionId: string, input: string): { runId: string } {
+  return codingAgentRunManager.send(sessionId, input)
+}
+
+export function stopCodingAgentRun(sessionId: string): { stopped: boolean } {
+  return { stopped: codingAgentRunManager.stop(sessionId) }
 }
 
 export async function openCodingAgentNativeTerminal(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentNativeLaunchResult> {

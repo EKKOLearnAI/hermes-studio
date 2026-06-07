@@ -5,6 +5,7 @@
 import type { Server, Socket } from 'socket.io'
 import { updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
+import { codingAgentRunManager } from '../../agent-runner/coding-agent-run-manager'
 import { flushBridgePendingToDb } from './bridge-message'
 import { flushResponseRunToDb } from './response-stream'
 import { replaceState } from './compression'
@@ -89,6 +90,8 @@ export async function handleAbort(
       logger.warn({ sessionId, runId }, '[chat-run-socket][abort] CLI bridge interrupt did not sync before timeout')
       return
     }
+  } else if (state.source === 'coding_agent') {
+    codingAgentRunManager.stop(sessionId)
   } else if (state.abortController) {
     state.abortController.abort()
   }

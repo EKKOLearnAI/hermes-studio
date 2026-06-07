@@ -105,6 +105,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'glm-coding-plan',
     builtin: true,
     base_url: 'https://api.z.ai/api/anthropic',
+    api_mode: 'anthropic_messages',
     models: [
       'glm-5.1',
       'glm-4.5-air',
@@ -178,6 +179,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'minimax',
     builtin: true,
     base_url: 'https://api.minimax.io/anthropic/v1',
+    api_mode: 'anthropic_messages',
     models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
   },
   {
@@ -185,6 +187,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'minimax-cn',
     builtin: true,
     base_url: 'https://api.minimaxi.com/anthropic/v1',
+    api_mode: 'anthropic_messages',
     models: ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
   },
   {

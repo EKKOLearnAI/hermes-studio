@@ -407,6 +407,7 @@ export default {
     searchEnterHint: 'Enter 打开 · Esc 关闭',
     searchFailed: '搜索会话失败',
     newChat: '新建对话',
+    agent: 'Agent',
     approvalKicker: '终端授权',
     approvalTitle: '运行前请确认命令',
     approvalAllowOnce: '仅本次允许',

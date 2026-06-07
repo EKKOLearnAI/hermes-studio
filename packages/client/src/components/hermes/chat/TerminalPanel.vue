@@ -106,7 +106,10 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 let touchScrollLastY: number | null = null;
 let touchScrollRemainder = 0;
 const TOUCH_SCROLL_LINE_PX = 18;
+const INITIAL_COMMAND_CHUNK_SIZE = 128;
+const INITIAL_COMMAND_CHUNK_DELAY_MS = 8;
 const initialCommandSent = ref(false);
+const initialCommandTimers = new Set<ReturnType<typeof setTimeout>>();
 
 // ─── Computed ──────────────────────────────────────────────────
 
@@ -257,9 +260,20 @@ function runInitialCommand() {
   const command = props.initialCommand?.trim();
   if (!command || initialCommandSent.value) return;
   initialCommandSent.value = true;
-  setTimeout(() => {
-    send(`${command}\r`);
-  }, 100);
+  scheduleInitialCommandChunk(`${command}\r`, 0, 100);
+}
+
+function scheduleInitialCommandChunk(command: string, offset: number, delay: number) {
+  const timer = setTimeout(() => {
+    initialCommandTimers.delete(timer);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const nextOffset = Math.min(offset + INITIAL_COMMAND_CHUNK_SIZE, command.length);
+    send({ type: "input", data: command.slice(offset, nextOffset) });
+    if (nextOffset < command.length) {
+      scheduleInitialCommandChunk(command, nextOffset, INITIAL_COMMAND_CHUNK_DELAY_MS);
+    }
+  }, delay);
+  initialCommandTimers.add(timer);
 }
 
 function getOrCreateTerm(id: string): { term: Terminal; fitAddon: FitAddon } {
@@ -431,6 +445,8 @@ watch(() => props.visible, (visible) => {
 }, { immediate: true });
 
 onUnmounted(() => {
+  for (const timer of initialCommandTimers) clearTimeout(timer);
+  initialCommandTimers.clear();
   unmountActiveTerminal();
   for (const entry of termMap.values()) {
     entry.term.dispose();

@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/claude-code-proxy'
-import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/codex-proxy'
+import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/claude-code-proxy'
+import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/codex-proxy'
 import { prepareCodingAgentLaunch } from '../../packages/server/src/services/coding-agents'
 
 const homes: string[] = []
@@ -54,9 +54,9 @@ describe('coding agent launch preparation', () => {
       rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       command: 'claude',
-      args: [],
+      args: ['--dangerously-skip-permissions'],
       env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude`,
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --dangerously-skip-permissions`,
       files: [],
     })
   })
@@ -103,13 +103,24 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'settings.json'),
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
+      '--dangerously-skip-permissions',
+      '--bare',
     ])
-    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} && claude`)
+    expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} &&`)
+    expect(result.shellCommand).toContain(join(result.rootDir, 'launch.sh'))
+    expect(result.shellCommand).not.toContain('ANTHROPIC_API_KEY')
+    expect(result.shellCommand).not.toContain('hwui_')
     expect(result.shellCommand).not.toContain('--model')
+    const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
+    expect(launcher).toContain('exec claude --settings')
+    expect(launcher).toContain('--dangerously-skip-permissions')
+    expect(launcher).toContain('--bare')
+    expect(launcher).not.toContain('--model')
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.model).toBe('cognitivecomputations/dolphin-mistral-24b-venice-edition:free')
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
+    expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(settings.env.ANTHROPIC_API_KEY)
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     expect(settings.env).toMatchObject({
       ANTHROPIC_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
@@ -123,6 +134,34 @@ describe('coding agent launch preparation', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Dolphin Mistral 24b Venice Edition:Free',
     })
     expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toBe('claude-sonnet-4-6')
+  })
+
+  it('isolates Claude Code settings for hidden chat runs only', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      isolateSettings: true,
+    })
+
+    expect(result.args).toEqual([
+      '--settings',
+      join(result.rootDir, 'settings.json'),
+      '--setting-sources',
+      'local',
+      '--mcp-config',
+      join(result.rootDir, 'mcp.json'),
+      '--dangerously-skip-permissions',
+      '--bare',
+    ])
+    expect(result.shellCommand).not.toContain('--setting-sources local')
+    const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
+    expect(launcher).toContain('--setting-sources local')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
   })
 
   it('keeps Claude Code protocol overrides behind the local proxy', async () => {
@@ -139,6 +178,7 @@ describe('coding agent launch preparation', () => {
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
+    expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(settings.env.ANTHROPIC_API_KEY)
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
   })
 
@@ -195,6 +235,27 @@ describe('coding agent launch preparation', () => {
     expect(deepseekModel.context_window).toBeGreaterThan(0)
     expect(deepseekModel.max_context_window).toBe(deepseekModel.context_window)
     expect(deepseekModel.model_messages.instructions_template).toContain('{{ base_instructions }}')
+  })
+
+  it('points Codex Responses providers at the local Responses proxy for stream capture', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openai-api',
+      model: 'gpt-5.5',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+      sessionId: 'chat-session-1',
+      agentSessionId: 'agent-session-1',
+    })
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain(`base_url = "http://127.0.0.1:8648/api/codex-proxy/`)
+    expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
+    expect(config).not.toContain('base_url = "https://api.openai.com/v1"')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openai-api', 'codex'))
   })
 
   it('points Codex Anthropic Messages providers at the local Responses proxy', async () => {
@@ -635,6 +696,30 @@ describe('coding agent launch preparation', () => {
 
     expect(chat.routeKey).not.toBe(anthropic.routeKey)
     expect(chat.token).not.toBe(anthropic.token)
+  })
+
+  it('keeps proxy routes separate for different hidden agent sessions', () => {
+    const first = registerClaudeCodeProxyTarget({
+      provider: 'same-provider',
+      model: 'same-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-one',
+      apiMode: 'chat_completions',
+      agentSessionId: 'agent-one',
+      chatSessionId: 'chat-one',
+    })
+    const second = registerClaudeCodeProxyTarget({
+      provider: 'same-provider',
+      model: 'same-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-two',
+      apiMode: 'chat_completions',
+      agentSessionId: 'agent-two',
+      chatSessionId: 'chat-two',
+    })
+
+    expect(first.routeKey).not.toBe(second.routeKey)
+    expect(first.token).not.toBe(second.token)
   })
 
   it('keeps Codex proxy routes separate for the same model with different upstream URLs', () => {

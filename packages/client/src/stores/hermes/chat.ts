@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, respondClarify, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -71,11 +71,18 @@ export interface Session {
   profile?: string
   title: string
   source?: string
+  agent?: string
+  agentSessionId?: string
+  agentNativeSessionId?: string
+  codingAgentId?: 'claude-code' | 'codex'
   messages: Message[]
   createdAt: number
   updatedAt: number
   model?: string
   provider?: string
+  baseUrl?: string
+  apiKey?: string
+  apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
   messageCount?: number
   messageTotal?: number
   loadedMessageCount?: number
@@ -306,6 +313,9 @@ function mapHermesSession(s: SessionSummary): Session {
     profile: s.profile || 'default',
     title: s.title || '',
     source: s.source || undefined,
+    agent: s.agent || undefined,
+    agentSessionId: s.agent_session_id || undefined,
+    agentNativeSessionId: s.agent_native_session_id || undefined,
     messages: [],
     createdAt: Math.round(s.started_at * 1000),
     updatedAt: Math.round((s.last_active || s.ended_at || s.started_at) * 1000),
@@ -567,17 +577,34 @@ export const useChatStore = defineStore('chat', () => {
   }
 
 
-  function createSession(options: { profile?: string; model?: string; provider?: string } = {}): Session {
+  function createSession(options: {
+    profile?: string
+    model?: string
+    provider?: string
+    source?: 'api_server' | 'cli' | 'coding_agent'
+    agent?: 'hermes' | 'claude' | 'codex'
+    codingAgentId?: 'claude-code' | 'codex'
+    baseUrl?: string
+    apiKey?: string
+    apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  } = {}): Session {
+    const source = options.source || 'cli'
+    const codingAgentId = options.codingAgentId || (options.agent === 'codex' ? 'codex' : options.agent === 'claude' ? 'claude-code' : undefined)
     const session: Session = {
       id: uid(),
       profile: options.profile || useProfilesStore().activeProfileName || 'default',
       title: '',
-      source: 'cli',
+      source,
+      agent: options.agent || (source === 'coding_agent' ? (codingAgentId === 'codex' ? 'codex' : 'claude') : 'hermes'),
+      codingAgentId,
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
       model: options.model || undefined,
       provider: options.provider || '',
+      baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
+      apiMode: options.apiMode,
     }
     sessions.value.unshift(session)
     return session
@@ -599,6 +626,7 @@ export const useChatStore = defineStore('chat', () => {
       id: `${ts}_${hex}`,
       title: '',
       source: 'cli',
+      agent: 'hermes',
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -805,12 +833,28 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function newChat(options: { profile?: string; model?: string; provider?: string } = {}): Session {
+  function newChat(options: {
+    profile?: string
+    model?: string
+    provider?: string
+    source?: 'api_server' | 'cli' | 'coding_agent'
+    agent?: 'hermes' | 'claude' | 'codex'
+    codingAgentId?: 'claude-code' | 'codex'
+    baseUrl?: string
+    apiKey?: string
+    apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  } = {}): Session {
     const appStore = useAppStore()
     const session = createSession({
       profile: options.profile,
       model: options.model || appStore.selectedModel || undefined,
       provider: options.provider || appStore.selectedProvider || '',
+      source: options.source,
+      agent: options.agent,
+      codingAgentId: options.codingAgentId,
+      baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
+      apiMode: options.apiMode,
     })
     void switchSession(session.id)
     return session
@@ -875,6 +919,15 @@ export const useChatStore = defineStore('chat', () => {
     if (idx !== -1) {
       s.messages[idx] = { ...s.messages[idx], ...update }
     }
+  }
+
+  function settleRunningTools(sessionId: string, status: 'done' | 'error') {
+    const msgs = getSessionMsgs(sessionId)
+    msgs.forEach((m, i) => {
+      if (m.role === 'tool' && m.toolStatus === 'running') {
+        msgs[i] = { ...m, toolStatus: status }
+      }
+    })
   }
 
   function clearAgentEventMessages(sessionId: string) {
@@ -1046,6 +1099,7 @@ export const useChatStore = defineStore('chat', () => {
   function handleAgentEvent(evt: RunEvent) {
     const sid = evt.session_id
     if (!sid) return
+    if ((evt as any).source === 'coding_agent' && (evt as any).kind === 'status') return
     const text = String((evt as any).text || (evt as any).message || '').trim()
     if (!text) return
 
@@ -1067,7 +1121,6 @@ export const useChatStore = defineStore('chat', () => {
       role: 'system',
       content: text,
       timestamp: Date.now(),
-      systemType: 'command',
       commandAction: 'agent.event',
       commandData,
     })
@@ -1387,12 +1440,13 @@ export const useChatStore = defineStore('chat', () => {
     const shouldSendInitialSessionConfig = activeSession.value
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
       : false
-    const isBridgeSlashCommand = content.trim().startsWith('/')
+    const isCodingAgentSession = activeSession.value?.source === 'coding_agent'
+    const isBridgeSlashCommand = !isCodingAgentSession && content.trim().startsWith('/')
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
     const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(content.trim())
     const isBridgeGoalCommand = isBridgeSlashCommand && /^\/goal(?:\s|$)/i.test(content.trim())
-    const wasLiveBeforeSend = isSessionLive(sid)
-    const shouldQueue = wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand)
+    const wasLiveBeforeSend = !isCodingAgentSession && isSessionLive(sid)
+    const shouldQueue = !isCodingAgentSession && wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand)
 
     const userMsg: Message = {
       id: uid(),
@@ -1409,7 +1463,7 @@ export const useChatStore = defineStore('chat', () => {
     } else {
       addMessage(sid, userMsg)
       updateSessionTitle(sid)
-      serverWorking.value.add(sid)
+      if (!isCodingAgentSession) serverWorking.value.add(sid)
     }
 
     let runSubmitted = false
@@ -1453,18 +1507,37 @@ export const useChatStore = defineStore('chat', () => {
       await appStore.waitForModelsForRun()
       const sessionModel = activeSession.value?.model || appStore.selectedModel
       const sessionProvider = activeSession.value?.provider || appStore.selectedProvider
-      const runPayload = {
+      const sessionProfile = activeSession.value?.profile || useProfilesStore().activeProfileName || undefined
+      const profileModelGroups = sessionProfile
+        ? appStore.profileModelGroups.find(entry => entry.profile === sessionProfile)?.groups
+        : undefined
+      const runModelGroups = profileModelGroups?.length ? profileModelGroups : appStore.modelGroups
+      const providerGroup = runModelGroups.find(group => group.provider === sessionProvider)
+      const sessionSource: StartRunRequest['source'] = activeSession.value?.source === 'coding_agent' ? 'coding_agent' : 'cli'
+      const codingAgentId: 'claude-code' | 'codex' =
+        activeSession.value?.codingAgentId ||
+        (activeSession.value?.agent === 'codex' ? 'codex' : 'claude-code')
+      const runPayload: StartRunRequest = {
         input,
         session_id: sid,
-        profile: activeSession.value?.profile || useProfilesStore().activeProfileName || undefined,
-        model: shouldSendInitialSessionConfig ? sessionModel || undefined : undefined,
-        provider: shouldSendInitialSessionConfig ? sessionProvider || undefined : undefined,
-        model_groups: appStore.modelGroups.map(group => ({
+        profile: sessionProfile,
+        model: sessionSource === 'coding_agent' || shouldSendInitialSessionConfig ? sessionModel || undefined : undefined,
+        provider: sessionSource === 'coding_agent' || shouldSendInitialSessionConfig ? sessionProvider || undefined : undefined,
+        model_groups: runModelGroups.map(group => ({
           provider: group.provider,
           models: group.models,
         })),
         queue_id: userMsg.id,
-        source: 'cli' as const,
+        source: sessionSource,
+        ...(sessionSource === 'coding_agent'
+          ? {
+              coding_agent_id: codingAgentId,
+              mode: 'scoped' as const,
+              baseUrl: activeSession.value?.baseUrl || providerGroup?.base_url || undefined,
+              apiKey: activeSession.value?.apiKey || providerGroup?.api_key || undefined,
+              apiMode: activeSession.value?.apiMode || providerGroup?.api_mode || undefined,
+            }
+          : {}),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -1617,12 +1690,13 @@ export const useChatStore = defineStore('chat', () => {
       const ctrl = startRunViaSocket(
         runPayload,
         // onEvent
-        (evt: RunEvent) => {
-          switch (evt.event) {
-            case 'run.started':
-              clearAgentEventMessages(sid)
-              setAbortState(null)
-              setCompressionState(sid, null)
+            (evt: RunEvent) => {
+              switch (evt.event) {
+                case 'run.started':
+                  serverWorking.value.add(sid)
+                  clearAgentEventMessages(sid)
+                  setAbortState(null)
+                  setCompressionState(sid, null)
               runProducedAssistantText = false
               runHadToolActivity = false
               closeStreamingAssistant()
@@ -1901,6 +1975,7 @@ export const useChatStore = defineStore('chat', () => {
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
+              settleRunningTools(sid, 'done')
               // Server-computed usage (local countTokens, snapshot-aware)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
@@ -2020,12 +2095,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
               addAgentErrorMessage(sid, evt.error)
-              const msgs = getSessionMsgs(sid)
-              msgs.forEach((m, i) => {
-                if (m.role === 'tool' && m.toolStatus === 'running') {
-                  msgs[i] = { ...m, toolStatus: 'error' }
-                }
-              })
+              settleRunningTools(sid, 'error')
               if ((evt as any).queue_remaining > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
               } else {
@@ -2072,7 +2142,9 @@ export const useChatStore = defineStore('chat', () => {
       )
       runSubmitted = true
 
-      if (!isBridgeSlashCommand || isBridgeCompressCommand || isBridgePlanCommand || isBridgeGoalCommand) {
+      if (isCodingAgentSession) {
+        serverWorking.value.add(sid)
+      } else if (!isBridgeSlashCommand || isBridgeCompressCommand || isBridgePlanCommand || isBridgeGoalCommand) {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {
@@ -2150,6 +2222,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.started':
+          serverWorking.value.add(sid)
           clearAgentEventMessages(sid)
           setAbortState(null)
           setCompressionState(sid, null)
@@ -2411,6 +2484,7 @@ export const useChatStore = defineStore('chat', () => {
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
           }
+          settleRunningTools(sid, 'done')
           // Server-computed usage (local countTokens, snapshot-aware)
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
@@ -2517,12 +2591,7 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           addAgentErrorMessage(sid, evt.error)
-          const msgs = getSessionMsgs(sid)
-          msgs.forEach((m, i) => {
-            if (m.role === 'tool' && m.toolStatus === 'running') {
-              msgs[i] = { ...m, toolStatus: 'error' }
-            }
-          })
+          settleRunningTools(sid, 'error')
           if (!hasQueue) {
             cleanup()
           }

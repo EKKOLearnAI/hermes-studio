@@ -43,6 +43,10 @@ describe('Hermes schema initialization', () => {
     expect(usageCols.some(c => c.name === 'input_tokens')).toBe(true)
     expect(usageCols.some(c => c.name === 'output_tokens')).toBe(true)
 
+    const sessionCols = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(sessionCols.some(c => c.name === 'source')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'agent')).toBe(true)
+
     const userCols = db.prepare(`PRAGMA table_info("${USERS_TABLE}")`).all() as Array<{ name: string }>
     expect(userCols.some(c => c.name === 'id')).toBe(true)
     expect(userCols.some(c => c.name === 'username')).toBe(true)

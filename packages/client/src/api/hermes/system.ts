@@ -78,6 +78,7 @@ export interface AvailableModelGroup {
   /** Full unfiltered model catalog for this provider, used to restore hidden WUI models. */
   available_models?: string[]
   api_key: string
+  api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
   builtin?: boolean
   /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
   base_url_env?: string

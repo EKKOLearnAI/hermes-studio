@@ -253,6 +253,9 @@ export async function listConversations(ctx: any) {
     id: s.id,
     profile: s.profile || null,
     source: s.source,
+    agent: s.agent,
+    agent_session_id: s.agent_session_id,
+    agent_native_session_id: s.agent_native_session_id,
     model: s.model,
     provider: s.provider,
     title: s.title,
@@ -319,7 +322,7 @@ export async function list(ctx: any) {
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
     sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
-      (s.source === 'api_server' || s.source === 'cli') &&
+      (s.source === 'api_server' || s.source === 'cli' || s.source === 'coding_agent') &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
     )),
   }

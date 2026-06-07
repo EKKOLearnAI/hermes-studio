@@ -392,6 +392,7 @@ export default {
     historyScopeHint: 'Schreibgeschützte Hermes-Verlaufssitzungen des aktuellen Profils, nach Quelle gruppiert.',
     noSessions: 'Keine Sitzungen',
     newChat: 'Neuer Chat',
+    agent: 'Agent',
     approvalKicker: 'Terminal-Berechtigung',
     approvalTitle: 'Befehl vor dem Ausführen prüfen',
     approvalAllowOnce: 'Einmal erlauben',

@@ -25,7 +25,12 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
 
-export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
+export function resolveRunSource(source?: string, sessionId?: string): ChatRunSource {
+  if (source === 'api_server' || source === 'cli' || source === 'coding_agent') return source
+  if (sessionId) {
+    const stored = getSession(sessionId)?.source
+    if (stored === 'api_server' || stored === 'cli' || stored === 'coding_agent') return stored
+  }
   return 'cli'
 }
 

@@ -1,0 +1,65 @@
+import { randomBytes } from 'crypto'
+import type { AgentApiMode } from './types'
+
+export interface AgentTargetInput {
+  provider: string
+  model: string
+  baseUrl: string
+  apiKey: string
+  apiMode?: AgentApiMode
+  agentId?: string
+  agentSessionId?: string
+  chatSessionId?: string
+}
+
+export type NormalizedAgentTargetInput<T extends AgentTargetInput> = Omit<T, 'apiMode'> & {
+  provider: string
+  model: string
+  baseUrl: string
+  apiKey: string
+  apiMode: AgentApiMode
+}
+
+export type RegisteredAgentTarget<T extends AgentTargetInput> = NormalizedAgentTargetInput<T> & {
+  key: string
+  routeKey: string
+  token: string
+  updatedAt: number
+}
+
+export class AgentTargetRegistry<T extends AgentTargetInput> {
+  private targets = new Map<string, RegisteredAgentTarget<T>>()
+
+  constructor(private readonly keyParts: (input: NormalizedAgentTargetInput<T>) => string[]) {}
+
+  register(input: T): RegisteredAgentTarget<T> {
+    const normalized = {
+      ...input,
+      provider: input.provider.trim(),
+      model: input.model.trim(),
+      baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
+      apiMode: input.apiMode || 'chat_completions',
+    } as NormalizedAgentTargetInput<T>
+    const key = this.keyParts(normalized).join('\0')
+    const existing = this.targets.get(key)
+    const routeKey = existing?.routeKey || Buffer.from(key, 'utf-8').toString('base64url')
+    const token = existing?.token || `hwui_${randomBytes(24).toString('base64url')}`
+    const target = {
+      ...normalized,
+      key,
+      routeKey,
+      token,
+      updatedAt: Date.now(),
+    } as RegisteredAgentTarget<T>
+
+    this.targets.set(key, target)
+    return target
+  }
+
+  find(routeKey: string): RegisteredAgentTarget<T> | null {
+    for (const target of this.targets.values()) {
+      if (target.routeKey === routeKey) return target
+    }
+    return null
+  }
+}

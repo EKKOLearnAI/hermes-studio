@@ -392,6 +392,7 @@ export default {
     historyScopeHint: '現在の profile の Hermes 履歴セッションをソース別に読み取り専用で表示します。',
     noSessions: 'セッションがありません',
     newChat: '新しいチャット',
+    agent: 'Agent',
     approvalKicker: 'ターミナル権限',
     approvalTitle: '実行前にコマンドを確認',
     approvalAllowOnce: '一度だけ許可',

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
+import type { AvailableModelGroup } from "@/api/hermes/system";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -181,10 +182,26 @@ function handleClarify(response?: string) {
 }
 
 const showNewChatModal = ref(false);
+const newChatAgent = ref<"hermes" | "claude-code" | "codex">("hermes");
 const newChatProfile = ref<string>("default");
 const newChatProvider = ref<string>("");
 const newChatModel = ref<string>("");
+const newChatBaseUrl = ref<string>("");
+const newChatApiKey = ref<string>("");
+const newChatApiMode = ref<"chat_completions" | "codex_responses" | "anthropic_messages">("codex_responses");
 const newChatLoading = ref(false);
+
+const newChatAgentOptions = computed(() => [
+  { label: "Hermes", value: "hermes" },
+  { label: "Claude Code", value: "claude-code" },
+  { label: "Codex", value: "codex" },
+]);
+
+const newChatApiModeOptions = computed(() => [
+  { label: t("codingAgents.protocolOpenAiChat"), value: "chat_completions" },
+  { label: t("codingAgents.protocolOpenAiResponses"), value: "codex_responses" },
+  { label: t("codingAgents.protocolAnthropicMessages"), value: "anthropic_messages" },
+]);
 
 function getModelGroupsForProfile(profile: string) {
   const profileModels = appStore.profileModelGroups.find(
@@ -240,10 +257,61 @@ const newChatModelOptions = computed(() => {
   }));
 });
 
+const selectedNewChatProviderGroup = computed(() =>
+  newChatModelGroups.value.find((item) => item.provider === newChatProvider.value),
+);
+
+const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
+const newChatNeedsBaseUrl = computed(() =>
+  isNewChatCodingAgent.value && !selectedNewChatProviderGroup.value?.base_url,
+);
+const newChatNeedsApiKey = computed(() =>
+  isNewChatCodingAgent.value && !selectedNewChatProviderGroup.value?.api_key,
+);
+const canConfirmNewChat = computed(() => {
+  if (!newChatProfile.value || !newChatProvider.value || !newChatModel.value) return false;
+  if (!isNewChatCodingAgent.value) return true;
+  if (!newChatApiMode.value) return false;
+  if (newChatNeedsBaseUrl.value && !newChatBaseUrl.value.trim()) return false;
+  if (newChatNeedsApiKey.value && !newChatApiKey.value.trim()) return false;
+  return true;
+});
+
+function defaultNewChatApiMode(group?: AvailableModelGroup) {
+  if (group?.api_mode) return group.api_mode;
+  const providerKey = String(group?.provider || newChatProvider.value || "").toLowerCase();
+  const baseUrl = String(group?.base_url || newChatBaseUrl.value || "").toLowerCase();
+  if (
+    providerKey.includes("claude") ||
+    providerKey === "anthropic" ||
+    baseUrl.includes("anthropic") ||
+    baseUrl.includes("/anthropic")
+  ) {
+    return "anthropic_messages";
+  }
+  if (
+    providerKey === "deepseek" ||
+    providerKey === "lmstudio" ||
+    baseUrl.includes("deepseek") ||
+    baseUrl.includes("127.0.0.1") ||
+    baseUrl.includes("localhost")
+  ) {
+    return "chat_completions";
+  }
+  return "codex_responses";
+}
+
+function syncNewChatApiMode() {
+  newChatApiMode.value = defaultNewChatApiMode(selectedNewChatProviderGroup.value);
+}
+
 function syncNewChatModelSelection() {
   const defaults = getDefaultModelForProfile(newChatProfile.value);
   newChatProvider.value = defaults.provider;
   newChatModel.value = defaults.model;
+  newChatBaseUrl.value = "";
+  newChatApiKey.value = "";
+  syncNewChatApiMode();
 }
 
 async function openNewChatModal() {
@@ -273,13 +341,29 @@ function handleNewChatProfileChange(value: string) {
 function handleNewChatProviderChange(value: string) {
   newChatProvider.value = value;
   newChatModel.value = newChatModelOptions.value[0]?.value || "";
+  newChatBaseUrl.value = "";
+  newChatApiKey.value = "";
+  syncNewChatApiMode();
 }
 
 async function confirmNewChat() {
+  const group = selectedNewChatProviderGroup.value;
+  const source = newChatAgent.value === "hermes" ? "cli" : "coding_agent";
+  const agent = newChatAgent.value === "codex"
+    ? "codex"
+    : newChatAgent.value === "claude-code"
+      ? "claude"
+      : "hermes";
   const session = chatStore.newChat({
     profile: newChatProfile.value,
     provider: newChatProvider.value,
     model: newChatModel.value,
+    source,
+    agent,
+    codingAgentId: newChatAgent.value === "hermes" ? undefined : newChatAgent.value,
+    baseUrl: source === "coding_agent" ? group?.base_url || newChatBaseUrl.value.trim() || undefined : undefined,
+    apiKey: source === "coding_agent" ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
+    apiMode: source === "coding_agent" ? newChatApiMode.value : undefined,
   });
   await router.push({
     name: "hermes.session",
@@ -1050,6 +1134,14 @@ async function handleSessionModelCustomSubmit() {
     >
       <div class="new-chat-form">
         <label class="new-chat-field">
+          <span class="new-chat-label">{{ t("chat.agent") }}</span>
+          <NSelect
+            v-model:value="newChatAgent"
+            :options="newChatAgentOptions"
+            :disabled="newChatLoading"
+          />
+        </label>
+        <label class="new-chat-field">
           <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
           <NSelect
             :value="newChatProfile"
@@ -1076,13 +1168,37 @@ async function handleSessionModelCustomSubmit() {
             filterable
           />
         </label>
+        <label v-if="isNewChatCodingAgent" class="new-chat-field">
+          <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
+          <NSelect
+            v-model:value="newChatApiMode"
+            :options="newChatApiModeOptions"
+            :disabled="newChatLoading"
+          />
+        </label>
+        <label v-if="newChatNeedsBaseUrl" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.baseUrl") }}</span>
+          <NInput
+            v-model:value="newChatBaseUrl"
+            :placeholder="t('models.baseUrlPlaceholder')"
+          />
+        </label>
+        <label v-if="newChatNeedsApiKey" class="new-chat-field">
+          <span class="new-chat-label">{{ t("models.apiKey") }}</span>
+          <NInput
+            v-model:value="newChatApiKey"
+            type="password"
+            show-password-on="click"
+            :placeholder="t('models.apiKeyPlaceholder')"
+          />
+        </label>
       </div>
       <template #footer>
         <div class="new-chat-actions">
           <NButton @click="showNewChatModal = false">{{ t("common.cancel") }}</NButton>
           <NButton
             type="primary"
-            :disabled="!newChatProfile || !newChatProvider || !newChatModel"
+            :disabled="!canConfirmNewChat"
             @click="confirmNewChat"
           >
             {{ t("chat.newChat") }}

@@ -8,6 +8,18 @@ import { logger } from '../../logger'
 import { summarizeToolArguments, responseFunctionCallToToolCall } from './response-utils'
 import type { SessionState, ResponseRunState } from './types'
 
+function textFromResponseMessageItem(item: any): string {
+  const content = Array.isArray(item?.content) ? item.content : []
+  return content
+    .map((part: any) => {
+      if (typeof part?.text === 'string') return part.text
+      if (typeof part?.content === 'string') return part.content
+      return ''
+    })
+    .filter(Boolean)
+    .join('')
+}
+
 export function applyResponseStreamEvent(
   state: SessionState,
   sessionId: string,
@@ -92,6 +104,38 @@ export function applyResponseStreamEvent(
     }
   }
 
+  if (eventType === 'response.function_call_arguments.delta') {
+    const callId = parsed.call_id || parsed.item_id || parsed.id
+    if (!callId) return null
+    const existing = run.toolCalls.get(callId)
+    if (!existing) return null
+    const delta = typeof parsed.delta === 'string' ? parsed.delta : ''
+    if (!delta) return null
+    const rawPreviousArgs = typeof existing.function?.arguments === 'string' ? existing.function.arguments : ''
+    const previousArgs = rawPreviousArgs === '{}' && /^[\[{]/.test(delta.trim()) ? '' : rawPreviousArgs
+    const nextToolCall = {
+      ...existing,
+      function: {
+        ...existing.function,
+        arguments: `${previousArgs}${delta}`,
+      },
+    }
+    run.toolCalls.set(callId, nextToolCall)
+    return {
+      event: 'tool.started',
+      payload: {
+        event: 'tool.started',
+        run_id: run.responseId,
+        response_id: run.responseId,
+        tool_call_id: callId,
+        tool: nextToolCall.function.name,
+        name: nextToolCall.function.name,
+        arguments: nextToolCall.function.arguments,
+        preview: summarizeToolArguments(nextToolCall.function.arguments),
+      },
+    }
+  }
+
   if (eventType === 'response.output_item.done') {
     const item = parsed.item || parsed.output_item || parsed
     if (item.type === 'function_call') {
@@ -163,7 +207,25 @@ export function applyResponseStreamEvent(
     run.responseId = response.id || run.responseId
     const output = Array.isArray(response.output) ? response.output : []
     for (const item of output) {
-      if (item.type === 'function_call') {
+      if (item.type === 'message') {
+        const finalText = textFromResponseMessageItem(item)
+        if (!finalText) continue
+        const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+        if (last?.role === 'assistant' && !last.tool_calls?.length) {
+          if (!last.content) last.content = finalText
+          last.finish_reason = last.finish_reason || 'stop'
+        } else {
+          state.messages.push({
+            id: state.messages.length + 1,
+            session_id: sessionId,
+            runMarker,
+            role: 'assistant',
+            content: finalText,
+            finish_reason: 'stop',
+            timestamp: now(),
+          })
+        }
+      } else if (item.type === 'function_call') {
         applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.added', { item })
         applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
       } else if (item.type === 'function_call_output') {
