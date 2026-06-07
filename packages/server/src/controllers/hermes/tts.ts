@@ -1,6 +1,7 @@
 import type { Context } from 'koa'
 import { textToSpeech, openaiCompatibleTts, speedToEdgeRate } from '../../services/hermes/tts'
 import { getTtsProvider } from '../../services/hermes/tts-providers'
+import { assertSafeResolvedTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 import {
   assertStoredTtsProvider,
   clearStoredTtsSecret,
@@ -130,6 +131,204 @@ export async function deleteSecret(ctx: Context) {
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
     throw error
+  }
+}
+
+type ProbeKind = 'tts' | 'stt'
+type ProbeCompatibility = 'openai-compatible' | 'manual'
+
+interface ProbeModel {
+  id: string
+  label: string
+  capability: 'preferred' | 'other'
+}
+
+async function normalizeProbeBaseUrl(rawUrl: string): Promise<string> {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) throw new Error('Base URL is required')
+
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    throw new Error('Enter a valid Base URL, including https://')
+  }
+
+  url.hash = ''
+  url.pathname = url.pathname.replace(/\/+$/, '') || '/'
+  await assertSafeResolvedTtsBaseUrl(url, 'Provider probe')
+  return url.toString().replace(/\/$/, '')
+}
+
+function buildOpenaiModelsUrl(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  url.search = ''
+  url.hash = ''
+  let pathname = url.pathname.replace(/\/+$/, '')
+
+  for (const suffix of ['/audio/speech', '/audio/transcriptions', '/chat/completions', '/responses']) {
+    if (pathname.endsWith(suffix)) {
+      pathname = pathname.slice(0, -suffix.length) || '/'
+      break
+    }
+  }
+
+  url.pathname = `${pathname.replace(/\/+$/, '')}/models`.replace(/\/+/g, '/')
+  return url.toString()
+}
+
+function modelRank(kind: ProbeKind, id: string): number {
+  const value = id.toLowerCase()
+  if (kind === 'tts') {
+    if (/tts|speech|audio|voice|playai|orpheus/.test(value)) return 0
+    if (/whisper|transcrib|stt/.test(value)) return 3
+    return 2
+  }
+
+  if (/whisper|transcrib|stt|speech-to-text/.test(value)) return 0
+  if (/tts|audio-speech|voice|orpheus|playai/.test(value)) return 3
+  return 2
+}
+
+function rankModels(kind: ProbeKind, ids: string[]): ProbeModel[] {
+  return [...new Set(ids.map(id => id.trim()).filter(Boolean))]
+    .sort((a, b) => {
+      const rankDiff = modelRank(kind, a) - modelRank(kind, b)
+      return rankDiff || a.localeCompare(b)
+    })
+    .slice(0, 100)
+    .map(id => ({
+      id,
+      label: id,
+      capability: modelRank(kind, id) === 0 ? 'preferred' : 'other',
+    }))
+}
+
+function summarizeProbeError(error: unknown): { summary: string; details: string } {
+  const message = sanitizeTtsError(error)
+  if (/401|unauthorized|invalid api key|incorrect api key|authentication/i.test(message)) {
+    return { summary: 'Authentication failed. Check the API key.', details: message }
+  }
+  if (/403|forbidden|permission|terms|billing|quota/i.test(message)) {
+    return { summary: 'The key reached the provider, but access is blocked. Check permissions, terms, billing, or quota.', details: message }
+  }
+  if (/404|not found/i.test(message)) {
+    return { summary: 'The model discovery endpoint was not found. Check the Base URL and compatibility type.', details: message }
+  }
+  if (/timeout|aborted/i.test(message)) {
+    return { summary: 'Model discovery timed out. You can still enter the model manually.', details: message }
+  }
+  if (/localhost|private network|metadata|resolved to/i.test(message)) {
+    return { summary: 'The Base URL targets a blocked local or private network address.', details: message }
+  }
+  if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|ECONNRESET/i.test(message)) {
+    return { summary: 'Could not reach the provider from the Web UI server. Check the Base URL and network access.', details: message }
+  }
+  return { summary: 'Could not fetch models. You can still enter the model name manually.', details: message }
+}
+
+async function fetchOpenaiCompatibleModels(kind: ProbeKind, baseUrl: string, apiKey: string, signal: AbortSignal): Promise<ProbeModel[]> {
+  const modelsUrl = buildOpenaiModelsUrl(baseUrl)
+  const res = await fetch(modelsUrl, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    signal,
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Model discovery returned ${res.status}: ${body || res.statusText}`)
+  }
+
+  const payload = await res.json().catch(() => null) as { data?: Array<{ id?: unknown }> } | null
+  const ids = Array.isArray(payload?.data)
+    ? payload.data.map(model => typeof model.id === 'string' ? model.id : '').filter(Boolean)
+    : []
+
+  if (!ids.length) {
+    throw new Error('Model discovery returned no model IDs')
+  }
+
+  return rankModels(kind, ids)
+}
+
+export async function probeProvider(ctx: Context) {
+  const body = (ctx.request.body || {}) as {
+    kind?: unknown
+    provider?: unknown
+    compatibility?: unknown
+    baseUrl?: unknown
+    apiKey?: unknown
+  }
+
+  const kind = body.kind === 'tts' || body.kind === 'stt' ? body.kind : null
+  const compatibility: ProbeCompatibility = body.compatibility === 'manual' ? 'manual' : 'openai-compatible'
+  const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
+
+  if (!kind) {
+    ctx.status = 400
+    ctx.body = { ok: false, models: [], recommendedModel: '', errorSummary: 'Provider kind must be TTS or STT.', manualModelAllowed: true }
+    return
+  }
+
+  let baseUrl = ''
+  try {
+    baseUrl = await normalizeProbeBaseUrl(typeof body.baseUrl === 'string' ? body.baseUrl : '')
+  } catch (error) {
+    ctx.status = 400
+    const { summary, details } = summarizeProbeError(error)
+    ctx.body = { ok: false, models: [], recommendedModel: '', errorSummary: summary, errorDetails: details, manualModelAllowed: true }
+    return
+  }
+
+  if (compatibility === 'manual') {
+    ctx.body = {
+      ok: true,
+      models: [],
+      recommendedModel: '',
+      errorSummary: '',
+      manualModelAllowed: true,
+      normalizedBaseUrl: baseUrl,
+    }
+    return
+  }
+
+  if (!apiKey) {
+    ctx.status = 400
+    ctx.body = { ok: false, models: [], recommendedModel: '', errorSummary: 'API key is required to fetch models.', manualModelAllowed: true, normalizedBaseUrl: baseUrl }
+    return
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  try {
+    const models = await fetchOpenaiCompatibleModels(kind, baseUrl, apiKey, controller.signal)
+    const recommended = models.find(model => model.capability === 'preferred') || models[0] || null
+    ctx.body = {
+      ok: true,
+      models,
+      recommendedModel: recommended?.id || '',
+      errorSummary: '',
+      manualModelAllowed: true,
+      normalizedBaseUrl: baseUrl,
+    }
+  } catch (error) {
+    const { summary, details } = summarizeProbeError(error)
+    ctx.status = 200
+    ctx.body = {
+      ok: false,
+      models: [],
+      recommendedModel: '',
+      errorSummary: summary,
+      errorDetails: details,
+      manualModelAllowed: true,
+      normalizedBaseUrl: baseUrl,
+    }
+  } finally {
+    clearTimeout(timeout)
   }
 }
 

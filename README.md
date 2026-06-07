@@ -162,13 +162,19 @@ hermes-web-ui reset-default-login
 - Model settings (default model & provider)
 - Profile and provider configuration
 
-### Voice / TTS
+### Voice / TTS / STT
 
 - Read assistant replies aloud from chat and group-chat messages.
 - Providers: browser Web Speech, built-in Edge TTS, OpenAI-compatible `/audio/speech`, custom OpenAI-compatible TTS endpoints, and MiMo.
 - MiMo supports preset voices, voice design prompts, and voice clone reference audio (`.mp3`/`.wav`, max 10 MB) with selectable auth header mode (`Authorization`, `api-key`, or both).
 - Edge/OpenAI-compatible/custom/MiMo playback uses the Web UI backend's unified `/api/hermes/tts/synthesize` endpoint, so stop/pause state is shared and in-flight fetches are aborted when possible.
-- Limitation: external TTS providers may continue processing a request after the browser/server aborts; custom/OpenAI-compatible and MiMo base URLs must be public `http`/`https` endpoints and cannot target localhost/private networks; voice-clone reference audio is stored in browser settings as a data URI, so avoid large or sensitive samples.
+- Provider API keys and MiMo clone reference audio are saved in server-side TTS settings, with only masked secret status shown back to the browser.
+- Save provider settings in Settings → Voice before using OpenAI/custom/MiMo playback. Message playback sends text and non-secret playback options; the backend reads the stored per-user secret when synthesizing.
+- Turn-based voice input is available from the chat input mic control: start/stop a voice turn, transcribe it, stage the transcript in the current input box for editing, then send it with the normal Send button.
+- Voice input / STT can use browser speech recognition when available or a server-backed provider configured in Settings → Voice.
+- Starting a new voice turn while assistant audio is playing stops playback first. This barge-in boundary does not implicitly cancel an active agent run; stopping a run remains an explicit action.
+- For supported settings, security notes, and current non-goals, see [`docs/voice-dialogue.md`](./docs/voice-dialogue.md).
+- Limitation: external TTS providers may continue processing a request after the browser/server aborts; custom/OpenAI-compatible and MiMo base URLs must be public `http`/`https` endpoints and cannot target localhost/private networks.
 
 ### Web Terminal
 
@@ -296,7 +302,6 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | --------------------------------- | ---------------------------------- |
 | `hermes-web-ui start`             | Start in background (daemon mode)  |
 | `hermes-web-ui start --port 9000` | Start on custom port               |
-| `hermes-web-ui client`            | Start for a remote client (`HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`, `CORS_ORIGINS=*`) |
 | `hermes-web-ui stop`              | Stop background process            |
 | `hermes-web-ui restart`           | Restart background process         |
 | `hermes-web-ui status`            | Check if running                   |

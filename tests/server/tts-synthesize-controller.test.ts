@@ -2,14 +2,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 function createMockCtx(body: Record<string, any> = {}) {
   const headers: Record<string, string> = {}
-  let closeHandler: (() => void) | undefined
+  let requestAbortHandler: (() => void) | undefined
+  let responseCloseHandler: (() => void) | undefined
 
   const ctx: any = {
     request: { body },
     req: {
       on: vi.fn((event: string, handler: () => void) => {
+        if (event === 'aborted') {
+          requestAbortHandler = handler
+        }
+      }),
+    },
+    res: {
+      writableEnded: false,
+      on: vi.fn((event: string, handler: () => void) => {
         if (event === 'close') {
-          closeHandler = handler
+          responseCloseHandler = handler
         }
       }),
     },
@@ -23,8 +32,12 @@ function createMockCtx(body: Record<string, any> = {}) {
   return {
     ctx,
     headers,
-    emitClose() {
-      closeHandler?.()
+    emitRequestAborted() {
+      requestAbortHandler?.()
+    },
+    emitResponseClose({ writableEnded = false } = {}) {
+      ctx.res.writableEnded = writableEnded
+      responseCloseHandler?.()
     },
   }
 }
@@ -147,7 +160,7 @@ describe('tts synthesize controller', () => {
     expect(ctx.body).toBe(audio)
   })
 
-  it('aborts the provider signal when the request closes', async () => {
+  it('aborts the provider signal on client disconnect, but not on normal request close', async () => {
     const audio = Buffer.from('late-audio')
     let capturedSignal: AbortSignal | undefined
     let resolveSynthesize: (() => void) | undefined
@@ -171,15 +184,18 @@ describe('tts synthesize controller', () => {
     }))
 
     const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
-    const { ctx, emitClose } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
+    const { ctx, emitRequestAborted, emitResponseClose } = createMockCtx({ provider: 'mimo', text: 'Hello world' })
 
     const pending = ctrl.synthesize(ctx)
 
-    expect(ctx.req.on).toHaveBeenCalledWith('close', expect.any(Function))
+    expect(ctx.req.on).toHaveBeenCalledWith('aborted', expect.any(Function))
+    expect(ctx.res.on).toHaveBeenCalledWith('close', expect.any(Function))
     expect(capturedSignal?.aborted).toBe(false)
 
-    emitClose()
+    emitResponseClose({ writableEnded: true })
+    expect(capturedSignal?.aborted).toBe(false)
 
+    emitRequestAborted()
     expect(capturedSignal?.aborted).toBe(true)
 
     resolveSynthesize?.()
@@ -206,9 +222,9 @@ describe('tts synthesize controller', () => {
     expect(JSON.stringify(ctx.body)).not.toContain('client went away')
   })
 
-  it('returns 502 without leaking upstream details when the provider fails', async () => {
+  it('returns sanitized provider details when the provider fails', async () => {
     const provider = {
-      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: secret body')),
+      synthesize: vi.fn().mockRejectedValue(new Error('MiMo TTS returned 401: apiKey=*** body')),
     }
     const getTtsProvider = vi.fn(() => provider)
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
@@ -220,9 +236,134 @@ describe('tts synthesize controller', () => {
 
     await ctrl.synthesize(ctx)
 
-    expect(ctx.status).toBe(502)
-    expect(ctx.body).toEqual({ error: 'TTS synthesis failed' })
-    expect(JSON.stringify(ctx.body)).not.toContain('secret body')
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({
+      error: 'TTS synthesis failed',
+      detail: 'MiMo TTS returned 401: apiKey=[redacted] body',
+    })
+    expect(JSON.stringify(ctx.body)).not.toContain('***')
+  })
+
+  it('probes OpenAI-compatible model endpoints, ranks models, and redacts errors', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [
+          { id: 'gpt-4o-mini' },
+          { id: 'whisper-large-v3' },
+          { id: 'tts-1-hd' },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'bad sk-test-secret-value key' } }), { status: 401, statusText: 'Unauthorized' }))
+    globalThis.fetch = fetchMock as any
+    let safety: typeof import('../../packages/server/src/services/hermes/tts-providers/url-safety') | undefined
+
+    try {
+      safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
+      safety.setTtsDnsLookupForTests(async () => [{ address: '93.184.216.34', family: 4 } as any])
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        kind: 'tts',
+        provider: 'custom',
+        compatibility: 'openai-compatible',
+        baseUrl: 'https://api.example.com/openai/v1/audio/speech/',
+        apiKey: 'sk-test-secret-value',
+      })
+      ctx.state = { user: { id: 1 } }
+
+      await ctrl.probeProvider(ctx)
+
+      expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/openai/v1/models', expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-test-secret-value' }),
+      }))
+      expect(ctx.body.ok).toBe(true)
+      expect(ctx.body.models[0].id).toBe('tts-1-hd')
+      expect(ctx.body.recommendedModel).toBe('tts-1-hd')
+      expect(ctx.body.normalizedBaseUrl).toBe('https://api.example.com/openai/v1/audio/speech')
+
+      const failed = createMockCtx({
+        kind: 'stt',
+        provider: 'custom',
+        compatibility: 'openai-compatible',
+        baseUrl: 'https://api.example.com/openai/v1',
+        apiKey: 'sk-test-secret-value',
+      })
+      failed.ctx.state = { user: { id: 1 } }
+      await ctrl.probeProvider(failed.ctx)
+
+      expect(failed.ctx.status).toBe(200)
+      expect(failed.ctx.body.ok).toBe(false)
+      expect(failed.ctx.body.errorSummary).toContain('Authentication failed')
+      expect(JSON.stringify(failed.ctx.body)).not.toContain('sk-test-secret-value')
+      expect(failed.ctx.body.manualModelAllowed).toBe(true)
+    } finally {
+      safety?.resetTtsDnsLookupForTests()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('does not call upstream discovery for manual custom endpoint probes', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as any
+    let safety: typeof import('../../packages/server/src/services/hermes/tts-providers/url-safety') | undefined
+
+    try {
+      safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
+      safety.setTtsDnsLookupForTests(async () => [{ address: '93.184.216.34', family: 4 } as any])
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        kind: 'stt',
+        provider: 'custom',
+        compatibility: 'manual',
+        baseUrl: 'https://manual.example.test/v1/',
+        apiKey: 'sk-test-secret-value',
+      })
+      ctx.state = { user: { id: 1 } }
+
+      await ctrl.probeProvider(ctx)
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(ctx.body).toEqual({
+        ok: true,
+        models: [],
+        recommendedModel: '',
+        errorSummary: '',
+        manualModelAllowed: true,
+        normalizedBaseUrl: 'https://manual.example.test/v1',
+      })
+    } finally {
+      safety?.resetTtsDnsLookupForTests()
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('blocks local or private network provider probe targets before upstream fetch', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as any
+
+    try {
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        kind: 'tts',
+        provider: 'custom',
+        compatibility: 'openai-compatible',
+        baseUrl: 'http://127.0.0.1:8080/v1',
+        apiKey: 'sk-tes...alue',
+      })
+      ctx.state = { user: { id: 1 } }
+
+      await ctrl.probeProvider(ctx)
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(ctx.status).toBe(400)
+      expect(ctx.body.ok).toBe(false)
+      expect(ctx.body.errorSummary).toContain('blocked local or private network')
+      expect(JSON.stringify(ctx.body)).not.toContain('sk-tes...alue')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 
@@ -238,11 +379,21 @@ describe('tts routes', () => {
     const generate = vi.fn(async (ctx: any) => { ctx.body = { route: 'generate' } })
     const openaiProxy = vi.fn(async (ctx: any) => { ctx.body = { route: 'openaiProxy' } })
     const synthesize = vi.fn(async (ctx: any) => { ctx.body = { route: 'synthesize' } })
+    const listSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'listSettings' } })
+    const saveSettings = vi.fn(async (ctx: any) => { ctx.body = { route: 'saveSettings' } })
+    const deleteBaseUrlPreset = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteBaseUrlPreset' } })
+    const deleteSecret = vi.fn(async (ctx: any) => { ctx.body = { route: 'deleteSecret' } })
+    const probeProvider = vi.fn(async (ctx: any) => { ctx.body = { route: 'probeProvider' } })
 
     vi.doMock('../../packages/server/src/controllers/hermes/tts', () => ({
       generate,
       openaiProxy,
       synthesize,
+      listSettings,
+      saveSettings,
+      deleteBaseUrlPreset,
+      deleteSecret,
+      probeProvider,
     }))
 
     const { ttsRoutes, ttsProtectedRoutes } = await import('../../packages/server/src/routes/hermes/tts')
@@ -254,7 +405,14 @@ describe('tts routes', () => {
       '/api/tts/proxy/audio/speech',
     ]))
     expect(paths).not.toContain('/api/hermes/tts/synthesize')
-    expect(protectedPaths).toEqual(['/api/hermes/tts/synthesize'])
+    expect(protectedPaths).toEqual(expect.arrayContaining([
+      '/api/hermes/tts/settings',
+      '/api/hermes/tts/settings/:provider',
+      '/api/hermes/tts/settings/:provider/base-url-preset',
+      '/api/hermes/tts/settings/:provider/secret/:secretName',
+      '/api/voice/providers/probe',
+      '/api/hermes/tts/synthesize',
+    ]))
 
     const synthLayer: any = ttsProtectedRoutes.stack.find((entry: any) => entry.path === '/api/hermes/tts/synthesize')
     const ctx: any = { request: { body: {} }, body: null }
