@@ -319,6 +319,19 @@ async function buildAvailableForProfile(
           && cp.model === currentDefault,
       )
       if (match) currentDefaultProvider = providerKeyForCustom(String(match.name || ''))
+    } else if (currentDefaultProvider && !currentDefaultProvider.startsWith('custom:')) {
+      // If the provider isn't a builtin key and doesn't already have the custom:
+      // prefix, try to match it against custom_providers[].name.  This handles
+      // the common case of `provider: qwen3` (without the custom: prefix) that
+      // tools like cc-switch or hand-edited configs produce.
+      const builtinKey = Object.keys(PROVIDER_ENV_MAP).find(k => k.toLowerCase() === currentDefaultProvider.toLowerCase())
+      if (!builtinKey) {
+        const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        const match = cps.find(
+          (cp: any) => String(cp.name || '').trim().toLowerCase() === currentDefaultProvider.toLowerCase(),
+        )
+        if (match) currentDefaultProvider = providerKeyForCustom(String(match.name || ''))
+      }
     }
   } else if (typeof modelSection === 'string') {
     currentDefault = modelSection.trim()
