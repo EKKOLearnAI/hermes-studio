@@ -768,10 +768,10 @@ async function handleTest() {
           {{ testPlaying ? t('settings.voice.testButtonPlaying') : t('settings.voice.testButton') }}
         </NButton>
       </div>
-      <div class="test-row">
+      <div class="test-row settings-save-row">
         <NButton
           size="small"
-          secondary
+          type="primary"
           :loading="settingsSaving"
           :disabled="settingsSaving"
           @click="saveCurrentProviderSettings"
@@ -811,6 +811,10 @@ async function handleTest() {
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+
+  .settings-save-row {
+    margin-top: 8px;
   }
 }
 
