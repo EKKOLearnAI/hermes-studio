@@ -9,6 +9,8 @@ import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
 const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
 const MAX_AGENT_BRIDGE_RESTART_DELAY_MS = 30000
+const DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS = 5000
+const DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS = 250
 const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
   HERMES_OPENROUTER_APP_REFERER: 'https://hermes-studio.ai',
   HERMES_OPENROUTER_APP_TITLE: 'Hermes Studio',
@@ -476,6 +478,7 @@ export class AgentBridgeManager {
   private starting: Promise<void> | null = null
   private ready = false
   private stopping = false
+  private stopGeneration = 0
   private restartTimer: NodeJS.Timeout | null = null
   private restartAttempts = 0
 
@@ -612,14 +615,14 @@ export class AgentBridgeManager {
       return readiness
     }
 
+    const recoveryStopGeneration = this.stopGeneration
     this.ready = false
     this.child = null
+    await this.waitForManagedChildExit(child)
 
-    if (!child.killed) {
-      child.kill('SIGTERM')
+    if (this.stopGeneration !== recoveryStopGeneration || this.stopping) {
+      return this.checkReadiness({ ...options, connectRetryMs: 0 })
     }
-
-    await new Promise(resolve => setTimeout(resolve, 100))
 
     try {
       await this.start()
@@ -647,6 +650,67 @@ export class AgentBridgeManager {
     } finally {
       this.starting = null
     }
+  }
+
+  private async waitForManagedChildExit(child: ChildProcess): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const gracefulTimeoutMs = envPositiveInt('HERMES_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS')
+        ?? DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS
+      const sigkillWaitMs = envPositiveInt('HERMES_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS')
+        ?? DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS
+
+      let settled = false
+      let gracefulTimeout: NodeJS.Timeout | null = null
+      let sigkillTimeout: NodeJS.Timeout | null = null
+
+      const cleanup = () => {
+        if (gracefulTimeout) clearTimeout(gracefulTimeout)
+        if (sigkillTimeout) clearTimeout(sigkillTimeout)
+        child.off('exit', onExit)
+      }
+
+      const finish = () => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve()
+      }
+
+      const onExit = () => {
+        finish()
+      }
+
+      const sendSignal = (signal: NodeJS.Signals) => {
+        try {
+          child.kill(signal)
+        } catch (err) {
+          logger.warn(err, '[agent-bridge] failed to signal managed child pid=%s signal=%s', child.pid, signal)
+        }
+      }
+
+      child.once('exit', onExit)
+
+      gracefulTimeout = setTimeout(() => {
+        if (settled) return
+        logger.warn(
+          '[agent-bridge] managed child pid=%s did not exit after SIGTERM within %dms; sending SIGKILL',
+          child.pid,
+          gracefulTimeoutMs,
+        )
+        sendSignal('SIGKILL')
+        sigkillTimeout = setTimeout(() => {
+          if (settled) return
+          logger.warn(
+            '[agent-bridge] managed child pid=%s still has not exited %dms after SIGKILL; continuing recovery',
+            child.pid,
+            sigkillWaitMs,
+          )
+          finish()
+        }, sigkillWaitMs)
+      }, gracefulTimeoutMs)
+
+      sendSignal('SIGTERM')
+    })
   }
 
   private async startProcess(): Promise<void> {
@@ -678,10 +742,15 @@ export class AgentBridgeManager {
     this.ready = false
 
     child.once('exit', (code, signal) => {
-      const shouldRestart = this.ready && !this.stopping && this.child === child && this.autoRestartEnabled()
+      const isCurrentChild = this.child === child
+      if (!isCurrentChild) {
+        logger.warn('[agent-bridge] stale managed child exit ignored code=%s signal=%s pid=%s', code, signal, child.pid)
+        return
+      }
+      const shouldRestart = this.ready && !this.stopping && this.autoRestartEnabled()
       logger.warn('[agent-bridge] exited code=%s signal=%s', code, signal)
       this.ready = false
-      if (this.child === child) this.child = null
+      this.child = null
       if (shouldRestart) this.scheduleRestart(code, signal)
     })
 
@@ -817,6 +886,7 @@ export class AgentBridgeManager {
   }
 
   async stop(): Promise<void> {
+    this.stopGeneration += 1
     this.stopping = true
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)

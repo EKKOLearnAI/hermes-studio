@@ -34,12 +34,37 @@ function currentProfileFromSocket(socket: Socket): string {
   return socketProfile || getActiveProfileName() || 'default'
 }
 
+function redactConfiguredTcpLoopbackEndpoint(error: string, endpoint?: string): string {
+  if (!endpoint?.startsWith('tcp://')) return error
+
+  try {
+    const url = new URL(endpoint)
+    if (!url.port) return error
+    const hosts = new Set<string>()
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1') {
+      hosts.add(`127.0.0.1:${url.port}`)
+      hosts.add(`localhost:${url.port}`)
+      hosts.add(`::1:${url.port}`)
+      hosts.add(`[::1]:${url.port}`)
+    }
+
+    let redacted = error
+    for (const host of hosts) {
+      redacted = redacted.split(host).join('configured endpoint')
+    }
+    return redacted
+  } catch {
+    return error
+  }
+}
+
 function redactBridgeReadyError(error: string, endpoint?: string): string {
   const normalized = error.replace(/^Error:\s*/, '').trim() || 'unknown error'
   let redacted = normalized
   if (endpoint?.trim()) {
     redacted = redacted.split(endpoint).join('configured endpoint')
   }
+  redacted = redactConfiguredTcpLoopbackEndpoint(redacted, endpoint)
   return redacted.replace(/ipc:\/\/[^\s),;]+/g, 'IPC endpoint')
 }
 
@@ -410,13 +435,13 @@ export class ChatRunSocket {
     if (state.runId && state.isWorking) return
     const session = getSession(sid)
     const profile = session?.profile || currentProfileFromSocket(socket)
-    let reattachedStateApplied = false
+    let pollKey: string | undefined
     try {
       const status = await this.bridge.statusIfLoaded(sid, profile) as Record<string, unknown>
       const running = status.running === true
       const runId = typeof status.current_run_id === 'string' ? status.current_run_id : ''
       if (!running || !runId) return
-      const pollKey = `${sid}:${runId}`
+      pollKey = `${sid}:${runId}`
       if (this.bridgeResumePolls.has(pollKey)) return
       this.bridgeResumePolls.add(pollKey)
       const bridgeReady = await ensureBridgeReadyForChatRun()
@@ -437,7 +462,6 @@ export class ChatRunSocket {
       state.profile = profile
       state.source = 'cli'
       state.events = []
-      reattachedStateApplied = true
       const instructions = this.resumeInstructionsForSession(sid)
       void resumeBridgeRun(
         this.nsp,
@@ -454,19 +478,26 @@ export class ChatRunSocket {
         this.bridge,
         this.dequeueNextQueuedRun.bind(this),
       ).finally(() => {
-        this.bridgeResumePolls.delete(pollKey)
+        if (pollKey) this.bridgeResumePolls.delete(pollKey!)
       })
       logger.info('[chat-run-socket] reattached running bridge run %s for session %s', runId, sid)
     } catch (err) {
-      if (reattachedStateApplied) {
-        this.rollbackBridgeReattachState(state)
-      }
+      if (pollKey) this.bridgeResumePolls.delete(pollKey)
+      this.rollbackBridgeReattachState(state)
       logger.warn(err, '[chat-run-socket] bridge status lookup failed while resuming session %s', sid)
+      const endpoint = getAgentBridgeManager().getRuntimeState?.().endpoint
+      const error = redactBridgeReadyError(err instanceof Error ? err.message : String(err), endpoint)
+      this.emitToSession(socket, sid, 'run.failed', {
+        event: 'run.failed',
+        session_id: sid,
+        error: `Agent Bridge is not reachable: ${error}`,
+      })
     }
   }
 
   private rollbackBridgeReattachState(state: SessionState) {
     state.isWorking = false
+    state.isAborting = false
     state.runId = undefined
     state.activeRunMarker = undefined
     state.profile = undefined

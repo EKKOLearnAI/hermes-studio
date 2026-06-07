@@ -1,8 +1,28 @@
+import { EventEmitter } from 'events'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+type MockManagedChild = EventEmitter & {
+  pid: number
+  killed: boolean
+  kill: ReturnType<typeof vi.fn>
+  unref: ReturnType<typeof vi.fn>
+}
+
+function createMockManagedChild(pid: number): MockManagedChild {
+  const child = new EventEmitter() as MockManagedChild
+  child.pid = pid
+  child.killed = false
+  child.kill = vi.fn((signal: string) => {
+    child.killed = signal === 'SIGTERM' || signal === 'SIGKILL'
+    return true
+  })
+  child.unref = vi.fn()
+  return child
+}
 
 describe('agent bridge manager command resolution', () => {
   const originalEnv = { ...process.env }
@@ -537,17 +557,10 @@ describe('agent bridge manager command resolution', () => {
     expect(startSpy).not.toHaveBeenCalled()
   })
 
-  it('restarts a managed child once when the bridge endpoint is unreachable', async () => {
+  it('waits for the old managed child to exit before starting replacement recovery', async () => {
     const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6557' })
-    const child = {
-      killed: false,
-      kill: vi.fn((signal: string) => {
-        child.killed = signal === 'SIGTERM'
-        return true
-      }),
-      pid: 12345,
-    }
+    const child = createMockManagedChild(12345)
 
     ;(manager as any).child = child
     ;(manager as any).ready = true
@@ -584,28 +597,260 @@ describe('agent bridge manager command resolution', () => {
       })
     const startSpy = vi.spyOn(manager, 'start').mockResolvedValue()
 
-    await expect(manager.ensureReady()).resolves.toMatchObject({
+    const ensureReadyPromise = manager.ensureReady()
+    await Promise.resolve()
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(startSpy).not.toHaveBeenCalled()
+
+    child.emit('exit', 0, 'SIGTERM')
+
+    await expect(ensureReadyPromise).resolves.toMatchObject({
       endpoint: 'tcp://127.0.0.1:6557',
       status: 'ready',
       reachable: true,
     })
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     expect(startSpy).toHaveBeenCalledTimes(1)
     expect(checkReadinessSpy).toHaveBeenCalledTimes(2)
     expect((manager as any).child).toBeNull()
   })
 
+  it('does not restart managed recovery after an explicit stop wins the race', async () => {
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6564' })
+    const child = createMockManagedChild(12347)
+
+    ;(manager as any).child = child
+    ;(manager as any).ready = true
+    ;(manager as any).attached = false
+
+    const checkReadinessSpy = vi.spyOn(manager, 'checkReadiness')
+      .mockResolvedValueOnce({
+        endpoint: 'tcp://127.0.0.1:6564',
+        endpointKind: 'tcp',
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+        pid: 12347,
+        error: 'connect ECONNREFUSED',
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'tcp://127.0.0.1:6564',
+        endpointKind: 'tcp',
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+        error: 'connect ECONNREFUSED',
+      })
+    const startSpy = vi.spyOn(manager, 'start').mockResolvedValue()
+
+    const ensureReadyPromise = manager.ensureReady()
+    await Promise.resolve()
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(startSpy).not.toHaveBeenCalled()
+
+    await manager.stop()
+    child.emit('exit', 0, 'SIGTERM')
+
+    await expect(ensureReadyPromise).resolves.toMatchObject({
+      endpoint: 'tcp://127.0.0.1:6564',
+      status: 'unreachable',
+      reachable: false,
+      ready: false,
+      running: false,
+    })
+    expect(startSpy).not.toHaveBeenCalled()
+    expect(checkReadinessSpy).toHaveBeenCalledTimes(2)
+    expect(checkReadinessSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({ connectRetryMs: 0 }))
+    expect((manager as any).child).toBeNull()
+    expect(manager.getRuntimeState()).toMatchObject({
+      ready: false,
+      running: false,
+      attached: false,
+      stopping: false,
+    })
+  })
+
+  it('bounds managed-child recovery by escalating to SIGKILL before starting replacement', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6563' })
+      const child = createMockManagedChild(12346)
+
+      ;(manager as any).child = child
+      ;(manager as any).ready = true
+      ;(manager as any).attached = false
+
+      const checkReadinessSpy = vi.spyOn(manager, 'checkReadiness')
+        .mockResolvedValueOnce({
+          endpoint: 'tcp://127.0.0.1:6563',
+          endpointKind: 'tcp',
+          status: 'unreachable',
+          reachable: false,
+          ready: false,
+          running: false,
+          attached: false,
+          starting: false,
+          stopping: false,
+          restartScheduled: false,
+          restartAttempts: 0,
+          pid: 12346,
+          error: 'connect ECONNREFUSED',
+        })
+        .mockResolvedValueOnce({
+          endpoint: 'tcp://127.0.0.1:6563',
+          endpointKind: 'tcp',
+          status: 'ready',
+          reachable: true,
+          ready: true,
+          running: true,
+          attached: false,
+          starting: false,
+          stopping: false,
+          restartScheduled: false,
+          restartAttempts: 0,
+        })
+      const startSpy = vi.spyOn(manager, 'start').mockResolvedValue()
+
+      const ensureReadyPromise = manager.ensureReady()
+      await Promise.resolve()
+
+      expect(child.kill).toHaveBeenNthCalledWith(1, 'SIGTERM')
+      expect(startSpy).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(child.kill).toHaveBeenNthCalledWith(2, 'SIGKILL')
+      expect(startSpy).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(250)
+
+      await expect(ensureReadyPromise).resolves.toMatchObject({
+        endpoint: 'tcp://127.0.0.1:6563',
+        status: 'ready',
+        reachable: true,
+      })
+      expect(startSpy).toHaveBeenCalledTimes(1)
+      expect(checkReadinessSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores the exiting stale managed child while delaying replacement until exit', async () => {
+    const oldChild = createMockManagedChild(45671)
+    const replacementChild = createMockManagedChild(45672)
+    const spawnMock = vi.fn()
+      .mockReturnValueOnce(oldChild)
+      .mockReturnValueOnce(replacementChild)
+
+    vi.doMock('child_process', async () => {
+      const actual = await vi.importActual<typeof import('child_process')>('child_process')
+      return {
+        ...actual,
+        spawn: spawnMock,
+      }
+    })
+
+    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
+    let pingCalls = 0
+    pingSpy.mockImplementation(async () => {
+      pingCalls += 1
+      if (pingCalls === 1 || pingCalls === 3) {
+        throw new Error('bridge offline')
+      }
+      return { ok: true, pong: true } as any
+    })
+
+    const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6562', startupTimeoutMs: 100 })
+    await manager.start()
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(manager.getRuntimeState()).toMatchObject({
+      ready: true,
+      running: true,
+      attached: false,
+      pid: 45671,
+    })
+
+    const checkReadinessSpy = vi.spyOn(manager, 'checkReadiness')
+      .mockResolvedValueOnce({
+        endpoint: 'tcp://127.0.0.1:6562',
+        endpointKind: 'tcp',
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+        pid: 45671,
+        error: 'connect ECONNREFUSED',
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'tcp://127.0.0.1:6562',
+        endpointKind: 'tcp',
+        status: 'ready',
+        reachable: true,
+        ready: true,
+        running: true,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: false,
+        restartAttempts: 0,
+        pid: 45672,
+      })
+
+    const ensureReadyPromise = manager.ensureReady()
+    await Promise.resolve()
+
+    expect(oldChild.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+
+    oldChild.emit('exit', 0, 'SIGTERM')
+
+    await expect(ensureReadyPromise).resolves.toMatchObject({
+      endpoint: 'tcp://127.0.0.1:6562',
+      status: 'ready',
+      reachable: true,
+      pid: 45672,
+    })
+    expect(checkReadinessSpy).toHaveBeenCalledTimes(2)
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+    expect((manager as any).child).toBe(replacementChild)
+    expect(manager.getRuntimeState()).toMatchObject({
+      ready: true,
+      running: true,
+      attached: false,
+      pid: 45672,
+      restartScheduled: false,
+      restartAttempts: 0,
+    })
+  })
+
   it('returns follow-up reachable readiness when restart fails after the bridge comes up', async () => {
     const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6558' })
-    const child = {
-      killed: false,
-      kill: vi.fn((signal: string) => {
-        child.killed = signal === 'SIGTERM'
-        return true
-      }),
-      pid: 23456,
-    }
+    const child = createMockManagedChild(23456)
     const recoveredReadiness = {
       endpoint: 'tcp://127.0.0.1:6558',
       endpointKind: 'tcp' as const,
@@ -644,7 +889,11 @@ describe('agent bridge manager command resolution', () => {
       .mockResolvedValueOnce(recoveredReadiness)
     const startSpy = vi.spyOn(manager, 'start').mockRejectedValue(new Error('spawn EADDRINUSE'))
 
-    await expect(manager.ensureReady()).resolves.toEqual(recoveredReadiness)
+    const ensureReadyPromise = manager.ensureReady()
+    await Promise.resolve()
+    child.emit('exit', 0, 'SIGTERM')
+
+    await expect(ensureReadyPromise).resolves.toEqual(recoveredReadiness)
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     expect(startSpy).toHaveBeenCalledTimes(1)
     expect(checkReadinessSpy).toHaveBeenCalledTimes(2)
@@ -655,14 +904,7 @@ describe('agent bridge manager command resolution', () => {
   it('keeps follow-up unreachable readiness while adding restart failure context', async () => {
     const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6559' })
-    const child = {
-      killed: false,
-      kill: vi.fn((signal: string) => {
-        child.killed = signal === 'SIGTERM'
-        return true
-      }),
-      pid: 34567,
-    }
+    const child = createMockManagedChild(34567)
 
     ;(manager as any).child = child
     ;(manager as any).ready = true
@@ -701,7 +943,11 @@ describe('agent bridge manager command resolution', () => {
       })
     const startSpy = vi.spyOn(manager, 'start').mockRejectedValue(new Error('spawn ENOENT'))
 
-    await expect(manager.ensureReady()).resolves.toMatchObject({
+    const ensureReadyPromise = manager.ensureReady()
+    await Promise.resolve()
+    child.emit('exit', 0, 'SIGTERM')
+
+    await expect(ensureReadyPromise).resolves.toMatchObject({
       endpoint: 'tcp://127.0.0.1:6559',
       status: 'starting',
       reachable: false,
