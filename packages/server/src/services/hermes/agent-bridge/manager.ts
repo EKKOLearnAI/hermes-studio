@@ -51,6 +51,10 @@ export interface AgentBridgeReadinessOptions {
   connectRetryMs?: number
 }
 
+export interface AgentBridgeEnsureReadyOptions extends AgentBridgeReadinessOptions {
+  recover?: boolean
+}
+
 export interface AgentBridgeReadiness {
   endpoint: string
   endpointKind: AgentBridgeEndpointKind
@@ -286,6 +290,20 @@ function normalizeReadinessError(endpoint: string, err: unknown): string {
       : undefined
   const normalized = message?.replace(/^Error:\s*/, '').trim()
   return normalized || 'agent bridge is unreachable'
+}
+
+function mergeStartFailureReadinessError(readiness: AgentBridgeReadiness, err: unknown): string | undefined {
+  if (readiness.reachable) {
+    return undefined
+  }
+
+  const readinessError = readiness.error?.trim()
+  const startError = normalizeReadinessError(readiness.endpoint, err)
+  if (readinessError && readinessError !== startError) {
+    return `${readinessError}; start failed: ${startError}`
+  }
+
+  return readinessError || startError
 }
 
 function isDesktopRuntime(): boolean {
@@ -564,6 +582,54 @@ export class AgentBridgeManager {
         running: false,
         error: normalizeReadinessError(endpoint, err),
       }
+    }
+  }
+
+  async ensureReady(options: AgentBridgeEnsureReadyOptions = {}): Promise<AgentBridgeReadiness> {
+    const readiness = await this.checkReadiness(options)
+    if (readiness.reachable) {
+      return readiness
+    }
+
+    if (readiness.status === 'starting' && this.starting) {
+      try {
+        await this.starting
+      } catch {}
+      return this.checkReadiness(options)
+    }
+
+    if (options.recover === false) {
+      return readiness
+    }
+
+    if (readiness.status !== 'unreachable') {
+      return readiness
+    }
+
+    const child = this.child
+    if (!child || this.attached) {
+      this.ready = false
+      return readiness
+    }
+
+    this.ready = false
+    this.child = null
+
+    if (!child.killed) {
+      child.kill('SIGTERM')
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    try {
+      await this.start()
+      return await this.checkReadiness(options)
+    } catch (err) {
+      const recoveredReadiness = await this.checkReadiness({ ...options, connectRetryMs: 0 })
+      const error = mergeStartFailureReadinessError(recoveredReadiness, err)
+      return error
+        ? { ...recoveredReadiness, error }
+        : recoveredReadiness
     }
   }
 
