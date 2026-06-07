@@ -111,6 +111,10 @@ export function handleMessage(messages: SessionMessage[], sid: string): any[] {
           reasoning: m.reasoning || '',
           timestamp: m.timestamp,
         }
+        if (Object.prototype.hasOwnProperty.call(m, 'finish_reason')) {
+          msg.finish_reason = m.finish_reason ?? null
+        }
+        if (m.runMarker) msg.runMarker = m.runMarker
         // Convert Anthropic format content to OpenAI format
         if (m.role === 'assistant' && typeof m.content === 'string') {
           let contentToParse = m.content
