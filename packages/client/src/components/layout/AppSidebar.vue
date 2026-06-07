@@ -71,7 +71,7 @@ function handleReloadClient() {
 
 function handleLogout() {
   localStorage.clear();
-  router.replace({ name: 'login' });
+  window.location.reload();
 }
 
 // Changelog
@@ -580,6 +580,11 @@ function openChangelog() {
   font-size: 13px;
   color: $text-muted;
 
+  > svg,
+  > span:not(.logout-username) {
+    flex-shrink: 0;
+  }
+
   &:hover {
     color: $error;
     background: rgba(var(--error-rgb, 239, 68, 68), 0.06);
@@ -587,10 +592,14 @@ function openChangelog() {
 
   .logout-username {
     margin-left: auto;
-    max-width: 140px;
+    width: 96px;
+    min-width: 0;
+    max-width: 40%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: right;
+    flex: 0 1 96px;
     font-size: 12px;
     color: $text-muted;
   }
