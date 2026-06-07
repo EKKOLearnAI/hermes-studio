@@ -1,0 +1,119 @@
+<script setup lang="ts">
+import type { VoiceDialogueEvent } from '@/utils/voiceDialogueEvents'
+import { computed } from 'vue'
+
+export type VoiceDialogueStatus = 'idle' | 'capturing' | 'transcribing' | 'sending' | 'error'
+
+type VoiceTranscriptOverlayEvent = Pick<VoiceDialogueEvent, 'type'>
+
+const props = withDefaults(defineProps<{
+  status: VoiceDialogueStatus
+  transcript: string
+  error?: string | null
+  floating?: boolean
+  events?: VoiceTranscriptOverlayEvent[]
+  debug?: boolean
+}>(), {
+  error: null,
+  floating: false,
+  events: () => [],
+  debug: false,
+})
+
+const statusLabel = computed(() => `Status: ${props.status.charAt(0).toUpperCase()}${props.status.slice(1)}`)
+const transcriptLabel = computed(() => `Transcript: ${props.transcript}`)
+const errorLabel = computed(() => `Error: ${props.error}`)
+const recentEventTypes = computed(() => props.events.slice(-5).map(event => event.type))
+</script>
+
+<template>
+  <div
+    class="voice-transcript-overlay"
+    :class="{ 'voice-transcript-overlay--floating': props.floating }"
+    data-testid="voice-transcript-overlay"
+    :data-status="props.status"
+    role="status"
+    aria-live="polite"
+  >
+    <p class="voice-transcript-overlay__status">
+      {{ statusLabel }}
+    </p>
+    <p v-if="props.transcript" class="voice-transcript-overlay__transcript">
+      {{ transcriptLabel }}
+    </p>
+    <p v-if="props.error" class="voice-transcript-overlay__error" role="alert">
+      {{ errorLabel }}
+    </p>
+    <div v-if="props.debug && recentEventTypes.length" class="voice-transcript-overlay__debug">
+      <p class="voice-transcript-overlay__debug-title">
+        Recent events
+      </p>
+      <ol class="voice-transcript-overlay__debug-list">
+        <li
+          v-for="(eventType, index) in recentEventTypes"
+          :key="`${index}:${eventType}`"
+          class="voice-transcript-overlay__debug-item"
+          data-testid="voice-event-debug-item"
+        >
+          {{ eventType }}
+        </li>
+      </ol>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.voice-transcript-overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 12rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+  border-radius: 0.75rem;
+  background: var(--card-color, rgba(32, 32, 32, 0.92));
+}
+
+.voice-transcript-overlay--floating {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  z-index: 10;
+  width: min(20rem, calc(100vw - 2rem));
+  max-width: 20rem;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.voice-transcript-overlay__status,
+.voice-transcript-overlay__transcript,
+.voice-transcript-overlay__error,
+.voice-transcript-overlay__debug-title {
+  margin: 0;
+}
+
+.voice-transcript-overlay__status {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.voice-transcript-overlay__error {
+  color: var(--error-color, #d03050);
+}
+
+.voice-transcript-overlay__debug {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.voice-transcript-overlay__debug-title {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.voice-transcript-overlay__debug-list {
+  margin: 0;
+  padding-left: 1rem;
+}
+</style>
