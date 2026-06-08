@@ -1280,7 +1280,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '--mcp-config',
       mcpPath,
       '--dangerously-skip-permissions',
-      '--bare',
     ]
   } else {
     if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {

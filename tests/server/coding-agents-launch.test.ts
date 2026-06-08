@@ -104,7 +104,6 @@ describe('coding agent launch preparation', () => {
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
       '--dangerously-skip-permissions',
-      '--bare',
     ])
     expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} &&`)
     expect(result.shellCommand).toContain(join(result.rootDir, 'launch.sh'))
@@ -114,7 +113,6 @@ describe('coding agent launch preparation', () => {
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('exec claude --settings')
     expect(launcher).toContain('--dangerously-skip-permissions')
-    expect(launcher).toContain('--bare')
     expect(launcher).not.toContain('--model')
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
@@ -156,7 +154,6 @@ describe('coding agent launch preparation', () => {
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
       '--dangerously-skip-permissions',
-      '--bare',
     ])
     expect(result.shellCommand).not.toContain('--setting-sources local')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
