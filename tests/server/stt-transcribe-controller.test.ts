@@ -1,8 +1,6 @@
 import { Readable } from 'stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { resetTtsDnsLookupForTests, setTtsDnsLookupForTests } from '../../packages/server/src/services/hermes/tts-providers/url-safety'
-
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
@@ -85,11 +83,13 @@ describe('stt transcribe controller', () => {
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
+    const safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
+    safety.setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
   })
 
-  afterEach(() => {
-    resetTtsDnsLookupForTests()
+  afterEach(async () => {
+    const safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
+    safety.resetTtsDnsLookupForTests()
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/db/index')
