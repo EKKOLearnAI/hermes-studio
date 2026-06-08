@@ -686,6 +686,61 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('does not append unrelated Codex final text without a tool boundary', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    ;(manager as any).markChatRunCompleted = () => {}
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-codex-no-tool-final-${suffix}`
+    const chatSessionId = `chat-session-codex-no-tool-final-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'codex',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-5-codex',
+      sessionId: chatSessionId,
+      command: 'codex',
+      args: ['--model', 'gpt-5-codex'],
+      shellCommand: 'codex --model gpt-5-codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+    run.printResponseId = 'resp_codex_no_tool_final'
+    run.printMessageId = 'msg_resp_codex_no_tool_final'
+    run.printTextStarted = false
+    run.printText = ''
+    run.printCompleted = false
+    run.responseStartEmitted = false
+    run.terminalEventHandled = false
+    run.codexToolBlocks = new Map()
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: { response: { id: 'resp_codex_no_tool_final', status: 'in_progress', model: 'gpt-5-codex', output: [] } },
+    })
+
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'Initial assistant text.' },
+    }))
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'Different final text without tools.' },
+    }))
+    ;(manager as any).completeCodexExecTurn(run)
+
+    const textMessages = state.messages.filter((message: any) => message.role === 'assistant' && !message.tool_calls?.length)
+    expect(textMessages.map((message: any) => message.content)).toEqual(['Initial assistant text.'])
+    expect(emitted.filter(event => event.event === 'message.delta').map(event => event.payload.delta)).toEqual(['Initial assistant text.'])
+    manager.shutdown()
+  })
+
   it('keeps repeated short Codex streaming deltas', () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
@@ -782,6 +837,16 @@ describe('coding agent run state', () => {
       data: { response: { id: 'resp_codex_tool_final', status: 'in_progress', model: 'gpt-5-codex', output: [] } },
     })
 
+    const openingText = '我会先查看你的桌面目录。'
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: openingText },
+    }))
+    expect(state.messages).toContainEqual(expect.objectContaining({
+      role: 'assistant',
+      content: openingText,
+    }))
+
     manager.handleResponseEvent(agentSessionId, {
       type: 'response.output_item.added',
       data: {
@@ -862,17 +927,15 @@ describe('coding agent run state', () => {
 
     const finalText = '你的桌面上有以下 3 个目录：ai素材、cache、git。'
     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
-      method: 'item/agentMessage/delta',
-      params: { delta: finalText },
+      type: 'item.completed',
+      item: { type: 'agent_message', text: finalText },
     }))
     run.currentChild = undefined
     ;(manager as any).completeCodexExecTurn(run, run.codexPendingUsage)
 
-    expect(state.messages).toContainEqual(expect.objectContaining({
-      role: 'assistant',
-      content: finalText,
-      finish_reason: 'stop',
-    }))
+    const textMessages = state.messages.filter((message: any) => message.role === 'assistant' && !message.tool_calls?.length)
+    expect(textMessages.map((message: any) => message.content)).toEqual([openingText, finalText])
+    expect(textMessages.at(-1)).toEqual(expect.objectContaining({ finish_reason: 'stop' }))
     const dbMessages = getSessionDetail(chatSessionId)?.messages || []
     expect(dbMessages.filter(message => message.role === 'assistant' && message.tool_calls?.length)).toHaveLength(1)
     expect(dbMessages).toContainEqual(expect.objectContaining({

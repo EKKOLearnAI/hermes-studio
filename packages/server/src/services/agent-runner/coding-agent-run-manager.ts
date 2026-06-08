@@ -1310,7 +1310,22 @@ export class CodingAgentRunManager {
     if (textTrimmed === existingTrimmed || existingTrimmed.endsWith(textTrimmed)) return
     if (textTrimmed.startsWith(existingTrimmed)) {
       this.appendCodexText(run, text.slice(existingTrimmed.length))
+      return
     }
+    if (this.codexLastRunMessageIsToolBoundary(run)) {
+      this.appendCodexText(run, text)
+    }
+  }
+
+  private codexLastRunMessageIsToolBoundary(run: ManagedCodingAgentRun): boolean {
+    const marker = run.runMarker
+    if (!marker) return false
+    for (let index = run.state.messages.length - 1; index >= 0; index--) {
+      const message = run.state.messages[index]
+      if (message.runMarker !== marker) continue
+      return message.role === 'tool' || Boolean(message.tool_calls?.length)
+    }
+    return false
   }
 
   private appendCodexText(run: ManagedCodingAgentRun, text: string) {
