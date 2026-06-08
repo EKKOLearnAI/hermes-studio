@@ -8,4 +8,10 @@ describe('bootstrap body parser limits', () => {
     expect(source).toContain("jsonLimit: '20mb'")
     expect(source).toContain("formLimit: '20mb'")
   })
+
+  it('parses DELETE request bodies for file operations', () => {
+    const source = readFileSync('packages/server/src/index.ts', 'utf8')
+
+    expect(source).toMatch(/parsedMethods:\s*\[\s*'POST',\s*'PUT',\s*'PATCH',\s*'DELETE'\s*\]/)
+  })
 })

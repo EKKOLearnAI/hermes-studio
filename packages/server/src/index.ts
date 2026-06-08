@@ -226,7 +226,13 @@ export async function bootstrap() {
   app.use(cors({ origin: createCorsOriginResolver(config.corsOrigins) }))
   // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
   // reference audio are posted as base64 data URLs before reaching handlers.
-  app.use(bodyParser({ encoding: 'utf-8', jsonLimit: '20mb', formLimit: '20mb', textLimit: '20mb' }))
+  app.use(bodyParser({
+    encoding: 'utf-8',
+    jsonLimit: '20mb',
+    formLimit: '20mb',
+    textLimit: '20mb',
+    parsedMethods: ['POST', 'PUT', 'PATCH', 'DELETE'],
+  }))
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)

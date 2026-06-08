@@ -133,7 +133,7 @@ fileRoutes.put('/api/hermes/files/write', async (ctx) => {
 
 // DELETE /api/hermes/files/delete  body: { path, recursive? }
 fileRoutes.delete('/api/hermes/files/delete', async (ctx) => {
-  const { path: relativePath, recursive } = ctx.request.body as { path?: string; recursive?: boolean }
+  const { path: relativePath, recursive } = (ctx.request.body || {}) as { path?: string; recursive?: boolean }
   if (!relativePath) {
     ctx.status = 400
     ctx.body = { error: 'Missing path parameter', code: 'missing_path' }
