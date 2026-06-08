@@ -76,7 +76,6 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
   background: var(--bg-input);
-  box-shadow: 0 8px 24px rgba(var(--text-primary-rgb), 0.12);
 }
 
 .voice-transcript-overlay--floating {
