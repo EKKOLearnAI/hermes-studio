@@ -11,6 +11,8 @@ import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import type { Session, Message } from '@/stores/hermes/chat'
 import type { KanbanTaskDetail } from '@/api/hermes/kanban'
 
+const RUN_HISTORY_PAGE_SIZE = 10
+
 const props = defineProps<{
   taskId: string | null
 }>()
@@ -40,6 +42,7 @@ const taskLogLoading = ref(false)
 const diagnostics = ref<unknown[] | null>(null)
 const diagnosticsLoading = ref(false)
 const recoveryReason = ref('')
+const runHistoryPage = ref(1)
 
 const completionSummary = computed(() => {
   if (!detail.value) return ''
@@ -118,7 +121,27 @@ const assigneeOptions = computed(() => {
     .map(a => ({ label: a.name, value: a.name }))
 })
 
+const runHistoryPageCount = computed(() => {
+  const total = detail.value?.runs.length || 0
+  return Math.max(1, Math.ceil(total / RUN_HISTORY_PAGE_SIZE))
+})
+
+const visibleRuns = computed(() => {
+  const runs = detail.value?.runs || []
+  const start = (runHistoryPage.value - 1) * RUN_HISTORY_PAGE_SIZE
+  return runs.slice(start, start + RUN_HISTORY_PAGE_SIZE)
+})
+
+const runHistoryRange = computed(() => {
+  const total = detail.value?.runs.length || 0
+  if (!total) return ''
+  const start = (runHistoryPage.value - 1) * RUN_HISTORY_PAGE_SIZE + 1
+  const end = Math.min(start + RUN_HISTORY_PAGE_SIZE - 1, total)
+  return `${start}-${end} / ${total}`
+})
+
 watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, board]) => {
+  runHistoryPage.value = 1
   if (!id) {
     detail.value = null
     return
@@ -139,6 +162,12 @@ watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, boar
     }
   }
 }, { immediate: true })
+
+watch(() => detail.value?.runs.length || 0, () => {
+  if (runHistoryPage.value > runHistoryPageCount.value) {
+    runHistoryPage.value = runHistoryPageCount.value
+  }
+})
 
 function formatTime(ts: number | null) {
   if (!ts) return '—'
@@ -410,8 +439,15 @@ function handleNavigateTask(taskId: string) {
 
           <!-- Runs -->
           <div v-if="detail.runs.length > 0" class="detail-section">
-            <div class="section-title">{{ t('kanban.detail.runs') }}</div>
-            <div v-for="run in detail.runs" :key="run.id" class="run-item">
+            <div class="section-title run-history-title">
+              <span>{{ t('kanban.detail.runs') }}</span>
+              <span class="run-history-range">{{ runHistoryRange }}</span>
+              <div v-if="runHistoryPageCount > 1" class="run-history-controls">
+                <NButton size="tiny" secondary :disabled="runHistoryPage <= 1" @click="runHistoryPage -= 1">‹</NButton>
+                <NButton size="tiny" secondary :disabled="runHistoryPage >= runHistoryPageCount" @click="runHistoryPage += 1">›</NButton>
+              </div>
+            </div>
+            <div v-for="run in visibleRuns" :key="run.id" class="run-item">
               <div class="run-header">
                 <span class="run-status" :class="run.status">{{ run.status }}</span>
                 <span class="run-profile">{{ run.profile || '—' }}</span>
@@ -486,6 +522,26 @@ function handleNavigateTask(taskId: string) {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 10px;
+}
+
+.run-history-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-history-range {
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: auto;
+  text-transform: none;
+}
+
+.run-history-controls {
+  display: flex;
+  gap: 4px;
 }
 
 .result-summary {

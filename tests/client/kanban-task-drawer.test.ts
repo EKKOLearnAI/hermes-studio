@@ -204,6 +204,58 @@ describe('KanbanTaskDrawer', () => {
     expect(mockRouterPush).toHaveBeenCalledWith({ name: 'hermes.chat', query: { session: 'session-2' } })
   })
 
+  it('renders task run history through a paged window', async () => {
+    mockGetTask.mockResolvedValueOnce({
+      task: {
+        id: 'task-many-runs',
+        title: 'Many runs',
+        body: null,
+        assignee: 'alice',
+        status: 'done',
+        priority: 2,
+        created_at: 100,
+        started_at: 110,
+        completed_at: 220,
+        tenant: null,
+        result: null,
+      },
+      latest_summary: null,
+      comments: [],
+      events: [],
+      runs: Array.from({ length: 25 }, (_, index) => ({
+        id: index + 1,
+        task_id: 'task-many-runs',
+        profile: `runner-${String(index + 1).padStart(2, '0')}`,
+        status: 'done',
+        outcome: null,
+        summary: `summary-${index + 1}`,
+        error: null,
+        metadata: null,
+        worker_pid: null,
+        started_at: 110 + index,
+        ended_at: 120 + index,
+      })),
+    })
+
+    const wrapper = mount(KanbanTaskDrawer, { props: { taskId: 'task-many-runs' } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.run-item')).toHaveLength(10)
+    expect(wrapper.text()).toContain('1-10 / 25')
+    expect(wrapper.text()).toContain('runner-01')
+    expect(wrapper.text()).toContain('runner-10')
+    expect(wrapper.text()).not.toContain('runner-11')
+
+    await wrapper.findAll('.n-button-stub').find(node => node.text() === '›')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.run-item')).toHaveLength(10)
+    expect(wrapper.text()).toContain('11-20 / 25')
+    expect(wrapper.text()).not.toContain('runner-10')
+    expect(wrapper.text()).toContain('runner-11')
+    expect(wrapper.text()).toContain('runner-20')
+  })
+
   it('does not expose mutation actions for archived tasks', async () => {
     mockGetTask.mockResolvedValueOnce({
       task: {
