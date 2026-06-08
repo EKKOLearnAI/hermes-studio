@@ -72,9 +72,11 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
   gap: 0.25rem;
   min-width: 12rem;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+  color: var(--n-text-color, var(--text-color-1, #1f2937));
+  border: 1px solid var(--n-border-color, var(--border-color, rgba(127, 127, 127, 0.35)));
   border-radius: 0.75rem;
-  background: var(--card-color, rgba(32, 32, 32, 0.92));
+  background: var(--n-popover-color, var(--n-color, var(--card-color, #ffffff)));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .voice-transcript-overlay--floating {
