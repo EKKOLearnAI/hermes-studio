@@ -198,6 +198,23 @@ export const STT_USER_SETTINGS_SCHEMA: Record<string, string> = {
   updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
 }
 
+export const TTS_PROVIDER_SETTINGS_TABLE = 'tts_provider_settings'
+
+export const TTS_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROVIDER_SETTINGS_INDEXES = {
+  idx_tts_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_tts_provider_settings_user ON tts_provider_settings(user_id)',
+  idx_tts_provider_settings_user_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_provider_settings_user_provider ON tts_provider_settings(user_id, provider)',
+}
+
 // ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
 // ============================================================================
@@ -485,6 +502,9 @@ export function initAllHermesTables(): void {
     })
     syncTable(STT_USER_SETTINGS_TABLE, STT_USER_SETTINGS_SCHEMA)
     migrateLegacySttProviderSettingsUserIdDefault(db)
+    syncTable(TTS_PROVIDER_SETTINGS_TABLE, TTS_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: TTS_PROVIDER_SETTINGS_INDEXES,
+    })
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)

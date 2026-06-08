@@ -56,6 +56,27 @@ describe('run-chat message formatting', () => {
     ])
   })
 
+  it('preserves assistant finish reason and run marker when resuming from database messages', () => {
+    const messages: SessionMessage[] = [
+      {
+        id: 1,
+        session_id: 's1',
+        role: 'assistant',
+        content: 'partial answer',
+        timestamp: 1,
+        finish_reason: null,
+        runMarker: 'cli_run_current',
+      },
+    ]
+
+    expect(handleMessage(messages, 's1')[0]).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: 'partial answer',
+      finish_reason: null,
+      runMarker: 'cli_run_current',
+    }))
+  })
+
   it('treats assistant tool-call messages as sendable even with empty text', () => {
     expect(isAssistantMessageSendable({
       content: '',
