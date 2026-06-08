@@ -329,18 +329,40 @@ export class ChatRunSocket {
     if (source === 'cli') {
       const bridgeReady = await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
+        let shouldDequeueNext = false
+        let queueRemaining = 0
         if (data.session_id) {
           const state = this.sessionMap.get(data.session_id)
-          if (state && !state.runId && !state.abortController && !state.activeRunMarker) {
-            state.isWorking = false
-            state.profile = undefined
+          queueRemaining = state?.queue?.length ?? 0
+          const canReleaseCurrentRun = state && !state.runId && !state.abortController && !state.activeRunMarker
+          if (canReleaseCurrentRun) {
+            if (queueRemaining > 0) {
+              const nextQueuedRun = state.queue[0]
+              state.isWorking = true
+              state.profile = nextQueuedRun?.profile || profile
+              state.source = nextQueuedRun?.source
+              shouldDequeueNext = true
+            } else {
+              state.isWorking = false
+              state.profile = undefined
+            }
           }
         }
-        socket.emit('run.failed', {
+        const payload: {
+          event: 'run.failed'
+          session_id?: string
+          error: string
+          queue_remaining?: number
+        } = {
           event: 'run.failed',
           session_id: data.session_id,
           error: `Agent Bridge is not reachable: ${bridgeReady.error}`,
-        })
+        }
+        if (queueRemaining > 0) payload.queue_remaining = queueRemaining
+        socket.emit('run.failed', payload)
+        if (data.session_id && shouldDequeueNext) {
+          this.dequeueNextQueuedRun(socket, data.session_id, profile)
+        }
         return
       }
 

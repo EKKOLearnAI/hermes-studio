@@ -229,6 +229,69 @@ describe('ChatRunSocket bridge readiness gating', () => {
     expect(socket.emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
   })
 
+  it('continues with remaining queued bridge runs when readiness fails before a dequeued run starts', async () => {
+    ensureReadyMock
+      .mockResolvedValueOnce({
+        reachable: false,
+        status: 'unreachable',
+        endpoint: 'ipc:///tmp/hermes-agent-bridge.sock',
+        error: 'bridge offline',
+      })
+      .mockResolvedValueOnce({
+        reachable: true,
+        status: 'ready',
+        endpoint: 'ipc:///tmp/hermes-agent-bridge.sock',
+      })
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { emitted, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [],
+      isWorking: true,
+      isAborting: false,
+      events: [],
+      queue: [{
+        queue_id: 'queue-next',
+        input: 'second queued message',
+        source: 'cli',
+        profile: 'default',
+      }],
+      profile: 'default',
+      source: 'cli',
+    })
+
+    ;(server as any).runQueuedItem(socket, 'session-1', {
+      queue_id: 'queue-failed',
+      input: 'first queued message',
+      source: 'cli',
+      profile: 'default',
+    }, 'default')
+
+    await vi.waitFor(() => expect(ensureReadyMock).toHaveBeenCalledTimes(2))
+    expect(handleBridgeRunMock).toHaveBeenCalledTimes(1)
+    expect(handleBridgeRunMock.mock.calls[0][2]).toEqual(expect.objectContaining({
+      input: 'second queued message',
+      queue_id: 'queue-next',
+    }))
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', {
+      event: 'run.failed',
+      session_id: 'session-1',
+      error: 'Agent Bridge is not reachable: bridge offline',
+      queue_remaining: 1,
+    })
+    expect(emitted).toContainEqual({
+      room: 'session:session-1',
+      event: 'run.queued',
+      payload: expect.objectContaining({
+        event: 'run.queued',
+        session_id: 'session-1',
+        queue_length: 0,
+        dequeued_queue_id: 'queue-next',
+      }),
+    })
+  })
+
   it('reattaches a loaded running bridge run without probing manager readiness again', async () => {
     bridgeMock.statusIfLoaded
       .mockResolvedValueOnce({
