@@ -3,7 +3,7 @@ import { deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessi
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
@@ -97,6 +97,10 @@ export interface Session {
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
+  /** Local patch (reasoning-effort): per-session reasoning effort override.
+   * Empty string / undefined = use config.yaml default.
+   * Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' */
+  reasoningEffort?: string
 }
 
 interface CompressionState {
@@ -646,6 +650,79 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       isLoadingSessions.value = false
       sessionsLoaded.value = true
+    }
+  }
+
+  // Refresh ONLY the session list metadata (titles, ordering, new/removed
+  // sessions) without switching the active session or reloading its messages.
+  // Used for live sync so sessions created elsewhere (CLI, Telegram, another
+  // device) appear without a manual reload. Skips while streaming to avoid
+  // churn.
+  //
+  // CRITICAL: this MERGES IN-PLACE into the existing session objects instead of
+  // replacing the array with `mapHermesSession` clones. `activeSession` is a ref
+  // bound to a specific object inside `sessions.value` (see switchSession), and
+  // streaming deltas mutate that same object via `sessions.value.find(...)`. If
+  // we swapped in fresh objects, `activeSession.value` would point at an orphan
+  // and live messages would stop appearing until a manual reload. Mutating the
+  // existing objects preserves referential identity so streaming keeps working.
+  async function refreshSessionListOnly(profile?: string | null): Promise<void> {
+    if (isStreaming.value) return
+    if (isLoadingSessions.value) return
+    try {
+      const list = await fetchSessions(undefined, undefined, profile ?? sessionProfileFilter.value ?? undefined)
+      const incoming = list.map(mapHermesSession)
+      const existingById = new Map(sessions.value.map(s => [s.id, s]))
+      const incomingIds = new Set(incoming.map(s => s.id))
+
+      // Build the next array reusing existing objects (identity-preserving) and
+      // inserting genuinely-new sessions as fresh objects.
+      const next: Session[] = []
+      for (const fresh of incoming) {
+        const existing = existingById.get(fresh.id)
+        if (existing) {
+          // Update scalar metadata in-place; never touch runtime/scroll state
+          // (messages, loadedMessageCount, hasMoreBefore, contextTokens).
+          existing.title = fresh.title
+          existing.source = fresh.source
+          existing.updatedAt = fresh.updatedAt
+          existing.lastActiveAt = fresh.lastActiveAt
+          existing.endedAt = fresh.endedAt
+          existing.model = fresh.model
+          existing.provider = fresh.provider
+          existing.messageCount = fresh.messageCount
+          existing.inputTokens = fresh.inputTokens
+          existing.outputTokens = fresh.outputTokens
+          existing.workspace = fresh.workspace
+          // messageTotal: keep the larger of server count vs what we've loaded,
+          // so we don't shrink below already-rendered messages mid-session.
+          if (fresh.messageTotal != null) {
+            existing.messageTotal = Math.max(fresh.messageTotal, existing.loadedMessageCount || 0)
+          }
+          next.push(existing)
+        } else {
+          next.push(fresh)
+        }
+      }
+
+      // Keep the active session even if the server no longer lists it (don't
+      // pull the rug out from under what the user is viewing).
+      const activeId = activeSessionId.value
+      if (activeId && !incomingIds.has(activeId)) {
+        const keep = existingById.get(activeId)
+        if (keep) next.push(keep)
+      }
+
+      sessions.value = next
+
+      // Defensive: re-bind activeSession to the (same) object now in the array,
+      // by id, in case anything above changed array membership.
+      if (activeId) {
+        const again = sessions.value.find(s => s.id === activeId)
+        if (again && activeSession.value !== again) activeSession.value = again
+      }
+    } catch (err) {
+      console.error('Failed to refresh session list:', err)
     }
   }
 
@@ -1656,6 +1733,8 @@ export const useChatStore = defineStore('chat', () => {
               apiMode: codingAgentMode === 'global' ? undefined : activeSession.value?.apiMode || providerGroup?.api_mode || undefined,
             }
           : {}),
+        // Per-session reasoning effort override.
+        reasoning_effort: activeSession.value?.reasoningEffort || undefined,
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -2978,6 +3057,11 @@ export const useChatStore = defineStore('chat', () => {
   // Tab visibility: re-sync when returning to foreground
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !isStreaming.value) {
+        // Live-sync the session list so sessions created elsewhere (CLI,
+        // Telegram, another device) appear without a manual reload.
+        void refreshSessionListOnly()
+      }
       if (document.visibilityState === 'visible' && activeSessionId.value && !isStreaming.value) {
         const sid = activeSessionId.value
         if (sid && !streamStates.value.has(sid)) {
@@ -3006,6 +3090,19 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
     })
+  }
+
+  // Mild background polling for live session-list sync (covers sessions created
+  // on the VM via CLI/Telegram while this client is in the foreground). Only
+  // runs when the tab is visible and not streaming, so it's cheap and never
+  // disrupts an active run. visibilitychange (above) handles the wake-from-hidden
+  // case; this covers the "left it open and watching" case.
+  if (typeof window !== 'undefined') {
+    window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (isStreaming.value) return
+      void refreshSessionListOnly()
+    }, 12_000)
   }
 
   // Transient observation of <think> boundaries during active streaming.
@@ -3059,6 +3156,43 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // Local patch (reasoning-effort): per-session reasoning effort.
+  // Persisted in localStorage keyed by sessionId so the choice survives
+  // page reloads. Cleared on session deletion is NOT implemented (best-effort
+  // — orphan keys are tiny and never read again).
+  const REASONING_LS_PREFIX = 'hermes:reasoning_effort:'
+  function setSessionReasoningEffort(sessionId: string, effort: string) {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    session.reasoningEffort = effort || undefined
+    try {
+      if (effort) {
+        localStorage.setItem(REASONING_LS_PREFIX + sessionId, effort)
+      } else {
+        localStorage.removeItem(REASONING_LS_PREFIX + sessionId)
+      }
+    } catch {
+      // localStorage may be unavailable (private mode); silently ignore
+    }
+  }
+  function getStoredReasoningEffort(sessionId: string): string | undefined {
+    try {
+      return localStorage.getItem(REASONING_LS_PREFIX + sessionId) || undefined
+    } catch {
+      return undefined
+    }
+  }
+  // Hydrate reasoningEffort onto sessions whenever they come in fresh from
+  // the server (mapHermesSession doesn't carry this — it's client-only state).
+  watch(sessions, (list) => {
+    for (const s of list) {
+      if (s.reasoningEffort === undefined) {
+        const stored = getStoredReasoningEffort(s.id)
+        if (stored) s.reasoningEffort = stored
+      }
+    }
+  }, { deep: false })
+
   function clearThinkingObservationFor(_sessionId: string) {
     // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
     // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
@@ -3110,6 +3244,7 @@ export const useChatStore = defineStore('chat', () => {
     respondApproval,
     respondToClarify,
     loadSessions,
+    refreshSessionListOnly,
     refreshActiveSession,
     getThinkingObservation,
     noteThinkingDelta,
@@ -3118,5 +3253,6 @@ export const useChatStore = defineStore('chat', () => {
     clearThinkingObservationFor,
     setAutoPlaySpeech,
     playMessageSpeech,
+    setSessionReasoningEffort,
   }
 })

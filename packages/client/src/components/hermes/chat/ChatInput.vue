@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NPopselect, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
@@ -24,6 +24,32 @@ const profilesStore = useProfilesStore()
 const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+
+// Local patch (reasoning-effort): per-session reasoning effort selector (brain button).
+// Sends override on every run for the active session.
+const reasoningEffortOptions = computed(() => [
+  { label: t('chat.reasoningEffort.options.default'), value: '' },
+  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+])
+const currentReasoningEffort = computed<string>(() =>
+  chatStore.activeSession?.reasoningEffort || ''
+)
+const reasoningEffortLabel = computed<string>(() => {
+  const v = currentReasoningEffort.value
+  if (!v) return t('chat.reasoningEffort.defaultLabel')
+  const opt = reasoningEffortOptions.value.find(o => o.value === v)
+  return opt?.label || v
+})
+function onReasoningEffortChange(value: string | null | undefined) {
+  const sid = chatStore.activeSessionId
+  if (!sid) return
+  chatStore.setSessionReasoningEffort(sid, value || '')
+}
 const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
 type DraftMap = Record<string, string>
 const inputText = ref('')
@@ -726,6 +752,35 @@ function isImage(type: string): boolean {
         {{ t('chat.attachFiles') }}
       </NTooltip>
 
+      <!-- Local patch (reasoning-effort): per-session reasoning effort selector (brain button). -->
+      <NPopselect
+        :value="currentReasoningEffort"
+        :options="reasoningEffortOptions"
+        trigger="click"
+        @update:value="onReasoningEffortChange"
+      >
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton
+              quaternary
+              size="tiny"
+              circle
+              class="reasoning-effort-button"
+              :class="{ active: !!currentReasoningEffort }"
+              :aria-label="`${t('chat.reasoningEffort.tooltip')}: ${reasoningEffortLabel}`"
+            >
+              <template #icon>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+                  <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+                </svg>
+              </template>
+            </NButton>
+          </template>
+          {{ t('chat.reasoningEffort.tooltip') }}: {{ reasoningEffortLabel }}
+        </NTooltip>
+      </NPopselect>
+
       <div class="auto-play-speech-switch">
         <NTooltip trigger="hover">
           <template #trigger>
@@ -1013,6 +1068,13 @@ function isImage(type: string): boolean {
   &:hover {
     color: #999999;
     opacity: 1;
+  }
+}
+
+/* Local patch (reasoning-effort): per-session reasoning effort selector. */
+.reasoning-effort-button {
+  &.active {
+    color: #4caf50;
   }
 }
 

@@ -289,6 +289,19 @@ export default {
       destroy: 'Освободить Bridge Agent текущего сеанса',
     },
     attachFiles: 'Прикрепить файлы',
+    reasoningEffort: {
+      tooltip: 'Глубина рассуждений',
+      defaultLabel: 'По умолчанию',
+      options: {
+        default: 'По умолчанию (config.yaml)',
+        none: 'Нет',
+        minimal: 'Минимум',
+        low: 'Низкая',
+        medium: 'Средняя',
+        high: 'Высокая',
+        xhigh: 'Очень высокая',
+      },
+    },
     autoPlaySpeech: 'Автовоспроизведение речи',
     voiceInput: {
       startCapture: 'Начать голосовой ввод',

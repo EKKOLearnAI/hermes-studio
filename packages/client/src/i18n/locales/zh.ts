@@ -377,6 +377,19 @@ export default {
       reloadMcp: '重载 MCP 服务器',
     },
     attachFiles: '添加附件',
+    reasoningEffort: {
+      tooltip: '推理强度',
+      defaultLabel: '默认',
+      options: {
+        default: '默认 (config.yaml)',
+        none: '无',
+        minimal: '极低',
+        low: '低',
+        medium: '中',
+        high: '高',
+        xhigh: '超高',
+      },
+    },
     autoPlaySpeech: '自动播放语音',
     voiceInput: {
       startCapture: '开始语音输入',

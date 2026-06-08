@@ -154,6 +154,8 @@ export class ChatRunSocket {
       apiMode?: string
       api_mode?: string
       profile?: string
+      // Local patch (reasoning-effort): per-session reasoning effort override.
+      reasoning_effort?: string
     }) => {
       let runProfile: string
       try {

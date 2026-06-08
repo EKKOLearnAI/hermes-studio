@@ -31,6 +31,9 @@ export interface StartRunRequest {
   api_key?: string
   apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
   api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  /** Per-session reasoning effort override.
+   * Empty/undefined = use config.yaml default. */
+  reasoning_effort?: string
 }
 
 export interface StartRunResponse {

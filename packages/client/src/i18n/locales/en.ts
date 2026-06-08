@@ -377,6 +377,19 @@ export default {
       reloadMcp: 'Reload MCP servers',
     },
     attachFiles: 'Attach files',
+    reasoningEffort: {
+      tooltip: 'Reasoning effort',
+      defaultLabel: 'Default',
+      options: {
+        default: 'Default (config.yaml)',
+        none: 'None',
+        minimal: 'Minimal',
+        low: 'Low',
+        medium: 'Medium',
+        high: 'High',
+        xhigh: 'Extra high',
+      },
+    },
     autoPlaySpeech: 'Auto-play voice',
     voiceInput: {
       startCapture: 'Start voice capture',

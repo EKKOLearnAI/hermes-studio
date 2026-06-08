@@ -49,6 +49,9 @@ export interface AgentBridgeChatOptions {
   source?: string
   wait?: boolean
   timeout?: number
+  /** Local patch (reasoning-effort): per-session reasoning effort override.
+   * Empty/undefined = use config.yaml default. */
+  reasoning_effort?: string
 }
 
 export type AgentBridgeMessage =
@@ -420,6 +423,8 @@ export class AgentBridgeClient {
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),
+      // Local patch (reasoning-effort): per-session reasoning effort override.
+      ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
     })
   }
 
