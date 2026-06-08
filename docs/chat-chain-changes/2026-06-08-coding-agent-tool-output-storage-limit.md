@@ -1,4 +1,9 @@
-# Coding Agent Tool Output Storage Limit
+---
+date: 2026-06-08
+pr: pending
+feature: Coding-agent tool output storage
+impact: Claude Code and Codex tool results are truncated before SQLite storage to limit database growth.
+---
 
 - Scope: Claude Code and Codex runs handled by `agent-runner`.
 - Change: truncate `function_call_output` before it enters the shared response stream state and SQLite flush path.
