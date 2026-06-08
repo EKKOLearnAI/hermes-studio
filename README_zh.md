@@ -37,6 +37,14 @@
   <a href="https://github.com/EKKOLearnAI/hermes-web-ui/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-web-ui?style=flat-square" alt="Star"/></a>
 </p>
 
+<p align="center">
+  <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui">
+    <img src="assets/atlas-cloud-logo.png" alt="Atlas Cloud" width="200">
+  </a>
+</p>
+
+> 🎁 **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui)** 是全模态、OpenAI 兼容的 AI 推理平台（DeepSeek、Qwen、GLM、Kimi、MiniMax 等）。在 Provider 面板选择 **Atlas Cloud** 并填入 API Key 即可使用。
+
 ---
 
 ## 功能特性
