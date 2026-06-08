@@ -493,6 +493,27 @@ export default {
     newCliChat: 'Neue CLI',
     cliEmptyState: 'CLI-Chat starten',
     autoPlaySpeech: 'Sprache automatisch abspielen',
+    voiceInput: {
+      startCapture: 'Sprachaufnahme starten',
+      stopCaptureAndInsert: 'Sprachaufnahme stoppen und Transkript in die Eingabe einfuegen',
+      cancelCapture: 'Spracheingabe abbrechen',
+      statusLabel: 'Status: {status}',
+      transcriptLabel: 'Transkript: {text}',
+      errorLabel: 'Fehler: {error}',
+      recentEvents: 'Letzte Ereignisse',
+      status: {
+        idle: 'Bereit',
+        capturing: 'Hoert zu',
+        transcribing: 'Transkribiert',
+        sending: 'Wird in die Eingabe eingefuegt',
+        error: 'Fehler',
+      },
+      browserSpeechUnsupported: 'Browser-Spracherkennung wird in diesem Browser nicht unterstuetzt.',
+      browserSpeechFailed: 'Browser-Spracherkennung fehlgeschlagen.',
+      browserSpeechFailedWithReason: 'Browser-Spracherkennung fehlgeschlagen: {error}.',
+      microphoneUnsupported: 'Mikrofonaufnahme wird in diesem Browser nicht unterstuetzt.',
+      microphoneRecordingFailed: 'Mikrofonaufnahme fehlgeschlagen.',
+    },
   },
 
   // Jobs

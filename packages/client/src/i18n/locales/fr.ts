@@ -493,6 +493,27 @@ export default {
     newCliChat: 'Nouveau CLI',
     cliEmptyState: 'Démarrer un chat CLI',
     autoPlaySpeech: 'Lire la voix automatiquement',
+    voiceInput: {
+      startCapture: 'Demarrer la saisie vocale',
+      stopCaptureAndInsert: 'Arreter la saisie vocale et inserer la transcription',
+      cancelCapture: 'Annuler la saisie vocale',
+      statusLabel: 'Statut : {status}',
+      transcriptLabel: 'Transcription : {text}',
+      errorLabel: 'Erreur : {error}',
+      recentEvents: 'Evenements recents',
+      status: {
+        idle: 'Inactif',
+        capturing: 'Ecoute',
+        transcribing: 'Transcription',
+        sending: 'Insertion dans la saisie',
+        error: 'Erreur',
+      },
+      browserSpeechUnsupported: 'La reconnaissance vocale du navigateur n est pas prise en charge par ce navigateur.',
+      browserSpeechFailed: 'La reconnaissance vocale du navigateur a echoue.',
+      browserSpeechFailedWithReason: 'La reconnaissance vocale du navigateur a echoue : {error}.',
+      microphoneUnsupported: 'La capture micro n est pas prise en charge par ce navigateur.',
+      microphoneRecordingFailed: 'L enregistrement micro a echoue.',
+    },
   },
 
   // Jobs

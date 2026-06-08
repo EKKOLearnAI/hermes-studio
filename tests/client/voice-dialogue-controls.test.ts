@@ -65,7 +65,12 @@ function createDeferred<T>() {
 }
 
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
+  useI18n: () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+      if (!params) return key
+      return `${key} ${Object.values(params).join(' ')}`
+    },
+  }),
 }))
 
 vi.mock('naive-ui', () => ({
@@ -289,9 +294,9 @@ describe('VoiceDialogueControls', () => {
     })
 
     const overlay = wrapper.get('[data-testid="voice-transcript-overlay"]')
-    expect(overlay.text()).toContain('Status: Capturing')
-    expect(overlay.text()).toContain('Transcript: hello hermes')
-    expect(overlay.text()).toContain('Error: Mic permission denied')
+    expect(overlay.text()).toContain('chat.voiceInput.statusLabel chat.voiceInput.status.capturing')
+    expect(overlay.text()).toContain('chat.voiceInput.transcriptLabel hello hermes')
+    expect(overlay.text()).toContain('chat.voiceInput.errorLabel Mic permission denied')
   })
 
   it('does not render the debug event list when debug is false or omitted', async () => {
@@ -308,13 +313,13 @@ describe('VoiceDialogueControls', () => {
       },
     })
 
-    expect(wrapper.text()).not.toContain('Recent events')
+    expect(wrapper.text()).not.toContain('chat.voiceInput.recentEvents')
     expect(wrapper.text()).not.toContain('session.started')
     expect(wrapper.text()).not.toContain('capture.started')
 
     await wrapper.setProps({ debug: false })
 
-    expect(wrapper.text()).not.toContain('Recent events')
+    expect(wrapper.text()).not.toContain('chat.voiceInput.recentEvents')
     expect(wrapper.text()).not.toContain('session.started')
     expect(wrapper.text()).not.toContain('capture.started')
   })
@@ -359,7 +364,7 @@ describe('VoiceDialogueControls', () => {
 
     expect(wrapper.get('[data-testid="voice-transcript-overlay"]').text()).toContain('boom')
     expect(wrapper.get('[data-testid="voice-record-toggle"]').attributes('aria-pressed')).toBe('false')
-    expect(wrapper.get('[data-testid="voice-record-toggle"]').attributes('aria-label')).toBe('Start voice capture')
+    expect(wrapper.get('[data-testid="voice-record-toggle"]').attributes('aria-label')).toBe('chat.voiceInput.startCapture')
     expect(wrapper.find('[data-testid="voice-record-cancel"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="voice-record-toggle"]').trigger('click')
@@ -406,7 +411,7 @@ describe('VoiceDialogueControls', () => {
     await flushPromises()
 
     const overlay = wrapper.get('[data-testid="voice-transcript-overlay"]')
-    expect(overlay.text()).not.toContain('Recent events')
+    expect(overlay.text()).not.toContain('chat.voiceInput.recentEvents')
     expect(overlay.text()).not.toContain('session.started')
     expect(overlay.text()).not.toContain('capture.started')
   })
@@ -442,8 +447,8 @@ describe('VoiceDialogueControls', () => {
     await flushPromises()
 
     const overlay = wrapper.get('[data-testid="voice-transcript-overlay"]')
-    expect(overlay.text()).toContain('Status: Capturing')
-    expect(overlay.text()).not.toContain('Recent events')
+    expect(overlay.text()).toContain('chat.voiceInput.statusLabel')
+    expect(overlay.text()).not.toContain('chat.voiceInput.recentEvents')
     expect(overlay.text()).not.toContain('session.started')
     expect(overlay.text()).not.toContain('capture.started')
     expect(overlay.text()).not.toContain('secret-api-key-123')

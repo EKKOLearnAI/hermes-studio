@@ -493,6 +493,27 @@ export default {
     newCliChat: '새 CLI',
     cliEmptyState: 'CLI 채팅 시작',
     autoPlaySpeech: '음성 자동 재생',
+    voiceInput: {
+      startCapture: '음성 입력 시작',
+      stopCaptureAndInsert: '음성 입력을 중지하고 입력창에 삽입',
+      cancelCapture: '음성 입력 취소',
+      statusLabel: '상태: {status}',
+      transcriptLabel: '전사: {text}',
+      errorLabel: '오류: {error}',
+      recentEvents: '최근 이벤트',
+      status: {
+        idle: '대기',
+        capturing: '듣는 중',
+        transcribing: '전사 중',
+        sending: '입력창에 삽입 중',
+        error: '오류',
+      },
+      browserSpeechUnsupported: '이 브라우저는 내장 음성 인식을 지원하지 않습니다.',
+      browserSpeechFailed: '브라우저 음성 인식에 실패했습니다.',
+      browserSpeechFailedWithReason: '브라우저 음성 인식에 실패했습니다: {error}.',
+      microphoneUnsupported: '이 브라우저는 마이크 녹음을 지원하지 않습니다.',
+      microphoneRecordingFailed: '마이크 녹음에 실패했습니다.',
+    },
   },
 
   // 예약 작업

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { VoiceDialogueEvent } from '@/utils/voiceDialogueEvents'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VoiceTranscriptOverlay, { type VoiceDialogueStatus } from './VoiceTranscriptOverlay.vue'
 
 const props = withDefaults(defineProps<{
@@ -19,10 +20,11 @@ const props = withDefaults(defineProps<{
 })
 
 const activeStatuses = new Set<VoiceDialogueStatus>(['capturing', 'transcribing', 'sending'])
+const { t } = useI18n()
 
 const isActive = computed(() => activeStatuses.has(props.status))
 const shouldShowOverlay = computed(() => isActive.value || Boolean(props.transcript) || Boolean(props.error))
-const toggleLabel = computed(() => (isActive.value ? 'Stop voice capture and place transcript in the input' : 'Start voice capture'))
+const toggleLabel = computed(() => (isActive.value ? t('chat.voiceInput.stopCaptureAndInsert') : t('chat.voiceInput.startCapture')))
 
 async function toggle() {
   if (isActive.value) {
@@ -95,7 +97,7 @@ function cancel() {
         type="button"
         class="voice-dialogue-controls__cancel"
         data-testid="voice-record-cancel"
-        aria-label="Cancel voice dialogue"
+        :aria-label="t('chat.voiceInput.cancelCapture')"
         @click="cancel"
       >
         <svg

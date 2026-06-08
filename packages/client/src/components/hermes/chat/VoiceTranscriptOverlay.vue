@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { VoiceDialogueEvent } from '@/utils/voiceDialogueEvents'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 export type VoiceDialogueStatus = 'idle' | 'capturing' | 'transcribing' | 'sending' | 'error'
 
@@ -20,9 +21,11 @@ const props = withDefaults(defineProps<{
   debug: false,
 })
 
-const statusLabel = computed(() => `Status: ${props.status.charAt(0).toUpperCase()}${props.status.slice(1)}`)
-const transcriptLabel = computed(() => `Transcript: ${props.transcript}`)
-const errorLabel = computed(() => `Error: ${props.error}`)
+const { t } = useI18n()
+const localizedStatus = computed(() => t(`chat.voiceInput.status.${props.status}`))
+const statusLabel = computed(() => t('chat.voiceInput.statusLabel', { status: localizedStatus.value }))
+const transcriptLabel = computed(() => t('chat.voiceInput.transcriptLabel', { text: props.transcript }))
+const errorLabel = computed(() => t('chat.voiceInput.errorLabel', { error: props.error }))
 const recentEventTypes = computed(() => props.events.slice(-5).map(event => event.type))
 </script>
 
@@ -46,7 +49,7 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
     </p>
     <div v-if="props.debug && recentEventTypes.length" class="voice-transcript-overlay__debug">
       <p class="voice-transcript-overlay__debug-title">
-        Recent events
+        {{ t('chat.voiceInput.recentEvents') }}
       </p>
       <ol class="voice-transcript-overlay__debug-list">
         <li
@@ -115,5 +118,16 @@ const recentEventTypes = computed(() => props.events.slice(-5).map(event => even
 .voice-transcript-overlay__debug-list {
   margin: 0;
   padding-left: 1rem;
+}
+
+@media (max-width: 640px) {
+  .voice-transcript-overlay--floating {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+    width: auto;
+    max-width: none;
+  }
 }
 </style>

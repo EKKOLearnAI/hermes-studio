@@ -493,6 +493,27 @@ export default {
     newCliChat: 'Nuevo CLI',
     cliEmptyState: 'Iniciar chat CLI',
     autoPlaySpeech: 'Reproducir voz automáticamente',
+    voiceInput: {
+      startCapture: 'Iniciar entrada de voz',
+      stopCaptureAndInsert: 'Detener entrada de voz e insertar la transcripcion',
+      cancelCapture: 'Cancelar entrada de voz',
+      statusLabel: 'Estado: {status}',
+      transcriptLabel: 'Transcripcion: {text}',
+      errorLabel: 'Error: {error}',
+      recentEvents: 'Eventos recientes',
+      status: {
+        idle: 'Inactivo',
+        capturing: 'Escuchando',
+        transcribing: 'Transcribiendo',
+        sending: 'Insertando en la entrada',
+        error: 'Error',
+      },
+      browserSpeechUnsupported: 'El reconocimiento de voz del navegador no es compatible con este navegador.',
+      browserSpeechFailed: 'Fallo el reconocimiento de voz del navegador.',
+      browserSpeechFailedWithReason: 'Fallo el reconocimiento de voz del navegador: {error}.',
+      microphoneUnsupported: 'La captura de microfono no es compatible con este navegador.',
+      microphoneRecordingFailed: 'Fallo la grabacion del microfono.',
+    },
   },
 
   // Jobs

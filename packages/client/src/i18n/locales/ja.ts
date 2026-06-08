@@ -493,6 +493,27 @@ export default {
     newCliChat: '新規 CLI',
     cliEmptyState: 'CLI チャットを開始',
     autoPlaySpeech: '音声を自動再生',
+    voiceInput: {
+      startCapture: '音声入力を開始',
+      stopCaptureAndInsert: '音声入力を停止して入力欄に挿入',
+      cancelCapture: '音声入力をキャンセル',
+      statusLabel: '状態: {status}',
+      transcriptLabel: '文字起こし: {text}',
+      errorLabel: 'エラー: {error}',
+      recentEvents: '最近のイベント',
+      status: {
+        idle: '待機中',
+        capturing: '聞き取り中',
+        transcribing: '文字起こし中',
+        sending: '入力欄へ挿入中',
+        error: 'エラー',
+      },
+      browserSpeechUnsupported: 'このブラウザは内蔵音声認識に対応していません。',
+      browserSpeechFailed: 'ブラウザ音声認識に失敗しました。',
+      browserSpeechFailedWithReason: 'ブラウザ音声認識に失敗しました: {error}。',
+      microphoneUnsupported: 'このブラウザはマイク録音に対応していません。',
+      microphoneRecordingFailed: 'マイク録音に失敗しました。',
+    },
   },
 
   // スケジュールジョブ
