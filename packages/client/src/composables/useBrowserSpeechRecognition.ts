@@ -6,6 +6,16 @@ export interface BrowserSpeechRecognitionStartOptions {
   language?: string
 }
 
+export interface BrowserSpeechRecognitionMessages {
+  unsupported?: string
+  failed?: string
+  failedWithReason?: (reason: string) => string
+}
+
+export interface BrowserSpeechRecognitionOptions {
+  messages?: BrowserSpeechRecognitionMessages
+}
+
 interface SpeechRecognitionAlternativeLike {
   transcript?: string
 }
@@ -107,7 +117,7 @@ function getSpeechRecognitionConstructor(): BrowserSpeechRecognitionConstructor 
   return browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition ?? null
 }
 
-export function useBrowserSpeechRecognition() {
+export function useBrowserSpeechRecognition(options: BrowserSpeechRecognitionOptions = {}) {
   const isSupported = ref(Boolean(getSpeechRecognitionConstructor()))
   const status = ref<BrowserSpeechRecognitionStatus>('idle')
   const transcript = ref('')
@@ -120,6 +130,21 @@ export function useBrowserSpeechRecognition() {
   let resolvePendingStop: ((text: string) => void) | null = null
   let rejectPendingStop: ((error: Error) => void) | null = null
   let stopTimer: ReturnType<typeof setTimeout> | null = null
+
+  function unsupportedErrorMessage() {
+    return options.messages?.unsupported || UNSUPPORTED_ERROR_MESSAGE
+  }
+
+  function recognitionFailedMessage(reason?: string) {
+    const normalizedReason = reason?.trim()
+    if (normalizedReason && options.messages?.failedWithReason) {
+      return options.messages.failedWithReason(normalizedReason)
+    }
+    if (normalizedReason) {
+      return `Browser speech recognition failed: ${normalizedReason}.`
+    }
+    return options.messages?.failed || 'Browser speech recognition failed.'
+  }
 
   function clearStopTimer() {
     if (stopTimer !== null) {
@@ -172,7 +197,60 @@ export function useBrowserSpeechRecognition() {
   }
 
   function resolvedTranscriptText() {
-    return transcript.value || partialTranscript.value
+    return joinTranscriptParts([transcript.value, partialTranscript.value])
+  }
+
+  function createRecognition(
+    recognitionConstructor: BrowserSpeechRecognitionConstructor,
+    token: number,
+    language: string,
+  ) {
+    const recognition = new recognitionConstructor()
+    activeRecognition = recognition
+
+    recognition.lang = language
+    recognition.interimResults = true
+    recognition.continuous = true
+
+    recognition.onresult = (event) => {
+      if (token !== sessionToken || activeRecognition !== recognition) {
+        return
+      }
+
+      const { finalText, interimText } = collectResultText(event)
+
+      if (finalText) {
+        transcript.value = joinTranscriptParts([transcript.value, finalText])
+      }
+
+      partialTranscript.value = interimText
+    }
+
+    recognition.onerror = (event) => {
+      failRecognition(token, new Error(recognitionFailedMessage(typeof event.error === 'string' ? event.error : undefined)))
+    }
+
+    recognition.onend = () => {
+      if (token !== sessionToken || activeRecognition !== recognition) {
+        return
+      }
+
+      if (status.value === 'listening' && !stopPromise) {
+        activeRecognition = null
+        detachRecognition(recognition)
+        partialTranscript.value = ''
+        try {
+          createRecognition(recognitionConstructor, token, language).start()
+        } catch (cause) {
+          failRecognition(token, cause)
+        }
+        return
+      }
+
+      finishRecognition(token)
+    }
+
+    return recognition
   }
 
   function clearError() {
@@ -210,12 +288,12 @@ export function useBrowserSpeechRecognition() {
     return normalizedError
   }
 
-  async function start(options: BrowserSpeechRecognitionStartOptions = {}) {
+  async function start(startOptions: BrowserSpeechRecognitionStartOptions = {}) {
     const recognitionConstructor = getSpeechRecognitionConstructor()
     isSupported.value = Boolean(recognitionConstructor)
 
     if (!recognitionConstructor) {
-      const unsupportedError = new Error(UNSUPPORTED_ERROR_MESSAGE)
+      const unsupportedError = new Error(unsupportedErrorMessage())
       status.value = 'error'
       error.value = unsupportedError
       throw unsupportedError
@@ -224,41 +302,12 @@ export function useBrowserSpeechRecognition() {
     cancel()
 
     const token = ++sessionToken
-    const recognition = new recognitionConstructor()
-    activeRecognition = recognition
+    const language = typeof startOptions.language === 'string' ? startOptions.language.trim() : ''
     transcript.value = ''
     partialTranscript.value = ''
     error.value = null
     status.value = 'listening'
-
-    recognition.lang = typeof options.language === 'string' ? options.language.trim() : ''
-    recognition.interimResults = true
-    recognition.continuous = false
-
-    recognition.onresult = (event) => {
-      if (token !== sessionToken || activeRecognition !== recognition) {
-        return
-      }
-
-      const { finalText, interimText } = collectResultText(event)
-
-      if (finalText) {
-        transcript.value = joinTranscriptParts([transcript.value, finalText])
-      }
-
-      partialTranscript.value = interimText
-    }
-
-    recognition.onerror = (event) => {
-      const detail = typeof event.error === 'string' && event.error.trim()
-        ? `Browser speech recognition failed: ${event.error}.`
-        : 'Browser speech recognition failed.'
-      failRecognition(token, new Error(detail))
-    }
-
-    recognition.onend = () => {
-      finishRecognition(token)
-    }
+    const recognition = createRecognition(recognitionConstructor, token, language)
 
     try {
       recognition.start()

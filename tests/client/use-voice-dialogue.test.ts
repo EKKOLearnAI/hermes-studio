@@ -52,7 +52,7 @@ describe('useVoiceDialogue', () => {
     expect(transcribe).toHaveBeenCalledWith(audio)
     expect(sendMessage).toHaveBeenCalledTimes(1)
     expect(sendMessage).toHaveBeenCalledWith('hello hermes')
-    expect(dialogue.transcript.value).toBe('hello hermes')
+    expect(dialogue.transcript.value).toBe('')
     expect(dialogue.status.value).toBe('idle')
     expect(dialogue.activeCaptureId.value).toBeNull()
   })

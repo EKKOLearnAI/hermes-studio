@@ -170,13 +170,19 @@ hermes-web-ui reset-default-login
 - 模型设置（默认模型 & Provider）
 - Profile 和 Provider 配置
 
-### 语音 / TTS
+### 语音 / TTS / STT
 
 - 可在聊天和群聊消息中朗读 Assistant 回复。
 - Provider 支持：浏览器 Web Speech、内置 Edge TTS、OpenAI 兼容 `/audio/speech`、自定义 OpenAI 兼容 TTS 端点、MiMo。
 - MiMo 支持预置音色、音色设计提示词、音色复刻参考音频（`.mp3`/`.wav`，最大 10 MB），并可选择鉴权请求头模式（`Authorization`、`api-key` 或两者同时发送）。
 - Edge / OpenAI 兼容 / 自定义 / MiMo 播放统一走 Web UI 后端 `/api/hermes/tts/synthesize`，停止/暂停状态一致，并会在可行时中断进行中的 fetch。
-- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网；音色复刻参考音频会以 data URI 保存在浏览器设置中，避免上传过大或敏感样本。
+- Provider API Key 和 MiMo 复刻参考音频保存在服务端 TTS 设置中，浏览器只显示脱敏后的 secret 状态。
+- 使用 OpenAI / 自定义 / MiMo 播放前，先在 Settings → Voice 保存 provider 设置。消息播放只发送文本和非敏感播放参数，后端合成时读取当前用户保存的私钥。
+- 聊天输入框支持回合制语音输入：通过麦克风按钮开始/停止一轮录音，转写结果会先填入当前输入框，用户可以编辑后再用普通发送按钮发送。
+- 语音输入 / STT 可在支持时使用浏览器语音识别，也可使用在 Settings → Voice 中配置的服务端 provider。
+- 当 Assistant 音频正在播放时，开始新的语音输入会先停止播放。这个 barge-in 只打断音频，不会隐式取消正在运行的 Agent；停止 run 仍然需要显式操作。
+- 支持的设置项、安全边界和当前非目标范围见 [`docs/voice-dialogue.md`](./docs/voice-dialogue.md)。
+- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网。
 
 ### Web 终端
 
@@ -302,7 +308,6 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 |---|---|
 | `hermes-web-ui start` | 后台启动（守护进程模式） |
 | `hermes-web-ui start --port 9000` | 自定义端口启动 |
-| `hermes-web-ui client` | 远程客户端模式启动（等同设置 `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`、`CORS_ORIGINS=*` 后执行 `start`） |
 | `hermes-web-ui stop` | 停止后台进程 |
 | `hermes-web-ui restart` | 重启后台进程 |
 | `hermes-web-ui status` | 查看运行状态 |

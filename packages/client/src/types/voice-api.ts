@@ -11,7 +11,9 @@ export interface VoiceApiPreset {
   kind: VoiceApiKind
   provider: VoiceApiProvider
   label: string
+  labelKey?: string
   description?: string
+  descriptionKey?: string
   baseUrl?: string
   defaultModel?: string
   isBuiltin?: boolean

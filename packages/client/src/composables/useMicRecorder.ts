@@ -13,6 +13,10 @@ export interface MicRecorderOptions {
   constraints?: MediaStreamConstraints
   maxDurationMs?: number
   mimeTypes?: string[]
+  messages?: {
+    unsupported?: string
+    recordingFailed?: string
+  }
 }
 
 const DEFAULT_MIME_TYPES = [
@@ -168,7 +172,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
     const mediaRecorderConstructor = getMediaRecorderConstructor()
 
     if (!mediaRecorderConstructor || typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      throw new Error(SUPPORT_ERROR_MESSAGE)
+      throw new Error(options.messages?.unsupported || SUPPORT_ERROR_MESSAGE)
     }
 
     return mediaRecorderConstructor
@@ -229,7 +233,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
           }
 
           recorder.onerror = (event: Event & { error?: unknown }) => {
-            const error = setErrorState(event.error ?? new Error('Microphone recording failed.'))
+            const error = setErrorState(event.error ?? new Error(options.messages?.recordingFailed || 'Microphone recording failed.'))
             clearSession()
             rejectStop(error)
           }
@@ -314,7 +318,7 @@ export function useMicRecorder(options: MicRecorderOptions = {}) {
       }
 
       recorder.onerror = (event: Event & { error?: unknown }) => {
-        const error = setErrorState(event.error ?? new Error('Microphone recording failed.'))
+        const error = setErrorState(event.error ?? new Error(options.messages?.recordingFailed || 'Microphone recording failed.'))
         clearSession()
         rejectStop(error)
       }

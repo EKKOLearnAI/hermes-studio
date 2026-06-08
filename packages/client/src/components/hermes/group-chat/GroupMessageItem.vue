@@ -398,10 +398,10 @@ function playSpeech(content: string, autoplay = false) {
         return
     }
     if (voiceSettings.provider.value === 'mimo') {
-        if (!voiceSettings.mimoApiKey.value) return
+        const apiKey = voiceSettings.mimoApiKey.value
         const options = {
             baseUrl: voiceSettings.mimoBaseUrl.value,
-            apiKey: voiceSettings.mimoApiKey.value,
+            apiKey: apiKey || undefined,
             authMode: voiceSettings.mimoAuthMode.value,
             model: voiceSettings.mimoModel.value,
             voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' as const : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' as const : 'preset' as const,

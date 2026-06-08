@@ -195,7 +195,6 @@ function handleMoreSelect(key: string | number) {
           >
             {{ t('settings.voice.setActive') }}
           </NButton>
-          <span v-else class="action-placeholder" aria-hidden="true" />
           <NButton
             size="tiny"
             :loading="testState?.status === 'loading'"
@@ -207,12 +206,10 @@ function handleMoreSelect(key: string | number) {
           <NButton
             v-if="canEdit"
             size="tiny"
-            secondary
             @click="handleEditAction"
           >
             {{ actionLabel }}
           </NButton>
-          <span v-else class="action-placeholder" aria-hidden="true" />
           <NDropdown
             v-if="requiresKey"
             trigger="click"
@@ -220,11 +217,10 @@ function handleMoreSelect(key: string | number) {
             :options="moreOptions"
             @select="handleMoreSelect"
           >
-            <NButton size="tiny" quaternary :aria-label="t('settings.voice.moreActionsFor', { provider: connection.label })">
+            <NButton size="tiny" :aria-label="t('settings.voice.moreActionsFor', { provider: connection.label })">
               {{ t('settings.voice.moreActions') }}
             </NButton>
           </NDropdown>
-          <span v-else class="action-placeholder" aria-hidden="true" />
         </div>
       </div>
     </div>
@@ -358,18 +354,15 @@ function handleMoreSelect(key: string | number) {
 }
 
 .card-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(82px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   width: 100%;
 
   :deep(.n-button) {
-    width: 100%;
+    min-width: 82px;
   }
-}
-
-.action-placeholder {
-  min-height: 22px;
 }
 
 .feedback-row {

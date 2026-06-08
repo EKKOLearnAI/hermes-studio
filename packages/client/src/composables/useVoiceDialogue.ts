@@ -179,6 +179,7 @@ export function useVoiceDialogue(deps: VoiceDialogueDeps) {
 
     activeCaptureId.value = null
     activeTurnId.value = null
+    transcript.value = ''
     status.value = 'idle'
   }
 

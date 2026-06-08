@@ -106,7 +106,7 @@ describe('useBrowserSpeechRecognition', () => {
     expect(instance).toBeDefined()
     expect(instance.lang).toBe('en-US')
     expect(instance.interimResults).toBe(true)
-    expect(instance.continuous).toBe(false)
+    expect(instance.continuous).toBe(true)
     expect(instance.started).toBe(true)
     expect(recognition.status.value).toBe('listening')
     expect(recognition.error.value).toBeNull()
@@ -180,6 +180,31 @@ describe('useBrowserSpeechRecognition', () => {
     await vi.advanceTimersByTimeAsync(1000)
 
     await expect(stopPromise).resolves.toBe('hello timeout fallback')
+    expect(recognition.status.value).toBe('idle')
+  })
+
+  it('restarts recognition after a natural browser end while still listening', async () => {
+    installSpeechRecognition()
+    const recognition = useBrowserSpeechRecognition()
+
+    await recognition.start({ language: 'en-US' })
+    const first = FakeSpeechRecognition.instances[0]
+    first.emitResult([{ transcript: 'first sentence', isFinal: true }])
+    first.emitEnd()
+
+    expect(recognition.status.value).toBe('listening')
+    expect(recognition.transcript.value).toBe('first sentence')
+    expect(FakeSpeechRecognition.instances).toHaveLength(2)
+    const second = FakeSpeechRecognition.instances[1]
+    expect(second.lang).toBe('en-US')
+    expect(second.continuous).toBe(true)
+    expect(second.started).toBe(true)
+
+    second.emitResult([{ transcript: 'second sentence', isFinal: true }])
+    const stopPromise = recognition.stop()
+    second.emitEnd()
+
+    await expect(stopPromise).resolves.toBe('first sentence second sentence')
     expect(recognition.status.value).toBe('idle')
   })
 

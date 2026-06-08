@@ -35,9 +35,20 @@ const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
 const speech = useGlobalSpeech()
-const micRecorder = useMicRecorder()
+const micRecorder = useMicRecorder({
+  messages: {
+    unsupported: t('chat.voiceInput.microphoneUnsupported'),
+    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
+  },
+})
 const sttSettings = useSttSettings()
-const browserRecognition = useBrowserSpeechRecognition()
+const browserRecognition = useBrowserSpeechRecognition({
+  messages: {
+    unsupported: t('chat.voiceInput.browserSpeechUnsupported'),
+    failed: t('chat.voiceInput.browserSpeechFailed'),
+    failedWithReason: (reason) => t('chat.voiceInput.browserSpeechFailedWithReason', { error: reason }),
+  },
+})
 const activeVoiceCaptureMode = ref<'browser' | 'backend' | null>(null)
 
 function normalizeVoiceTranscript(text: string) {
