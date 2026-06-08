@@ -13,6 +13,9 @@ import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
 const MAX_TERMINAL_EVENT_CHARS = 4000
+const CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT = 32 * 1024
+const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
+const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
 
 let pty: any = null
 
@@ -123,6 +126,59 @@ function isCodexProxyExecToolEvent(event: CanonicalResponsesEvent): boolean {
   }
   const name = String(item.name || item.function?.name || '').trim()
   return name === 'exec_command' || name === 'functions.exec_command'
+}
+
+function truncateCodingAgentToolOutputForStorage(output: unknown): string {
+  const text = typeof output === 'string' ? output : JSON.stringify(output ?? '')
+  if (text.length <= CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT) return text
+  const head = text.slice(0, CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS)
+  const tail = text.slice(-CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS)
+  const omitted = text.length - head.length - tail.length
+  return [
+    head,
+    '',
+    `[Hermes Web UI: coding-agent tool output truncated for storage; original_chars=${text.length}; omitted_chars=${omitted}]`,
+    '',
+    tail,
+  ].join('\n')
+}
+
+function truncateCodingAgentToolOutputItem(item: any): any {
+  if (!item || item.type !== 'function_call_output') return item
+  const nextOutput = truncateCodingAgentToolOutputForStorage(item.output)
+  if (nextOutput === item.output) return item
+  return { ...item, output: nextOutput }
+}
+
+function truncateCodingAgentToolOutputEvent(event: CanonicalResponsesEvent): CanonicalResponsesEvent {
+  const data: any = event.data || {}
+  if (event.type === 'response.output_item.done') {
+    const item = data.item || data.output_item || data
+    const nextItem = truncateCodingAgentToolOutputItem(item)
+    if (nextItem === item) return event
+    if (data.item) return { ...event, data: { ...data, item: nextItem } }
+    if (data.output_item) return { ...event, data: { ...data, output_item: nextItem } }
+    return { ...event, data: nextItem }
+  }
+
+  if (event.type === 'response.completed') {
+    const response = data.response || data
+    const output = Array.isArray(response?.output) ? response.output : null
+    if (!output) return event
+    let changed = false
+    const nextOutput = output.map((item: any) => {
+      const nextItem = truncateCodingAgentToolOutputItem(item)
+      if (nextItem !== item) changed = true
+      return nextItem
+    })
+    if (!changed) return event
+    const nextResponse = { ...response, output: nextOutput }
+    return data.response
+      ? { ...event, data: { ...data, response: nextResponse } }
+      : { ...event, data: nextResponse }
+  }
+
+  return event
 }
 
 function isPrintAgent(agentId: string): boolean {
@@ -400,18 +456,19 @@ export class CodingAgentRunManager {
     if (run.launch.agentId === 'codex' && isCodexProxyExecToolEvent(event)) return
     const responseEvent = this.normalizeCodexChatTextEvent(run, event)
     if (!responseEvent) return
+    const storageSafeResponseEvent = truncateCodingAgentToolOutputEvent(responseEvent)
     if (run.launch.agentId === 'claude-code' && run.currentChild && !run.acceptingPrintEvent && !isProxyToolEvent(event)) return
-    if (responseEvent.type === 'response.created') {
+    if (storageSafeResponseEvent.type === 'response.created') {
       if (run.responseStartEmitted) return
       run.responseStartEmitted = true
     }
-    const isTerminalEvent = responseEvent.type === 'response.completed' || responseEvent.type === 'response.failed'
+    const isTerminalEvent = storageSafeResponseEvent.type === 'response.completed' || storageSafeResponseEvent.type === 'response.failed'
     if (
       run.launch.agentId === 'codex' &&
-      responseEvent.type === 'response.completed' &&
+      storageSafeResponseEvent.type === 'response.completed' &&
       childIsRunning(run.currentChild)
     ) {
-      const final = (responseEvent.data as any).response || responseEvent.data
+      const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       run.codexPendingUsage = final?.usage ?? run.codexPendingUsage
       return
     }
@@ -426,18 +483,18 @@ export class CodingAgentRunManager {
     run.state.profile = run.launch.profile
     run.state.source = 'coding_agent'
     run.state.runId = run.id
-    for (const mappedEvent of mapCodingAgentResponseEvent(responseEvent)) {
+    for (const mappedEvent of mapCodingAgentResponseEvent(storageSafeResponseEvent)) {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
     }
-    const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, responseEvent.type, responseEvent.data)
+    const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, storageSafeResponseEvent.type, storageSafeResponseEvent.data)
     if (mapped) this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     if (isTerminalEvent) {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
       updateSessionStats(run.launch.sessionId)
-      const final = (responseEvent.data as any).response || responseEvent.data
+      const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
       const finalText = extractResponseText(final)
-      const chatCompletionEvent = responseEvent.type === 'response.completed' ? 'run.completed' : 'run.failed'
+      const chatCompletionEvent = storageSafeResponseEvent.type === 'response.completed' ? 'run.completed' : 'run.failed'
       const chatCompletionPayload: Record<string, unknown> = {
         event: chatCompletionEvent,
         run_id: final?.id,

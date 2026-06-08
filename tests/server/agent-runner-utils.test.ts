@@ -951,6 +951,91 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('truncates large coding-agent tool outputs before emitting and flushing to SQLite', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const state: any = { messages: [], isWorking: false, events: [], queue: [] }
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    ;(manager as any).markChatRunCompleted = () => {}
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const agentSessionId = `agent-session-codex-large-tool-${suffix}`
+    const chatSessionId = `chat-session-codex-large-tool-${suffix}`
+    manager.start({
+      agentSessionId,
+      agentId: 'codex',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-5-codex',
+      sessionId: chatSessionId,
+      command: 'codex',
+      args: ['--model', 'gpt-5-codex'],
+      shellCommand: 'codex --model gpt-5-codex',
+      workspaceDir: process.cwd(),
+      state,
+    })
+    const run = (manager as any).runs.get(agentSessionId)
+    const largeOutput = `HEAD-${'a'.repeat(80 * 1024)}-TAIL`
+
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: { response: { id: 'resp_large_tool', status: 'in_progress', model: 'gpt-5-codex', output: [] } },
+    })
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.added',
+      data: {
+        item: {
+          type: 'function_call',
+          id: 'call_large',
+          call_id: 'call_large',
+          name: 'read_file',
+          arguments: '{"path":"big.log"}',
+        },
+      },
+    })
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.done',
+      data: {
+        item: {
+          type: 'function_call',
+          id: 'call_large',
+          call_id: 'call_large',
+          name: 'read_file',
+          arguments: '{"path":"big.log"}',
+        },
+      },
+    })
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.done',
+      data: {
+        item: {
+          type: 'function_call_output',
+          id: 'call_large',
+          call_id: 'call_large',
+          output: largeOutput,
+        },
+      },
+    })
+    ;(manager as any).handleClaudePrintResponseEvent(run, {
+      type: 'response.completed',
+      data: { response: { id: 'resp_large_tool', status: 'completed', model: 'gpt-5-codex', output: [] } },
+    })
+
+    const toolMessage = state.messages.find((message: any) => message.role === 'tool')
+    const completedPayload = emitted.find(event => event.event === 'tool.completed')?.payload as any
+    const dbToolMessage = (getSessionDetail(chatSessionId)?.messages || []).find(message => message.role === 'tool')
+    for (const output of [toolMessage?.content, completedPayload?.output, dbToolMessage?.content]) {
+      expect(output).toContain('HEAD-')
+      expect(output).toContain('-TAIL')
+      expect(output).toContain('coding-agent tool output truncated for storage')
+      expect(output.length).toBeLessThan(largeOutput.length)
+      expect(output.length).toBeLessThan(34 * 1024)
+    }
+    manager.shutdown()
+  })
+
   it('records Codex thread id so follow-up turns can resume the native session', () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
