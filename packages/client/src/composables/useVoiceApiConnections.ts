@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   clearTtsSecret,
   fetchTtsSettings,
@@ -44,6 +45,7 @@ function stringSetting(settings: object, key: string): string {
 }
 
 export function useVoiceApiConnections() {
+  const { t } = useI18n()
   const connections = ref<VoiceApiConnection[]>([])
   const loading = ref(false)
   const vs = useVoiceSettings()
@@ -120,7 +122,7 @@ export function useVoiceApiConnections() {
       id: `tts-${provider}`,
       kind: 'tts',
       provider,
-      label: preset?.label || `${provider} TTS`,
+      label: preset?.labelKey ? t(preset.labelKey) : preset?.label || `${provider} TTS`,
       baseUrl: settings.baseUrl,
       model: settings.model,
       voice: settings.voice,
@@ -136,7 +138,7 @@ export function useVoiceApiConnections() {
       id: `stt-${provider}`,
       kind: 'stt',
       provider,
-      label: preset?.label || `${provider} STT`,
+      label: preset?.labelKey ? t(preset.labelKey) : preset?.label || `${provider} STT`,
       baseUrl: settings.baseUrl,
       model: settings.model,
       settings: settings as Record<string, unknown>,
@@ -159,7 +161,7 @@ export function useVoiceApiConnections() {
           id: 'tts-edge',
           kind: 'tts',
           provider: 'edge',
-          label: 'Edge TTS',
+          label: t('settings.voice.presetEdgeTtsLabel'),
           isBuiltin: true,
           hasSecret: false,
           active: activeTtsId.value === 'tts-edge',
@@ -174,7 +176,7 @@ export function useVoiceApiConnections() {
           id: 'stt-browser',
           kind: 'stt',
           provider: 'browser',
-          label: 'Browser STT',
+          label: t('settings.voice.presetBrowserSttLabel'),
           isBuiltin: true,
           hasSecret: false,
           active: activeSttId.value === 'stt-browser',

@@ -50,7 +50,7 @@ let suppressProbeReset = false
 const presetOptions = computed(() =>
   VOICE_API_PRESETS
     .filter(p => p.kind === props.kind && !p.isBuiltin)
-    .map(p => ({ label: p.label, value: p.id })),
+    .map(p => ({ label: p.labelKey ? t(p.labelKey) : p.label, value: p.id })),
 )
 
 const selectedPreset = computed(() =>
@@ -61,7 +61,7 @@ const isCustomProvider = computed(() => selectedPreset.value?.provider === 'cust
 const canProbeModels = computed(() => compatibility.value === 'openai-compatible')
 const modelOptions = computed(() => {
   const discovered = probeModels.value.map(model => ({
-    label: model.capability === 'preferred' ? `${model.label} · recommended` : model.label,
+    label: model.capability === 'preferred' ? `${model.label} · ${t('settings.voice.modelRecommendedSuffix')}` : model.label,
     value: model.id,
   }))
   const current = formData.value.model.trim()
@@ -80,11 +80,11 @@ const baseUrlError = computed(() => {
 const modelError = computed(() => {
   if (!selectedPreset.value?.capabilities?.models) return ''
   if (!modelTouched.value) return ''
-  return formData.value.model.trim() ? '' : 'Model is required. Connect to auto-fill, or enter manually.'
+  return formData.value.model.trim() ? '' : t('settings.voice.modelRequiredConnectManual')
 })
 const apiKeyError = computed(() => {
   if (!apiKeyTouched.value || !selectedPreset.value?.isSecretRequired) return ''
-  return formData.value.apiKey.trim() ? '' : 'API key is required.'
+  return formData.value.apiKey.trim() ? '' : t('settings.voice.apiKeyRequired')
 })
 const canConnect = computed(() => {
   return !!selectedPreset.value &&
@@ -105,12 +105,12 @@ const canSave = computed(() => {
 const connectHelpText = computed(() => {
   if (!selectedPreset.value) return ''
   if (compatibility.value === 'manual') {
-    return 'Manual custom endpoint selected. Model discovery is not available; enter the model name manually.'
+    return t('settings.voice.discoveryManualHint')
   }
   if (!formData.value.baseUrl.trim() || !formData.value.apiKey.trim()) {
-    return 'Enter Base URL and API key, then connect to fetch available models.'
+    return t('settings.voice.discoveryCredentialHint')
   }
-  return 'No requests are sent while typing. Use Connect when the credentials are ready.'
+  return t('settings.voice.discoveryNoAutoProbeHint')
 })
 
 watch(() => props.show, (show) => {
@@ -165,15 +165,15 @@ function normalizeBaseUrl(value: string): string {
 
 function validateBaseUrl(value: string): string {
   const trimmed = value.trim()
-  if (!trimmed) return 'Base URL is required.'
+  if (!trimmed) return t('settings.voice.baseUrlRequired')
   try {
     const url = new URL(trimmed)
     if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
-      return 'Use https:// unless the endpoint is localhost.'
+      return t('settings.voice.baseUrlHttpsRequired')
     }
     return ''
   } catch {
-    return 'Enter a valid Base URL, including https://.'
+    return t('settings.voice.baseUrlInvalid')
   }
 }
 
@@ -245,7 +245,7 @@ async function handleProbe() {
     return
   }
   if (!formData.value.apiKey.trim()) {
-    probeErrorSummary.value = 'API key is required to fetch models.'
+    probeErrorSummary.value = t('settings.voice.apiKeyRequiredForDiscovery')
     return
   }
 
@@ -275,7 +275,7 @@ async function handleProbe() {
     }
     probeModels.value = result.models || []
     probeRecommendedModel.value = result.recommendedModel || ''
-    probeErrorSummary.value = result.ok ? '' : (result.errorSummary || 'Could not fetch models. You can still enter the model name manually.')
+    probeErrorSummary.value = result.ok ? '' : (result.errorSummary || t('settings.voice.discoveryFailedManualFallback'))
     probeErrorDetails.value = result.errorDetails || ''
 
     if (result.ok && result.recommendedModel && !modelManuallyEdited.value && !formData.value.model.trim()) {
@@ -284,7 +284,7 @@ async function handleProbe() {
     }
   } catch (error) {
     if (controller.signal.aborted || seq !== probeSeq) return
-    probeErrorSummary.value = error instanceof Error ? error.message : 'Could not fetch models. You can still enter the model name manually.'
+    probeErrorSummary.value = error instanceof Error ? error.message : t('settings.voice.discoveryFailedManualFallback')
     probeErrorDetails.value = ''
   } finally {
     if (seq === probeSeq) {
@@ -301,7 +301,7 @@ async function handleSave() {
   modelTouched.value = true
 
   if (!canSave.value) {
-    message.warning(modelError.value || baseUrlError.value || apiKeyError.value || 'Complete the required provider fields before saving.')
+    message.warning(modelError.value || baseUrlError.value || apiKeyError.value || t('settings.voice.completeRequiredProviderFields'))
     return
   }
 
@@ -343,12 +343,12 @@ async function handleSave() {
           />
         </NFormItem>
 
-        <NFormItem v-if="selectedPreset && isCustomProvider" label="API compatibility" required>
+        <NFormItem v-if="selectedPreset && isCustomProvider" :label="t('settings.voice.apiCompatibility')" required>
           <NSelect
             v-model:value="compatibility"
             :options="[
-              { label: 'OpenAI-compatible', value: 'openai-compatible' },
-              { label: 'Manual custom endpoint', value: 'manual' },
+              { label: t('settings.voice.openaiCompatible'), value: 'openai-compatible' },
+              { label: t('settings.voice.manualCustomEndpoint'), value: 'manual' },
             ]"
             data-testid="voice-provider-compatibility"
           />
@@ -358,7 +358,7 @@ async function handleSave() {
       <template v-if="selectedPreset">
         <section class="form-section">
           <div class="section-heading">
-            <span>Connection</span>
+            <span>{{ t('settings.voice.connectionStep') }}</span>
             <small>{{ connectHelpText }}</small>
           </div>
 
@@ -378,7 +378,7 @@ async function handleSave() {
               type="password"
               show-password-on="click"
               autocomplete="off"
-              :placeholder="selectedPreset.isSecretRequired ? 'Paste API key to connect; stored keys are never shown' : t('models.apiKeyPlaceholder')"
+              :placeholder="selectedPreset.isSecretRequired ? t('settings.voice.apiKeyConnectPlaceholder') : t('models.apiKeyPlaceholder')"
               data-testid="voice-provider-api-key"
               @blur="maybeProbeOnApiKeyBlur"
             />
@@ -392,14 +392,14 @@ async function handleSave() {
               data-testid="voice-provider-probe"
               @click="handleProbe"
             >
-              Connect & fetch models
+              {{ t('settings.voice.connectFetchModels') }}
             </NButton>
           </div>
 
           <div v-if="probeErrorSummary" class="inline-error" data-testid="voice-provider-probe-error">
             <span>{{ probeErrorSummary }}</span>
             <button v-if="probeErrorDetails" type="button" class="link-button" @click="showProbeDetails = !showProbeDetails">
-              {{ showProbeDetails ? 'Hide details' : 'Show details' }}
+              {{ showProbeDetails ? t('settings.voice.hideDetails') : t('settings.voice.showDetails') }}
             </button>
             <pre v-if="showProbeDetails && probeErrorDetails">{{ probeErrorDetails }}</pre>
           </div>
@@ -407,8 +407,8 @@ async function handleSave() {
 
         <section v-if="selectedPreset.capabilities?.models" class="form-section">
           <div class="section-heading">
-            <span>Model</span>
-            <small>Connect to auto-fill, or enter manually.</small>
+            <span>{{ t('settings.voice.model') }}</span>
+            <small>{{ t('settings.voice.modelConnectManualHint') }}</small>
           </div>
 
           <NFormItem :label="t('models.defaultModel')" :feedback="modelError">
@@ -418,19 +418,19 @@ async function handleSave() {
               tag
               filterable
               :loading="probeLoading"
-              placeholder="Connect to auto-fill, or enter manually."
+              :placeholder="t('settings.voice.modelConnectManualHint')"
               data-testid="voice-provider-model"
               @update:value="handleModelUpdate"
             />
           </NFormItem>
 
-          <div v-if="probeLoading" class="helper-text">Fetching models…</div>
+          <div v-if="probeLoading" class="helper-text">{{ t('settings.voice.fetchingModels') }}</div>
           <div v-else-if="probeRecommendedModel && modelManuallyEdited && formData.model !== probeRecommendedModel" class="helper-text">
-            Recommended: {{ probeRecommendedModel }}.
-            <button type="button" class="link-button" @click="applyRecommendedModel">Use this.</button>
+            {{ t('settings.voice.recommendedModel', { model: probeRecommendedModel }) }}
+            <button type="button" class="link-button" @click="applyRecommendedModel">{{ t('settings.voice.useRecommendedModel') }}</button>
           </div>
-          <div v-else-if="probeModels.length" class="helper-text">{{ probeModels.length }} models discovered. Recommended model is selected when the field is empty.</div>
-          <div v-else-if="probeErrorSummary" class="helper-text">Could not fetch models. You can still enter the model name manually.</div>
+          <div v-else-if="probeModels.length" class="helper-text">{{ t('settings.voice.modelsDiscovered', { count: probeModels.length }) }}</div>
+          <div v-else-if="probeErrorSummary" class="helper-text">{{ t('settings.voice.discoveryFailedManualFallback') }}</div>
         </section>
       </template>
     </NForm>

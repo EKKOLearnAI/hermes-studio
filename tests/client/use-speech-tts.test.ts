@@ -494,4 +494,14 @@ describe('client TTS autoplay call sites', () => {
     expect(groupMessageItem).toContain('void speech.mimoPlay')
     expect(groupMessageItem).toContain('.catch(handleAutoplayTtsError)')
   })
+
+  it('does not require a local MiMo API key before using server-stored TTS credentials', () => {
+    const messageItem = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
+    const groupMessageItem = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
+
+    expect(messageItem).not.toContain('MiMo TTS API Key 为空')
+    expect(groupMessageItem).not.toContain('if (!voiceSettings.mimoApiKey.value) return')
+    expect(messageItem).toContain('apiKey: apiKey || undefined')
+    expect(groupMessageItem).toContain('apiKey: apiKey || undefined')
+  })
 })
