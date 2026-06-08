@@ -153,6 +153,8 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'settings.json'),
       '--setting-sources',
       'local',
+      '--append-system-prompt',
+      'Hermes Web UI is running this Claude Code chat session through a scoped provider configuration. The actual provider is openrouter. The actual model is anthropic/claude-sonnet-4.6. If the user asks what model you are, answer with the actual model value above, not just the Claude Code agent name.',
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
       '--dangerously-skip-permissions',
@@ -161,6 +163,8 @@ describe('coding agent launch preparation', () => {
     expect(result.shellCommand).not.toContain('--setting-sources local')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('--setting-sources local')
+    expect(launcher).toContain('--append-system-prompt')
+    expect(launcher).toContain('actual model is anthropic/claude-sonnet-4.6')
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
   })
 
