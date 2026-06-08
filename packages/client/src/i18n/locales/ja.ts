@@ -587,6 +587,8 @@ export default {
     customModelPlaceholder: '未掲載のモデル ID',
     customModelHint: 'プロバイダーは対応しているが API が返さないモデル用です。表示名の変更ではありません。Enter で読み込み。',
     noProviders: 'プロバイダーがありません。カスタムプロバイダーを追加して始めましょう。',
+    noModels: 'モデルがありません。少なくとも1つのプロバイダーにAPIキーが設定されていることを確認するか、設定 → モデルでカスタムプロバイダーを追加してください。',
+    noResults: '一致するモデルが見つかりませんでした。',
     clearVisibleModels: '選択をクリア',
     currentDefault: '現在のデフォルト',
     defaultShort: 'デフォルト',

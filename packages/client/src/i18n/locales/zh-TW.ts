@@ -685,6 +685,8 @@ export default {
     customModelHint: '按 Enter 載入',
     removeCustomModel: '移除這個未列出的模型',
     noProviders: '目前無 Provider，新增一個開始吧。',
+    noModels: '目前無可用模型。請確保至少一個 Provider 在 Hermes 設定 .env 檔案中設定了 API Key，或在設定 → 模型中新增自訂 Provider。',
+    noResults: '未找到相符的模型。',
     models: '模型清單',
     count: '個模型',
     more: '個更多',

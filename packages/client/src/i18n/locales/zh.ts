@@ -691,6 +691,8 @@ export default {
     customModelHint: '仅用于 provider 支持但未返回的模型；不是重命名。按回车加载。',
     removeCustomModel: '移除这个未列出的模型',
     noProviders: '暂无 Provider，添加一个开始吧。',
+    noModels: '暂无可用模型。请确保至少一个 Provider 在 Hermes 配置 .env 文件中设置了 API Key，或在设置 → 模型中添加自定义 Provider。',
+    noResults: '未找到匹配的模型。',
     models: '模型列表',
     count: '个模型',
     more: '个更多',

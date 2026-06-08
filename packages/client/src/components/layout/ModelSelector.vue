@@ -194,7 +194,7 @@ function openModal() {
           </div>
         </div>
         <div v-if="filteredGroups.length === 0" class="model-empty">
-          {{ searchQuery ? 'No results' : 'No models' }}
+          {{ searchQuery ? t('models.noResults') : t('models.noModels') }}
         </div>
         <div class="model-custom">
           <div class="model-custom-row">

@@ -691,6 +691,8 @@ export default {
     customModelHint: 'For provider-supported models not returned by the API; not a display rename. Press Enter to load.',
     removeCustomModel: 'Remove this unlisted model',
     noProviders: 'No providers found. Add a custom provider to get started.',
+    noModels: 'No models available. Make sure at least one provider has an API key configured in your Hermes profile .env file, or add a custom provider in Settings → Models.',
+    noResults: 'No matching models found.',
     models: 'Models',
     count: 'models',
     more: 'more',
