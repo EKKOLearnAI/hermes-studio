@@ -90,7 +90,7 @@ export function useSpeech() {
     // 移除 HTML 标签
     text = text.replace(/<[^>]+>/g, '')
 
-    text = text.replace(/[^\p{L}\p{N}\s。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
+    text = text.replace(/[^\p{L}\p{N}\s.。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
 
     text = text.replace(/\s+/g, ' ').trim()
 
