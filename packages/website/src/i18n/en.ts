@@ -209,6 +209,8 @@ export default {
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],
           ['HERMES_WEB_UI_HOME', 'Hermes Studio data home for auth token, credentials, logs, DB, and default uploads'],
           ['HERMES_WEBUI_STATE_DIR', 'Compatibility alias for HERMES_WEB_UI_HOME'],
+          ['HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT', 'Disable startup injection of the managed hermes-studio MCP server into Hermes profile configs'],
+          ['HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT', 'Allow managed MCP injection when HERMES_WEB_UI_HOME is under a temporary directory, such as Version Preview runtimes'],
           ['UPLOAD_DIR', 'Custom upload root. Uploaded files are stored below profile-scoped subdirectories.'],
           ['CORS_ORIGINS', 'Cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests (default: same host only; set * only for intentional legacy wildcard CORS)'],
           ['AUTH_TOKEN', 'Custom bearer token; overrides the auto-generated token'],

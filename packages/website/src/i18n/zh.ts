@@ -209,6 +209,8 @@ export default {
           ['BIND_HOST', '服务器绑定地址（默认：0.0.0.0）。如需 IPv6，请显式设置为 ::。'],
           ['HERMES_WEB_UI_HOME', 'Hermes Studio 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
           ['HERMES_WEBUI_STATE_DIR', 'HERMES_WEB_UI_HOME 的兼容别名'],
+          ['HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT', '关闭启动时向 Hermes profile 配置自动注入托管的 hermes-studio MCP server'],
+          ['HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT', '当 HERMES_WEB_UI_HOME 位于临时目录（例如 Version Preview runtime）时，仍允许托管 MCP 自动注入'],
           ['UPLOAD_DIR', '自定义上传根目录。文件会保存在按 Profile 隔离的子目录下'],
           ['CORS_ORIGINS', 'HTTP、Socket.IO、WebSocket 跨源 allowlist（默认：仅同 host；只有明确需要旧版 wildcard CORS 时才设置为 *）'],
           ['AUTH_TOKEN', '自定义 bearer token，会覆盖自动生成的 token'],
