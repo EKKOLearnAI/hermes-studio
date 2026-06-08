@@ -263,7 +263,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
 | `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
-| `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
+| `WORKSPACE_BASE` | current user's home directory | Base directory for workspace browsing. |
 | `HERMES_HOME` | platform default | Hermes data home. Windows uses `%LOCALAPPDATA%\hermes`; macOS/Linux uses `~/.hermes`. |
 | `HERMES_BIN` | `hermes` | Custom Hermes CLI binary path. |
 | `HERMES_AGENT_ROOT` | auto-discovered | Hermes Agent source checkout containing `run_agent.py`. |

@@ -27,7 +27,7 @@ import { homedir } from 'os'
  * - HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT: Allow MCP injection when HERMES_WEB_UI_HOME is under a temp dir.
  * - HERMES_LAN_DISCOVERY_ENABLED: Set false/0/off to disable UDP LAN discovery responder.
  * - HERMES_LAN_DISCOVERY_HTTP_PORTS: HTTP ports to probe during UDP discovery scans. Default: 8648,8748 plus current PORT.
- * - WORKSPACE_BASE: Base directory for workspace browsing. Default: /opt/data/workspace.
+ * - WORKSPACE_BASE: Base directory for workspace browsing. Default: current user's home directory.
  *
  * Limits/logging:
  * - MAX_DOWNLOAD_SIZE: Max file download size. Default: 200MB.

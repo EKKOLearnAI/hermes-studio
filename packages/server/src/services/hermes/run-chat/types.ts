@@ -36,6 +36,7 @@ export interface QueuedRun {
   model_groups?: Array<{ provider: string; models: string[] }>
   instructions?: string
   profile: string
+  workspace?: string | null
   source?: ChatRunSource
   codingAgentId?: 'claude-code' | 'codex'
   agentId?: 'claude-code' | 'codex'

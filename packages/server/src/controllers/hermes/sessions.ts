@@ -23,6 +23,7 @@ import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -254,6 +255,7 @@ export async function listConversations(ctx: any) {
     profile: s.profile || null,
     source: s.source,
     agent: s.agent,
+    agent_mode: s.agent_mode,
     agent_session_id: s.agent_session_id,
     agent_native_session_id: s.agent_native_session_id,
     model: s.model,
@@ -514,7 +516,11 @@ export async function remove(ctx: any) {
   const existing = localGetSession(sessionId)
   if (denySessionAccess(ctx, existing)) return
   const hermesProfile = requestedProfile(ctx) || existing?.profile || getActiveProfileName()
-  const hermes = await deleteHermesSessionIfPresent(sessionId, hermesProfile)
+  const isCodingAgentSession = existing?.source === 'coding_agent'
+  if (isCodingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
+  const hermes = isCodingAgentSession
+    ? { attempted: false, deleted: false, profile: hermesProfile }
+    : await deleteHermesSessionIfPresent(sessionId, hermesProfile)
   const localDeleted = existing ? localDeleteSession(sessionId) : true
   if (!localDeleted) {
     ctx.status = 500
@@ -580,7 +586,11 @@ export async function batchRemove(ctx: any) {
       continue
     }
 
-    const hermes = await deleteHermesSessionIfPresent(id, targetProfile)
+    const isCodingAgentSession = existing?.source === 'coding_agent'
+    if (isCodingAgentSession) codingAgentRunManager.stop(id, { reportClosed: false })
+    const hermes = isCodingAgentSession
+      ? { attempted: false, deleted: false, profile: targetProfile || 'default' }
+      : await deleteHermesSessionIfPresent(id, targetProfile)
     if (hermes.deleted) {
       results.hermesDeleted++
     } else if (hermes.attempted && hermes.error) {
@@ -755,14 +765,15 @@ export async function usageStats(ctx: any) {
 /**
  * List folders under workspace base path for folder picker.
  * GET /api/hermes/workspace/folders?path=<relative_path>
- * Base: /opt/data/workspace (overridable via WORKSPACE_BASE env)
+ * Base: current user's home directory (overridable via WORKSPACE_BASE env)
  */
 export async function listWorkspaceFolders(ctx: any) {
   const { resolve, join } = await import('path')
   const { readdir } = await import('fs/promises')
   const { existsSync } = await import('fs')
+  const { homedir } = await import('os')
 
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/opt/data/workspace'
+  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
   const subPath = (ctx.query.path as string) || ''
 
   // Security: prevent path traversal

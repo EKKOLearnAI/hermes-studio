@@ -142,6 +142,7 @@ export class ChatRunSocket {
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       queue_id?: string
+      workspace?: string | null
       source?: string
       coding_agent_id?: 'claude-code' | 'codex'
       agent_id?: 'claude-code' | 'codex'
@@ -195,7 +196,7 @@ export class ChatRunSocket {
           }
           return
         }
-        if (state.isWorking && source !== 'coding_agent') {
+        if (state.isWorking) {
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
           state.queue.push({
             queue_id: queueId,
@@ -205,6 +206,7 @@ export class ChatRunSocket {
             model_groups: data.model_groups,
             instructions: data.instructions,
             profile: runProfile,
+            workspace: data.workspace,
             source,
             codingAgentId: data.coding_agent_id,
             agentId: data.agent_id,
@@ -335,6 +337,7 @@ export class ChatRunSocket {
       provider?: string
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
+      workspace?: string | null
       source?: string
       queue_id?: string
       peerExcludeSocketId?: string
@@ -399,8 +402,9 @@ export class ChatRunSocket {
         : getSystemPrompt()
       if (data.session_id) {
         const sessionRow = getSession(data.session_id)
-        if (sessionRow?.workspace) {
-          const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
+        const workspace = sessionRow?.workspace || String(data.workspace || '').trim()
+        if (workspace) {
+          const workspaceCtx = `[Current working directory: ${workspace}]`
           fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
         }
       }
@@ -544,6 +548,9 @@ export class ChatRunSocket {
     if (!state?.queue.length) return false
 
     const next = state.queue.shift()!
+    state.isWorking = true
+    state.profile = next.profile || fallbackProfile
+    state.source = next.source
     logger.info('[chat-run-socket] dequeuing queued run for session %s (remaining: %d)', sessionId, state.queue.length)
     this.nsp.to(`session:${sessionId}`).emit('run.queued', {
       event: 'run.queued',
@@ -568,6 +575,7 @@ export class ChatRunSocket {
       provider: next.provider,
       model_groups: next.model_groups,
       instructions: next.instructions,
+      workspace: next.workspace,
       source: next.source,
       queue_id: next.queue_id,
       peerExcludeSocketId: next.originSocketId,
@@ -606,6 +614,25 @@ export class ChatRunSocket {
     state.responseRun = undefined
     state.profile = undefined
     logger.info('[chat-run-socket] external run completed for session %s (%s)', sessionId, event)
+    if (state.queue.length > 0) {
+      const socket = this.socketForQueuedRun(sessionId, state.queue[0])
+      if (socket) this.dequeueNextQueuedRun(socket, sessionId)
+    }
+  }
+
+  private socketForQueuedRun(sessionId: string, next?: QueuedRun): Socket | null {
+    if (next?.originSocketId) {
+      const origin = this.nsp.sockets.get(next.originSocketId)
+      if (origin) return origin
+    }
+    const room = this.nsp.adapter.rooms.get(`session:${sessionId}`)
+    if (room) {
+      for (const socketId of room) {
+        const socket = this.nsp.sockets.get(socketId)
+        if (socket) return socket
+      }
+    }
+    return this.nsp.sockets.values().next().value || null
   }
 
   private clearClarifyEventState(sessionId: string, clarifyId: string) {

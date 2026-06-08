@@ -49,6 +49,7 @@ try {
 export interface CodingAgentRunLaunch {
   agentSessionId: string
   agentId: string
+  mode: 'scoped' | 'global'
   profile: string
   provider: string
   model: string
@@ -77,6 +78,7 @@ interface ManagedCodingAgentRun {
   startedAt: number
   exited: boolean
   currentChild?: ChildProcess
+  currentChildKillTimer?: ReturnType<typeof setTimeout>
   printResponseId?: string
   printMessageId?: string
   printTextStarted?: boolean
@@ -87,6 +89,12 @@ interface ManagedCodingAgentRun {
   acceptingPrintEvent?: boolean
   printToolBlocks?: Map<number, { id: string; name: string; arguments: string; done: boolean }>
   nativeResumeReady?: boolean
+  codexToolBlocks?: Map<string, { id: string; name: string; arguments: string; done: boolean }>
+  codexChatText?: string
+  codexPendingUsage?: any
+  stoppedByUser?: boolean
+  pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
+  pendingChatCompletionPayload?: Record<string, unknown>
 }
 
 function nowSeconds(): number {
@@ -102,6 +110,63 @@ function isProxyToolEvent(event: CanonicalResponsesEvent): boolean {
   const item = data.item || data.output_item || data
   return event.type === 'response.function_call_arguments.delta' ||
     ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') && item?.type === 'function_call')
+}
+
+function isCodexProxyExecToolEvent(event: CanonicalResponsesEvent): boolean {
+  const data: any = event.data || {}
+  const item = data.item || data.output_item || data
+  if (
+    (event.type !== 'response.output_item.added' && event.type !== 'response.output_item.done') ||
+    item?.type !== 'function_call'
+  ) {
+    return false
+  }
+  const name = String(item.name || item.function?.name || '').trim()
+  return name === 'exec_command' || name === 'functions.exec_command'
+}
+
+function isPrintAgent(agentId: string): boolean {
+  return agentId === 'claude-code' || agentId === 'codex'
+}
+
+function childIsRunning(child?: ChildProcess): boolean {
+  return Boolean(child && child.exitCode == null && child.signalCode == null && !child.killed)
+}
+
+function appendedTextDelta(existing: string, next: string): string {
+  if (!existing || !next) return next
+  if (next.startsWith(existing)) return next.slice(existing.length)
+  const max = Math.min(existing.length, next.length)
+  for (let length = max; length >= 16; length--) {
+    if (existing.endsWith(next.slice(0, length))) return next.slice(length)
+  }
+  return next
+}
+
+function terminateChildProcess(child?: ChildProcess) {
+  if (!child || !child.pid || !childIsRunning(child)) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+    return
+  }
+  try {
+    process.kill(-child.pid, 'SIGINT')
+  } catch {
+    try { process.kill(child.pid, 'SIGINT') } catch {}
+  }
+}
+
+function forceKillChildProcess(child?: ChildProcess) {
+  if (!child || !child.pid || !childIsRunning(child)) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }).on('error', () => {})
+    return
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    try { process.kill(child.pid, 'SIGKILL') } catch {}
+  }
 }
 
 function claudeContentToText(content: unknown): string {
@@ -162,9 +227,34 @@ export class CodingAgentRunManager {
     return Boolean(run && !run.exited)
   }
 
+  isSessionProcessing(sessionId: string): boolean {
+    const run = this.getBySession(sessionId)
+    return childIsRunning(run?.currentChild)
+  }
+
   runIdForSession(sessionId: string): string | undefined {
     const run = this.getBySession(sessionId)
     return run && !run.exited ? run.id : undefined
+  }
+
+  isSessionLaunchCompatible(sessionId: string, launch: {
+    agentId: string
+    mode?: 'scoped' | 'global'
+    provider?: string
+    model?: string
+  }): boolean {
+    const run = this.getBySession(sessionId)
+    if (!run || run.exited) return false
+    const mode = launch.mode === 'global' ? 'global' : 'scoped'
+    if (run.launch.agentId !== launch.agentId) return false
+    if (run.launch.mode !== mode) return false
+    if (mode === 'scoped') {
+      const provider = String(launch.provider || '').trim()
+      const model = String(launch.model || '').trim()
+      if (provider && run.launch.provider !== provider) return false
+      if (model && run.launch.model !== model) return false
+    }
+    return true
   }
 
   start(launch: CodingAgentRunLaunch): { runId: string; pid: number } {
@@ -181,7 +271,7 @@ export class CodingAgentRunManager {
     state.source = 'coding_agent'
     state.runId = runId
 
-    if (launch.agentId === 'claude-code') {
+    if (isPrintAgent(launch.agentId)) {
       const run: ManagedCodingAgentRun = {
         id: runId,
         launch,
@@ -195,11 +285,12 @@ export class CodingAgentRunManager {
       this.sessionIndex.set(launch.sessionId, run.id)
       this.ensureDbSession(run)
       this.touch(run)
-      this.emitTerminalStatus(run, 'Claude Code chat runner ready.')
+      this.emitTerminalStatus(run, `${launch.agentId === 'codex' ? 'Codex' : 'Claude Code'} chat runner ready.`)
       logger.info({
         runId: run.id,
         sessionId: launch.sessionId,
         agentId: launch.agentId,
+        mode: launch.mode,
         profile: launch.profile,
         provider: launch.provider,
         model: launch.model,
@@ -256,6 +347,7 @@ export class CodingAgentRunManager {
       runId: run.id,
       sessionId: launch.sessionId,
       agentId: launch.agentId,
+      mode: launch.mode,
       profile: launch.profile,
       provider: launch.provider,
       model: launch.model,
@@ -278,15 +370,20 @@ export class CodingAgentRunManager {
       this.startClaudePrintTurn(run, text)
       return { runId: run.id }
     }
+    if (run.launch.agentId === 'codex') {
+      this.startCodexExecTurn(run, text)
+      return { runId: run.id }
+    }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
     run.pty.write(`${text}\r`)
     return { runId: run.id }
   }
 
-  stop(sessionId: string): boolean {
+  stop(sessionId: string, options: { reportClosed?: boolean } = {}): boolean {
     const run = this.getBySession(sessionId)
     if (!run) return false
-    this.cleanupRun(run, { kill: true })
+    if (options.reportClosed === false) run.stoppedByUser = true
+    this.cleanupRun(run, { kill: true, reportClosed: options.reportClosed ?? true })
     return true
   }
 
@@ -300,12 +397,24 @@ export class CodingAgentRunManager {
     if (!agentSessionId) return
     const run = this.runs.get(agentSessionId)
     if (!run) return
+    if (run.launch.agentId === 'codex' && isCodexProxyExecToolEvent(event)) return
+    const responseEvent = this.normalizeCodexChatTextEvent(run, event)
+    if (!responseEvent) return
     if (run.launch.agentId === 'claude-code' && run.currentChild && !run.acceptingPrintEvent && !isProxyToolEvent(event)) return
-    if (event.type === 'response.created') {
+    if (responseEvent.type === 'response.created') {
       if (run.responseStartEmitted) return
       run.responseStartEmitted = true
     }
-    const isTerminalEvent = event.type === 'response.completed' || event.type === 'response.failed'
+    const isTerminalEvent = responseEvent.type === 'response.completed' || responseEvent.type === 'response.failed'
+    if (
+      run.launch.agentId === 'codex' &&
+      responseEvent.type === 'response.completed' &&
+      childIsRunning(run.currentChild)
+    ) {
+      const final = (responseEvent.data as any).response || responseEvent.data
+      run.codexPendingUsage = final?.usage ?? run.codexPendingUsage
+      return
+    }
     if (isTerminalEvent) {
       if (run.terminalEventHandled) return
       run.terminalEventHandled = true
@@ -316,28 +425,56 @@ export class CodingAgentRunManager {
     run.state.isWorking = true
     run.state.profile = run.launch.profile
     run.state.source = 'coding_agent'
-    for (const mappedEvent of mapCodingAgentResponseEvent(event)) {
+    run.state.runId = run.id
+    for (const mappedEvent of mapCodingAgentResponseEvent(responseEvent)) {
       this.emitToChat(run.launch.sessionId, mappedEvent.event, mappedEvent.payload)
     }
-    const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, event.type, event.data)
+    const mapped = applyResponseStreamEvent(run.state, run.launch.sessionId, run.runMarker, responseEvent.type, responseEvent.data)
     if (mapped) this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     if (isTerminalEvent) {
       flushResponseRunToDb(run.state, run.launch.sessionId)
       run.state.responseRun = undefined
-      run.state.isWorking = false
       updateSessionStats(run.launch.sessionId)
-      const final = (event.data as any).response || event.data
+      const final = (responseEvent.data as any).response || responseEvent.data
       const finalText = extractResponseText(final)
-      this.emitToChat(run.launch.sessionId, event.type === 'response.completed' ? 'run.completed' : 'run.failed', {
-        event: event.type === 'response.completed' ? 'run.completed' : 'run.failed',
+      const chatCompletionEvent = responseEvent.type === 'response.completed' ? 'run.completed' : 'run.failed'
+      const chatCompletionPayload: Record<string, unknown> = {
+        event: chatCompletionEvent,
         run_id: final?.id,
         response_id: final?.id,
         output: finalText,
-        usage: final?.usage,
-        error: final?.error || (event.data as any).error,
-      })
-      this.markChatRunCompleted(run.launch.sessionId, event.type === 'response.completed' ? 'run.completed' : 'run.failed')
-      run.runMarker = undefined
+        error: final?.error || (responseEvent.data as any).error,
+      }
+      if (childIsRunning(run.currentChild)) {
+        run.pendingChatCompletionEvent = chatCompletionEvent
+        run.pendingChatCompletionPayload = chatCompletionPayload
+      } else {
+        this.emitAndMarkPrintChatRunCompleted(run, chatCompletionEvent, chatCompletionPayload)
+      }
+    }
+  }
+
+  private normalizeCodexChatTextEvent(run: ManagedCodingAgentRun, event: CanonicalResponsesEvent): CanonicalResponsesEvent | null {
+    if (run.launch.agentId !== 'codex' || event.type !== 'response.output_text.delta') return event
+    const data: any = event.data || {}
+    const text = typeof data.delta === 'string'
+      ? data.delta
+      : typeof data.text === 'string'
+        ? data.text
+        : ''
+    if (!text) return event
+    const existing = run.codexChatText || ''
+    const delta = text.length >= 16 ? appendedTextDelta(existing, text) : text
+    if (!delta) return null
+    run.codexChatText = `${existing}${delta}`
+    if (delta === text) return event
+    return {
+      ...event,
+      data: {
+        ...data,
+        delta,
+        text: typeof data.text === 'string' ? delta : data.text,
+      },
     }
   }
 
@@ -361,7 +498,7 @@ export class CodingAgentRunManager {
         agent_native_session_id: run.launch.agentNativeSessionId,
         model: run.launch.model,
       provider: run.launch.provider,
-      title: `${run.launch.agentId} ${run.launch.model}`,
+      title: '',
       workspace: run.launch.workspaceDir,
     })
   }
@@ -396,27 +533,34 @@ export class CodingAgentRunManager {
     }, this.idleMs)
   }
 
-  private cleanupRun(run: ManagedCodingAgentRun, options: { kill: boolean }) {
+  private cleanupRun(run: ManagedCodingAgentRun, options: { kill: boolean; reportClosed?: boolean }) {
+    const shouldReportClosed = options.reportClosed !== false && (run.state.isWorking || Boolean(run.currentChild && !run.currentChild.killed))
     if (run.idleTimer) clearTimeout(run.idleTimer)
+    if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
     this.flushTerminalOutput(run)
     if (run.terminalFlushTimer) clearTimeout(run.terminalFlushTimer)
     this.runs.delete(run.id)
     if (this.sessionIndex.get(run.launch.sessionId) === run.id) this.sessionIndex.delete(run.launch.sessionId)
     if (options.kill && !run.exited) {
       try { run.pty?.kill() } catch {}
-      try { run.currentChild?.kill() } catch {}
+      terminateChildProcess(run.currentChild)
+      if (childIsRunning(run.currentChild)) {
+        run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(run.currentChild), 1500)
+      }
     }
     run.exited = true
     run.state.isWorking = false
-    this.emitToChat(run.launch.sessionId, 'run.failed', {
-      event: 'run.failed',
-      error: 'Coding agent session closed',
-    })
-    this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
+    if (shouldReportClosed) {
+      this.emitToChat(run.launch.sessionId, 'run.failed', {
+        event: 'run.failed',
+        error: 'Coding agent session closed',
+      })
+      this.markChatRunCompleted(run.launch.sessionId, 'run.failed')
+    }
   }
 
   private startClaudePrintTurn(run: ManagedCodingAgentRun, input: string) {
-    if (run.currentChild && !run.currentChild.killed) {
+    if (childIsRunning(run.currentChild)) {
       throw new Error('Claude Code is still processing the previous input')
     }
 
@@ -429,6 +573,7 @@ export class CodingAgentRunManager {
     run.responseStartEmitted = false
     run.terminalEventHandled = false
     run.printToolBlocks = new Map()
+    run.runMarker = undefined
 
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.created',
@@ -460,6 +605,7 @@ export class CodingAgentRunManager {
         ...(run.launch.env || {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     run.currentChild = child
 
@@ -480,8 +626,15 @@ export class CodingAgentRunManager {
 
     child.on('exit', (code) => {
       if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      run.currentChildKillTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] claude print exited')
+      if (run.stoppedByUser) return
+      if (run.pendingChatCompletionEvent) {
+        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        return
+      }
       if (code === 0) {
         this.completeClaudePrintTurn(run)
         return
@@ -822,6 +975,404 @@ export class CodingAgentRunManager {
         },
       },
     })
+  }
+
+  private startCodexExecTurn(run: ManagedCodingAgentRun, input: string) {
+    if (childIsRunning(run.currentChild)) {
+      throw new Error('Codex is still processing the previous input')
+    }
+
+    const responseId = `resp_${Date.now()}`
+    run.printResponseId = responseId
+    run.printMessageId = `msg_${responseId}`
+    run.printTextStarted = false
+    run.printText = ''
+    run.printCompleted = false
+    run.responseStartEmitted = false
+    run.terminalEventHandled = false
+    run.codexToolBlocks = new Map()
+    run.codexChatText = ''
+    run.codexPendingUsage = undefined
+    run.runMarker = undefined
+
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: {
+        type: 'response.created',
+        response: { id: responseId, object: 'response', status: 'in_progress', model: run.launch.model, output: [] },
+      },
+    })
+
+    const commonArgs = [
+      '--json',
+      ...run.launch.args,
+      '--skip-git-repo-check',
+      '--dangerously-bypass-approvals-and-sandbox',
+    ]
+    const args = run.launch.agentNativeSessionId && run.nativeResumeReady
+      ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, input]
+      : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, input]
+
+    const child = spawn(run.launch.command, args, {
+      cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+      env: {
+        ...process.env,
+        ...(run.launch.env || {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    run.currentChild = child
+
+    let stdoutBuffer = ''
+    child.stdout?.on('data', (chunk: Buffer) => {
+      this.touch(run)
+      stdoutBuffer += chunk.toString('utf8')
+      const lines = stdoutBuffer.split(/\r?\n/)
+      stdoutBuffer = lines.pop() || ''
+      for (const line of lines) this.handleCodexExecLine(run, line)
+    })
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      this.touch(run)
+      const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8')).trim()
+      if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
+    })
+
+    child.on('exit', (code) => {
+      if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      run.currentChildKillTimer = undefined
+      run.currentChild = undefined
+      logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
+      if (run.stoppedByUser) return
+      if (run.pendingChatCompletionEvent) {
+        this.emitAndMarkPrintChatRunCompleted(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+        return
+      }
+      if (code === 0) {
+        this.completeCodexExecTurn(run, run.codexPendingUsage)
+        return
+      }
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.failed',
+        data: {
+          type: 'response.failed',
+          response: {
+            id: run.printResponseId,
+            object: 'response',
+            status: 'failed',
+            model: run.launch.model,
+            error: { message: `Codex exited with code ${code ?? 'unknown'}` },
+            output: [],
+          },
+        },
+      })
+    })
+  }
+
+  private handleCodexExecLine(run: ManagedCodingAgentRun, line: string) {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    let event: any
+    try {
+      event = JSON.parse(trimmed)
+    } catch {
+      logger.debug({ runId: run.id, line: sanitizeCodingAgentTerminalOutput(trimmed) }, '[coding-agent-run] ignored non-json Codex exec line')
+      return
+    }
+
+    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(event))
+
+    const method = String(event.method || '').trim()
+    if (method) {
+      this.handleCodexProtocolEvent(run, method, event.params || {})
+      return
+    }
+
+    const msg = event.msg || event.message
+    if (msg && (typeof msg.content === 'string' || typeof msg.text === 'string')) {
+      this.appendCodexFinalText(run, String(msg.content || msg.text || ''))
+      return
+    }
+
+    const type = String(event.type || '').trim()
+    if (type === 'thread.started') {
+      this.recordCodexNativeSessionId(run, String(event.thread_id || event.threadId || '').trim())
+      return
+    }
+    if (type === 'item.started') {
+      this.handleCodexItemStarted(run, event.item || event)
+      return
+    }
+    if (type === 'item.completed') {
+      this.handleCodexItemCompleted(run, event.item || event)
+      return
+    }
+    if (type === 'turn.completed') {
+      run.codexPendingUsage = event.usage
+      return
+    }
+    if (type === 'turn.failed' || type === 'error') {
+      this.failCodexExecTurn(run, event.error?.message || event.message || 'Codex run failed')
+    }
+  }
+
+  private handleCodexProtocolEvent(run: ManagedCodingAgentRun, method: string, params: any) {
+    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(params))
+    if (method === 'thread/started') {
+      this.recordCodexNativeSessionId(run, String(params.thread_id || params.threadId || '').trim())
+      return
+    }
+    if (method === 'item/agentMessage/delta' || method === 'item/assistantMessage/delta') {
+      this.appendCodexText(run, String(params.delta || params.text || ''))
+      return
+    }
+    if (method === 'item/started') {
+      this.handleCodexItemStarted(run, params.item || params)
+      return
+    }
+    if (method === 'item/completed') {
+      this.handleCodexItemCompleted(run, params.item || params)
+      return
+    }
+    if (method === 'turn/completed') {
+      run.codexPendingUsage = params.usage
+      return
+    }
+    if (method === 'turn/failed' || method === 'error') {
+      this.failCodexExecTurn(run, params.error?.message || params.message || 'Codex run failed')
+    }
+  }
+
+  private failCodexExecTurn(run: ManagedCodingAgentRun, message: string) {
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.failed',
+      data: {
+        type: 'response.failed',
+        response: {
+          id: run.printResponseId,
+          object: 'response',
+          status: 'failed',
+          model: run.launch.model,
+          error: { message },
+          output: [],
+        },
+      },
+    })
+  }
+
+  private handleCodexItemStarted(run: ManagedCodingAgentRun, item: any) {
+    const itemType = this.codexItemType(item)
+    if (!this.isCodexToolItem(itemType)) return
+    if (this.isRedundantCodexExecToolItem(item, itemType)) return
+    const toolBlock = this.codexToolBlock(item, itemType)
+    run.codexToolBlocks?.set(toolBlock.id, toolBlock)
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.added',
+      data: {
+        type: 'response.output_item.added',
+        output_index: run.codexToolBlocks?.size || 0,
+        item: {
+          type: 'function_call',
+          id: toolBlock.id,
+          call_id: toolBlock.id,
+          name: toolBlock.name,
+          arguments: toolBlock.arguments,
+        },
+      },
+    })
+  }
+
+  private handleCodexItemCompleted(run: ManagedCodingAgentRun, item: any) {
+    const itemType = this.codexItemType(item)
+    if (
+      itemType === 'agent_message' ||
+      itemType === 'assistant_message' ||
+      itemType === 'agentMessage' ||
+      itemType === 'assistantMessage'
+    ) {
+      this.appendCodexFinalText(run, String(item.text || item.message || item.content || ''))
+      return
+    }
+    if (!this.isCodexToolItem(itemType)) return
+    if (this.isRedundantCodexExecToolItem(item, itemType)) return
+    let toolBlock = run.codexToolBlocks?.get(String(item.id || item.call_id || item.callId || itemType))
+    if (!toolBlock) {
+      toolBlock = this.codexToolBlock(item, itemType)
+      run.codexToolBlocks?.set(toolBlock.id, toolBlock)
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.output_item.added',
+        data: {
+          type: 'response.output_item.added',
+          output_index: run.codexToolBlocks?.size || 0,
+          item: {
+            type: 'function_call',
+            id: toolBlock.id,
+            call_id: toolBlock.id,
+            name: toolBlock.name,
+            arguments: toolBlock.arguments,
+          },
+        },
+      })
+    }
+    if (toolBlock.done) return
+    toolBlock.done = true
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.done',
+      data: {
+        type: 'response.output_item.done',
+        output_index: run.codexToolBlocks?.size || 0,
+        item: {
+          type: 'function_call',
+          id: toolBlock.id,
+          call_id: toolBlock.id,
+          name: toolBlock.name,
+          arguments: toolBlock.arguments,
+        },
+      },
+    })
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.output_item.done',
+      data: {
+        type: 'response.output_item.done',
+        output_index: run.codexToolBlocks?.size || 0,
+        item: {
+          type: 'function_call_output',
+          id: toolBlock.id,
+          call_id: toolBlock.id,
+          output: this.codexToolOutput(item),
+        },
+      },
+    })
+  }
+
+  private codexItemType(item: any): string {
+    return String(item?.type || item?.item_type || item?.itemType || '').trim()
+  }
+
+  private isCodexToolItem(itemType: string): boolean {
+    return itemType === 'command_execution' ||
+      itemType === 'mcp_tool_call' ||
+      itemType === 'web_search' ||
+      itemType === 'file_change'
+  }
+
+  private isRedundantCodexExecToolItem(item: any, itemType: string): boolean {
+    if (itemType !== 'mcp_tool_call') return false
+    const name = String(item.tool || item.name || item.function?.name || '').trim()
+    return name === 'exec_command' || name === 'functions.exec_command'
+  }
+
+  private codexToolBlock(item: any, itemType: string): { id: string; name: string; arguments: string; done: boolean } {
+    const id = String(item.id || item.call_id || item.callId || `codex_${itemType}_${Date.now()}`)
+    const name = itemType === 'command_execution'
+      ? 'Command'
+      : itemType === 'mcp_tool_call'
+        ? String(item.tool || item.name || 'MCP Tool')
+        : itemType === 'web_search'
+          ? 'Web Search'
+          : 'File Change'
+    const args = itemType === 'command_execution'
+      ? { command: item.command || item.cmd || '' }
+      : itemType === 'mcp_tool_call'
+        ? { server: item.server, tool: item.tool || item.name, arguments: item.arguments || item.input }
+        : itemType === 'web_search'
+          ? { query: item.query || item.text || '' }
+          : { path: item.path || item.file || '', action: item.action || item.change || '' }
+    return { id, name, arguments: JSON.stringify(args), done: false }
+  }
+
+  private codexToolOutput(item: any): string {
+    const value = item.aggregated_output ?? item.output ?? item.result ?? item.error?.message ?? ''
+    if (typeof value === 'string') return value
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+
+  private appendCodexFinalText(run: ManagedCodingAgentRun, text: string) {
+    if (!text) return
+    const existing = run.printText || ''
+    if (!existing) {
+      this.appendCodexText(run, text)
+      return
+    }
+    if (text === existing) return
+    if (text.startsWith(existing)) {
+      this.appendCodexText(run, text.slice(existing.length))
+      return
+    }
+    const existingTrimmed = existing.trimEnd()
+    const textTrimmed = text.trimEnd()
+    if (textTrimmed === existingTrimmed || existingTrimmed.endsWith(textTrimmed)) return
+    if (textTrimmed.startsWith(existingTrimmed)) {
+      this.appendCodexText(run, text.slice(existingTrimmed.length))
+    }
+  }
+
+  private appendCodexText(run: ManagedCodingAgentRun, text: string) {
+    if (!text) return
+    const existing = run.printText || ''
+    const delta = text.length >= 16 ? appendedTextDelta(existing, text) : text
+    if (!delta) return
+    this.ensureClaudePrintText(run)
+    run.printText = `${existing}${delta}`
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.output_text.delta',
+      data: {
+        type: 'response.output_text.delta',
+        item_id: run.printMessageId,
+        output_index: 0,
+        content_index: 0,
+        delta,
+      },
+    })
+  }
+
+  private completeCodexExecTurn(run: ManagedCodingAgentRun, usage?: any) {
+    this.completeClaudePrintTurn(run, usage)
+  }
+
+  private emitAndMarkPrintChatRunCompleted(run: ManagedCodingAgentRun, event: 'run.completed' | 'run.failed', payload?: Record<string, unknown>) {
+    run.pendingChatCompletionEvent = undefined
+    run.pendingChatCompletionPayload = undefined
+    const queueRemaining = run.state.queue.length
+    this.emitToChat(run.launch.sessionId, event, {
+      ...(payload || { event }),
+      ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
+    })
+    run.state.isWorking = false
+    run.state.runId = undefined
+    run.state.abortController = undefined
+    run.state.activeRunMarker = undefined
+    run.state.events = []
+    this.markChatRunCompleted(run.launch.sessionId, event)
+    run.runMarker = undefined
+  }
+
+  private codexNativeSessionIdFrom(value: any): string {
+    if (!value || typeof value !== 'object') return ''
+    const direct = value.thread_id || value.threadId || value.session_id || value.sessionId || value.conversation_id || value.conversationId
+    if (typeof direct === 'string' && direct.trim()) return direct.trim()
+    const nested = value.thread || value.session || value.conversation || value.params || value.msg || value.message
+    if (nested && nested !== value) return this.codexNativeSessionIdFrom(nested)
+    return ''
+  }
+
+  private recordCodexNativeSessionId(run: ManagedCodingAgentRun, nativeSessionId: string) {
+    if (!nativeSessionId) return
+    if (run.launch.agentNativeSessionId === nativeSessionId && run.nativeResumeReady) return
+    run.launch.agentNativeSessionId = nativeSessionId
+    run.nativeResumeReady = true
+    try {
+      updateSession(run.launch.sessionId, { agent_native_session_id: nativeSessionId })
+      logger.info({ runId: run.id, sessionId: run.launch.sessionId, nativeSessionId }, '[coding-agent-run] recorded Codex native session id')
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to persist Codex native session id')
+    }
   }
 
   private emitToChat(sessionId: string, event: string, payload: any) {

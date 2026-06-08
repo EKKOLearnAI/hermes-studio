@@ -25,6 +25,7 @@ const CODEX_CATALOG_BASE_INSTRUCTIONS = 'You are Codex, a coding agent. Be preci
 const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
+const CODING_AGENT_SCOPED_AUTH_PROVIDERS = new Set(['openai-codex', 'copilot', 'xai-oauth', 'nous'])
 
 export type CodingAgentId = 'claude-code' | 'codex'
 
@@ -78,6 +79,7 @@ export interface CodingAgentConfigFileContent extends CodingAgentConfigFileDefin
 export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   mode?: 'scoped' | 'global'
   model?: string
+  workspace?: string | null
   baseUrl?: string
   apiKey?: string
   apiMode?: ApiMode
@@ -428,6 +430,11 @@ function normalizeLaunchApiMode(value: unknown, fallback: ApiMode): ApiMode {
   return mode
 }
 
+function storedCodingAgentMode(session: HermesSessionRow | null): 'scoped' | 'global' {
+  if (session?.agent_mode === 'global' || session?.agent_mode === 'scoped') return session.agent_mode
+  return session?.provider === 'global' ? 'global' : 'scoped'
+}
+
 function makeAgentSessionId(): string {
   return `coding_agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
@@ -438,6 +445,19 @@ function getScopedConfigRoot(id: CodingAgentId, scope: Required<CodingAgentConfi
 
 function getScopedWorkspaceRoot(scope: Required<CodingAgentConfigScope>): string {
   return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'workspace', scope.profile, scope.provider)
+}
+
+function resolveLaunchWorkspaceRoot(scope: Required<CodingAgentConfigScope>, workspace?: string | null): string {
+  const customWorkspace = String(workspace || '').trim()
+  if (customWorkspace) {
+    if (customWorkspace.includes('\0')) {
+      const err = new Error('Invalid workspace')
+      ;(err as any).status = 400
+      throw err
+    }
+    return customWorkspace
+  }
+  return getScopedWorkspaceRoot(scope)
 }
 
 function displayNameForModel(model: string): string {
@@ -1180,7 +1200,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const mode = input.mode === 'global' ? 'global' : 'scoped'
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
-    const workspaceDir = getScopedWorkspaceRoot(scope)
+    const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
     const args = tool.id === 'claude-code' ? ['--dangerously-skip-permissions'] : []
     await mkdir(workspaceDir, { recursive: true })
     const shellCommand = buildLaunchShellCommand({
@@ -1219,7 +1239,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const preset = PROVIDER_PRESETS.find(item => item.value === provider)
   const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
   const rootDir = getScopedConfigRoot(tool.id, scope)
-  const workspaceDir = getScopedWorkspaceRoot(scope)
+  const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
   await mkdir(rootDir, { recursive: true })
   await mkdir(workspaceDir, { recursive: true })
 
@@ -1383,13 +1403,24 @@ export async function startCodingAgentRun(
   const existingSession = getSession(sessionId)
   const existingAgentSessionId = existingSession?.agent_session_id || ''
   const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
-  if (resolvedInput.mode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
+  const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
+  const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
+  if (requestedMode !== 'global' && CODING_AGENT_SCOPED_AUTH_PROVIDERS.has(requestedProvider)) {
+    const err = new Error('Coding agent scoped mode does not support OAuth/subscription providers. Use global mode or select an API-key provider.')
+    ;(err as any).status = 400
+    throw err
+  }
+  if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
     const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
     ;(err as any).status = 400
     throw err
   }
   const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
-  const existingNativeSessionId = existingSession?.agent_native_session_id || ''
+  const canResumeNativeSession = existingSession
+    ? storedCodingAgentMode(existingSession) === requestedMode &&
+      (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent)
+    : false
+  const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
   const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')
   const launch = await prepareCodingAgentLaunch(id, {
     ...resolvedInput,
@@ -1401,6 +1432,7 @@ export async function startCodingAgentRun(
   const started = codingAgentRunManager.start({
     agentSessionId,
     agentId: launch.agentId,
+    mode: launch.mode,
     profile: launch.profile,
     provider: persistedProvider,
     model: launch.model,
@@ -1417,8 +1449,9 @@ export async function startCodingAgentRun(
   updateSession(sessionId, {
     source: 'coding_agent',
     agent: launch.agentId === 'codex' ? 'codex' : 'claude',
+    agent_mode: launch.mode,
     agent_session_id: agentSessionId,
-    ...(agentNativeSessionId ? { agent_native_session_id: agentNativeSessionId } : {}),
+    agent_native_session_id: agentNativeSessionId,
     model: launch.model,
     provider: persistedProvider,
     workspace: launch.workspaceDir,

@@ -85,6 +85,24 @@ describe('coding agent launch preparation', () => {
     })
   })
 
+  it('uses a selected workspace directory when launching a coding agent', async () => {
+    const home = makeHome()
+    const workspace = join(home, 'selected workspace')
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'openai/gpt-oss-20b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      workspace,
+    })
+
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'codex'))
+    expect(result.workspaceDir).toBe(workspace)
+    expect(result.shellCommand).toContain(workspace)
+  })
+
   it('launches Claude Code with scoped settings instead of a CLI --model override', async () => {
     const home = makeHome()
 

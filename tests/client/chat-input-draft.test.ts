@@ -31,11 +31,11 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: { value: true }, toggleToolTraceVisible: vi.fn() }),
 }))
 
-function mountForSession(sessionId: string) {
+function mountForSession(sessionId: string, sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {}) {
   const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
   const chatStore = useChatStore()
   chatStore.sessions = [
-    { id: sessionId, title: sessionId, source: 'cli', messages: [], createdAt: Date.now(), updatedAt: Date.now() },
+    { id: sessionId, title: sessionId, source: 'cli', messages: [], createdAt: Date.now(), updatedAt: Date.now(), ...sessionOverrides },
   ]
   chatStore.activeSessionId = sessionId
   chatStore.activeSession = chatStore.sessions[0]
@@ -81,5 +81,20 @@ describe('ChatInput draft persistence', () => {
     const remountedA = mountForSession('session-a')
     await nextTick()
     expect((remountedA.get('textarea').element as HTMLTextAreaElement).value).toBe('draft for session a')
+  })
+
+  it('hides context usage for coding-agent sessions', async () => {
+    const wrapper = mountForSession('session-codex', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      inputTokens: 1200,
+      outputTokens: 800,
+      contextTokens: 2000,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.context-info').exists()).toBe(false)
+    expect(wrapper.find('.context-bar').exists()).toBe(false)
   })
 })

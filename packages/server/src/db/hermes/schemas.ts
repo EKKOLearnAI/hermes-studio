@@ -33,6 +33,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   profile: 'TEXT NOT NULL DEFAULT \'default\'',
   source: 'TEXT NOT NULL DEFAULT \'api_server\'',
   agent: 'TEXT NOT NULL DEFAULT \'\'',
+  agent_mode: 'TEXT NOT NULL DEFAULT \'\'',
   agent_session_id: 'TEXT NOT NULL DEFAULT \'\'',
   agent_native_session_id: 'TEXT NOT NULL DEFAULT \'\'',
   user_id: 'TEXT',

@@ -46,6 +46,15 @@ const profileHasModels = computed(() => {
 const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
+const sessionAgentLogo = computed(() => {
+  if (props.session.source === 'coding_agent') {
+    if (props.session.codingAgentId === 'codex' || props.session.agent === 'codex') {
+      return { label: 'Codex', src: '/coding-agents/codex-openai.png' }
+    }
+    return { label: 'Claude Code', src: '/coding-agents/claude-code.svg' }
+  }
+  return { label: 'Hermes', src: '/coding-agents/hermes.png' }
+})
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -137,6 +146,14 @@ onUnmounted(() => {
           {{ t('chat.profileMissingModelsTip', { profile: profileName }) }}
         </NTooltip>
       </span>
+      <span class="session-item-agent-row">
+        <img
+          class="session-item-agent-logo"
+          :src="sessionAgentLogo.src"
+          :alt="sessionAgentLogo.label"
+        >
+        <span class="session-item-agent-name">{{ sessionAgentLogo.label }}</span>
+      </span>
       <span class="session-item-meta">
         <span v-if="sessionModelName" class="session-item-model" :title="session.model">{{ sessionModelName }}</span>
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
@@ -192,5 +209,33 @@ onUnmounted(() => {
   font-weight: 700;
   line-height: 14px;
   cursor: pointer;
+}
+
+.session-item-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.session-item-agent-logo {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 50%;
+  object-fit: contain;
+  background: #fff;
+}
+
+.session-item-agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
 }
 </style>

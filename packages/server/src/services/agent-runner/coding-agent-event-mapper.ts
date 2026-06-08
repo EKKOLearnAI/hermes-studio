@@ -41,21 +41,5 @@ export function mapCodingAgentResponseEvent(event: CanonicalResponsesEvent): Cod
     }
   }
 
-  if (event.type === 'response.completed') {
-    const response = data.response || data
-    const usage = response?.usage || {}
-    mapped.push({
-      event: 'usage.updated',
-      payload: {
-        event: 'usage.updated',
-        run_id: response?.id || runId,
-        response_id: response?.id || runId,
-        inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
-        outputTokens: usage.output_tokens ?? usage.outputTokens ?? 0,
-        contextTokens: usage.total_tokens ?? usage.totalTokens,
-      },
-    })
-  }
-
   return mapped
 }

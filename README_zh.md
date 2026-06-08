@@ -269,7 +269,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |
 | `MAX_DOWNLOAD_SIZE` | `200MB` | 最大文件下载大小。 |
 | `MAX_EDIT_SIZE` | `10MB` | 最大可编辑文件大小。 |
-| `WORKSPACE_BASE` | `/opt/data/workspace` | Workspace 浏览根目录。 |
+| `WORKSPACE_BASE` | 当前用户 Home 目录 | Workspace 浏览根目录。 |
 | `HERMES_HOME` | 平台默认值 | Hermes 数据目录。Windows 使用 `%LOCALAPPDATA%\hermes`；macOS/Linux 使用 `~/.hermes`。 |
 | `HERMES_BIN` | `hermes` | 自定义 Hermes CLI 二进制路径。 |
 | `HERMES_AGENT_ROOT` | 自动发现 | 包含 `run_agent.py` 的 Hermes Agent 源码目录。 |

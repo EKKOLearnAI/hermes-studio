@@ -24,6 +24,7 @@ export interface StartRunRequest {
   coding_agent_id?: 'claude-code' | 'codex'
   agent_id?: 'claude-code' | 'codex'
   mode?: 'scoped' | 'global'
+  workspace?: string | null
   baseUrl?: string
   base_url?: string
   apiKey?: string
@@ -713,7 +714,12 @@ export function resumeSession(
 ): Socket {
   const socket = connectChatRun(profile)
 
-  socket.once('resumed', onResumed)
+  const handleResumed = (data: ResumeSessionPayload) => {
+    if (data?.session_id !== sessionId) return
+    removeSocketListener(socket, 'resumed', handleResumed)
+    onResumed(data)
+  }
+  socket.on('resumed', handleResumed)
   socket.emit('resume', { session_id: sessionId, ...(profile ? { profile } : {}) })
 
   return socket

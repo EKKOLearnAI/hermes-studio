@@ -164,6 +164,67 @@ describe('coding agent resumed session config', () => {
     }))
   })
 
+  it('does not resume a stored scoped Codex native session when launching global mode', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_mode: 'scoped',
+      agent_session_id: 'agent-session-1',
+      agent_native_session_id: 'codex-scoped-thread',
+      provider: 'custom:glm-coding-plan',
+      model: 'glm-5-turbo',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    const result = await startCodingAgentRun('codex', { sessionId: 'session-1', mode: 'global' })
+
+    expect(result).toEqual(expect.objectContaining({
+      mode: 'global',
+      provider: 'global',
+      model: '',
+    }))
+    expect(startRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      agentSessionId: 'agent-session-1',
+      agentNativeSessionId: '',
+      nativeResume: false,
+      provider: 'global',
+      model: '',
+      env: {},
+      args: [],
+    }))
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      agent_mode: 'global',
+      agent_native_session_id: '',
+      provider: 'global',
+      model: '',
+    }))
+  })
+
+  it('rejects OAuth/subscription providers for scoped coding-agent launches', async () => {
+    makeHome()
+    getSessionMock.mockReturnValue(null)
+    readConfigYamlForProfileMock.mockResolvedValue({})
+    safeReadFileMock.mockResolvedValue('')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await expect(startCodingAgentRun('codex', {
+      sessionId: 'session-1',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'copilot',
+      model: 'gpt-5.5',
+      baseUrl: 'https://api.githubcopilot.com',
+      apiKey: 'oauth-token',
+      apiMode: 'codex_responses',
+    })).rejects.toThrow('does not support OAuth/subscription providers')
+    expect(startRunMock).not.toHaveBeenCalled()
+  })
+
   it('fails clearly instead of launching Claude without scoped credentials', async () => {
     makeHome()
     getSessionMock.mockReturnValue({

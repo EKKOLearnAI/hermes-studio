@@ -93,7 +93,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
 export async function handleApiRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; workspace?: string | null; source?: string; queue_id?: string; peerExcludeSocketId?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   skipUserMessage = false,
@@ -107,8 +107,9 @@ export async function handleApiRun(
     : getSystemPrompt()
   if (session_id) {
     const sessionRow = getSession(session_id)
-    if (sessionRow?.workspace) {
-      const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
+    const workspace = sessionRow?.workspace || String(data.workspace || '').trim()
+    if (workspace) {
+      const workspaceCtx = `[Current working directory: ${workspace}]`
       fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
     }
   }
@@ -150,7 +151,7 @@ export async function handleApiRun(
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview, workspace: data.workspace || undefined })
       }
 
       const messageId = addMessage({
@@ -173,7 +174,7 @@ export async function handleApiRun(
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview, workspace: data.workspace || undefined })
       }
       const messageId = addMessage({
         session_id,

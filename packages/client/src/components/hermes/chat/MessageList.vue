@@ -66,6 +66,30 @@ const visibleToolCalls = computed(() =>
   currentToolCalls.value.filter((tool) => !!tool.toolName),
 );
 
+const emptyState = computed(() => {
+  const session = chatStore.activeSession;
+  const codingAgentId = session?.codingAgentId || (session?.agent === "codex" ? "codex" : session?.agent === "claude" ? "claude-code" : undefined);
+  if (codingAgentId === "codex") {
+    return {
+      logo: "/coding-agents/codex-openai.png",
+      alt: "Codex",
+      text: t("chat.emptyStateAgent", { agent: "Codex" }),
+    };
+  }
+  if (codingAgentId === "claude-code") {
+    return {
+      logo: "/coding-agents/claude-code.svg",
+      alt: "Claude Code",
+      text: t("chat.emptyStateAgent", { agent: "Claude Code" }),
+    };
+  }
+  return {
+    logo: "/logo.png",
+    alt: "Hermes",
+    text: t("chat.emptyState"),
+  };
+});
+
 const displayMessages = computed(() => {
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
   return chatStore.messages.filter((m) => {
@@ -257,8 +281,8 @@ defineExpose({
   >
     <template #empty>
       <div class="empty-state">
-        <img src="/logo.png" alt="Hermes" class="empty-logo" />
-        <p>{{ t("chat.emptyState") }}</p>
+        <img :src="emptyState.logo" :alt="emptyState.alt" class="empty-logo" />
+        <p>{{ emptyState.text }}</p>
       </div>
     </template>
     <template #before>

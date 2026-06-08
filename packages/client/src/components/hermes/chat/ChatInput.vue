@@ -320,8 +320,10 @@ let contextLengthRequest: Promise<void> | null = null
 const showContextEditModal = ref(false)
 const editingContextLimit = ref(256000)
 const isSavingContextLimit = ref(false)
+const isCodingAgentSession = computed(() => chatStore.activeSession?.source === 'coding_agent')
 
 async function handleEditContextLimit() {
+  if (isCodingAgentSession.value) return
   editingContextLimit.value = contextLength.value
   showContextEditModal.value = true
 }
@@ -369,6 +371,7 @@ function currentContextLengthKey() {
 }
 
 async function loadContextLength() {
+  if (isCodingAgentSession.value) return
   const key = currentContextLengthKey()
   if (key === contextLengthLoadedKey) return
   if (key === contextLengthRequestKey && contextLengthRequest) return contextLengthRequest
@@ -405,18 +408,21 @@ watch(
     chatStore.activeSession?.profile,
     chatStore.activeSession?.provider,
     chatStore.activeSession?.model,
+    chatStore.activeSession?.source,
   ],
   loadContextLength,
   { flush: 'post' },
 )
 
 const totalTokens = computed(() => {
+  if (isCodingAgentSession.value) return 0
   const context = chatStore.activeSession?.contextTokens
   if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
 })
+const showContextUsage = computed(() => totalTokens.value > 0)
 
 const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
 
@@ -756,7 +762,7 @@ function isImage(type: string): boolean {
         {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
       </NTooltip>
 
-      <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
+      <span v-if="showContextUsage" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
         <NTooltip trigger="hover">
           <template #trigger>
@@ -768,7 +774,7 @@ function isImage(type: string): boolean {
         </NTooltip>
         · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
       </span>
-      <div v-if="totalTokens > 0" class="context-bar">
+      <div v-if="showContextUsage" class="context-bar">
         <div
           class="context-bar-fill"
           :class="{

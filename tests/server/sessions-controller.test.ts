@@ -27,6 +27,9 @@ const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
+const codingAgentRunManagerMock = vi.hoisted(() => ({
+  stop: vi.fn(),
+}))
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -103,6 +106,10 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
+vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+  codingAgentRunManager: codingAgentRunManagerMock,
+}))
+
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
@@ -152,6 +159,7 @@ describe('session conversations controller', () => {
     listUserProfilesMock.mockReturnValue([])
     readConfigYamlForProfileMock.mockReset()
     readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
+    codingAgentRunManagerMock.stop.mockReset()
   })
 
   it('lists conversations from the local session store', async () => {
@@ -676,6 +684,29 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('deletes a local coding-agent session without invoking Hermes CLI deletion', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'codex-session',
+      profile: 'default',
+      source: 'coding_agent',
+    })
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'codex-session' }, body: null }
+    await mod.remove(ctx)
+
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
+    expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
+    expect(ctx.body).toEqual({
+      ok: true,
+      deleted: true,
+      hermes: { attempted: false, deleted: false, profile: 'default' },
+    })
+  })
+
   it('batch deletes sessions from their requested profiles', async () => {
     listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
     getSessionMock.mockImplementation((id: string) => ({
@@ -710,6 +741,32 @@ describe('session conversations controller', () => {
     expect(localDeleteSessionMock).toHaveBeenCalledWith('default-session')
     expect(localDeleteSessionMock).toHaveBeenCalledWith('travel-session')
     expect(ctx.body).toMatchObject({ ok: true, deleted: 2, failed: 0, hermesDeleted: 2 })
+  })
+
+  it('batch deletes local coding-agent sessions without invoking Hermes CLI deletion', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'codex-session',
+      profile: 'default',
+      source: 'coding_agent',
+    })
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      request: {
+        body: {
+          sessions: [{ id: 'codex-session', profile: 'default' }],
+        },
+      },
+      body: null,
+    }
+    await mod.batchRemove(ctx)
+
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
+    expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
+    expect(ctx.body).toMatchObject({ ok: true, deleted: 1, failed: 0, hermesDeleted: 0 })
   })
 
   it('imports a Hermes session into the local Web UI store', async () => {
