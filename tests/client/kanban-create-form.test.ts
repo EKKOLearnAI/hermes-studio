@@ -44,6 +44,11 @@ vi.mock('naive-ui', () => ({
     emits: ['click'],
     template: '<button class="n-button-stub" @click.prevent="$emit(\'click\')"><slot /></button>',
   }),
+  NCheckbox: defineComponent({
+    props: { checked: { type: Boolean, required: false } },
+    emits: ['update:checked'],
+    template: '<label class="n-checkbox-stub"><input type="checkbox" :checked="checked" @change="$emit(\'update:checked\', $event.target.checked)" /><slot /></label>',
+  }),
   useMessage: () => mockMessage,
 }))
 
@@ -85,6 +90,46 @@ describe('KanbanCreateForm', () => {
     expect(mockMessage.success).toHaveBeenCalledWith('kanban.message.taskCreated')
     expect(wrapper.emitted('created')).toBeTruthy()
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('submits advanced dispatcher options', async () => {
+    mockCreateTask.mockResolvedValue({ id: 'task-1' })
+    const wrapper = mount(KanbanCreateForm)
+
+    const inputs = () => wrapper.findAll('.n-input-stub')
+    const selects = wrapper.findAll('.n-select-stub')
+    await inputs()[0].setValue('Build parity')
+    await inputs()[1].setValue('cover cli create flags')
+    await selects[2].setValue('worktree')
+    await flushPromises()
+    await inputs()[2].setValue('ops')
+    await inputs()[3].setValue('/repo')
+    await inputs()[4].setValue('kanban-ui')
+    await inputs()[5].setValue('planner, reviewer')
+    await inputs()[6].setValue('2h')
+    await inputs()[7].setValue('3')
+    const checkboxes = wrapper.findAll('input[type="checkbox"]')
+    await checkboxes[0].setValue(true)
+    await checkboxes[1].setValue(true)
+    await flushPromises()
+    await inputs()[8].setValue('12')
+
+    await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: 'Build parity',
+      body: 'cover cli create flags',
+      tenant: 'ops',
+      triage: true,
+      workspace: 'worktree:/repo',
+      branch: 'kanban-ui',
+      skills: ['planner', 'reviewer'],
+      maxRuntime: '2h',
+      maxRetries: 3,
+      goalMode: true,
+      goalMaxTurns: 12,
+    })
   })
 
   it('uses compact profile names for assignee options', () => {

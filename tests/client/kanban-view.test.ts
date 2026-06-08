@@ -32,6 +32,7 @@ const mockSetFilter = vi.hoisted(() => vi.fn())
 const mockRecoverSelectedBoard = vi.hoisted(() => vi.fn())
 const mockCreateBoard = vi.hoisted(() => vi.fn())
 const mockArchiveSelectedBoard = vi.hoisted(() => vi.fn())
+const mockDispatch = vi.hoisted(() => vi.fn())
 const mockStartEventStream = vi.hoisted(() => vi.fn())
 const mockStopEventStream = vi.hoisted(() => vi.fn())
 const mockFetchProfiles = vi.hoisted(() => vi.fn())
@@ -63,6 +64,7 @@ vi.mock('@/stores/hermes/kanban', () => ({
     recoverSelectedBoard: mockRecoverSelectedBoard,
     createBoard: mockCreateBoard,
     archiveSelectedBoard: mockArchiveSelectedBoard,
+    dispatch: mockDispatch,
     startEventStream: mockStartEventStream,
     stopEventStream: mockStopEventStream,
   }),
@@ -187,6 +189,7 @@ describe('KanbanView', () => {
       if (key === 'status') storeState.filterStatus = value
       else storeState.filterAssignee = value
     })
+    mockDispatch.mockResolvedValue({ spawned: 1 })
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       get: () => 'visible',
@@ -203,7 +206,7 @@ describe('KanbanView', () => {
     expect(mockRecoverSelectedBoard).toHaveBeenCalledWith('project-a')
     expect(mockRefreshAll).toHaveBeenCalledOnce()
     expect(routerReplace).not.toHaveBeenCalled()
-    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["triage","todo","ready","running","blocked","done","archived"]')
+    expect(wrapper.find('.n-collapse-stub').attributes('data-expanded')).toBe('["triage","todo","scheduled","ready","running","blocked","review","done","archived"]')
 
     await wrapper.find('.drawer-updated').trigger('click')
     expect(mockFetchTasks).toHaveBeenCalledTimes(1)

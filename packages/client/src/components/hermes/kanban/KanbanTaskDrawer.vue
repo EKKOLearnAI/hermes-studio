@@ -34,6 +34,12 @@ const showBlockInput = ref(false)
 const completeSummary = ref('')
 const showCompleteInput = ref(false)
 const showMessagesModal = ref(false)
+const commentBody = ref('')
+const taskLog = ref<string | null>(null)
+const taskLogLoading = ref(false)
+const diagnostics = ref<unknown[] | null>(null)
+const diagnosticsLoading = ref(false)
+const recoveryReason = ref('')
 
 const completionSummary = computed(() => {
   if (!detail.value) return ''
@@ -198,6 +204,83 @@ async function handleAssign() {
   }
 }
 
+async function handleAddComment() {
+  if (!props.taskId || !commentBody.value.trim()) return
+  try {
+    await kanbanStore.addComment(props.taskId, commentBody.value.trim())
+    commentBody.value = ''
+    detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
+    message.success(t('kanban.message.commentAdded'))
+    emit('updated')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+async function handleLoadLog() {
+  if (!props.taskId) return
+  taskLogLoading.value = true
+  try {
+    const log = await kanbanStore.getTaskLog(props.taskId, 20000)
+    taskLog.value = log.exists ? log.content : t('kanban.detail.noLog')
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    taskLogLoading.value = false
+  }
+}
+
+async function handleLoadDiagnostics() {
+  if (!props.taskId) return
+  diagnosticsLoading.value = true
+  try {
+    diagnostics.value = await kanbanStore.getDiagnostics({ task: props.taskId, severity: 'warning' })
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    diagnosticsLoading.value = false
+  }
+}
+
+async function handleReclaim() {
+  if (!props.taskId) return
+  try {
+    await kanbanStore.reclaimTask(props.taskId, recoveryReason.value.trim() || undefined)
+    message.success(t('kanban.message.taskReclaimed'))
+    emit('updated')
+    emit('close')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+async function handleReassign() {
+  if (!props.taskId || !assignProfile.value) return
+  try {
+    await kanbanStore.reassignTask(props.taskId, assignProfile.value, {
+      reclaim: detail.value?.task.status === 'running',
+      reason: recoveryReason.value.trim() || undefined,
+    })
+    message.success(t('kanban.message.taskReassigned'))
+    emit('updated')
+    emit('close')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+async function handleSpecify() {
+  if (!props.taskId) return
+  try {
+    await kanbanStore.specifyTask(props.taskId)
+    message.success(t('kanban.message.taskSpecified'))
+    detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
+    emit('updated')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
 function handleNavigateTask(taskId: string) {
   emit('updated')
   emit('navigate', taskId)
@@ -298,6 +381,12 @@ function handleNavigateTask(taskId: string) {
               <NSelect v-model:value="assignProfile" :options="assigneeOptions" size="small" :placeholder="t('kanban.action.assignTo')" style="flex: 1;" />
               <NButton size="small" :disabled="!assignProfile" @click="handleAssign">{{ t('kanban.action.assign') }}</NButton>
             </div>
+            <div class="recovery-group">
+              <NInput v-model:value="recoveryReason" size="small" :placeholder="t('kanban.action.recoveryReason')" />
+              <NButton size="small" secondary @click="handleReclaim">{{ t('kanban.action.reclaim') }}</NButton>
+              <NButton size="small" secondary :disabled="!assignProfile" @click="handleReassign">{{ t('kanban.action.reassign') }}</NButton>
+              <NButton v-if="detail.task.status === 'triage'" size="small" secondary @click="handleSpecify">{{ t('kanban.action.specify') }}</NButton>
+            </div>
           </div>
 
           <!-- Related Sessions -->
@@ -343,6 +432,23 @@ function handleNavigateTask(taskId: string) {
               </div>
               <div class="comment-body">{{ comment.body }}</div>
             </div>
+          </div>
+          <div v-if="canMutateTask" class="detail-section">
+            <div class="section-title">{{ t('kanban.detail.addComment') }}</div>
+            <div class="comment-input">
+              <NInput v-model:value="commentBody" type="textarea" :rows="3" :placeholder="t('kanban.detail.commentPlaceholder')" />
+              <NButton size="small" type="primary" :disabled="!commentBody.trim()" @click="handleAddComment">{{ t('common.add') }}</NButton>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">{{ t('kanban.detail.operations') }}</div>
+            <div class="action-group">
+              <NButton size="small" secondary :loading="taskLogLoading" @click="handleLoadLog">{{ t('kanban.action.loadLog') }}</NButton>
+              <NButton size="small" secondary :loading="diagnosticsLoading" @click="handleLoadDiagnostics">{{ t('kanban.action.loadDiagnostics') }}</NButton>
+            </div>
+            <pre v-if="taskLog !== null" class="log-output">{{ taskLog }}</pre>
+            <pre v-if="diagnostics !== null" class="log-output">{{ JSON.stringify(diagnostics, null, 2) }}</pre>
           </div>
 
           <!-- Events -->
@@ -717,6 +823,39 @@ function handleNavigateTask(taskId: string) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.recovery-group,
+.comment-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.comment-input {
+  align-items: flex-start;
+}
+
+.comment-input :deep(.n-input) {
+  flex: 1;
+  min-width: 220px;
+}
+
+.log-output {
+  margin: 10px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+  background: rgba(var(--accent-primary-rgb), 0.03);
+  color: $text-secondary;
+  font-family: $font-code;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .session-msg {

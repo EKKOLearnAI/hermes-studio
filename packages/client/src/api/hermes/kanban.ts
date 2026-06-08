@@ -2,7 +2,7 @@ import { request, getApiKey, getBaseUrlValue } from '../client'
 
 // ─── Types ──────────────────────────────────────────────────────
 
-export type KanbanTaskStatus = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done' | 'archived'
+export type KanbanTaskStatus = 'triage' | 'todo' | 'scheduled' | 'ready' | 'running' | 'blocked' | 'review' | 'done' | 'archived'
 
 export interface KanbanTask {
   id: string
@@ -154,6 +154,14 @@ export interface KanbanCreateRequest {
   assignee?: string
   priority?: number
   tenant?: string
+  workspace?: string
+  branch?: string
+  triage?: boolean
+  skills?: string[]
+  maxRuntime?: string
+  maxRetries?: number
+  goalMode?: boolean
+  goalMaxTurns?: number
 }
 
 export interface KanbanBoardOptions {

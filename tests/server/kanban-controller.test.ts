@@ -497,9 +497,39 @@ describe('kanban controller', () => {
       path: '/Users/tester/.hermes/kanban/workspaces/task/out.txt',
     })
 
-    const createCtx = ctx({ query: { board: 'project-a' }, request: { body: { title: 'Ship', body: 'x' } } })
+    const createCtx = ctx({
+      query: { board: 'project-a' },
+      request: {
+        body: {
+          title: 'Ship',
+          body: 'x',
+          workspace: 'worktree:/repo',
+          branch: 'kanban-ui',
+          triage: true,
+          skills: ['planner', ' reviewer ', ''],
+          maxRuntime: '2h',
+          maxRetries: 3,
+          goalMode: true,
+          goalMaxTurns: 12,
+        },
+      },
+    })
     await ctrl.create(createCtx)
-    expect(mockCreateTask).toHaveBeenCalledWith('Ship', { board: 'project-a', body: 'x', assignee: undefined, priority: undefined, tenant: undefined })
+    expect(mockCreateTask).toHaveBeenCalledWith('Ship', {
+      board: 'project-a',
+      body: 'x',
+      assignee: undefined,
+      priority: undefined,
+      tenant: undefined,
+      workspace: 'worktree:/repo',
+      branch: 'kanban-ui',
+      triage: true,
+      skills: ['planner', 'reviewer'],
+      maxRuntime: '2h',
+      maxRetries: 3,
+      goalMode: true,
+      goalMaxTurns: 12,
+    })
     expect(createCtx.body).toEqual({ task: { id: 'task-2' } })
 
     const completeCtx = ctx({ query: { board: 'project-a' }, request: { body: { task_ids: ['task-1'], summary: 'done' } } })

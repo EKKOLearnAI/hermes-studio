@@ -28,7 +28,7 @@ const boardActionLoading = ref(false)
 const refreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const routeReady = ref(false)
 
-const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'ready', 'running', 'blocked', 'done', 'archived']
+const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'scheduled', 'ready', 'running', 'blocked', 'review', 'done', 'archived']
 const expandedStatusNames = ref<string[]>([...boardStatuses])
 
 function firstQueryString(value: unknown): string | null {
@@ -216,6 +216,19 @@ async function handleArchiveSelectedBoard() {
     boardActionLoading.value = false
   }
 }
+
+async function handleDispatch() {
+  boardActionLoading.value = true
+  try {
+    await kanbanStore.dispatch()
+    await kanbanStore.refreshAll()
+    message.success(t('kanban.message.dispatchNudged'))
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    boardActionLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -241,6 +254,9 @@ async function handleArchiveSelectedBoard() {
           @click="handleArchiveSelectedBoard"
         >
           {{ t('kanban.board.archive') }}
+        </NButton>
+        <NButton size="small" secondary :loading="boardActionLoading" @click="handleDispatch">
+          {{ t('kanban.action.dispatch') }}
         </NButton>
         <NSelect
           v-model:value="filterStatusValue"
@@ -395,12 +411,16 @@ async function handleArchiveSelectedBoard() {
   &.status-triage { --kanban-status-color: #94a3b8; }
   &.todo,
   &.status-todo { --kanban-status-color: #38bdf8; }
+  &.scheduled,
+  &.status-scheduled { --kanban-status-color: #06b6d4; }
   &.ready,
   &.status-ready { --kanban-status-color: #f59e0b; }
   &.running,
   &.status-running { --kanban-status-color: #8b5cf6; }
   &.blocked,
   &.status-blocked { --kanban-status-color: #ef4444; }
+  &.review,
+  &.status-review { --kanban-status-color: #ec4899; }
   &.done,
   &.status-done { --kanban-status-color: #22c55e; }
   &.archived,
