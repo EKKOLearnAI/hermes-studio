@@ -120,7 +120,7 @@ describe('coding agent launch preparation', () => {
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.model).toBe('cognitivecomputations/dolphin-mistral-24b-venice-edition:free')
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
-    expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(settings.env.ANTHROPIC_API_KEY)
+    expect(settings.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     expect(settings.env).toMatchObject({
       ANTHROPIC_MODEL: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
@@ -178,7 +178,7 @@ describe('coding agent launch preparation', () => {
 
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
-    expect(settings.env.ANTHROPIC_AUTH_TOKEN).toBe(settings.env.ANTHROPIC_API_KEY)
+    expect(settings.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
   })
 

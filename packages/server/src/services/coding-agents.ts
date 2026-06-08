@@ -1255,7 +1255,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       model,
       env: {
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
-        ...(claudeApiKey ? { ANTHROPIC_AUTH_TOKEN: claudeApiKey } : {}),
         ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
         ANTHROPIC_MODEL: model,
         ANTHROPIC_CUSTOM_MODEL_OPTION: model,

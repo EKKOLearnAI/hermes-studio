@@ -90,7 +90,7 @@ describe('coding agent resumed session config', () => {
     }))
     const launch = startRunMock.mock.calls[0][0]
     expect(launch.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
-    expect(launch.env.ANTHROPIC_AUTH_TOKEN).toBe(launch.env.ANTHROPIC_API_KEY)
+    expect(launch.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(launch.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     const settings = JSON.parse(readFileSync(join(home, 'coding-agent', 'model', 'default', 'custom_corp-claude', 'claude-code', 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toBe(launch.env.ANTHROPIC_API_KEY)
