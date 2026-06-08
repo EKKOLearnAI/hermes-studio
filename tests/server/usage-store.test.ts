@@ -164,6 +164,29 @@ describe('Usage Store (SQLite path)', () => {
     )
   })
 
+  it('updateUsage writes updated_at when a legacy SQLite table has the column', async () => {
+    allMock.mockReturnValueOnce([
+      { name: 'id' },
+      { name: 'session_id' },
+      { name: 'created_at' },
+      { name: 'updated_at' },
+    ])
+    const { updateUsage } = await import('../../packages/server/src/db/hermes/usage-store')
+    updateUsage('s1', { inputTokens: 500, outputTokens: 200 })
+    expect(runMock).toHaveBeenCalledWith(
+      's1',
+      500,
+      200,
+      0, // cacheReadTokens
+      0, // cacheWriteTokens
+      0, // reasoningTokens
+      '', // model
+      'default', // profile
+      expect.any(Number), // created_at
+      expect.any(Number), // updated_at
+    )
+  })
+
   it('getUsage queries by session_id', async () => {
     getMock.mockReturnValue({
       input_tokens: 999,

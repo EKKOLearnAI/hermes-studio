@@ -175,6 +175,49 @@ export const DEVICES_INDEXES = {
   idx_devices_last_seen: 'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
 }
 
+export const STT_PROVIDER_SETTINGS_TABLE = 'stt_provider_settings'
+
+export const STT_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const STT_PROVIDER_SETTINGS_INDEXES = {
+  idx_stt_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_stt_provider_settings_user ON stt_provider_settings(user_id)',
+  idx_stt_provider_settings_user_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_provider_settings_user_provider ON stt_provider_settings(user_id, provider)',
+}
+
+export const STT_USER_SETTINGS_TABLE = 'stt_user_settings'
+
+export const STT_USER_SETTINGS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER PRIMARY KEY',
+  active_provider: "TEXT NOT NULL DEFAULT 'browser'",
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROVIDER_SETTINGS_TABLE = 'tts_provider_settings'
+
+export const TTS_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROVIDER_SETTINGS_INDEXES = {
+  idx_tts_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_tts_provider_settings_user ON tts_provider_settings(user_id)',
+  idx_tts_provider_settings_user_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_provider_settings_user_provider ON tts_provider_settings(user_id, provider)',
+}
+
 // ============================================================================
 // Group Chat (services/hermes/group-chat/index.ts)
 // ============================================================================
@@ -338,6 +381,54 @@ function addMissingSafeColumns(
   }
 }
 
+function createIndexes(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  indexes?: Record<string, string>,
+): void {
+  if (!indexes) return
+
+  for (const indexSQL of Object.values(indexes)) {
+    db.exec(indexSQL)
+  }
+}
+
+function migrateLegacySttProviderSettingsUserIdDefault(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, STT_PROVIDER_SETTINGS_TABLE)) return
+
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)})`).all() as Array<{
+    name: string
+    dflt_value: string | null
+  }>
+  const userIdColumn = columns.find((column) => column.name === 'user_id')
+
+  if (!userIdColumn || userIdColumn.dflt_value === null) {
+    return
+  }
+
+  const replacementTableName = `${STT_PROVIDER_SETTINGS_TABLE}__rebuilt`
+  const preservedColumns = ['id', 'user_id', 'provider', 'settings_json', 'secrets_json', 'created_at', 'updated_at']
+  const quotedPreservedColumns = preservedColumns.map((column) => quoteIdentifier(column)).join(', ')
+
+  db.exec('BEGIN')
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(replacementTableName)}`)
+    createTable(db, replacementTableName, STT_PROVIDER_SETTINGS_SCHEMA)
+    db.exec(
+      `INSERT INTO ${quoteIdentifier(replacementTableName)} (${quotedPreservedColumns}) ` +
+      `SELECT ${quotedPreservedColumns} FROM ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`
+    )
+    db.exec(`DROP TABLE ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`)
+    db.exec(`ALTER TABLE ${quoteIdentifier(replacementTableName)} RENAME TO ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`)
+    createIndexes(db, STT_PROVIDER_SETTINGS_INDEXES)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 /**
  * 主同步函数
  * - 表不存在：创建
@@ -359,11 +450,7 @@ export function syncTable(
     createTable(db, tableName, schema, options?.primaryKey)
 
     // 创建索引
-    if (options?.indexes) {
-      for (const indexSQL of Object.values(options.indexes)) {
-        db.exec(indexSQL)
-      }
-    }
+    createIndexes(db, options?.indexes)
     return
   }
 
@@ -412,6 +499,14 @@ export function initAllHermesTables(): void {
     // LAN devices and link request status
     syncTable(DEVICES_TABLE, DEVICES_SCHEMA, {
       indexes: DEVICES_INDEXES,
+    })
+    syncTable(STT_PROVIDER_SETTINGS_TABLE, STT_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: STT_PROVIDER_SETTINGS_INDEXES,
+    })
+    syncTable(STT_USER_SETTINGS_TABLE, STT_USER_SETTINGS_SCHEMA)
+    migrateLegacySttProviderSettingsUserIdDefault(db)
+    syncTable(TTS_PROVIDER_SETTINGS_TABLE, TTS_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: TTS_PROVIDER_SETTINGS_INDEXES,
     })
 
     // Group chat - basic tables

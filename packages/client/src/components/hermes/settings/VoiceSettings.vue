@@ -1,659 +1,432 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { NSelect, NInput, NButton, NSlider } from 'naive-ui'
+import { computed, onMounted, ref } from 'vue'
+import { NButton, NInput, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useVoiceSettings } from '@/composables/useVoiceSettings'
-import { useSpeech } from '@/composables/useSpeech'
-import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
-import SettingRow from './SettingRow.vue'
+import { useSpeech, type MimoTtsOptions, type OpenaiTtsOptions } from '@/composables/useSpeech'
+import { useMicRecorder } from '@/composables/useMicRecorder'
+import { transcribeSpeech } from '@/api/hermes/stt'
+import { useVoiceApiConnections } from '@/composables/useVoiceApiConnections'
+import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.vue'
+import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
+import VoiceApiConfigurator from './voice/VoiceApiConfigurator.vue'
+import type { VoiceApiConnection, VoiceApiKind, VoiceApiProvider, VoiceApiSavePayload } from '@/types/voice-api'
+import type { StoredSttProvider } from '@/api/hermes/stt-settings'
+
+interface VoiceApiFormSavedPayload extends VoiceApiSavePayload {
+  preset: {
+    provider: VoiceApiProvider
+  }
+}
 
 const { t } = useI18n()
-const vs = useVoiceSettings()
+const message = useMessage()
 const speech = useSpeech()
+const voiceApi = useVoiceApiConnections()
 
 const testText = ref(t('settings.voice.testTextDefault'))
-const testPlaying = ref(false)
-const mimoCloneAudioInput = ref<HTMLInputElement | null>(null)
-const MIMO_CLONE_AUDIO_MAX_BYTES = 10 * 1024 * 1024
-const MIMO_CLONE_AUDIO_ACCEPT = 'audio/mpeg,audio/mp3,audio/wav,.mp3,.wav'
+const showAddModal = ref(false)
+const addModalKind = ref<VoiceApiKind>('tts')
+const showConfigurator = ref(false)
+const editingConnection = ref<VoiceApiConnection | null>(null)
+const sttRecorder = useMicRecorder({ maxDurationMs: 30_000 })
+const cardTestStates = ref<Record<string, VoiceApiCardTestState>>({})
 
-const providerOptions = [
-  { label: t('settings.voice.providerWebSpeech'), value: 'webspeech' },
-  { label: t('settings.voice.providerOpenai'), value: 'openai' },
-  { label: t('settings.voice.providerCustom'), value: 'custom' },
-  { label: t('settings.voice.providerEdge'), value: 'edge' },
-  { label: t('settings.voice.providerMimo'), value: 'mimo' },
-]
+const activeTtsDescription = computed(() => voiceApi.activeTtsConnection.value?.label || t('settings.voice.noneSelected'))
+const activeSttDescription = computed(() => voiceApi.activeSttConnection.value?.label || t('settings.voice.noneSelected'))
 
-const openaiModelOptions = [
-  { label: 'tts-1', value: 'tts-1' },
-  { label: 'tts-1-hd', value: 'tts-1-hd' },
-]
-
-const openaiVoiceOptions = [
-  { label: 'Alloy', value: 'alloy' },
-  { label: 'Echo', value: 'echo' },
-  { label: 'Fable', value: 'fable' },
-  { label: 'Nova', value: 'nova' },
-  { label: 'Onyx', value: 'onyx' },
-  { label: 'Shimmer', value: 'shimmer' },
-]
-
-const edgeVoiceOptions = [
-  { label: '晓晓 (zh-CN-XiaoxiaoNeural)', value: 'zh-CN-XiaoxiaoNeural' },
-  { label: '晓萱 (zh-CN-XiaoxuanNeural)', value: 'zh-CN-XiaoxuanNeural' },
-  { label: '云希 (zh-CN-YunxiNeural)', value: 'zh-CN-YunxiNeural' },
-  { label: '云健 (zh-CN-YunjianNeural)', value: 'zh-CN-YunjianNeural' },
-  { label: '云扬 (zh-CN-YunyangNeural)', value: 'zh-CN-YunyangNeural' },
-  { label: '小晨 (zh-TW-HsiaoChenNeural)', value: 'zh-TW-HsiaoChenNeural' },
-  { label: '小宇 (zh-TW-HsiaoYuNeural)', value: 'zh-TW-HsiaoYuNeural' },
-  { label: '云哲 (zh-TW-YunJheNeural)', value: 'zh-TW-YunJheNeural' },
-  { label: '希雅 (zh-HK-HiuGaaiNeural)', value: 'zh-HK-HiuGaaiNeural' },
-  { label: '希文 (zh-HK-HiuMaanNeural)', value: 'zh-HK-HiuMaanNeural' },
-  { label: '文龙 (zh-HK-WanLungNeural)', value: 'zh-HK-WanLungNeural' },
-  { label: 'Jenny (en-US-JennyNeural)', value: 'en-US-JennyNeural' },
-  { label: 'Aria (en-US-AriaNeural)', value: 'en-US-AriaNeural' },
-  { label: 'Guy (en-US-GuyNeural)', value: 'en-US-GuyNeural' },
-  { label: 'Sonia (en-GB-SoniaNeural)', value: 'en-GB-SoniaNeural' },
-  { label: 'Ryan (en-GB-RyanNeural)', value: 'en-GB-RyanNeural' },
-  { label: 'Nanami (ja-JP-NanamiNeural)', value: 'ja-JP-NanamiNeural' },
-  { label: 'Keita (ja-JP-KeitaNeural)', value: 'ja-JP-KeitaNeural' },
-  { label: 'Sun-Hi (ko-KR-SunHiNeural)', value: 'ko-KR-SunHiNeural' },
-  { label: 'InJoon (ko-KR-InJoonNeural)', value: 'ko-KR-InJoonNeural' },
-  { label: 'Denise (fr-FR-DeniseNeural)', value: 'fr-FR-DeniseNeural' },
-  { label: 'Henri (fr-FR-HenriNeural)', value: 'fr-FR-HenriNeural' },
-  { label: 'Katja (de-DE-KatjaNeural)', value: 'de-DE-KatjaNeural' },
-  { label: 'Conrad (de-DE-ConradNeural)', value: 'de-DE-ConradNeural' },
-]
-
-// Get WebSpeech voices list on mount
-const webspeechVoices = ref<SpeechSynthesisVoice[]>([])
-onMounted(() => {
-  if ('speechSynthesis' in window) {
-    const voices = window.speechSynthesis.getVoices()
-    if (voices.length) {
-      webspeechVoices.value = voices
-    }
-    window.speechSynthesis.onvoiceschanged = () => {
-      webspeechVoices.value = window.speechSynthesis.getVoices()
-    }
-  }
+onMounted(async () => {
+  await voiceApi.refresh()
 })
 
-// ── MiMo TTS options ──
-const mimoBaseUrlOptions = [
-  { label: 'https://api.xiaomimimo.com/v1', value: 'https://api.xiaomimimo.com/v1' },
-  { label: 'https://token-plan-cn.xiaomimimo.com/v1', value: 'https://token-plan-cn.xiaomimimo.com/v1' },
-]
-
-const mimoAuthModeOptions = [
-  { label: t('settings.voice.mimoAuthModeBearer'), value: 'bearer' },
-  { label: t('settings.voice.mimoAuthModeApiKey'), value: 'api-key' },
-  { label: t('settings.voice.mimoAuthModeBoth'), value: 'both' },
-]
-
-const mimoModelOptions = [
-  { label: t('settings.voice.mimoModelPreset'), value: 'mimo-v2.5-tts' },
-  { label: t('settings.voice.mimoModelVoiceDesign'), value: 'mimo-v2.5-tts-voicedesign' },
-  { label: t('settings.voice.mimoModelVoiceClone'), value: 'mimo-v2.5-tts-voiceclone' },
-]
-
-const mimoVoiceOptions = [
-  { label: '冰糖 (中文·女)', value: '冰糖' },
-  { label: '茉莉 (中文·女)', value: '茉莉' },
-  { label: '苏打 (中文·男)', value: '苏打' },
-  { label: '白桦 (中文·男)', value: '白桦' },
-  { label: 'Mia (English·Female)', value: 'Mia' },
-  { label: 'Chloe (English·Female)', value: 'Chloe' },
-  { label: 'Milo (English·Male)', value: 'Milo' },
-  { label: 'Dean (English·Male)', value: 'Dean' },
-]
-
-function getMimoVoiceMode(): 'preset' | 'voiceDesign' | 'voiceClone' {
-  if (vs.mimoModel.value === 'mimo-v2.5-tts-voicedesign') return 'voiceDesign'
-  if (vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone') return 'voiceClone'
-  return 'preset'
+function openAddModal(kind: VoiceApiKind) {
+  addModalKind.value = kind
+  showAddModal.value = true
 }
 
-function buildMimoTtsOptions() {
-  const voiceMode = getMimoVoiceMode()
-  return {
-    baseUrl: vs.mimoBaseUrl.value,
-    apiKey: vs.mimoApiKey.value,
-    authMode: vs.mimoAuthMode.value,
-    model: vs.mimoModel.value,
-    voiceMode,
-    voice: voiceMode === 'preset' ? vs.mimoVoice.value : undefined,
-    voiceDesignDesc: voiceMode === 'voiceDesign' ? vs.mimoVoiceDesignDesc.value || undefined : undefined,
-    voiceCloneDataUri: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneDataUri.value || undefined : undefined,
-    voiceCloneFormat: voiceMode === 'voiceClone' ? vs.mimoVoiceCloneFormat.value : undefined,
-    stylePrompt: vs.mimoStylePrompt.value || undefined,
+function setCardTestState(id: string, status: VoiceApiCardTestState['status'], messageText?: string) {
+  cardTestStates.value = {
+    ...cardTestStates.value,
+    [id]: { status, message: messageText },
   }
 }
 
-function inferCloneAudioFormat(file: File): 'mp3' | 'wav' {
-  const name = file.name.toLowerCase()
-  if (file.type.includes('mpeg') || file.type.includes('mp3') || name.endsWith('.mp3')) return 'mp3'
-  return 'wav'
-}
-
-function readFileAsDataUri(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(reader.error || new Error('Failed to read audio file'))
-    reader.readAsDataURL(file)
-  })
-}
-
-async function handleMimoCloneAudioChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  const lowerName = file.name.toLowerCase()
-  const validType = file.type === 'audio/wav'
-    || file.type === 'audio/mpeg'
-    || file.type === 'audio/mp3'
-    || lowerName.endsWith('.wav')
-    || lowerName.endsWith('.mp3')
-  if (!validType) {
-    console.warn('[VoiceSettings] MiMo clone audio must be mp3 or wav')
-    input.value = ''
-    return
-  }
-  if (file.size > MIMO_CLONE_AUDIO_MAX_BYTES) {
-    console.warn('[VoiceSettings] MiMo clone audio is too large')
-    input.value = ''
-    return
-  }
-
-  const dataUri = await readFileAsDataUri(file)
-  vs.setMimoVoiceCloneDataUri(dataUri)
-  vs.setMimoVoiceCloneFileName(file.name)
-  vs.setMimoVoiceCloneFormat(inferCloneAudioFormat(file))
-}
-
-function clearMimoCloneAudio() {
-  vs.setMimoVoiceCloneDataUri('')
-  vs.setMimoVoiceCloneFileName('')
-  vs.setMimoVoiceCloneFormat('wav')
-  if (mimoCloneAudioInput.value) mimoCloneAudioInput.value.value = ''
-}
-
-async function handleTest() {
-  const text = testText.value.trim()
-  if (!text) return
-  testPlaying.value = true
-  try {
-    if (vs.provider.value === 'webspeech') {
-      speech.stop(false)
-      speech.speakViaBrowser('__test__', text, {
-        voiceName: vs.webspeechVoice.value || undefined,
-      })
-    } else if (vs.provider.value === 'openai') {
-      if (!vs.openaiBaseUrl.value) {
-        console.warn('[VoiceSettings] OpenAI base URL empty')
-        return
-      }
-      await speech.openaiPlay('__test__', text, {
-        provider: 'openai',
-        baseUrl: vs.openaiBaseUrl.value,
-        apiKey: vs.openaiApiKey.value || undefined,
-        model: vs.openaiModel.value,
-        voice: vs.openaiVoice.value,
-      })
-    } else if (vs.provider.value === 'custom') {
-      if (!vs.customUrl.value) {
-        console.warn('[VoiceSettings] Custom URL empty')
-        return
-      }
-      await speech.openaiPlay('__test__', text, {
-        provider: 'custom',
-        baseUrl: vs.customUrl.value,
-        apiKey: vs.customApiKey.value || undefined,
-      })
-    } else if (vs.provider.value === 'edge') {
-      await speech.openaiPlay('__test__', text, {
-        provider: 'edge',
-        baseUrl: '/api/tts/proxy',
-        voice: vs.edgeVoice.value,
-        rate: speedToEdgeRate(vs.edgeRate.value),
-        pitch: hzToEdgePitch(vs.edgePitchHz.value),
-      })
-    } else if (vs.provider.value === 'mimo') {
-      if (!vs.mimoApiKey.value) {
-        console.warn('[VoiceSettings] MiMo API Key empty')
-        return
-      }
-      await speech.mimoPlay('__test__', text, buildMimoTtsOptions())
+function clearOtherRecordingStates(id: string) {
+  const next = { ...cardTestStates.value }
+  for (const [key, value] of Object.entries(next)) {
+    if (key !== id && value.status === 'recording') {
+      next[key] = { status: 'idle' }
     }
-  } catch (err) {
-    console.error('[VoiceSettings] Test failed:', err)
-  } finally {
-    testPlaying.value = false
   }
+  cardTestStates.value = next
+}
+
+async function handleAddSaved(data: VoiceApiFormSavedPayload) {
+  try {
+    await voiceApi.saveConnection(addModalKind.value, data.preset.provider, {
+      settings: data.settings,
+      secrets: data.secrets,
+    })
+    showAddModal.value = false
+    message.success(t('settings.voice.ttsSaved'))
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : t('settings.voice.ttsSaveFailed'))
+  }
+}
+
+function openConfigurator(conn: VoiceApiConnection) {
+  editingConnection.value = conn
+  showConfigurator.value = true
+}
+
+async function handleConfigSave(conn: VoiceApiConnection, payload: VoiceApiSavePayload) {
+  try {
+    await voiceApi.saveConnection(conn.kind, conn.provider, payload)
+    showConfigurator.value = false
+    message.success(t('settings.voice.ttsSaved'))
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : t('settings.voice.ttsSaveFailed'))
+  }
+}
+
+async function handleRemove(conn: VoiceApiConnection) {
+  try {
+    await voiceApi.deleteSecret(conn.kind, conn.provider)
+    setCardTestState(conn.id, 'idle')
+    message.success(t('settings.voice.ttsCleared'))
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : t('settings.voice.ttsClearFailed'))
+  }
+}
+
+async function handleSetActive(conn: VoiceApiConnection) {
+  await voiceApi.setActiveConnection(conn.kind, conn.id)
+}
+
+async function handleActiveTtsUpdate(id: string) {
+  await voiceApi.setActiveConnection('tts', id)
+}
+
+async function handleActiveSttUpdate(id: string) {
+  await voiceApi.setActiveConnection('stt', id)
+}
+
+function ttsOptionsFor(connection: VoiceApiConnection): Record<string, unknown> {
+  return {
+    ...connection.settings,
+    baseUrl: connection.baseUrl || connection.settings.baseUrl,
+    model: connection.model || connection.settings.model,
+    voice: connection.voice || connection.settings.voice,
+  }
+}
+
+function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
+  const options = ttsOptionsFor(connection)
+  const provider = connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom'
+    ? connection.provider
+    : undefined
+  return {
+    baseUrl: String(options.baseUrl || ''),
+    model: typeof options.model === 'string' ? options.model : undefined,
+    voice: typeof options.voice === 'string' ? options.voice : undefined,
+    rate: typeof options.rate === 'string' ? options.rate : undefined,
+    pitch: typeof options.pitch === 'string' ? options.pitch : undefined,
+    provider,
+  }
+}
+
+function mimoOptionsFor(connection: VoiceApiConnection): MimoTtsOptions {
+  const options = ttsOptionsFor(connection)
+  return {
+    baseUrl: String(options.baseUrl || 'https://api.xiaomimimo.com/v1'),
+    model: String(options.model || 'mimo-v2.5-tts'),
+    voice: typeof options.voice === 'string' ? options.voice : undefined,
+    authMode: options.authMode === 'api-key' || options.authMode === 'bearer' || options.authMode === 'both' ? options.authMode : undefined,
+    voiceMode: options.voiceMode === 'preset' || options.voiceMode === 'voiceDesign' || options.voiceMode === 'voiceClone' ? options.voiceMode : undefined,
+    voiceDesignDesc: typeof options.voiceDesignDesc === 'string' ? options.voiceDesignDesc : undefined,
+    voiceCloneDataUri: typeof options.voiceCloneDataUri === 'string' ? options.voiceCloneDataUri : undefined,
+    voiceCloneFormat: options.voiceCloneFormat === 'mp3' || options.voiceCloneFormat === 'wav' ? options.voiceCloneFormat : undefined,
+    stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
+  }
+}
+
+async function handleTtsTest(connection: VoiceApiConnection) {
+  const text = testText.value.trim()
+  if (!text) {
+    setCardTestState(connection.id, 'error', t('settings.voice.testTextRequired'))
+    return
+  }
+
+  if (!connection.isBuiltin && !connection.hasSecret) {
+    setCardTestState(connection.id, 'error', t('settings.voice.keyMissingForTest'))
+    return
+  }
+
+  setCardTestState(connection.id, 'loading', t('settings.voice.testing'))
+  try {
+    if (connection.provider === 'mimo') {
+      await speech.mimoPlay(connection.id, text, mimoOptionsFor(connection))
+    } else if (connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom') {
+      await speech.openaiPlay(connection.id, text, openaiOptionsFor(connection))
+    }
+    setCardTestState(connection.id, 'success', t('settings.voice.testSuccess'))
+  } catch (err) {
+    setCardTestState(connection.id, 'error', t('settings.voice.testFailed', { error: err instanceof Error ? err.message : String(err) }))
+  }
+}
+
+async function handleSttTest(connection: VoiceApiConnection) {
+  if (connection.provider === 'browser') {
+    setCardTestState(connection.id, 'success', t('settings.voice.browserSttTestHint'))
+    return
+  }
+
+  if (!connection.hasSecret) {
+    setCardTestState(connection.id, 'error', t('settings.voice.keyMissingForTest'))
+    return
+  }
+
+  if (cardTestStates.value[connection.id]?.status === 'recording') {
+    setCardTestState(connection.id, 'loading', t('settings.voice.transcribing'))
+    try {
+      const audio = await sttRecorder.stop()
+      if (!audio.size) {
+        setCardTestState(connection.id, 'error', t('settings.voice.sttEmptyAudio'))
+        return
+      }
+
+      const result = await transcribeSpeech({
+        audio,
+        provider: connection.provider as StoredSttProvider,
+      })
+      setCardTestState(connection.id, 'success', result.text || t('settings.voice.sttTestSuccess'))
+    } catch (err) {
+      setCardTestState(connection.id, 'error', t('settings.voice.sttTestFailed', { error: err instanceof Error ? err.message : String(err) }))
+    }
+    return
+  }
+
+  try {
+    clearOtherRecordingStates(connection.id)
+    await sttRecorder.start()
+    setCardTestState(connection.id, 'recording', t('settings.voice.sttRecordingHint'))
+  } catch (err) {
+    console.error('[VoiceSettings] Failed to start STT card test recording:', err)
+    setCardTestState(connection.id, 'error', t('settings.voice.sttTestFailed', { error: err instanceof Error ? err.message : String(err) }))
+  }
+}
+
+async function handleCardTest(connection: VoiceApiConnection) {
+  if (connection.kind === 'tts') {
+    await handleTtsTest(connection)
+    return
+  }
+  await handleSttTest(connection)
 }
 </script>
 
 <template>
   <div class="voice-settings">
-    <SettingRow
-      :label="t('settings.voice.ttsProvider')"
-      :hint="t('settings.voice.ttsProviderHint')"
-    >
-      <NSelect
-        :value="vs.provider.value"
-        :options="providerOptions"
-        size="small"
-        style="width: 300px"
-        @update:value="vs.setProvider"
-      />
-    </SettingRow>
-
-    <!-- ════ WebSpeech API ════ -->
-    <template v-if="vs.provider.value === 'webspeech'">
-      <SettingRow
-        :label="t('settings.voice.webspeechVoice')"
-        :hint="t('settings.voice.webspeechVoiceHint')"
-      >
-        <NSelect
-          :value="vs.webspeechVoice.value"
-          size="small"
-          filterable
-          style="width: 320px"
-          :placeholder="t('settings.voice.webspeechVoicePlaceholder')"
-          :consistent-menu-width="false"
-          :options="webspeechVoices.map(v => ({
-            label: `${v.name} (${v.lang})`,
-            value: v.name,
-          }))"
-          @update:value="vs.setWebSpeechVoice"
-        />
-      </SettingRow>
-
-    </template>
-
-    <!-- ════ OpenAI TTS ════ -->
-    <template v-if="vs.provider.value === 'openai'">
-      <SettingRow
-        :label="t('settings.voice.openaiKey')"
-        :hint="t('settings.voice.openaiKeyHint')"
-      >
-        <NInput
-          :value="vs.openaiApiKey.value"
-          type="password"
-          size="small"
-          show-password-on="click"
-          style="width: 360px"
-          placeholder="sk-..."
-          @update:value="vs.setOpenaiApiKey"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.openaiUrl')"
-        :hint="t('settings.voice.openaiUrlHint')"
-      >
-        <NInput
-          :value="vs.openaiBaseUrl.value"
-          size="small"
-          style="width: 360px"
-          placeholder="https://api.openai.com/v1/audio/speech"
-          @update:value="vs.setOpenaiBaseUrl"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.openaiModel')"
-        :hint="t('settings.voice.openaiModelHint')"
-      >
-        <NSelect
-          :value="vs.openaiModel.value"
-          :options="openaiModelOptions"
-          size="small"
-          style="width: 200px"
-          @update:value="vs.setOpenaiModel"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.openaiVoice')"
-        :hint="t('settings.voice.openaiVoiceHint')"
-      >
-        <NSelect
-          :value="vs.openaiVoice.value"
-          :options="openaiVoiceOptions"
-          size="small"
-          style="width: 200px"
-          @update:value="vs.setOpenaiVoice"
-        />
-      </SettingRow>
-
-    </template>
-
-    <!-- ════ Custom Endpoint ════ -->
-    <template v-if="vs.provider.value === 'custom'">
-      <div class="provider-hint">
-        {{ t('settings.voice.customHint') }}
-      </div>
-
-      <SettingRow
-        :label="t('settings.voice.customUrl')"
-        :hint="t('settings.voice.customUrlHint')"
-      >
-        <NInput
-          :value="vs.customUrl.value"
-          size="small"
-          style="width: 360px"
-          :placeholder="t('settings.voice.customUrlPlaceholder')"
-          @update:value="vs.setCustomUrl"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.customApiKey')"
-        :hint="t('settings.voice.customApiKeyHint')"
-      >
-        <NInput
-          :value="vs.customApiKey.value"
-          type="password"
-          size="small"
-          show-password-on="click"
-          style="width: 360px"
-          :placeholder="t('settings.voice.customApiKeyPlaceholder')"
-          @update:value="vs.setCustomApiKey"
-        />
-      </SettingRow>
-
-
-    </template>
-
-    <!-- ════ Edge TTS ════ -->
-    <template v-if="vs.provider.value === 'edge'">
-      <div class="provider-hint">
-        {{ t('settings.voice.edgeHint') }}
-      </div>
-
-<SettingRow
-        :label="t('settings.voice.edgeVoice')"
-        :hint="t('settings.voice.edgeVoiceHint')"
-      >
-        <NSelect
-          :value="vs.edgeVoice.value"
-          :options="edgeVoiceOptions"
-          size="small"
-          filterable
-          style="width: 320px"
-          :consistent-menu-width="false"
-          @update:value="vs.setEdgeVoice"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.edgeRate')"
-        :hint="t('settings.voice.edgeRateHint')"
-      >
-        <div class="slider-row">
-          <NSlider
-            :value="vs.edgeRate.value"
-            :min="0.5"
-            :max="2.0"
-            :step="0.05"
-            style="width: 200px"
-            @update:value="vs.setEdgeRate"
-          />
-          <span class="slider-value">{{ vs.edgeRate.value.toFixed(2) }}x ({{ speedToEdgeRate(vs.edgeRate.value) }})</span>
+    <section class="settings-section voice-provider-section" aria-labelledby="tts-providers-title">
+      <header class="section-header">
+        <div class="section-copy">
+          <h4 id="tts-providers-title" class="section-title">{{ t('settings.voice.ttsProvidersTitle') }}</h4>
+          <p class="section-desc">{{ t('settings.voice.ttsProvidersDescription') }}</p>
         </div>
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.edgePitch')"
-        :hint="t('settings.voice.edgePitchHint')"
-      >
-        <div class="slider-row">
-          <NSlider
-            :value="vs.edgePitchHz.value"
-            :min="-20"
-            :max="20"
-            :step="1"
-            style="width: 200px"
-            @update:value="vs.setEdgePitchHz"
-          />
-          <span class="slider-value">{{ vs.edgePitchHz.value > 0 ? '+' : '' }}{{ vs.edgePitchHz.value }} Hz ({{ hzToEdgePitch(vs.edgePitchHz.value) }})</span>
-        </div>
-      </SettingRow>
-
-    </template>
-
-    <!-- ════ MiMo TTS ════ -->
-    <template v-if="vs.provider.value === 'mimo'">
-      <div class="provider-hint">
-        {{ t('settings.voice.mimoHint') }}
-      </div>
-
-      <SettingRow
-        :label="t('settings.voice.mimoApiKey')"
-        :hint="t('settings.voice.mimoApiKeyHint')"
-      >
-        <NInput
-          :value="vs.mimoApiKey.value"
-          type="password"
-          size="small"
-          show-password-on="click"
-          style="width: 360px"
-          :placeholder="t('settings.voice.mimoApiKeyPlaceholder')"
-          @update:value="vs.setMimoApiKey"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.mimoAuthMode')"
-        :hint="t('settings.voice.mimoAuthModeHint')"
-      >
-        <NSelect
-          :value="vs.mimoAuthMode.value"
-          :options="mimoAuthModeOptions"
-          size="small"
-          style="width: 240px"
-          @update:value="vs.setMimoAuthMode"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.mimoBaseUrl')"
-        :hint="t('settings.voice.mimoBaseUrlHint')"
-      >
-        <NSelect
-          :value="vs.mimoBaseUrl.value"
-          :options="mimoBaseUrlOptions"
-          size="small"
-          filterable
-          tag
-          style="width: 360px"
-          @update:value="vs.setMimoBaseUrl"
-        />
-      </SettingRow>
-
-      <SettingRow
-        :label="t('settings.voice.mimoModel')"
-        :hint="t('settings.voice.mimoModelHint')"
-      >
-        <NSelect
-          :value="vs.mimoModel.value"
-          :options="mimoModelOptions"
-          size="small"
-          style="width: 320px"
-          @update:value="vs.setMimoModel"
-        />
-      </SettingRow>
-
-      <!-- Preset voice mode -->
-      <SettingRow
-        v-if="vs.mimoModel.value === 'mimo-v2.5-tts'"
-        :label="t('settings.voice.mimoVoice')"
-        :hint="t('settings.voice.mimoVoiceHint')"
-      >
-        <NSelect
-          :value="vs.mimoVoice.value"
-          :options="mimoVoiceOptions"
-          size="small"
-          style="width: 200px"
-          @update:value="vs.setMimoVoice"
-        />
-      </SettingRow>
-
-      <!-- Voice design mode -->
-      <SettingRow
-        v-if="vs.mimoModel.value === 'mimo-v2.5-tts-voicedesign'"
-        :label="t('settings.voice.mimoVoiceDesignPrompt')"
-        :hint="t('settings.voice.mimoVoiceDesignPromptHint')"
-      >
-        <NInput
-          :value="vs.mimoVoiceDesignDesc.value"
-          type="textarea"
-          size="small"
-          style="width: 360px"
-          :rows="3"
-          :placeholder="t('settings.voice.mimoVoiceDesignPromptPlaceholder')"
-          @update:value="vs.setMimoVoiceDesignDesc"
-        />
-      </SettingRow>
-
-      <!-- Voice clone mode -->
-      <SettingRow
-        v-if="vs.mimoModel.value === 'mimo-v2.5-tts-voiceclone'"
-        :label="t('settings.voice.mimoCloneAudio')"
-        :hint="t('settings.voice.mimoCloneAudioHint')"
-      >
-        <div class="clone-audio-row">
-          <input
-            ref="mimoCloneAudioInput"
-            type="file"
-            :accept="MIMO_CLONE_AUDIO_ACCEPT"
-            class="hidden-file-input"
-            @change="handleMimoCloneAudioChange"
-          />
-          <NButton size="small" @click="mimoCloneAudioInput?.click()">
-            {{ t('settings.voice.mimoCloneAudioUpload') }}
-          </NButton>
-          <span v-if="vs.mimoVoiceCloneFileName.value" class="clone-audio-name">
-            {{ vs.mimoVoiceCloneFileName.value }} · {{ vs.mimoVoiceCloneFormat.value }}
-          </span>
-          <NButton
-            v-if="vs.mimoVoiceCloneDataUri.value"
-            size="small"
-            tertiary
-            @click="clearMimoCloneAudio"
-          >
-            {{ t('settings.voice.mimoCloneAudioClear') }}
+        <div class="section-controls">
+          <div class="active-select">
+            <span class="active-label">{{ t('settings.voice.activeTtsApi') }}</span>
+            <NSelect
+              :value="voiceApi.activeTtsId.value"
+              :options="voiceApi.ttsConnectionOptions.value"
+              size="small"
+              :aria-label="t('settings.voice.activeTtsApi')"
+              @update:value="handleActiveTtsUpdate"
+            />
+            <span class="active-summary">{{ activeTtsDescription }}</span>
+          </div>
+          <NButton size="small" secondary @click="openAddModal('tts')">
+            {{ t('settings.voice.addTtsApi') }}
           </NButton>
         </div>
-      </SettingRow>
+      </header>
 
-      <!-- Style prompt (available for all models) -->
-      <SettingRow
-        :label="t('settings.voice.mimoStylePrompt')"
-        :hint="t('settings.voice.mimoStylePromptHint')"
-      >
-        <NInput
-          :value="vs.mimoStylePrompt.value"
-          type="textarea"
-          size="small"
-          style="width: 360px"
-          :rows="2"
-          :placeholder="t('settings.voice.mimoStylePromptPlaceholder')"
-          @update:value="vs.setMimoStylePrompt"
-        />
-      </SettingRow>
-    </template>
-
-    <!-- ─── Test / Audition ─── -->
-    <div class="test-section">
-      <h4 class="test-title">{{ t('settings.voice.testTitle') }}</h4>
-      <div class="test-row">
+      <div class="test-copy-row">
         <NInput
           v-model:value="testText"
           size="small"
-          style="width: 360px"
           :placeholder="t('settings.voice.testTextPlaceholder')"
-          :disabled="testPlaying"
-          @keyup.enter="handleTest"
+          data-testid="tts-test-text"
         />
-        <NButton
-          size="small"
-          type="primary"
-          :loading="testPlaying"
-          :disabled="testPlaying"
-          @click="handleTest"
-        >
-          {{ testPlaying ? t('settings.voice.testButtonPlaying') : t('settings.voice.testButton') }}
-        </NButton>
       </div>
-    </div>
+
+      <div class="provider-list">
+        <VoiceApiCard
+          v-for="conn in voiceApi.ttsConnections.value"
+          :key="conn.id"
+          :connection="conn"
+          :test-state="cardTestStates[conn.id]"
+          @set-active="handleSetActive"
+          @test="handleCardTest"
+          @edit="openConfigurator"
+          @connect="openConfigurator"
+          @remove="handleRemove"
+        />
+      </div>
+    </section>
+
+    <section class="settings-section voice-provider-section" aria-labelledby="stt-providers-title">
+      <header class="section-header">
+        <div class="section-copy">
+          <h4 id="stt-providers-title" class="section-title">{{ t('settings.voice.sttProvidersTitle') }}</h4>
+          <p class="section-desc">{{ t('settings.voice.sttProvidersDescription') }}</p>
+        </div>
+        <div class="section-controls">
+          <div class="active-select">
+            <span class="active-label">{{ t('settings.voice.activeSttApi') }}</span>
+            <NSelect
+              :value="voiceApi.activeSttId.value"
+              :options="voiceApi.sttConnectionOptions.value"
+              size="small"
+              :aria-label="t('settings.voice.activeSttApi')"
+              @update:value="handleActiveSttUpdate"
+            />
+            <span class="active-summary">{{ activeSttDescription }}</span>
+          </div>
+          <NButton size="small" secondary @click="openAddModal('stt')">
+            {{ t('settings.voice.addSttApi') }}
+          </NButton>
+        </div>
+      </header>
+
+      <div class="provider-list">
+        <VoiceApiCard
+          v-for="conn in voiceApi.sttConnections.value"
+          :key="conn.id"
+          :connection="conn"
+          :test-state="cardTestStates[conn.id]"
+          @set-active="handleSetActive"
+          @test="handleCardTest"
+          @edit="openConfigurator"
+          @connect="openConfigurator"
+          @remove="handleRemove"
+        />
+      </div>
+    </section>
+
+    <VoiceApiFormModal
+      :show="showAddModal"
+      :kind="addModalKind"
+      @close="showAddModal = false"
+      @saved="handleAddSaved"
+    />
+
+    <VoiceApiConfigurator
+      :show="showConfigurator"
+      :connection="editingConnection"
+      @close="showConfigurator = false"
+      @save="handleConfigSave"
+    />
   </div>
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/variables' as *;
+
 .voice-settings {
+  padding: 8px 0;
+}
+
+.settings-section {
+  margin-top: 16px;
+}
+
+.voice-provider-section + .voice-provider-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid $border-color;
+}
+
+.section-header {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 14px;
 }
 
-.provider-hint {
-  font-size: 12px;
-  color: #888;
-  line-height: 1.5;
-  padding: 0 0 4px 0;
+.section-copy {
+  min-width: 0;
 }
 
-.test-section {
-  padding-top: 16px;
-
-  .test-title {
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .test-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
+.section-title {
+  margin: 0 0 6px;
+  color: $text-primary;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.slider-row {
-  display: flex;
+.section-desc {
+  margin: 0;
+  max-width: 620px;
+  color: $text-muted;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.section-controls {
+  display: grid;
+  grid-template-columns: 220px 112px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-shrink: 0;
+
+  > .n-button {
+    width: 112px;
+  }
 }
 
-.slider-value {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-  min-width: 120px;
+.active-select {
+  display: grid;
+  gap: 5px;
+  width: 220px;
+  min-width: 0;
 }
 
-.clone-audio-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+.active-label,
+.active-summary {
+  color: $text-muted;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
-.hidden-file-input {
-  display: none;
-}
-
-.clone-audio-name {
-  max-width: 240px;
+.active-summary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  color: #888;
+}
+
+.test-copy-row {
+  max-width: 460px;
+  margin-bottom: 10px;
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (max-width: 860px) {
+  .section-header,
+  .section-controls {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .section-controls > .n-button,
+  .active-select {
+    width: 100%;
+  }
 }
 </style>

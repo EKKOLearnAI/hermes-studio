@@ -110,8 +110,9 @@ function emitAuthNotice(kind: 'expired' | 'forbidden') {
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const base = getBaseUrl()
   const url = `${base}${path}`
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormDataBody ? {} : { 'Content-Type': 'application/json' }),
     ...options.headers as Record<string, string>,
   }
 

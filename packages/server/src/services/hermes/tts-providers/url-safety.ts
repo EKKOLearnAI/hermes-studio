@@ -1,4 +1,16 @@
+import { lookup as dnsLookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
+
+type DnsLookup = typeof dnsLookup
+let resolveHostname: DnsLookup = dnsLookup
+
+export function setTtsDnsLookupForTests(lookup: DnsLookup) {
+  resolveHostname = lookup
+}
+
+export function resetTtsDnsLookupForTests() {
+  resolveHostname = dnsLookup
+}
 
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
@@ -41,9 +53,13 @@ function isBlockedIpv6(hostname: string): boolean {
     return isBlockedIpv4(mappedIpv4)
   }
 
+  const firstHextet = normalized.split(':', 1)[0]
+  const firstHextetValue = firstHextet ? Number.parseInt(firstHextet, 16) : Number.NaN
+  const isLinkLocal = Number.isInteger(firstHextetValue) && (firstHextetValue & 0xffc0) === 0xfe80
+
   return normalized === '::'
     || normalized === '::1'
-    || normalized.startsWith('fe80:')
+    || isLinkLocal
     || normalized.startsWith('fc')
     || normalized.startsWith('fd')
     || normalized.startsWith('ff')
@@ -70,4 +86,32 @@ export function assertSafeTtsBaseUrl(url: URL, providerLabel: string) {
   if (isBlockedHostname(url.hostname) || isBlockedIp(url.hostname)) {
     throw new Error(`${providerLabel} TTS baseUrl cannot target localhost or private network addresses`)
   }
+}
+
+export async function assertSafeResolvedTtsBaseUrl(url: URL, providerLabel: string) {
+  assertSafeTtsBaseUrl(url, providerLabel)
+
+  if (isIP(normalizeHostname(url.hostname))) {
+    return
+  }
+
+  const records = await resolveHostname(url.hostname, { all: true, verbatim: true })
+  if (!records.length) {
+    throw new Error(`${providerLabel} TTS baseUrl hostname did not resolve`)
+  }
+
+  if (records.some(record => isBlockedIp(record.address))) {
+    throw new Error(`${providerLabel} TTS baseUrl resolved to localhost or private network addresses`)
+  }
+}
+
+export function normalizeSafeTtsBaseUrl(baseUrl: string, providerLabel: string): string {
+  const value = String(baseUrl || '').trim()
+  if (!value) {
+    return ''
+  }
+
+  const url = new URL(value)
+  assertSafeTtsBaseUrl(url, providerLabel)
+  return url.toString()
 }

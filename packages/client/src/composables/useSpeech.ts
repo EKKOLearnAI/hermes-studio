@@ -23,7 +23,7 @@ export interface OpenaiTtsOptions {
 
 export interface MimoTtsOptions {
   baseUrl: string
-  apiKey: string
+  apiKey?: string
   authMode?: 'api-key' | 'bearer' | 'both'
   model: string
   voice?: string              // preset voice ID (preset mode)
@@ -53,7 +53,18 @@ interface SpeechQueueItem {
  * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis
+  const synth = window.speechSynthesis ?? {
+    getVoices: () => [],
+    speak: () => {},
+    cancel: () => {},
+    pause: () => {},
+    resume: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    speaking: false,
+    pending: false,
+    paused: false,
+  } as unknown as SpeechSynthesis
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
@@ -334,7 +345,6 @@ export function useSpeech() {
     provider: TtsProviderId,
     options: Record<string, unknown>,
     token: number,
-    requestErrorMessage: string,
     playbackErrorMessage: string,
   ) {
     currentTtsAbort?.abort()
@@ -369,7 +379,6 @@ export function useSpeech() {
       if (isAbortError(err)) {
         return
       }
-      console.error(requestErrorMessage, err)
       throw err
     } finally {
       if (currentTtsAbort === abortController) {
@@ -396,7 +405,6 @@ export function useSpeech() {
       provider,
       providerOptions as unknown as Record<string, unknown>,
       token,
-      '[useSpeech] OpenAI TTS 请求失败:',
       '[useSpeech] Custom TTS audio playback error',
     )
   }
@@ -432,7 +440,7 @@ export function useSpeech() {
 
   function startCustomPlayback(promise: Promise<void>) {
     void promise.catch(() => {
-      // openaiPlay/mimoPlay already log non-abort failures and clear state.
+      // openaiPlay/mimoPlay already clear state; inline card UI handles failures.
       // Toggle callers are fire-and-forget UI actions; do not leak unhandled rejections.
     })
   }
@@ -468,7 +476,6 @@ export function useSpeech() {
       'mimo',
       opts as unknown as Record<string, unknown>,
       token,
-      '[useSpeech] MiMo TTS 请求失败:',
       '[useSpeech] MiMo TTS audio playback error',
     )
   }

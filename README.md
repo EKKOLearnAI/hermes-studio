@@ -162,13 +162,19 @@ hermes-web-ui reset-default-login
 - Model settings (default model & provider)
 - Profile and provider configuration
 
-### Voice / TTS
+### Voice / TTS / STT
 
 - Read assistant replies aloud from chat and group-chat messages.
 - Providers: browser Web Speech, built-in Edge TTS, OpenAI-compatible `/audio/speech`, custom OpenAI-compatible TTS endpoints, and MiMo.
 - MiMo supports preset voices, voice design prompts, and voice clone reference audio (`.mp3`/`.wav`, max 10 MB) with selectable auth header mode (`Authorization`, `api-key`, or both).
 - Edge/OpenAI-compatible/custom/MiMo playback uses the Web UI backend's unified `/api/hermes/tts/synthesize` endpoint, so stop/pause state is shared and in-flight fetches are aborted when possible.
-- Limitation: external TTS providers may continue processing a request after the browser/server aborts; custom/OpenAI-compatible and MiMo base URLs must be public `http`/`https` endpoints and cannot target localhost/private networks; voice-clone reference audio is stored in browser settings as a data URI, so avoid large or sensitive samples.
+- Provider API keys and MiMo clone reference audio are saved in server-side TTS settings, with only masked secret status shown back to the browser.
+- Save provider settings in Settings → Voice before using OpenAI/custom/MiMo playback. Message playback sends text and non-secret playback options; the backend reads the stored per-user secret when synthesizing.
+- Turn-based voice input is available from the chat input mic control: start/stop a voice turn, transcribe it, stage the transcript in the current input box for editing, then send it with the normal Send button.
+- Voice input / STT can use browser speech recognition when available or a server-backed provider configured in Settings → Voice.
+- Starting a new voice turn while assistant audio is playing stops playback first. This barge-in boundary does not implicitly cancel an active agent run; stopping a run remains an explicit action.
+- For supported settings, security notes, and current non-goals, see [`docs/voice-dialogue.md`](./docs/voice-dialogue.md).
+- Limitation: external TTS providers may continue processing a request after the browser/server aborts; custom/OpenAI-compatible and MiMo base URLs must be public `http`/`https` endpoints and cannot target localhost/private networks.
 
 ### Web Terminal
 
@@ -246,6 +252,8 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
 | `HERMES_WEBUI_STATE_DIR` | unset | Compatibility alias for `HERMES_WEB_UI_HOME`. |
+| `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | unset | Disable startup injection of the managed `hermes-studio` MCP server into Hermes profile configs. |
+| `HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT` | unset | Allow managed MCP injection when `HERMES_WEB_UI_HOME` is under a temporary directory, such as Version Preview runtimes. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
@@ -281,7 +289,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | platform/runtime dependent | Force managed legacy gateway process handling. Set `1`, `true`, `yes`, or `on` to enable. |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | unset | Skip startup gateway checks/autostart. Set `1`, `true`, `yes`, or `on` for dashboard-only deployments where another service owns Hermes gateway lifecycle. |
-| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | unset | Skip startup bundled skill injection. Set `1`, `true`, `yes`, or `on` when bundled skills are managed outside Web UI or target skill directories must not be overwritten. |
+| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | unset | Skip startup bundled skill injection. Set `1`, `true`, `yes`, or `on` when bundled skills are managed outside Hermes Web UI. When injection is enabled, Web UI updates only skills it previously installed or identical existing bundled copies; local edits and user-owned same-name skills are skipped. |
 | `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | enabled in production | Controls whether Web UI shutdown also stops managed gateway processes. Set `0` or `false` to detach them. |
 | `GATEWAY_HOST` | `127.0.0.1` | Default gateway host written into profile config for legacy gateway compatibility. |
 | `HERMES_WEB_UI_PREVIEW_REPO` | package repository | GitHub repository used by Version Preview. |
@@ -296,7 +304,6 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | --------------------------------- | ---------------------------------- |
 | `hermes-web-ui start`             | Start in background (daemon mode)  |
 | `hermes-web-ui start --port 9000` | Start on custom port               |
-| `hermes-web-ui client`            | Start for a remote client (`HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`, `CORS_ORIGINS=*`) |
 | `hermes-web-ui stop`              | Stop background process            |
 | `hermes-web-ui restart`           | Restart background process         |
 | `hermes-web-ui status`            | Check if running                   |

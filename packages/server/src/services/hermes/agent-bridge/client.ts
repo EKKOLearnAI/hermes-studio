@@ -583,12 +583,12 @@ export class AgentBridgeClient {
     })
   }
 
-  statusIfLoaded(sessionId: string, profile?: string): Promise<AgentBridgeResponse> {
+  statusIfLoaded(sessionId: string, profile?: string, options: AgentBridgeRequestOptions = {}): Promise<AgentBridgeResponse> {
     return this.request({
       action: 'status_if_loaded',
       session_id: sessionId,
       ...(profile ? { profile } : {}),
-    })
+    }, options)
   }
 
   destroy(sessionId: string, profile?: string, workerKey?: string): Promise<AgentBridgeResponse> {

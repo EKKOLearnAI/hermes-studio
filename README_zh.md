@@ -170,13 +170,19 @@ hermes-web-ui reset-default-login
 - 模型设置（默认模型 & Provider）
 - Profile 和 Provider 配置
 
-### 语音 / TTS
+### 语音 / TTS / STT
 
 - 可在聊天和群聊消息中朗读 Assistant 回复。
 - Provider 支持：浏览器 Web Speech、内置 Edge TTS、OpenAI 兼容 `/audio/speech`、自定义 OpenAI 兼容 TTS 端点、MiMo。
 - MiMo 支持预置音色、音色设计提示词、音色复刻参考音频（`.mp3`/`.wav`，最大 10 MB），并可选择鉴权请求头模式（`Authorization`、`api-key` 或两者同时发送）。
 - Edge / OpenAI 兼容 / 自定义 / MiMo 播放统一走 Web UI 后端 `/api/hermes/tts/synthesize`，停止/暂停状态一致，并会在可行时中断进行中的 fetch。
-- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网；音色复刻参考音频会以 data URI 保存在浏览器设置中，避免上传过大或敏感样本。
+- Provider API Key 和 MiMo 复刻参考音频保存在服务端 TTS 设置中，浏览器只显示脱敏后的 secret 状态。
+- 使用 OpenAI / 自定义 / MiMo 播放前，先在 Settings → Voice 保存 provider 设置。消息播放只发送文本和非敏感播放参数，后端合成时读取当前用户保存的私钥。
+- 聊天输入框支持回合制语音输入：通过麦克风按钮开始/停止一轮录音，转写结果会先填入当前输入框，用户可以编辑后再用普通发送按钮发送。
+- 语音输入 / STT 可在支持时使用浏览器语音识别，也可使用在 Settings → Voice 中配置的服务端 provider。
+- 当 Assistant 音频正在播放时，开始新的语音输入会先停止播放。这个 barge-in 只打断音频，不会隐式取消正在运行的 Agent；停止 run 仍然需要显式操作。
+- 支持的设置项、安全边界和当前非目标范围见 [`docs/voice-dialogue.md`](./docs/voice-dialogue.md)。
+- 限制：浏览器/服务端中断后，外部 TTS Provider 仍可能继续处理请求；自定义 / OpenAI 兼容 / MiMo base URL 必须是公网 `http`/`https` 端点，不能指向 localhost 或私网。
 
 ### Web 终端
 
@@ -252,6 +258,8 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `BIND_HOST` | `0.0.0.0` | Web UI 绑定地址。如需 IPv6，可显式设置为 `::`。 |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录。兼容支持 `HERMES_WEBUI_STATE_DIR` 作为别名。 |
 | `HERMES_WEBUI_STATE_DIR` | 未设置 | `HERMES_WEB_UI_HOME` 的兼容别名。 |
+| `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | 未设置 | 关闭启动时向 Hermes profile 配置自动注入托管的 `hermes-studio` MCP server。 |
+| `HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT` | 未设置 | 当 `HERMES_WEB_UI_HOME` 位于临时目录（例如 Version Preview runtime）时，仍允许托管 MCP 自动注入。 |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | 覆盖上传根目录。文件会保存在按 Profile 隔离的子目录下。 |
 | `CORS_ORIGINS` | 仅同 host | HTTP、Socket.IO、WebSocket 跨源 allowlist，支持逗号或空格分隔。只有明确需要旧版 wildcard CORS 时才设置为 `*`。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
@@ -287,7 +295,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | 由平台/运行环境决定 | 强制启用旧 gateway 进程托管；设为 `1`、`true`、`yes` 或 `on` 开启。 |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | 未设置 | 跳过启动时的 gateway 检查/自动启动；dashboard-only 部署中如果由其它服务管理 Hermes gateway，可设为 `1`、`true`、`yes` 或 `on`。 |
-| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | 未设置 | 跳过启动时的内置 skill 注入；如果内置 skills 由 Web UI 外部管理，或不希望覆盖同名目标目录，可设为 `1`、`true`、`yes` 或 `on`。 |
+| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | 未设置 | 跳过启动时的内置 skill 注入；如果内置 skills 由 Hermes Web UI 外部管理，可设为 `1`、`true`、`yes` 或 `on`。启用注入时，Web UI 只更新自己此前安装的 skills 或内容完全相同的既有内置副本；本地修改和用户拥有的同名 skills 会跳过。 |
 | `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | 生产环境默认开启 | Web UI 关闭时是否同时停止托管的 gateway 进程；设为 `0` 或 `false` 可让 gateway 分离运行。 |
 | `GATEWAY_HOST` | `127.0.0.1` | 旧 gateway 兼容配置中写入 profile 的默认 gateway host。 |
 | `HERMES_WEB_UI_PREVIEW_REPO` | package repository | Version Preview 使用的 GitHub 仓库。 |
@@ -302,7 +310,6 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 |---|---|
 | `hermes-web-ui start` | 后台启动（守护进程模式） |
 | `hermes-web-ui start --port 9000` | 自定义端口启动 |
-| `hermes-web-ui client` | 远程客户端模式启动（等同设置 `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART=1`、`CORS_ORIGINS=*` 后执行 `start`） |
 | `hermes-web-ui stop` | 停止后台进程 |
 | `hermes-web-ui restart` | 重启后台进程 |
 | `hermes-web-ui status` | 查看运行状态 |

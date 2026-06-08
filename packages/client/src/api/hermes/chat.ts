@@ -420,6 +420,16 @@ function globalAgentEventHandler(event: RunEvent): void {
   }
 }
 
+function globalRunReattachFailedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAgentEvent) {
+    handlers.onAgentEvent(event)
+  }
+}
+
 function globalApprovalRequestedHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
@@ -657,6 +667,7 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
     chatRunSocket.on('agent.event', globalAgentEventHandler)
+    chatRunSocket.on('run.reattach_failed', globalRunReattachFailedHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)
     chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
 

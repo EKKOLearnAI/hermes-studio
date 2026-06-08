@@ -272,6 +272,31 @@ describe('client TTS unified synthesize flow', () => {
     await pending.catch(() => undefined)
   })
 
+  it('stop(true) clears queued playback and stops the active TTS audio', async () => {
+    mockFetch.mockResolvedValue(new Response(new Blob(['audio'], { type: 'audio/mpeg' }), {
+      status: 200,
+      headers: { 'X-TTS-Engine': 'edge' },
+    }))
+
+    const { useSpeech } = await import('../../packages/client/src/composables/useSpeech')
+    const speech = useSpeech()
+
+    speech.enqueue('msg-1', 'First queued response')
+    await flushPromises()
+    const [firstAudio] = audioInstances
+
+    speech.enqueue('msg-2', 'Second queued response')
+    speech.stop(true)
+    firstAudio.onended?.()
+    await flushPromises()
+
+    expect(firstAudio.pause).toHaveBeenCalledOnce()
+    expect(firstAudio.src).toBe('')
+    expect(audioInstances).toHaveLength(1)
+    expect(speech.currentMessageId.value).toBe(null)
+    expect(speech.isPlaying.value).toBe(false)
+  })
+
   it('handles AbortError silently without console.error and clears custom state', async () => {
     const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' })
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -303,7 +328,7 @@ describe('client TTS unified synthesize flow', () => {
     })
     await flushPromises()
 
-    expect(consoleError).toHaveBeenCalledWith('[useSpeech] OpenAI TTS 请求失败:', expect.any(Error))
+    expect(consoleError).not.toHaveBeenCalled()
     expect(speech.isCustomPlaying.value).toBe(false)
     expect(speech.isCustomPaused.value).toBe(false)
     expect(speech.currentCustomMessageId.value).toBe(null)
@@ -468,5 +493,15 @@ describe('client TTS autoplay call sites', () => {
     expect(groupMessageItem).toContain('void speech.openaiPlay')
     expect(groupMessageItem).toContain('void speech.mimoPlay')
     expect(groupMessageItem).toContain('.catch(handleAutoplayTtsError)')
+  })
+
+  it('does not require a local MiMo API key before using server-stored TTS credentials', () => {
+    const messageItem = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
+    const groupMessageItem = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
+
+    expect(messageItem).not.toContain('MiMo TTS API Key 为空')
+    expect(groupMessageItem).not.toContain('if (!voiceSettings.mimoApiKey.value) return')
+    expect(messageItem).toContain('apiKey: apiKey || undefined')
+    expect(groupMessageItem).toContain('apiKey: apiKey || undefined')
   })
 })
