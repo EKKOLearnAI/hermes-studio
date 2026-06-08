@@ -449,15 +449,6 @@ function displayNameForModel(model: string): string {
     .replace(/\b\w/g, char => char.toUpperCase())
 }
 
-function claudeModelIdentityPrompt(provider: string, model: string): string {
-  return [
-    'Hermes Web UI is running this Claude Code chat session through a scoped provider configuration.',
-    `The actual provider is ${provider || 'unknown'}.`,
-    `The actual model is ${model}.`,
-    'If the user asks what model you are, answer with the actual model value above, not just the Claude Code agent name.',
-  ].join(' ')
-}
-
 function codexCatalogEntry(input: {
   model: string
   displayName: string
@@ -1287,7 +1278,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '--settings',
       settingsPath,
       ...(input.isolateSettings ? ['--setting-sources', 'local'] : []),
-      ...(input.isolateSettings ? ['--append-system-prompt', claudeModelIdentityPrompt(provider, model)] : []),
       '--mcp-config',
       mcpPath,
       '--dangerously-skip-permissions',
