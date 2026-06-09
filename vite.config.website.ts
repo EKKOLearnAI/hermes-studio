@@ -3,11 +3,14 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import pkg from './package.json'
 
+const websiteDownloadVersion = process.env.WEBSITE_DOWNLOAD_VERSION?.trim() || pkg.version
+
 export default defineConfig({
   root: 'packages/website',
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __WEBSITE_DOWNLOAD_VERSION__: JSON.stringify(websiteDownloadVersion),
   },
   resolve: {
     alias: {

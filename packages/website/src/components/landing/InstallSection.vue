@@ -13,7 +13,7 @@ const { t, tm } = useI18n()
 useScrollReveal()
 const activeTab = ref<'desktop' | 'npm' | 'docker' | 'source'>('desktop')
 
-const releaseVersion = __APP_VERSION__.replace(/^v/, '')
+const releaseVersion = __WEBSITE_DOWNLOAD_VERSION__.replace(/^v/, '')
 const releaseTag = `v${releaseVersion}`
 const releaseBaseUrl = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases'
 const releaseUrl = `${releaseBaseUrl}/tag/${releaseTag}`
