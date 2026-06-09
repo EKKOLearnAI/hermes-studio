@@ -183,6 +183,62 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('syncs generated result tail to the session DB when the agent crashes after generation', () => {
+    runPython(String.raw`
+${harness}
+
+class CrashingAgent:
+    def run_conversation(self, message, **kwargs):
+        self.messages = [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "assistant survived"},
+        ]
+        raise RuntimeError("late post-processing failure")
+
+pool, fake_db = make_pool()
+_session, record, thread = start_manual_run(pool, "tail-sync", CrashingAgent())
+thread.join(timeout=5)
+
+assert record.status == "error"
+messages = fake_db.get_messages("tail-sync")
+assert [(msg["role"], msg["content"]) for msg in messages] == [
+    ("user", "message:tail-sync"),
+    ("assistant", "assistant survived"),
+]
+`)
+  })
+
+  it('only appends missing generated tail messages when the session DB is partially flushed', () => {
+    runPython(String.raw`
+${harness}
+
+class PartiallyFlushedAgent:
+    def __init__(self, db):
+        self.db = db
+
+    def run_conversation(self, message, **kwargs):
+        self.db.append_message("partial-tail-sync", "assistant", "already flushed")
+        self.messages = [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "already flushed"},
+            {"role": "tool", "content": "missing tool result", "tool_name": "demo"},
+        ]
+        raise RuntimeError("late post-processing failure")
+
+pool, fake_db = make_pool()
+_session, record, thread = start_manual_run(pool, "partial-tail-sync", PartiallyFlushedAgent(fake_db))
+thread.join(timeout=5)
+
+assert record.status == "error"
+messages = fake_db.get_messages("partial-tail-sync")
+assert [(msg["role"], msg["content"]) for msg in messages] == [
+    ("user", "message:partial-tail-sync"),
+    ("assistant", "already flushed"),
+    ("tool", "missing tool result"),
+]
+`)
+  })
+
   it('remembers execute_code approvals inside the bridge without patching upstream files', () => {
     runPython(String.raw`
 ${harness}
