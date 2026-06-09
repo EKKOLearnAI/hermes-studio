@@ -40,10 +40,16 @@ const groupChatApiMock = vi.hoisted(() => {
     clearRoomContext: vi.fn(),
   }
 })
+const clientApiMock = vi.hoisted(() => ({
+  getApiKey: vi.fn(() => 'test-token'),
+  getActiveProfileName: vi.fn(() => 'research'),
+}))
+const fetchMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
-vi.mock('@/api/client', () => ({ getApiKey: vi.fn(() => 'test-token') }))
+vi.mock('@/api/client', () => clientApiMock)
 vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.stubGlobal('fetch', fetchMock)
 
 function emitSocket(event: string, payload: unknown) {
   for (const cb of groupChatApiMock.handlers.get(event) || []) cb(payload)
@@ -96,6 +102,9 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.getSocket.mockReturnValue(groupChatApiMock.socket)
     groupChatApiMock.getStoredUserId.mockReturnValue('user-1')
     groupChatApiMock.getStoredUserName.mockReturnValue('tester')
+    clientApiMock.getApiKey.mockReturnValue('test-token')
+    clientApiMock.getActiveProfileName.mockReturnValue('research')
+    fetchMock.mockReset()
     groupChatApiMock.socket.on.mockClear()
     groupChatApiMock.socket.emit.mockReset()
     groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
@@ -337,5 +346,36 @@ describe('group chat store streaming merge', () => {
       expect.anything(),
       expect.any(Function),
     )
+  })
+
+  it('adds auth and active profile headers to group chat uploads', async () => {
+    const store = await createJoinedStore()
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ files: [{ name: 'note.txt', path: '/tmp/note.txt' }] }),
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data?: unknown, ack?: Function) => {
+      if (event === 'join' && ack) ack({ members: [], agents: [], typingUsers: [], contextStatuses: [] })
+      if (event === 'message' && ack) ack({ id: 'msg-server' })
+      return groupChatApiMock.socket
+    })
+
+    await store.sendMessage('hello', [{
+      id: 'file-1',
+      name: 'note.txt',
+      type: 'text/plain',
+      size: 5,
+      url: '',
+      file: new File(['hello'], 'note.txt', { type: 'text/plain' }),
+    }])
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('/upload')
+    expect(options.method).toBe('POST')
+    expect(options.headers.Authorization).toBe('Bearer test-token')
+    expect(options.headers['X-Hermes-Profile']).toBe('research')
+    expect(options.body).toBeInstanceOf(FormData)
   })
 })

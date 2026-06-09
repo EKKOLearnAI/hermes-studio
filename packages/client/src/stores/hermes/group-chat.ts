@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getApiKey } from '@/api/client'
+import { getActiveProfileName, getApiKey } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { Attachment, ContentBlock } from './chat'
@@ -32,10 +32,14 @@ async function uploadGroupFiles(attachments: Attachment[]): Promise<{ name: stri
         if (att.file) formData.append('file', att.file, att.name)
     }
     const token = getApiKey()
+    const profileName = getActiveProfileName()
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (profileName) headers['X-Hermes-Profile'] = profileName
     const res = await fetch('/upload', {
         method: 'POST',
         body: formData,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
     })
     if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
     const data = await res.json() as { files: { name: string; path: string }[] }
