@@ -5,6 +5,7 @@ import {
   isSensitivePath,
   MAX_EDIT_SIZE,
 } from '../../services/hermes/file-provider'
+import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../../lib/multipart'
 
 function requestedProfile(ctx: any): string | undefined {
   return ctx.state?.profile?.name
@@ -229,8 +230,8 @@ fileRoutes.post('/api/hermes/files/upload', async (ctx) => {
     return
   }
 
-  const boundary = '--' + contentType.split('boundary=')[1]
-  if (!boundary || boundary === '--undefined') {
+  const boundaryBuf = parseMultipartBoundary(contentType)
+  if (!boundaryBuf) {
     ctx.status = 400
     ctx.body = { error: 'Missing boundary', code: 'invalid_request' }
     return
@@ -240,7 +241,6 @@ fileRoutes.post('/api/hermes/files/upload', async (ctx) => {
   for await (const chunk of ctx.req) chunks.push(chunk)
   const raw = Buffer.concat(chunks)
 
-  const boundaryBuf = Buffer.from(boundary)
   const parts = splitMultipart(raw, boundaryBuf)
   const provider = await createRequestFileProvider(ctx)
   const results: { name: string; path: string }[] = []
@@ -252,15 +252,18 @@ fileRoutes.post('/api/hermes/files/upload', async (ctx) => {
     const header = headerBuf.toString('utf-8')
     const data = part.subarray(headerEnd + 4, part.length - 2)
 
-    let filename = ''
-    const filenameStarMatch = header.match(/filename\*=UTF-8''(.+)/i)
-    if (filenameStarMatch) {
-      filename = decodeURIComponent(filenameStarMatch[1])
-    } else {
-      const filenameMatch = header.match(/filename="([^"]+)"/)
-      if (!filenameMatch) continue
-      filename = filenameMatch[1]
+    let filename: string | null
+    try {
+      filename = parseMultipartFilename(header)
+    } catch (error) {
+      if (error instanceof MultipartParseError) {
+        ctx.status = 400
+        ctx.body = { error: error.message, code: 'invalid_request' }
+        return
+      }
+      throw error
     }
+    if (!filename) continue
 
     if (data.length > MAX_EDIT_SIZE) {
       ctx.status = 413
@@ -282,18 +285,3 @@ fileRoutes.post('/api/hermes/files/upload', async (ctx) => {
 
   ctx.body = { files: results }
 })
-
-function splitMultipart(raw: Buffer, boundary: Buffer): Buffer[] {
-  const parts: Buffer[] = []
-  let start = 0
-  while (true) {
-    const idx = raw.indexOf(boundary, start)
-    if (idx === -1) break
-    if (start > 0) {
-      const partStart = start + 2
-      parts.push(raw.subarray(partStart, idx))
-    }
-    start = idx + boundary.length
-  }
-  return parts
-}
