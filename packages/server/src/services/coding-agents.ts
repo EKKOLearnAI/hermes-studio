@@ -27,6 +27,8 @@ const NODE_ENVIRONMENT_MISSING_CODE = 'node_environment_missing'
 const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 const CODING_AGENT_SCOPED_AUTH_PROVIDERS = new Set(['openai-codex', 'copilot', 'xai-oauth', 'nous'])
+const CLAUDE_CODE_SKIP_PERMISSIONS_ARGS = ['--dangerously-skip-permissions']
+const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
 
 interface CommandExecution {
   command: string
@@ -546,6 +548,17 @@ function buildCodexModelCatalog(input: {
       priority: index,
     })),
   }
+}
+
+function hasRootPrivileges(): boolean {
+  if (process.platform === 'win32') return false
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  const euid = typeof process.geteuid === 'function' ? process.geteuid() : null
+  return uid === 0 || euid === 0
+}
+
+function claudeCodePermissionArgs(): string[] {
+  return hasRootPrivileges() ? CLAUDE_CODE_ROOT_PERMISSION_ARGS : CLAUDE_CODE_SKIP_PERMISSIONS_ARGS
 }
 
 function expandHomePath(path: string): string {
@@ -1195,7 +1208,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
-    const args = tool.id === 'claude-code' ? ['--dangerously-skip-permissions'] : []
+    const args = tool.id === 'claude-code' ? claudeCodePermissionArgs() : []
     await mkdir(workspaceDir, { recursive: true })
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
@@ -1293,7 +1306,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ...(input.isolateSettings ? ['--setting-sources', 'local'] : []),
       '--mcp-config',
       mcpPath,
-      '--dangerously-skip-permissions',
+      ...claudeCodePermissionArgs(),
     ]
   } else {
     if (apiMode !== 'chat_completions' && apiMode !== 'codex_responses' && apiMode !== 'anthropic_messages') {

@@ -1,12 +1,17 @@
 import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/claude-code-proxy'
 import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/agent-runner/proxies/codex-proxy'
 import { prepareCodingAgentLaunch } from '../../packages/server/src/services/coding-agents'
 
 const homes: string[] = []
+
+function mockProcessUid(uid: number) {
+  vi.spyOn(process, 'getuid').mockReturnValue(uid)
+  vi.spyOn(process, 'geteuid').mockReturnValue(uid)
+}
 
 function makeHome() {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-launch-'))
@@ -15,8 +20,13 @@ function makeHome() {
   return home
 }
 
+beforeEach(() => {
+  mockProcessUid(1000)
+})
+
 afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
@@ -58,6 +68,25 @@ describe('coding agent launch preparation', () => {
       env: {},
       shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --dangerously-skip-permissions`,
       files: [],
+    })
+  })
+
+  it('uses Claude Code auto permission mode instead of dangerous bypass when running as root', async () => {
+    mockProcessUid(0)
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      mode: 'global',
+      profile: 'default',
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'claude-code',
+      mode: 'global',
+      rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'claude',
+      args: ['--permission-mode', 'auto'],
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --permission-mode auto`,
     })
   })
 
@@ -176,6 +205,35 @@ describe('coding agent launch preparation', () => {
     expect(result.shellCommand).not.toContain('--setting-sources local')
     const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
     expect(launcher).toContain('--setting-sources local')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
+  })
+
+  it('uses Claude Code auto permission mode for scoped root launches', async () => {
+    mockProcessUid(0)
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      isolateSettings: true,
+    })
+
+    expect(result.args).toEqual([
+      '--settings',
+      join(result.rootDir, 'settings.json'),
+      '--setting-sources',
+      'local',
+      '--mcp-config',
+      join(result.rootDir, 'mcp.json'),
+      '--permission-mode',
+      'auto',
+    ])
+    const launcher = readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8')
+    expect(launcher).toContain('--permission-mode auto')
+    expect(launcher).not.toContain('--dangerously-skip-permissions')
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
   })
 
