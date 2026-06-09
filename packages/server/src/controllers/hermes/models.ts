@@ -164,6 +164,19 @@ function profileAuthPath(profile: string): string {
   return join(getProfileDir(profile), 'auth.json')
 }
 
+function profileGoogleOAuthPath(profile: string): string {
+  return join(getProfileDir(profile), 'auth', 'google_oauth.json')
+}
+
+function hasGoogleGeminiOAuthCredentials(profile: string): boolean {
+  try {
+    const authPath = profileGoogleOAuthPath(profile)
+    if (!existsSync(authPath)) return false
+    const creds = JSON.parse(readFileSync(authPath, 'utf-8'))
+    return !!String(creds?.access || '').trim() && !!String(creds?.refresh || '').trim()
+  } catch { return false }
+}
+
 function envReader(envContent: string) {
   const envHasValue = (key: string): boolean => {
     if (!key) return false
@@ -311,6 +324,7 @@ async function buildAvailableForProfile(
 
   const isOAuthAuthorized = (providerKey: string): boolean => {
     try {
+      if (providerKey === 'google-gemini-cli' && hasGoogleGeminiOAuthCredentials(profile)) return true
       const authPath = profileAuthPath(profile)
       if (!existsSync(authPath)) return false
       const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
@@ -557,6 +571,7 @@ export async function getAvailable(ctx: any) {
 
     const isOAuthAuthorized = (providerKey: string): boolean => {
       try {
+        if (providerKey === 'google-gemini-cli' && hasGoogleGeminiOAuthCredentials(getActiveProfileName())) return true
         const authPath = getActiveAuthPath()
         if (!existsSync(authPath)) return false
         const auth = JSON.parse(readFileSync(authPath, 'utf-8'))

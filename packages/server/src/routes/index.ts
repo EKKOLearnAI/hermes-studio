@@ -21,6 +21,7 @@ import { providerRoutes } from './hermes/providers'
 import { configRoutes } from './hermes/config'
 import { logRoutes } from './hermes/logs'
 import { codexAuthRoutes } from './hermes/codex-auth'
+import { geminiAuthRoutes } from './hermes/gemini-auth'
 import { nousAuthRoutes } from './hermes/nous-auth'
 import { copilotAuthRoutes } from './hermes/copilot-auth'
 import { xaiAuthRoutes } from './hermes/xai-auth'
@@ -69,6 +70,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(configRoutes.routes())
   app.use(logRoutes.routes())
   app.use(codexAuthRoutes.routes())
+  app.use(geminiAuthRoutes.routes())
   app.use(nousAuthRoutes.routes())
   app.use(copilotAuthRoutes.routes())
   app.use(xaiAuthRoutes.routes())

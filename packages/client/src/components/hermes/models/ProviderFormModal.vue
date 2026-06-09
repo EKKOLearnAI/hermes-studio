@@ -4,6 +4,7 @@ import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadi
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
 import CodexLoginModal from './CodexLoginModal.vue'
+import GeminiLoginModal from './GeminiLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
 import CopilotLoginModal from './CopilotLoginModal.vue'
 import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
@@ -26,6 +27,7 @@ const showModal = ref(true)
 const loading = ref(false)
 const fetchingModels = ref(false)
 const showCodexLogin = ref(false)
+const showGeminiLogin = ref(false)
 const showNousLogin = ref(false)
 const showCopilotLogin = ref(false)
 const showXaiLogin = ref(false)
@@ -44,6 +46,7 @@ const formData = ref({
 const modelOptions = ref<Array<{ label: string; value: string }>>([])
 
 const CODEX_KEY = 'openai-codex'
+const GEMINI_KEY = 'google-gemini-cli'
 const NOUS_KEY = 'nous'
 const COPILOT_KEY = 'copilot'
 const CLIPROXYAPI_KEY = 'cliproxyapi'
@@ -55,6 +58,7 @@ const ALIBABA_CODING_REGIONS = {
 } as const
 
 const isCodex = computed(() => selectedPreset.value === CODEX_KEY)
+const isGemini = computed(() => selectedPreset.value === GEMINI_KEY)
 const isNous = computed(() => selectedPreset.value === NOUS_KEY)
 const isCopilot = computed(() => selectedPreset.value === COPILOT_KEY)
 const isCliproxyApi = computed(() => selectedPreset.value === CLIPROXYAPI_KEY)
@@ -169,6 +173,12 @@ async function handleSave() {
     return
   }
 
+  // Google Gemini CLI: 弹出 PKCE OAuth 授权弹窗
+  if (isGemini.value) {
+    showGeminiLogin.value = true
+    return
+  }
+
   // Nous: 弹出 OAuth 设备码弹窗
   if (isNous.value) {
     showNousLogin.value = true
@@ -229,6 +239,12 @@ async function handleSave() {
 
 async function handleCodexSuccess() {
   showCodexLogin.value = false
+  message.success(t('models.providerAdded'))
+  emit('saved')
+}
+
+async function handleGeminiSuccess() {
+  showGeminiLogin.value = false
   message.success(t('models.providerAdded'))
   emit('saved')
 }
@@ -324,7 +340,7 @@ function handleClose() {
     preset="card"
     :title="t('models.addProvider')"
     :style="{ width: 'min(520px, calc(100vw - 32px))' }"
-    :mask-closable="!loading && !showCodexLogin && !showNousLogin && !showCopilotLogin && !showXaiLogin"
+    :mask-closable="!loading && !showCodexLogin && !showGeminiLogin && !showNousLogin && !showCopilotLogin && !showXaiLogin"
     @after-leave="emit('close')"
   >
     <NForm label-placement="top">
@@ -376,7 +392,7 @@ function handleClose() {
         </NRadioGroup>
       </NFormItem>
 
-      <NFormItem v-if="!isCodex && !isNous" :label="t('models.baseUrl')" required>
+      <NFormItem v-if="!isCodex && !isGemini && !isNous" :label="t('models.baseUrl')" required>
         <NInput
           v-model:value="formData.base_url"
           :placeholder="t('models.baseUrlPlaceholder')"
@@ -384,7 +400,7 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem v-if="!isCodex && !isNous" :label="t('models.apiKey')" :required="!isCliproxyApi && !isXaiOAuth">
+      <NFormItem v-if="!isCodex && !isGemini && !isNous" :label="t('models.apiKey')" :required="!isCliproxyApi && !isXaiOAuth">
         <NInput
           v-model:value="formData.api_key"
           type="password"
@@ -438,6 +454,12 @@ function handleClose() {
       v-if="showCodexLogin"
       @close="showCodexLogin = false"
       @success="handleCodexSuccess"
+    />
+
+    <GeminiLoginModal
+      v-if="showGeminiLogin"
+      @close="showGeminiLogin = false"
+      @success="handleGeminiSuccess"
     />
 
     <NousLoginModal

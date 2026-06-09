@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from 'fs'
-import { writeFile } from 'fs/promises'
+import { writeFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex'])
-const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'google-gemini-cli'])
+const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'google-gemini-cli'])
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -17,23 +17,30 @@ function authPathForProfile(profile: string): string {
   return join(getProfileDir(profile), 'auth.json')
 }
 
+function googleOAuthPathForProfile(profile: string): string {
+  return join(getProfileDir(profile), 'auth', 'google_oauth.json')
+}
+
 async function clearStoredAuthProvider(profile: string, poolKey: string) {
   try {
     const authPath = authPathForProfile(profile)
-    if (!existsSync(authPath)) return
-
-    const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
-    let changed = false
-    if (auth.providers && Object.prototype.hasOwnProperty.call(auth.providers, poolKey)) {
-      delete auth.providers[poolKey]
-      changed = true
+    if (existsSync(authPath)) {
+      const auth = JSON.parse(readFileSync(authPath, 'utf-8'))
+      let changed = false
+      if (auth.providers && Object.prototype.hasOwnProperty.call(auth.providers, poolKey)) {
+        delete auth.providers[poolKey]
+        changed = true
+      }
+      if (auth.credential_pool && Object.prototype.hasOwnProperty.call(auth.credential_pool, poolKey)) {
+        delete auth.credential_pool[poolKey]
+        changed = true
+      }
+      if (changed) {
+        await writeFile(authPath, JSON.stringify(auth, null, 2) + '\n', 'utf-8')
+      }
     }
-    if (auth.credential_pool && Object.prototype.hasOwnProperty.call(auth.credential_pool, poolKey)) {
-      delete auth.credential_pool[poolKey]
-      changed = true
-    }
-    if (changed) {
-      await writeFile(authPath, JSON.stringify(auth, null, 2) + '\n', 'utf-8')
+    if (poolKey === 'google-gemini-cli') {
+      try { await unlink(googleOAuthPathForProfile(profile)) } catch {}
     }
   } catch (err: any) { logger.error(err, 'Failed to clear auth credentials for %s', poolKey) }
 }
