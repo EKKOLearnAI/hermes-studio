@@ -10,6 +10,11 @@
   overflow: hidden;
   background: $code-bg;
   border: 1px solid $border-color;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
 
   .code-header {
     display: flex;
@@ -49,6 +54,9 @@
     font-size: 13px;
     line-height: 1.5;
     overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   &.hljs-unified-diff {
@@ -57,6 +65,7 @@
       padding: 0;
       overflow-x: auto;
       white-space: pre;
+      overflow-wrap: normal;
       word-break: normal;
       line-height: 1.45;
     }
