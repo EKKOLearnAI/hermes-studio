@@ -18,6 +18,7 @@ const CHILD_STDERR_TAIL_CHARS = 8 * 1024
 const CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT = 32 * 1024
 const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
+const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
 
 let pty: any = null
 
@@ -1146,6 +1147,7 @@ export class CodingAgentRunManager {
 
     const commonArgs = [
       '--json',
+      ...CODEX_REASONING_SUMMARY_ARGS,
       ...run.launch.args,
       '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox',
@@ -1269,6 +1271,10 @@ export class CodingAgentRunManager {
       this.handleCodexItemCompleted(run, event.item || event)
       return
     }
+    if (type === 'response_item') {
+      this.handleCodexResponseItem(run, event.payload || event.item || event)
+      return
+    }
     if (type === 'turn.completed') {
       run.codexPendingUsage = event.usage
       return
@@ -1286,6 +1292,15 @@ export class CodingAgentRunManager {
     }
     if (method === 'item/agentMessage/delta' || method === 'item/assistantMessage/delta') {
       this.appendCodexText(run, String(params.delta || params.text || ''))
+      return
+    }
+    if (
+      method === 'item/reasoning/delta' ||
+      method === 'item/reasoningText/delta' ||
+      method === 'item/reasoningSummary/delta' ||
+      method === 'item/thinking/delta'
+    ) {
+      this.appendCodexReasoning(run, this.codexReasoningText(params))
       return
     }
     if (method === 'item/started') {
@@ -1346,6 +1361,10 @@ export class CodingAgentRunManager {
 
   private handleCodexItemCompleted(run: ManagedCodingAgentRun, item: any) {
     const itemType = this.codexItemType(item)
+    if (this.isCodexReasoningItem(itemType)) {
+      this.appendCodexReasoning(run, this.codexReasoningText(item))
+      return
+    }
     if (
       itemType === 'agent_message' ||
       itemType === 'assistant_message' ||
@@ -1407,6 +1426,23 @@ export class CodingAgentRunManager {
     })
   }
 
+  private handleCodexResponseItem(run: ManagedCodingAgentRun, item: any) {
+    const itemType = this.codexItemType(item)
+    if (this.isCodexReasoningItem(itemType)) {
+      this.appendCodexReasoning(run, this.codexReasoningText(item))
+      return
+    }
+    if (
+      itemType === 'agent_message' ||
+      itemType === 'assistant_message' ||
+      itemType === 'agentMessage' ||
+      itemType === 'assistantMessage' ||
+      itemType === 'message'
+    ) {
+      this.appendCodexFinalText(run, String(item.text || item.message || item.content || ''))
+    }
+  }
+
   private codexItemType(item: any): string {
     return String(item?.type || item?.item_type || item?.itemType || '').trim()
   }
@@ -1416,6 +1452,27 @@ export class CodingAgentRunManager {
       itemType === 'mcp_tool_call' ||
       itemType === 'web_search' ||
       itemType === 'file_change'
+  }
+
+  private isCodexReasoningItem(itemType: string): boolean {
+    return itemType === 'reasoning' ||
+      itemType === 'reasoning_text' ||
+      itemType === 'reasoning_summary' ||
+      itemType === 'thinking'
+  }
+
+  private codexReasoningText(item: any): string {
+    if (typeof item?.delta === 'string') return item.delta
+    if (typeof item?.text === 'string') return item.text
+    if (typeof item?.summary === 'string') return item.summary
+    if (typeof item?.reasoning === 'string') return item.reasoning
+    if (Array.isArray(item?.summary)) {
+      return item.summary
+        .map((part: any) => typeof part?.text === 'string' ? part.text : typeof part === 'string' ? part : '')
+        .filter(Boolean)
+        .join('')
+    }
+    return ''
   }
 
   private isRedundantCodexExecToolItem(item: any, itemType: string): boolean {
@@ -1503,6 +1560,19 @@ export class CodingAgentRunManager {
         output_index: 0,
         content_index: 0,
         delta,
+      },
+    })
+  }
+
+  private appendCodexReasoning(run: ManagedCodingAgentRun, text: string) {
+    if (!text) return
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.reasoning.delta',
+      data: {
+        type: 'response.reasoning.delta',
+        item_id: run.printMessageId,
+        output_index: 0,
+        delta: text,
       },
     })
   }

@@ -47,6 +47,7 @@ export async function* openAiChatSseToResponsesEvents(
   let buffer = ''
   let textStarted = false
   let text = ''
+  let reasoning = ''
   const toolCalls = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
 
   yield {
@@ -70,6 +71,19 @@ export async function* openAiChatSseToResponsesEvents(
         if (!choice) continue
 
         const delta = choice.delta || {}
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+          reasoning += delta.reasoning_content
+          yield {
+            type: 'response.reasoning.delta',
+            data: {
+              type: 'response.reasoning.delta',
+              item_id: messageId,
+              output_index: 0,
+              delta: delta.reasoning_content,
+            },
+          }
+        }
+
         if (typeof delta.content === 'string' && delta.content) {
           if (!textStarted) {
             textStarted = true
@@ -161,6 +175,13 @@ export async function* openAiChatSseToResponsesEvents(
   }
 
   const output: any[] = []
+  if (reasoning) {
+    output.push({
+      type: 'reasoning',
+      id: `rs_${id}`,
+      summary: [{ type: 'summary_text', text: reasoning }],
+    })
+  }
   if (textStarted) {
     const messageItem = {
       type: 'message',
@@ -269,6 +290,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
   let buffer = ''
   let textStarted = false
   let text = ''
+  let reasoning = ''
   const toolBlocks = new Map<number, { id: string; name: string; arguments: string; added: boolean }>()
 
   yield {
@@ -350,6 +372,19 @@ export async function* anthropicMessagesSseToResponsesEvents(
 
         if (eventName === 'content_block_delta' || data?.type === 'content_block_delta') {
           const delta = data?.delta || {}
+          if (delta.type === 'thinking_delta' && delta.thinking) {
+            const textDelta = String(delta.thinking)
+            reasoning += textDelta
+            yield {
+              type: 'response.reasoning.delta',
+              data: {
+                type: 'response.reasoning.delta',
+                item_id: messageId,
+                output_index: Number(data.index || 0),
+                delta: textDelta,
+              },
+            }
+          }
           if (delta.type === 'text_delta' && delta.text) {
             yield* ensureText()
             text += String(delta.text)
@@ -385,6 +420,13 @@ export async function* anthropicMessagesSseToResponsesEvents(
   }
 
   const output: any[] = []
+  if (reasoning) {
+    output.push({
+      type: 'reasoning',
+      id: `rs_${id}`,
+      summary: [{ type: 'summary_text', text: reasoning }],
+    })
+  }
   if (textStarted) {
     const messageItem = {
       type: 'message',

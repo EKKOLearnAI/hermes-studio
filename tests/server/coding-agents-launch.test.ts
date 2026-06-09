@@ -216,11 +216,13 @@ describe('coding agent launch preparation', () => {
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
+    expect(config).toContain('model_reasoning_summary = "auto"')
 
     const catalog = JSON.parse(readFileSync(join(result.rootDir, 'codex-model-catalog.json'), 'utf-8'))
     expect(catalog.models.some((entry: any) => entry.slug === 'openai/gpt-oss-20b:free')).toBe(true)
     expect(catalog.models[0]).toHaveProperty('base_instructions')
     expect(catalog.models[0]).toHaveProperty('model_messages')
+    expect(catalog.models[0]).toHaveProperty('default_reasoning_summary', 'auto')
   })
 
   it('points Codex Chat Completions providers at the local Responses proxy', async () => {

@@ -88,6 +88,8 @@ export interface SessionState {
 export interface ResponseRunState {
   runMarker?: string
   responseId?: string
+  reasoningMessageId?: number | string
+  pendingReasoning?: string
   insertedKeys: Set<string>
   toolCalls: Map<string, any>
 }

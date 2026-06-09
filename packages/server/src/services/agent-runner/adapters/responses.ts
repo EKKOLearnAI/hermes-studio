@@ -235,6 +235,14 @@ export function openAiChatToResponses(data: any, target: ResponsesAdapterTarget)
   const message = choice.message || {}
   const output: any[] = []
 
+  if (message.reasoning_content) {
+    output.push({
+      type: 'reasoning',
+      id: `rs_${responseId(data)}`,
+      summary: [{ type: 'summary_text', text: String(message.reasoning_content) }],
+    })
+  }
+
   if (message.content) {
     output.push({
       type: 'message',
@@ -269,8 +277,11 @@ export function openAiChatToResponses(data: any, target: ResponsesAdapterTarget)
 export function anthropicMessageToResponses(data: any, target: ResponsesAdapterTarget): any {
   const output: any[] = []
   const textParts: string[] = []
+  const reasoningParts: string[] = []
   for (const block of Array.isArray(data?.content) ? data.content : []) {
     if (block?.type === 'text' && block.text) textParts.push(String(block.text))
+    if (block?.type === 'thinking' && block.thinking) reasoningParts.push(String(block.thinking))
+    if (block?.type === 'redacted_thinking') reasoningParts.push('[redacted thinking]')
     if (block?.type === 'tool_use') {
       output.push({
         type: 'function_call',
@@ -288,6 +299,13 @@ export function anthropicMessageToResponses(data: any, target: ResponsesAdapterT
       status: 'completed',
       role: 'assistant',
       content: [{ type: 'output_text', text: textParts.join('\n'), annotations: [] }],
+    })
+  }
+  if (reasoningParts.length) {
+    output.unshift({
+      type: 'reasoning',
+      id: `rs_${responseId(data)}`,
+      summary: [{ type: 'summary_text', text: reasoningParts.join('\n') }],
     })
   }
 

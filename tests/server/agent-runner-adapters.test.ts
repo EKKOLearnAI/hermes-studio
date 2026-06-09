@@ -100,9 +100,10 @@ describe('agent runner Responses adapters', () => {
       id: 'chatcmpl_1',
       created: 123,
       choices: [{
-        message: {
-          content: 'hi',
-          tool_calls: [{
+	        message: {
+	          reasoning_content: 'think',
+	          content: 'hi',
+	          tool_calls: [{
             id: 'call_1',
             function: { name: 'lookup', arguments: '{"id":1}' },
           }],
@@ -113,9 +114,10 @@ describe('agent runner Responses adapters', () => {
       id: 'chatcmpl_1',
       object: 'response',
       created_at: 123,
-      model: 'test-model',
-      output: [
-        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi', annotations: [] }] },
+	      model: 'test-model',
+	      output: [
+	        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
+	        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi', annotations: [] }] },
         { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
       ],
       usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
@@ -124,19 +126,21 @@ describe('agent runner Responses adapters', () => {
 
   it('converts Anthropic messages to Responses output', () => {
     expect(anthropicMessageToResponses({
-      id: 'msg_1',
-      content: [
-        { type: 'text', text: 'hi' },
-        { type: 'tool_use', id: 'toolu_1', name: 'lookup', input: { id: 1 } },
+	      id: 'msg_1',
+	      content: [
+	        { type: 'thinking', thinking: 'anthropic think' },
+	        { type: 'text', text: 'hi' },
+	        { type: 'tool_use', id: 'toolu_1', name: 'lookup', input: { id: 1 } },
       ],
       usage: { input_tokens: 4, output_tokens: 5 },
     }, target)).toMatchObject({
       id: 'msg_1',
-      object: 'response',
-      model: 'test-model',
-      output: [
-        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi', annotations: [] }] },
-        { type: 'function_call', call_id: 'toolu_1', name: 'lookup', arguments: '{"id":1}' },
+	      object: 'response',
+	      model: 'test-model',
+	      output: [
+	        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'anthropic think' }] },
+	        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi', annotations: [] }] },
+	        { type: 'function_call', call_id: 'toolu_1', name: 'lookup', arguments: '{"id":1}' },
       ],
       usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 },
     })
@@ -161,19 +165,21 @@ async function collectAnthropicEvents(events: AsyncIterable<AnthropicStreamEvent
 }
 
 describe('agent runner Responses stream adapters', () => {
-  it('normalizes OpenAI Chat SSE text and tool calls to Responses events', async () => {
-    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
-      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
-      'data: {"choices":[{"delta":{"content":"llo"}}]}\r\n\r\n',
+	  it('normalizes OpenAI Chat SSE text and tool calls to Responses events', async () => {
+	    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
+	      'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\n',
+	      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
+	      'data: {"choices":[{"delta":{"content":"llo"}}]}\r\n\r\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}\n\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n',
       'data: [DONE]\n\n',
     ]), target))
 
-    expect(events.map(event => event.type)).toEqual([
-      'response.created',
-      'response.output_item.added',
-      'response.content_part.added',
+	    expect(events.map(event => event.type)).toEqual([
+	      'response.created',
+	      'response.reasoning.delta',
+	      'response.output_item.added',
+	      'response.content_part.added',
       'response.output_text.delta',
       'response.output_text.delta',
       'response.output_item.added',
@@ -183,37 +189,41 @@ describe('agent runner Responses stream adapters', () => {
       'response.content_part.done',
       'response.output_item.done',
       'response.output_item.done',
-      'response.completed',
-    ])
-    expect(events[3].data).toMatchObject({ delta: 'he' })
-    expect(events[4].data).toMatchObject({ delta: 'llo' })
-    expect(events[5].data).toMatchObject({
-      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
-    })
-    expect(events[12].data).toMatchObject({
-      response: {
-        model: 'test-model',
-        status: 'completed',
-        output: [
-          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
-          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
+	      'response.completed',
+	    ])
+	    expect(events[1].data).toMatchObject({ delta: 'think' })
+	    expect(events[4].data).toMatchObject({ delta: 'he' })
+	    expect(events[5].data).toMatchObject({ delta: 'llo' })
+	    expect(events[6].data).toMatchObject({
+	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
+	    })
+	    expect(events[13].data).toMatchObject({
+	      response: {
+	        model: 'test-model',
+	        status: 'completed',
+	        output: [
+	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
+	          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
+	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
         ],
       },
     })
   })
 
   it('normalizes Anthropic Messages SSE text and tool calls to Responses events', async () => {
-    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
-      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
-      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
+	    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
+	      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
+	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}\n\n',
+	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
       'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}\r\n\r\n',
       'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"id\\":1}"}}\n\n',
     ]), target))
 
-    expect(events.map(event => event.type)).toEqual([
-      'response.created',
-      'response.output_item.added',
-      'response.content_part.added',
+	    expect(events.map(event => event.type)).toEqual([
+	      'response.created',
+	      'response.reasoning.delta',
+	      'response.output_item.added',
+	      'response.content_part.added',
       'response.output_text.delta',
       'response.output_item.added',
       'response.function_call_arguments.delta',
@@ -221,17 +231,19 @@ describe('agent runner Responses stream adapters', () => {
       'response.content_part.done',
       'response.output_item.done',
       'response.output_item.done',
-      'response.completed',
-    ])
-    expect(events[1].data).toMatchObject({ item: { id: 'msg_msg_1' } })
-    expect(events[4].data).toMatchObject({
-      item: { type: 'function_call', call_id: 'toolu_1', name: 'lookup' },
-    })
-    expect(events[10].data).toMatchObject({
-      response: {
-        id: 'msg_1',
-        output: [
-          { type: 'message', content: [{ type: 'output_text', text: 'hi' }] },
+	      'response.completed',
+	    ])
+	    expect(events[1].data).toMatchObject({ delta: 'think' })
+	    expect(events[2].data).toMatchObject({ item: { id: 'msg_msg_1' } })
+	    expect(events[5].data).toMatchObject({
+	      item: { type: 'function_call', call_id: 'toolu_1', name: 'lookup' },
+	    })
+	    expect(events[11].data).toMatchObject({
+	      response: {
+	        id: 'msg_1',
+	        output: [
+	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
+	          { type: 'message', content: [{ type: 'output_text', text: 'hi' }] },
           { type: 'function_call', call_id: 'toolu_1', name: 'lookup', arguments: '{"id":1}' },
         ],
       },
