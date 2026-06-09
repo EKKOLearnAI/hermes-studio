@@ -275,6 +275,32 @@ describe('chat store compression state', () => {
     vi.useRealTimers()
   })
 
+  it('renders object-shaped run failure errors with their message text', async () => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('run claude')
+
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
+    onEvent({
+      event: 'run.failed',
+      session_id: 'session-1',
+      error: {
+        message: 'spawn claude ENOENT',
+        code: 'ENOENT',
+      },
+    })
+
+    const errorMessage = store.activeSession?.messages.find(
+      (message: Message) => message.role === 'assistant' && message.systemType === 'error',
+    )
+    expect(errorMessage?.content).toBe('Error: spawn claude ENOENT')
+    expect(errorMessage?.content).not.toContain('[object Object]')
+  })
+
   it('appends post-reconnect deltas to a genuine resumed in-flight assistant instead of duplicating it', async () => {
     const store = useChatStore()
     const session = makeSession('session-1')
