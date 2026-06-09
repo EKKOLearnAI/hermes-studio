@@ -197,7 +197,17 @@ function windowsCommandNeedsShell(command: string): boolean {
 }
 
 function quoteCmdArg(value: string): string {
-  return `"${String(value).replace(/"/g, '""')}"`
+  return `"${String(value).replace(/%/g, '%%').replace(/"/g, '""')}"`
+}
+
+function decodeChildChunk(chunk: Buffer): string {
+  const utf8 = chunk.toString('utf8')
+  if (process.platform !== 'win32' || !utf8.includes('\uFFFD')) return utf8
+  try {
+    return new TextDecoder('gb18030').decode(chunk)
+  } catch {
+    return utf8
+  }
 }
 
 function spawnCodingAgentChild(command: string, args: string[], options: {
@@ -205,7 +215,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
   env: NodeJS.ProcessEnv
 }): ChildProcess {
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    return spawn('cmd.exe', ['/d', '/s', '/c', [quoteCmdArg(command), ...args.map(quoteCmdArg)].join(' ')], {
+    return spawn('cmd.exe', ['/d', '/c', ['call', quoteCmdArg(command), ...args.map(quoteCmdArg)].join(' ')], {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -236,7 +246,7 @@ function childProcessErrorMessage(err: unknown): string {
 }
 
 function appendChildStderr(run: ManagedCodingAgentRun, chunk: Buffer): string {
-  const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8'))
+  const text = sanitizeCodingAgentTerminalOutput(decodeChildChunk(chunk))
   run.currentChildStderr = `${run.currentChildStderr || ''}${text}`.slice(-CHILD_STDERR_TAIL_CHARS)
   return text.trim()
 }
