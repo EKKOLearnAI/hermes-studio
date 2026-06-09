@@ -1,6 +1,6 @@
 ---
 date: 2026-06-09
-pr: pending
+pr: 1452
 feature: Mobile chat message overflow
 impact: Chat message containers keep long markdown, links, inline code, and code blocks inside the mobile viewport.
 ---
