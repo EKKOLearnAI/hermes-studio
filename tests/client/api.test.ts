@@ -159,6 +159,21 @@ describe('API Client', () => {
       await expect(request('/api/hermes/sessions')).rejects.toThrow('API Error 500: Internal Server Error')
     })
 
+    it('extracts nested JSON error messages instead of stringifying objects', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve(JSON.stringify({
+          error: {
+            message: 'spawn claude ENOENT',
+            code: 'ENOENT',
+          },
+        })),
+      })
+
+      await expect(request('/api/coding-agents/runs/session-1/input')).rejects.toThrow('API Error 500: spawn claude ENOENT')
+    })
+
     it('returns parsed JSON on success', async () => {
       const data = { sessions: [{ id: '1' }] }
       mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(data) })

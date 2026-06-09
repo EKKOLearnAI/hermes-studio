@@ -142,4 +142,49 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()
   })
+
+  it('emits a readable failed run when a hidden Claude Code process cannot start', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).markChatRunCompleted = (_sessionId: string, event: string) => {
+      emitted.push({ event: 'marked', payload: { event } })
+    }
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+
+    manager.start({
+      agentSessionId: 'agent-session-error-1',
+      agentId: 'claude-code',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'claude-test',
+      sessionId: 'chat-session-error-1',
+      command: 'claude',
+      args: [],
+      shellCommand: 'claude',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    manager.send('chat-session-error-1', 'test')
+    testState.spawnCalls[0].child.emit('error', Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' }))
+
+    expect(emitted).toContainEqual(expect.objectContaining({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        error: expect.objectContaining({
+          message: 'spawn claude ENOENT',
+        }),
+      }),
+    }))
+
+    const run = (manager as any).runs.get('agent-session-error-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
 })

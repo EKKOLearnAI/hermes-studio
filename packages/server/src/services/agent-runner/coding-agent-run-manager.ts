@@ -220,6 +220,19 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
   })
 }
 
+function childProcessErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (!err || typeof err !== 'object') return String(err || 'Process failed')
+  const record = err as Record<string, unknown>
+  const message = record.message
+  if (typeof message === 'string' && message.trim()) return message
+  try {
+    return JSON.stringify(record)
+  } catch {
+    return String(err)
+  }
+}
+
 function appendedTextDelta(existing: string, next: string): string {
   if (!existing || !next) return next
   if (next.startsWith(existing)) return next.slice(existing.length)
@@ -710,6 +723,27 @@ export class CodingAgentRunManager {
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
     })
 
+    child.on('error', (err) => {
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      run.currentChildKillTimer = undefined
+      run.currentChild = undefined
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] claude print failed to start')
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.failed',
+        data: {
+          type: 'response.failed',
+          response: {
+            id: run.printResponseId,
+            object: 'response',
+            status: 'failed',
+            model: run.launch.model,
+            error: { message: childProcessErrorMessage(err) },
+            output: [],
+          },
+        },
+      })
+    })
+
     child.on('exit', (code) => {
       if (stdoutBuffer.trim()) this.handleClaudePrintLine(run, stdoutBuffer)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
@@ -1121,6 +1155,27 @@ export class CodingAgentRunManager {
       this.touch(run)
       const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8')).trim()
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
+    })
+
+    child.on('error', (err) => {
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      run.currentChildKillTimer = undefined
+      run.currentChild = undefined
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] codex exec failed to start')
+      this.handleClaudePrintResponseEvent(run, {
+        type: 'response.failed',
+        data: {
+          type: 'response.failed',
+          response: {
+            id: run.printResponseId,
+            object: 'response',
+            status: 'failed',
+            model: run.launch.model,
+            error: { message: childProcessErrorMessage(err) },
+            output: [],
+          },
+        },
+      })
     })
 
     child.on('exit', (code) => {
