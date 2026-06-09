@@ -68,8 +68,33 @@ const latestRunProfile = computed(() => {
   return [...detail.value.runs].reverse().find(run => run.profile)?.profile || null
 })
 
+function isActiveTask(taskId: string, board: string): boolean {
+  return props.taskId === taskId && kanbanStore.selectedBoard === board
+}
+
+function resetTaskScopedState() {
+  assignProfile.value = null
+  blockReason.value = ''
+  showBlockInput.value = false
+  completeSummary.value = ''
+  showCompleteInput.value = false
+  showMessagesModal.value = false
+  commentBody.value = ''
+  taskLog.value = null
+  taskLogLoading.value = false
+  diagnostics.value = null
+  diagnosticsLoading.value = false
+  recoveryReason.value = ''
+  runHistoryPage.value = 1
+  sessionResults.value = []
+  sessionLoading.value = false
+  showSessions.value = false
+}
+
 async function searchTaskSessions() {
   if (!detail.value) return
+  const taskId = detail.value.task.id
+  const board = kanbanStore.selectedBoard
   const profile = latestRunProfile.value
   if (!profile) return
   showSessions.value = !showSessions.value
@@ -77,13 +102,13 @@ async function searchTaskSessions() {
   sessionLoading.value = true
   try {
     const res = await request<{ results: any[] }>(
-      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(detail.value.task.id)}&profile=${encodeURIComponent(profile)}&board=${encodeURIComponent(kanbanStore.selectedBoard)}`
+      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(taskId)}&profile=${encodeURIComponent(profile)}&board=${encodeURIComponent(board)}`
     )
-    sessionResults.value = res.results
+    if (isActiveTask(taskId, board)) sessionResults.value = res.results
   } catch {
-    sessionResults.value = []
+    if (isActiveTask(taskId, board)) sessionResults.value = []
   } finally {
-    sessionLoading.value = false
+    if (isActiveTask(taskId, board)) sessionLoading.value = false
   }
 }
 
@@ -141,7 +166,7 @@ const runHistoryRange = computed(() => {
 })
 
 watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, board]) => {
-  runHistoryPage.value = 1
+  resetTaskScopedState()
   if (!id) {
     detail.value = null
     return
@@ -149,15 +174,15 @@ watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, boar
   loading.value = true
   try {
     const nextDetail = await getTask(id, { board })
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       detail.value = nextDetail
     }
   } catch (err: any) {
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       message.error(t('kanban.message.loadFailed'))
     }
   } finally {
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       loading.value = false
     }
   }
@@ -220,54 +245,73 @@ async function handleUnblock() {
 
 async function handleAssign() {
   if (!props.taskId || !assignProfile.value) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   try {
-    await kanbanStore.assignTask(props.taskId, assignProfile.value)
-    message.success(t('kanban.message.taskAssigned'))
-    assignProfile.value = null
+    await kanbanStore.assignTask(taskId, assignProfile.value)
+    if (isActiveTask(taskId, board)) {
+      message.success(t('kanban.message.taskAssigned'))
+      assignProfile.value = null
+    }
     if (detail.value) {
-      detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
+      const nextDetail = await getTask(taskId, { board })
+      if (isActiveTask(taskId, board)) detail.value = nextDetail
     }
     emit('updated')
   } catch (err: any) {
-    message.error(err.message)
+    if (isActiveTask(taskId, board)) message.error(err.message)
   }
 }
 
 async function handleAddComment() {
   if (!props.taskId || !commentBody.value.trim()) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   try {
-    await kanbanStore.addComment(props.taskId, commentBody.value.trim())
-    commentBody.value = ''
-    detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
-    message.success(t('kanban.message.commentAdded'))
+    await kanbanStore.addComment(taskId, commentBody.value.trim())
+    const nextDetail = await getTask(taskId, { board })
+    if (isActiveTask(taskId, board)) {
+      commentBody.value = ''
+      detail.value = nextDetail
+      message.success(t('kanban.message.commentAdded'))
+    }
     emit('updated')
   } catch (err: any) {
-    message.error(err.message)
+    if (isActiveTask(taskId, board)) message.error(err.message)
   }
 }
 
 async function handleLoadLog() {
   if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   taskLogLoading.value = true
   try {
-    const log = await kanbanStore.getTaskLog(props.taskId, 20000)
-    taskLog.value = log.exists ? log.content : t('kanban.detail.noLog')
+    const log = await kanbanStore.getTaskLog(taskId, 20000)
+    if (isActiveTask(taskId, board)) {
+      taskLog.value = log.exists ? log.content : t('kanban.detail.noLog')
+    }
   } catch (err: any) {
-    message.error(err.message)
+    if (isActiveTask(taskId, board)) message.error(err.message)
   } finally {
-    taskLogLoading.value = false
+    if (isActiveTask(taskId, board)) taskLogLoading.value = false
   }
 }
 
 async function handleLoadDiagnostics() {
   if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   diagnosticsLoading.value = true
   try {
-    diagnostics.value = await kanbanStore.getDiagnostics({ task: props.taskId, severity: 'warning' })
+    const nextDiagnostics = await kanbanStore.getDiagnostics({ task: taskId, severity: 'warning' })
+    if (isActiveTask(taskId, board)) {
+      diagnostics.value = nextDiagnostics
+    }
   } catch (err: any) {
-    message.error(err.message)
+    if (isActiveTask(taskId, board)) message.error(err.message)
   } finally {
-    diagnosticsLoading.value = false
+    if (isActiveTask(taskId, board)) diagnosticsLoading.value = false
   }
 }
 
@@ -300,10 +344,15 @@ async function handleReassign() {
 
 async function handleSpecify() {
   if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   try {
-    await kanbanStore.specifyTask(props.taskId)
-    message.success(t('kanban.message.taskSpecified'))
-    detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
+    await kanbanStore.specifyTask(taskId)
+    const nextDetail = await getTask(taskId, { board })
+    if (isActiveTask(taskId, board)) {
+      message.success(t('kanban.message.taskSpecified'))
+      detail.value = nextDetail
+    }
     emit('updated')
   } catch (err: any) {
     message.error(err.message)

@@ -35,6 +35,11 @@ vi.mock('naive-ui', () => ({
     emits: ['update:value'],
     template: '<input class="n-input-stub" :value="value" @input="$emit(\'update:value\', $event.target.value)" />',
   }),
+  NInputNumber: defineComponent({
+    props: { value: { type: Number, required: false } },
+    emits: ['update:value'],
+    template: '<input class="n-input-number-stub" type="number" :value="value ?? \'\'" @input="$emit(\'update:value\', $event.target.value === \'\' ? null : Number($event.target.value))" />',
+  }),
   NSelect: defineComponent({
     props: { value: { required: false }, options: { type: Array, default: () => [] } },
     emits: ['update:value'],
@@ -107,12 +112,12 @@ describe('KanbanCreateForm', () => {
     await inputs()[4].setValue('kanban-ui')
     await inputs()[5].setValue('planner, reviewer')
     await inputs()[6].setValue('2h')
-    await inputs()[7].setValue('3')
+    await wrapper.findAll('.n-input-number-stub')[0].setValue('3')
     const checkboxes = wrapper.findAll('input[type="checkbox"]')
     await checkboxes[0].setValue(true)
     await checkboxes[1].setValue(true)
     await flushPromises()
-    await inputs()[8].setValue('12')
+    await wrapper.findAll('.n-input-number-stub')[1].setValue('12')
 
     await wrapper.findAll('.n-button-stub')[1].trigger('click')
     await flushPromises()

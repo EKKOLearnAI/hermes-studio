@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NModal, NForm, NFormItem, NInput, NSelect, NButton, NCheckbox, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NInputNumber, NSelect, NButton, NCheckbox, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useKanbanStore } from '@/stores/hermes/kanban'
 import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
@@ -139,17 +139,23 @@ async function handleSubmit() {
           <NInput v-model:value="maxRuntime" :placeholder="t('kanban.form.maxRuntimePlaceholder')" />
         </NFormItem>
         <NFormItem :label="t('kanban.form.maxRetries')">
-          <NInput
-            :value="maxRetries === null ? '' : String(maxRetries)"
+          <NInputNumber
+            v-model:value="maxRetries"
+            :min="1"
+            :max="100"
+            :precision="0"
             :placeholder="t('kanban.form.maxRetriesPlaceholder')"
-            @update:value="value => { maxRetries = value ? Number(value) : null }"
+            clearable
           />
         </NFormItem>
         <NFormItem v-if="goalMode" :label="t('kanban.form.goalMaxTurns')">
-          <NInput
-            :value="goalMaxTurns === null ? '' : String(goalMaxTurns)"
+          <NInputNumber
+            v-model:value="goalMaxTurns"
+            :min="1"
+            :max="100"
+            :precision="0"
             :placeholder="t('kanban.form.goalMaxTurnsPlaceholder')"
-            @update:value="value => { goalMaxTurns = value ? Number(value) : null }"
+            clearable
           />
         </NFormItem>
       </div>

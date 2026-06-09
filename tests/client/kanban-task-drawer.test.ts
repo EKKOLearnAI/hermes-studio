@@ -9,6 +9,12 @@ const mockCompleteTasks = vi.hoisted(() => vi.fn())
 const mockBlockTask = vi.hoisted(() => vi.fn())
 const mockUnblockTasks = vi.hoisted(() => vi.fn())
 const mockAssignTask = vi.hoisted(() => vi.fn())
+const mockAddComment = vi.hoisted(() => vi.fn())
+const mockGetTaskLog = vi.hoisted(() => vi.fn())
+const mockGetDiagnostics = vi.hoisted(() => vi.fn())
+const mockReclaimTask = vi.hoisted(() => vi.fn())
+const mockReassignTask = vi.hoisted(() => vi.fn())
+const mockSpecifyTask = vi.hoisted(() => vi.fn())
 const mockRouterPush = vi.hoisted(() => vi.fn())
 const mockUseMessage = vi.hoisted(() => vi.fn(() => ({
   success: vi.fn(),
@@ -43,6 +49,12 @@ vi.mock('@/stores/hermes/kanban', () => ({
     blockTask: mockBlockTask,
     unblockTasks: mockUnblockTasks,
     assignTask: mockAssignTask,
+    addComment: mockAddComment,
+    getTaskLog: mockGetTaskLog,
+    getDiagnostics: mockGetDiagnostics,
+    reclaimTask: mockReclaimTask,
+    reassignTask: mockReassignTask,
+    specifyTask: mockSpecifyTask,
   }),
 }))
 
@@ -106,6 +118,12 @@ describe('KanbanTaskDrawer', () => {
     mockBlockTask.mockResolvedValue(undefined)
     mockUnblockTasks.mockResolvedValue(undefined)
     mockAssignTask.mockResolvedValue(undefined)
+    mockAddComment.mockResolvedValue({ ok: true })
+    mockGetTaskLog.mockResolvedValue({ task_id: 'task-1', path: null, exists: true, size_bytes: 10, content: 'worker log', truncated: false })
+    mockGetDiagnostics.mockResolvedValue([{ task_id: 'task-1' }])
+    mockReclaimTask.mockResolvedValue({ ok: true })
+    mockReassignTask.mockResolvedValue({ ok: true })
+    mockSpecifyTask.mockResolvedValue([{ task_id: 'task-1' }])
     mockGetTask.mockResolvedValue({
       task: {
         id: 'task-1',
@@ -254,6 +272,39 @@ describe('KanbanTaskDrawer', () => {
     expect(wrapper.text()).not.toContain('runner-10')
     expect(wrapper.text()).toContain('runner-11')
     expect(wrapper.text()).toContain('runner-20')
+  })
+
+  it('clears task-scoped operation output when switching tasks', async () => {
+    const wrapper = mount(KanbanTaskDrawer, { props: { taskId: 'task-1' } })
+    await flushPromises()
+
+    await wrapper.findAll('.n-button-stub').find(node => node.text() === 'kanban.action.loadLog')?.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('worker log')
+
+    mockGetTask.mockResolvedValueOnce({
+      task: {
+        id: 'task-2',
+        title: 'Next task',
+        body: null,
+        assignee: 'bob',
+        status: 'todo',
+        priority: 1,
+        created_at: 200,
+        started_at: null,
+        completed_at: null,
+        tenant: null,
+        result: null,
+      },
+      latest_summary: null,
+      comments: [],
+      events: [],
+      runs: [],
+    })
+    await wrapper.setProps({ taskId: 'task-2' })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('worker log')
   })
 
   it('does not expose mutation actions for archived tasks', async () => {
