@@ -35,11 +35,15 @@ async function loadController() {
   return import('../../packages/server/src/controllers/hermes/skills')
 }
 
-function multipartBody(boundary: string, parts: Array<{ name: string; value: string; filename?: string; contentType?: string }>): Buffer {
+function multipartBody(boundary: string, parts: Array<{ name: string; value: string; filename?: string; filenameStar?: string; contentType?: string }>): Buffer {
   const chunks: Buffer[] = []
   for (const part of parts) {
     chunks.push(Buffer.from(`--${boundary}\r\n`))
-    const filename = part.filename ? `; filename="${part.filename}"` : ''
+    const filename = part.filenameStar
+      ? `; filename*=UTF-8''${part.filenameStar}`
+      : part.filename
+        ? `; filename="${part.filename}"`
+        : ''
     chunks.push(Buffer.from(`Content-Disposition: form-data; name="${part.name}"${filename}\r\n`))
     if (part.contentType) chunks.push(Buffer.from(`Content-Type: ${part.contentType}\r\n`))
     chunks.push(Buffer.from('\r\n'))
@@ -206,6 +210,52 @@ describe('skills controller', () => {
 
       await expect(readFile(join(researchProfileDir, 'skills', 'demo-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Demo Skill\nresearch copy\n')
       await expect(readFile(join(defaultProfileDir, 'skills', 'demo-skill', 'SKILL.md'), 'utf-8')).rejects.toThrow()
+      expect(ctx.body).toEqual({ success: true, name: 'demo-skill' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns bad request for malformed encoded skill import filenames', async () => {
+    const boundary = '----hermes-skill-import-bad-filename'
+    const ctx: any = {
+      get: vi.fn((header: string) => header.toLowerCase() === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
+      req: Readable.from([multipartBody(boundary, [
+        { name: 'file', filenameStar: '%E0%A4%A', contentType: 'text/markdown', value: '# Demo Skill\n' },
+      ])]),
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    const { importSkill } = await loadController()
+
+    await importSkill(ctx)
+
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'Invalid multipart filename encoding' })
+  })
+
+  it('imports skills with valid encoded multipart filenames', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-import-encoded-filename-'))
+    const profileDir = join(root, 'research')
+    mockGetProfileDir.mockReturnValue(profileDir)
+
+    const boundary = '----hermes-skill-import-encoded-filename'
+    const ctx: any = {
+      get: vi.fn((header: string) => header.toLowerCase() === 'content-type' ? `multipart/form-data; boundary=${boundary}` : ''),
+      req: Readable.from([multipartBody(boundary, [
+        { name: 'file', filenameStar: 'demo-skill%2FSKILL.md', contentType: 'text/markdown', value: '# Demo Skill\nencoded filename\n' },
+      ])]),
+      state: { profile: { name: 'research' } },
+      body: null,
+    }
+
+    try {
+      const { importSkill } = await loadController()
+
+      await importSkill(ctx)
+
+      await expect(readFile(join(profileDir, 'skills', 'demo-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Demo Skill\nencoded filename\n')
       expect(ctx.body).toEqual({ success: true, name: 'demo-skill' })
     } finally {
       await rm(root, { recursive: true, force: true })

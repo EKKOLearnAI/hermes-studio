@@ -811,7 +811,15 @@ async function readMultipartBody(ctx: any): Promise<{ parts: ParsedPart[] } | { 
   const rawParts = splitMultipart(raw, Buffer.from(boundary))
   const parts: ParsedPart[] = []
   for (const p of rawParts) {
-    const parsed = parsePart(p)
+    let parsed: ParsedPart | null
+    try {
+      parsed = parsePart(p)
+    } catch (err) {
+      if (err instanceof URIError) {
+        return { error: 'Invalid multipart filename encoding', status: 400 }
+      }
+      throw err
+    }
     if (parsed) parts.push(parsed)
   }
   return { parts }
