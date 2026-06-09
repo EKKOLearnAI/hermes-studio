@@ -1,6 +1,6 @@
 ---
 date: 2026-06-09
-pr: pending
+pr: 1451
 feature: Claude Code root permission mode
 impact: Claude Code runs started by Web UI avoid the root-only failure from dangerous permission bypass mode.
 ---
