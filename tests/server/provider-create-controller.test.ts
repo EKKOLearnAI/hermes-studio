@@ -81,6 +81,27 @@ describe('providers controller create', () => {
     expect(envAfter).toContain('DEEPSEEK_BASE_URL=https://deepseek-proxy.invalid/v1')
   })
 
+  it('creates Atlas Cloud as a built-in API-key provider', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({
+      name: 'Atlas Cloud',
+      base_url: 'https://api.atlascloud.ai/v1',
+      api_key: 'atlas-key',
+      model: 'deepseek-ai/deepseek-v4-pro',
+      providerKey: 'atlascloud',
+    })
+
+    await create(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.model).toEqual({ default: 'deepseek-ai/deepseek-v4-pro', provider: 'atlascloud' })
+    expect(configAfter.custom_providers).toBeUndefined()
+    const envAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
+    expect(envAfter).toContain('ATLASCLOUD_API_KEY=atlas-key')
+    expect(envAfter).not.toContain('ATLASCLOUD_BASE_URL')
+  })
+
   it('creates xAI OAuth as a direct config provider without an API key or custom provider entry', async () => {
     const { create } = await loadProvidersController()
     const ctx = makeCtx({

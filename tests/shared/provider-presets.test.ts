@@ -25,6 +25,15 @@ function modelsForProvider(providerPresets: Array<{ value: string; models: strin
 }
 
 describe('provider presets', () => {
+  it('keeps every built-in provider preset registered in the env map', () => {
+    const missingMappings = SERVER_PROVIDER_PRESETS
+      .filter(candidate => candidate.builtin)
+      .map(candidate => candidate.value)
+      .filter(provider => !Object.prototype.hasOwnProperty.call(PROVIDER_ENV_MAP, provider))
+
+    expect(missingMappings).toEqual([])
+  })
+
   it('routes apikey.fun Codex through the Responses transport', () => {
     const preset = SERVER_PROVIDER_PRESETS.find((candidate) => candidate.value === FUN_CODEX_PROVIDER)
     expect(preset?.api_mode).toBe('codex_responses')
