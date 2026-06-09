@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
