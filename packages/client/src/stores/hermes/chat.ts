@@ -97,7 +97,7 @@ export interface Session {
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
-  /** Local patch (reasoning-effort): per-session reasoning effort override.
+  /** Per-session reasoning effort override.
    * Empty string / undefined = use config.yaml default.
    * Values: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' */
   reasoningEffort?: string
@@ -1733,8 +1733,9 @@ export const useChatStore = defineStore('chat', () => {
               apiMode: codingAgentMode === 'global' ? undefined : activeSession.value?.apiMode || providerGroup?.api_mode || undefined,
             }
           : {}),
-        // Per-session reasoning effort override.
-        reasoning_effort: activeSession.value?.reasoningEffort || undefined,
+        // Per-session reasoning effort override. Coding Agent runners do not
+        // consume this setting yet, so keep their payloads explicit.
+        reasoning_effort: sessionSource === 'coding_agent' ? undefined : activeSession.value?.reasoningEffort || undefined,
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -3156,7 +3157,6 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Local patch (reasoning-effort): per-session reasoning effort.
   // Persisted in localStorage keyed by sessionId so the choice survives
   // page reloads. Cleared on session deletion is NOT implemented (best-effort
   // — orphan keys are tiny and never read again).

@@ -25,8 +25,6 @@ const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 
-// Local patch (reasoning-effort): per-session reasoning effort selector (brain button).
-// Sends override on every run for the active session.
 const reasoningEffortOptions = computed(() => [
   { label: t('chat.reasoningEffort.options.default'), value: '' },
   { label: t('chat.reasoningEffort.options.none'), value: 'none' },
@@ -752,8 +750,8 @@ function isImage(type: string): boolean {
         {{ t('chat.attachFiles') }}
       </NTooltip>
 
-      <!-- Local patch (reasoning-effort): per-session reasoning effort selector (brain button). -->
       <NPopselect
+        v-if="!isCodingAgentSession"
         :value="currentReasoningEffort"
         :options="reasoningEffortOptions"
         trigger="click"
@@ -1071,7 +1069,6 @@ function isImage(type: string): boolean {
   }
 }
 
-/* Local patch (reasoning-effort): per-session reasoning effort selector. */
 .reasoning-effort-button {
   &.active {
     color: #4caf50;

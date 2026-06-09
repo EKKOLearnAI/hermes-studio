@@ -244,6 +244,7 @@ describe('chat store reasoning/tool boundaries', () => {
     session.baseUrl = 'http://example.invalid'
     session.apiKey = 'secret'
     session.apiMode = 'chat_completions'
+    session.reasoningEffort = 'high'
     store.sessions = [session]
     store.activeSessionId = 'session-1'
     store.activeSession = session
@@ -261,6 +262,7 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(body.baseUrl).toBeUndefined()
     expect(body.apiKey).toBeUndefined()
     expect(body.apiMode).toBeUndefined()
+    expect(body.reasoning_effort).toBeUndefined()
   })
 
   it('sends the selected workspace when starting a coding-agent run', async () => {
