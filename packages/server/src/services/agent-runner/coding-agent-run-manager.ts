@@ -63,7 +63,7 @@ export interface CodingAgentRunLaunch {
   args: string[]
   shellCommand: string
   workspaceDir: string
-  env?: Record<string, string>
+  env?: NodeJS.ProcessEnv
   state?: SessionState
 }
 
@@ -187,6 +187,37 @@ function isPrintAgent(agentId: string): boolean {
 
 function childIsRunning(child?: ChildProcess): boolean {
   return Boolean(child && child.exitCode == null && child.signalCode == null && !child.killed)
+}
+
+function windowsCommandNeedsShell(command: string): boolean {
+  const normalized = command.trim().toLowerCase()
+  return normalized.endsWith('.cmd') || normalized.endsWith('.bat')
+}
+
+function quoteCmdArg(value: string): string {
+  return `"${String(value).replace(/"/g, '""')}"`
+}
+
+function spawnCodingAgentChild(command: string, args: string[], options: {
+  cwd: string
+  env: NodeJS.ProcessEnv
+}): ChildProcess {
+  if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
+    return spawn('cmd.exe', ['/d', '/s', '/c', [quoteCmdArg(command), ...args.map(quoteCmdArg)].join(' ')], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+  }
+
+  return spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+    windowsHide: process.platform === 'win32',
+  })
 }
 
 function appendedTextDelta(existing: string, next: string): string {
@@ -655,14 +686,12 @@ export class CodingAgentRunManager {
       '--verbose',
       input,
     ]
-    const child = spawn(run.launch.command, args, {
+    const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
       env: {
         ...process.env,
         ...(run.launch.env || {}),
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
     })
     run.currentChild = child
 
@@ -1070,14 +1099,12 @@ export class CodingAgentRunManager {
       ? ['exec', 'resume', ...commonArgs, run.launch.agentNativeSessionId, input]
       : ['exec', ...commonArgs, '--cd', run.launch.workspaceDir, input]
 
-    const child = spawn(run.launch.command, args, {
+    const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
       env: {
         ...process.env,
         ...(run.launch.env || {}),
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
     })
     run.currentChild = child
 

@@ -1428,6 +1428,15 @@ export async function startCodingAgentRun(
     agentSessionId,
     isolateSettings: true,
   })
+  const runtimeEnv = process.platform === 'win32'
+    ? {
+        ...(await commandEnv()),
+        ...launch.env,
+      }
+    : launch.env
+  const runtimeCommand = process.platform === 'win32'
+    ? await resolveCommandForExecution(launch.command, runtimeEnv)
+    : launch.command
   const persistedProvider = String(resolvedInput.provider || launch.provider || '').trim() || launch.provider
   const started = codingAgentRunManager.start({
     agentSessionId,
@@ -1439,11 +1448,11 @@ export async function startCodingAgentRun(
     sessionId,
     agentNativeSessionId,
     nativeResume: Boolean(existingNativeSessionId),
-    command: launch.command,
+    command: runtimeCommand,
     args: launch.args,
     shellCommand: launch.shellCommand,
     workspaceDir: launch.workspaceDir,
-    env: launch.env,
+    env: runtimeEnv,
     state,
   })
   updateSession(sessionId, {
