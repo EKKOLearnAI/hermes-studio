@@ -33,6 +33,7 @@ interface CliShimInstallOptions {
   executablePath?: string
   homeDir?: string
   platform?: NodeJS.Platform
+  runtimeVersion?: string
 }
 
 interface McpShimInstallOptions extends CliShimInstallOptions {
@@ -85,6 +86,7 @@ export function createShimContent(
   executablePath: string,
   platform: NodeJS.Platform = process.platform,
   archName: string = process.arch,
+  runtimeVersion = '0.15.2',
 ): string {
   if (platform === 'win32') {
     const runtimePlatform = windowsRuntimePlatformKey(archName)
@@ -96,7 +98,7 @@ export function createShimContent(
       'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%HERMES_WEBUI_STATE_DIR%"',
       'if "%WEBUI_HOME%"=="" set "WEBUI_HOME=%USERPROFILE%\\.hermes-web-ui"',
       'set "RUNTIME=%HERMES_DESKTOP_RUNTIME_DIR%"',
-      `if "%RUNTIME%"=="" set "RUNTIME=%WEBUI_HOME%\\desktop-runtime\\${runtimePlatform}"`,
+      `if "%RUNTIME%"=="" set "RUNTIME=%WEBUI_HOME%\\desktop-runtime\\hermes\\${runtimeVersion}\\${runtimePlatform}"`,
       'set "PYTHON=%RUNTIME%\\python\\python.exe"',
       'if not exist "%PYTHON%" (',
       '  echo Hermes Studio Python runtime not found at "%PYTHON%" 1>&2',
@@ -306,7 +308,7 @@ export async function installHermesStudioCliShim(options: CliShimInstallOptions 
   const shimPath = shimPathForPlatform(binDir, platform)
 
   mkdirSync(binDir, { recursive: true })
-  const status = writeShim(shimPath, createShimContent(executablePath, platform), platform)
+  const status = writeShim(shimPath, createShimContent(executablePath, platform, process.arch, options.runtimeVersion), platform)
   const pathUpdated = await ensureUserBinOnPath(homeDir, binDir, platform, env).catch((err) => {
     console.warn(`[cli-shim] failed to update PATH: ${err instanceof Error ? err.message : String(err)}`)
     return false

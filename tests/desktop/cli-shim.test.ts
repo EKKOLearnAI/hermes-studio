@@ -42,7 +42,7 @@ describe('Hermes Studio CLI shim', () => {
       'x64',
     )
 
-    expect(content).toContain('desktop-runtime\\win-x64')
+    expect(content).toContain('desktop-runtime\\hermes\\0.15.2\\win-x64')
     expect(content).toContain('set "PYTHON=%RUNTIME%\\python\\python.exe"')
     expect(content).toContain('"%PYTHON%" -m hermes_cli.main %*')
     expect(content).not.toContain('"%APP%" -- --hermes-cli')
