@@ -110,4 +110,68 @@ describe('useSpeech WebSpeech playback', () => {
 
     wrapper.unmount()
   })
+
+  it('does not crash when Web Speech is unavailable', () => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: undefined,
+    })
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+      configurable: true,
+      value: undefined,
+    })
+    Object.defineProperty(globalThis, 'SpeechSynthesisUtterance', {
+      configurable: true,
+      value: undefined,
+    })
+
+    const wrapper = mount(defineComponent({
+      setup() {
+        return {
+          speech: useSpeech(),
+        }
+      },
+      template: '<div />',
+    }))
+    const speech = wrapper.vm.speech
+
+    expect(speech.isSupported.value).toBe(false)
+    expect(() => speech.toggleBrowser('message-unsupported', 'Hello world')).not.toThrow()
+    expect(speech.isPlaying.value).toBe(false)
+
+    expect(() => wrapper.unmount()).not.toThrow()
+  })
+
+  it('does not crash when speechSynthesis listener methods are missing', () => {
+    const synth = {
+      speaking: false,
+      pending: false,
+      paused: false,
+      getVoices: vi.fn(() => []),
+      speak: vi.fn(),
+      cancel: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+    } as unknown as SpeechSynthesis
+
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: synth,
+    })
+
+    const wrapper = mount(defineComponent({
+      setup() {
+        return {
+          speech: useSpeech(),
+        }
+      },
+      template: '<div />',
+    }))
+    const speech = wrapper.vm.speech
+
+    expect(speech.isSupported.value).toBe(true)
+    expect(speech.availableVoices.value).toEqual([])
+
+    expect(() => wrapper.unmount()).not.toThrow()
+  })
 })

@@ -53,18 +53,7 @@ interface SpeechQueueItem {
  * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis ?? {
-    getVoices: () => [],
-    speak: () => {},
-    cancel: () => {},
-    pause: () => {},
-    resume: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    speaking: false,
-    pending: false,
-    paused: false,
-  } as unknown as SpeechSynthesis
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
@@ -86,10 +75,16 @@ export function useSpeech() {
 
   // 加载可用语音列表
   function loadVoices() {
-    availableVoices.value = synth.getVoices()
+    try {
+      availableVoices.value = typeof synth?.getVoices === 'function' ? synth.getVoices() : []
+    } catch {
+      availableVoices.value = []
+    }
   }
 
-  synth.addEventListener('voiceschanged', loadVoices)
+  if (typeof synth?.addEventListener === 'function') {
+    synth.addEventListener('voiceschanged', loadVoices)
+  }
   loadVoices()
 
   /**
@@ -119,7 +114,12 @@ export function useSpeech() {
   }
 
   const isSupported = computed(() => {
-    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
+    return Boolean(
+      typeof window !== 'undefined' &&
+      window.speechSynthesis &&
+      typeof window.speechSynthesis.speak === 'function' &&
+      typeof window.SpeechSynthesisUtterance === 'function',
+    )
   })
 
   function getDefaultVoice(): SpeechSynthesisVoice | null {
@@ -151,7 +151,7 @@ export function useSpeech() {
     stopCustomAudioPlayback()
     clearCustomPlaybackState()
     // Stop browser speech
-    if (synth.speaking || synth.pending || synth.paused) {
+    if (synth && (synth.speaking || synth.pending || synth.paused) && typeof synth.cancel === 'function') {
       synth.cancel()
     }
     utterance = null
@@ -213,7 +213,17 @@ export function useSpeech() {
 
   function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token?: number) {
     token = token || ++playbackToken
-    utterance = new SpeechSynthesisUtterance(text)
+    if (!isSupported.value || !synth) {
+      state.value = {
+        isPlaying: false,
+        isPaused: false,
+        currentMessageId: null,
+        progress: 0,
+        engine: 'none',
+      }
+      return
+    }
+    utterance = new window.SpeechSynthesisUtterance(text)
     const activeUtterance = utterance
 
     utterance.rate = 1
@@ -571,7 +581,7 @@ export function useSpeech() {
     if (state.value.engine === 'tts' && currentAudio) {
       currentAudio.pause()
       state.value.isPaused = true
-    } else if (state.value.engine === 'browser' && !state.value.isPaused) {
+    } else if (state.value.engine === 'browser' && !state.value.isPaused && typeof synth?.pause === 'function') {
       synth.pause()
       state.value.isPaused = true
     }
@@ -585,7 +595,7 @@ export function useSpeech() {
     if (state.value.isPaused) {
       if (state.value.engine === 'tts' && currentAudio) {
         currentAudio.play()
-      } else {
+      } else if (typeof synth?.resume === 'function') {
         synth.resume()
       }
       state.value.isPaused = false
@@ -606,7 +616,9 @@ export function useSpeech() {
 
   onUnmounted(() => {
     stop()
-    synth.removeEventListener('voiceschanged', loadVoices)
+    if (typeof synth?.removeEventListener === 'function') {
+      synth.removeEventListener('voiceschanged', loadVoices)
+    }
   })
 
   return {
