@@ -181,6 +181,14 @@ describe('API Client', () => {
       expect(url.searchParams.get('profile')).toBe('research')
       expect(url.searchParams.get('token')).toBe('secret-key')
     })
+
+    it('handles raw percent signs in download paths and filenames', () => {
+      const url = new URL(getDownloadUrl('/tmp/100% ready.txt', '100% ready.txt'), 'http://localhost')
+
+      expect(url.pathname).toBe('/api/hermes/download')
+      expect(url.searchParams.get('path')).toBe('/tmp/100% ready.txt')
+      expect(url.searchParams.get('name')).toBe('100% ready.txt')
+    })
   })
 
   describe('file upload', () => {
