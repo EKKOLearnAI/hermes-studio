@@ -84,13 +84,14 @@ describe('coding agent Windows process launch', () => {
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
-      args: expect.arrayContaining(['/d', '/c']),
+      args: expect.arrayContaining(['/d', '/s', '/c']),
     })
-    expect(testState.spawnCalls[0].args[2]).toContain('call "C:\\Users\\Administrator\\AppData\\Roaming\\npm\\claude.cmd"')
-    expect(testState.spawnCalls[0].args[2]).toContain('"--settings"')
-    expect(testState.spawnCalls[0].args[2]).toContain('"test"')
+    expect(testState.spawnCalls[0].args[3]).toContain('C:\\Users\\Administrator\\AppData\\Roaming\\npm\\claude.cmd')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"--settings^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"test^"')
     expect(testState.spawnCalls[0].options).toMatchObject({
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: true,
       windowsHide: true,
     })
 
@@ -126,14 +127,15 @@ describe('coding agent Windows process launch', () => {
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
-      args: expect.arrayContaining(['/d', '/c']),
+      args: expect.arrayContaining(['/d', '/s', '/c']),
     })
-    expect(testState.spawnCalls[0].args[2]).toContain('call "C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd"')
-    expect(testState.spawnCalls[0].args[2]).toContain('"exec"')
-    expect(testState.spawnCalls[0].args[2]).toContain('"--model"')
-    expect(testState.spawnCalls[0].args[2]).toContain('"test"')
+    expect(testState.spawnCalls[0].args[3]).toContain('C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"exec^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"--model^"')
+    expect(testState.spawnCalls[0].args[3]).toContain('^"test^"')
     expect(testState.spawnCalls[0].options).toMatchObject({
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: true,
       windowsHide: true,
     })
 
@@ -169,9 +171,9 @@ describe('coding agent Windows process launch', () => {
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
-      args: expect.arrayContaining(['/d', '/c']),
+      args: expect.arrayContaining(['/d', '/s', '/c']),
     })
-    expect(testState.spawnCalls[0].args[2]).toContain('call "C:\\用户\\管理员\\AppData\\Roaming\\npm\\codex.cmd"')
+    expect(testState.spawnCalls[0].args[3]).toContain('C:\\用户\\管理员\\AppData\\Roaming\\npm\\codex.cmd')
 
     const run = (manager as any).runs.get('agent-session-codex-unicode-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)
@@ -205,10 +207,10 @@ describe('coding agent Windows process launch', () => {
 
     expect(testState.spawnCalls[0]).toMatchObject({
       command: 'cmd.exe',
-      args: expect.arrayContaining(['/d', '/c']),
+      args: expect.arrayContaining(['/d', '/s', '/c']),
     })
-    expect(testState.spawnCalls[0].args[2]).toContain('call "C:\\nvm4w\\nodejs\\codex.cmd"')
-    expect(testState.spawnCalls[0].args[2]).not.toContain('"""C:\\nvm4w\\nodejs\\codex.cmd"""')
+    expect(testState.spawnCalls[0].args[3]).toContain('C:\\nvm4w\\nodejs\\codex.cmd')
+    expect(testState.spawnCalls[0].args[3]).not.toContain('"C:\\nvm4w\\nodejs\\codex.cmd"')
 
     const run = (manager as any).runs.get('agent-session-codex-quoted-1')
     if (run?.idleTimer) clearTimeout(run.idleTimer)

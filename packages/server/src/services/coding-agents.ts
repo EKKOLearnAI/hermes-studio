@@ -27,6 +27,12 @@ const POSIX_LAUNCHER_FILE = 'launch.sh'
 const WINDOWS_LAUNCHER_FILE = 'launch.ps1'
 const CODING_AGENT_SCOPED_AUTH_PROVIDERS = new Set(['openai-codex', 'copilot', 'xai-oauth', 'nous'])
 
+interface CommandExecution {
+  command: string
+  args: string[]
+  windowsVerbatimArguments?: boolean
+}
+
 export type CodingAgentId = 'claude-code' | 'codex'
 
 export interface CodingAgentDefinition {
@@ -556,10 +562,6 @@ function powerShellQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
-function cmdQuote(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`
-}
-
 function buildLaunchShellCommand(input: {
   workspaceDir: string
   env: Record<string, string>
@@ -798,7 +800,7 @@ function getCurrentNodeEnv(): NodeJS.ProcessEnv {
   }
 }
 
-async function npmExecution(args: string[], env: NodeJS.ProcessEnv): Promise<{ command: string; args: string[] }> {
+async function npmExecution(args: string[], env: NodeJS.ProcessEnv): Promise<CommandExecution> {
   const bundledNpmCli = getNpmCliPath()
   if (bundledNpmCli) return { command: process.execPath, args: [bundledNpmCli, ...args] }
 
@@ -838,6 +840,7 @@ async function runNpm(args: string[], options: { timeout?: number; env?: NodeJS.
     encoding: 'utf-8',
     timeout: options.timeout,
     windowsHide: true,
+    windowsVerbatimArguments: execution.windowsVerbatimArguments,
     maxBuffer: 10 * 1024 * 1024,
     env,
   })
@@ -865,14 +868,23 @@ async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promis
       windowsHide: true,
       env,
     })
-    return stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    return stdout.split(/\r?\n/).map(line => normalizeWindowsCommandPath(line.trim())).filter(Boolean)
   } catch {
     return []
   }
 }
 
+function normalizeWindowsCommandPath(command: string): string {
+  if (process.platform !== 'win32') return command
+  const trimmed = command.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
+}
+
 function windowsCommandNeedsShell(command: string): boolean {
-  const extension = extname(command).toLowerCase()
+  const extension = extname(normalizeWindowsCommandPath(command)).toLowerCase()
   return extension === '.cmd' || extension === '.bat'
 }
 
@@ -885,18 +897,37 @@ async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEn
   return windowsPath || paths[0] || command
 }
 
-function commandExecution(command: string, args: string[]): { command: string; args: string[] } {
-  if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    // For CMD /C, the command and args need to be passed as a single string
-    // The command path should be quoted if it contains spaces, but args are joined directly
-    const commandArg = / /.test(command) ? `"${command}"` : command
-    const argsString = args.map(arg => / /.test(arg) ? `"${arg}"` : arg).join(' ')
+function commandExecution(command: string, args: string[]): CommandExecution {
+  const normalizedCommand = normalizeWindowsCommandPath(command)
+  if (process.platform === 'win32' && windowsCommandNeedsShell(normalizedCommand)) {
     return {
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', `${commandArg} ${argsString}`],
+      command: process.env.comspec || 'cmd.exe',
+      args: buildWindowsCmdShimArgs(normalizedCommand, args),
+      windowsVerbatimArguments: true,
     }
   }
-  return { command, args }
+  return { command: normalizedCommand, args }
+}
+
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
+
+function escapeCmdCommand(value: string): string {
+  return normalizeWindowsCommandPath(value).replace(CMD_META_CHARS, '^$1')
+}
+
+function escapeCmdArgument(value: string): string {
+  let escaped = String(value)
+  escaped = escaped.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
+  escaped = escaped.replace(/(?=(\\+?)?)\1$/, '$1$1')
+  return `"${escaped}"`.replace(CMD_META_CHARS, '^$1')
+}
+
+function buildWindowsCmdShimArgs(command: string, args: string[]): string[] {
+  const shellCommand = [
+    escapeCmdCommand(command),
+    ...args.map(escapeCmdArgument),
+  ].join(' ')
+  return ['/d', '/s', '/c', `"${shellCommand}"`]
 }
 
 function packageParts(packageName: string): string[] {
@@ -999,6 +1030,7 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
       encoding: 'utf-8',
       timeout: 8000,
       windowsHide: true,
+      windowsVerbatimArguments: execution.windowsVerbatimArguments,
       env,
     })
     const rawVersion = `${stdout || ''}${stderr || ''}`.trim()

@@ -204,8 +204,25 @@ function windowsCommandNeedsShell(command: string): boolean {
   return normalized.endsWith('.cmd') || normalized.endsWith('.bat')
 }
 
-function quoteCmdArg(value: string): string {
-  return `"${String(value).replace(/%/g, '%%').replace(/"/g, '""')}"`
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
+
+function escapeCmdCommand(value: string): string {
+  return normalizeWindowsCommandPath(value).replace(CMD_META_CHARS, '^$1')
+}
+
+function escapeCmdArgument(value: string): string {
+  let escaped = String(value)
+  escaped = escaped.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
+  escaped = escaped.replace(/(?=(\\+?)?)\1$/, '$1$1')
+  return `"${escaped}"`.replace(CMD_META_CHARS, '^$1')
+}
+
+function buildWindowsCmdShimArgs(command: string, args: string[]): string[] {
+  const shellCommand = [
+    escapeCmdCommand(command),
+    ...args.map(escapeCmdArgument),
+  ].join(' ')
+  return ['/d', '/s', '/c', `"${shellCommand}"`]
 }
 
 function decodeChildChunk(chunk: Buffer): string {
@@ -224,10 +241,11 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
 }): ChildProcess {
   const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    return spawn('cmd.exe', ['/d', '/c', ['call', quoteCmdArg(normalizedCommand), ...args.map(quoteCmdArg)].join(' ')], {
+    return spawn(process.env.comspec || 'cmd.exe', buildWindowsCmdShimArgs(normalizedCommand, args), {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: true,
       windowsHide: true,
     })
   }
