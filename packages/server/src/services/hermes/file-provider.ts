@@ -75,13 +75,18 @@ export function normalizePlatformPath(filePath: string, platform = process.platf
   return `${drive.toUpperCase()}:\\${rest.replace(/\//g, '\\')}`
 }
 
+function hasTraversalSegment(filePath: string): boolean {
+  return filePath.replace(/\\/g, '/').split('/').some(part => part === '..')
+}
+
 export function validatePath(filePath: string): string {
   if (!filePath) throw Object.assign(new Error('Missing file path'), { code: 'missing_path' })
-  const resolved = resolve(normalizePlatformPath(filePath))
-  const normalized = normalize(resolved)
-  if (normalized.includes('..')) {
+  const platformPath = normalizePlatformPath(filePath)
+  if (hasTraversalSegment(platformPath)) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
+  const resolved = resolve(platformPath)
+  const normalized = normalize(resolved)
   if (!isAbsolute(normalized)) {
     throw Object.assign(new Error('Path must be absolute'), { code: 'invalid_path' })
   }
