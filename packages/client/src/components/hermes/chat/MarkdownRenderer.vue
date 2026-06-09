@@ -531,13 +531,19 @@ function closeTextPreview(): void {
 .markdown-body {
   font-size: 14px;
   line-height: 1.65;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 
   p {
     margin: 0 0 8px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
 
     &:last-child {
       margin-bottom: 0;
@@ -551,6 +557,9 @@ function closeTextPreview(): void {
 
   li {
     margin: 2px 0;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 
   strong {
@@ -566,6 +575,8 @@ function closeTextPreview(): void {
     color: $accent-primary;
     text-decoration: underline;
     text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 
     &:hover {
       color: $accent-hover;
@@ -711,10 +722,14 @@ function closeTextPreview(): void {
     font-family: $font-code;
     font-size: 13px;
     color: $accent-primary;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
     margin: 8px 0;
     display: block;
