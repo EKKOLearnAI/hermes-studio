@@ -298,6 +298,32 @@ Status:
 - Remove duplicated conversion and SSE parsing code.
 - Revisit naming and export boundaries.
 
+## Implementation Notes
+
+Gateway adoption is complete for the current proxy and internal API-run paths:
+
+- Claude and Codex proxy route handlers remain responsible for local auth, Koa
+  response shape, and target lookup.
+- `AgentRunGateway` owns upstream POSTs, bearer auth, stream validation, and
+  provider error shape.
+- `run-stream.ts` chooses the provider protocol and returns canonical Responses
+  events to Web UI runs.
+- Persistence stays optional and disabled for external proxy requests unless a
+  session binding is provided.
+
+Compatibility constraints:
+
+- Claude Code expects Anthropic-shaped errors and Messages SSE events.
+- Codex expects OpenAI/Responses-shaped errors and Responses SSE events.
+- Some OpenAI-compatible providers expect `/v1/chat/completions`.
+- Some providers already include a non-`/v1` OpenAI root path in `baseUrl`.
+- Endpoint resolver behavior should be driven by provider-preset tests, not
+  only regexes.
+
+The next safe extraction is a persistence subscriber for external proxy request
+session binding. Internal Web UI runs already persist through
+`run-chat/response-stream.ts`.
+
 ## Validation
 
 Minimum checks for each phase:
