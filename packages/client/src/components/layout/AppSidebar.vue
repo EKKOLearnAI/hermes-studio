@@ -706,7 +706,7 @@ function openVersionManagement() {
 }
 
 .changelog-list {
-  max-height: 400px;
+  max-height: min(70vh, 640px);
   overflow-y: auto;
 }
 

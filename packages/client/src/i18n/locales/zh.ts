@@ -1962,6 +1962,16 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_12_1: 'Coding Agent 升级为更完整的聊天体验，支持独立会话、更清晰的历史记录、保留工具/最终输出，并优化聊天状态恢复',
+    new_0_6_12_2: '桌面端在 Windows 下启动 Claude Code 和 Codex 更可靠，修复命令解析问题，并提供更可读的失败信息',
+    new_0_6_12_3: 'Coding Agent 的 reasoning、队列状态和错误展示更容易跟踪，支持 reasoning 内容存储，并使用不阻塞滚动的队列浮层',
+    new_0_6_12_4: '桌面端运行时版本管理服务于 Coding Agent 工作流，支持切换 active version、官网版本清单、发布打包，并且只在桌面环境显示',
+    new_0_6_12_5: '聊天支持按会话设置 reasoning effort，兼容模型可单独调整；Coding Agent 场景会隐藏不适用的控制项',
+    new_0_6_12_6: '群聊更稳定，修复窗口尺寸变化后的 mention 定位，并让上传请求跟随当前 active Profile',
+    new_0_6_12_7: '文件、下载和 Markdown 预览更稳定，修复文件列表列对齐、原始百分号下载 URL，以及本地音频链接的 inline 渲染',
+    new_0_6_12_8: '远程设备配对更方便，支持手动配对和 LAN HTTP fallback',
+    new_0_6_12_9: '聊天渲染继续打磨，修复高亮代码块和超长连续字符撑出屏幕的问题；diff 代码块仍保留横向滚动以保持行对齐',
+    new_0_6_12_10: '其他前端优化包括远程设备配对 fallback、Atlas Cloud 预设、中文侧边栏文案、退出登录身份展示，以及移除未接线的 Busy Input 选项',
     new_0_6_11_1: 'LAN 设备发现新增配对审批、申请历史、重复申请处理、状态同步，以及撤销设备权限时的清理逻辑',
     new_0_6_11_2: 'LAN Peer 已接入 MCP，包含内置 MCP 启动、命令 shim、Peer Socket 重连、本地连接列表，以及终端会话数量限制',
     new_0_6_11_3: '统一后端 TTS 合成和 MiMo 音色复刻设置已可用，并支持保存设置前试听',
