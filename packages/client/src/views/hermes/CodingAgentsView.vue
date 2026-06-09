@@ -52,6 +52,14 @@ const installing = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
 })
+const installFailureHints = ref<Record<CodingAgentId, string>>({
+  'claude-code': '',
+  codex: '',
+})
+const installFailureDetails = ref<Record<CodingAgentId, string>>({
+  'claude-code': '',
+  codex: '',
+})
 const deleting = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
@@ -363,17 +371,27 @@ async function launchNativeTerminal() {
 
 async function handleInstall(id: CodingAgentId) {
   installing.value[id] = true
+  installFailureHints.value[id] = ''
+  installFailureDetails.value[id] = ''
   try {
     const result = await installCodingAgent(id)
     tools.value = result.tools
     if (result.success) {
       message.success(t('codingAgents.installSuccess'))
+      installFailureHints.value[id] = ''
+      installFailureDetails.value[id] = ''
     } else {
-      message.error(codingAgentMessage(result.code, result.message, 'codingAgents.installFailed'))
+      const errorMessage = codingAgentMessage(result.code, result.message, 'codingAgents.installFailed')
+      message.error(errorMessage)
+      installFailureHints.value[id] = t('codingAgents.installFailedHermesHint')
+      installFailureDetails.value[id] = errorMessage
     }
   } catch (err: any) {
     const payload = parseErrorPayload(err)
-    message.error(codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.installFailed'))
+    const errorMessage = codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.installFailed')
+    message.error(errorMessage)
+    installFailureHints.value[id] = t('codingAgents.installFailedHermesHint')
+    installFailureDetails.value[id] = errorMessage
   } finally {
     installing.value[id] = false
   }
@@ -467,6 +485,18 @@ onMounted(() => {
               {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
             </NButton>
           </div>
+
+          <NAlert
+            v-if="installFailureHints[block.id]"
+            class="install-helper-alert"
+            type="warning"
+            :bordered="false"
+          >
+            <div>{{ installFailureHints[block.id] }}</div>
+            <div v-if="installFailureDetails[block.id]" class="install-error-detail">
+              {{ t('codingAgents.installFailureReason') }}: {{ installFailureDetails[block.id] }}
+            </div>
+          </NAlert>
 
           <div class="config-file-section">
             <div class="config-file-title">{{ t('codingAgents.configFiles') }}</div>
@@ -709,6 +739,18 @@ onMounted(() => {
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid $border-light;
+}
+
+.install-helper-alert {
+  margin: 10px 14px 0;
+}
+
+.install-error-detail {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .install-state-main {

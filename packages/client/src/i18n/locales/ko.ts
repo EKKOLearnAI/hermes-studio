@@ -1495,6 +1495,8 @@ export default {
     installing: "설치 중",
     installSuccess: "설치됨",
     installFailed: "설치 실패",
+    installFailedHermesHint: "설치에 실패했습니다. Hermes에게 설치를 요청하세요.",
+    installFailureReason: "오류 원인",
     nodeEnvironmentMissing: "Node/npm 환경을 찾을 수 없습니다. Node.js를 설치한 뒤 다시 시도하세요.",
     deleteNow: "삭제",
     deleting: "삭제 중",

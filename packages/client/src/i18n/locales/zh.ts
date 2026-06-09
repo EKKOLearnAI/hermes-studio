@@ -1627,6 +1627,8 @@ export default {
     installing: "安装中",
     installSuccess: "安装完成",
     installFailed: "安装失败",
+    installFailedHermesHint: "安装失败，请让 Hermes 帮你安装。",
+    installFailureReason: "错误原因",
     nodeEnvironmentMissing: "未检测到可用的 Node/npm 环境，请先安装 Node.js 后重试。",
     deleteNow: "删除",
     deleting: "删除中",

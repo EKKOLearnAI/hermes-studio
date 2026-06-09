@@ -1495,6 +1495,8 @@ export default {
     installing: "インストール中",
     installSuccess: "インストールしました",
     installFailed: "インストールに失敗しました",
+    installFailedHermesHint: "インストールに失敗しました。Hermes にインストールを依頼してください。",
+    installFailureReason: "理由",
     nodeEnvironmentMissing: "Node/npm が検出されませんでした。Node.js をインストールしてから再試行してください。",
     deleteNow: "削除",
     deleting: "削除中",

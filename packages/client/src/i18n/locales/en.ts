@@ -1635,6 +1635,8 @@ export default {
     installing: "Installing",
     installSuccess: "Installed",
     installFailed: "Install failed",
+    installFailedHermesHint: "Installation failed. Ask Hermes to install it for you.",
+    installFailureReason: "Reason",
     nodeEnvironmentMissing: "Node/npm was not detected. Please install Node.js and try again.",
     deleteNow: "Delete",
     deleting: "Deleting",

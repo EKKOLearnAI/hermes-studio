@@ -207,6 +207,11 @@ export default {
     },
   },
 
+  codingAgents: {
+    installFailedHermesHint: 'Installation failed. Ask Hermes to install it for you.',
+    installFailureReason: 'Reason',
+  },
+
   devices: {
     title: 'Устройства',
     count: 'Устройств: {count}',
