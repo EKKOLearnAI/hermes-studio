@@ -679,6 +679,8 @@ export default defineComponent({ components: { CreateRoomForm } })
     height: 100%;
     overflow: hidden;
     position: relative;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .sidebar-backdrop {
