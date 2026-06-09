@@ -621,6 +621,7 @@ onBeforeUnmount(() => {
     padding: 2px 0;
     min-width: 0;
     max-width: 100%;
+    box-sizing: border-box;
 
     &.self {
         flex-direction: row-reverse;
@@ -796,6 +797,7 @@ onBeforeUnmount(() => {
     flex-direction: column;
     min-width: 0;
     max-width: 85%;
+    box-sizing: border-box;
 }
 
 .msg-header {
@@ -937,8 +939,11 @@ onBeforeUnmount(() => {
     color: $text-primary;
     border-radius: 10px;
     background-color: $msg-user-bg;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
     word-break: break-word;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
 
     &.speech-playing {
         box-shadow:

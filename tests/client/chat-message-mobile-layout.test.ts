@@ -8,6 +8,9 @@ describe('chat message mobile layout guards', () => {
     const virtualList = readFileSync('packages/client/src/components/hermes/chat/VirtualMessageList.vue', 'utf8')
     const messageItem = readFileSync('packages/client/src/components/hermes/chat/MessageItem.vue', 'utf8')
     const markdownRenderer = readFileSync('packages/client/src/components/hermes/chat/MarkdownRenderer.vue', 'utf8')
+    const groupChatPanel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
+    const groupMessageList = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageList.vue', 'utf8')
+    const groupMessageItem = readFileSync('packages/client/src/components/hermes/group-chat/GroupMessageItem.vue', 'utf8')
 
     expect(chatPanel).toContain('.chat-panel')
     expect(chatPanel).toContain('min-width: 0;')
@@ -28,5 +31,18 @@ describe('chat message mobile layout guards', () => {
     expect(markdownRenderer).toContain('width: 100%;')
     expect(markdownRenderer).toContain('code:not(.hljs)')
     expect(markdownRenderer).toContain('white-space: pre-wrap;')
+
+    expect(groupChatPanel).toContain('.group-chat-panel')
+    expect(groupChatPanel).toContain('min-width: 0;')
+    expect(groupChatPanel).toContain('max-width: 100%;')
+
+    expect(groupMessageList).toContain('.group-message-list')
+    expect(groupMessageList).toContain('min-width: 0;')
+    expect(groupMessageList).toContain('max-width: 100%;')
+
+    expect(groupMessageItem).toContain('.group-message')
+    expect(groupMessageItem).toContain('.msg-body')
+    expect(groupMessageItem).toContain('.msg-content')
+    expect(groupMessageItem).toContain('overflow-wrap: anywhere;')
   })
 })
