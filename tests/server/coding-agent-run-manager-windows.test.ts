@@ -187,4 +187,50 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()
   })
+
+  it('includes stderr detail when a hidden Codex process exits non-zero', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).markChatRunCompleted = (_sessionId: string, event: string) => {
+      emitted.push({ event: 'marked', payload: { event } })
+    }
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-error-1',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-test',
+      sessionId: 'chat-session-codex-error-1',
+      command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd',
+      args: ['--model', 'gpt-test'],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    manager.send('chat-session-codex-error-1', 'test')
+    testState.spawnCalls[0].child.stderr.emit('data', Buffer.from('Authentication failed: missing token\n'))
+    testState.spawnCalls[0].child.emit('exit', 1)
+
+    expect(emitted).toContainEqual(expect.objectContaining({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        error: expect.objectContaining({
+          message: 'Codex exited with code 1: Authentication failed: missing token',
+        }),
+      }),
+    }))
+
+    const run = (manager as any).runs.get('agent-session-codex-error-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
 })

@@ -13,6 +13,7 @@ import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
 const MAX_TERMINAL_EVENT_CHARS = 4000
+const CHILD_STDERR_TAIL_CHARS = 8 * 1024
 const CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT = 32 * 1024
 const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
@@ -82,6 +83,7 @@ interface ManagedCodingAgentRun {
   exited: boolean
   currentChild?: ChildProcess
   currentChildKillTimer?: ReturnType<typeof setTimeout>
+  currentChildStderr?: string
   printResponseId?: string
   printMessageId?: string
   printTextStarted?: boolean
@@ -231,6 +233,18 @@ function childProcessErrorMessage(err: unknown): string {
   } catch {
     return String(err)
   }
+}
+
+function appendChildStderr(run: ManagedCodingAgentRun, chunk: Buffer): string {
+  const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8'))
+  run.currentChildStderr = `${run.currentChildStderr || ''}${text}`.slice(-CHILD_STDERR_TAIL_CHARS)
+  return text.trim()
+}
+
+function exitErrorMessage(agentName: string, code: number | null, stderr?: string): string {
+  const message = `${agentName} exited with code ${code ?? 'unknown'}`
+  const detail = String(stderr || '').trim()
+  return detail ? `${message}: ${detail}` : message
 }
 
 function appendedTextDelta(existing: string, next: string): string {
@@ -674,6 +688,7 @@ export class CodingAgentRunManager {
     run.responseStartEmitted = false
     run.terminalEventHandled = false
     run.printToolBlocks = new Map()
+    run.currentChildStderr = ''
     run.runMarker = undefined
 
     this.handleClaudePrintResponseEvent(run, {
@@ -719,7 +734,7 @@ export class CodingAgentRunManager {
 
     child.stderr?.on('data', (chunk: Buffer) => {
       this.touch(run)
-      const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8')).trim()
+      const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] claude print stderr')
     })
 
@@ -768,7 +783,7 @@ export class CodingAgentRunManager {
             object: 'response',
             status: 'failed',
             model: run.launch.model,
-            error: { message: `Claude Code exited with code ${code ?? 'unknown'}` },
+            error: { message: exitErrorMessage('Claude Code', code, run.currentChildStderr) },
             output: [],
           },
         },
@@ -1113,6 +1128,7 @@ export class CodingAgentRunManager {
     run.codexToolBlocks = new Map()
     run.codexChatText = ''
     run.codexPendingUsage = undefined
+    run.currentChildStderr = ''
     run.runMarker = undefined
 
     this.handleClaudePrintResponseEvent(run, {
@@ -1153,7 +1169,7 @@ export class CodingAgentRunManager {
 
     child.stderr?.on('data', (chunk: Buffer) => {
       this.touch(run)
-      const text = sanitizeCodingAgentTerminalOutput(chunk.toString('utf8')).trim()
+      const text = appendChildStderr(run, chunk)
       if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] codex exec stderr')
     })
 
@@ -1202,7 +1218,7 @@ export class CodingAgentRunManager {
             object: 'response',
             status: 'failed',
             model: run.launch.model,
-            error: { message: `Codex exited with code ${code ?? 'unknown'}` },
+            error: { message: exitErrorMessage('Codex', code, run.currentChildStderr) },
             output: [],
           },
         },
