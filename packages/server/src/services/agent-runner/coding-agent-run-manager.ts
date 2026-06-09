@@ -191,8 +191,16 @@ function childIsRunning(child?: ChildProcess): boolean {
   return Boolean(child && child.exitCode == null && child.signalCode == null && !child.killed)
 }
 
+function normalizeWindowsCommandPath(command: string): string {
+  const trimmed = command.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
+}
+
 function windowsCommandNeedsShell(command: string): boolean {
-  const normalized = command.trim().toLowerCase()
+  const normalized = normalizeWindowsCommandPath(command).toLowerCase()
   return normalized.endsWith('.cmd') || normalized.endsWith('.bat')
 }
 
@@ -214,8 +222,9 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
   cwd: string
   env: NodeJS.ProcessEnv
 }): ChildProcess {
+  const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    return spawn('cmd.exe', ['/d', '/c', ['call', quoteCmdArg(command), ...args.map(quoteCmdArg)].join(' ')], {
+    return spawn('cmd.exe', ['/d', '/c', ['call', quoteCmdArg(normalizedCommand), ...args.map(quoteCmdArg)].join(' ')], {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -223,7 +232,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
     })
   }
 
-  return spawn(command, args, {
+  return spawn(normalizedCommand, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -179,6 +179,43 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).sessionIndex.clear()
   })
 
+  it('normalizes already quoted Windows .cmd paths before launching hidden chat turns', () => {
+    const manager = new CodingAgentRunManager()
+    ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => {}
+    ;(manager as any).emitToChat = () => {}
+    ;(manager as any).markChatRunCompleted = () => {}
+
+    manager.start({
+      agentSessionId: 'agent-session-codex-quoted-1',
+      agentId: 'codex',
+      mode: 'scoped',
+      profile: 'default',
+      provider: 'test-provider',
+      model: 'gpt-test',
+      sessionId: 'chat-session-codex-quoted-1',
+      command: '"C:\\nvm4w\\nodejs\\codex.cmd"',
+      args: ['--model', 'gpt-test'],
+      shellCommand: 'codex',
+      workspaceDir: process.cwd(),
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+    })
+
+    manager.send('chat-session-codex-quoted-1', 'test')
+
+    expect(testState.spawnCalls[0]).toMatchObject({
+      command: 'cmd.exe',
+      args: expect.arrayContaining(['/d', '/c']),
+    })
+    expect(testState.spawnCalls[0].args[2]).toContain('call "C:\\nvm4w\\nodejs\\codex.cmd"')
+    expect(testState.spawnCalls[0].args[2]).not.toContain('"""C:\\nvm4w\\nodejs\\codex.cmd"""')
+
+    const run = (manager as any).runs.get('agent-session-codex-quoted-1')
+    if (run?.idleTimer) clearTimeout(run.idleTimer)
+    ;(manager as any).runs.clear()
+    ;(manager as any).sessionIndex.clear()
+  })
+
   it('emits a readable failed run when a hidden Claude Code process cannot start', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
