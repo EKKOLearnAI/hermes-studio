@@ -19,6 +19,15 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      hermes_versions:
+        description: "Optional Hermes Agent versions for /versions.json (comma or space separated)"
+        required: false
+        type: string
+      webui_versions:
+        description: "Optional Web UI versions for /versions.json (comma or space separated)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -53,6 +62,30 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+
+      - name: Update website version manifest
+        if: github.event_name == 'workflow_dispatch' && (github.event.inputs.hermes_versions != '' || github.event.inputs.webui_versions != '')
+        env:
+          HERMES_VERSIONS: ${{ github.event.inputs.hermes_versions }}
+          WEBUI_VERSIONS: ${{ github.event.inputs.webui_versions }}
+        run: |
+          node - <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs')
+          const file = 'packages/website/public/versions.json'
+          const current = JSON.parse(readFileSync(file, 'utf-8'))
+          const splitVersions = (value) => String(value || '')
+            .split(/[,\s]+/)
+            .map(part => part.trim())
+            .filter(Boolean)
+          const hermes = splitVersions(process.env.HERMES_VERSIONS)
+          const webui = splitVersions(process.env.WEBUI_VERSIONS)
+          const next = {
+            schema: 1,
+            hermes: hermes.length ? hermes : current.hermes,
+            webui: webui.length ? webui : current.webui,
+          }
+          writeFileSync(file, JSON.stringify(next, null, 2) + '\n')
+          NODE
 
       - name: Type-check website
         run: npx vue-tsc -p tsconfig.website.json --noEmit
