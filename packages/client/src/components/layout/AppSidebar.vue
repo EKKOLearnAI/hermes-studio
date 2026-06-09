@@ -30,6 +30,10 @@ const selectedKey = computed(() => {
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
 const currentUsername = computed(() => getStoredUsername());
 const isVersionPreview = import.meta.env.VITE_HERMES_PREVIEW === '1';
+const isDesktopShell = computed(() => {
+  return typeof window !== 'undefined' &&
+    (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true;
+});
 
 function isNavActive(...names: string[]) {
   return names.includes(selectedKey.value);
@@ -383,7 +387,7 @@ function openVersionManagement() {
         <span class="version-text" @click="openChangelog">Studio v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
-      <NButton type="primary" size="tiny" block class="update-btn" @click="openVersionManagement">
+      <NButton v-if="isDesktopShell" type="primary" size="tiny" block class="update-btn" @click="openVersionManagement">
         {{ t('sidebar.versionManagement') }}
       </NButton>
       <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
@@ -408,7 +412,7 @@ function openVersionManagement() {
         </div>
       </div>
     </NModal>
-    <VersionManagementModal v-model:show="showVersionManagement" />
+    <VersionManagementModal v-if="isDesktopShell" v-model:show="showVersionManagement" />
   </aside>
 </template>
 
