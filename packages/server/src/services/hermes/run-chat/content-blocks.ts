@@ -45,11 +45,18 @@ export async function convertContentBlocks(blocks: ContentBlock[]): Promise<Resp
         parts.push({ type: 'input_text', text: `[Image: ${block.path}]` })
       }
     } else if (block.type === 'file') {
-      parts.push({ type: 'input_text', text: `[File: ${block.name || block.path}]` })
+      parts.push({ type: 'input_text', text: fileBlockToText(block) })
     }
   }
 
   return parts
+}
+
+function fileBlockToText(block: Extract<ContentBlock, { type: 'file' }>): string {
+  const label = block.name || block.path
+  return block.path && block.path !== label
+    ? `[File: ${label}]\nLocal file path: ${block.path}`
+    : `[File: ${label}]`
 }
 
 /**

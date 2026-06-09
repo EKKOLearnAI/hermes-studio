@@ -31,6 +31,20 @@ describe('run chat content blocks', () => {
     expect(JSON.stringify(parts)).not.toContain('Local image path for tools')
   })
 
+  it('includes local file paths in API file content blocks', async () => {
+    const filePath = join(tempDir, 'notes.txt')
+
+    const parts = await convertContentBlocks([
+      { type: 'text', text: 'read this' },
+      { type: 'file', name: 'notes.txt', path: filePath, media_type: 'text/plain' },
+    ])
+
+    expect(parts).toEqual([
+      { type: 'input_text', text: 'read this' },
+      { type: 'input_text', text: `[File: notes.txt]\nLocal file path: ${filePath}` },
+    ])
+  })
+
   it('adds local file path text for bridge agents while preserving the image data', async () => {
     const imagePath = join(tempDir, 'image.png')
     await writeFile(imagePath, Buffer.from([1, 2, 3]))
