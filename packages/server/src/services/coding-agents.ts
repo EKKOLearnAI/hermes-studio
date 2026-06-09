@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'fs/promises'
 import { homedir } from 'os'
-import { delimiter, dirname, extname, join } from 'path'
+import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
@@ -16,6 +16,7 @@ import { getProfileDir } from './hermes/hermes-profile'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { getSession, updateSession, type HermesSessionRow } from '../db/hermes/session-store'
 import type { SessionState } from './hermes/run-chat/types'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from './windows-command'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -30,7 +31,7 @@ const CODING_AGENT_SCOPED_AUTH_PROVIDERS = new Set(['openai-codex', 'copilot', '
 interface CommandExecution {
   command: string
   args: string[]
-  windowsVerbatimArguments?: boolean
+  windowsVerbatimArguments?: WindowsCommandExecution['windowsVerbatimArguments']
 }
 
 export type CodingAgentId = 'claude-code' | 'codex'
@@ -874,20 +875,6 @@ async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promis
   }
 }
 
-function normalizeWindowsCommandPath(command: string): string {
-  if (process.platform !== 'win32') return command
-  const trimmed = command.trim()
-  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1)
-  }
-  return trimmed
-}
-
-function windowsCommandNeedsShell(command: string): boolean {
-  const extension = extname(normalizeWindowsCommandPath(command)).toLowerCase()
-  return extension === '.cmd' || extension === '.bat'
-}
-
 async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
   if (process.platform !== 'win32') return command
   const paths = await findCommandPaths(command, env)
@@ -900,34 +887,9 @@ async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEn
 function commandExecution(command: string, args: string[]): CommandExecution {
   const normalizedCommand = normalizeWindowsCommandPath(command)
   if (process.platform === 'win32' && windowsCommandNeedsShell(normalizedCommand)) {
-    return {
-      command: process.env.comspec || 'cmd.exe',
-      args: buildWindowsCmdShimArgs(normalizedCommand, args),
-      windowsVerbatimArguments: true,
-    }
+    return windowsCmdShimExecution(normalizedCommand, args)
   }
   return { command: normalizedCommand, args }
-}
-
-const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
-
-function escapeCmdCommand(value: string): string {
-  return normalizeWindowsCommandPath(value).replace(CMD_META_CHARS, '^$1')
-}
-
-function escapeCmdArgument(value: string): string {
-  let escaped = String(value)
-  escaped = escaped.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
-  escaped = escaped.replace(/(?=(\\+?)?)\1$/, '$1$1')
-  return `"${escaped}"`.replace(CMD_META_CHARS, '^$1')
-}
-
-function buildWindowsCmdShimArgs(command: string, args: string[]): string[] {
-  const shellCommand = [
-    escapeCmdCommand(command),
-    ...args.map(escapeCmdArgument),
-  ].join(' ')
-  return ['/d', '/s', '/c', `"${shellCommand}"`]
 }
 
 function packageParts(packageName: string): string[] {

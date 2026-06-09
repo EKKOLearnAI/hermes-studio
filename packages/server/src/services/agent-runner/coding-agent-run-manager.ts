@@ -9,6 +9,7 @@ import { extractResponseText } from '../hermes/run-chat/response-utils'
 import type { SessionState } from '../hermes/run-chat/types'
 import type { CanonicalResponsesEvent } from './adapters/responses-stream'
 import { mapCodingAgentResponseEvent } from './coding-agent-event-mapper'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../windows-command'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -191,40 +192,6 @@ function childIsRunning(child?: ChildProcess): boolean {
   return Boolean(child && child.exitCode == null && child.signalCode == null && !child.killed)
 }
 
-function normalizeWindowsCommandPath(command: string): string {
-  const trimmed = command.trim()
-  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1)
-  }
-  return trimmed
-}
-
-function windowsCommandNeedsShell(command: string): boolean {
-  const normalized = normalizeWindowsCommandPath(command).toLowerCase()
-  return normalized.endsWith('.cmd') || normalized.endsWith('.bat')
-}
-
-const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g
-
-function escapeCmdCommand(value: string): string {
-  return normalizeWindowsCommandPath(value).replace(CMD_META_CHARS, '^$1')
-}
-
-function escapeCmdArgument(value: string): string {
-  let escaped = String(value)
-  escaped = escaped.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"')
-  escaped = escaped.replace(/(?=(\\+?)?)\1$/, '$1$1')
-  return `"${escaped}"`.replace(CMD_META_CHARS, '^$1')
-}
-
-function buildWindowsCmdShimArgs(command: string, args: string[]): string[] {
-  const shellCommand = [
-    escapeCmdCommand(command),
-    ...args.map(escapeCmdArgument),
-  ].join(' ')
-  return ['/d', '/s', '/c', `"${shellCommand}"`]
-}
-
 function decodeChildChunk(chunk: Buffer): string {
   const utf8 = chunk.toString('utf8')
   if (process.platform !== 'win32' || !utf8.includes('\uFFFD')) return utf8
@@ -241,11 +208,12 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
 }): ChildProcess {
   const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    return spawn(process.env.comspec || 'cmd.exe', buildWindowsCmdShimArgs(normalizedCommand, args), {
+    const execution = windowsCmdShimExecution(normalizedCommand, args)
+    return spawn(execution.command, execution.args, {
       cwd: options.cwd,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      windowsVerbatimArguments: true,
+      windowsVerbatimArguments: execution.windowsVerbatimArguments,
       windowsHide: true,
     })
   }
