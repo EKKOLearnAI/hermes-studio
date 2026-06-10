@@ -219,6 +219,7 @@ export default {
       gettingStarted: '快速开始',
       configuration: '配置说明',
       features: '功能详解',
+      hermesStudioManual: '客户端手册',
       platforms: '平台接入',
       api: 'API 参考',
     },
@@ -342,6 +343,39 @@ export default {
       analytics: {
         title: '用量分析',
         content: '追踪 Token 用量（输入/输出）、预估费用、缓存命中率、会话数和模型分布。查看 30 天日趋势交互图表。',
+      },
+    },
+    hermesStudioManual: {
+      title: 'Hermes Studio 客户端完整操作手册',
+      intro: '这份手册面向 Hermes Studio 桌面客户端和 Web 界面的使用、配置、运维、验收与内部培训场景，覆盖当前客户端可见导航、设置、弹窗、状态页、关键按钮、常见流程和风险提示。',
+      open: {
+        title: '打开完整手册',
+        content: '完整手册保留原始 HTML 排版、截图标注和 PDF 版本。HTML 版本适合在线浏览，PDF 版本适合归档、打印和离线分发。',
+        links: [
+          {
+            label: '在线打开中文 HTML 手册',
+            href: '/docs/hermes-studio-0.6.12-full-cn/index.html',
+            description: '包含目录、截图、表格、风险提示和完整操作章节。',
+          },
+          {
+            label: '下载中文 PDF 手册',
+            href: '/docs/hermes-studio-0.6.12-full-cn/hermes-studio-0.6.12-full-cn.pdf',
+            description: '适合离线阅读、归档和培训材料分发。',
+          },
+        ],
+      },
+      scope: {
+        title: '适用范围',
+        rows: [
+          ['适用版本', 'Hermes Studio 0.6.12 客户端操作手册'],
+          ['文档语言', '中文完整手册；官网提供中英文入口说明'],
+          ['覆盖内容', '登录、聊天、历史、记忆、技能、插件、文件、终端、任务、群聊、看板、用量、日志、MCP、平台集成、设备、设置、备份、安全和故障排除'],
+          ['推荐读者', '个人用户、管理员、技术支持、交付验收人员和内部培训对象'],
+        ],
+      },
+      maintenance: {
+        title: '维护说明',
+        content: '当官网、说明文档、Hermes 智能体文档与当前客户端界面存在差异时，操作步骤以当前客户端实际可见界面为准。后续版本更新时，请同步替换 HTML/PDF 资源并更新本页的适用版本说明。',
       },
     },
     platforms: {

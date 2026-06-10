@@ -219,6 +219,7 @@ export default {
       gettingStarted: 'Getting Started',
       configuration: 'Configuration',
       features: 'Features',
+      hermesStudioManual: 'Client Manual',
       platforms: 'Platform Guides',
       api: 'API Reference',
     },
@@ -342,6 +343,39 @@ export default {
       analytics: {
         title: 'Usage Analytics',
         content: 'Track token usage (input/output), estimated costs, cache hit rates, session counts, and model distribution. View 30-day daily trends with interactive charts.',
+      },
+    },
+    hermesStudioManual: {
+      title: 'Hermes Studio Client Manual',
+      intro: 'This page publishes the complete Hermes Studio 0.6.12 client operations manual. The full manual is currently authored in Chinese and covers day-to-day usage, configuration, operations, acceptance review, internal training, visible navigation, dialogs, status pages, key actions, common workflows, and risk notes.',
+      open: {
+        title: 'Open the full manual',
+        content: 'The uploaded manual preserves the original HTML layout, annotated screenshots, tables, and PDF export. Use the HTML version for online browsing and the PDF version for offline review, archiving, or training distribution.',
+        links: [
+          {
+            label: 'Open the Chinese HTML manual',
+            href: '/docs/hermes-studio-0.6.12-full-cn/index.html',
+            description: 'Includes the full table of contents, annotated screenshots, workflow sections, tables, and operational notes.',
+          },
+          {
+            label: 'Download the Chinese PDF manual',
+            href: '/docs/hermes-studio-0.6.12-full-cn/hermes-studio-0.6.12-full-cn.pdf',
+            description: 'Best for offline reading, archival use, printing, and training handouts.',
+          },
+        ],
+      },
+      scope: {
+        title: 'Scope',
+        rows: [
+          ['Version', 'Hermes Studio 0.6.12 client operations manual'],
+          ['Language', 'Full manual in Chinese, with bilingual website entry copy'],
+          ['Coverage', 'Login, chat, history, memory, skills, plugins, files, terminal, jobs, group chat, Kanban, usage, logs, MCP, platform integrations, devices, settings, backup, security, and troubleshooting'],
+          ['Audience', 'Individual users, administrators, support teams, acceptance reviewers, and internal training teams'],
+        ],
+      },
+      maintenance: {
+        title: 'Maintenance note',
+        content: 'When the website, reference docs, Hermes agent docs, and the current client UI differ, the manual treats the currently visible client interface as the operational source of truth. For future releases, replace the uploaded HTML/PDF assets and update the version scope on this page.',
       },
     },
     platforms: {

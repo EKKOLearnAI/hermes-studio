@@ -12,6 +12,7 @@ const pages = [
   { key: 'gettingStarted', name: 'docs.getting-started' },
   { key: 'configuration', name: 'docs.configuration' },
   { key: 'features', name: 'docs.features' },
+  { key: 'hermesStudioManual', name: 'docs.hermes-studio-manual' },
   { key: 'platforms', name: 'docs.platforms' },
   { key: 'api', name: 'docs.api' },
 ]

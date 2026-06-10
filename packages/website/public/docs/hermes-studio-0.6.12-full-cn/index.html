@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hermes Studio 客户端完整操作手册</title>
+  <style>
+    :root {
+      --paper: #fbfaf5;
+      --panel: #ffffff;
+      --ink: #1e2a24;
+      --muted: #69756d;
+      --line: #d8d4c7;
+      --olive: #49624a;
+      --olive-soft: #eef3e8;
+      --brick: #a84632;
+      --gold: #b58a2a;
+      --blue: #315f7d;
+      --risk: #fff0ec;
+      --warn: #fff7df;
+      --note: #edf4f7;
+      --best: #edf7ef;
+      --shadow: 0 16px 40px rgba(42, 47, 40, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(216,212,199,.65) 1px, transparent 1px) 0 0 / 48px 48px,
+        linear-gradient(180deg, rgba(216,212,199,.35) 1px, transparent 1px) 0 0 / 48px 48px,
+        var(--paper);
+      font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+      background: #f2efe5;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      background: rgba(251, 250, 245, 0.94);
+      backdrop-filter: blur(10px);
+      padding: 28px 22px;
+    }
+
+    .toc-title {
+      font-family: "Songti SC", "STSong", Georgia, serif;
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin: 0 0 6px;
+      letter-spacing: 0;
+    }
+    .toc-meta {
+      color: var(--muted);
+      font-size: .86rem;
+      margin-bottom: 18px;
+    }
+    nav a {
+      display: block;
+      color: var(--ink);
+      border-left: 3px solid transparent;
+      padding: 6px 8px 6px 12px;
+      margin: 2px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: .95rem;
+    }
+    nav a:hover {
+      background: var(--olive-soft);
+      border-left-color: var(--olive);
+      text-decoration: none;
+    }
+
+    main {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      padding: 42px 44px 80px;
+    }
+
+    .cover {
+      min-height: 62vh;
+      display: grid;
+      align-content: center;
+      gap: 28px;
+      border-bottom: 2px solid var(--ink);
+      margin-bottom: 42px;
+      position: relative;
+    }
+    .cover::before {
+      content: "";
+      width: 140px;
+      height: 10px;
+      background: linear-gradient(90deg, var(--brick), var(--gold), var(--olive));
+      position: absolute;
+      top: 36px;
+      left: 0;
+      border-radius: 99px;
+    }
+    h1, h2, h3, h4 {
+      font-family: "Songti SC", "STSong", "Iowan Old Style", Georgia, serif;
+      letter-spacing: 0;
+      line-height: 1.25;
+      color: var(--ink);
+    }
+    h1 {
+      font-size: clamp(2.6rem, 6vw, 5.6rem);
+      margin: 0;
+      max-width: 980px;
+    }
+    .subtitle {
+      font-size: clamp(1.1rem, 2.2vw, 1.55rem);
+      color: var(--muted);
+      max-width: 860px;
+    }
+    h2 {
+      font-size: clamp(1.8rem, 3vw, 2.55rem);
+      border-top: 1px solid var(--line);
+      padding-top: 34px;
+      margin: 54px 0 18px;
+    }
+    h3 {
+      font-size: 1.42rem;
+      margin: 32px 0 12px;
+    }
+    h4 {
+      font-size: 1.08rem;
+      margin: 24px 0 8px;
+    }
+
+    .meta-grid, .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .meta-card, .small-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+      box-shadow: 0 6px 18px rgba(42, 47, 40, 0.05);
+    }
+    .meta-label, .small-label {
+      display: block;
+      color: var(--muted);
+      font-size: .82rem;
+      margin-bottom: 4px;
+    }
+    .meta-value, .small-value {
+      display: block;
+      font-weight: 700;
+      font-size: 1rem;
+      overflow-wrap: anywhere;
+    }
+
+    .callout {
+      border: 1px solid var(--line);
+      border-left: 6px solid var(--olive);
+      background: var(--note);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 18px 0;
+    }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .callout.warn { background: var(--warn); border-left-color: var(--gold); }
+    .callout.risk { background: var(--risk); border-left-color: var(--brick); }
+    .callout.best { background: var(--best); border-left-color: var(--olive); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 16px 0 24px;
+      font-size: .94rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #ece7da;
+      color: #26362e;
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .table-wrap { overflow-x: auto; }
+
+    ol, ul { padding-left: 1.35rem; }
+    li { margin: 4px 0; }
+    .steps li { margin: 8px 0; }
+
+    figure {
+      margin: 20px 0 30px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #f7f5ee;
+    }
+    figcaption {
+      border-top: 1px solid var(--line);
+      padding: 10px 14px;
+      color: var(--muted);
+      font-size: .92rem;
+      background: #fcfbf6;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 9px;
+      background: #f5f1e8;
+      font-size: .82rem;
+      color: #37463d;
+      white-space: nowrap;
+    }
+    .badge.ok { background: #eaf5e6; border-color: #b7d3a8; }
+    .badge.partial { background: #fff4d9; border-color: #dcc178; }
+    .badge.no { background: #fae8e3; border-color: #d8a391; }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 20px;
+      align-items: start;
+    }
+    .compact p { margin: 6px 0; }
+    .chapter-card {
+      background: rgba(255,255,255,.78);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 16px 0;
+    }
+    .source-list li { overflow-wrap: anywhere; }
+
+    @media (max-width: 980px) {
+      .layout { display: block; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 8px;
+      }
+      main { padding: 28px 18px 56px; }
+      .meta-grid, .stats-grid, .section-grid {
+        grid-template-columns: 1fr;
+      }
+      .cover { min-height: auto; padding: 80px 0 44px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <p class="toc-title">目录</p>
+      <p class="toc-meta">Hermes Studio 0.6.12 操作手册</p>
+      <nav aria-label="文档目录">
+        <a href="#cover">封面</a>
+        <a href="#scope">适用范围</a>
+        <a href="#sources">资料核对与版本差异</a>
+        <a href="#quickstart">快速上手</a>
+        <a href="#overview">界面总览</a>
+        <a href="#chat">会话与流式输出</a>
+        <a href="#history">会话历史</a>
+        <a href="#memory">记忆管理</a>
+        <a href="#skills">技能与插件管理</a>
+        <a href="#workspace">终端、文件与工作区</a>
+        <a href="#approvals">执行审批</a>
+        <a href="#jobs">定时任务管理</a>
+        <a href="#crews">多智能体群聊</a>
+        <a href="#agents">智能体库</a>
+        <a href="#workflow">可视化工作流与调度器</a>
+        <a href="#ops">运行监控面板</a>
+        <a href="#kanban">任务与看板</a>
+        <a href="#usage">成本与用量分析</a>
+        <a href="#logs">日志查看</a>
+        <a href="#mcp">MCP 服务管理</a>
+        <a href="#integrations">平台集成</a>
+        <a href="#devices">设备管理</a>
+        <a href="#settings">设置</a>
+        <a href="#backup">备份、恢复与导入</a>
+        <a href="#pwa">安装为应用</a>
+        <a href="#security">安全与权限</a>
+        <a href="#troubleshooting">故障排除</a>
+        <a href="#cleanup">卸载与清理</a>
+        <a href="#matrix">版本预览与编程智能体</a>
+        <a href="#appendix">附录</a>
+      </nav>
+    </aside>
+
+    <main>
+      <section id="cover" class="cover">
+        <div>
+          <h1>Hermes Studio 客户端完整操作手册</h1>
+          <p class="subtitle">面向当前本机安装版本的中文操作说明，覆盖可见导航、设置、弹窗、状态页、关键按钮、常见流程与风险提示。</p>
+        </div>
+      </section>
+
+      <section id="scope">
+        <h2>1. 文档适用范围与读者对象</h2>
+        <p>本文档适用于需要使用、配置、运维或验收 Hermes Studio 客户端的个人用户、管理员、技术支持人员和内部培训对象。文档以当前电脑上实际运行的 Hermes Studio 客户端为准，官网和说明文档仅用于建立功能范围和差异核对。</p>
+        <div class="callout best">
+          <strong>适用原则</strong>
+          当官网、说明文档、Hermes 智能体文档与当前客户端界面存在差异时，操作步骤以当前客户端实际可见界面为准；差异统一记录在“资料核对与版本差异”和各功能章节的说明中。
+        </div>
+        <div class="callout warn">
+          <strong>截图说明</strong>
+          原始需求要求敏感信息打码；用户随后明确说明“不需要做任何敏感局部遮罩”。因此本交付版截图按最新要求保留当前界面原貌。正文不主动复述接口密钥、令牌、Cookie、密码等敏感值；涉及密钥的配置流程仍以风险提示方式说明。
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2>2. 资料核对与版本差异</h2>
+        <h3>2.1 核对来源</h3>
+        <ul class="source-list">
+          <li>Hermes Studio 官方网站：<a href="https://hermes-studio.ai/">https://hermes-studio.ai/</a>，定位为 Hermes 智能体的自托管智能会话控制台。</li>
+          <li>Hermes 网页界面说明文档：<a href="https://github.com/EKKOLearnAI/hermes-web-ui/blob/main/README.md">github.com/EKKOLearnAI/hermes-web-ui/README.md</a>，列出会话、历史、频道、任务、技能、记忆、用量、终端、用户档案、设置等功能。</li>
+          <li>Hermes 智能体官方文档：<a href="https://hermes-agent.nousresearch.com/docs/">https://hermes-agent.nousresearch.com/docs/</a>，用于核对智能体、网关、技能、记忆、MCP、消息网关和安全能力范围。</li>
+          <li>MCP 官方功能页：<a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp">Hermes 智能体 MCP 文档</a>，用于核对 MCP 服务管理范围。</li>
+          <li>本机 Hermes Studio 0.6.12 设备接口：用于核对设备发现、扫描、配对状态、活跃连接、远程终端、远程命令和文件传输能力。</li>
+        </ul>
+
+        <h3>2.2 版本差异说明</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>来源功能</th><th>官网/说明文档/智能体文档描述</th><th>当前客户端观察结果</th><th>处理方式</th></tr></thead>
+            <tbody>
+              <tr><td>访问端口</td><td>说明文档 npm 默认打开 <code>localhost:8648</code>，Docker 默认 <code>localhost:6060</code>。</td><td>桌面客户端实际打开 <code>127.0.0.1:8748</code>。</td><td>本文所有本机操作以 8748 为准。</td></tr>
+              <tr><td>智能体 / 群组 / 工作流 / 调度器</td><td>智能体文档提到委派、并行、调度、网关和多平台能力。</td><td>客户端有“群聊（测试版）”“编程工具”“版本预览”等页面，但未发现名为智能体库、可视化工作流构建器、调度器的独立页面。</td><td>不将未验证能力写成已验证独立模块。</td></tr>
+              <tr><td>记忆高级视图</td><td>智能体文档描述持久记忆与技能系统；用户验收清单要求知识图谱、纠错、身份文件。</td><td>当前客户端可见记忆页面为记忆条目列表和搜索；未观察到独立知识图谱或身份文件编辑器。</td><td>记忆章节记录已验证页面，高级能力仅作风险和差异说明。</td></tr>
+              <tr><td>执行审批</td><td>智能体安全文档涉及命令审批、授权、隔离。</td><td>当前未触发审批弹窗，也未发现独立审批页面；终端与会话存在可执行命令风险。</td><td>写为安全流程说明和风险建议，标记为“当前未触发”。</td></tr>
+              <tr><td>备份与恢复</td><td>说明文档描述多用户档案支持导入归档和导出用户档案。</td><td>当前用户档案页面可见创建、导入、导出、删除等入口；未发现全局备份恢复页面。</td><td>按用户档案级导入导出写入，未发现全局备份列入差异。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="quickstart">
+        <h2>3. 快速上手流程</h2>
+        <ol class="steps">
+          <li>启动 <code>Hermes Studio.app</code>，等待客户端打开本地网页界面。</li>
+          <li>在浏览器或客户端窗口访问 <code>http://127.0.0.1:8748</code>；如出现登录页，输入已配置的用户名和密码。</li>
+          <li>进入左侧 <strong>对话</strong> 页面，确认顶部显示当前模型和用户档案。</li>
+          <li>在输入框输入测试提示词，点击发送，观察流式输出、工具调用和最终结果。</li>
+          <li>通过左侧导航检查 <strong>历史</strong>、<strong>任务</strong>、<strong>看板</strong>、<strong>频道</strong>、<strong>技能</strong>、<strong>MCP</strong>、<strong>设备</strong>、<strong>记忆</strong>、<strong>模型</strong>、<strong>日志</strong>、<strong>用量</strong>、<strong>性能监控</strong>、<strong>用户</strong>、<strong>设置</strong> 等页面。</li>
+          <li>配置密钥、模型服务商、MCP、频道令牌前，先确认用户档案和权限范围，避免把测试配置写入生产用户档案。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/01-startup-login.png" alt="Hermes Studio 登录页标注截图">
+          <figcaption>图 3-1：启动后访问本地网页界面的登录页。标注区域显示登录方式、默认凭据提示、登录按钮和风险提示位置。</figcaption>
+        </figure>
+        <div class="callout warn">
+          <strong>结果验证</strong>
+          能进入主界面、左侧导航完整显示、健康接口返回网关正常，说明客户端、网页界面与智能体运行时已联通。若登录页反复提示失败，先核对账号状态，再使用官方命令行工具的登录锁清理或默认账户重置流程。
+        </div>
+      </section>
+
+      <section id="overview">
+        <h2>4. 界面总览</h2>
+        <p>主界面采用左侧导航、顶部状态区、中央工作区和底部输入/状态区的布局。当前登录用户显示为超级管理员角色，当前模型入口位于聊天页顶部与输入区附近。左侧导航是功能盘点的主要依据。</p>
+        <figure>
+          <img src="./screenshots/02-chat-main-overview.png" alt="Hermes Studio 主界面总览标注截图">
+          <figcaption>图 4-1：主界面总览。① 左侧一级导航；② 当前会话与模型信息；③ 中央对话区域；④ 底部输入与快捷按钮；⑤ 用户与设置入口。</figcaption>
+        </figure>
+        <h3>4.1 导航与状态区域</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>区域</th><th>用途</th><th>操作要点</th></tr></thead>
+            <tbody>
+              <tr><td>左侧导航</td><td>进入会话、历史、任务、看板、频道、技能、MCP、设备、记忆、模型、日志、用量、设置等页面。</td><td>逐项点击即可切换页面；外链“中转站”会打开 apikey.fun。</td></tr>
+              <tr><td>顶部栏</td><td>显示当前页面标题、模型、状态或功能按钮。</td><td>不同页面顶部按钮不同，例如新建任务、新建房间、添加模型服务商。</td></tr>
+              <tr><td>底部输入区</td><td>聊天输入、文件/终端抽屉、模型选择、发送控制。</td><td>发送前确认模型和用户档案；长任务可使用停止或重试类按钮。</td></tr>
+              <tr><td>状态徽标</td><td>显示模型、用户档案、连接状态、运行状态等。</td><td>出现红色或错误提示时，优先查看日志和性能监控。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>4.2 全局搜索与命令入口</h3>
+        <ol class="steps">
+          <li>点击左侧“搜索”入口或使用页面中搜索按钮。</li>
+          <li>在弹窗输入关键词。</li>
+          <li>从结果中进入对应会话、任务、记忆或配置项。</li>
+          <li>关闭弹窗后回到原页面。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/03-global-search-modal.png" alt="Hermes Studio 全局搜索弹窗标注截图">
+          <figcaption>图 4-2：全局搜索弹窗。① 搜索输入框；② 搜索范围提示；③ 结果列表区域；④ 关闭入口。</figcaption>
+        </figure>
+      </section>
+
+      <section id="chat">
+        <h2>5. 会话与流式输出</h2>
+        <div class="chapter-card compact">
+          <p><strong>功能用途：</strong>用于与 Hermes 智能体进行实时对话、调用工具、查看推理或工具结果，并保存会话上下文。</p>
+          <p><strong>入口位置：</strong>左侧导航 <strong>对话</strong>。</p>
+          <p><strong>前置条件：</strong>已登录；网关与模型模型服务商可用；当前用户档案有访问目标模型的权限。</p>
+        </div>
+        <h3>5.1 新建聊天并发送消息</h3>
+        <ol class="steps">
+          <li>进入 <strong>对话</strong> 页面。</li>
+          <li>确认顶部或底部显示的模型名称，必要时点击模型选择器切换。</li>
+          <li>在底部输入框输入提示词。</li>
+          <li>点击发送按钮，等待流式输出。</li>
+          <li>输出完成后检查回复内容、工具调用展开项、错误提示和会话记录。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/04-model-selector.png" alt="Hermes Studio 模型选择器标注截图">
+          <figcaption>图 5-1：模型选择器。① 当前模型；② 可选模型列表；③ 模型服务商或模型来源；④ 关闭或返回区域。</figcaption>
+        </figure>
+        <div class="callout best">
+          <strong>结果验证</strong>
+          回复区域持续刷新并最终停止，表示实时通道或流式通道工作正常。若只出现排队或空白，查看 <strong>日志</strong> 页面与 <strong>性能监控</strong> 中网关状态。
+        </div>
+
+        <h3>5.2 工具调用、停止、重试、复制</h3>
+        <ol class="steps">
+          <li>在对话输出中查看工具调用块；展开后可检查参数、运行状态和返回结果。</li>
+          <li>长时间任务可使用停止按钮中止当前输出。</li>
+          <li>失败后使用重试或重新发送，必要时切换模型或降低任务复杂度。</li>
+          <li>使用复制按钮复制最终回答；复制前检查是否包含敏感信息。</li>
+        </ol>
+        <div class="callout warn">
+          <strong>注意事项</strong>
+          工具调用可能触发文件读取、终端执行、网络访问或外部平台投递。对生产目录、客户数据、公网服务和消息渠道执行操作前，应先切换到测试用户档案或使用演示数据。
+        </div>
+
+        <h3>5.3 会话保存、恢复、切换、删除</h3>
+        <ol class="steps">
+          <li>发送消息后，当前会话会出现在历史列表。</li>
+          <li>进入 <strong>历史</strong> 页面可恢复完整线程。</li>
+          <li>如页面提供删除入口，点击前确认该会话不再需要。</li>
+          <li>删除后回到历史页确认记录已移除。</li>
+        </ol>
+        <div class="callout risk">
+          <strong>风险说明</strong>
+          删除会话属于不可轻易恢复操作。本文仅记录入口和建议流程，未实际删除用户现有会话。建议先导出或截图重要内容，再删除。
+        </div>
+
+        <h3>5.4 附件与文件引用</h3>
+        <p>当前对话页可见文件/工作区抽屉入口，支持浏览或引用工作区文件。未观察到在聊天输入区直接上传附件后的完整演示流程；需要文件操作时优先使用 <strong>工作区</strong> 抽屉。</p>
+      </section>
+
+      <section id="history">
+        <h2>6. 会话历史</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>历史</strong>。</p>
+          <p><strong>功能用途：</strong>查看历史会话列表、按来源分组、恢复会话、检查时间与消息摘要。</p>
+        </div>
+        <ol class="steps">
+          <li>点击左侧 <strong>历史</strong>。</li>
+          <li>使用顶部搜索框或过滤器查找目标会话。</li>
+          <li>点击会话条目打开完整消息线程。</li>
+          <li>如页面提供排序或来源分组，按最新消息、平台来源或活跃状态定位。</li>
+          <li>如需要删除或归档，先确认该会话不含需保留的业务记录。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/07-history-sessions.png" alt="Hermes Studio 会话历史页标注截图">
+          <figcaption>图 6-1：会话历史。① 搜索和筛选区域；② 会话列表；③ 会话摘要；④ 操作入口。</figcaption>
+        </figure>
+        <div class="callout">
+          <strong>当前观察</strong>
+          说明文档提到令牌、模型、成本和时间等历史信息。当前截图可验证会话列表与摘要入口；更细的令牌和成本维度应结合用量页面交叉查看。
+        </div>
+      </section>
+
+      <section id="memory">
+        <h2>7. 记忆管理</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>记忆</strong>。</p>
+          <p><strong>功能用途：</strong>浏览、搜索和管理 Hermes 的持久记忆条目，辅助跨会话召回。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>记忆</strong> 页面。</li>
+          <li>使用搜索框按关键词查找记忆。</li>
+          <li>查看条目内容、时间、来源和标签信息。</li>
+          <li>如页面提供新增、编辑或删除入口，使用前确认当前用户档案。</li>
+          <li>完成变更后刷新或重新搜索，验证条目已按预期变化。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/19-memory-notes.png" alt="Hermes Studio 记忆管理页标注截图">
+          <figcaption>图 7-1：记忆页面。① 搜索框；② 记忆列表；③ 条目元信息；④ 页面操作按钮。</figcaption>
+        </figure>
+        <div class="callout warn">
+          <strong>注意事项</strong>
+          记忆可能影响后续会话行为。编辑或删除前建议记录原始内容；生产用户档案中不要写入临时测试偏好，测试数据建议命名为演示记忆。
+        </div>
+        <div class="callout">
+          <strong>当前未观察到</strong>
+          本版本未发现交互式知识图谱、节点拖动/缩放、模式与纠错、身份文件编辑器的独立入口。
+        </div>
+      </section>
+
+      <section id="skills">
+        <h2>8. 技能与插件管理</h2>
+        <h3>8.1 技能列表</h3>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>技能</strong>。</p>
+          <p><strong>功能用途：</strong>浏览已安装或可用技能，查看技能名称、分类、状态和详情。</p>
+        </div>
+        <ol class="steps">
+          <li>点击 <strong>技能</strong>。</li>
+          <li>使用搜索框按名称或能力查找技能。</li>
+          <li>点击技能卡片或详情按钮查看说明、来源、权限和版本信息。</li>
+          <li>如提供安装、启用、停用或卸载按钮，先确认技能来源可信。</li>
+          <li>安装失败时查看错误提示，并到 <strong>日志</strong> 页面检索依赖或权限错误。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/14-skills-list.png" alt="Hermes Studio 技能列表页标注截图">
+          <figcaption>图 8-1：技能页面。① 搜索与筛选；② 技能卡片列表；③ 状态/分类标识；④ 技能操作入口。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>风险说明</strong>
+          技能可扩展智能体能力，部分技能可能读取文件、访问网络或调用外部工具。启用前应检查来源、权限和说明文档；生产环境优先启用官方或已审计技能。
+        </div>
+
+        <h3>8.2 插件清单</h3>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>插件</strong>。</p>
+          <p><strong>功能用途：</strong>查看插件域、插件包、包含的技能或工具集合。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>插件</strong> 页面。</li>
+          <li>查看插件名称、来源、状态和描述。</li>
+          <li>使用搜索或筛选定位目标插件。</li>
+          <li>如需要删除或禁用插件，先确认其是否被当前任务、MCP 或技能依赖。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/16-plugins-inventory.png" alt="Hermes Studio 插件页标注截图">
+          <figcaption>图 8-2：插件页面。① 插件搜索；② 插件列表；③ 插件状态；④ 详情或操作入口。</figcaption>
+        </figure>
+      </section>
+
+      <section id="workspace">
+        <h2>9. 终端、文件与工作区</h2>
+        <h3>9.1 文件工作区</h3>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>对话页底部或侧边的 <strong>工作区</strong> 抽屉入口。</p>
+          <p><strong>功能用途：</strong>浏览工作区文件，进行上传、下载、打开、创建目录或查看文件内容等操作。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>对话</strong> 页面。</li>
+          <li>点击工作区或文件图标打开抽屉。</li>
+          <li>在文件树中选择目录或文件。</li>
+          <li>根据页面按钮执行打开、下载、上传、创建目录等操作。</li>
+          <li>完成后检查文件列表刷新，确认文件存在且路径正确。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/05-files-workspace-drawer.png" alt="Hermes Studio 文件工作区抽屉标注截图">
+          <figcaption>图 9-1：文件工作区抽屉。① 文件树；② 当前路径；③ 上传/新建等操作；④ 文件预览或状态区域。</figcaption>
+        </figure>
+
+        <h3>9.2 网页终端</h3>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>对话页底部或侧边的 <strong>终端</strong> 抽屉入口。</p>
+          <p><strong>功能用途：</strong>在网页界面内执行命令、查看输出、辅助排查运行环境。</p>
+        </div>
+        <ol class="steps">
+          <li>点击终端图标打开网页终端。</li>
+          <li>确认当前工作目录和用户档案。</li>
+          <li>输入只读命令进行诊断，例如查看版本或列出当前目录。</li>
+          <li>观察输出区域和错误提示。</li>
+          <li>结束后关闭终端抽屉，避免误输入命令。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/06-terminal-drawer.png" alt="Hermes Studio 网页终端抽屉标注截图">
+          <figcaption>图 9-2：网页终端。① 命令输出区；② 输入光标；③ 会话控制；④ 关闭抽屉按钮。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>终端安全提示</strong>
+          不要在终端中执行删除数据、停止服务、修改启动项或公开发送凭据的命令。需要演示时使用临时目录和演示数据；高风险命令执行前应获得明确确认。
+        </div>
+      </section>
+
+      <section id="approvals">
+        <h2>10. 执行审批</h2>
+        <p>当前遍历过程中未触发独立的审批弹窗，也未发现名为执行审批的独立页面。Hermes 智能体文档中存在命令审批和授权相关能力，因此本节记录应对流程和验收口径。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>审批场景</th><th>应查看内容</th><th>建议动作</th></tr></thead>
+            <tbody>
+              <tr><td>智能体请求执行命令</td><td>命令全文、工作目录、上下文、目标文件、是否联网。</td><td>只读诊断可按一次性批准；写入、删除、上传、发消息需人工复核。</td></tr>
+              <tr><td>仅批准一次</td><td>仅本次执行。</td><td>用于低风险、可复核、可重复的单次操作。</td></tr>
+              <tr><td>本次会话批准</td><td>当前会话内同类操作。</td><td>仅用于受控测试会话，不建议在生产用户档案中长期使用。</td></tr>
+              <tr><td>始终允许</td><td>长期放行。</td><td>高风险。仅在工具来源可信、命令范围清晰、已有备份时使用。</td></tr>
+              <tr><td>拒绝</td><td>拒绝执行。</td><td>命令涉及删除、密钥、外发数据或不可逆变更时优先选择。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout risk">
+          <strong>当前版本状态</strong>
+          未观察到待审批全局提醒和审批后回执页面。若后续实际触发审批弹窗，应补充截图并记录具体按钮原文。
+        </div>
+      </section>
+
+      <section id="jobs">
+        <h2>11. 定时任务管理</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>任务</strong>。</p>
+          <p><strong>功能用途：</strong>创建、编辑、暂停、恢复、删除定时任务，支持定时表达式、预设计划、投递渠道和运行日志。</p>
+        </div>
+        <h3>11.1 查看任务列表</h3>
+        <ol class="steps">
+          <li>点击左侧 <strong>任务</strong>。</li>
+          <li>查看任务名称、状态、计划、最近运行时间和输出摘要。</li>
+          <li>使用刷新或自动刷新状态确认任务是否正在运行。</li>
+          <li>点击任务条目查看详情或运行日志。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/09-jobs-manager.png" alt="Hermes Studio 定时任务页面标注截图">
+          <figcaption>图 11-1：任务页面。① 新建任务按钮；② 任务列表；③ 状态与计划；④ 运行/编辑/删除等操作入口。</figcaption>
+        </figure>
+
+        <h3>11.2 新建定时任务</h3>
+        <ol class="steps">
+          <li>点击 <strong>新建任务</strong> 或同义按钮。</li>
+          <li>填写任务名称，例如演示任务。</li>
+          <li>填写自然语言提示词，说明任务目标、输出格式和投递要求。</li>
+          <li>选择预设计划，或输入自定义定时表达式。</li>
+          <li>选择投递渠道，例如 Telegram、Discord、Slack 或当前页面可见渠道。</li>
+          <li>选择技能、重复次数、是否启用等选项。</li>
+          <li>保存后返回任务列表，检查状态和下次运行时间。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/10-jobs-create-modal.png" alt="Hermes Studio 新建定时任务弹窗标注截图">
+          <figcaption>图 11-2：新建任务弹窗。① 名称；② 提示词；③ 计划/定时表达式；④ 投递渠道；⑤ 保存/取消按钮。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>风险说明与回滚</strong>
+          定时任务可能自动触发模型调用、工具调用和外部消息投递，带来成本、隐私和误发风险。本文未保存真实任务。若误建任务，应立即暂停或删除，并检查最近运行日志和外部平台消息。
+        </div>
+
+        <h3>11.3 手动立即触发与运行日志</h3>
+        <ol class="steps">
+          <li>在任务列表选择目标任务。</li>
+          <li>点击 <strong>立即触发</strong> 或当前界面同义按钮。</li>
+          <li>查看实时运行日志、最近输出和状态变化。</li>
+          <li>如任务失败，复制错误摘要，在日志页面按任务名称或时间检索。</li>
+        </ol>
+      </section>
+
+      <section id="crews">
+        <h2>12. 多智能体群聊（测试版）</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>群聊（测试版）</strong>。</p>
+          <p><strong>功能用途：</strong>创建多智能体聊天房间，添加成员，使用 @提及 路由给指定智能体，观察实时活动流。</p>
+        </div>
+        <h3>12.1 查看群聊房间</h3>
+        <ol class="steps">
+          <li>点击 <strong>群聊（测试版）</strong>。</li>
+          <li>查看房间列表、成员数量、最近活动和状态。</li>
+          <li>点击房间进入聊天流。</li>
+          <li>使用 @成员名将任务派发给指定成员，或发送普通消息给全部成员。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/08-group-chat-rooms.png" alt="Hermes Studio 群聊房间页面标注截图">
+          <figcaption>图 12-1：群聊房间列表。① 新建房间；② 房间卡片；③ 成员与状态；④ 进入房间入口。</figcaption>
+        </figure>
+
+        <h3>12.2 创建群聊房间</h3>
+        <ol class="steps">
+          <li>点击 <strong>新建房间</strong>。</li>
+          <li>填写名称，例如演示群组。</li>
+          <li>填写目标或描述，说明团队任务边界。</li>
+          <li>选择内置人格智能体或添加自定义成员。</li>
+          <li>保存后进入房间，检查成员列表和实时消息流。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/30-group-chat-create-room-modal.png" alt="Hermes Studio 创建群聊房间弹窗标注截图">
+          <figcaption>图 12-2：创建群聊房间弹窗。① 房间名称；② 描述/目标；③ 成员选择；④ 保存/取消。</figcaption>
+        </figure>
+        <div class="callout">
+          <strong>当前观察</strong>
+          当前页面名称为“群聊（测试版）”，未直接使用群组命名；克隆群组、归档群组、成员单独聊天等能力未在本次截图中观察到独立按钮。
+        </div>
+      </section>
+
+      <section id="agents">
+        <h2>13. 智能体库</h2>
+        <p>当前客户端未发现名为 <strong>智能体库</strong> 的独立一级导航。可替代的可见能力包括：群聊（测试版） 中选择成员或人格智能体，用户档案页面中创建/克隆用户档案，会话页面中选择模型或用户档案。</p>
+        <div class="callout warn">
+          <strong>操作口径</strong>
+          创建自定义智能体、设置图标、角色标签、系统提示词、模型覆盖、复制/删除智能体等功能，当前版本未作为独立智能体库页面出现。需要按群聊成员、用户档案或模型服务商的实际入口分别配置。
+        </div>
+      </section>
+
+      <section id="workflow">
+        <h2>14. 可视化工作流与调度器</h2>
+        <p>当前遍历未发现 <strong>可视化工作流构建器</strong>、<strong>调度器</strong>、<strong>任务编排</strong> 的独立页面或左侧导航。未观察到节点画布、依赖连线、圆桌/战情室布局、研究/构建/评审/部署模板、并行数配置、任务成本历史等独立界面。</p>
+        <div class="callout">
+          <strong>当前版本处理</strong>
+          自动化任务可使用任务；多智能体协同可使用群聊（测试版）；任务状态管理可使用看板。上述模块是当前版本可见替代路径，不等同于已验证工作流构建器或调度器。
+        </div>
+      </section>
+
+      <section id="ops">
+        <h2>15. 运行监控面板</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>性能监控</strong>，并结合 <strong>日志</strong>、<strong>用量</strong>、<strong>技能用量</strong> 查看运行状态。</p>
+          <p><strong>功能用途：</strong>观察系统健康、资源占用、运行时间、请求状态和错误定位。</p>
+        </div>
+        <ol class="steps">
+          <li>点击 <strong>性能监控</strong>。</li>
+          <li>查看 CPU、内存、磁盘、运行时间和网关状态。</li>
+          <li>如出现异常，切换到日志页面按时间检索错误。</li>
+          <li>如怀疑成本或模型调用异常，进入用量页面查看令牌与成本趋势。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/24-performance-dashboard.png" alt="Hermes Studio 性能监控页面标注截图">
+          <figcaption>图 15-1：性能监控。① 系统资源指标；② 运行状态；③ 刷新/时间范围；④ 异常或状态提示区域。</figcaption>
+        </figure>
+        <div class="callout">
+          <strong>差异说明</strong>
+          当前未发现名为运行监控面板的独立页面；性能监控、日志、用量和技能用量共同承担运行监控职责。
+        </div>
+      </section>
+
+      <section id="kanban">
+        <h2>16. 任务与看板</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>看板</strong>。</p>
+          <p><strong>功能用途：</strong>以待办池、待办、进行中、评审、完成等列管理任务卡片。</p>
+        </div>
+        <h3>16.1 查看与移动任务</h3>
+        <ol class="steps">
+          <li>进入 <strong>看板</strong> 页面。</li>
+          <li>查看不同状态列中的任务卡片。</li>
+          <li>按优先级、标签、负责人或来源链接识别任务。</li>
+          <li>拖拽任务卡片到目标列，改变状态。</li>
+          <li>打开任务详情，检查评论、描述、阻塞状态或完成状态。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/11-kanban-board.png" alt="Hermes Studio 看板页面标注截图">
+          <figcaption>图 16-1：看板。① 状态列；② 任务卡片；③ 新建任务；④ 刷新或过滤入口。</figcaption>
+        </figure>
+
+        <h3>16.2 新建任务卡片</h3>
+        <ol class="steps">
+          <li>点击 <strong>新建任务</strong>。</li>
+          <li>填写标题，例如“演示任务”。</li>
+          <li>填写描述、优先级、标签、来源链接和负责人。</li>
+          <li>选择初始状态列。</li>
+          <li>保存后返回看板，确认卡片出现在指定列。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/12-kanban-new-task-modal.png" alt="Hermes Studio 新建任务卡片弹窗标注截图">
+          <figcaption>图 16-2：新建看板任务。① 标题；② 描述；③ 状态/优先级/标签；④ 保存/取消。</figcaption>
+        </figure>
+        <div class="callout">
+          <strong>关联关系</strong>
+          当前页面未观察到与调度器任务或群组的明确独立关联字段；若任务由智能体创建，需在卡片来源或描述中人工保留上下文链接。
+        </div>
+      </section>
+
+      <section id="usage">
+        <h2>17. 成本与用量分析</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>用量</strong> 与 <strong>技能用量</strong>。</p>
+          <p><strong>功能用途：</strong>查看令牌输入/输出、模型维度、会话维度、趋势图、技能调用和成本估算。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>用量</strong> 页面。</li>
+          <li>查看总令牌、输入/输出拆分、成本估算和图表。</li>
+          <li>切换时间范围，观察近期趋势。</li>
+          <li>按模型、会话或用户档案维度定位异常成本。</li>
+          <li>进入 <strong>技能用量</strong> 查看技能调用频率和工具使用分布。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/23-usage-analytics.png" alt="Hermes Studio 用量分析页面标注截图">
+          <figcaption>图 17-1：用量分析。① 令牌汇总；② 趋势图；③ 模型/会话维度；④ 时间范围或刷新入口。</figcaption>
+        </figure>
+        <figure>
+          <img src="./screenshots/25-skills-usage.png" alt="Hermes Studio 技能用量页面标注截图">
+          <figcaption>图 17-2：技能用量。① 技能统计；② 调用次数；③ 时间范围；④ 详情入口。</figcaption>
+        </figure>
+        <div class="callout warn">
+          <strong>注意事项</strong>
+          成本显示依赖模型价格、模型服务商返回数据和缓存命中统计。出现异常峰值时，应同时查看日志、历史和任务，确认是否由定时任务或重试造成。
+        </div>
+      </section>
+
+      <section id="logs">
+        <h2>18. 日志查看</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>日志</strong>。</p>
+          <p><strong>功能用途：</strong>查看最近日志、按级别筛选、搜索错误、辅助排查模型、MCP、终端、网关和任务问题。</p>
+        </div>
+        <ol class="steps">
+          <li>点击 <strong>日志</strong>。</li>
+          <li>选择“全部”或“错误”筛选。</li>
+          <li>在搜索框输入关键词，例如模型服务商、网关、MCP、定时任务。</li>
+          <li>开启或关闭自动滚动，便于观察实时错误。</li>
+          <li>将错误时间与会话、任务、用量页面中的异常事件对应起来。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/22-logs-viewer.png" alt="Hermes Studio 日志查看器标注截图">
+          <figcaption>图 18-1：日志查看器。① 级别筛选；② 搜索框；③ 日志列表；④ 自动滚动/刷新入口。</figcaption>
+        </figure>
+        <div class="callout best">
+          <strong>排查示例</strong>
+          如果聊天无响应，先按当前时间过滤日志，查找模型认证、网关连接、工具执行或桥接进程错误，再到模型或设置页面修复配置。
+        </div>
+      </section>
+
+      <section id="mcp">
+        <h2>19. MCP 服务管理</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>MCP</strong>。</p>
+          <p><strong>功能用途：</strong>管理 MCP 服务器，向 Hermes 暴露外部工具、资源和提示。</p>
+        </div>
+        <h3>19.1 查看 MCP 服务器列表</h3>
+        <ol class="steps">
+          <li>点击 <strong>MCP</strong>。</li>
+          <li>查看服务器名称、类型、命令、URL、启用状态和连接状态。</li>
+          <li>按需重载或刷新服务器状态。</li>
+          <li>进入日志页面确认启动失败、环境变量缺失或连接超时等错误。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/17-mcp-servers.png" alt="Hermes Studio MCP 服务器列表标注截图">
+          <figcaption>图 19-1：MCP 服务管理。① 新增服务器；② 服务器列表；③ 启用状态；④ 编辑/删除/重载入口。</figcaption>
+        </figure>
+
+        <h3>19.2 新增 MCP 服务</h3>
+        <ol class="steps">
+          <li>点击新增 MCP 服务。</li>
+          <li>填写服务器名称。</li>
+          <li>选择标准输入输出或 HTTP 类型。</li>
+          <li>标准输入输出类型填写命令、参数、环境变量；HTTP 类型填写 URL 和认证信息。</li>
+          <li>保存后触发重载。</li>
+          <li>返回列表检查连接状态，并在会话中验证 MCP 工具是否可被调用。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/18-mcp-add-server-modal.png" alt="Hermes Studio 新增 MCP 服务弹窗标注截图">
+          <figcaption>图 19-2：新增 MCP 服务。① 名称；② 类型；③ 命令或 URL；④ 环境变量；⑤ 保存/取消。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>风险说明</strong>
+          MCP 服务可能把文件系统、数据库、浏览器或内部接口暴露给智能体。新增前应限制工具范围，不把长期凭据写入不可信服务；出现连接失败时优先检查日志，不要反复保存未经验证的命令。
+        </div>
+      </section>
+
+      <section id="integrations">
+        <h2>20. 平台集成</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>频道</strong>。</p>
+          <p><strong>功能用途：</strong>配置 Telegram、Discord、Slack、WhatsApp、Matrix、Feishu、WeChat、WeCom 等消息渠道的凭据、启用状态和网关行为。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>频道</strong> 页面。</li>
+          <li>选择目标平台卡片。</li>
+          <li>填写令牌、机器人编号、网络回调、密钥或页面要求的凭据。</li>
+          <li>启用平台，并使用测试连接按钮验证。</li>
+          <li>查看网关状态和日志页面，确认平台已连接。</li>
+          <li>为定时任务或会话选择投递渠道时，确认渠道处于已配置状态。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/13-channels-integrations.png" alt="Hermes Studio 频道集成页面标注截图">
+          <figcaption>图 20-1：频道页面。① 平台卡片；② 配置状态；③ 凭据入口；④ 测试连接或启用开关。</figcaption>
+        </figure>
+        <div class="callout warn">
+          <strong>敏感凭据注意</strong>
+          虽然本交付版截图按用户要求不做局部遮罩，实际配置时仍不建议在公共屏幕、录屏或多人会议中展示令牌、网络回调、Cookie 或机器人密钥。凭据泄露后应在对应平台立即轮换。
+        </div>
+      </section>
+
+      <section id="devices">
+        <h2>21. 设备管理</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧导航 <strong>设备</strong>。</p>
+          <p><strong>功能用途：</strong>发现局域网或远程 Hermes 设备，查看在线状态、系统信息、版本、延迟和配对状态，并在配对后建立远程连接。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>设备</strong> 页面。</li>
+          <li>查看设备列表中的电脑名称、端点类型、访问地址、系统、Hermes Agent 版本、网页界面版本、延迟和最后发现时间。</li>
+          <li>点击刷新或扫描，更新局域网设备发现缓存。</li>
+          <li>检查入站和出站配对状态；未配对设备需要先发起配对请求，已配对设备才能连接。</li>
+          <li>连接前确认目标设备名称和地址，避免把远程终端、文件传输或命令执行发到错误设备。</li>
+          <li>不再使用时断开活跃连接，并回到设备列表确认状态变化。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/33-devices-management.png" alt="Hermes Studio 设备管理页面核对图">
+          <figcaption>图 21-1：设备管理实拍图。左侧为 Hermes Studio 设备列表与远程配对入口，右侧为通过浏览器访问远程设备页面的状态。</figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>操作</th><th>作用</th><th>注意事项</th></tr></thead>
+            <tbody>
+              <tr><td>刷新/扫描设备</td><td>更新已知设备和在线状态。</td><td>扫描结果受网络、端口、防火墙和对端 Hermes 服务状态影响。</td></tr>
+              <tr><td>按地址配对</td><td>手动输入设备地址，向远端发送配对请求。</td><td>只对可信设备发起；确认地址、端口和设备名称后再批准。</td></tr>
+              <tr><td>连接已配对设备</td><td>建立远程对等连接，用于后续终端、命令和文件操作。</td><td>连接前确认入站/出站状态均符合预期。</td></tr>
+              <tr><td>远程终端</td><td>在已连接设备上创建交互式终端。</td><td>权限和风险等同于在目标设备本地执行命令。</td></tr>
+              <tr><td>远程命令</td><td>向已连接设备发送命令和参数。</td><td>优先执行只读诊断；写入、删除、安装、停止服务前需人工复核。</td></tr>
+              <tr><td>文件上传/下载</td><td>在本机和远程设备之间传输文件。</td><td>确认路径、覆盖风险和敏感文件范围；完成后检查文件大小和位置。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <strong>当前核对结果</strong>
+          本机 0.6.12 设备接口可返回设备列表、扫描时间、在线状态、配对状态和活跃连接列表；当前未发现活跃远程连接。因界面登录态未在自动化浏览器中复用，本节截图使用本机设备接口字段生成，不包含设备公钥。
+        </div>
+        <div class="callout risk">
+          <strong>风险说明</strong>
+          设备管理连接的是另一台真实机器。远程终端、远程命令、上传和下载都可能改变对端文件或服务状态；操作前应确认目标设备、用户档案、网络环境和备份。
+        </div>
+      </section>
+
+      <section id="settings">
+        <h2>22. 设置</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧底部 <strong>设置</strong>。</p>
+          <p><strong>当前可见页签：</strong>当前账户/账户管理、显示、代理、记忆、上下文压缩、会话、隐私、模型、语音。</p>
+        </div>
+        <figure>
+          <img src="./screenshots/29-settings-overview.png" alt="Hermes Studio 设置总览页面标注截图">
+          <figcaption>图 22-1：设置总览。① 设置页签；② 当前页设置项；③ 保存/重置入口；④ 账户相关操作。</figcaption>
+        </figure>
+        <h3>22.1 账户管理</h3>
+        <ol class="steps">
+          <li>进入 <strong>设置</strong>。</li>
+          <li>选择账户相关页签。</li>
+          <li>查看当前用户名、角色、会话状态和账户列表。</li>
+          <li>需要修改用户名或密码时，打开账户编辑弹窗。</li>
+          <li>保存前确认新凭据已记录在安全位置。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/32-settings-account-modal.png" alt="Hermes Studio 账户设置弹窗标注截图">
+          <figcaption>图 22-2：账户设置弹窗。① 用户名；② 密码字段；③ 角色/权限；④ 保存/取消。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>风险说明</strong>
+          修改账户或密码可能导致当前会话失效。操作前确认至少保留一个可用的超级管理员账号；忘记密码时使用官方说明文档中的默认账户重置命令。
+        </div>
+
+        <h3>22.2 模型服务商设置</h3>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧 <strong>模型</strong>，或设置的 <strong>模型</strong> 页签。</p>
+          <p><strong>功能用途：</strong>管理模型服务商、默认模型、兼容 OpenAI 的端点、授权登录或接口密钥凭据。</p>
+        </div>
+        <ol class="steps">
+          <li>进入 <strong>模型</strong> 页面。</li>
+          <li>查看当前模型服务商列表、默认模型和可用模型。</li>
+          <li>点击添加模型服务商。</li>
+          <li>选择预设模型服务商或填写自定义兼容 OpenAI 的端点。</li>
+          <li>输入凭据并保存；保存后测试模型列表是否能拉取。</li>
+          <li>回到会话页面，在模型选择器中验证新模型可见。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/20-models-management.png" alt="Hermes Studio 模型管理页面标注截图">
+          <figcaption>图 22-3：模型页面。① 模型服务商列表；② 当前模型；③ 添加模型服务商；④ 测试/编辑/删除入口。</figcaption>
+        </figure>
+        <figure>
+          <img src="./screenshots/21-models-add-provider-modal.png" alt="Hermes Studio 添加模型服务商弹窗标注截图">
+          <figcaption>图 22-4：添加模型服务商。① 模型服务商类型；② 基础地址；③ 接口密钥/授权登录；④ 默认模型；⑤ 保存/取消。</figcaption>
+        </figure>
+
+        <h3>22.3 显示、代理、记忆、会话、隐私、语音</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>页签</th><th>用途</th><th>操作与验证</th></tr></thead>
+            <tbody>
+              <tr><td>显示</td><td>主题、紧凑模式、流式显示、推理和成本显示。</td><td>调整后返回会话页面，确认界面风格和输出信息按预期变化。</td></tr>
+              <tr><td>代理</td><td>智能体运行限制、最大轮次、超时或工具策略。</td><td>修改前记录原值；长任务异常时可降低并发或调整超时。</td></tr>
+              <tr><td>记忆</td><td>启用/禁用记忆、字符限制等。</td><td>变更后通过记忆页面和新会话验证是否生效。</td></tr>
+              <tr><td>上下文压缩</td><td>长会话摘要和历史压缩策略。</td><td>用于控制超长会话成本；验证压缩后上下文仍保留关键事实。</td></tr>
+              <tr><td>会话</td><td>空闲超时、会话保持、重置策略。</td><td>修改后重新登录或等待超时，验证行为。</td></tr>
+              <tr><td>隐私</td><td>个人信息自动隐藏或隐私相关开关。</td><td>启用后用测试文本验证是否按预期隐藏敏感字段。</td></tr>
+              <tr><td>语音</td><td>语音输入或 TTS 相关设置。</td><td>配置后在支持语音的入口测试。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout">
+          <strong>当前未观察到</strong>
+          未发现独立的 Redis、systemd 自启动、Tailscale 移动访问、安装为应用说明、全局备份与导入页面。相关内容见后续章节。
+        </div>
+      </section>
+
+      <section id="backup">
+        <h2>23. 备份、恢复与导入</h2>
+        <div class="chapter-card compact">
+          <p><strong>入口位置：</strong>左侧 <strong>用户</strong> / 用户档案页面。</p>
+          <p><strong>功能用途：</strong>创建、克隆、导入、导出和删除用户档案，作为配置和数据隔离单位。</p>
+        </div>
+        <ol class="steps">
+          <li>点击左侧 <strong>用户</strong>。</li>
+          <li>查看用户档案列表、当前激活用户档案和权限状态。</li>
+          <li>点击创建用户档案，填写名称和描述。</li>
+          <li>如需备份，使用导出入口生成用户档案归档。</li>
+          <li>如需恢复，使用导入入口选择归档文件。</li>
+          <li>恢复后切换到目标用户档案，检查模型、任务、记忆、技能和会话是否可用。</li>
+        </ol>
+        <figure>
+          <img src="./screenshots/28-profiles-management.png" alt="Hermes Studio 用户与用户档案管理页面标注截图">
+          <figcaption>图 23-1：用户档案页面。① 用户档案列表；② 当前用户档案；③ 创建/导入/导出；④ 删除或切换入口。</figcaption>
+        </figure>
+        <figure>
+          <img src="./screenshots/31-profiles-create-modal.png" alt="Hermes Studio 创建用户档案弹窗标注截图">
+          <figcaption>图 23-2：创建用户档案。① 名称；② 克隆来源或空白创建；③ 描述；④ 保存/取消。</figcaption>
+        </figure>
+        <div class="callout risk">
+          <strong>恢复前注意事项</strong>
+          导入或切换用户档案会改变当前可见模型、凭据、任务和记忆范围。恢复前先导出现有用户档案；如恢复失败，回到原用户档案并查看日志中的导入错误。
+        </div>
+      </section>
+
+      <section id="pwa">
+        <h2>24. 安装为应用与桌面体验</h2>
+        <p>当前电脑已安装 macOS 桌面客户端，未在当前客户端设置页中观察到独立的安装为应用入口。浏览器版可以使用 Chrome 或 Edge 的“安装此站点为应用”能力，但此能力来自浏览器，不是当前 Hermes Studio 页面内独立功能。</p>
+        <ol class="steps">
+          <li>使用 Chrome 或 Edge 打开 <code>http://127.0.0.1:8748</code>。</li>
+          <li>点击浏览器地址栏右侧安装图标，或进入浏览器菜单选择安装应用。</li>
+          <li>安装后从系统应用列表启动。</li>
+          <li>重启后验证本机 Hermes Studio 服务是否已启动；若服务未运行，安装后的应用窗口会显示无法连接。</li>
+        </ol>
+        <div class="callout">
+          <strong>离线状态说明</strong>
+          安装为应用或桌面壳不等于智能体离线可用。模型调用、网关、MCP、外部渠道和模型服务商认证仍依赖本地服务与网络状态。
+        </div>
+      </section>
+
+      <section id="security">
+        <h2>25. 安全与权限章节</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>风险对象</th><th>风险等级</th><th>建议做法</th><th>回滚方式</th></tr></thead>
+            <tbody>
+              <tr><td>接口密钥 / 令牌 / 网络回调</td><td><span class="badge no">高</span></td><td>只在受信设备配置；不要截图外发；泄露后立即轮换。</td><td>在模型服务商或平台后台吊销旧凭据，重新配置新凭据。</td></tr>
+              <tr><td>终端命令</td><td><span class="badge no">高</span></td><td>先执行只读诊断；写入/删除/停止服务前人工确认。</td><td>从备份恢复文件；重启服务；查看命令历史确认影响。</td></tr>
+              <tr><td>远程设备连接</td><td><span class="badge no">高</span></td><td>确认目标设备、配对方向和权限范围；远程终端/命令/文件传输前人工复核。</td><td>断开连接，撤销配对，检查目标设备日志和被改动路径。</td></tr>
+              <tr><td>删除会话、用户档案、任务、技能</td><td><span class="badge no">高</span></td><td>删除前导出或截图；使用演示数据演示。</td><td>从用户档案导出归档或系统备份恢复。</td></tr>
+              <tr><td>MCP 服务</td><td><span class="badge no">高</span></td><td>限制工具范围；不要暴露全盘、生产数据库或长期凭据。</td><td>禁用服务器，重载配置，轮换凭据。</td></tr>
+              <tr><td>定时任务自动投递</td><td><span class="badge partial">中高</span></td><td>先暂停创建；使用测试渠道；限制频率和重复次数。</td><td>暂停/删除任务，检查日志和外部平台消息。</td></tr>
+              <tr><td>用量成本异常</td><td><span class="badge partial">中</span></td><td>设置合理模型和任务频率；监控趋势。</td><td>暂停任务，切换低成本模型，检查失败重试。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <strong>本次文档制作安全边界</strong>
+          已遍历可见页面和弹窗，未执行删除、重置、停止服务、修改系统启动项、发送外部消息、保存真实新凭据等高风险动作。
+        </div>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>26. 常见问题与故障排除</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>问题</th><th>现象</th><th>检查路径</th><th>处理建议</th></tr></thead>
+            <tbody>
+              <tr><td>无法打开页面</td><td>浏览器显示无法连接。</td><td>确认 Hermes Studio 是否运行；确认端口是否为 8748。</td><td>重启客户端；若端口被占用，查看运行进程后再处理。</td></tr>
+              <tr><td>网关未连接</td><td>会话无响应或状态异常。</td><td>性能监控、日志、健康接口。</td><td>查看网关错误；确认智能体运行时和用户档案配置。</td></tr>
+              <tr><td>模型认证失败</td><td>发送后返回 401、403 或模型服务商错误。</td><td>模型、设置、日志。</td><td>检查模型服务商、基础地址、接口密钥/授权登录状态；必要时重新授权。</td></tr>
+              <tr><td>任务不运行</td><td>任务状态不变或无输出。</td><td>任务、日志、用量。</td><td>检查定时表达式、启用状态、投递渠道和模型权限。</td></tr>
+              <tr><td>定时表达式错误</td><td>保存失败或下次运行时间异常。</td><td>任务创建弹窗。</td><td>使用预设计划校验，再改为自定义表达式。</td></tr>
+              <tr><td>MCP 连接失败</td><td>服务器显示错误或工具不可用。</td><td>MCP 页面、日志。</td><td>检查命令、参数、环境变量、URL、网络和依赖安装。</td></tr>
+              <tr><td>设备扫描不到</td><td>设备列表为空或在线状态不更新。</td><td>设备页面、健康接口、网络连通性、防火墙。</td><td>确认对端 Hermes 服务正在运行；检查地址、端口、同网段或远程访问策略，再重新扫描。</td></tr>
+              <tr><td>设备连接失败</td><td>已发现设备但无法建立远程连接。</td><td>设备页面配对状态、活跃连接、日志。</td><td>确认入站/出站配对均已批准；必要时撤销旧请求后重新配对。</td></tr>
+              <tr><td>技能安装失败</td><td>安装报错或技能不可见。</td><td>技能、插件、日志。</td><td>检查来源、依赖、权限和用户档案的技能目录。</td></tr>
+              <tr><td>终端命令无响应</td><td>终端空白或卡住。</td><td>终端抽屉、日志、性能监控。</td><td>关闭抽屉重开；避免长时间交互命令；必要时重启客户端。</td></tr>
+              <tr><td>截图或页面显示异常</td><td>布局错位、空白、按钮不见。</td><td>浏览器刷新、性能监控、日志。</td><td>刷新页面；检查窗口尺寸；重启桌面客户端。</td></tr>
+              <tr><td>会话持久化问题</td><td>登录状态丢失或会话不保存。</td><td>设置会话页、用户档案、说明文档登录锁说明。</td><td>确认网页界面状态目录可写；必要时清理登录锁或重置默认登录。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="cleanup">
+        <h2>27. 卸载与数据清理</h2>
+        <div class="callout risk">
+          <strong>高风险提醒</strong>
+          卸载、停止服务、清理数据会影响现有智能体、用户档案、会话、记忆、技能和渠道配置。本文只给出建议流程，未在本机执行卸载或清理。
+        </div>
+        <h3>27.1 停止服务</h3>
+        <ol class="steps">
+          <li>先退出 Hermes Studio 客户端。</li>
+          <li>确认没有正在运行的会话、任务、网关投递和外部渠道任务。</li>
+          <li>如必须停止网关，先记录当前用户档案和运行状态。</li>
+          <li>停止后通过浏览器访问 8748 验证页面已不可达。</li>
+        </ol>
+        <h3>27.2 清理 Studio 数据</h3>
+        <ol class="steps">
+          <li>先导出用户档案或备份整个网页界面状态目录。</li>
+          <li>清理浏览器本地存储前确认不会丢失登录状态或前端偏好。</li>
+          <li>清理 <code>~/.hermes-web-ui</code> 前确认不再需要网页界面登录、数据库、日志、上传文件和用户档案状态。</li>
+          <li><code>~/.hermes/</code> 属于 Hermes 智能体数据目录，包含智能体配置、技能、记忆和运行数据；除非同时卸载智能体，否则不要误删。</li>
+        </ol>
+        <h3>27.3 Docker / systemd / 本地依赖</h3>
+        <p>当前安装方式为 macOS 桌面客户端，未观察到本机 Docker 或 systemd 安装入口。若使用 Docker 部署，应按编排文件停止容器并备份数据卷；若使用 Linux systemd，应先禁用服务，再停止并清理服务文件。</p>
+      </section>
+
+      <section id="matrix">
+        <h2>28. 版本预览与编程智能体</h2>
+        <figure>
+          <img src="./screenshots/27-version-preview.png" alt="Hermes Studio 版本预览页面标注截图">
+          <figcaption>图 28-1：版本预览。① 版本信息；② 准备/启动/停止入口；③ 状态输出；④ 风险提示位置。</figcaption>
+        </figure>
+        <figure>
+          <img src="./screenshots/26-coding-agents.png" alt="Hermes Studio 编程工具页面标注截图">
+          <figcaption>图 28-2：编程智能体。① 编程工具状态；② 可用智能体或工具；③ 操作入口；④ 说明区域。</figcaption>
+        </figure>
+      </section>
+
+      <section id="appendix">
+        <h2>29. 附录</h2>
+        <h3>29.1 快捷键</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>快捷键</th><th>作用</th><th>当前状态</th></tr></thead>
+            <tbody>
+              <tr><td><code>Enter</code></td><td>聊天输入中发送或换行动作依设置而定。</td><td>需按当前输入框提示确认。</td></tr>
+              <tr><td><code>Shift</code> + <code>Enter</code></td><td>常见为换行。</td><td>当前版本未单独弹出快捷键说明。</td></tr>
+              <tr><td><code>Esc</code></td><td>关闭弹窗。</td><td>在搜索、创建弹窗中可按通用网页行为尝试。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>29.2 术语表</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>术语</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>Hermes Studio</td><td>当前桌面客户端和网页界面入口，用于管理 Hermes 智能体。</td></tr>
+              <tr><td>Hermes 智能体</td><td>底层自学习智能体运行时，负责模型调用、工具调用、记忆、技能和网关。</td></tr>
+              <tr><td>网关</td><td>连接外部消息平台和智能体的服务。</td></tr>
+              <tr><td>模型服务商</td><td>模型服务提供方或兼容 OpenAI 的端点。</td></tr>
+              <tr><td>用户档案</td><td>隔离配置、会话、任务、记忆、技能和模型可见性的用户/运行档案。</td></tr>
+              <tr><td>设备</td><td>可被 Hermes Studio 发现、配对并远程连接的局域网或远程 Hermes 实例。</td></tr>
+              <tr><td>MCP</td><td>模型上下文协议，用于连接外部工具服务器。</td></tr>
+              <tr><td>任务</td><td>按定时表达式或预设计划自动运行的任务。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </section>
+
+    </main>
+  </div>
+</body>
+</html>
