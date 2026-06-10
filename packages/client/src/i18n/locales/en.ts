@@ -1969,7 +1969,7 @@ export default {
     new_0_6_12_7: 'Files, downloads, and Markdown previews are steadier with aligned file columns, raw percent download URL handling, and inline rendering for local audio links',
     new_0_6_12_8: 'Remote device pairing is easier with manual pairing and LAN HTTP fallback support',
     new_0_6_12_9: 'Chat rendering polish fixes highlighted code blocks that could overflow the screen, including long uninterrupted tokens, while diff blocks keep line-aligned scrolling',
-    new_0_6_12_10: 'Additional frontend polish includes remote device pairing fallback, the Atlas Cloud preset, clearer sidebar labels, refined logout identity text, and removal of an unwired Busy Input option',
+    new_0_6_12_10: 'Additional frontend polish includes remote device pairing fallback, clearer sidebar labels, refined logout identity text, and removal of an unwired Busy Input option',
     new_0_6_11_1: 'LAN device discovery now includes pairing approvals, request history, duplicate request handling, status sync, and cleanup when device access is revoked',
     new_0_6_11_2: 'LAN peer access is available through MCP with bundled MCP startup, command shims, reconnecting peer sockets, local connection listing, and capped terminal sessions',
     new_0_6_11_3: 'Unified backend TTS synthesis and MiMo voice cloning settings are now available, including playback support before saving settings',
