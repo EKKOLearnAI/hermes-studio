@@ -9,6 +9,7 @@ const { isDark } = useTheme()
 useScrollReveal()
 
 const stars = ref<number | null>(null)
+const releaseVersion = __WEBSITE_DOWNLOAD_VERSION__
 
 const chartSrc = computed(() => {
   const base = 'https://api.star-history.com/svg?repos=EKKOLearnAI%2Fhermes-web-ui&type=Date'
@@ -19,7 +20,7 @@ onMounted(async () => {
   try {
     const res = await fetch('https://api.github.com/repos/EKKOLearnAI/hermes-web-ui')
     const data = await res.json()
-    stars.value = data.stargazers_count
+    stars.value = Number.isFinite(data.stargazers_count) ? data.stargazers_count : null
   } catch {}
 })
 </script>
@@ -43,16 +44,8 @@ onMounted(async () => {
         <span v-if="stars !== null" class="star-count">{{ stars.toLocaleString() }}</span>
       </a>
 
-      <img
-        class="github-badge"
-        src="https://img.shields.io/github/license/EKKOLearnAI/hermes-web-ui?style=flat-square"
-        :alt="t('starHistory.licenseAlt')"
-      />
-      <img
-        class="github-badge"
-        src="https://img.shields.io/github/v/release/EKKOLearnAI/hermes-web-ui?style=flat-square"
-        :alt="t('starHistory.versionAlt')"
-      />
+      <span class="meta-pill">{{ t('footer.license') }}</span>
+      <span class="meta-pill">{{ releaseVersion }}</span>
     </div>
 
     <div class="star-chart reveal reveal-delay-2">
@@ -74,28 +67,40 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .star-panel {
-  padding: 40px 32px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-lg;
+  position: relative;
+  overflow: hidden;
+  padding: clamp(28px, 4vw, 44px);
+  background:
+    radial-gradient(circle at 86% 10%, rgba(68, 111, 174, 0.13), rgba(68, 111, 174, 0) 30%),
+    radial-gradient(circle at 12% 22%, rgba(229, 185, 77, 0.14), rgba(229, 185, 77, 0) 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(247, 249, 252, 0.74));
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  border-radius: 34px;
+  box-shadow:
+    0 24px 80px rgba(30, 50, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
   display: flex;
   flex-direction: column;
 
   @media (max-width: $breakpoint-mobile) {
-    padding: 24px 16px;
+    padding: 22px 14px;
+    border-radius: 24px;
   }
 }
 
 .panel-title {
-  font-size: 24px;
-  font-weight: 700;
-  margin-bottom: 8px;
-  color: var(--text-primary);
+  margin: 0 0 10px;
+  color: rgba(30, 38, 52, 0.92);
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.06;
 }
 
 .panel-desc {
-  color: var(--text-secondary);
+  color: rgba(42, 50, 64, 0.66);
   font-size: 15px;
+  line-height: 1.65;
   margin-bottom: 24px;
 }
 
@@ -111,40 +116,52 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
+  min-height: 36px;
+  padding: 7px 14px;
+  background: rgba(30, 50, 90, 0.9);
+  border: 1px solid rgba(30, 50, 90, 0.12);
+  border-radius: 999px;
   text-decoration: none;
-  color: var(--text-primary);
+  color: #fff;
   font-size: 13px;
-  font-weight: 500;
-  transition: all $transition-fast;
+  font-weight: 650;
+  box-shadow: 0 8px 22px rgba(30, 50, 90, 0.16);
+  transition: transform $transition-fast, background $transition-fast;
 
   &:hover {
-    border-color: var(--text-muted);
+    transform: translateY(-1px);
+    background: rgba(30, 50, 90, 1);
+    color: #fff;
   }
 }
 
 .star-icon {
   width: 16px;
   height: 16px;
-  fill: var(--text-muted);
+  fill: rgba(255, 255, 255, 0.86);
 }
 
 .star-count {
-  padding: 1px 8px;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border-color);
-  border-radius: 0 $radius-sm $radius-sm 0;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
   margin-left: 2px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.github-badge {
-  height: 22px;
-  border-radius: 2px;
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid rgba(30, 50, 90, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  color: rgba(30, 50, 90, 0.66);
+  font-size: 13px;
+  font-weight: 650;
+  backdrop-filter: blur(14px);
 }
 
 .star-chart {
@@ -160,7 +177,9 @@ onMounted(async () => {
 
 .chart-img {
   width: 100%;
-  border-radius: $radius-sm;
+  border-radius: 22px;
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  background: rgba(255, 255, 255, 0.62);
   transition: opacity $transition-fast;
 
   &:hover {

@@ -1,14 +1,13 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { ref, onMounted, onUnmounted } from 'vue'
 
 const { t } = useI18n()
 const router = useRouter()
 const copied = ref(false)
-const canvasRef = ref<HTMLCanvasElement>()
-
 const installCmd = 'npm install -g hermes-web-ui'
+const releaseVersion = __WEBSITE_DOWNLOAD_VERSION__.replace(/^v/, '')
 
 async function copyCmd() {
   try {
@@ -18,289 +17,319 @@ async function copyCmd() {
   } catch {}
 }
 
-// ─── Particle network animation ──────────────────────────
-
-interface Particle {
-  x: number
-  y: number
-  vx: number
-  vy: number
-  r: number
+function goDocs() {
+  router.push({ name: 'docs.getting-started' })
 }
 
-let animId = 0
-let particles: Particle[] = []
-
-function initCanvas() {
-  const canvas = canvasRef.value
-  if (!canvas) return
-
-  const ctx = canvas.getContext('2d')!
-  const dpr = window.devicePixelRatio || 1
-
-  function resize() {
-    const el = canvasRef.value
-    if (!el || !el.parentElement) return
-    const rect = el.parentElement.getBoundingClientRect()
-    el.width = rect.width * dpr
-    el.height = rect.height * dpr
-    el.style.width = rect.width + 'px'
-    el.style.height = rect.height + 'px'
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  }
-
-  resize()
-
-  const count = Math.min(60, Math.floor((canvas.width / dpr) / 18))
-  const w = canvas.width / dpr
-  const h = canvas.height / dpr
-
-  particles = Array.from({ length: count }, () => ({
-    x: Math.random() * w,
-    y: Math.random() * h,
-    vx: (Math.random() - 0.5) * 0.4,
-    vy: (Math.random() - 0.5) * 0.4,
-    r: Math.random() * 1.5 + 0.5,
-  }))
-
-  const maxDist = 120
-
-  function draw() {
-    const dark = document.documentElement.classList.contains('dark')
-    const dotColor = dark ? 'rgba(224,224,224,' : 'rgba(51,51,51,'
-    const lineColor = dark ? 'rgba(224,224,224,' : 'rgba(51,51,51,'
-
-    ctx.clearRect(0, 0, w, h)
-
-    // Update & draw particles
-    for (const p of particles) {
-      p.x += p.vx
-      p.y += p.vy
-      if (p.x < 0 || p.x > w) p.vx *= -1
-      if (p.y < 0 || p.y > h) p.vy *= -1
-
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-      ctx.fillStyle = dotColor + '0.6)'
-      ctx.fill()
-    }
-
-    // Draw connections
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x
-        const dy = particles[i].y - particles[j].y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < maxDist) {
-          const alpha = (1 - dist / maxDist) * 0.15
-          ctx.beginPath()
-          ctx.moveTo(particles[i].x, particles[i].y)
-          ctx.lineTo(particles[j].x, particles[j].y)
-          ctx.strokeStyle = lineColor + alpha + ')'
-          ctx.lineWidth = 0.5
-          ctx.stroke()
-        }
-      }
-    }
-
-    animId = requestAnimationFrame(draw)
-  }
-
-  draw()
-
-  const onResize = () => {
-    cancelAnimationFrame(animId)
-    initCanvas()
-  }
-  window.addEventListener('resize', onResize)
-
-  onUnmounted(() => {
-    cancelAnimationFrame(animId)
-    window.removeEventListener('resize', onResize)
-  })
+function scrollToDownload() {
+  document.getElementById('download')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
-
-onMounted(() => {
-  initCanvas()
-})
 </script>
 
 <template>
-  <section class="hero">
-    <canvas ref="canvasRef" class="hero-canvas" />
-    <div class="hero-inner">
-      <h1 class="hero-title animate-fade-in-up">{{ t('hero.title') }}</h1>
-      <p class="hero-subtitle animate-fade-in-up animate-delay-1">{{ t('hero.subtitle') }}</p>
-      <div class="hero-actions animate-fade-in-up animate-delay-2">
-        <button class="btn-primary" @click="router.push({ name: 'docs.getting-started' })">
-          {{ t('hero.cta') }}
-        </button>
-        <a
-          class="btn-outline"
-          href="https://github.com/EKKOLearnAI/hermes-web-ui"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" class="btn-icon">
-            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-          </svg>
-          {{ t('hero.viewGithub') }}
-        </a>
+  <section class="hero-shell">
+    <div class="hero-panel">
+      <div class="hero-bg">
+        <img src="/image1.png" :alt="t('hero.previewAlt')" />
       </div>
-      <div class="install-box animate-fade-in animate-delay-3">
-        <code>{{ installCmd }}</code>
-        <button class="copy-btn" @click="copyCmd">
-          {{ copied ? t('ui.copied') : t('ui.copy') }}
-        </button>
+      <div class="hero-overlay" />
+
+      <div class="hero-content">
+        <div class="hero-badge animate-fade-in-up">
+          <span class="status-dot" />
+          <span>{{ t('hero.badge') }}</span>
+        </div>
+
+        <h1 class="hero-title animate-fade-in-up animate-delay-1">{{ t('hero.title') }}</h1>
+        <p class="hero-subtitle animate-fade-in-up animate-delay-2">{{ t('hero.subtitle') }}</p>
+
+        <div class="hero-actions animate-fade-in-up animate-delay-3">
+          <button class="primary-cta" type="button" @click="scrollToDownload">
+            {{ t('hero.cta') }}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+          </button>
+          <button class="secondary-cta" type="button" @click="goDocs">
+            {{ t('hero.docsCta') }}
+          </button>
+        </div>
+
+        <div class="hero-meta animate-fade-in animate-delay-4">
+          <button class="install-command" type="button" @click="copyCmd">
+            <code>{{ installCmd }}</code>
+            <span>{{ copied ? t('ui.copied') : t('ui.copy') }}</span>
+          </button>
+          <div class="release-chip">
+            <strong>{{ releaseVersion }}</strong>
+            <span>{{ t('hero.latestRelease') }}</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped lang="scss">
-.hero {
-  position: relative;
-  overflow: hidden;
-  padding: 120px 24px 80px;
-  text-align: center;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-color);
+.hero-shell {
+  width: 100%;
+  padding: 18px 18px 0;
+  background: #f7f8fa;
+  display: flex;
+  justify-content: center;
 
   @media (max-width: $breakpoint-mobile) {
-    padding: 80px 16px 48px;
+    padding: 10px 10px 0;
   }
 }
 
-.hero-canvas {
-  position: absolute;
-  inset: 0;
+.hero-panel {
+  position: relative;
+  overflow: hidden;
   width: 100%;
-  height: 100%;
-  pointer-events: none;
+  max-width: 1536px;
+  min-height: min(720px, calc(100svh - 104px));
+  border-radius: 34px;
+  background: #eef1f4;
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  isolation: isolate;
+
+  @media (max-width: $breakpoint-mobile) {
+    min-height: 650px;
+    border-radius: 24px;
+  }
 }
 
-.hero-inner {
-  position: relative;
-  z-index: 1;
-  max-width: 720px;
+.hero-bg {
+  position: absolute;
+  inset: auto 4% -8% 4%;
+  height: 58%;
+  border-radius: 24px 24px 0 0;
+  overflow: hidden;
+  border: 1px solid rgba(30, 50, 90, 0.1);
+  box-shadow:
+    0 24px 80px rgba(30, 50, 90, 0.16),
+    0 4px 24px rgba(30, 50, 90, 0.08);
+  z-index: -2;
+
+  img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: top center;
+    filter: saturate(0.94) contrast(0.96);
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    inset: auto 12px -4% 12px;
+    height: 45%;
+    border-radius: 18px 18px 0 0;
+  }
+}
+
+.hero-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: min(64%, 500px);
+  z-index: -1;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0) 58%),
+    linear-gradient(180deg, rgba(238, 241, 244, 0.96) 0%, rgba(238, 241, 244, 0.82) 55%, rgba(238, 241, 244, 0) 100%);
+  pointer-events: none;
+
+  @media (min-width: 1600px) {
+    height: 460px;
+  }
+}
+
+.hero-content {
+  width: min(100%, 920px);
   margin: 0 auto;
+  padding: clamp(58px, 9vh, 92px) 24px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 44px 18px 0;
+  }
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  margin-bottom: 16px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(30, 50, 90, 0.1);
+  background: rgba(255, 255, 255, 0.66);
+  color: rgba(30, 50, 90, 0.76);
+  backdrop-filter: blur(14px);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #35c67a;
+  box-shadow: 0 0 0 5px rgba(53, 198, 122, 0.12);
 }
 
 .hero-title {
-  font-size: 48px;
-  font-weight: 700;
-  line-height: 1.2;
-  margin-bottom: 20px;
-  color: var(--text-primary);
+  max-width: 760px;
+  margin: 0;
+  color: rgba(30, 38, 52, 0.92);
+  font-size: clamp(50px, 7vw, 92px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 0.98;
 
   @media (max-width: $breakpoint-mobile) {
-    font-size: 32px;
+    font-size: clamp(42px, 13vw, 62px);
   }
 }
 
 .hero-subtitle {
-  font-size: 18px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  margin-bottom: 36px;
-
-  @media (max-width: $breakpoint-mobile) {
-    font-size: 15px;
-  }
+  max-width: 660px;
+  margin: 20px 0 0;
+  color: rgba(42, 50, 64, 0.7);
+  font-size: clamp(15px, 1.35vw, 18px);
+  line-height: 1.68;
+  font-weight: 450;
 }
 
 .hero-actions {
   display: flex;
   justify-content: center;
   gap: 12px;
-  margin-bottom: 36px;
   flex-wrap: wrap;
+  margin-top: 26px;
 }
 
-.btn-primary {
-  padding: 12px 28px;
-  background: var(--accent-primary);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: $radius-md;
-  font-size: 15px;
-  font-weight: 600;
+.primary-cta,
+.secondary-cta {
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background $transition-fast, transform $transition-fast;
-
-  &:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
-  }
+  transition: transform $transition-fast, background $transition-fast, border-color $transition-fast;
 }
 
-.btn-outline {
+.primary-cta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 28px;
-  background: transparent;
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  font-size: 15px;
-  font-weight: 500;
-  text-decoration: none;
-  transition: all $transition-fast;
+  gap: 10px;
+  border: 0;
+  background: rgba(30, 50, 90, 0.92);
+  color: #fff;
+
+  svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 
   &:hover {
-    border-color: var(--text-muted);
+    background: rgba(30, 50, 90, 1);
     transform: translateY(-1px);
   }
 }
 
-.btn-icon {
-  width: 18px;
-  height: 18px;
+.secondary-cta {
+  border: 1px solid rgba(30, 50, 90, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+  color: rgba(30, 50, 90, 0.82);
+  backdrop-filter: blur(14px);
+
+  &:hover {
+    border-color: rgba(30, 50, 90, 0.24);
+    background: rgba(255, 255, 255, 0.84);
+    transform: translateY(-1px);
+  }
 }
 
-.install-box {
+.hero-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.install-command {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  padding: 12px 20px;
-  max-width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  max-width: calc(100vw - 56px);
+  border: 1px solid rgba(30, 50, 90, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  color: rgba(30, 50, 90, 0.82);
+  padding: 8px 9px 8px 16px;
+  backdrop-filter: blur(14px);
+  cursor: pointer;
 
   code {
-    font-size: 14px;
-    background: transparent;
     padding: 0;
+    background: transparent;
+    color: inherit;
     white-space: nowrap;
+    font-size: 13px;
+  }
+
+  span {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: rgba(30, 50, 90, 0.08);
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 700;
   }
 
   @media (max-width: $breakpoint-mobile) {
-    padding: 10px 14px;
-    gap: 8px;
+    width: 100%;
+    justify-content: space-between;
+    border-radius: 16px;
 
     code {
-      font-size: 12px;
+      overflow-x: auto;
     }
   }
 }
 
-.copy-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-sm;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all $transition-fast;
+.release-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(30, 50, 90, 0.1);
+  background: rgba(255, 255, 255, 0.54);
+  color: rgba(30, 50, 90, 0.7);
+  padding: 8px 13px;
+  backdrop-filter: blur(14px);
 
-  &:hover {
-    color: var(--text-primary);
-    border-color: var(--text-muted);
+  strong {
+    color: rgba(30, 50, 90, 0.9);
+    font-size: 13px;
+  }
+
+  span {
+    font-size: 12px;
+    font-weight: 650;
   }
 }
 </style>
