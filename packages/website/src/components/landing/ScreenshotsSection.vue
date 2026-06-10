@@ -23,10 +23,6 @@ function next() {
   activeIndex.value = (activeIndex.value + 1) % images.value.length
 }
 
-function prev() {
-  activeIndex.value = (activeIndex.value - 1 + images.value.length) % images.value.length
-}
-
 function setActive(i: number) {
   activeIndex.value = i
   resetTimer()
