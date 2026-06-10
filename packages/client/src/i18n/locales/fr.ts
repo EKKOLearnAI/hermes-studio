@@ -1700,6 +1700,12 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_13_1: 'Alibaba Coding Plan inclut maintenant le preset de modele qwen3.7-plus',
+    new_0_6_13_2: 'La gestion des fichiers est plus sure, avec validation des points litteraux dans les chemins et rejet des noms de fichiers d import de skill mal encodes',
+    new_0_6_13_3: 'Le chat est plus stable sur mobile et dans les navigateurs sans prise en charge de speech synthesis',
+    new_0_6_13_4: 'Les echecs d Agent conservent maintenant la fin d erreur du bridge, et les lancements Claude Code avec permission root sont plus fiables',
+    new_0_6_13_5: 'Les mises a jour desktop sont plus fiables : les mises a niveau Windows ferment les anciens processus Hermes Studio, Cloudflare est verifie en premier et GitHub reste le flux de secours',
+    new_0_6_13_6: 'L automatisation des releases garde les releases Web UI et Docker hors de GitHub Latest, tandis que les releases desktop completes sont promues manuellement en Latest apres build reussi',
     new_0_6_12_1: 'Coding Agent offre maintenant une experience de chat plus complete, avec des sessions dediees, un historique plus clair, la conservation des sorties d outils et des reponses finales, et une meilleure recuperation de l etat du chat',
     new_0_6_12_2: 'Claude Code et Codex se lancent plus fiablement depuis l application de bureau sous Windows, avec une resolution de commande corrigee et des messages d erreur plus lisibles',
     new_0_6_12_3: 'Le raisonnement, l etat de la file et les erreurs de Coding Agent sont plus faciles a suivre, avec le contenu de raisonnement enregistre et une file qui ne bloque pas le defilement',

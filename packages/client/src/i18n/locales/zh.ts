@@ -1962,6 +1962,12 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_13_1: 'Alibaba Coding Plan 新增 qwen3.7-plus 模型预设',
+    new_0_6_13_2: '文件处理更安全：路径校验支持字面量点号，并拒绝异常编码的技能导入文件名',
+    new_0_6_13_3: '聊天在移动端和不支持 speech synthesis 的浏览器中更稳定',
+    new_0_6_13_4: 'Agent 失败时会保留 bridge 错误尾部信息，Claude Code root 权限启动也更可靠',
+    new_0_6_13_5: '桌面更新更可靠：Windows 升级会关闭残留 Hermes Studio 进程，优先检查 Cloudflare，并保留 GitHub 更新源兜底',
+    new_0_6_13_6: '发布自动化调整：Web UI 和 Docker release 不再标记为 GitHub Latest，完整桌面 release 手动构建成功后才提升为 Latest',
     new_0_6_12_1: 'Coding Agent 升级为更完整的聊天体验，支持独立会话、更清晰的历史记录、保留工具/最终输出，并优化聊天状态恢复',
     new_0_6_12_2: '桌面端在 Windows 下启动 Claude Code 和 Codex 更可靠，修复命令解析问题，并提供更可读的失败信息',
     new_0_6_12_3: 'Coding Agent 的 reasoning、队列状态和错误展示更容易跟踪，支持 reasoning 内容存储，并使用不阻塞滚动的队列浮层',

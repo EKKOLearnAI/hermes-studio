@@ -1699,6 +1699,12 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_13_1: 'Alibaba Coding Plan에 qwen3.7-plus 모델 프리셋을 추가했습니다',
+    new_0_6_13_2: '파일 처리가 더 안전해져 리터럴 점이 포함된 경로 검증과 잘못 인코딩된 skill import 파일명 거부를 지원합니다',
+    new_0_6_13_3: '모바일과 speech synthesis를 지원하지 않는 브라우저에서 채팅이 더 안정적입니다',
+    new_0_6_13_4: 'Agent 실패 시 bridge 오류 꼬리 로그를 보존하고 Claude Code root 권한 실행이 더 안정적입니다',
+    new_0_6_13_5: '데스크톱 업데이트 안정성을 개선했습니다. Windows 업그레이드는 남아 있는 Hermes Studio 프로세스를 닫고, Cloudflare를 먼저 확인하며, GitHub 업데이트 피드를 fallback으로 유지합니다',
+    new_0_6_13_6: '릴리스 자동화를 조정해 Web UI와 Docker release는 GitHub Latest로 표시하지 않고, 전체 데스크톱 release만 수동 빌드 성공 후 Latest로 승격합니다',
     new_0_6_12_1: 'Coding Agent가 전용 세션, 더 명확한 기록, 도구 출력과 최종 답변 보존, 채팅 상태 복구 개선을 통해 더 완성도 높은 채팅 경험을 제공합니다',
     new_0_6_12_2: 'Windows 데스크톱 앱에서 Claude Code와 Codex를 더 안정적으로 실행할 수 있도록 명령 확인 방식과 실패 시 오류 메시지를 개선했습니다',
     new_0_6_12_3: 'Coding Agent의 추론, 대기열 상태, 오류 상태를 더 쉽게 따라갈 수 있도록 추론 내용 저장과 스크롤을 방해하지 않는 대기열 표시를 지원합니다',

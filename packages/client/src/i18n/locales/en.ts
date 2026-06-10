@@ -1960,6 +1960,12 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_13_1: 'Alibaba Coding Plan now includes the qwen3.7-plus model preset',
+    new_0_6_13_2: 'File handling is safer with literal-dot path validation and malformed skill-import filename rejection',
+    new_0_6_13_3: 'Chat is more stable on mobile and in browsers without speech synthesis support',
+    new_0_6_13_4: 'Agent failures now preserve the bridge error tail, and Claude Code root-permission launches are more reliable',
+    new_0_6_13_5: 'Desktop updates are more reliable: Windows upgrades close stale Hermes Studio processes, Cloudflare is checked first, and GitHub remains the fallback feed',
+    new_0_6_13_6: 'Release automation now keeps Web UI and Docker releases out of GitHub Latest while full desktop releases are manually promoted to Latest',
     new_0_6_12_1: 'Coding Agent is now a fuller chat experience with dedicated sessions, clearer history, preserved tool/final output, and better chat-state recovery',
     new_0_6_12_2: 'Claude Code and Codex launch more reliably from the desktop app on Windows, with corrected command resolution and readable failure messages',
     new_0_6_12_3: 'Coding Agent reasoning, queue status, and error states are easier to follow with stored reasoning content and a nonblocking queue overlay',

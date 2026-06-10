@@ -1700,6 +1700,12 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_13_1: 'Alibaba Coding Plan enthaelt jetzt das Modellpreset qwen3.7-plus',
+    new_0_6_13_2: 'Die Dateiverarbeitung ist sicherer, mit Pfadvalidierung fuer literal Punkte und Ablehnung fehlerhaft codierter Skill-Import-Dateinamen',
+    new_0_6_13_3: 'Der Chat ist auf Mobilgeraeten und in Browsern ohne speech synthesis stabiler',
+    new_0_6_13_4: 'Agent-Fehler behalten nun das Bridge-Fehlerende bei, und Claude-Code-Starts mit Root-Berechtigung sind verlaesslicher',
+    new_0_6_13_5: 'Desktop-Updates sind verlaesslicher: Windows-Upgrades schliessen alte Hermes-Studio-Prozesse, pruefen zuerst Cloudflare und behalten GitHub als Fallback-Feed',
+    new_0_6_13_6: 'Die Release-Automatisierung markiert Web-UI- und Docker-Releases nicht mehr als GitHub Latest; vollstaendige Desktop-Releases werden nach erfolgreichem manuellem Build zu Latest gemacht',
     new_0_6_12_1: 'Coding Agent bietet jetzt ein vollstaendigeres Chat-Erlebnis mit eigenen Sitzungen, klarerer Historie, beibehaltenen Werkzeugausgaben und finalen Antworten sowie besserer Wiederherstellung des Chat-Zustands',
     new_0_6_12_2: 'Claude Code und Codex starten in der Windows-Desktop-App verlaesslicher, mit korrigierter Befehlsauflösung und besser lesbaren Fehlermeldungen',
     new_0_6_12_3: 'Reasoning, Warteschlangenstatus und Fehlerzustände von Coding Agent sind leichter nachzuvollziehen, mit gespeicherten Reasoning-Inhalten und einer Warteschlangenanzeige, die das Scrollen nicht blockiert',
