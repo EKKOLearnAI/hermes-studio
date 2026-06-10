@@ -8,6 +8,7 @@ import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
+import { showCompletionNotification } from '@/utils/completion-notification'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 
 // Re-export ContentBlock for convenience
@@ -1637,6 +1638,47 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function truncateNotificationText(value: string, maxLength: number): string {
+    const normalized = value.replace(/\s+/g, ' ').trim()
+    if (normalized.length <= maxLength) return normalized
+    return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`
+  }
+
+  function completionNotificationAgent(session: Session): { icon: string } {
+    const codingAgentId = session.codingAgentId || (session.agent === 'codex' ? 'codex' : session.agent === 'claude' ? 'claude-code' : undefined)
+    if (codingAgentId === 'codex') {
+      return { icon: '/coding-agents/codex-openai.png' }
+    }
+    if (codingAgentId === 'claude-code') {
+      return { icon: '/coding-agents/claude-code.svg' }
+    }
+    return { icon: '/coding-agents/hermes.png' }
+  }
+
+  function completionNotificationBody(session: Session, message?: Message): string {
+    const preview = message?.content || session.title || 'Message complete.'
+    return truncateNotificationText(preview, 140)
+  }
+
+  function showCompletionNotificationIfEnabled(sessionId: string, messageId?: string | null) {
+    const settingsStore = useSettingsStore()
+    if (!settingsStore.display.notify_on_complete) return
+
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    const message = messageId
+      ? session.messages.find(m => m.id === messageId)
+      : [...session.messages].reverse().find(m => m.role === 'assistant')
+
+    const agent = completionNotificationAgent(session)
+    void showCompletionNotification({
+      title: truncateNotificationText(session.title || 'Hermes', 80),
+      body: completionNotificationBody(session, message),
+      icon: agent.icon,
+      tag: `hermes-complete-${sessionId}-${message?.id || Date.now()}`,
+    })
+  }
+
   async function sendMessage(content: string, attachments?: Attachment[]) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
@@ -2336,6 +2378,7 @@ export const useChatStore = defineStore('chat', () => {
                 })
               } else {
                 playCompletionBellIfEnabled()
+                showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
               }
 
               // 自动播放语音
@@ -2886,6 +2929,7 @@ export const useChatStore = defineStore('chat', () => {
             })
           } else {
             playCompletionBellIfEnabled()
+            showCompletionNotificationIfEnabled(sid, completedAssistantMessageId)
           }
 
           // Auto-play speech for every completed assistant message

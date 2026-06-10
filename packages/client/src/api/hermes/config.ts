@@ -6,6 +6,7 @@ export interface DisplayConfig {
   resume_display?: string
   busy_input_mode?: string
   bell_on_complete?: boolean
+  notify_on_complete?: boolean
   show_reasoning?: boolean
   streaming?: boolean
   inline_diffs?: boolean

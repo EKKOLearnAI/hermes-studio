@@ -10,6 +10,7 @@ const mockSettingsStore = vi.hoisted(() => ({
     show_cost: false,
     inline_diffs: true,
     bell_on_complete: false,
+    notify_on_complete: false,
     busy_input_mode: 'interrupt',
   },
   saveSection: vi.fn(),

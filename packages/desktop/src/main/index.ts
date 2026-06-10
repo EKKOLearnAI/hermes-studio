@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage } from 'electron'
+import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
 import { bundledNode, desktopIcon, desktopRuntimeVersion, desktopTrayTemplateIcon, desktopWindowsTrayIcon, hermesBinExists, hermesBin, webuiDir } from './paths'
@@ -19,6 +20,7 @@ import {
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
 const QUIT_EXISTING = process.argv.includes('--quit')
+const APP_USER_MODEL_ID = 'com.hermeswebui.studio'
 
 let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
@@ -26,6 +28,11 @@ let tray: Tray | null = null
 let isQuitting = false
 let isBootstrapping = false
 let windowFadeTimer: NodeJS.Timeout | null = null
+const activeNotifications = new Set<Notification>()
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID)
+}
 
 function cancelWindowFade() {
   if (windowFadeTimer) {
@@ -420,6 +427,54 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+function resolveNotificationIcon(icon: unknown): string {
+  if (typeof icon !== 'string') return desktopIcon()
+  const normalized = icon.trim().replace(/^\/+/, '')
+  if (!normalized || normalized.includes('..')) return desktopIcon()
+
+  const candidates = [
+    join(webuiDir(), 'dist', 'client', normalized),
+    join(webuiDir(), 'dist', normalized),
+    join(webuiDir(), 'packages', 'client', 'public', normalized),
+    join(webuiDir(), normalized),
+  ]
+  return candidates.find(candidate => existsSync(candidate)) || desktopIcon()
+}
+
+ipcMain.handle('hermes-desktop:notify-completion', (_event, payload?: { title?: unknown; body?: unknown; icon?: unknown; tag?: unknown }) => {
+  const supported = Notification.isSupported()
+  if (!supported) {
+    console.warn('[desktop-notification] Electron notifications are not supported on this system')
+    return false
+  }
+
+  const title = typeof payload?.title === 'string' && payload.title.trim()
+    ? payload.title.trim()
+    : 'Hermes Studio'
+  const body = typeof payload?.body === 'string' ? payload.body.trim().slice(0, 240) : ''
+  const icon = resolveNotificationIcon(payload?.icon)
+  const notification = new Notification({
+    title,
+    body,
+    icon,
+    silent: false,
+  })
+  activeNotifications.add(notification)
+  const releaseNotification = () => {
+    activeNotifications.delete(notification)
+  }
+  notification.on('click', () => {
+    releaseNotification()
+    showMainWindow()
+  })
+  notification.on('close', releaseNotification)
+  notification.on('failed', (_event, error) => {
+    console.warn('[desktop-notification] notification failed', error)
+    releaseNotification()
+  })
+  notification.show()
+  return true
+})
 ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: RuntimeDownloadSource) => {
   if (serverUrl) {
     await mainWindow?.loadURL(serverUrl)

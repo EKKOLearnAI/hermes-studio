@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { NSwitch, NSelect, useMessage } from 'naive-ui'
+import { NButton, NSwitch, NSelect, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useTheme, type BrightnessMode } from '@/composables/useTheme'
+import { requestCompletionNotificationPermission, showCompletionNotification, type CompletionNotificationPermissionResult } from '@/utils/completion-notification'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
@@ -30,6 +31,50 @@ function handleThemeChange(val: string) {
   setBrightness(m)
   save({ skin: m })
 }
+
+function notificationPermissionErrorKey(result: CompletionNotificationPermissionResult): string {
+  if (result.reason === 'insecure') return 'settings.display.notifyOnCompleteInsecure'
+  if (result.reason === 'unsupported') return 'settings.display.notifyOnCompleteUnsupported'
+  return 'settings.display.notifyOnCompleteDenied'
+}
+
+async function handleNotifyOnCompleteChange(value: boolean) {
+  if (value) {
+    const result = await requestCompletionNotificationPermission()
+    if (!result.granted) {
+      message.error(t(notificationPermissionErrorKey(result)))
+      return
+    }
+  }
+  await save({ notify_on_complete: value })
+  if (value) {
+    void showCompletionNotification({
+      title: 'Hermes',
+      body: t('settings.display.notifyOnCompleteTest'),
+      icon: '/coding-agents/hermes.png',
+      tag: `hermes-complete-test-${Date.now()}`,
+    })
+  }
+}
+
+async function testCompletionNotification() {
+  const result = await requestCompletionNotificationPermission()
+  if (!result.granted) {
+    message.error(t(notificationPermissionErrorKey(result)))
+    return
+  }
+  const shown = await showCompletionNotification({
+    title: 'Hermes',
+    body: t('settings.display.notifyOnCompleteTest'),
+    icon: '/coding-agents/hermes.png',
+    tag: `hermes-complete-test-${Date.now()}`,
+  })
+  if (!shown) {
+    message.error(t('settings.display.notifyOnCompleteTestFailed'))
+    return
+  }
+  message.success(t('settings.display.notifyOnCompleteTestSent'))
+}
 </script>
 
 <template>
@@ -55,6 +100,14 @@ function handleThemeChange(val: string) {
     <SettingRow :label="t('settings.display.bellOnComplete')" :hint="t('settings.display.bellOnCompleteHint')">
       <NSwitch :value="settingsStore.display.bell_on_complete" @update:value="v => save({ bell_on_complete: v })" />
     </SettingRow>
+    <SettingRow :label="t('settings.display.notifyOnComplete')" :hint="`${t('settings.display.notifyOnCompleteHint')} ${t('settings.display.notifyOnCompleteMacHint')}`">
+      <div class="notify-controls">
+        <NSwitch :value="settingsStore.display.notify_on_complete" @update:value="handleNotifyOnCompleteChange" />
+        <NButton size="tiny" secondary @click="testCompletionNotification">
+          {{ t('settings.display.notifyOnCompleteTestButton') }}
+        </NButton>
+      </div>
+    </SettingRow>
   </section>
 </template>
 
@@ -63,5 +116,11 @@ function handleThemeChange(val: string) {
 
 .settings-section {
   margin-top: 16px;
+}
+
+.notify-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>
