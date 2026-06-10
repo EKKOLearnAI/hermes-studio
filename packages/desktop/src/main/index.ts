@@ -78,6 +78,12 @@ function quitApp() {
   app.quit()
 }
 
+function hasQuitRequest(data: unknown): boolean {
+  return typeof data === 'object'
+    && data !== null
+    && (data as { quit?: unknown }).quit === true
+}
+
 function loginItemOptions() {
   return {
     path: process.execPath,
@@ -425,14 +431,14 @@ ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: Runtime
 })
 
 function runDesktopApp() {
-  const gotLock = app.requestSingleInstanceLock()
+  const gotLock = app.requestSingleInstanceLock(QUIT_EXISTING ? { quit: true } : undefined)
   if (!gotLock) {
     app.quit()
     return
   }
 
-  app.on('second-instance', (_event, argv) => {
-    if (argv.includes('--quit')) {
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    if (argv.includes('--quit') || hasQuitRequest(additionalData)) {
       quitApp()
       return
     }

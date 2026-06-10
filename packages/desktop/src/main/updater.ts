@@ -7,6 +7,7 @@ let checking = false
 let updateDownloaded = false
 
 const LATEST_RELEASE_DOWNLOAD_URL = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download'
+const GITHUB_RELEASE_DOWNLOAD_BASE_URL = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases/download'
 const CLOUDFLARE_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
 
 class MissingUpdateInfoError extends Error {
@@ -52,24 +53,58 @@ function updateManifestFile(): string {
 
 async function assertUpdateManifestExists(feedUrl: string): Promise<void> {
   const manifestUrl = `${feedUrl}/${updateManifestFile()}`
-  const res = await fetch(manifestUrl, {
-    method: 'HEAD',
-    headers: {
-      'User-Agent': `Hermes-Studio/${app.getVersion()}`,
-    },
-  })
+  const res = await fetchUpdateManifest(manifestUrl)
   if (res.status === 404) throw new MissingUpdateInfoError(manifestUrl)
   if (!res.ok) throw new Error(`Update feed returned ${res.status}`)
 }
 
+async function fetchUpdateManifest(manifestUrl: string): Promise<Response> {
+  const headers = {
+    'User-Agent': `Hermes-Studio/${app.getVersion()}`,
+  }
+  const res = await fetch(manifestUrl, {
+    method: 'HEAD',
+    headers,
+  })
+  if (res.status !== 403 && res.status !== 405) return res
+  return fetch(manifestUrl, {
+    method: 'GET',
+    headers: {
+      ...headers,
+      Range: 'bytes=0-0',
+    },
+  })
+}
+
+function updateFeedCandidates(tag: string): string[] {
+  const cloudflareFeedUrl = `${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}`
+  return [
+    cloudflareFeedUrl,
+    `${GITHUB_RELEASE_DOWNLOAD_BASE_URL}/${tag}`,
+  ]
+}
+
 async function configureFeedFromLatestRelease(): Promise<void> {
   const tag = await getLatestReleaseTag(updateManifestFile())
-  const feedUrl = `${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}`
-  await assertUpdateManifestExists(feedUrl)
-  autoUpdater.setFeedURL({
-    provider: 'generic',
-    url: feedUrl,
-  })
+  let lastError: unknown = null
+  for (const feedUrl of updateFeedCandidates(tag)) {
+    try {
+      await assertUpdateManifestExists(feedUrl)
+      autoUpdater.setFeedURL({
+        provider: 'generic',
+        url: feedUrl,
+      })
+      return
+    } catch (err) {
+      lastError = err
+      console.warn(`[updater] update feed unavailable at ${feedUrl}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  throw lastError || new MissingUpdateInfoError(`${CLOUDFLARE_DOWNLOAD_BASE_URL}/${tag}/${updateManifestFile()}`)
+}
+
+export const updaterInternals = {
+  updateFeedCandidates,
 }
 
 function showUpToDate(info?: UpdateInfo) {

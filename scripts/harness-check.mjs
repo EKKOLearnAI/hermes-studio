@@ -253,6 +253,9 @@ const electronBuilderConfig = await readText('packages/desktop/electron-builder.
 const desktopPackageJson = await readText('packages/desktop/package.json')
 const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
 const desktopWebuiServer = await readText('packages/desktop/src/main/webui-server.ts')
+const desktopMain = await readText('packages/desktop/src/main/index.ts')
+const desktopUpdater = await readText('packages/desktop/src/main/updater.ts')
+const desktopInstallerScript = await readText('packages/desktop/build/installer.nsh')
 const desktopRuntimeManager = await readText('packages/desktop/src/main/runtime-manager.ts')
 const desktopPaths = await readText('packages/desktop/src/main/paths.ts')
 const desktopRuntimeAssetName = await readText('packages/desktop/scripts/runtime-asset-name.mjs')
@@ -406,6 +409,35 @@ for (const phrase of [
 ]) {
   if (!desktopWebuiServer.includes(phrase)) {
     fail(`desktop webui server must expose bundled browser runtime: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'requestSingleInstanceLock(QUIT_EXISTING ? { quit: true } : undefined)',
+  'hasQuitRequest(additionalData)',
+]) {
+  if (!desktopMain.includes(phrase)) {
+    fail(`desktop main process must forward --quit to an existing app instance: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'HERMES_STUDIO_EXE',
+  'Get-CimInstance Win32_Process',
+  'CloseMainWindow()',
+  'Stop-Process -Id',
+]) {
+  if (!desktopInstallerScript.includes(phrase)) {
+    fail(`desktop installer must close stale Hermes Studio processes by installed executable path: ${phrase}`)
+  }
+}
+
+for (const phrase of [
+  'GITHUB_RELEASE_DOWNLOAD_BASE_URL',
+  'updateFeedCandidates(tag)',
+]) {
+  if (!desktopUpdater.includes(phrase)) {
+    fail(`desktop updater must keep GitHub release feed fallback after Cloudflare: ${phrase}`)
   }
 }
 
