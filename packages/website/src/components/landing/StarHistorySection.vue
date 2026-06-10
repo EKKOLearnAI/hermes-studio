@@ -2,18 +2,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useScrollReveal } from '@/composables/useScrollReveal'
-import { useTheme } from '@/composables/useTheme'
 
 const { t } = useI18n()
-const { isDark } = useTheme()
 useScrollReveal()
 
 const stars = ref<number | null>(null)
 const releaseVersion = __WEBSITE_DOWNLOAD_VERSION__
 
 const chartSrc = computed(() => {
-  const base = 'https://api.star-history.com/svg?repos=EKKOLearnAI%2Fhermes-web-ui&type=Date'
-  return isDark.value ? `${base}&theme=dark` : base
+  return 'https://api.star-history.com/svg?repos=EKKOLearnAI%2Fhermes-web-ui&type=Date'
 })
 
 onMounted(async () => {

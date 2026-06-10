@@ -1,48 +1,24 @@
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 
 const STORAGE_KEY = 'hermes_website_theme'
 
-const mode = ref<ThemeMode>(
-  (localStorage.getItem(STORAGE_KEY) as ThemeMode) || 'system',
-)
-
+const mode = ref<ThemeMode>('light')
 const isDark = ref(false)
 
-function applyTheme(dark: boolean) {
-  isDark.value = dark
-  document.documentElement.classList.toggle('dark', dark)
-}
-
-function resolveDark(m: ThemeMode): boolean {
-  if (m === 'system') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  }
-  return m === 'dark'
-}
-
-applyTheme(resolveDark(mode.value))
-
-const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-mediaQuery.addEventListener('change', () => {
-  if (mode.value === 'system') {
-    applyTheme(resolveDark('system'))
-  }
-})
-
-watch(mode, (newMode) => {
-  localStorage.setItem(STORAGE_KEY, newMode)
-  applyTheme(resolveDark(newMode))
-})
+localStorage.setItem(STORAGE_KEY, 'light')
+document.documentElement.classList.remove('dark')
 
 export function useTheme() {
-  function setMode(m: ThemeMode) {
-    mode.value = m
+  function setMode(_m: ThemeMode) {
+    mode.value = 'light'
+    localStorage.setItem(STORAGE_KEY, 'light')
+    document.documentElement.classList.remove('dark')
   }
 
   function toggleTheme() {
-    mode.value = isDark.value ? 'light' : 'dark'
+    setMode('light')
   }
 
   return {
