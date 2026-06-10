@@ -21,6 +21,7 @@ const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
 const QUIT_EXISTING = process.argv.includes('--quit')
 const APP_USER_MODEL_ID = 'com.hermeswebui.studio'
+type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 
 let mainWindow: BrowserWindow | null = null
 let serverUrl: string | null = null
@@ -83,6 +84,25 @@ function showMainWindow() {
 function quitApp() {
   isQuitting = true
   app.quit()
+}
+
+function windowState() {
+  return {
+    isMaximized: !!mainWindow?.isMaximized(),
+  }
+}
+
+function handleWindowControl(action: WindowControlAction) {
+  if (!mainWindow || mainWindow.isDestroyed()) return windowState()
+  if (action === 'minimize') {
+    mainWindow.minimize()
+  } else if (action === 'toggle-maximize') {
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+  } else if (action === 'close') {
+    mainWindow.close()
+  }
+  return windowState()
 }
 
 function hasQuitRequest(data: unknown): boolean {
@@ -185,6 +205,14 @@ function createWindow() {
     backgroundColor: '#1a1a1a',
     autoHideMenuBar: true,
     show: false,
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 16, y: 12 },
+        }
+      : {
+          frame: false,
+        }),
     ...(process.platform === 'linux' ? { icon: desktopIcon() } : {}),
     webPreferences: {
       preload: join(__dirname, '..', 'preload', 'index.js'),
@@ -427,6 +455,11 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+ipcMain.handle('hermes-desktop:get-window-state', () => windowState())
+ipcMain.handle('hermes-desktop:window-control', (_event, action?: unknown) => {
+  if (action !== 'minimize' && action !== 'toggle-maximize' && action !== 'close') return windowState()
+  return handleWindowControl(action)
+})
 function resolveNotificationIcon(icon: unknown): string {
   if (typeof icon !== 'string') return desktopIcon()
   const normalized = icon.trim().replace(/^\/+/, '')
