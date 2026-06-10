@@ -1,12 +1,12 @@
 <p align="center">
-  <strong>Hermes Web UI</strong>
+  <strong>Hermes Studio</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
 <p align="center">
-  A full-featured desktop app and web dashboard for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
-  Manage AI chat sessions, monitor usage & costs, configure platform channels,<br/>
-  schedule cron jobs, browse skills — all from a clean, responsive web interface.
+  A desktop app, local runtime, and web console for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
+  Chat with agents, manage models and profiles, connect platform channels,<br/>
+  automate jobs, inspect files, run coding agents, and keep everything local.
 </p>
 
 <p align="center">
@@ -35,9 +35,19 @@
   </a>
 </p>
 
-> 🎁 **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui)** is a full-modal, OpenAI-compatible AI inference platform (DeepSeek, Qwen, GLM, Kimi, MiniMax, …). Select **Atlas Cloud** from the provider panel and add your API key.
+> 🎁 **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui)** is a multimodal, OpenAI-compatible AI inference platform (DeepSeek, Qwen, GLM, Kimi, MiniMax, …). Select **Atlas Cloud** from the provider panel and add your API key.
 
 ---
+
+## Core Capabilities
+
+| Area | What Hermes Studio does |
+| --- | --- |
+| Agent chat | Runs Hermes Agent conversations with streaming responses, tool traces, file upload/download, and persistent local sessions. |
+| Local control plane | Manages profiles, providers, models, credentials, memory, skills, plugins, logs, and runtime settings from one dashboard. |
+| Automation | Configures platform channels, cron jobs, Kanban tasks, group-chat rooms, and MCP servers around the same Hermes profiles. |
+| Workspace tools | Provides a file browser, web terminal, voice input/output, coding-agent runners, device discovery, and performance views. |
+| Distribution | Ships as a desktop app for Windows/macOS/Linux, an npm CLI package, and a Docker image. |
 
 ## Features
 
@@ -90,6 +100,12 @@ Unified configuration for **8 platforms** in one page:
 - Trigger immediate execution
 - Cron expression quick presets
 
+### Kanban
+
+- Profile-aware Kanban board for planning and tracking agent work
+- Task creation, updates, and status movement from the dashboard
+- Shared with the same local Web UI state and authentication model
+
 ### Model Management
 
 - Auto-discover models from credential pool (`~/.hermes/auth.json`)
@@ -126,6 +142,12 @@ Unified configuration for **8 platforms** in one page:
 - SQLite message persistence
 - Mobile responsive with collapsible sidebar
 
+### Coding Agents
+
+- Launch and monitor local coding-agent sessions from the web dashboard
+- Dedicated proxy routes for Codex and Claude Code integrations
+- Stores agent output and reasoning metadata for later inspection
+
 ### Skills & Memory
 
 - Browse and search installed skills
@@ -137,6 +159,13 @@ Unified configuration for **8 platforms** in one page:
 - View agent / server / error logs
 - Filter by log level, log file, and keyword
 - Structured log parsing with HTTP access log highlighting
+
+### Admin & Runtime Management
+
+- Device and LAN peer views for local-network discovery and peer tooling
+- MCP manager for the managed `hermes-studio` MCP server and profile injection
+- Runtime version and version-preview tooling for testing newer builds in isolation
+- Performance monitor views for super administrators
 
 ### Authentication
 
@@ -191,6 +220,14 @@ hermes-web-ui reset-default-login
 - Real-time keyboard input and PTY output streaming via WebSocket
 - Window resize support
 
+### Desktop App & Updates
+
+- Native Electron shell for Windows, macOS, and Linux
+- Bundles the Web UI runtime and starts the local Hermes Studio server automatically
+- Uses Cloudflare download endpoints for desktop auto-update metadata and assets first
+- Falls back to GitHub Releases `latest` assets if the Cloudflare update feed is unavailable
+- Windows upgrades attempt to close an existing Hermes Studio process before replacing files
+
 ---
 
 ## Quick Start
@@ -209,6 +246,11 @@ runtime and stores Hermes Agent data in the native Hermes location:
 
 The desktop wrapper stores its own Web UI state separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
+
+Desktop auto-updates read the latest feed from
+`https://download.ekkolearnai.com/latest` first. If that endpoint is
+unavailable, the updater falls back to
+`https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download`.
 
 ### npm
 
@@ -365,7 +407,7 @@ Browser → BFF (Koa, :8648) → Socket.IO /chat-run
 
 The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
 
-The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account- and profile-scoped management, config/credential management, WeChat QR login, model discovery, skills/memory management, log reading, and static file serving.
+The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account- and profile-scoped management, config/credential management, WeChat QR login, model discovery, skills/memory/plugin management, TTS/STT, coding-agent proxies, MCP/runtime management, log reading, and static file serving.
 
 ## Tech Stack
 

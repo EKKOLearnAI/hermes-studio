@@ -1,12 +1,12 @@
 <p align="center">
-  <strong>Hermes Web UI</strong>
+  <strong>Hermes Studio</strong>
   <a href="./README.md">English</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的全功能桌面应用和 Web 管理面板。<br/>
-  管理 AI 聊天会话、监控用量与成本、配置平台渠道、<br/>
-  管理定时任务、浏览技能 —— 全部在一个简洁响应式的 Web 界面中完成。
+  面向 <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的桌面应用、本地运行时和 Web 控制台。<br/>
+  聊天、模型与 Profile 管理、平台渠道接入、任务自动化、<br/>
+  文件查看、Coding Agent 和本地运行环境都在一个界面中完成。
 </p>
 
 <p align="center">
@@ -43,9 +43,19 @@
   </a>
 </p>
 
-> 🎁 **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui)** 是全模态、OpenAI 兼容的 AI 推理平台（DeepSeek、Qwen、GLM、Kimi、MiniMax 等）。在 Provider 面板选择 **Atlas Cloud** 并填入 API Key 即可使用。
+> 🎁 **[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=hermes-web-ui)** 是多模态、OpenAI 兼容的 AI 推理平台（DeepSeek、Qwen、GLM、Kimi、MiniMax 等）。在 Provider 面板选择 **Atlas Cloud** 并填入 API Key 即可使用。
 
 ---
+
+## 核心能力
+
+| 模块 | Hermes Studio 能做什么 |
+|---|---|
+| Agent 聊天 | 运行 Hermes Agent 对话，支持流式回复、工具调用轨迹、文件上传下载和本地持久化会话。 |
+| 本地控制台 | 在一个仪表盘中管理 Profile、Provider、模型、凭证、记忆、技能、插件、日志和运行时设置。 |
+| 自动化 | 围绕同一套 Hermes Profile 配置平台渠道、Cron 任务、Kanban 任务、群聊房间和 MCP Server。 |
+| 工作区工具 | 提供文件浏览器、Web 终端、语音输入输出、Coding Agent、设备发现和性能视图。 |
+| 分发形态 | 支持 Windows/macOS/Linux 桌面应用、npm CLI 包和 Docker 镜像。 |
 
 ## 功能特性
 
@@ -98,6 +108,12 @@
 - 立即触发执行
 - Cron 表达式快捷预设
 
+### Kanban
+
+- 按 Profile 管理的 Kanban 看板，用于规划和跟踪 Agent 工作
+- 可在仪表盘中创建任务、更新任务并移动状态
+- 复用 Web UI 本地状态和认证体系
+
 ### 模型管理
 
 - 从凭证池自动发现模型（`~/.hermes/auth.json`）
@@ -134,6 +150,12 @@
 - SQLite 消息持久化
 - 移动端响应式布局，可折叠侧边栏
 
+### Coding Agents
+
+- 在 Web 仪表盘中启动和监控本地 Coding Agent 会话
+- 为 Codex 和 Claude Code 集成提供独立代理路由
+- 持久化 Agent 输出和 reasoning 元数据，便于后续查看
+
 ### 技能与记忆
 
 - 浏览和搜索已安装的技能
@@ -145,6 +167,13 @@
 - 查看 Agent / Server / Error 日志
 - 按日志级别、日志文件和关键词过滤
 - 结构化日志解析，HTTP 访问日志高亮
+
+### 管理与运行时
+
+- 设备和局域网 Peer 页面，用于本地网络发现和 Peer 工具能力
+- MCP 管理器，用于托管的 `hermes-studio` MCP Server 和 Profile 自动注入
+- Runtime Version 和 Version Preview 工具，用于隔离测试新版本
+- 面向超级管理员的性能监控视图
 
 ### 认证
 
@@ -199,6 +228,14 @@ hermes-web-ui reset-default-login
 - 通过 WebSocket 实时传输键盘输入和 PTY 输出
 - 支持窗口大小调整
 
+### 桌面应用与自动更新
+
+- Windows、macOS 和 Linux 原生 Electron 桌面壳
+- 内置 Web UI 运行时，并自动启动本地 Hermes Studio 服务
+- 桌面自动更新优先使用 Cloudflare 下载端点获取更新元数据和安装包
+- 如果 Cloudflare 更新源不可用，会回退到 GitHub Releases `latest` 资源
+- Windows 升级时会先尝试关闭已有 Hermes Studio 进程，再替换文件
+
 ---
 
 ## 快速开始
@@ -216,6 +253,10 @@ hermes-web-ui reset-default-login
 
 桌面壳自身的 Web UI 状态会单独保存到 `~/.hermes-web-ui`，除非设置了
 `HERMES_WEB_UI_HOME`。
+
+桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。
+如果该端点不可用，更新器会回退到
+`https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download`。
 
 ### npm 安装
 
@@ -371,7 +412,7 @@ npm run build   # 构建输出到 dist/
 
 前端采用 **多 Agent 可扩展架构** — 所有 Hermes 相关代码都按命名空间组织在 `hermes/` 目录下（API、组件、视图、Store），可以方便地并行接入新的 Agent。
 
-BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、分账户分 Profile 管理、配置/凭证管理、微信扫码登录、模型发现、技能/记忆管理、日志读取和静态文件服务。
+BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile 隔离的上传和按路径解析的下载（多 Backend 支持：local/Docker/SSH/Singularity）、会话 CRUD、分账户分 Profile 管理、配置/凭证管理、微信扫码登录、模型发现、技能/记忆/插件管理、TTS/STT、Coding Agent 代理、MCP/Runtime 管理、日志读取和静态文件服务。
 
 ## 技术栈
 
