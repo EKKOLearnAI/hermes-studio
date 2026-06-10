@@ -120,6 +120,25 @@ describe('Profile Routes', () => {
     })
   })
 
+  describe('profile rename validation', () => {
+    it('rejects reserved profile names before calling Hermes CLI', async () => {
+      vi.mocked(hermesCli.renameProfile).mockResolvedValue(true)
+      const { rename } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        params: { name: 'work' },
+        request: { body: { new_name: 'hermes' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await rename(ctx)
+
+      expect(ctx.status).toBe(400)
+      expect(ctx.body).toEqual({ error: "Profile name 'hermes' is reserved and cannot be used" })
+      expect(hermesCli.renameProfile).not.toHaveBeenCalled()
+    })
+  })
+
   describe('profile deletion fallback', () => {
     it('removes a reserved profile directory when Hermes CLI refuses to delete it', async () => {
       const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-delete-'))

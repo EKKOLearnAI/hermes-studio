@@ -672,6 +672,11 @@ export async function rename(ctx: any) {
     ctx.body = { error: 'Missing new_name' }
     return
   }
+  if (isForbiddenProfileName(new_name)) {
+    ctx.status = 400
+    ctx.body = { error: `Profile name '${new_name}' is reserved and cannot be used` }
+    return
+  }
   try {
     const ok = await hermesCli.renameProfile(ctx.params.name, new_name)
     if (ok) {
