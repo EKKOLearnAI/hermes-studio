@@ -6,14 +6,12 @@ on:
       tag:
         description: "Existing release tag to attach artifacts to (e.g. v0.6.5)"
         required: true
-  release:
-    types: [published]
 
 permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  group: desktop-release-${{ github.event.inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -75,7 +73,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ref: ${{ github.event.inputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -169,7 +167,7 @@ jobs:
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          tag_name: ${{ github.event.inputs.tag }}
           fail_on_unmatched_files: true
           files: ${{ matrix.artifact_files }}
 
@@ -181,7 +179,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ref: ${{ github.event.inputs.tag }}
 
       - name: Download macOS update manifests
         uses: actions/download-artifact@v4
@@ -201,6 +199,20 @@ jobs:
       - name: Upload merged macOS updater manifest to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          tag_name: ${{ github.event.inputs.tag }}
           fail_on_unmatched_files: true
           files: /tmp/latest-mac.yml
+
+  mark-latest:
+    name: Mark desktop release as latest
+    needs: mac-update-manifest
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Mark release as latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest

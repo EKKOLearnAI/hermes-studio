@@ -85,8 +85,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          make_latest: false
           fail_on_unmatched_files: true
           files: |
             release/webui/${{ steps.package.outputs.asset }}
             release/webui/${{ steps.package.outputs.asset }}.sha256
             release/webui/${{ steps.package.outputs.manifest }}
+
+  keep-release-out-of-latest:
+    name: Keep release out of GitHub latest
+    if: always() && github.event_name == 'release'
+    needs: webui
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Mark release as not latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest=false

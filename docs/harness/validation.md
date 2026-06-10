@@ -44,6 +44,15 @@ npm run build
 
 ## Release Workflow Guardrail
 
+Published GitHub Releases should still trigger Web UI artifact packaging and
+Docker image publishing, but those workflows must keep the GitHub Release out
+of latest.
+
+Full desktop packaging is manually dispatched through
+`.github/workflows/desktop-release.yml`; published GitHub Releases must not
+automatically start desktop packaging. After a full desktop release finishes,
+the workflow must mark the target GitHub Release as latest.
+
 Desktop release jobs must upload only the artifacts that their matrix target can
 produce. Keep artifact globs in matrix data and keep `fail_on_unmatched_files:
 true` so missing expected files still fail.

@@ -247,6 +247,8 @@ const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release
 const desktopManualBuildWorkflow = await readText('.github/workflows/desktop-manual-build.yml')
 const desktopMacUpdateManifestWorkflow = await readText('.github/workflows/desktop-mac-update-manifest.yml')
 const desktopRuntimeWorkflow = await readText('.github/workflows/desktop-runtime.yml')
+const webuiReleaseWorkflow = await readText('.github/workflows/webui-release.yml')
+const dockerPublishWorkflow = await readText('.github/workflows/docker-publish.yml')
 const electronBuilderConfig = await readText('packages/desktop/electron-builder.yml')
 const desktopPackageJson = await readText('packages/desktop/package.json')
 const desktopInstallHermes = await readText('packages/desktop/scripts/install-hermes.mjs')
@@ -256,6 +258,30 @@ const desktopPaths = await readText('packages/desktop/src/main/paths.ts')
 const desktopRuntimeAssetName = await readText('packages/desktop/scripts/runtime-asset-name.mjs')
 if (!desktopReleaseWorkflow.includes('files: ${{ matrix.artifact_files }}')) {
   fail('desktop-release.yml must upload matrix-specific artifact_files')
+}
+
+if (desktopReleaseWorkflow.includes('types: [published]')) {
+  fail('desktop-release.yml must not run full desktop packaging on every published GitHub Release')
+}
+
+if (!desktopReleaseWorkflow.includes('gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest')) {
+  fail('desktop-release.yml must mark successful full desktop releases as GitHub latest')
+}
+
+for (const [file, text] of [
+  ['webui-release.yml', webuiReleaseWorkflow],
+  ['docker-publish.yml', dockerPublishWorkflow],
+]) {
+  if (!text.includes('release:') || !text.includes('types: [published]')) {
+    fail(`${file} must keep running on published GitHub Releases`)
+  }
+  if (!text.includes('gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest=false')) {
+    fail(`${file} must keep published GitHub Releases out of latest`)
+  }
+}
+
+if (!webuiReleaseWorkflow.includes('make_latest: false')) {
+  fail('webui-release.yml must not mark release uploads as GitHub latest')
 }
 
 if (!electronBuilderConfig.includes('icon: build/icons')) {

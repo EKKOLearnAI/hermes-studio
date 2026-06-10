@@ -71,9 +71,13 @@ Frontend rules:
 Desktop packaging is intentionally split:
 
 - Pull requests run the web UI build and tests in `.github/workflows/build.yml`.
-- Published releases and manual dispatches run desktop artifact packaging in `.github/workflows/desktop-release.yml`
-  and `.github/workflows/desktop-manual-build.yml`.
+- Published GitHub Releases run Web UI artifact packaging and Docker image publishing without
+  marking the release as GitHub latest.
+- Manual dispatches run full desktop artifact packaging in `.github/workflows/desktop-release.yml`.
+- `.github/workflows/desktop-manual-build.yml` builds one desktop target for targeted repairs or re-runs.
 - Each release matrix target uploads only the artifact globs for its own platform.
+- A successful full desktop release marks the target GitHub Release as latest after all desktop artifacts
+  and the merged macOS updater manifest have been uploaded.
 
 Do not make a Windows job require macOS `.dmg` files or a Linux job require
 Windows installers. Keep `fail_on_unmatched_files: true` where platform-specific
