@@ -433,12 +433,16 @@ for (const phrase of [
 }
 
 for (const phrase of [
-  'GITHUB_RELEASE_DOWNLOAD_BASE_URL',
-  'updateFeedCandidates(tag)',
+  'https://download.ekkolearnai.com/latest',
+  'configureLatestUpdateFeed()',
 ]) {
   if (!desktopUpdater.includes(phrase)) {
-    fail(`desktop updater must keep GitHub release feed fallback after Cloudflare: ${phrase}`)
+    fail(`desktop updater must use the Cloudflare latest update feed directly: ${phrase}`)
   }
+}
+
+if (desktopUpdater.includes('releases/latest/download')) {
+  fail('desktop updater must not call GitHub to resolve the latest release tag')
 }
 
 for (const phrase of [
