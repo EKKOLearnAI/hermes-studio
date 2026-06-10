@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
@@ -42,6 +42,18 @@ function gitLines(args) {
   }
 }
 
+function gitOutput(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    return ''
+  }
+}
+
 function changedFilesFromGit() {
   const files = new Set()
 
@@ -72,6 +84,77 @@ function changedFilesFromGit() {
   }
 
   return [...files].sort()
+}
+
+function collectAddedLinesFromDiff(args, linesByFile) {
+  const diff = gitOutput(['diff', '--unified=0', '--no-ext-diff', ...args])
+  let currentFile = ''
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith('+++ ')) {
+      const marker = line.slice(4).trim()
+      currentFile = marker.startsWith('b/') ? marker.slice(2) : ''
+      continue
+    }
+    if (!currentFile || !line.startsWith('+') || line.startsWith('+++')) continue
+    if (!linesByFile.has(currentFile)) linesByFile.set(currentFile, [])
+    linesByFile.get(currentFile).push(line.slice(1))
+  }
+}
+
+function addedFilesFromGit() {
+  const files = new Set()
+
+  for (const file of gitLines(['diff', '--name-only', '--diff-filter=A'])) files.add(file)
+  for (const file of gitLines(['diff', '--name-only', '--cached', '--diff-filter=A'])) files.add(file)
+  for (const file of gitLines(['ls-files', '--others', '--exclude-standard'])) files.add(file)
+
+  const baseRef = process.env.GITHUB_BASE_REF
+  if (baseRef) {
+    for (const base of [`origin/${baseRef}`, baseRef]) {
+      const diff = gitLines(['diff', '--name-only', '--diff-filter=A', `${base}...HEAD`])
+      if (diff.length > 0) {
+        for (const file of diff) files.add(file)
+        break
+      }
+    }
+  } else {
+    const upstream = gitLines(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])[0]
+    if (upstream) {
+      for (const file of gitLines(['diff', '--name-only', '--diff-filter=A', `${upstream}...HEAD`])) files.add(file)
+    }
+  }
+
+  return [...files].sort()
+}
+
+function addedLinesByFileFromGit(changedFiles) {
+  const linesByFile = new Map()
+
+  collectAddedLinesFromDiff([], linesByFile)
+  collectAddedLinesFromDiff(['--cached'], linesByFile)
+
+  const baseRef = process.env.GITHUB_BASE_REF
+  if (baseRef) {
+    for (const base of [`origin/${baseRef}`, baseRef]) {
+      const beforeSize = linesByFile.size
+      collectAddedLinesFromDiff([`${base}...HEAD`], linesByFile)
+      if (linesByFile.size > beforeSize) break
+    }
+  } else {
+    const upstream = gitLines(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])[0]
+    if (upstream) collectAddedLinesFromDiff([`${upstream}...HEAD`], linesByFile)
+  }
+
+  for (const file of gitLines(['ls-files', '--others', '--exclude-standard'])) {
+    if (!changedFiles.includes(file) || linesByFile.has(file) || !existsSync(path.join(root, file))) continue
+    try {
+      linesByFile.set(file, readFileSync(path.join(root, file), 'utf8').split(/\r?\n/))
+    } catch {
+      // Binary untracked files are handled by file-name checks.
+    }
+  }
+
+  return linesByFile
 }
 
 function isChatSessionChainFile(file) {
@@ -211,6 +294,124 @@ for (const phrase of [
 }
 
 const changedFiles = changedFilesFromGit()
+
+const promotionScanFilePatterns = [
+  /^README(?:_zh)?\.md$/,
+  /^docs\/.*\.(?:md|mdx)$/,
+  /^packages\/client\/src\/.*\.(?:vue|ts|tsx|js|jsx|md)$/,
+  /^packages\/website\/src\/.*\.(?:vue|ts|tsx|js|jsx|md)$/,
+  /^packages\/server\/src\/shared\/providers\.ts$/,
+  /^packages\/server\/src\/services\/config-helpers\.ts$/,
+]
+const allowedPromotionalUrls = new Set([
+  'https://apikey.fun/register?aff=LIBAPI',
+])
+const allowedExternalDomains = new Set([
+  '127.0.0.1',
+  'localhost',
+  'apikey.fun',
+  'api.apikey.fun',
+  'api.star-history.com',
+  'download.ekkolearnai.com',
+  'github.com',
+  'img.shields.io',
+  'npmjs.com',
+  'raw.githubusercontent.com',
+  'shields.io',
+  'star-history.com',
+  'www.github.com',
+  'www.npmjs.com',
+  'www.star-history.com',
+  'hermes-studio.ai',
+  'www.hermes-studio.ai',
+])
+const blockedExternalDomains = new Set([
+  'atlascloud.ai',
+  'api.atlascloud.ai',
+  'www.atlascloud.ai',
+])
+const blockedPromotionPatterns = [
+  /\bAtlas Cloud\b/i,
+  /\batlascloud\b/i,
+  /\bsponsored?\b/i,
+  /\bsponsorship\b/i,
+  /\baffiliate\b/i,
+  /\breferral\b/i,
+  /\bpromo(?:tion| code)?\b/i,
+  /广告/,
+  /推广/,
+  /赞助/,
+]
+const urlPattern = /https?:\/\/[^\s"'<>`)]+/g
+const trackingParamPattern = /[?&](?:aff|affiliate|referral|utm_source|utm_medium|utm_campaign|utm_term|utm_content|promo|promo_code|ref)=/i
+
+function shouldScanForPromotions(file) {
+  if (file === 'scripts/harness-check.mjs') return false
+  return promotionScanFilePatterns.some(pattern => pattern.test(file))
+}
+
+function normalizeUrl(rawUrl) {
+  return rawUrl.replace(/[.,;:!?]+$/, '')
+}
+
+function domainAllowed(hostname) {
+  if (allowedExternalDomains.has(hostname)) return true
+  return [...allowedExternalDomains].some(domain => hostname.endsWith(`.${domain}`))
+}
+
+function checkNoPromotionalContent() {
+  const addedLineMap = addedLinesByFileFromGit(changedFiles)
+  for (const [file, lines] of addedLineMap) {
+    if (!shouldScanForPromotions(file)) continue
+    for (const [index, line] of lines.entries()) {
+      let scrubbedLine = line
+      for (const allowedUrl of allowedPromotionalUrls) {
+        scrubbedLine = scrubbedLine.replaceAll(allowedUrl, '')
+      }
+      if (trackingParamPattern.test(scrubbedLine)) {
+        fail(`${file}:${index + 1} adds an unapproved tracking or affiliate URL parameter`)
+      }
+      for (const pattern of blockedPromotionPatterns) {
+        if (pattern.test(scrubbedLine)) {
+          fail(`${file}:${index + 1} adds promotional or sponsor-like text: ${line.trim()}`)
+          break
+        }
+      }
+      for (const match of line.matchAll(urlPattern)) {
+        const rawUrl = normalizeUrl(match[0])
+        if (allowedPromotionalUrls.has(rawUrl)) continue
+        let parsed
+        try {
+          parsed = new URL(rawUrl)
+        } catch {
+          continue
+        }
+        const hostname = parsed.hostname.toLowerCase()
+        if (blockedExternalDomains.has(hostname)) {
+          fail(`${file}:${index + 1} adds a blocked external domain: ${hostname}`)
+          continue
+        }
+        if (!domainAllowed(hostname)) {
+          fail(`${file}:${index + 1} adds external URL outside the harness allowlist: ${rawUrl}`)
+        }
+      }
+    }
+  }
+
+  const allowedLogoAssets = new Set([
+    'packages/client/src/assets/logo.png',
+    'packages/client/src/assets/vite.svg',
+  ])
+  for (const file of addedFilesFromGit()) {
+    if (allowedLogoAssets.has(file)) continue
+    if (/^assets\/.*logo.*\.(?:png|jpe?g|webp|gif|svg)$/i.test(file)) {
+      fail(`${file} adds a root logo asset; external brand logos require explicit owner approval`)
+    }
+  }
+}
+
+checkNoPromotionalContent()
+
 const changedChatChainFiles = changedFiles.filter(
   file => !isChatChainChangeFragment(file)
     && file !== 'docs/chat-chain-changes/README.md'
