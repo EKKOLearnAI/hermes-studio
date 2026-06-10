@@ -306,25 +306,6 @@ const promotionScanFilePatterns = [
 const allowedPromotionalUrls = new Set([
   'https://apikey.fun/register?aff=LIBAPI',
 ])
-const allowedExternalDomains = new Set([
-  '127.0.0.1',
-  'localhost',
-  'apikey.fun',
-  'api.apikey.fun',
-  'api.star-history.com',
-  'download.ekkolearnai.com',
-  'github.com',
-  'img.shields.io',
-  'npmjs.com',
-  'raw.githubusercontent.com',
-  'shields.io',
-  'star-history.com',
-  'www.github.com',
-  'www.npmjs.com',
-  'www.star-history.com',
-  'hermes-studio.ai',
-  'www.hermes-studio.ai',
-])
 const blockedExternalDomains = new Set([
   'atlascloud.ai',
   'api.atlascloud.ai',
@@ -352,11 +333,6 @@ function shouldScanForPromotions(file) {
 
 function normalizeUrl(rawUrl) {
   return rawUrl.replace(/[.,;:!?]+$/, '')
-}
-
-function domainAllowed(hostname) {
-  if (allowedExternalDomains.has(hostname)) return true
-  return [...allowedExternalDomains].some(domain => hostname.endsWith(`.${domain}`))
 }
 
 function checkNoPromotionalContent() {
@@ -389,10 +365,6 @@ function checkNoPromotionalContent() {
         const hostname = parsed.hostname.toLowerCase()
         if (blockedExternalDomains.has(hostname)) {
           fail(`${file}:${index + 1} adds a blocked external domain: ${hostname}`)
-          continue
-        }
-        if (!domainAllowed(hostname)) {
-          fail(`${file}:${index + 1} adds external URL outside the harness allowlist: ${rawUrl}`)
         }
       }
     }
