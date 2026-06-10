@@ -5,8 +5,10 @@ import { t } from './desktop-i18n'
 let initialized = false
 let checking = false
 let updateDownloaded = false
+let tryingFallbackFeed = false
 
 const CLOUDFLARE_LATEST_FEED_URL = 'https://download.ekkolearnai.com/latest'
+const GITHUB_LATEST_FEED_URL = 'https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download'
 
 interface AutoUpdaterOptions {
   beforeQuitAndInstall?: () => void
@@ -14,11 +16,27 @@ interface AutoUpdaterOptions {
 
 let options: AutoUpdaterOptions = {}
 
-function configureLatestUpdateFeed(): void {
+function configureUpdateFeed(url: string): void {
   autoUpdater.setFeedURL({
     provider: 'generic',
-    url: CLOUDFLARE_LATEST_FEED_URL,
+    url,
   })
+}
+
+async function checkForUpdatesWithFallback(): Promise<void> {
+  configureUpdateFeed(CLOUDFLARE_LATEST_FEED_URL)
+  try {
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    console.warn(`[updater] Cloudflare update feed failed, trying GitHub: ${err instanceof Error ? err.message : String(err)}`)
+    tryingFallbackFeed = true
+    try {
+      configureUpdateFeed(GITHUB_LATEST_FEED_URL)
+      await autoUpdater.checkForUpdates()
+    } finally {
+      tryingFallbackFeed = false
+    }
+  }
 }
 
 function showUpToDate(info?: UpdateInfo) {
@@ -67,7 +85,7 @@ export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
   })
   autoUpdater.on('error', err => {
     console.error('[updater] error:', err)
-    if (checking) showUpdateCheckFailed()
+    if (checking && !tryingFallbackFeed) showUpdateCheckFailed()
   })
   autoUpdater.on('download-progress', (info: ProgressInfo) => {
     console.log(`[updater] download ${Math.round(info.percent)}%`)
@@ -131,8 +149,7 @@ export async function checkForDesktopUpdates(manual: boolean): Promise<void> {
 
   checking = manual
   try {
-    configureLatestUpdateFeed()
-    await autoUpdater.checkForUpdates()
+    await checkForUpdatesWithFallback()
   } catch (err) {
     if (manual) showUpdateCheckFailed()
     throw err

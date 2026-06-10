@@ -434,15 +434,16 @@ for (const phrase of [
 
 for (const phrase of [
   'https://download.ekkolearnai.com/latest',
-  'configureLatestUpdateFeed()',
+  'https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest/download',
+  'checkForUpdatesWithFallback()',
 ]) {
   if (!desktopUpdater.includes(phrase)) {
-    fail(`desktop updater must use the Cloudflare latest update feed directly: ${phrase}`)
+    fail(`desktop updater must check Cloudflare first and keep GitHub as fallback: ${phrase}`)
   }
 }
 
-if (desktopUpdater.includes('releases/latest/download')) {
-  fail('desktop updater must not call GitHub to resolve the latest release tag')
+if (desktopUpdater.includes('fetch(')) {
+  fail('desktop updater must not make custom fetch requests to resolve the latest release tag')
 }
 
 for (const phrase of [
