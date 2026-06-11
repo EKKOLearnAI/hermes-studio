@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
@@ -17,8 +17,6 @@ const { isDark, isComic } = useTheme()
 const { t } = useI18n()
 const appStore = useAppStore()
 const route = useRoute()
-const router = useRouter()
-const ready = ref(false)
 
 const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
@@ -38,11 +36,6 @@ const isDesktopShell = computed(() =>
 // Close mobile sidebar on route change
 watch(() => route.path, () => {
   appStore.closeSidebar()
-})
-
-// Wait for router to resolve before rendering layout
-router.isReady().then(() => {
-  ready.value = true
 })
 
 onMounted(() => {
@@ -65,7 +58,7 @@ useKeyboard()
       <AuthEventListener />
       <NDialogProvider>
         <NNotificationProvider>
-          <div v-if="ready" class="app-shell" :class="{ desktop: isDesktopShell }">
+          <div class="app-shell" :class="{ desktop: isDesktopShell }">
             <DesktopTitleBar v-if="isDesktopShell" />
             <div v-if="nodeVersionLow" class="node-warning-bar">
               {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}

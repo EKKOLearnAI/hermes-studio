@@ -16,7 +16,8 @@ type WindowWithHermesDesktop = Window & typeof globalThis & {
 const desktop = (window as WindowWithHermesDesktop).hermesDesktop
 const platform = desktop?.platform
 const isMac = computed(() => platform === 'darwin')
-const showWindowButtons = computed(() => platform === 'win32' || platform === 'linux')
+const showTitleBar = computed(() => platform === 'darwin' || platform === 'win32')
+const showWindowButtons = computed(() => platform === 'win32')
 const isMaximized = ref(false)
 
 async function refreshWindowState() {
@@ -45,7 +46,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <header class="desktop-titlebar" :class="{ mac: isMac }" @dblclick="controlWindow('toggle-maximize')">
+  <header v-if="showTitleBar" class="desktop-titlebar" :class="{ mac: isMac }" @dblclick="controlWindow('toggle-maximize')">
     <div class="desktop-titlebar__drag">
       <div class="desktop-titlebar__brand">
         <img class="desktop-titlebar__logo" src="/logo.png" alt="" draggable="false">

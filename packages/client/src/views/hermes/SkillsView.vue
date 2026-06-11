@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { NInput, NButton } from 'naive-ui'
+import { NBadge, NButton, NDrawer, NDrawerContent, NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
+import PendingWriteApprovals from '@/components/hermes/skills/PendingWriteApprovals.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
+import { fetchPendingWrites } from '@/api/hermes/write-gate'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
@@ -25,6 +27,9 @@ const sourceFilter = ref<SourceFilter | null>(null)
 const recommendations = ref('')
 const showImportModal = ref(false)
 const showExternalDirsModal = ref(false)
+const showWriteApprovalDrawer = ref(false)
+const pendingWriteCount = ref(0)
+const writeApprovalSupported = ref(true)
 let mobileQuery: MediaQueryList | null = null
 let recommendationsRequestSeq = 0
 
@@ -53,6 +58,7 @@ onMounted(() => {
   mobileQuery.addEventListener('change', handleMobileChange)
   loadSkills()
   loadRecommendations()
+  loadPendingWriteCount()
 })
 
 onUnmounted(() => {
@@ -96,6 +102,16 @@ async function loadRecommendations() {
 }
 
 watch(recommendationsPath, loadRecommendations)
+
+async function loadPendingWriteCount() {
+  try {
+    const data = await fetchPendingWrites()
+    writeApprovalSupported.value = data.supported !== false
+    pendingWriteCount.value = writeApprovalSupported.value ? data.records?.length || 0 : 0
+  } catch (err) {
+    console.error('Failed to load pending write approvals:', err)
+  }
+}
 
 function toggleFilter(filter: SourceFilter) {
   sourceFilter.value = sourceFilter.value === filter ? null : filter
@@ -173,6 +189,26 @@ function handlePinToggled(name: string, pinned: boolean) {
       </div>
       <div class="header-actions">
         <NButton
+          v-if="writeApprovalSupported"
+          class="header-action-btn"
+          size="small"
+          :title="t('skills.writeApprovalTitle')"
+          @click="showWriteApprovalDrawer = true"
+        >
+          <template #icon>
+            <NBadge :value="pendingWriteCount" :max="99" :show="pendingWriteCount > 0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+            </NBadge>
+          </template>
+          <span class="header-action-label">
+            {{ t('skills.writeApprovalButton', { count: pendingWriteCount }) }}
+          </span>
+        </NButton>
+        <NButton
           class="header-action-btn"
           size="small"
           :title="t('skills.import')"
@@ -215,6 +251,19 @@ function handlePinToggled(name: string, pinned: boolean) {
     <SkillImportModal v-if="showImportModal" @close="showImportModal = false" @saved="handleImported" />
     <SkillExternalDirsModal v-if="showExternalDirsModal"
       @close="showExternalDirsModal = false" @saved="handleExternalDirsSaved" />
+    <NDrawer
+      v-model:show="showWriteApprovalDrawer"
+      width="min(960px, calc(100vw - 32px))"
+      placement="right"
+      class="write-approval-drawer"
+    >
+      <NDrawerContent :title="t('skills.writeApprovalTitle')" closable>
+        <PendingWriteApprovals
+          v-if="showWriteApprovalDrawer"
+          @count-change="(count) => pendingWriteCount = count"
+        />
+      </NDrawerContent>
+    </NDrawer>
 
     <div class="skills-content">
       <div v-if="loading && categories.length === 0" class="skills-loading">{{ t('common.loading') }}</div>

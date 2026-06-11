@@ -3,9 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const mockFetchPendingWrites = vi.hoisted(() => vi.fn())
-const mockFetchPendingWriteDiff = vi.hoisted(() => vi.fn())
-const mockApprovePendingWrite = vi.hoisted(() => vi.fn())
-const mockRejectPendingWrite = vi.hoisted(() => vi.fn())
 
 const mockSettingsStore = vi.hoisted(() => ({
   sessionReset: { mode: 'both', idle_minutes: 60, at_hour: 0 },
@@ -35,9 +32,6 @@ vi.mock('@/stores/hermes/session-browser-prefs', () => ({
 
 vi.mock('@/api/hermes/write-gate', () => ({
   fetchPendingWrites: mockFetchPendingWrites,
-  fetchPendingWriteDiff: mockFetchPendingWriteDiff,
-  approvePendingWrite: mockApprovePendingWrite,
-  rejectPendingWrite: mockRejectPendingWrite,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -65,10 +59,7 @@ describe('SessionSettings', () => {
     mockPrefsStore.humanOnly = true
     mockSettingsStore.memory.write_approval = false
     mockSettingsStore.skills.write_approval = true
-    mockFetchPendingWrites.mockResolvedValue({ records: [], counts: { memory: 0, skills: 0 } })
-    mockFetchPendingWriteDiff.mockResolvedValue('diff text')
-    mockApprovePendingWrite.mockResolvedValue({ output: 'approved' })
-    mockRejectPendingWrite.mockResolvedValue({ output: 'rejected' })
+    mockFetchPendingWrites.mockResolvedValue({ records: [], counts: { memory: 0, skills: 0 }, supported: true })
   })
 
   it('surfaces the human-only preference in the Session tab', async () => {
@@ -100,6 +91,7 @@ describe('SessionSettings', () => {
         },
       },
     })
+    await flushPromises()
 
     expect(wrapper.text()).toContain('settings.session.liveMonitorHumanOnly')
 
@@ -133,6 +125,7 @@ describe('SessionSettings', () => {
         },
       },
     })
+    await flushPromises()
 
     expect(wrapper.text()).toContain('settings.session.memoryWriteApproval')
     expect(wrapper.text()).toContain('settings.session.skillsWriteApproval')
@@ -149,31 +142,8 @@ describe('SessionSettings', () => {
     expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('skills', { write_approval: false })
   })
 
-  it('approves and rejects pending write gate records', async () => {
-    const pendingResponse = {
-      records: [
-        {
-          id: 'mem123',
-          subsystem: 'memory',
-          action: 'add',
-          summary: 'remember concise answers',
-          origin: 'foreground',
-          created_at: 1765440000,
-          payload: {},
-        },
-        {
-          id: 'skill123',
-          subsystem: 'skills',
-          action: 'patch',
-          summary: 'patch demo skill',
-          origin: 'background_review',
-          created_at: 1765440060,
-          payload: {},
-        },
-      ],
-      counts: { memory: 1, skills: 1 },
-    }
-    mockFetchPendingWrites.mockResolvedValue(pendingResponse)
+  it('hides write approval toggles when Hermes Agent does not support them', async () => {
+    mockFetchPendingWrites.mockResolvedValue({ records: [], counts: { memory: 0, skills: 0 }, supported: false })
 
     const wrapper = mount(SessionSettings, {
       global: {
@@ -184,11 +154,6 @@ describe('SessionSettings', () => {
           },
           NSelect: true,
           NInputNumber: true,
-          NTag: { template: '<span><slot /></span>' },
-          NButton: {
-            props: ['loading'],
-            template: '<button class="n-button" @click="$emit(\'click\')"><slot /></button>',
-          },
           NSwitch: {
             props: ['value'],
             emits: ['update:value'],
@@ -199,18 +164,8 @@ describe('SessionSettings', () => {
     })
 
     await flushPromises()
-    expect(wrapper.text()).toContain('remember concise answers')
-    expect(wrapper.text()).toContain('patch demo skill')
 
-    const approveButtons = () => wrapper.findAll('.n-button').filter(button => button.text() === 'settings.session.writeApprovalApprove')
-    const rejectButtons = () => wrapper.findAll('.n-button').filter(button => button.text() === 'settings.session.writeApprovalReject')
-
-    await approveButtons()[0].trigger('click')
-    await flushPromises()
-    await rejectButtons()[1].trigger('click')
-    await flushPromises()
-
-    expect(mockApprovePendingWrite).toHaveBeenCalledWith('memory', 'mem123')
-    expect(mockRejectPendingWrite).toHaveBeenCalledWith('skills', 'skill123')
+    expect(wrapper.text()).not.toContain('settings.session.memoryWriteApproval')
+    expect(wrapper.text()).not.toContain('settings.session.skillsWriteApproval')
   })
 })

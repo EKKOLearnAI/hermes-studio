@@ -791,7 +791,7 @@ assert calls == [("cmd", "desc", False)]
 `)
   })
 
-  it('honors session-level approval for repeated memory write prompts', () => {
+  it('does not persist session-level approval for repeated memory write prompts', () => {
     runPython(String.raw`
 ${harness}
 
@@ -823,16 +823,11 @@ assert pool.respond_approval(approval_id, "session") == {
 thread.join(timeout=5)
 assert result["first"] == "session"
 
-second = callback("memory text 2", "Save to memory: add to memory", allow_permanent=False)
-assert second == "session"
-with pool._lock:
-    assert pool._approval_requests == {}
+second_result = {}
+def second_prompt():
+    second_result["choice"] = callback("memory text 2", "Save to memory: add to memory", allow_permanent=False)
 
-other = {}
-def non_memory_prompt():
-    other["choice"] = callback("cmd", "Not memory", allow_permanent=False)
-
-thread = threading.Thread(target=non_memory_prompt)
+thread = threading.Thread(target=second_prompt)
 thread.start()
 deadline = time.time() + 5
 approval_id = None
@@ -846,7 +841,43 @@ while time.time() < deadline:
 assert approval_id is not None
 pool.respond_approval(approval_id, "once")
 thread.join(timeout=5)
-assert other["choice"] == "once"
+assert second_result["choice"] == "once"
+`)
+  })
+
+  it('keeps bound approval session when Hermes propagates callback to tool workers', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+pool._install_approval_dispatcher_for_current_thread("session-a")
+parent_callback = terminal_tool._get_approval_callback()
+assert parent_callback is not None
+
+result = {}
+def worker_prompt():
+    # Hermes propagates the terminal approval callback object to worker threads,
+    # but it does not propagate bridge_pool._run_context because that is a
+    # bridge-local threading.local(). The callback itself must carry session-a.
+    assert getattr(pool._run_context, "session_id", "") == ""
+    result["first"] = parent_callback("memory text", "Save to memory: add preference", allow_permanent=False)
+
+thread = threading.Thread(target=worker_prompt)
+thread.start()
+
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+pool.respond_approval(approval_id, "session")
+thread.join(timeout=5)
+assert result["first"] == "session"
 `)
   })
 

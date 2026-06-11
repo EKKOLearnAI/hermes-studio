@@ -490,16 +490,19 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <div class="approval-float-desc">{{ visibleApproval.description }}</div>
                             <code class="approval-float-command">{{ visibleApproval.command }}</code>
                             <div class="approval-float-actions">
-                                <NButton v-if="visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
+                                <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
+                                    {{ t('chat.approvalAgree') }}
+                                </NButton>
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
                                     {{ t('chat.approvalAllowOnce') }}
                                 </NButton>
-                                <NButton v-if="visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
                                     {{ t('chat.approvalAllowSession') }}
                                 </NButton>
-                                <NButton v-if="visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
                                     {{ t('chat.approvalAlways') }}
                                 </NButton>
-                                <NButton v-if="visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
+                                <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
                                     {{ t('chat.approvalDeny') }}
                                 </NButton>
                             </div>
@@ -774,7 +777,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     right: 16px;
     bottom: 16px;
     z-index: 8;
-    width: min(520px, calc(100% - 32px));
+    width: min(720px, calc(100% - 32px));
     padding: 10px;
     border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
     border-radius: 16px;

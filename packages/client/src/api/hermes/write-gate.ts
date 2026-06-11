@@ -15,6 +15,25 @@ export interface PendingWriteRecord {
 export interface PendingWritesResponse {
   records: PendingWriteRecord[]
   counts: Record<WriteGateSubsystem, number>
+  supported?: boolean
+}
+
+export interface PendingWriteReviewNote {
+  type: 'patchOldStringMissing' | 'currentReadFailed' | 'deleteSkill' | 'removeFile'
+  targetLabel?: string
+  skillName?: string
+}
+
+export interface PendingWriteReview {
+  subsystem: WriteGateSubsystem
+  targetLabel: string
+  language: string
+  current: string
+  proposed: string
+  diff: string
+  requestedOldString?: string
+  payloadText?: string
+  notes: PendingWriteReviewNote[]
 }
 
 export async function fetchPendingWrites(): Promise<PendingWritesResponse> {
@@ -22,8 +41,23 @@ export async function fetchPendingWrites(): Promise<PendingWritesResponse> {
 }
 
 export async function fetchPendingWriteDiff(subsystem: WriteGateSubsystem, id: string): Promise<string> {
-  const res = await request<{ diff: string }>(`/api/hermes/write-gate/pending/${encodeURIComponent(subsystem)}/${encodeURIComponent(id)}/diff`)
+  const res = await request<{ diff: string; review?: PendingWriteReview }>(`/api/hermes/write-gate/pending/${encodeURIComponent(subsystem)}/${encodeURIComponent(id)}/diff`)
   return res.diff
+}
+
+export async function fetchPendingWriteReview(subsystem: WriteGateSubsystem, id: string): Promise<PendingWriteReview> {
+  const res = await request<{ diff: string; review?: PendingWriteReview }>(`/api/hermes/write-gate/pending/${encodeURIComponent(subsystem)}/${encodeURIComponent(id)}/diff`)
+  if (res.review) return res.review
+  return {
+    subsystem,
+    targetLabel: subsystem,
+    language: subsystem === 'memory' ? 'json' : '',
+    current: '',
+    proposed: res.diff || '',
+    diff: res.diff || '',
+    payloadText: subsystem === 'memory' ? res.diff || '' : undefined,
+    notes: [],
+  }
 }
 
 export async function approvePendingWrite(subsystem: WriteGateSubsystem, id: string): Promise<{ output: string }> {

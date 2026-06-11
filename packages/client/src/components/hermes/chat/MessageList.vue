@@ -530,7 +530,15 @@ defineExpose({
           <code class="approval-float-command">{{ visibleApproval.command }}</code>
           <div class="approval-float-actions">
             <NButton
-              v-if="visibleApproval.choices.includes('once')"
+              v-if="visibleApproval.isMemoryWrite"
+              size="small"
+              type="primary"
+              @click="handleApproval('once')"
+            >
+              {{ t("chat.approvalAgree") }}
+            </NButton>
+            <NButton
+              v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')"
               size="small"
               type="primary"
               @click="handleApproval('once')"
@@ -538,7 +546,7 @@ defineExpose({
               {{ t("chat.approvalAllowOnce") }}
             </NButton>
             <NButton
-              v-if="visibleApproval.choices.includes('session')"
+              v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')"
               size="small"
               secondary
               @click="handleApproval('session')"
@@ -546,7 +554,7 @@ defineExpose({
               {{ t("chat.approvalAllowSession") }}
             </NButton>
             <NButton
-              v-if="visibleApproval.choices.includes('always')"
+              v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')"
               size="small"
               secondary
               @click="handleApproval('always')"
@@ -554,7 +562,7 @@ defineExpose({
               {{ t("chat.approvalAlways") }}
             </NButton>
             <NButton
-              v-if="visibleApproval.choices.includes('deny')"
+              v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')"
               size="small"
               type="error"
               secondary
@@ -668,7 +676,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(520px, calc(100% - 32px));
+  width: min(720px, calc(100% - 32px));
   pointer-events: none;
 }
 

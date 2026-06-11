@@ -2,7 +2,7 @@ import type { Context } from 'koa'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import {
   approvePendingWrite,
-  getPendingWriteDiff,
+  getPendingWriteReview,
   listPendingWrites,
   rejectPendingWrite,
 } from '../../services/hermes/write-gate'
@@ -24,6 +24,8 @@ function handleError(ctx: Context, err: any) {
     ctx.status = 400
   } else if (/No pending .* write with id/i.test(message)) {
     ctx.status = 404
+  } else if (/write approval is not supported/i.test(message)) {
+    ctx.status = 409
   } else {
     ctx.status = 500
   }
@@ -41,8 +43,10 @@ export async function list(ctx: Context) {
 export async function diff(ctx: Context) {
   try {
     const { subsystem, id } = pendingParams(ctx)
+    const review = await getPendingWriteReview(requestedProfile(ctx), subsystem, id)
     ctx.body = {
-      diff: await getPendingWriteDiff(requestedProfile(ctx), subsystem, id),
+      diff: review.diff,
+      review,
     }
   } catch (err: any) {
     handleError(ctx, err)

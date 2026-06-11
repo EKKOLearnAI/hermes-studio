@@ -26,6 +26,25 @@ export interface PendingWriteRecord {
 export interface PendingWritesResponse {
   records: PendingWriteRecord[]
   counts: Record<WriteGateSubsystem, number>
+  supported: boolean
+}
+
+export interface PendingWriteReviewNote {
+  type: 'patchOldStringMissing' | 'currentReadFailed' | 'deleteSkill' | 'removeFile'
+  targetLabel?: string
+  skillName?: string
+}
+
+export interface PendingWriteReview {
+  subsystem: WriteGateSubsystem
+  targetLabel: string
+  language: string
+  current: string
+  proposed: string
+  diff: string
+  requestedOldString?: string
+  payloadText?: string
+  notes: PendingWriteReviewNote[]
 }
 
 const PYTHON_HELPER = String.raw`
@@ -52,9 +71,114 @@ if action == "diff":
     if not rec:
         raise SystemExit(f"No pending {subsystem} write with id '{pending_id}'.")
     if subsystem == "skills":
-        output = wa.skill_pending_diff(rec)
+        import difflib
+        from pathlib import Path
+
+        def language_for(path):
+            suffix = Path(path or "").suffix.lower()
+            return {
+                ".md": "markdown",
+                ".markdown": "markdown",
+                ".py": "python",
+                ".ts": "typescript",
+                ".tsx": "tsx",
+                ".js": "javascript",
+                ".jsx": "jsx",
+                ".json": "json",
+                ".yaml": "yaml",
+                ".yml": "yaml",
+                ".sh": "bash",
+            }.get(suffix, "")
+
+        def skill_review(record):
+            payload = record.get("payload", {})
+            action_name = payload.get("action", "")
+            name = payload.get("name", "")
+            notes = []
+            target_label = "SKILL.md"
+            current = ""
+            proposed = ""
+            requested_old_string = ""
+
+            try:
+                from tools.skill_manager_tool import _find_skill
+                found = _find_skill(name)
+            except Exception:
+                found = None
+
+            base = found["path"] if found else None
+            if action_name == "create":
+                proposed = payload.get("content") or ""
+            elif action_name == "delete":
+                if base:
+                    p = base / "SKILL.md"
+                    if p.exists():
+                        try:
+                            current = p.read_text(encoding="utf-8")
+                        except Exception:
+                            notes.append({"type": "currentReadFailed", "targetLabel": "SKILL.md"})
+                notes.append({"type": "deleteSkill", "skillName": name})
+            else:
+                if action_name in {"patch", "write_file", "remove_file"}:
+                    target_label = payload.get("file_path") or "SKILL.md"
+                p = (base / target_label) if base else None
+                if p and p.exists():
+                    try:
+                        current = p.read_text(encoding="utf-8")
+                    except Exception:
+                        notes.append({"type": "currentReadFailed", "targetLabel": target_label})
+
+                if action_name == "edit":
+                    proposed = payload.get("content") or ""
+                elif action_name == "patch":
+                    old_s = payload.get("old_string") or ""
+                    new_s = payload.get("new_string") or ""
+                    replace_all = bool(payload.get("replace_all"))
+                    if current and old_s and old_s in current:
+                        proposed = current.replace(old_s, new_s) if replace_all else current.replace(old_s, new_s, 1)
+                    else:
+                        proposed = current
+                        notes.append({"type": "patchOldStringMissing", "targetLabel": target_label})
+                        requested_old_string = old_s
+                elif action_name == "write_file":
+                    proposed = payload.get("file_content") or ""
+                elif action_name == "remove_file":
+                    proposed = ""
+                    notes.append({"type": "removeFile", "targetLabel": target_label, "skillName": name})
+                else:
+                    proposed = current
+
+            diff = "".join(difflib.unified_diff(
+                current.splitlines(keepends=True),
+                proposed.splitlines(keepends=True),
+                fromfile=f"a/{target_label}",
+                tofile=f"b/{target_label}",
+            ))
+
+            return {
+                "subsystem": "skills",
+                "targetLabel": target_label,
+                "language": language_for(target_label),
+                "current": current,
+                "proposed": proposed,
+                "diff": diff,
+                "requestedOldString": requested_old_string,
+                "notes": notes,
+            }
+
+        output = json.dumps(skill_review(rec), ensure_ascii=False)
     else:
-        output = json.dumps(rec.get("payload", {}), ensure_ascii=False, indent=2)
+        payload_text = json.dumps(rec.get("payload", {}), ensure_ascii=False, indent=2)
+        output = json.dumps({
+            "subsystem": "memory",
+            "targetLabel": "memory",
+            "language": "json",
+            "current": "",
+            "proposed": payload_text,
+            "diff": payload_text,
+            "payloadText": payload_text,
+            "notes": [],
+        }, ensure_ascii=False)
 elif action in {"approve", "reject"}:
     memory_store = None
     if subsystem == "memory" and action == "approve":
@@ -134,6 +258,16 @@ export async function listPendingWrites(profile: string): Promise<PendingWritesR
       memory: memory.length,
       skills: skills.length,
     },
+    supported: isWriteGateSupported(),
+  }
+}
+
+export function isWriteGateSupported(): boolean {
+  try {
+    resolveAgentRoot()
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -221,6 +355,9 @@ async function runPythonAction(
 ): Promise<string> {
   assertSubsystem(subsystem)
   assertPendingId(pendingId)
+  if (!isWriteGateSupported()) {
+    throw new Error('Hermes Agent write approval is not supported by the installed Hermes Agent version.')
+  }
   const agentRoot = resolveAgentRoot()
   const python = resolveHermesPython(agentRoot)
   const profileDir = getProfileDir(profile || 'default')
@@ -244,8 +381,27 @@ async function runPythonAction(
 }
 
 export async function getPendingWriteDiff(profile: string, subsystem: string, pendingId: string): Promise<string> {
+  return (await getPendingWriteReview(profile, subsystem, pendingId)).diff
+}
+
+export async function getPendingWriteReview(profile: string, subsystem: string, pendingId: string): Promise<PendingWriteReview> {
   assertSubsystem(subsystem)
-  return runPythonAction(profile, subsystem, 'diff', pendingId)
+  const output = await runPythonAction(profile, subsystem, 'diff', pendingId)
+  try {
+    const parsed = JSON.parse(output)
+    return normalizePendingWriteReview(parsed, subsystem)
+  } catch {
+    return {
+      subsystem,
+      targetLabel: subsystem,
+      language: subsystem === 'memory' ? 'json' : '',
+      current: '',
+      proposed: output,
+      diff: output,
+      payloadText: subsystem === 'memory' ? output : undefined,
+      notes: [],
+    }
+  }
 }
 
 export async function approvePendingWrite(profile: string, subsystem: string, pendingId: string): Promise<string> {
@@ -256,4 +412,31 @@ export async function approvePendingWrite(profile: string, subsystem: string, pe
 export async function rejectPendingWrite(profile: string, subsystem: string, pendingId: string): Promise<string> {
   assertSubsystem(subsystem)
   return runPythonAction(profile, subsystem, 'reject', pendingId)
+}
+
+function normalizePendingWriteReview(raw: any, subsystem: WriteGateSubsystem): PendingWriteReview {
+  const notes = Array.isArray(raw?.notes)
+    ? raw.notes
+        .filter((note: any) => note && typeof note === 'object' && typeof note.type === 'string')
+        .map((note: any) => ({
+          type: note.type,
+          targetLabel: typeof note.targetLabel === 'string' ? note.targetLabel : undefined,
+          skillName: typeof note.skillName === 'string' ? note.skillName : undefined,
+        }))
+    : []
+  return {
+    subsystem,
+    targetLabel: typeof raw?.targetLabel === 'string' && raw.targetLabel ? raw.targetLabel : subsystem,
+    language: typeof raw?.language === 'string' ? raw.language : '',
+    current: typeof raw?.current === 'string' ? raw.current : '',
+    proposed: typeof raw?.proposed === 'string' ? raw.proposed : '',
+    diff: typeof raw?.diff === 'string' ? raw.diff : '',
+    requestedOldString: typeof raw?.requestedOldString === 'string' ? raw.requestedOldString : undefined,
+    payloadText: typeof raw?.payloadText === 'string' ? raw.payloadText : undefined,
+    notes: notes.filter((note: PendingWriteReviewNote) =>
+      note.type === 'patchOldStringMissing' ||
+      note.type === 'currentReadFailed' ||
+      note.type === 'deleteSkill' ||
+      note.type === 'removeFile'),
+  }
 }

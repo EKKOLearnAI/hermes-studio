@@ -109,6 +109,33 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+// Teleported overlays must remain clickable above Electron drag regions.
+.hermes-desktop-shell {
+  .n-drawer,
+  .n-drawer *,
+  .n-modal,
+  .n-modal *,
+  .n-dialog,
+  .n-dialog *,
+  .n-popover,
+  .n-popover *,
+  .n-dropdown,
+  .n-dropdown *,
+  .n-select-menu,
+  .n-select-menu *,
+  .n-base-select-menu,
+  .n-base-select-menu *,
+  .n-message-container,
+  .n-message-container *,
+  .n-notification-container,
+  .n-notification-container *,
+  .drawer-overlay,
+  .drawer-panel,
+  .drawer-panel * {
+    -webkit-app-region: no-drag;
+  }
+}
+
 
 
 code, pre, .mono {

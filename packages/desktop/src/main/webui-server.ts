@@ -23,6 +23,7 @@ import {
 
 const DEFAULT_PORT = 8748
 const DEFAULT_READY_TIMEOUT_MS = 120_000
+const DEFAULT_FULL_STARTUP_WAIT_MS = 8_000
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
@@ -60,6 +61,20 @@ function envPositiveInt(name: string): number | undefined {
 
 function readyTimeoutMs(): number {
   return envPositiveInt('HERMES_DESKTOP_READY_TIMEOUT_MS') || DEFAULT_READY_TIMEOUT_MS
+}
+
+function fullStartupWaitMs(): number {
+  const raw = process.env.HERMES_DESKTOP_FULL_STARTUP_WAIT_MS
+  if (raw === undefined) return DEFAULT_FULL_STARTUP_WAIT_MS
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_FULL_STARTUP_WAIT_MS
+}
+
+function timeoutAfter(ms: number, message: string): Promise<void> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    timer.unref?.()
+  })
 }
 
 function createAgentBridgeStartupTracker(): {
@@ -405,10 +420,22 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   })
 
   const timeoutMs = readyTimeoutMs()
-  void bridgeStartup.wait(timeoutMs).catch(err => {
-    console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
-  })
+  const bridgeReady = bridgeStartup.wait(timeoutMs)
   await waitForReady(port, timeoutMs)
+  const fullStartupTimeoutMs = fullStartupWaitMs()
+  if (fullStartupTimeoutMs > 0) {
+    await Promise.race([
+      bridgeReady,
+      timeoutAfter(fullStartupTimeoutMs, `Agent bridge did not become ready within ${fullStartupTimeoutMs}ms`),
+    ]).catch(err => {
+      console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+    })
+    void bridgeReady.catch(() => undefined)
+  } else {
+    void bridgeReady.catch(err => {
+      console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
   return getServerUrl(port)
 }
 

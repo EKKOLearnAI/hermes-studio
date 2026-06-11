@@ -120,6 +120,7 @@ export interface GroupPendingApproval {
     description: string
     choices: Array<'once' | 'session' | 'always' | 'deny'>
     allowPermanent: boolean
+    isMemoryWrite: boolean
     requestedAt: number
 }
 
@@ -487,6 +488,13 @@ const currentUserAvatar = ref('')
 
         socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
             if (!data.approval_id) return
+            const description = data.description || ''
+            const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
+            const isMemoryWrite = !Boolean(data.allow_permanent) && (
+                normalizedDescription === 'save to memory' ||
+                normalizedDescription.startsWith('save to memory:') ||
+                normalizedDescription.startsWith('save to memory?')
+            )
             const choices = (Array.isArray(data.choices) ? data.choices : ['once', 'session', 'deny'])
                 .filter((choice): choice is GroupPendingApproval['choices'][number] =>
                     choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
@@ -495,9 +503,10 @@ const currentUserAvatar = ref('')
                 agentName: data.agentName || '',
                 approvalId: data.approval_id,
                 command: data.command || '',
-                description: data.description || '',
-                choices: choices.length ? choices : ['once', 'session', 'deny'],
+                description,
+                choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
                 allowPermanent: Boolean(data.allow_permanent),
+                isMemoryWrite,
                 requestedAt: Date.now(),
             })
             pendingApprovals.value = new Map(pendingApprovals.value)

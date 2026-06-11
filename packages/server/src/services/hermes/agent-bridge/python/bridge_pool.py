@@ -109,7 +109,6 @@ class AgentPool:
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
-        self._memory_approval_session_allow: set[str] = set()
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._clarify_requests: dict[str, queue.Queue[str]] = {}
         self._run_context = threading.local()
@@ -556,15 +555,6 @@ class AgentPool:
 
     def _approval_callback(self, session_id: str):
         def callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
-            is_memory_write_approval = (
-                not allow_permanent and
-                str(description or "").startswith("Save to memory:")
-            )
-            if is_memory_write_approval:
-                with self._lock:
-                    if session_id in self._memory_approval_session_allow:
-                        return "session"
-
             approval_id = uuid.uuid4().hex
             response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
             with self._lock:
@@ -591,9 +581,6 @@ class AgentPool:
                 "approval_id": approval_id,
                 "choice": choice,
             })
-            if is_memory_write_approval and choice == "session":
-                with self._lock:
-                    self._memory_approval_session_allow.add(session_id)
             return choice
 
         return callback
@@ -632,12 +619,14 @@ class AgentPool:
             return "deny"
         return handler(command, description, allow_permanent=allow_permanent)
 
-    def _install_approval_dispatcher_for_current_thread(self) -> None:
+    def _install_approval_dispatcher_for_current_thread(self, session_id: str) -> None:
         from tools.terminal_tool import set_approval_callback
 
-        # terminal_tool stores callbacks in threading.local(), so each run
-        # thread must bind the shared dispatcher for itself.
-        set_approval_callback(self._approval_dispatcher)
+        # terminal_tool stores callbacks in threading.local(), and Hermes
+        # propagates that callback object into tool worker threads. Bind the
+        # session id into the callback itself instead of relying on this
+        # bridge's thread-local run context, which is not propagated by Hermes.
+        set_approval_callback(self._approval_callback(session_id))
 
     def _enter_exec_ask_scope(self) -> None:
         with self._lock:
@@ -887,7 +876,7 @@ class AgentPool:
                 try:
                     self._enter_exec_ask_scope()
                     exec_ask_scope_entered = True
-                    self._install_approval_dispatcher_for_current_thread()
+                    self._install_approval_dispatcher_for_current_thread(session.session_id)
                     with self._lock:
                         self._approval_handlers[session.session_id] = self._approval_callback(session.session_id)
                     self._run_context.session_id = session.session_id
@@ -1034,7 +1023,6 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._approval_handlers.pop(session.session_id, None)
-                    self._memory_approval_session_allow.discard(session.session_id)
                 try:
                     del self._run_context.session_id
                 except AttributeError:

@@ -92,6 +92,23 @@ const SKILLS_USAGE_COMPACT_LABEL_LIMITS: Record<string, number> = {
   'skillsUsage.otherSkills': 16,
 }
 
+const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
+  'chat.approvalAgree',
+  'skills.writeApprovalTitle',
+  'skills.writeApprovalDescription',
+  'skills.writeApprovalEmpty',
+  'skills.writeApprovalViewDiff',
+  'skills.writeApprovalNoDiff',
+  'skills.writeApprovalApprove',
+  'skills.writeApprovalReject',
+  'skills.writeApprovalPendingMemoryWrite',
+  'skills.writeApprovalCurrentFile',
+  'skills.writeApprovalPatchOldStringMissing',
+  'settings.session.requireAuth',
+  'settings.session.memoryWriteApproval',
+  'settings.session.skillsWriteApproval',
+]
+
 function labelLength(value: unknown): number {
   return typeof value === 'string' ? Array.from(value.replace(/\{[^}]+\}/g, '')).length : Infinity
 }
@@ -136,6 +153,21 @@ describe('i18n locale coverage', () => {
       if (locale === 'en') return []
 
       return SKILLS_USAGE_LOCALIZED_KEYS.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
+
+  it('localizes approval and write-gate copy in every non-English locale instead of falling back to English', () => {
+    const englishMessages = messages.en
+    const untranslated = Object.entries(messages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      return APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS.flatMap((key) => {
         const localeValue = getPath(localeMessages, key)
         if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
         return localeValue === getPath(englishMessages, key) ? [`${locale}: ${key}`] : []

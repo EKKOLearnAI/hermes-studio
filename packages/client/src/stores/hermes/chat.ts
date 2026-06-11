@@ -57,6 +57,7 @@ export interface PendingApproval {
   description: string
   choices: Array<'once' | 'session' | 'always' | 'deny'>
   allowPermanent: boolean
+  isMemoryWrite: boolean
   requestedAt: number
 }
 
@@ -1511,6 +1512,13 @@ export const useChatStore = defineStore('chat', () => {
     const sid = evt.session_id
     const approvalId = (evt as any).approval_id as string | undefined
     if (!sid || !approvalId) return
+    const description = String((evt as any).description || '')
+    const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
+    const isMemoryWrite = !Boolean((evt as any).allow_permanent) && (
+      normalizedDescription === 'save to memory' ||
+      normalizedDescription.startsWith('save to memory:') ||
+      normalizedDescription.startsWith('save to memory?')
+    )
     const rawChoices = Array.isArray((evt as any).choices) ? (evt as any).choices : ['once', 'session', 'deny']
     const choices = rawChoices
       .filter((choice: unknown): choice is PendingApproval['choices'][number] =>
@@ -1519,9 +1527,10 @@ export const useChatStore = defineStore('chat', () => {
       sessionId: sid,
       approvalId,
       command: String((evt as any).command || ''),
-      description: String((evt as any).description || ''),
-      choices: choices.length ? choices : ['once', 'session', 'deny'],
+      description,
+      choices: isMemoryWrite ? ['once', 'deny'] : choices.length ? choices : ['once', 'session', 'deny'],
       allowPermanent: Boolean((evt as any).allow_permanent),
+      isMemoryWrite,
       requestedAt: Date.now(),
     })
     pendingApprovals.value = new Map(pendingApprovals.value)
