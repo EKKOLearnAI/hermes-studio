@@ -170,7 +170,7 @@ export async function deleteManagedUser(id: number): Promise<ManagedUsersRespons
 
 export interface LockedIp {
   ip: string
-  type: 'password' | 'token'
+  type: 'password' | 'token' | 'pairing'
   failures: number
   lockedUntil: number
 }

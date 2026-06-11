@@ -232,6 +232,10 @@ function formatTime(ts: number): string {
   return remaining > 0 ? `${remaining} min` : t("common.expired");
 }
 
+function lockedIpTypeLabel(type: LockedIp["type"]): string {
+  return t(`settings.lockedIps.type.${type}`);
+}
+
 onMounted(() => { loadLockedIps(); });
 </script>
 
@@ -297,7 +301,7 @@ onMounted(() => { loadLockedIps(); });
         <div v-for="lock in lockedIps" :key="lock.ip + lock.type" class="locked-item">
           <div class="locked-info">
             <span class="locked-ip">{{ lock.ip }}</span>
-            <span class="locked-badge">{{ lock.type }}</span>
+            <span class="locked-badge">{{ lockedIpTypeLabel(lock.type) }}</span>
             <span class="locked-ttl">{{ formatTime(lock.lockedUntil) }}</span>
           </div>
           <NButton size="tiny" type="error" ghost @click="handleUnlockIp(lock.ip)">{{ t("settings.lockedIps.unlock") }}</NButton>

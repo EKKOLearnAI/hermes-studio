@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NDrawer, NDrawerContent, NInput, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NInput, NModal, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { copyToClipboard } from '@/utils/clipboard'
 import {
   approveDevice,
   blockDevice,
   deleteDeviceRequestHistory,
+  fetchDevicePairingLink,
   fetchLanDevices,
   rejectDevice,
   requestDevicePairing,
@@ -28,6 +30,10 @@ const manualPairing = ref(false)
 const manualPairingUrl = ref('')
 const updatingDeviceId = ref('')
 const showRequests = ref(false)
+const copyingPairingLink = ref(false)
+const showPairingCodeModal = ref(false)
+const pairingCodeInput = ref('')
+const pendingPairingDevice = ref<LanDeviceInfo | null>(null)
 const state = ref<LanDiscoveryState>({
   scanning: false,
   last_scanned_at: null,
@@ -43,6 +49,10 @@ const devices = computed(() =>
     if (kindOrder !== 0) return kindOrder
     return a.id.localeCompare(b.id)
   }),
+)
+
+const pairingRequesting = computed(() =>
+  Boolean(pendingPairingDevice.value && updatingDeviceId.value === pendingPairingDevice.value.id),
 )
 
 function endpointOrder(kind: LanEndpointKind): number {
@@ -132,6 +142,15 @@ function formatVersion(value: string): string {
   return value || t('devices.unknown')
 }
 
+function safeDeviceUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 async function loadDevices() {
   loading.value = true
   try {
@@ -154,12 +173,69 @@ async function refreshDevices() {
   }
 }
 
-async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve' | 'reject' | 'block' | 'unblock' | 'deleteHistory') {
+async function copyPairingLink() {
+  copyingPairingLink.value = true
+  try {
+    const response = await fetchDevicePairingLink()
+    const copied = await copyToClipboard(response.link)
+    if (copied) {
+      message.success(t('devices.pairingLinkCopied'))
+    } else {
+      message.error(t('devices.pairingLinkCopyFailed'))
+    }
+  } catch (err: any) {
+    message.error(err?.message || t('devices.pairingLinkCopyFailed'))
+  } finally {
+    copyingPairingLink.value = false
+  }
+}
+
+function openPairingCodeModal(device: LanDeviceInfo) {
+  pendingPairingDevice.value = device
+  pairingCodeInput.value = ''
+  showPairingCodeModal.value = true
+}
+
+function resetPairingCodeModal() {
+  showPairingCodeModal.value = false
+  pairingCodeInput.value = ''
+  pendingPairingDevice.value = null
+}
+
+function closePairingCodeModal() {
+  if (pairingRequesting.value) return
+  resetPairingCodeModal()
+}
+
+async function confirmPairingRequest() {
+  const device = pendingPairingDevice.value
+  if (!device || pairingRequesting.value) return
+
+  const pairingCode = pairingCodeInput.value.trim()
+  if (!pairingCode) {
+    message.warning(t('devices.pairingCodeRequired'))
+    return
+  }
+
   updatingDeviceId.value = device.id
   try {
-    const next = action === 'request'
-      ? await requestDevicePairing(device.id)
-      : action === 'approve'
+    state.value = await requestDevicePairing(device.id, pairingCode)
+    resetPairingCodeModal()
+  } catch (err: any) {
+    if (String(err?.message || '').includes('Duplicate pairing request')) {
+      message.warning(t('devices.duplicateRequest'))
+      return
+    }
+    message.error(err?.message || t('devices.updateFailed'))
+  } finally {
+    updatingDeviceId.value = ''
+  }
+}
+
+async function updateDevice(device: LanDeviceInfo, action: 'approve' | 'reject' | 'block' | 'unblock' | 'deleteHistory') {
+  updatingDeviceId.value = device.id
+  try {
+    const next = action === 'approve'
       ? await approveDevice(device.id)
       : action === 'reject'
       ? await rejectDevice(device.id)
@@ -170,10 +246,6 @@ async function updateDevice(device: LanDeviceInfo, action: 'request' | 'approve'
       : await unblockDevice(device.id)
     state.value = next
   } catch (err: any) {
-    if (action === 'request' && String(err?.message || '').includes('Duplicate pairing request')) {
-      message.warning(t('devices.duplicateRequest'))
-      return
-    }
     message.error(err?.message || t('devices.updateFailed'))
   } finally {
     updatingDeviceId.value = ''
@@ -220,6 +292,9 @@ onMounted(() => {
         <NButton size="small" :loading="manualPairing" @click="requestManualPairing">
           {{ t('devices.manualPairing') }}
         </NButton>
+        <NButton size="small" :loading="copyingPairingLink" @click="copyPairingLink">
+          {{ t('devices.copyPairingLink') }}
+        </NButton>
         <div class="header-meta">
           <span>{{ t('devices.count', { count: devices.length }) }}</span>
           <span>{{ t('devices.lastScanned', { time: formatTime(state.last_scanned_at) }) }}</span>
@@ -247,9 +322,10 @@ onMounted(() => {
             <div class="device-card-header">
               <div class="device-title-block">
                 <div class="device-name">{{ device.computer_name || device.ip }}</div>
-                <a class="device-link" :href="device.url" target="_blank" rel="noopener noreferrer">
+                <a v-if="safeDeviceUrl(device.url)" class="device-link" :href="safeDeviceUrl(device.url)" target="_blank" rel="noopener noreferrer">
                   {{ device.ip }}:{{ device.http_port }}
                 </a>
+                <span v-else class="device-link">{{ device.ip }}:{{ device.http_port }}</span>
               </div>
               <NTag size="small" :type="endpointTagType(device.endpoint_kind)" round>
                     {{ endpointLabel(device.endpoint_kind) }}
@@ -288,7 +364,7 @@ onMounted(() => {
             </dl>
 
             <div class="device-actions">
-              <NButton v-if="canRequestPairing(device)" size="tiny" type="primary" :loading="updatingDeviceId === device.id" @click="updateDevice(device, 'request')">
+              <NButton v-if="canRequestPairing(device)" size="tiny" type="primary" :loading="updatingDeviceId === device.id" @click="openPairingCodeModal(device)">
                 {{ t('devices.requestPairing') }}
               </NButton>
               <NButton
@@ -358,6 +434,32 @@ onMounted(() => {
         </div>
       </NDrawerContent>
     </NDrawer>
+
+    <NModal v-model:show="showPairingCodeModal" :mask-closable="!pairingRequesting" @esc="closePairingCodeModal">
+      <div class="pairing-code-dialog">
+        <div class="pairing-code-title">{{ t('devices.pairingCodeTitle') }}</div>
+        <NInput
+          v-model:value="pairingCodeInput"
+          clearable
+          :placeholder="t('devices.pairingCodePlaceholder')"
+          :disabled="pairingRequesting"
+          @keyup.enter="confirmPairingRequest"
+        />
+        <div class="pairing-code-actions">
+          <NButton :disabled="pairingRequesting" @click="closePairingCodeModal">
+            {{ t('common.cancel') }}
+          </NButton>
+          <NButton
+            type="primary"
+            :loading="pairingRequesting"
+            :disabled="!pairingCodeInput.trim()"
+            @click="confirmPairingRequest"
+          >
+            {{ t('devices.submitPairingRequest') }}
+          </NButton>
+        </div>
+      </div>
+    </NModal>
   </div>
 </template>
 
@@ -564,6 +666,28 @@ onMounted(() => {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.pairing-code-dialog {
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: $radius-sm;
+  background: $bg-card;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+}
+
+.pairing-code-title {
+  color: $text-primary;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.pairing-code-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 @media (max-width: $breakpoint-mobile) {

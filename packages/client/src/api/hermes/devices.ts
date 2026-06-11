@@ -50,16 +50,28 @@ export interface LanPeerConnectionInfo {
   connected_at: number
 }
 
+export interface DevicePairingLink {
+  code: string
+  link: string
+}
+
 export async function fetchLanDevices(): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>('/api/devices')
+}
+
+export async function fetchDevicePairingLink(): Promise<DevicePairingLink> {
+  return request<DevicePairingLink>('/api/devices/pairing-link')
 }
 
 export async function scanLanDevices(): Promise<LanDiscoveryState> {
   return request<LanDiscoveryState>('/api/devices/scan', { method: 'POST' })
 }
 
-export async function requestDevicePairing(id: string): Promise<LanDiscoveryState> {
-  return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/request`, { method: 'POST' })
+export async function requestDevicePairing(id: string, pairingCode: string): Promise<LanDiscoveryState> {
+  return request<LanDiscoveryState>(`/api/devices/${encodeURIComponent(id)}/request`, {
+    method: 'POST',
+    body: JSON.stringify({ pairing_code: pairingCode }),
+  })
 }
 
 export async function requestDevicePairingByUrl(url: string): Promise<LanDiscoveryState> {

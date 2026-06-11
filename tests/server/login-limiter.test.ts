@@ -63,4 +63,35 @@ describe('login limiter', () => {
       expect.objectContaining({ ip, type: 'token', failures: 10 }),
     ])
   })
+
+  it('locks pairing attempts and clears stale failure records after the window', async () => {
+    const limiter = await loadLimiter()
+    const ip = '192.0.2.30'
+
+    limiter.recordPairingFailure(ip)
+    expect(limiter.checkPairing(ip)).toEqual({ allowed: true })
+
+    vi.advanceTimersByTime(16 * 60_000)
+
+    expect(limiter.checkPairing(ip)).toEqual({ allowed: true })
+    expect(limiter.getLockedIps()).toEqual([])
+  })
+
+  it('locks pairing attempts on the tenth failed attempt from the same IP', async () => {
+    const limiter = await loadLimiter()
+    const ip = '192.0.2.40'
+
+    for (let i = 0; i < 9; i++) {
+      expect(limiter.checkPairing(ip)).toEqual({ allowed: true })
+      limiter.recordPairingFailure(ip)
+    }
+
+    expect(limiter.checkPairing(ip)).toEqual({ allowed: true })
+    limiter.recordPairingFailure(ip)
+
+    expect(limiter.checkPairing(ip)).toEqual({ allowed: false, status: 429 })
+    expect(limiter.getLockedIps()).toEqual([
+      expect.objectContaining({ ip, type: 'pairing', failures: 10 }),
+    ])
+  })
 })

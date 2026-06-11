@@ -157,6 +157,7 @@ describe('LAN discovery', () => {
     expect(deviceIndex).toBeGreaterThanOrEqual(0)
     expect(deviceRoutesSource).toContain("devicePublicRoutes.post('/api/devices/link-status'")
     expect(deviceRoutesSource).toContain("devicePublicRoutes.get('/api/devices/link-info'")
+    expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/pairing-link'")
     expect(deviceRoutesSource).toContain("deviceRoutes.post('/api/devices/manual-request'")
     expect(deviceRoutesSource).toContain("deviceRoutes.delete('/api/devices/:id/request-history'")
     expect(deviceRoutesSource).toContain("deviceRoutes.get('/api/devices/peer-connections'")

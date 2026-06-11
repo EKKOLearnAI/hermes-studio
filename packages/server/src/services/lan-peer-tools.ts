@@ -39,34 +39,34 @@ export class LanPeerToolsService {
   }
 
   async createTerminal(connectionId: string, options: { shell?: string; cols?: number; rows?: number } = {}): Promise<LanPeerTerminalInfo> {
-    return this.requireConnection(connectionId).createRemoteTerminal(options)
+    return this.requireClientConnection(connectionId).createRemoteTerminal(options)
   }
 
   listTerminals(connectionId: string): LanPeerTerminalList {
-    return this.requireConnection(connectionId).listTerminals()
+    return this.requireClientConnection(connectionId).listTerminals()
   }
 
   writeTerminal(input: PeerToolTerminalInput & { data: string }) {
-    this.requireConnection(input.connectionId).writeRemoteTerminal(input.terminalId, input.data)
+    this.requireClientConnection(input.connectionId).writeRemoteTerminal(input.terminalId, input.data)
     return { ok: true }
   }
 
   resizeTerminal(input: PeerToolTerminalInput & { cols: number; rows: number }) {
-    this.requireConnection(input.connectionId).resizeRemoteTerminal(input.terminalId, input.cols, input.rows)
+    this.requireClientConnection(input.connectionId).resizeRemoteTerminal(input.terminalId, input.cols, input.rows)
     return { ok: true }
   }
 
   closeTerminal(input: PeerToolTerminalInput) {
-    this.requireConnection(input.connectionId).closeRemoteTerminal(input.terminalId)
+    this.requireClientConnection(input.connectionId).closeRemoteTerminal(input.terminalId)
     return { ok: true }
   }
 
   readTerminal(input: PeerToolTerminalInput): LanPeerTerminalReadResult {
-    return this.requireConnection(input.connectionId).readRemoteTerminal(input.terminalId)
+    return this.requireClientConnection(input.connectionId).readRemoteTerminal(input.terminalId)
   }
 
   exec(input: PeerToolExecInput): Promise<LanPeerExecResult> {
-    return this.requireConnection(input.connectionId).execRemoteCommand({
+    return this.requireClientConnection(input.connectionId).execRemoteCommand({
       command: input.command,
       args: input.args,
       cwd: input.cwd,
@@ -76,7 +76,7 @@ export class LanPeerToolsService {
 
   async downloadFile(input: PeerToolDownloadInput) {
     const localPath = validatePath(input.localPath)
-    const data = await this.requireConnection(input.connectionId).downloadFileToBuffer(input.remotePath, input.timeoutMs)
+    const data = await this.requireClientConnection(input.connectionId).downloadFileToBuffer(input.remotePath, input.timeoutMs)
     await writeFile(localPath, data)
     return {
       remote_path: input.remotePath,
@@ -88,7 +88,7 @@ export class LanPeerToolsService {
   async uploadFile(input: PeerToolUploadInput) {
     const localPath = validatePath(input.localPath)
     const data = await readFile(localPath)
-    const result = await this.requireConnection(input.connectionId).uploadFileFromBuffer(
+    const result = await this.requireClientConnection(input.connectionId).uploadFileFromBuffer(
       input.remotePath,
       data,
       input.timeoutMs,
@@ -103,6 +103,14 @@ export class LanPeerToolsService {
   private requireConnection(connectionId: string) {
     const connection = getLanPeerSocketManager().getConnection(connectionId)
     if (!connection) throw Object.assign(new Error('Peer connection not found'), { status: 404 })
+    return connection
+  }
+
+  private requireClientConnection(connectionId: string) {
+    const connection = this.requireConnection(connectionId)
+    if (connection.info().role !== 'client') {
+      throw Object.assign(new Error('Peer connection is not authorized for remote tools'), { status: 403 })
+    }
     return connection
   }
 }

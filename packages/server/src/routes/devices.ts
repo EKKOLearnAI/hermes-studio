@@ -9,6 +9,7 @@ devicePublicRoutes.post('/api/devices/link-status', ctrl.requestDeviceLinkStatus
 devicePublicRoutes.get('/api/devices/link-info', ctrl.deviceLinkInfoController)
 
 deviceRoutes.get('/api/devices', ctrl.listDevices)
+deviceRoutes.get('/api/devices/pairing-link', ctrl.getDevicePairingLink)
 deviceRoutes.post('/api/devices/scan', ctrl.scanDevices)
 deviceRoutes.post('/api/devices/manual-request', ctrl.requestManualDevicePairing)
 deviceRoutes.post('/api/devices/:id/request', ctrl.requestDevicePairing)

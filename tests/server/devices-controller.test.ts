@@ -50,6 +50,7 @@ describe('devices controller', () => {
     db = null
     vi.unstubAllGlobals()
     vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/services/login-limiter')
     vi.resetModules()
   })
 
@@ -78,6 +79,212 @@ describe('devices controller', () => {
 
     expect(ctx.status).toBeUndefined()
     expect(ctx.body).toEqual({ status: 'approved' })
+  })
+
+  it('keeps LAN pairing requests code-free and derives the device URL from the request source', async () => {
+    const timestamp = Date.now()
+    const nonce = 'lan-request-nonce-1'
+    const signature = sign(null, Buffer.from(`${device.id}.${nonce}.${timestamp}`), keyPair.privateKey).toString('base64url')
+    const ctx: any = {
+      ip: '192.168.1.99',
+      request: {
+        ip: '192.168.1.99',
+        body: {
+          ...device,
+          http_port: 8648,
+          url: 'javascript:alert(1)',
+          timestamp,
+          nonce,
+          signature,
+        },
+      },
+    }
+
+    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    await requestDeviceLinkController(ctx)
+
+    expect(ctx.status).toBeUndefined()
+    expect(ctx.body).toEqual({ status: 'pending' })
+    expect(getDeviceRelation(device.id)?.url).toBe('http://192.168.1.99:8648')
+  })
+
+  it('requires the startup pairing code before public requests enter the approval list', async () => {
+    const timestamp = Date.now()
+    const nonce = 'public-request-nonce-1'
+    const signature = sign(null, Buffer.from(`${device.id}.${nonce}.${timestamp}`), keyPair.privateKey).toString('base64url')
+    const ctx: any = {
+      ip: '8.8.8.8',
+      request: {
+        ip: '8.8.8.8',
+        body: {
+          ...device,
+          http_port: 8648,
+          timestamp,
+          nonce,
+          signature,
+        },
+      },
+    }
+
+    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    await requestDeviceLinkController(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Invalid pairing code' })
+    expect(getDeviceRelation(device.id)).toBeNull()
+  })
+
+  it('does not trust forged forwarded private IPs for public pairing requests', async () => {
+    const recordPairingFailure = vi.fn()
+    vi.doMock('../../packages/server/src/services/login-limiter', () => ({
+      checkPairing: (ip: string) => {
+        expect(ip).toBe('8.8.8.8')
+        return { allowed: true }
+      },
+      recordPairingFailure,
+    }))
+
+    const timestamp = Date.now()
+    const nonce = 'forged-forwarded-private-request-nonce-1'
+    const signature = sign(null, Buffer.from(`${device.id}.${nonce}.${timestamp}`), keyPair.privateKey).toString('base64url')
+    const ctx: any = {
+      ip: '8.8.8.8',
+      get: (name: string) => name.toLowerCase() === 'x-forwarded-for' ? '192.168.1.44' : '',
+      request: {
+        ip: '8.8.8.8',
+        body: {
+          ...device,
+          http_port: 8648,
+          timestamp,
+          nonce,
+          signature,
+        },
+      },
+    }
+
+    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    await requestDeviceLinkController(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Invalid pairing code' })
+    expect(recordPairingFailure).toHaveBeenCalledWith('8.8.8.8')
+    expect(getDeviceRelation(device.id)).toBeNull()
+  })
+
+  it('requires the startup pairing code for public clients forwarded through loopback proxies', async () => {
+    const timestamp = Date.now()
+    const nonce = 'forwarded-public-request-nonce-1'
+    const signature = sign(null, Buffer.from(`${device.id}.${nonce}.${timestamp}`), keyPair.privateKey).toString('base64url')
+    const ctx: any = {
+      ip: '127.0.0.1',
+      get: (name: string) => name.toLowerCase() === 'x-forwarded-for' ? '203.0.113.10' : '',
+      request: {
+        ip: '127.0.0.1',
+        body: {
+          ...device,
+          http_port: 8648,
+          timestamp,
+          nonce,
+          signature,
+        },
+      },
+    }
+
+    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    await requestDeviceLinkController(ctx)
+
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Invalid pairing code' })
+    expect(getDeviceRelation(device.id)).toBeNull()
+  })
+
+  it('stores public pairing requests as pending when the startup pairing code is valid', async () => {
+    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+      getDevicePairingCode: () => 'pair-secret',
+      verifyDevicePairingCode: (value: unknown) => value === 'pair-secret',
+    }))
+    const timestamp = Date.now()
+    const nonce = 'public-request-nonce-2'
+    const signature = sign(null, Buffer.from(`${device.id}.${nonce}.${timestamp}`), keyPair.privateKey).toString('base64url')
+    const ctx: any = {
+      ip: '8.8.4.4',
+      request: {
+        ip: '8.8.4.4',
+        body: {
+          ...device,
+          http_port: 8648,
+          pairing_code: 'pair-secret',
+          timestamp,
+          nonce,
+          signature,
+        },
+      },
+    }
+
+    const { getDeviceRelation } = await import('../../packages/server/src/db/hermes/devices-store')
+    const { requestDeviceLinkController } = await import('../../packages/server/src/controllers/devices')
+    await requestDeviceLinkController(ctx)
+
+    expect(ctx.status).toBeUndefined()
+    expect(ctx.body).toEqual({ status: 'pending' })
+    expect(getDeviceRelation(device.id)?.inbound_status).toBe('pending')
+    expect(getDeviceRelation(device.id)?.url).toBe('http://8.8.4.4:8648')
+  })
+
+  it('prefers public request hosts when building copyable pairing links', async () => {
+    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+      getDevicePairingCode: () => 'pair-secret',
+      verifyDevicePairingCode: () => false,
+    }))
+
+    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      protocol: 'http',
+      host: 'studio.example.com',
+      get: (name: string) => name.toLowerCase() === 'x-forwarded-proto' ? 'https' : '',
+    }
+
+    await getDevicePairingLink(ctx)
+
+    expect(ctx.body).toEqual({
+      code: 'pair-secret',
+      link: 'https://studio.example.com/#/hermes/devices?pairing_code=pair-secret',
+    })
+  })
+
+  it('falls back from localhost to LAN addresses when building copyable pairing links', async () => {
+    vi.doMock('os', async () => {
+      const actual = await vi.importActual<typeof import('os')>('os')
+      return {
+        ...actual,
+        networkInterfaces: () => ({
+          lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
+          en0: [{ family: 'IPv4', internal: false, address: '192.168.1.88' }],
+        }),
+      }
+    })
+    vi.doMock('../../packages/server/src/services/device-pairing-code', () => ({
+      getDevicePairingCode: () => 'pair-secret',
+      verifyDevicePairingCode: () => false,
+    }))
+
+    const { getDevicePairingLink } = await import('../../packages/server/src/controllers/devices')
+    const ctx: any = {
+      protocol: 'http',
+      host: 'localhost:8648',
+      get: () => '',
+    }
+
+    await getDevicePairingLink(ctx)
+
+    expect(ctx.body).toEqual({
+      code: 'pair-secret',
+      link: 'http://192.168.1.88:8648/#/hermes/devices?pairing_code=pair-secret',
+    })
   })
 
   it('rejects peer socket connections until outbound pairing is approved locally', async () => {
@@ -316,6 +523,9 @@ describe('devices controller', () => {
         }
       }
       if (url === 'https://remote.example.com/api/devices/link-request' && options?.method === 'POST') {
+        expect(JSON.parse(String(options.body))).toEqual(expect.objectContaining({
+          pairing_code: 'pair-secret',
+        }))
         return {
           ok: true,
           status: 200,
@@ -338,7 +548,7 @@ describe('devices controller', () => {
     const ctx: any = {
       request: {
         body: {
-          url: 'https://remote.example.com/some/path?ignored=true',
+          url: 'https://remote.example.com/#/hermes/devices?pairing_code=pair-secret',
         },
       },
     }

@@ -527,21 +527,27 @@ class LanPeerConnection {
         this.markRemoteTerminalExit(msg)
         break
       case 'terminal.create':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.createTerminal(msg)
         break
       case 'terminal.input':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.writeTerminal(msg)
         break
       case 'terminal.resize':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.resizeTerminal(msg)
         break
       case 'terminal.close':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.closeTerminal(msg)
         break
       case 'terminal.exec':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.execCommand(msg)
         break
       case 'file.download':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.downloadFile(msg)
         break
       case 'file.download.started':
@@ -552,17 +558,39 @@ class LanPeerConnection {
         this.handleFileTransferMessage(msg)
         break
       case 'file.upload.start':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.startUpload(msg)
         break
       case 'file.upload.chunk':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.writeUploadChunk(msg)
         break
       case 'file.upload.complete':
+        if (!this.canServeLocalToolRequest(msg)) break
         this.completeUpload(msg)
         break
       default:
         this.sendJson({ type: 'error', request_id: msg.request_id, message: `Unsupported peer message: ${msg.type}` })
     }
+  }
+
+  private canServeLocalToolRequest(msg: PeerJsonMessage): boolean {
+    if (this.role === 'server') return true
+    const message = 'Peer connection is not authorized to control this device'
+    if (msg.type === 'terminal.create') {
+      this.sendJson({ type: 'terminal.error', request_id: msg.request_id, message })
+      return false
+    }
+    if (msg.type === 'terminal.exec') {
+      this.sendJson({ type: 'terminal.exec.error', request_id: msg.request_id, message })
+      return false
+    }
+    if (msg.type?.startsWith('file.')) {
+      this.sendJson({ type: 'file.error', request_id: msg.request_id, transfer_id: msg.transfer_id, message })
+      return false
+    }
+    this.sendJson({ type: 'error', request_id: msg.request_id, message })
+    return false
   }
 
   private handlePendingMessage(msg: PeerJsonMessage): boolean {

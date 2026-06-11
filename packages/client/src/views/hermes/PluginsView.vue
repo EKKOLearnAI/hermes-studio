@@ -4,6 +4,7 @@ import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin, NTag, useMessage } fro
 import { useI18n } from 'vue-i18n'
 import { fetchPlugins, type HermesPluginInfo, type HermesPluginsMetadata } from '@/api/hermes/plugins'
 import { useProfilesStore } from '@/stores/hermes/profiles'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const { t, te } = useI18n()
 const message = useMessage()
@@ -112,8 +113,12 @@ function pluginCommand(plugin: HermesPluginInfo) {
 async function copyCommand(plugin: HermesPluginInfo) {
   const command = pluginCommand(plugin)
   if (!command) return
-  await navigator.clipboard.writeText(command)
-  message.success(t('plugins.commandCopied'))
+  const copied = await copyToClipboard(command)
+  if (copied) {
+    message.success(t('plugins.commandCopied'))
+  } else {
+    message.error(t('chat.copyFailed'))
+  }
 }
 
 watch(() => profilesStore.activeProfileName || 'default', () => {

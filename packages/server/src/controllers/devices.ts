@@ -11,13 +11,16 @@ import {
   type DeviceInboundStatus,
   type DeviceOutboundStatus,
 } from '../db/hermes/devices-store'
-import { getLanDiscoveryCache, getLanEndpointKind, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
+import { getLanDiscoveryCache, getLanEndpointKind, isPrivateOrLoopbackIPv4, scanLanDevices, type LanDeviceInfo } from '../services/lan-discovery'
 import { getLanPeerSocketManager } from '../services/lan-peer-socket'
 import { getLanPeerToolsService } from '../services/lan-peer-tools'
+import { getDevicePairingCode, verifyDevicePairingCode } from '../services/device-pairing-code'
 import { createDeviceSignature, deviceIdFromPublicKey, getPublicSystemInfo, verifyDeviceSignature } from '../services/system-info'
 import { describeLanJsonPostError, getLanJson, postLanJson } from '../services/lan-http-client'
+import { checkPairing, recordPairingFailure } from '../services/login-limiter'
 import { config } from '../config'
 import { randomUUID } from 'crypto'
+import { networkInterfaces } from 'os'
 
 const REQUEST_TTL_MS = 5 * 60 * 1000
 const seenRequestNonces = new Map<string, number>()
@@ -183,6 +186,77 @@ function normalizedManualDeviceUrl(input: unknown): URL | null {
   }
 }
 
+function pairingCodeFromUrl(url: URL): string {
+  const direct = url.searchParams.get('pairing_code') || url.searchParams.get('pairingCode') || url.searchParams.get('code')
+  if (direct) return direct.trim()
+
+  const hashQuery = url.hash.includes('?') ? url.hash.slice(url.hash.indexOf('?') + 1) : ''
+  if (!hashQuery) return ''
+  const hashParams = new URLSearchParams(hashQuery)
+  return (hashParams.get('pairing_code') || hashParams.get('pairingCode') || hashParams.get('code') || '').trim()
+}
+
+function manualPairingCode(input: unknown): string {
+  const raw = String(input || '').trim()
+  if (!raw) return ''
+  try {
+    return pairingCodeFromUrl(new URL(raw.includes('://') ? raw : `http://${raw}`))
+  } catch {
+    return ''
+  }
+}
+
+function normalizeHostName(host: string): string {
+  const value = host.trim()
+  if (!value) return ''
+  if (value.startsWith('[')) return value.slice(1, value.indexOf(']') > 0 ? value.indexOf(']') : undefined)
+  return value.split(':')[0] || ''
+}
+
+function isPublicHost(host: string): boolean {
+  const hostname = normalizeHostName(host).toLowerCase()
+  if (!hostname) return false
+  if (hostname === 'localhost' || hostname === '::1') return false
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return !isPrivateOrLoopbackIPv4(hostname)
+  return !hostname.endsWith('.localhost')
+}
+
+function requestProtocol(ctx: any): string {
+  const forwardedProto = typeof ctx.get === 'function' ? ctx.get('x-forwarded-proto') : ''
+  const proto = String(forwardedProto || ctx.protocol || 'http').split(',')[0]?.trim().toLowerCase()
+  return proto === 'https' ? 'https' : 'http'
+}
+
+function requestHost(ctx: any): string {
+  return String(ctx.host || (typeof ctx.get === 'function' ? ctx.get('host') : '') || '').trim()
+}
+
+function firstLanIPv4(): string {
+  try {
+    for (const iface of Object.values(networkInterfaces()).flat()) {
+      if (!iface || iface.family !== 'IPv4' || iface.internal || !iface.address) continue
+      if (isPrivateOrLoopbackIPv4(iface.address) && !iface.address.startsWith('127.')) return iface.address
+    }
+    for (const iface of Object.values(networkInterfaces()).flat()) {
+      if (!iface || iface.family !== 'IPv4' || iface.internal || !iface.address) continue
+      return iface.address
+    }
+  } catch {
+    // Fall back to localhost below when network interfaces are unavailable.
+  }
+  return ''
+}
+
+function devicePairingOrigin(ctx: any): string {
+  const host = requestHost(ctx)
+  if (isPublicHost(host)) return `${requestProtocol(ctx)}://${host}`
+
+  const lanIp = firstLanIPv4()
+  if (lanIp) return `http://${lanIp}:${config.port}`
+
+  return `http://localhost:${config.port}`
+}
+
 function responseMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt)
 }
@@ -231,7 +305,7 @@ async function fetchManualDevice(baseUrl: URL): Promise<LanDeviceInfo> {
   return device
 }
 
-async function requestPairingWithDevice(target: LanDeviceInfo): Promise<DeviceOutboundStatus> {
+async function requestPairingWithDevice(target: LanDeviceInfo, pairingCode = ''): Promise<DeviceOutboundStatus> {
   const timestamp = Date.now()
   const nonce = randomUUID()
   const localInfo = await getPublicSystemInfo()
@@ -243,6 +317,7 @@ async function requestPairingWithDevice(target: LanDeviceInfo): Promise<DeviceOu
     timestamp,
     nonce,
     signature,
+    pairing_code: pairingCode,
   }
 
   const response = await postLanJson(`${target.url.replace(/\/$/, '')}/api/devices/link-request`, body, 5000)
@@ -264,8 +339,18 @@ export async function deviceLinkInfoController(ctx: any) {
   }
 }
 
+export async function getDevicePairingLink(ctx: any) {
+  const code = getDevicePairingCode()
+  const origin = devicePairingOrigin(ctx)
+  ctx.body = {
+    code,
+    link: `${origin}/#/hermes/devices?pairing_code=${encodeURIComponent(code)}`,
+  }
+}
+
 export async function requestManualDevicePairing(ctx: any) {
-  const baseUrl = normalizedManualDeviceUrl((ctx.request.body as any)?.url)
+  const inputUrl = (ctx.request.body as any)?.url
+  const baseUrl = normalizedManualDeviceUrl(inputUrl)
   if (!baseUrl) {
     ctx.status = 400
     ctx.body = { error: 'Invalid device URL' }
@@ -274,7 +359,7 @@ export async function requestManualDevicePairing(ctx: any) {
 
   try {
     const target = await fetchManualDevice(baseUrl)
-    const remoteStatus = await requestPairingWithDevice(target)
+    const remoteStatus = await requestPairingWithDevice(target, manualPairingCode(inputUrl))
     if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
     ctx.body = await devicesPayload()
   } catch (err: any) {
@@ -303,6 +388,30 @@ function normalizeIp(ctx: any): string {
   return ip.startsWith('::ffff:') ? ip.slice(7) : ip
 }
 
+function forwardedClientIp(ctx: any): string {
+  const header = typeof ctx.get === 'function'
+    ? ctx.get('x-forwarded-for')
+    : ctx.headers?.['x-forwarded-for'] || ctx.request?.headers?.['x-forwarded-for']
+  const value = Array.isArray(header) ? header[0] : String(header || '')
+  const first = value.split(',')[0]?.trim() || ''
+  return first.startsWith('::ffff:') ? first.slice(7) : first
+}
+
+function isPrivateOrLoopbackAddress(ip: string): boolean {
+  return ip === '::1' || ip === 'localhost' || isPrivateOrLoopbackIPv4(ip)
+}
+
+function requiresPairingCode(ctx: any, device: LanDeviceInfo): boolean {
+  const sourceIp = normalizeIp(ctx)
+  if (!isPrivateOrLoopbackAddress(sourceIp)) return true
+  if (forwardedClientIp(ctx)) return true
+  return !isPrivateOrLoopbackAddress(device.ip)
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+}
+
 function bodyToDevice(ctx: any, body: any): LanDeviceInfo | null {
   const deviceId = typeof body?.device_id === 'string' ? body.device_id.trim() : ''
   const publicKey = typeof body?.device_public_key === 'string' ? body.device_public_key : ''
@@ -320,7 +429,7 @@ function bodyToDevice(ctx: any, body: any): LanDeviceInfo | null {
     ip,
     http_port: httpPort,
     endpoint_kind: endpointKind,
-    url: typeof body?.url === 'string' && body.url ? body.url : `http://${ip}:${httpPort}`,
+    url: `http://${hostForUrl(ip)}:${httpPort}`,
     computer_name: String(body?.computer_name || ''),
     os: {
       type: String(body?.os?.type || ''),
@@ -367,6 +476,21 @@ export async function requestDeviceLinkController(ctx: any) {
     ctx.status = 409
     ctx.body = { error: 'Device request replayed' }
     return
+  }
+  if (requiresPairingCode(ctx, device)) {
+    const pairingIp = normalizeIp(ctx) || 'unknown'
+    const lock = checkPairing(pairingIp)
+    if (!lock.allowed) {
+      ctx.status = lock.status
+      ctx.body = { error: 'Too many invalid pairing attempts, please try again later' }
+      return
+    }
+    if (!verifyDevicePairingCode(body?.pairing_code)) {
+      recordPairingFailure(pairingIp)
+      ctx.status = 403
+      ctx.body = { error: 'Invalid pairing code' }
+      return
+    }
   }
 
   try {
@@ -637,7 +761,8 @@ export async function requestDevicePairing(ctx: any) {
   }
 
   try {
-    const remoteStatus = await requestPairingWithDevice(target)
+    const body = ctx.request.body as any
+    const remoteStatus = await requestPairingWithDevice(target, typeof body?.pairing_code === 'string' ? body.pairing_code : '')
     if (remoteStatus !== 'none') updateOutboundStatus(target.id, remoteStatus, target)
     ctx.body = await devicesPayload()
   } catch (err: any) {
