@@ -157,6 +157,7 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
 const installingTools = new Set<CodingAgentId>()
 const deletingTools = new Set<CodingAgentId>()
 let cachedGlobalNpmBin: string | null | undefined
+let cachedLoginShellPath: string | null | undefined
 const MAX_CONFIG_FILE_SIZE = parseInt(process.env.MAX_EDIT_SIZE || '', 10) || 10 * 1024 * 1024
 
 function getNodeBinDir() {
@@ -222,6 +223,81 @@ function getNvmNodeBinPaths(): string {
       .join(delimiter)
   } catch {
     return ''
+  }
+}
+
+function getLoginShellCandidates(): string[] {
+  if (process.platform === 'win32') return []
+  return [
+    process.env.SHELL || '',
+    '/bin/zsh',
+    '/bin/bash',
+    '/usr/bin/zsh',
+    '/usr/bin/bash',
+  ].filter(Boolean)
+}
+
+function getLoginShell(): string | null {
+  for (const shell of [...new Set(getLoginShellCandidates())]) {
+    if (shell.startsWith('/') && existsSync(shell)) return shell
+  }
+  return null
+}
+
+async function getLoginShellPath(): Promise<string | null> {
+  if (process.env.HERMES_DESKTOP !== 'true' || process.platform === 'win32') return null
+  if (typeof cachedLoginShellPath !== 'undefined') return cachedLoginShellPath
+
+  const shell = getLoginShell()
+  if (!shell) {
+    cachedLoginShellPath = null
+    return cachedLoginShellPath
+  }
+
+  try {
+    const { stdout } = await execFileAsync(shell, ['-lc', 'printf %s "$PATH"'], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      windowsHide: true,
+    })
+    cachedLoginShellPath = stdout.trim() || null
+  } catch {
+    cachedLoginShellPath = null
+  }
+  return cachedLoginShellPath
+}
+
+function getDesktopCommonBinPaths(): string[] {
+  if (process.env.HERMES_DESKTOP !== 'true' || process.platform === 'win32') return []
+  const home = homedir()
+  return [
+    join(home, '.npm-global', 'bin'),
+    join(home, '.local', 'bin'),
+    join(home, '.yarn', 'bin'),
+    join(home, '.config', 'yarn', 'global', 'node_modules', '.bin'),
+    join(home, '.pnpm'),
+    join(home, 'Library', 'pnpm'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ]
+}
+
+function prependPathEntries(env: NodeJS.ProcessEnv, entries: Array<string | null | undefined>) {
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+  const currentPath = env[pathKey] || ''
+  const existing = new Set(currentPath.split(delimiter).filter(Boolean))
+  const prepended: string[] = []
+
+  for (const entry of entries) {
+    if (!entry) continue
+    for (const segment of entry.split(delimiter).map(item => item.trim()).filter(Boolean)) {
+      if (existing.has(segment) || prepended.includes(segment)) continue
+      prepended.push(segment)
+    }
+  }
+
+  if (prepended.length > 0) {
+    env[pathKey] = currentPath ? `${prepended.join(delimiter)}${delimiter}${currentPath}` : prepended.join(delimiter)
   }
 }
 
@@ -967,13 +1043,12 @@ async function getGlobalNpmBin(): Promise<string | null> {
 async function commandEnv(): Promise<NodeJS.ProcessEnv> {
   const env = getCurrentNodeEnv()
   const npmBin = await getGlobalNpmBin()
-  if (npmBin) {
-    const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
-    const currentPath = env[pathKey] || ''
-    if (!currentPath.split(delimiter).includes(npmBin)) {
-      env[pathKey] = currentPath ? `${npmBin}${delimiter}${currentPath}` : npmBin
-    }
-  }
+  const loginShellPath = await getLoginShellPath()
+  prependPathEntries(env, [
+    npmBin,
+    loginShellPath,
+    ...getDesktopCommonBinPaths(),
+  ])
   return env
 }
 
