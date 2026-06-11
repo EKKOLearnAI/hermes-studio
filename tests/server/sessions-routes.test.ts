@@ -14,6 +14,9 @@ const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setModelMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const listWorkspaceFoldersMock = vi.fn(async (ctx: any) => { ctx.body = { folders: [] } })
+const createWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const renameWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const deleteWorkspaceFolderMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const usageBatchMock = vi.fn(async (ctx: any) => { ctx.body = {} })
 const usageSingleMock = vi.fn(async (ctx: any) => { ctx.body = { input_tokens: 0, output_tokens: 0 } })
 const usageStatsMock = vi.fn(async (ctx: any) => { ctx.body = { total_input_tokens: 0, total_output_tokens: 0 } })
@@ -37,6 +40,9 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   setWorkspace: setWorkspaceMock,
   setModel: setModelMock,
   listWorkspaceFolders: listWorkspaceFoldersMock,
+  createWorkspaceFolder: createWorkspaceFolderMock,
+  renameWorkspaceFolder: renameWorkspaceFolderMock,
+  deleteWorkspaceFolder: deleteWorkspaceFolderMock,
   usageBatch: usageBatchMock,
   usageSingle: usageSingleMock,
   usageStats: usageStatsMock,
@@ -59,6 +65,10 @@ describe('session routes', () => {
     removeMock.mockClear()
     renameMock.mockClear()
     setModelMock.mockClear()
+    listWorkspaceFoldersMock.mockClear()
+    createWorkspaceFolderMock.mockClear()
+    renameWorkspaceFolderMock.mockClear()
+    deleteWorkspaceFolderMock.mockClear()
   })
 
   it('registers conversations, session list, and search routes', async () => {
@@ -83,7 +93,33 @@ describe('session routes', () => {
       '/api/hermes/sessions/:id/usage',
       '/api/hermes/sessions/:id/rename',
       '/api/hermes/sessions/:id/model',
+      '/api/hermes/workspace/folders',
+      '/api/hermes/workspace/folders/rename',
     ]))
+  })
+
+  it('delegates workspace folder routes to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('HEAD'))
+    const createLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('POST'))
+    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders/rename')
+    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('DELETE'))
+
+    const listCtx: any = { query: {}, request: { body: {} }, body: null, params: {} }
+    await listLayer.stack[0](listCtx)
+    expect(listWorkspaceFoldersMock).toHaveBeenCalledWith(listCtx)
+
+    const createCtx: any = { query: {}, request: { body: { parentPath: '', name: 'new-folder' } }, body: null, params: {} }
+    await createLayer.stack[0](createCtx)
+    expect(createWorkspaceFolderMock).toHaveBeenCalledWith(createCtx)
+
+    const renameCtx: any = { query: {}, request: { body: { path: 'old-folder', name: 'new-folder' } }, body: null, params: {} }
+    await renameLayer.stack[0](renameCtx)
+    expect(renameWorkspaceFolderMock).toHaveBeenCalledWith(renameCtx)
+
+    const deleteCtx: any = { query: {}, request: { body: { path: 'new-folder' } }, body: null, params: {} }
+    await deleteLayer.stack[0](deleteCtx)
+    expect(deleteWorkspaceFolderMock).toHaveBeenCalledWith(deleteCtx)
   })
 
   it('delegates session search to the controller', async () => {
