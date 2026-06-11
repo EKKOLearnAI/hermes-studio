@@ -311,6 +311,8 @@ watch(() => `${props.category}/${props.skill}`, loadSkill, { immediate: true })
   border-top: 1px solid $border-color;
   padding-top: 12px;
   margin-top: 12px;
+  max-height: 30vh;
+  overflow-y: auto;
 }
 
 .files-header {
