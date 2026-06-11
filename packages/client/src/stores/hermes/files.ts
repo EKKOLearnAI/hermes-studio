@@ -218,8 +218,8 @@ export const useFilesStore = defineStore('files', () => {
 
   function closePreview() { previewFile.value = null }
 
-  async function createDir(name: string) {
-    const path = currentPath.value ? `${currentPath.value}/${name}` : name
+  async function createDir(name: string, targetPath = currentPath.value) {
+    const path = targetPath ? `${targetPath}/${name}` : name
     await filesApi.mkDir(path)
     await fetchEntries()
   }

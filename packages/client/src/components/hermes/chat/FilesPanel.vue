@@ -22,6 +22,7 @@ const showUpload = ref(false)
 const showRenameModal = ref(false)
 const renameMode = ref<'newFile' | 'newFolder' | 'rename'>('newFile')
 const renameEntry = ref<FileEntry | null>(null)
+const renameTargetPath = ref<string | null>(null)
 const showSidebar = ref(false)
 
 function handleContextMenu(e: MouseEvent, entry: FileEntry) {
@@ -31,18 +32,28 @@ function handleContextMenu(e: MouseEvent, entry: FileEntry) {
 function handleShowNewFile() {
   renameMode.value = 'newFile'
   renameEntry.value = null
+  renameTargetPath.value = null
   showRenameModal.value = true
 }
 
 function handleShowNewFolder() {
   renameMode.value = 'newFolder'
   renameEntry.value = null
+  renameTargetPath.value = null
+  showRenameModal.value = true
+}
+
+function handleContextNewFolder(entry: FileEntry) {
+  renameMode.value = 'newFolder'
+  renameEntry.value = null
+  renameTargetPath.value = entry.isDir ? entry.path : filesStore.currentPath
   showRenameModal.value = true
 }
 
 function handleRename(entry: FileEntry) {
   renameMode.value = 'rename'
   renameEntry.value = entry
+  renameTargetPath.value = null
   showRenameModal.value = true
 }
 
@@ -92,9 +103,18 @@ onMounted(() => {
         <FileList v-else @contextmenu-entry="handleContextMenu" />
       </div>
     </div>
-    <FileContextMenu ref="contextMenuRef" @rename="handleRename" />
+    <FileContextMenu
+      ref="contextMenuRef"
+      @rename="handleRename"
+      @new-folder="handleContextNewFolder"
+    />
     <FileUploadModal v-model:show="showUpload" />
-    <FileRenameModal v-model:show="showRenameModal" :mode="renameMode" :entry="renameEntry" />
+    <FileRenameModal
+      v-model:show="showRenameModal"
+      :mode="renameMode"
+      :entry="renameEntry"
+      :target-path="renameTargetPath"
+    />
   </div>
 </template>
 
