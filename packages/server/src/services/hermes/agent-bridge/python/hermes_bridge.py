@@ -48,6 +48,7 @@ _RUNTIME_PATCH_NAMES = (
     "_candidate_agent_roots",
     "_discover_agent_root",
     "_discover_hermes_home",
+    "_ensure_agent_imports",
     "_find_agent_root",
     "_hermes_home",
     "_hidden_subprocess_kwargs",
