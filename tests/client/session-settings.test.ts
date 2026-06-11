@@ -2,8 +2,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const mockFetchPendingWrites = vi.hoisted(() => vi.fn())
-
 const mockSettingsStore = vi.hoisted(() => ({
   sessionReset: { mode: 'both', idle_minutes: 60, at_hour: 0 },
   approvals: { mode: 'manual' },
@@ -28,10 +26,6 @@ vi.mock('@/stores/hermes/settings', () => ({
 
 vi.mock('@/stores/hermes/session-browser-prefs', () => ({
   useSessionBrowserPrefsStore: () => mockPrefsStore,
-}))
-
-vi.mock('@/api/hermes/write-gate', () => ({
-  fetchPendingWrites: mockFetchPendingWrites,
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -59,7 +53,6 @@ describe('SessionSettings', () => {
     mockPrefsStore.humanOnly = true
     mockSettingsStore.memory.write_approval = false
     mockSettingsStore.skills.write_approval = true
-    mockFetchPendingWrites.mockResolvedValue({ records: [], counts: { memory: 0, skills: 0 }, supported: true })
   })
 
   it('surfaces the human-only preference in the Session tab', async () => {
@@ -142,9 +135,7 @@ describe('SessionSettings', () => {
     expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('skills', { write_approval: false })
   })
 
-  it('hides write approval toggles when Hermes Agent does not support them', async () => {
-    mockFetchPendingWrites.mockResolvedValue({ records: [], counts: { memory: 0, skills: 0 }, supported: false })
-
+  it('shows write approval toggles without probing Hermes Agent support', async () => {
     const wrapper = mount(SessionSettings, {
       global: {
         stubs: {
@@ -165,7 +156,7 @@ describe('SessionSettings', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('settings.session.memoryWriteApproval')
-    expect(wrapper.text()).not.toContain('settings.session.skillsWriteApproval')
+    expect(wrapper.text()).toContain('settings.session.memoryWriteApproval')
+    expect(wrapper.text()).toContain('settings.session.skillsWriteApproval')
   })
 })

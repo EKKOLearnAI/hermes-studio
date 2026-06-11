@@ -1,17 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
 import { NInputNumber, NSelect, NSwitch, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
-import { fetchPendingWrites } from "@/api/hermes/write-gate";
 import SettingRow from "./SettingRow.vue";
 
 const settingsStore = useSettingsStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const message = useMessage();
 const { t } = useI18n();
-const writeApprovalSupported = ref(true);
 
 // 防抖保存：每个字段独立定时器，300ms 内只发最后一次 HTTP 请求
 const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -60,14 +57,6 @@ async function toggleWriteApproval(section: "memory" | "skills", value: boolean)
   }
 }
 
-onMounted(async () => {
-  try {
-    const data = await fetchPendingWrites();
-    writeApprovalSupported.value = data.supported !== false;
-  } catch {
-    writeApprovalSupported.value = true;
-  }
-});
 </script>
 
 <template>
@@ -79,7 +68,6 @@ onMounted(async () => {
       <NSwitch :value="settingsStore.approvals.mode === 'manual'" @update:value="toggleRequireAuth" />
     </SettingRow>
     <SettingRow
-      v-if="writeApprovalSupported"
       :label="t('settings.session.memoryWriteApproval')"
       :hint="t('settings.session.memoryWriteApprovalHint')"
     >
@@ -89,7 +77,6 @@ onMounted(async () => {
       />
     </SettingRow>
     <SettingRow
-      v-if="writeApprovalSupported"
       :label="t('settings.session.skillsWriteApproval')"
       :hint="t('settings.session.skillsWriteApprovalHint')"
     >

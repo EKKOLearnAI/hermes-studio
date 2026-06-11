@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { existsSync, readFileSync, realpathSync } from 'fs'
 import { readdir, readFile } from 'fs/promises'
 import { homedir } from 'os'
@@ -10,6 +10,11 @@ import { getHermesBaseDir, getProfileDir } from './hermes-profile'
 const execFileAsync = promisify(execFile)
 const SUBSYSTEMS = new Set(['memory', 'skills'])
 const PENDING_ID_RE = /^[A-Za-z0-9_-]{1,80}$/
+const WRITE_GATE_REQUIRED_FILES = [
+  join('tools', 'write_approval.py'),
+  join('hermes_cli', 'write_approval_commands.py'),
+]
+const WRITE_GATE_IMPORT_CHECK = 'import tools.write_approval; import hermes_cli.write_approval_commands'
 
 export type WriteGateSubsystem = 'memory' | 'skills'
 
@@ -208,6 +213,10 @@ function pendingDir(profile: string, subsystem: WriteGateSubsystem): string {
   return join(getProfileDir(profile || 'default'), 'pending', subsystem)
 }
 
+function hasWriteGateSupportFiles(agentRoot: string): boolean {
+  return WRITE_GATE_REQUIRED_FILES.every(relativePath => existsSync(join(agentRoot, relativePath)))
+}
+
 function normalizeRecord(raw: any, subsystem: WriteGateSubsystem, fallbackId: string): PendingWriteRecord | null {
   const id = typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : fallbackId
   if (!PENDING_ID_RE.test(id)) return null
@@ -263,12 +272,7 @@ export async function listPendingWrites(profile: string): Promise<PendingWritesR
 }
 
 export function isWriteGateSupported(): boolean {
-  try {
-    resolveAgentRoot()
-    return true
-  } catch {
-    return false
-  }
+  return Boolean(tryResolveAgentRoot()) || hasWriteGatePythonImports()
 }
 
 function pathCandidates(command: string): string[] {
@@ -306,12 +310,33 @@ function hermesShebangPython(): string | null {
 
 function agentRootFromPython(python: string | null): string {
   if (!python || !isAbsolute(python)) return ''
-  try {
-    const real = realpathSync(python)
-    const binDir = dirname(real)
+  const candidates: string[] = []
+  const addCandidate = (pythonPath: string) => {
+    const binDir = dirname(pythonPath)
     const venvDir = dirname(binDir)
-    if (basename(venvDir) === 'venv') return dirname(venvDir)
+    if (basename(venvDir) === 'venv') candidates.push(dirname(venvDir))
+  }
+  addCandidate(python)
+  try {
+    addCandidate(realpathSync(python))
   } catch {}
+  return candidates.find(hasWriteGateSupportFiles) || candidates[0] || ''
+}
+
+function agentRootFromHermesBin(): string {
+  for (const candidate of pathCandidates(getHermesBin())) {
+    if (!existsSync(candidate)) continue
+    try {
+      const real = realpathSync(candidate)
+      const binDir = dirname(real)
+      const candidates = [
+        resolve(binDir, '..', '..'),
+        resolve(binDir, '..'),
+      ]
+      const root = candidates.find(hasWriteGateSupportFiles)
+      if (root) return root
+    } catch {}
+  }
   return ''
 }
 
@@ -321,30 +346,63 @@ function agentRootCandidates(): string[] {
     process.env.HERMES_AGENT_ROOT?.trim() || '',
     join(getHermesBaseDir(), 'hermes-agent'),
     join(homedir(), '.hermes', 'hermes-agent'),
+    agentRootFromHermesBin(),
     agentRootFromPython(shebangPython),
   ].filter(Boolean)
 }
 
-function resolveAgentRoot(): string {
+function tryResolveAgentRoot(): string {
   for (const candidate of agentRootCandidates()) {
-    if (existsSync(join(candidate, 'tools', 'write_approval.py'))) return resolve(candidate)
+    if (hasWriteGateSupportFiles(candidate)) return resolve(candidate)
   }
+  return ''
+}
+
+function resolveAgentRoot(): string {
+  const agentRoot = tryResolveAgentRoot()
+  if (agentRoot) return agentRoot
   throw new Error('Hermes Agent source not found. Set HERMES_AGENT_ROOT to enable write approval actions.')
 }
 
-function resolveHermesPython(agentRoot: string): string {
+function resolveHermesPython(agentRoot?: string): string {
   const envPython = process.env.HERMES_AGENT_CLI_PYTHON?.trim()
   if (envPython) return envPython
 
-  const venvPython = process.platform === 'win32'
-    ? join(agentRoot, 'venv', 'Scripts', 'python.exe')
-    : join(agentRoot, 'venv', 'bin', 'python3')
-  if (existsSync(venvPython)) return venvPython
+  if (agentRoot) {
+    const venvPython = process.platform === 'win32'
+      ? join(agentRoot, 'venv', 'Scripts', 'python.exe')
+      : join(agentRoot, 'venv', 'bin', 'python3')
+    if (existsSync(venvPython)) return venvPython
+  }
 
   const shebangPython = hermesShebangPython()
-  if (shebangPython) return shebangPython
+  if (shebangPython && !/[/\\](?:sh|bash|zsh|fish|cmd|powershell|pwsh)(?:\.exe)?$/i.test(shebangPython)) return shebangPython
 
   return process.platform === 'win32' ? 'python' : 'python3'
+}
+
+function hasWriteGatePythonImports(): boolean {
+  const agentRoot = tryResolveAgentRoot()
+  const python = resolveHermesPython(agentRoot)
+  const pythonPath = [agentRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(delimiter)
+  try {
+    execFileSync(
+      python,
+      ['-c', WRITE_GATE_IMPORT_CHECK],
+      {
+        env: {
+          ...process.env,
+          ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
+        },
+        timeout: 5000,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function runPythonAction(
@@ -358,7 +416,7 @@ async function runPythonAction(
   if (!isWriteGateSupported()) {
     throw new Error('Hermes Agent write approval is not supported by the installed Hermes Agent version.')
   }
-  const agentRoot = resolveAgentRoot()
+  const agentRoot = tryResolveAgentRoot()
   const python = resolveHermesPython(agentRoot)
   const profileDir = getProfileDir(profile || 'default')
   const pythonPath = [agentRoot, process.env.PYTHONPATH || ''].filter(Boolean).join(delimiter)
