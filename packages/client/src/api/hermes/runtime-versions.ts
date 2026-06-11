@@ -92,10 +92,22 @@ export async function downloadRuntimeVersion(version: string, source: VersionDow
   })
 }
 
+export async function deleteRuntimeVersion(version: string): Promise<{ success: boolean; deleted: InstalledRuntimeVersion }> {
+  return request<{ success: boolean; deleted: InstalledRuntimeVersion }>(`/api/hermes/runtime-versions/runtime/${encodeURIComponent(version)}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function downloadWebUiVersion(version: string, source: VersionDownloadSource): Promise<{ success: boolean; job: VersionDownloadJob }> {
   return request<{ success: boolean; job: VersionDownloadJob }>('/api/hermes/runtime-versions/webui/download', {
     method: 'POST',
     body: JSON.stringify({ version, source }),
+  })
+}
+
+export async function deleteWebUiVersion(version: string): Promise<{ success: boolean; deleted: InstalledWebUiVersion }> {
+  return request<{ success: boolean; deleted: InstalledWebUiVersion }>(`/api/hermes/runtime-versions/webui/${encodeURIComponent(version)}`, {
+    method: 'DELETE',
   })
 }
 

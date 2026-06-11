@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NAlert, NButton, NDrawer, NDrawerContent, NProgress, NSpin, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NProgress, NSpin, NTag, useMessage } from 'naive-ui'
 import {
   activateRuntimeVersion,
   activateWebUiVersion,
+  deleteRuntimeVersion,
+  deleteWebUiVersion,
   downloadRuntimeVersion,
   downloadWebUiVersion,
   fetchRuntimeVersionStatus,
@@ -218,10 +220,26 @@ async function useRuntime(version: string) {
   })
 }
 
+async function removeRuntime(version: string) {
+  await runAction(`delete-runtime-${version}`, async () => {
+    await deleteRuntimeVersion(version)
+    message.success(t('runtimeVersions.deleteRuntimeSuccess'))
+    await loadAll()
+  })
+}
+
 async function useWebUi(version: string) {
   await runAction(`activate-webui-${version}`, async () => {
     await activateWebUiVersion(version)
     message.success(t('runtimeVersions.activateSuccess'))
+    await loadAll()
+  })
+}
+
+async function removeWebUi(version: string) {
+  await runAction(`delete-webui-${version}`, async () => {
+    await deleteWebUiVersion(version)
+    message.success(t('runtimeVersions.deleteWebUiSuccess'))
     await loadAll()
   })
 }
@@ -280,6 +298,22 @@ async function useWebUi(version: string) {
                 >
                   {{ t('runtimeVersions.useVersion') }}
                 </NButton>
+                <NPopconfirm
+                  v-if="runtimeFor(version) && !runtimeFor(version)?.active"
+                  @positive-click="removeRuntime(version)"
+                >
+                  <template #trigger>
+                    <NButton
+                      size="small"
+                      type="error"
+                      secondary
+                      :loading="actionLoading[`delete-runtime-${version}`]"
+                    >
+                      {{ t('runtimeVersions.deleteVersion') }}
+                    </NButton>
+                  </template>
+                  {{ t('runtimeVersions.deleteRuntimeConfirm', { version }) }}
+                </NPopconfirm>
                 <NButton
                   v-if="!runtimeFor(version)"
                   size="small"
@@ -343,6 +377,22 @@ async function useWebUi(version: string) {
                 >
                   {{ t('runtimeVersions.useVersion') }}
                 </NButton>
+                <NPopconfirm
+                  v-if="webUiFor(version) && !webUiFor(version)?.active && version !== status?.webui.activeVersion"
+                  @positive-click="removeWebUi(version)"
+                >
+                  <template #trigger>
+                    <NButton
+                      size="small"
+                      type="error"
+                      secondary
+                      :loading="actionLoading[`delete-webui-${version}`]"
+                    >
+                      {{ t('runtimeVersions.deleteVersion') }}
+                    </NButton>
+                  </template>
+                  {{ t('runtimeVersions.deleteWebUiConfirm', { version }) }}
+                </NPopconfirm>
                 <NButton
                   v-if="!webUiFor(version) && version !== status?.webui.activeVersion"
                   size="small"

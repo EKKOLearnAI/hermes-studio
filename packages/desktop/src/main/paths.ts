@@ -36,6 +36,59 @@ type ActiveRuntimeVersion = {
   webUiDirectory?: unknown
 }
 
+function runtimeRequiredFiles(root: string): string[] {
+  const python = isWin ? join(root, 'python', 'python.exe') : join(root, 'python', 'bin', 'python3')
+  const hermes = isWin ? join(root, 'python', 'Scripts', 'hermes.exe') : join(root, 'python', 'bin', 'hermes')
+  const node = isWin ? join(root, 'node', 'node.exe') : join(root, 'node', 'bin', 'node')
+  const files = [python, hermes, node, join(root, 'runtime-manifest.json')]
+  if (isWin) files.push(join(root, 'git', 'cmd', 'git.exe'))
+  return files
+}
+
+function runtimeDirectoryReady(root: string): boolean {
+  return runtimeRequiredFiles(root).every(existsSync)
+}
+
+function readRuntimeManifestVersion(runtimeDir: string): string | null {
+  try {
+    const manifest = JSON.parse(readFileSync(join(runtimeDir, 'runtime-manifest.json'), 'utf-8')) as {
+      hermesAgentVersion?: unknown
+      asset?: { name?: unknown }
+    }
+    if (typeof manifest.hermesAgentVersion === 'string' && manifest.hermesAgentVersion.trim()) {
+      return manifest.hermesAgentVersion.trim()
+    }
+    const assetName = typeof manifest.asset?.name === 'string' ? manifest.asset.name : ''
+    const match = assetName.match(/hermes-agent-([^-]+)-/)
+    return match?.[1] || null
+  } catch {
+    return null
+  }
+}
+
+function installedRuntimeDirectories(): Array<{ directory: string; version: string }> {
+  const root = join(webUiHome(), 'desktop-runtime', 'hermes')
+  const currentPlatform = runtimePlatformKey()
+  if (!existsSync(root)) return []
+
+  const runtimes: Array<{ directory: string; version: string }> = []
+  try {
+    for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
+      if (!versionEntry.isDirectory()) continue
+      const platformDir = join(root, versionEntry.name, currentPlatform)
+      if (!runtimeDirectoryReady(platformDir)) continue
+      runtimes.push({
+        directory: platformDir,
+        version: readRuntimeManifestVersion(platformDir) || versionEntry.name,
+      })
+    }
+  } catch {
+    return []
+  }
+
+  return runtimes.sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }))
+}
+
 function activeRuntimeVersionFile(): string {
   return join(webUiHome(), 'desktop-runtime', ACTIVE_RUNTIME_VERSION_NAME)
 }
@@ -129,9 +182,12 @@ export function desktopRuntimeDir(): string {
   if (active?.platform === runtimePlatformKey()
     && typeof active.runtimeDirectory === 'string'
     && active.runtimeDirectory.trim()
-    && existsSync(active.runtimeDirectory)) {
+    && runtimeDirectoryReady(active.runtimeDirectory)) {
     return resolve(active.runtimeDirectory)
   }
+
+  const installed = installedRuntimeDirectories()
+  if (installed[0]) return resolve(installed[0].directory)
 
   return targetDesktopRuntimeDir()
 }

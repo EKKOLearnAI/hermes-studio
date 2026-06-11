@@ -6,15 +6,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '0.6.13',
-    date: '2026-06-10',
+    version: '0.6.14',
+    date: '2026-06-11',
     changes: [
-      'changelog.new_0_6_13_1',
-      'changelog.new_0_6_13_2',
-      'changelog.new_0_6_13_3',
-      'changelog.new_0_6_13_4',
-      'changelog.new_0_6_13_5',
-      'changelog.new_0_6_13_6',
+      'changelog.new_0_6_14_1',
+      'changelog.new_0_6_14_2',
+      'changelog.new_0_6_14_3',
+      'changelog.new_0_6_14_4',
+      'changelog.new_0_6_14_5',
+      'changelog.new_0_6_14_6',
+      'changelog.new_0_6_14_7',
+      'changelog.new_0_6_14_8',
+      'changelog.new_0_6_14_9',
+      'changelog.new_0_6_14_10',
     ],
   },
   {
@@ -63,44 +67,6 @@ export const changelog: ChangelogEntry[] = [
       'changelog.new_0_6_10_8',
       'changelog.new_0_6_10_9',
       'changelog.new_0_6_10_10',
-    ],
-  },
-  {
-    version: '0.6.9',
-    date: '2026-06-02',
-    changes: [
-      'changelog.new_0_6_9_1',
-      'changelog.new_0_6_9_2',
-      'changelog.new_0_6_9_3',
-      'changelog.new_0_6_9_4',
-      'changelog.new_0_6_9_5',
-      'changelog.new_0_6_9_6',
-    ],
-  },
-  {
-    version: '0.6.8',
-    date: '2026-06-01',
-    changes: [
-      'changelog.new_0_6_8_1',
-      'changelog.new_0_6_8_2',
-      'changelog.new_0_6_8_3',
-      'changelog.new_0_6_8_4',
-      'changelog.new_0_6_8_5',
-    ],
-  },
-  {
-    version: '0.6.7',
-    date: '2026-05-31',
-    changes: [
-      'changelog.new_0_6_7_1',
-      'changelog.new_0_6_7_9',
-      'changelog.new_0_6_7_2',
-      'changelog.new_0_6_7_3',
-      'changelog.new_0_6_7_4',
-      'changelog.new_0_6_7_5',
-      'changelog.new_0_6_7_6',
-      'changelog.new_0_6_7_7',
-      'changelog.new_0_6_7_8',
     ],
   },
 ]

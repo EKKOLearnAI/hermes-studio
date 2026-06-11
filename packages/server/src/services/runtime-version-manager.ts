@@ -463,6 +463,28 @@ export function activateInstalledRuntimeVersion(version: string): ActiveVersionM
   return next
 }
 
+export function deleteInstalledRuntimeVersion(version: string): InstalledRuntimeVersion {
+  const cleanVersion = version.trim()
+  if (!cleanVersion) throw new Error('Runtime version is required')
+
+  const active = readActiveVersionManifest()
+  const installed = listInstalledRuntimeVersions(active)
+  const target = installed.find(item => item.version === cleanVersion && item.platform === runtimePlatformKey())
+  if (!target) throw new Error(`Installed runtime version not found for this platform: ${cleanVersion}`)
+  if (target.active) throw new Error('Active runtime version cannot be deleted')
+
+  rmSync(target.directory, { recursive: true, force: true })
+  try {
+    const versionRoot = dirname(target.directory)
+    if (existsSync(versionRoot) && readdirSync(versionRoot).length === 0) {
+      rmSync(versionRoot, { recursive: true, force: true })
+    }
+  } catch {
+    /* ignore empty parent cleanup failures */
+  }
+  return target
+}
+
 export function activateDownloadedWebUiVersion(version: string): ActiveVersionManifest {
   const cleanVersion = version.trim().replace(/^v/, '')
   if (!cleanVersion) throw new Error('Web UI version is required')
@@ -481,6 +503,27 @@ export function activateDownloadedWebUiVersion(version: string): ActiveVersionMa
   mkdirSync(dirname(activeVersionPath()), { recursive: true })
   writeFileSync(activeVersionPath(), JSON.stringify(next, null, 2) + '\n', 'utf-8')
   return next
+}
+
+export function deleteDownloadedWebUiVersion(version: string): InstalledWebUiVersion {
+  const cleanVersion = version.trim().replace(/^v/, '')
+  if (!cleanVersion) throw new Error('Web UI version is required')
+
+  const active = readActiveVersionManifest()
+  const installed = listInstalledWebUiVersions(active)
+  const target = installed.find(item => item.version === cleanVersion)
+  if (!target) throw new Error(`Downloaded Web UI version not found: ${cleanVersion}`)
+  if (target.active) throw new Error('Active Web UI version cannot be deleted')
+
+  const webUiRoot = resolve(join(config.appHome, 'webui'))
+  const targetDir = resolve(target.directory)
+  const rel = relative(webUiRoot, targetDir)
+  if (!rel || rel.startsWith('..') || rel === '..') {
+    throw new Error('Only downloaded Web UI versions can be deleted')
+  }
+
+  rmSync(targetDir, { recursive: true, force: true })
+  return target
 }
 
 const versionDownloadJobs = new Map<string, VersionDownloadJob>()

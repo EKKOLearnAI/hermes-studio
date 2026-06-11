@@ -24,6 +24,7 @@ import {
   webuiDir,
 } from './paths'
 import {
+  compareHermesAgentVersions,
   hermesAgentVersionFromRuntimeTag,
   runtimeManifestMatchesHermesAgentVersion,
 } from './runtime-version'
@@ -196,7 +197,14 @@ export function cachedRuntimeNeedsPackagedReleaseUpdate(): boolean {
     ? hermesAgentVersionFromRuntimeTag(process.env.HERMES_DESKTOP_RUNTIME_RELEASE_TAG)
     : metadata?.hermesAgentVersion || hermesAgentVersionFromRuntimeTag(metadata?.tag)
   if (!expectedVersion) return false
-  const match = runtimeManifestMatchesHermesAgentVersion(readCachedRuntimeManifest(desktopRuntimeDir()), expectedVersion)
+  const manifest = readCachedRuntimeManifest(desktopRuntimeDir())
+  const assetVersion = typeof manifest?.asset?.name === 'string'
+    ? manifest.asset.name.match(/hermes-agent-([^-]+)-/)?.[1]
+    : undefined
+  const cachedVersion = manifest?.hermesAgentVersion || assetVersion
+  const comparison = compareHermesAgentVersions(cachedVersion, expectedVersion)
+  if (comparison !== null) return comparison < 0
+  const match = runtimeManifestMatchesHermesAgentVersion(manifest, expectedVersion)
   return match === false
 }
 

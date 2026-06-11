@@ -2,6 +2,8 @@ import type { Context } from 'koa'
 import {
   activateInstalledRuntimeVersion,
   activateDownloadedWebUiVersion,
+  deleteDownloadedWebUiVersion,
+  deleteInstalledRuntimeVersion,
   getVersionDownloadJob,
   getRuntimeVersionStatus,
   listVersionDownloadJobs,
@@ -30,12 +32,34 @@ export async function activateRuntime(ctx: Context) {
   }
 }
 
+export async function deleteRuntime(ctx: Context) {
+  const version = String(ctx.params.version || '')
+  try {
+    const deleted = deleteInstalledRuntimeVersion(version)
+    ctx.body = { success: true, deleted }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export async function activateWebUi(ctx: Context) {
   const body = ctx.request.body as { version?: unknown }
   const version = typeof body?.version === 'string' ? body.version : ''
   try {
     const active = activateDownloadedWebUiVersion(version)
     ctx.body = { success: true, active }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function deleteWebUi(ctx: Context) {
+  const version = String(ctx.params.version || '')
+  try {
+    const deleted = deleteDownloadedWebUiVersion(version)
+    ctx.body = { success: true, deleted }
   } catch (err) {
     ctx.status = 400
     ctx.body = { error: err instanceof Error ? err.message : String(err) }
