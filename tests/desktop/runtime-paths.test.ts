@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -113,6 +113,35 @@ describe('desktop runtime paths', () => {
     expect(desktopRuntimeDir()).toBe(runtimeDir)
     expect(webuiDir()).toBe(webUiDir)
     expect(targetDesktopRuntimeDir()).toBe(join(homeDir, 'desktop-runtime', 'hermes', '0.15.2', runtimePlatformKey()))
+  })
+
+  it('removes downloaded Web UI caches below 0.6.14 so startup falls back to the bundled Web UI', async () => {
+    const homeDir = tempDir()
+    const appPath = tempDir()
+    const legacyWebUiDir = join(homeDir, 'webui', '0.6.13')
+    const currentWebUiDir = join(homeDir, 'webui', '0.6.14')
+    process.env.HERMES_WEB_UI_HOME = homeDir
+    mockElectronApp.getAppPath = () => appPath
+
+    const { runtimePlatformKey } = await import('../../packages/desktop/src/main/runtime-paths')
+    mkdirSync(join(legacyWebUiDir, 'dist', 'server'), { recursive: true })
+    writeFileSync(join(legacyWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.13' }))
+    writeFileSync(join(legacyWebUiDir, 'dist', 'server', 'index.js'), '')
+    mkdirSync(currentWebUiDir, { recursive: true })
+    writeFileSync(join(currentWebUiDir, 'package.json'), JSON.stringify({ version: '0.6.14' }))
+    mkdirSync(join(homeDir, 'desktop-runtime'), { recursive: true })
+    writeFileSync(join(homeDir, 'desktop-runtime', 'active-version.json'), JSON.stringify({
+      schema: 1,
+      webUiVersion: '0.6.13',
+      webUiDirectory: legacyWebUiDir,
+      platform: runtimePlatformKey(),
+    }))
+
+    const { webuiDir } = await import('../../packages/desktop/src/main/paths')
+
+    expect(webuiDir()).not.toBe(legacyWebUiDir)
+    expect(existsSync(legacyWebUiDir)).toBe(false)
+    expect(existsSync(currentWebUiDir)).toBe(true)
   })
 
   it('falls back to the newest installed runtime when the active runtime was deleted', async () => {

@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
 import {
@@ -7,12 +7,14 @@ import {
   runtimePlatformKey,
   type DesktopRuntimeResource,
 } from './runtime-paths'
-import { hermesAgentVersionFromRuntimeTag } from './runtime-version'
+import { compareHermesAgentVersions, hermesAgentVersionFromRuntimeTag } from './runtime-version'
 
 const isWin = platform() === 'win32'
 const DEFAULT_HERMES_AGENT_VERSION = '0.15.2'
+const MIN_COMPATIBLE_WEB_UI_VERSION = '0.6.14'
 const PACKAGED_RUNTIME_RELEASE_NAME = 'runtime-release.json'
 const ACTIVE_RUNTIME_VERSION_NAME = 'active-version.json'
+let legacyWebUiVersionsCleaned = false
 
 export function isPackaged() {
   return !!app?.isPackaged
@@ -103,6 +105,28 @@ function readActiveRuntimeVersion(): ActiveRuntimeVersion | null {
   }
 }
 
+function cleanupLegacyWebUiVersions(): void {
+  if (legacyWebUiVersionsCleaned) return
+  legacyWebUiVersionsCleaned = true
+
+  const root = join(webUiHome(), 'webui')
+  if (!existsSync(root)) return
+
+  try {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const version = entry.name.trim().replace(/^v/, '')
+      const comparison = compareHermesAgentVersions(version, MIN_COMPATIBLE_WEB_UI_VERSION)
+      if (comparison === null || comparison >= 0) continue
+      const target = join(root, entry.name)
+      rmSync(target, { recursive: true, force: true })
+      console.log(`[desktop] removed incompatible Web UI cache ${version}: ${target}`)
+    }
+  } catch (err) {
+    console.warn('[desktop] failed to clean incompatible Web UI caches:', err instanceof Error ? err.message : String(err))
+  }
+}
+
 // Bundled web-ui directory.
 // dev:  <repo root> (or HERMES_WEB_UI_DIR)
 // prod: <resources>/webui
@@ -110,6 +134,8 @@ function readActiveRuntimeVersion(): ActiveRuntimeVersion | null {
 export function webuiDir(): string {
   const override = process.env.HERMES_WEB_UI_DIR?.trim()
   if (override) return resolve(override)
+
+  cleanupLegacyWebUiVersions()
 
   const active = readActiveRuntimeVersion()
   if (active?.platform === runtimePlatformKey()
