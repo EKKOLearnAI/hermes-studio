@@ -774,7 +774,7 @@ export default defineComponent({ components: { CreateRoomForm } })
     right: 16px;
     bottom: 16px;
     z-index: 8;
-    width: min(380px, calc(100% - 32px));
+    width: min(520px, calc(100% - 32px));
     padding: 10px;
     border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
     border-radius: 16px;
@@ -861,9 +861,10 @@ export default defineComponent({ components: { CreateRoomForm } })
 
 @media (max-width: 640px) {
     .approval-float-panel {
+        left: 8px;
         right: 8px;
         bottom: 8px;
-        width: min(360px, calc(100% - 16px));
+        width: auto;
         padding: 7px;
         border-radius: 14px;
     }

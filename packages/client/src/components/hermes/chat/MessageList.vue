@@ -668,7 +668,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(380px, calc(100% - 32px));
+  width: min(520px, calc(100% - 32px));
   pointer-events: none;
 }
 
@@ -690,6 +690,11 @@ defineExpose({
 
 .approval-float-panel {
   border-color: rgba(var(--accent-primary-rgb), 0.24);
+}
+
+.queue-float-panel {
+  align-self: flex-end;
+  width: min(380px, 100%);
 }
 
 .float-panel-header {
@@ -890,9 +895,10 @@ defineExpose({
 
 @media (max-width: 640px) {
   .message-float-stack {
+    left: 8px;
     right: 8px;
     bottom: 8px;
-    width: min(360px, calc(100% - 16px));
+    width: auto;
     gap: 8px;
   }
 
