@@ -23,7 +23,7 @@ import {
 
 const DEFAULT_PORT = 8748
 const DEFAULT_READY_TIMEOUT_MS = 120_000
-const DEFAULT_FULL_STARTUP_WAIT_MS = 8_000
+const DEFAULT_FULL_STARTUP_WAIT_MS = 0
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
