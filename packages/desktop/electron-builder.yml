@@ -79,6 +79,10 @@ linux:
   category: Development
   artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
 
+deb:
+  afterInstall: build/linux-after-install.tpl
+  afterRemove: build/linux-after-remove.tpl
+
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
