@@ -267,11 +267,11 @@ export function resolveAgentBridgeCommand(options: AgentBridgeManagerOptions = {
 
 function bridgeScriptPath(): string {
   const candidates = [
-    // Built server: dist/server/index.js -> dist/server/agent-bridge/hermes_bridge.py
-    resolve(__dirname, 'agent-bridge', 'hermes_bridge.py'),
+    // Built server: dist/server/index.js -> dist/server/agent-bridge/python/hermes_bridge.py
+    resolve(__dirname, 'agent-bridge', 'python', 'hermes_bridge.py'),
     // ts-node/dev source tree.
-    resolve(__dirname, 'services/hermes/agent-bridge/hermes_bridge.py'),
-    resolve(process.cwd(), 'packages/server/src/services/hermes/agent-bridge/hermes_bridge.py'),
+    resolve(__dirname, 'services/hermes/agent-bridge/python/hermes_bridge.py'),
+    resolve(process.cwd(), 'packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py'),
   ]
   const found = candidates.find(candidate => existsSync(candidate))
   if (!found) {

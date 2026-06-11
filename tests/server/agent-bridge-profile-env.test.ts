@@ -19,7 +19,7 @@ afterEach(async () => {
 })
 
 async function runBridgeProbe(script: string): Promise<any> {
-  const bridgePath = resolve('packages/server/src/services/hermes/agent-bridge/hermes_bridge.py')
+  const bridgePath = resolve('packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py')
   const { stdout } = await execFileAsync('python3', ['-c', script], {
     cwd: resolve('.'),
     env: {

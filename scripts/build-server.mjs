@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
@@ -28,12 +28,14 @@ await esbuild.build({
   logLevel: 'info',
 })
 
-const bridgeOutDir = resolve(serverOutDir, 'agent-bridge')
+const bridgeOutDir = resolve(serverOutDir, 'agent-bridge', 'python')
+const bridgeSrcDir = resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/python')
 mkdirSync(bridgeOutDir, { recursive: true })
-cpSync(
-  resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/hermes_bridge.py'),
-  resolve(bridgeOutDir, 'hermes_bridge.py'),
-)
+for (const fileName of readdirSync(bridgeSrcDir)) {
+  if (fileName.endsWith('.py')) {
+    cpSync(resolve(bridgeSrcDir, fileName), resolve(bridgeOutDir, fileName))
+  }
+}
 chmodSync(resolve(bridgeOutDir, 'hermes_bridge.py'), 0o755)
 
 const skillsOutDir = resolve(rootDir, 'dist/skills')

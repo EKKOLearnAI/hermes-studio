@@ -112,7 +112,7 @@ approval.load_permanent_allowlist = load_permanent_allowlist
 approval.check_execute_code_guard = check_execute_code_guard
 sys.modules["tools.approval"] = approval
 
-path = Path("packages/server/src/services/hermes/agent-bridge/hermes_bridge.py")
+path = Path("packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py")
 spec = importlib.util.spec_from_file_location("hermes_bridge", path)
 bridge = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = bridge

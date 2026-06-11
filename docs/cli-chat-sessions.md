@@ -101,7 +101,7 @@ PR 号。
 | `packages/server/src/services/hermes/run-chat/bridge-delta.ts` | 过滤 bridge 输出中的工具调用标记，避免 UI 文本重复或丢字符。 |
 | `packages/server/src/services/hermes/agent-bridge/client.ts` | Node 到 Python bridge 的本地 socket 客户端。 |
 | `packages/server/src/services/hermes/agent-bridge/manager.ts` | Python bridge broker 子进程生命周期管理。 |
-| `packages/server/src/services/hermes/agent-bridge/hermes_bridge.py` | Python broker/worker，实现 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
+| `packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py` | Python broker/worker entrypoint；实现拆分在同目录的 `bridge_*.py` 模块中，覆盖 `AIAgent` 会话池、工具审批、澄清、压缩协作、goal/plan 命令等。 |
 | `packages/server/src/services/hermes/group-chat/index.ts` | `/group-chat` Socket.IO server、room/member/message 存储、agent 恢复、mention 分发、approval/interrupt 入口。 |
 | `packages/server/src/services/hermes/group-chat/agent-clients.ts` | Group Chat agent socket client，调用 Agent Bridge 执行被 mention 的 agent，并同步 tool/reasoning/context 状态。 |
 | `packages/server/src/services/hermes/context-engine/*` | Group Chat 上下文压缩和 summary cache。 |
