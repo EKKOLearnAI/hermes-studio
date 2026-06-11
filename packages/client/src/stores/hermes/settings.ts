@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as configApi from '@/api/hermes/config'
-import type { DisplayConfig, AgentConfig, MemoryConfig, CompressionConfig, SessionResetConfig, PrivacyConfig, ApprovalConfig, GatewayAutoStartConfig } from '@/api/hermes/config'
+import type { DisplayConfig, AgentConfig, MemoryConfig, SkillsConfig, CompressionConfig, SessionResetConfig, PrivacyConfig, ApprovalConfig, GatewayAutoStartConfig } from '@/api/hermes/config'
 
 function parseProfileList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
@@ -40,6 +40,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const display = ref<DisplayConfig>({})
   const agent = ref<AgentConfig>({})
   const memory = ref<MemoryConfig>({})
+  const skills = ref<SkillsConfig>({})
   const compression = ref<CompressionConfig>({})
   const sessionReset = ref<SessionResetConfig>({})
   const privacy = ref<PrivacyConfig>({})
@@ -64,6 +65,7 @@ export const useSettingsStore = defineStore('settings', () => {
       display.value = data.display || {}
       agent.value = data.agent || {}
       memory.value = data.memory || {}
+      skills.value = data.skills || {}
       compression.value = data.compression || {}
       sessionReset.value = data.session_reset || {}
       privacy.value = data.privacy || {}
@@ -92,6 +94,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'display': display.value = { ...display.value, ...values }; break
       case 'agent': agent.value = { ...agent.value, ...values }; break
       case 'memory': memory.value = { ...memory.value, ...values }; break
+      case 'skills': skills.value = { ...skills.value, ...values }; break
       case 'compression': compression.value = { ...compression.value, ...values }; break
       case 'session_reset': sessionReset.value = { ...sessionReset.value, ...values }; break
       case 'privacy': privacy.value = { ...privacy.value, ...values }; break
@@ -127,6 +130,7 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'display': display.value = { ...display.value, ...values }; break
       case 'agent': agent.value = { ...agent.value, ...values }; break
       case 'memory': memory.value = { ...memory.value, ...values }; break
+      case 'skills': skills.value = { ...skills.value, ...values }; break
       case 'compression': compression.value = { ...compression.value, ...values }; break
       case 'session_reset': sessionReset.value = { ...sessionReset.value, ...values }; break
       case 'privacy': privacy.value = { ...privacy.value, ...values }; break
@@ -160,7 +164,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     loading, saving,
-    display, agent, memory, compression, sessionReset, privacy, approvals, gatewayAutoStart,
+    display, agent, memory, skills, compression, sessionReset, privacy, approvals, gatewayAutoStart,
     telegram, discord, slack, whatsapp, matrix, wecom, feishu, dingtalk, qqbot, weixin, platforms,
     fetchSettings, saveSection, updateLocal,
   }

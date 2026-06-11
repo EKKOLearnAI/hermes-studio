@@ -11,6 +11,7 @@ const { t } = useI18n()
 const { toolTraceVisible } = useToolTraceVisibility()
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null)
 const displayMessages = computed(() => store.sortedMessages.filter(msg => msg.role !== 'tool' || toolTraceVisible.value || msg.toolStatus === 'running'))
+const listPadding = computed(() => store.activePendingApproval ? '16px 20px 260px' : '16px 20px')
 let pendingInitialBottomRoomId: string | null = store.currentRoomId
 
 type BottomScrollOptions = number | {
@@ -73,7 +74,7 @@ defineExpose({ scrollToBottom })
         :messages="displayMessages"
         :estimated-item-height="170"
         :row-gap="12"
-        padding="16px 20px"
+        :padding="listPadding"
         @top-reach="handleTopReach"
     >
         <template #empty>

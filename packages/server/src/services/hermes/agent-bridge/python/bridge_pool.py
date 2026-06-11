@@ -109,6 +109,7 @@ class AgentPool:
         self._approval_requests: dict[str, queue.Queue[str]] = {}
         self._gateway_approval_requests: dict[str, str] = {}
         self._gateway_approval_pattern_keys: dict[str, list[str]] = {}
+        self._memory_approval_session_allow: set[str] = set()
         self._compression_requests: dict[str, queue.Queue[dict[str, Any]]] = {}
         self._clarify_requests: dict[str, queue.Queue[str]] = {}
         self._run_context = threading.local()
@@ -555,6 +556,15 @@ class AgentPool:
 
     def _approval_callback(self, session_id: str):
         def callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
+            is_memory_write_approval = (
+                not allow_permanent and
+                str(description or "").startswith("Save to memory:")
+            )
+            if is_memory_write_approval:
+                with self._lock:
+                    if session_id in self._memory_approval_session_allow:
+                        return "session"
+
             approval_id = uuid.uuid4().hex
             response_queue: queue.Queue[str] = queue.Queue(maxsize=1)
             with self._lock:
@@ -581,6 +591,9 @@ class AgentPool:
                 "approval_id": approval_id,
                 "choice": choice,
             })
+            if is_memory_write_approval and choice == "session":
+                with self._lock:
+                    self._memory_approval_session_allow.add(session_id)
             return choice
 
         return callback
@@ -1021,6 +1034,7 @@ class AgentPool:
             finally:
                 with self._lock:
                     self._approval_handlers.pop(session.session_id, None)
+                    self._memory_approval_session_allow.discard(session.session_id)
                 try:
                     del self._run_context.session_id
                 except AttributeError:

@@ -17,6 +17,7 @@ const sessionScrollPositions = new Map<string, SessionScrollSnapshot>();
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
@@ -114,9 +115,25 @@ const queuedMessages = computed(() => {
   if (!sid) return [];
   return chatStore.queuedUserMessages.get(sid) || [];
 });
-const virtualListPadding = computed(() => queuedMessages.value.length > 0
-  ? "20px 20px 240px"
-  : "20px");
+const visibleApproval = computed(() => chatStore.activePendingApproval);
+const visibleClarify = computed(() => chatStore.activePendingClarify);
+const clarifyResponse = ref("");
+const hasFloatingPrompt = computed(() => !!visibleApproval.value || !!visibleClarify.value);
+const virtualListPadding = computed(() => {
+  if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return "20px 20px 380px";
+  if (queuedMessages.value.length > 0 || hasFloatingPrompt.value) return "20px 20px 260px";
+  return "20px";
+});
+
+function handleApproval(choice: "once" | "session" | "always" | "deny") {
+  chatStore.respondApproval(choice);
+}
+
+function handleClarify(response?: string) {
+  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
+  chatStore.respondToClarify(finalResponse);
+  clarifyResponse.value = "";
+}
 
 function removeQueuedMessage(messageId: string) {
   const sid = chatStore.activeSessionId;
@@ -484,38 +501,152 @@ defineExpose({
         </Transition>
       </template>
     </VirtualMessageList>
-    <Transition name="queue-float">
-      <div v-if="queuedMessages.length > 0" class="queue-float-panel">
-        <div class="queue-float-header">
-          <span class="queue-orbit" aria-hidden="true">
-            <span></span>
-          </span>
-          <span>{{ t('chat.messageQueue') }}</span>
-          <strong>{{ queuedMessages.length }}</strong>
-        </div>
-        <div class="queue-float-list">
-          <div
-            v-for="(message, index) in queuedMessages"
-            :key="message.id"
-            class="queue-float-item"
-          >
-            <span class="queue-index">{{ index + 1 }}</span>
-            <span class="queue-text">{{ queuedPreview(message.content) }}</span>
-            <button
-              type="button"
-              class="queue-remove"
-              :title="t('chat.removeQueuedMessage')"
-              @click="removeQueuedMessage(message.id)"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
+    <div
+      v-if="visibleApproval || visibleClarify || queuedMessages.length > 0"
+      class="message-float-stack"
+    >
+      <Transition name="queue-float">
+        <div v-if="visibleApproval" class="approval-float-panel">
+          <div class="float-panel-header">
+            <span class="approval-float-icon" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                <path d="m9 12 2 2 4-4" />
               </svg>
-            </button>
+            </span>
+            <span>{{ t("chat.approvalKicker") }}</span>
+          </div>
+          <div class="approval-float-title">{{ t("chat.approvalTitle") }}</div>
+          <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+          <code class="approval-float-command">{{ visibleApproval.command }}</code>
+          <div class="approval-float-actions">
+            <NButton
+              v-if="visibleApproval.choices.includes('once')"
+              size="small"
+              type="primary"
+              @click="handleApproval('once')"
+            >
+              {{ t("chat.approvalAllowOnce") }}
+            </NButton>
+            <NButton
+              v-if="visibleApproval.choices.includes('session')"
+              size="small"
+              secondary
+              @click="handleApproval('session')"
+            >
+              {{ t("chat.approvalAllowSession") }}
+            </NButton>
+            <NButton
+              v-if="visibleApproval.choices.includes('always')"
+              size="small"
+              secondary
+              @click="handleApproval('always')"
+            >
+              {{ t("chat.approvalAlways") }}
+            </NButton>
+            <NButton
+              v-if="visibleApproval.choices.includes('deny')"
+              size="small"
+              type="error"
+              secondary
+              @click="handleApproval('deny')"
+            >
+              {{ t("chat.approvalDeny") }}
+            </NButton>
           </div>
         </div>
-      </div>
-    </Transition>
+      </Transition>
+      <Transition name="queue-float">
+        <div v-if="!visibleApproval && visibleClarify" class="approval-float-panel">
+          <div class="float-panel-header">
+            <span class="approval-float-icon" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </span>
+            <span>{{ t("chat.clarifyKicker") }}</span>
+          </div>
+          <div class="approval-float-title">{{ t("chat.clarifyTitle") }}</div>
+          <div class="approval-float-desc">{{ visibleClarify.question }}</div>
+          <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="approval-float-actions">
+            <NButton
+              v-for="choice in visibleClarify.choices"
+              :key="choice"
+              size="small"
+              type="primary"
+              @click="handleClarify(choice)"
+            >
+              {{ choice }}
+            </NButton>
+            <NButton size="small" type="error" secondary @click="handleClarify('')">
+              {{ t("chat.clarifyDismiss") }}
+            </NButton>
+          </div>
+          <div v-else class="clarify-float-input-row">
+            <NInput
+              v-model:value="clarifyResponse"
+              size="small"
+              :placeholder="t('chat.clarifyPlaceholder')"
+            />
+            <NButton size="small" type="primary" @click="handleClarify()">
+              {{ t("chat.clarifySubmit") }}
+            </NButton>
+          </div>
+        </div>
+      </Transition>
+      <Transition name="queue-float">
+        <div v-if="queuedMessages.length > 0" class="queue-float-panel">
+          <div class="queue-float-header">
+            <span class="queue-orbit" aria-hidden="true">
+              <span></span>
+            </span>
+            <span>{{ t('chat.messageQueue') }}</span>
+            <strong>{{ queuedMessages.length }}</strong>
+          </div>
+          <div class="queue-float-list">
+            <div
+              v-for="(message, index) in queuedMessages"
+              :key="message.id"
+              class="queue-float-item"
+            >
+              <span class="queue-index">{{ index + 1 }}</span>
+              <span class="queue-text">{{ queuedPreview(message.content) }}</span>
+              <button
+                type="button"
+                class="queue-remove"
+                :title="t('chat.removeQueuedMessage')"
+                @click="removeQueuedMessage(message.id)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </div>
   </div>
 </template>
 
@@ -529,12 +660,22 @@ defineExpose({
   display: flex;
 }
 
-.queue-float-panel {
+.message-float-stack {
   position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 8;
-  width: min(340px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.approval-float-panel,
+.queue-float-panel {
+  pointer-events: auto;
+  width: 100%;
   padding: 10px;
   border: 1px solid rgba(var(--accent-info-rgb), 0.22);
   border-radius: 16px;
@@ -544,6 +685,99 @@ defineExpose({
 
   .dark & {
     background: #262626;
+  }
+}
+
+.approval-float-panel {
+  border-color: rgba(var(--accent-primary-rgb), 0.24);
+}
+
+.float-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 8px;
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.approval-float-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+}
+
+.approval-float-title {
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: $text-primary;
+}
+
+.approval-float-desc {
+  padding: 0 4px;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: $text-secondary;
+}
+
+.approval-float-command {
+  display: block;
+  margin: 8px 4px 0;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: $text-primary;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid $border-color;
+  border-radius: 11px;
+  padding: 8px 10px;
+
+  .dark & {
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.approval-float-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 4px 0;
+  border-top: 1px solid $border-color;
+}
+
+.clarify-float-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 4px 0;
+  border-top: 1px solid $border-color;
+
+  :deep(.n-input) {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  :deep(.n-button) {
+    flex: 0 0 auto;
   }
 }
 
@@ -655,10 +889,15 @@ defineExpose({
 }
 
 @media (max-width: 640px) {
-  .queue-float-panel {
+  .message-float-stack {
     right: 8px;
     bottom: 8px;
-    width: min(260px, calc(100% - 8px));
+    width: min(360px, calc(100% - 16px));
+    gap: 8px;
+  }
+
+  .approval-float-panel,
+  .queue-float-panel {
     padding: 7px;
     border-radius: 14px;
   }
@@ -708,6 +947,23 @@ defineExpose({
   .queue-remove {
     width: 22px;
     height: 22px;
+  }
+
+  .approval-float-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    :deep(.n-button) {
+      width: 100%;
+    }
+  }
+
+  .clarify-float-input-row {
+    flex-direction: column;
+
+    :deep(.n-button) {
+      width: 100%;
+    }
   }
 }
 

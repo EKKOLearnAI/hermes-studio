@@ -791,6 +791,65 @@ assert calls == [("cmd", "desc", False)]
 `)
   })
 
+  it('honors session-level approval for repeated memory write prompts', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+callback = pool._approval_callback("session-a")
+result = {}
+
+def first_prompt():
+    result["first"] = callback("memory text", "Save to memory: add to memory", allow_permanent=False)
+
+thread = threading.Thread(target=first_prompt)
+thread.start()
+
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+assert pool.respond_approval(approval_id, "session") == {
+    "approval_id": approval_id,
+    "resolved": True,
+    "choice": "session",
+}
+thread.join(timeout=5)
+assert result["first"] == "session"
+
+second = callback("memory text 2", "Save to memory: add to memory", allow_permanent=False)
+assert second == "session"
+with pool._lock:
+    assert pool._approval_requests == {}
+
+other = {}
+def non_memory_prompt():
+    other["choice"] = callback("cmd", "Not memory", allow_permanent=False)
+
+thread = threading.Thread(target=non_memory_prompt)
+thread.start()
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+pool.respond_approval(approval_id, "once")
+thread.join(timeout=5)
+assert other["choice"] == "once"
+`)
+  })
+
   it('cleans broker workers and wires worker parent watchdog state', () => {
     runPython(String.raw`
 ${harness}
