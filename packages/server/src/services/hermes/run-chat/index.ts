@@ -41,6 +41,17 @@ function redactBridgeReadyError(error: string, endpoint?: string): string {
   return redactAgentBridgeError(normalized, endpoint, 'configured endpoint') || 'unknown error'
 }
 
+function isBridgeStatusLookupTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /^Agent bridge request timed out after \d+ms$/.test(message.trim())
+}
+
+function isHermesWorkerBackedSessionSource(source?: string): boolean {
+  // "api_server" is a legacy/default source value; Hermes sessions still use worker-backed runtime.
+  // coding_agent runs have a separate lifecycle.
+  return !source || source === 'cli' || source === 'api_server'
+}
+
 export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const readiness = await getAgentBridgeManager().ensureReady({ timeoutMs: 1000, connectRetryMs: 0, recover: false })
@@ -476,6 +487,8 @@ export class ChatRunSocket {
   private async reattachBridgeRun(socket: Socket, sid: string, state: SessionState) {
     if (state.runId && state.isWorking) return
     const session = getSession(sid)
+    const source = state.source || session?.source
+    if (!isHermesWorkerBackedSessionSource(source)) return
     const profile = session?.profile || currentProfileFromSocket(socket)
     let pollKey: string | undefined
     try {
@@ -514,6 +527,10 @@ export class ChatRunSocket {
       logger.info('[chat-run-socket] reattached running bridge run %s for session %s', runId, sid)
     } catch (err) {
       if (pollKey) this.bridgeResumePolls.delete(pollKey)
+      if (isBridgeStatusLookupTimeout(err)) {
+        logger.debug(err, '[chat-run-socket] bridge status lookup timed out while resuming session %s', sid)
+        return
+      }
       logger.warn(err, '[chat-run-socket] bridge status lookup failed while resuming session %s', sid)
       const endpoint = getAgentBridgeManager().getRuntimeState?.().endpoint
       const error = redactBridgeReadyError(err instanceof Error ? err.message : String(err), endpoint)
