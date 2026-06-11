@@ -21,7 +21,9 @@ import { homedir } from 'os'
  *
  * Runtime behavior:
  * - PROFILE: Initial Hermes profile name. Default: default.
- * - GATEWAY_HOST: Default gateway host written into profile config. Default: 127.0.0.1.
+ * - HERMES_GATEWAY_URL / GATEWAY_URL: Explicit Hermes gateway upstream URL for proxy routes.
+ * - GATEWAY_HOST: Default Hermes gateway upstream host. Default: 127.0.0.1.
+ * - GATEWAY_PORT: Default Hermes gateway upstream port. Default: 8642.
  * - HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: Whether Web UI shutdown also stops gateways.
  * - HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT: Disable Hermes Studio MCP config injection.
  * - HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT: Allow MCP injection when HERMES_WEB_UI_HOME is under a temp dir.

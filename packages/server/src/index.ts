@@ -107,13 +107,12 @@ async function startRuntimeServicesBeforeListen(): Promise<void> {
   if (gatewayAutostartDisabled()) {
     console.log('[bootstrap] profile gateway check disabled by HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART')
   } else {
-    try {
-      await ensureProfileGatewaysRunning()
-      console.log('[bootstrap] profile gateways checked')
-    } catch (err) {
-      logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-      console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-    }
+    void ensureProfileGatewaysRunning()
+      .then(() => console.log('[bootstrap] profile gateways checked'))
+      .catch((err) => {
+        logger.warn(err, '[bootstrap] failed to ensure profile gateways')
+        console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
+      })
   }
 
   try {

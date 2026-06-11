@@ -3,9 +3,7 @@ import { existsSync, readFileSync, readdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { promisify } from 'util'
 import { readAppConfig, type GatewayAutoStartConfig } from '../app-config'
-import { stripLegacyApiServerGatewayConfig } from '../config-helpers'
 import { logger } from '../logger'
-import { safeFileStore } from '../safe-file-store'
 import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
 import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
@@ -429,7 +427,6 @@ export async function getGatewayRuntimeStatusForProfile(profile: string): Promis
 export async function restartGatewayForProfile(profile: string): Promise<{ running: boolean; profile: string }> {
   const hermesBin = resolveHermesBin()
   const profileDir = getProfileDir(profile)
-  await clearApiServerForProfile(profileDir)
   await stopGatewayForProfile(hermesBin, profile, profileDir)
 
   try {
@@ -442,18 +439,6 @@ export async function restartGatewayForProfile(profile: string): Promise<{ runni
   const running = await waitForGatewayRunning(hermesBin, profile, profileDir)
   if (!running) throw new Error('Hermes gateway start completed but gateway did not report running within timeout')
   return { running, profile }
-}
-
-export async function clearApiServerForProfile(profileDir: string): Promise<void> {
-  const configPath = join(profileDir, 'config.yaml')
-  try {
-    await safeFileStore.updateYaml(configPath, (config) => {
-      const result = stripLegacyApiServerGatewayConfig(config)
-      return { data: result.config, result: undefined, write: result.changed }
-    }, { backup: true })
-  } catch (err) {
-    logger.warn(err, 'Failed to clear legacy api_server gateway config before gateway startup: %s', profileDir)
-  }
 }
 
 export async function ensureProfileGatewaysRunning(): Promise<void> {
@@ -493,7 +478,6 @@ export async function ensureProfileGatewaysRunning(): Promise<void> {
       continue
     }
 
-    await clearApiServerForProfile(profileDir)
     await startGatewayForProfile(hermesBin, profile, profileDir, { managedRun: shouldUseManagedGatewayRunForAutostart() })
     const ready = await waitForGatewayRunning(hermesBin, profile, profileDir)
     if (!ready) {

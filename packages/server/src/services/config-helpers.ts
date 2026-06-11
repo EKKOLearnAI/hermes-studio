@@ -105,20 +105,6 @@ export async function updateConfigYamlForProfile<T = void>(
   return safeFileStore.updateYaml(configPathForProfile(profile), updater, { backup: true })
 }
 
-export function stripLegacyApiServerGatewayConfig(config: Record<string, any>): { config: Record<string, any>; changed: boolean } {
-  if (!config.platforms || typeof config.platforms !== 'object' || Array.isArray(config.platforms)) {
-    return { config, changed: false }
-  }
-
-  if (config.platforms.api_server !== undefined) {
-    delete config.platforms.api_server
-    if (Object.keys(config.platforms).length === 0) delete config.platforms
-    return { config, changed: true }
-  }
-
-  return { config, changed: false }
-}
-
 // --- .env helpers ---
 
 function assertValidEnvKey(key: string): void {
