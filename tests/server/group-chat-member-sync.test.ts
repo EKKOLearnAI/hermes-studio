@@ -224,6 +224,55 @@ describe('Group Chat member/agent identity sync', () => {
     })
   })
 
+  it('reuses an authenticated member name when the browser has no local group-chat name', () => {
+    const emit = vi.fn()
+    const server = Object.create(GroupChatServer.prototype) as any
+    server.rooms = new Map()
+    server.socketUserMap = new Map([['socket-1', 'auth:42']])
+    server.socketRequestedSourceMap = new Map([['socket-1', 'human']])
+    server.socketAuthUserIdMap = new Map([['socket-1', 42]])
+    server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
+    server.typingState = new Map()
+    server.contextStatusState = new Map()
+    server.storage = {
+      getRoomAgentByAgentId: vi.fn(() => null),
+      getMemberByUserId: vi.fn(() => null),
+      getMemberByAuthUserId: vi.fn(() => ({
+        id: 'member-old',
+        userId: 'browser-local-id',
+        name: 'Alice Display',
+        description: 'saved description',
+        joinedAt: 1,
+        avatar: '',
+        authUserId: 42,
+      })),
+      saveRoom: vi.fn(),
+      addRoomMember: vi.fn(),
+      getMessages: vi.fn(() => []),
+      getRoomAgents: vi.fn(() => []),
+    }
+    const socket = {
+      id: 'socket-1',
+      join: vi.fn(),
+      to: vi.fn(() => ({ emit })),
+    }
+    const ack = vi.fn()
+
+    server.handleJoin(socket, { roomId: 'room-1' }, ack)
+
+    expect(server.storage.addRoomMember).toHaveBeenCalledWith(
+      'room-1',
+      'auth:42',
+      'Alice Display',
+      'saved description',
+      '',
+      42,
+    )
+    expect(ack.mock.calls[0][0].members).toEqual([
+      expect.objectContaining({ userId: 'auth:42', name: 'Alice Display' }),
+    ])
+  })
+
   it('filters room list to rooms containing one of the regular admin profiles', async () => {
     const allRooms = [
       { id: 'room-default', name: 'Default', inviteCode: null },

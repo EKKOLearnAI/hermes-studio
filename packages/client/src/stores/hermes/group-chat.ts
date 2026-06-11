@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getActiveProfileName, getApiKey } from '@/api/client'
+import { getActiveProfileName, getApiKey, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
 import type { Attachment, ContentBlock } from './chat'
@@ -83,6 +83,14 @@ function normalizeLocalFilePath(path: string): string {
 
 function hasText(value?: string | null): boolean {
     return !!value?.trim()
+}
+
+function authenticatedGroupUserId(authUserId: number): string {
+    return `auth:${authUserId}`
+}
+
+function getStoredGroupUserName(): string {
+    return getStoredUserName()?.trim() || ''
 }
 
 function hasToolCalls(message: ChatMessage): boolean {
@@ -199,12 +207,15 @@ const currentUserAvatar = ref('')
         return null
     })
     const userId = ref(getStoredUserId())
-    const userName = ref(getStoredUserName() || '')
+    const userName = ref(getStoredGroupUserName() || getStoredUsername() || '')
 
     function applyRealtimeJoinState(res: any, options: { syncMessages?: boolean } = {}) {
         members.value = res.members || []
         if (res.agents) agents.value = res.agents
         if (res.roomName) roomName.value = res.roomName
+        const currentMember = members.value.find(member => member.userId === userId.value)
+        if (currentMember?.name) userName.value = currentMember.name
+        if (currentMember?.avatar) currentUserAvatar.value = currentMember.avatar
         if (options.syncMessages && Array.isArray(res.messages)) {
             const byId = new Map(messages.value.map(message => [message.id, message]))
             for (const message of res.messages) {
@@ -244,11 +255,12 @@ const currentUserAvatar = ref('')
     async function joinRealtimeRoom(roomId: string, options: { syncMessages?: boolean } = {}) {
         const socket = getSocket()
         if (!socket) return
+        const storedName = getStoredGroupUserName()
 
         await new Promise<void>((resolve) => {
             socket.emit('join', {
                 roomId,
-                name: userName.value || undefined,
+                name: storedName || undefined,
                 description: localStorage.getItem('gc_user_description') || undefined,
             }, (res: any) => {
                 if (currentRoomId.value !== roomId) {
@@ -287,14 +299,17 @@ const currentUserAvatar = ref('')
     // ─── Connection ────────────────────────────────────────
     async function connect() {
         let authUserId: number | undefined
+        const connectionName = getStoredGroupUserName()
         try {
             const user = await fetchCurrentUser()
             authUserId = user.id
+            userId.value = authenticatedGroupUserId(user.id)
+            if (!connectionName) userName.value = user.username
             currentUserAvatar.value = user.avatar || ''
         } catch { /* non-critical: avatar fallback handles missing id */ }
         const socket = connectGroupChat({
             userId: userId.value,
-            userName: userName.value || undefined,
+            userName: connectionName || undefined,
             authUserId,
         })
         console.log('[GroupChat] connecting...', { userId: userId.value, userName: userName.value })

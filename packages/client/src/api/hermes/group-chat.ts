@@ -83,7 +83,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
 
     const token = getApiKey()
     const userId = opts?.userId || localStorage.getItem('gc_user_id') || generateUUID()
-    localStorage.setItem('gc_user_id', userId)
+    if (!opts?.userId) localStorage.setItem('gc_user_id', userId)
 
     socket = io('/group-chat', {
         auth: {

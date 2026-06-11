@@ -6,6 +6,7 @@ import { updateUsage } from '../../../db/hermes/usage-store'
 import { countTokens } from '../../../lib/context-compressor'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
+import { resolveBridgeRunModelConfig } from '../run-chat/model-config'
 import type { ContentBlock } from '../run-chat/types'
 import {
     isAllAgentsMentioned,
@@ -44,6 +45,7 @@ type MentionMessage = {
 }
 
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
+export type GroupModelContext = { model: string; provider: string }
 
 interface BridgeContextCache {
     fixedContextTokens: number
@@ -58,6 +60,10 @@ interface BridgeContextCache {
     provider?: string
 }
 
+export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
+    return resolveBridgeRunModelConfig({ profile })
+}
+
 export function estimateGroupHistoryMessageTokens(history: Array<{ content?: unknown }>): number {
     return history.reduce((sum, message) => sum + countTokens(String(message.content || '')), 0)
 }
@@ -70,6 +76,16 @@ export function groupContextTokensWithFixedOverhead(
         return undefined
     }
     return Math.floor(fixedContextTokens) + estimateGroupHistoryMessageTokens(history)
+}
+
+export function isGroupBridgeContextCacheCompatible(
+    cache: { model?: string; provider?: string } | null | undefined,
+    modelContext: GroupModelContext,
+): boolean {
+    if (!cache) return false
+    if (modelContext.model && cache.model !== modelContext.model) return false
+    if (modelContext.provider && cache.provider !== modelContext.provider) return false
+    return true
 }
 
 export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown>): string | null {
@@ -289,7 +305,12 @@ class AgentClient {
             : undefined
     }
 
-    private cacheBridgeContext(sessionId: string, data: Record<string, unknown> | AgentBridgeContextEstimate, instructions?: string): void {
+    private cacheBridgeContext(
+        sessionId: string,
+        data: Record<string, unknown> | AgentBridgeContextEstimate,
+        instructions?: string,
+        modelContext: GroupModelContext = { model: '', provider: '' },
+    ): void {
         const fixedContextTokens = this.finiteToken(data.fixed_context_tokens)
         if (fixedContextTokens == null) return
         this.bridgeContextCache.set(sessionId, {
@@ -301,8 +322,8 @@ class AgentClient {
             toolCount: this.finiteToken(data.tool_count),
             toolNames: Array.isArray(data.tool_names) ? data.tool_names.map(String) : undefined,
             profile: typeof data.profile === 'string' ? data.profile : undefined,
-            model: typeof data.model === 'string' ? data.model : undefined,
-            provider: typeof data.provider === 'string' ? data.provider : undefined,
+            model: typeof data.model === 'string' ? data.model : modelContext.model || undefined,
+            provider: typeof data.provider === 'string' ? data.provider : modelContext.provider || undefined,
         })
     }
 
@@ -310,10 +331,11 @@ class AgentClient {
         return estimateGroupHistoryMessageTokens(history)
     }
 
-    private estimateWithCachedBridgeContext(sessionId: string, history: GroupEstimateMessage[], instructions?: string): number | undefined {
+    private estimateWithCachedBridgeContext(sessionId: string, history: GroupEstimateMessage[], instructions: string | undefined, modelContext: GroupModelContext): number | undefined {
         const cache = this.bridgeContextCache.get(sessionId)
         if (!cache) return undefined
         if (cache.instructions !== instructions) return undefined
+        if (!isGroupBridgeContextCacheCompatible(cache, modelContext)) return undefined
         return groupContextTokensWithFixedOverhead(cache.fixedContextTokens, history)
     }
 
@@ -323,9 +345,10 @@ class AgentClient {
         bridge: AgentBridgeClient,
         history: GroupEstimateMessage[],
         instructions: string | undefined,
+        modelContext: GroupModelContext,
         phase: string,
     ): Promise<number | undefined> {
-        const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions)
+        const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions, modelContext)
         if (cachedTokens != null) {
             logger.info({
                 roomId,
@@ -347,8 +370,12 @@ class AgentClient {
             history,
             instructions,
             this.profile,
+            {
+                ...(modelContext.model ? { model: modelContext.model } : {}),
+                ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+            },
         )
-        this.cacheBridgeContext(sessionId, estimate, instructions)
+        this.cacheBridgeContext(sessionId, estimate, instructions, modelContext)
         const totalTokens = Number(estimate.token_count || 0)
         logger.info({
             roomId,
@@ -402,6 +429,7 @@ class AgentClient {
             const bridge = new AgentBridgeClient()
             const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
             const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+            const modelContext = await resolveGroupAgentModelContext(this.profile)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -446,6 +474,7 @@ class AgentClient {
                                 bridge,
                                 history,
                                 estimateInstructions,
+                                modelContext,
                                 'build',
                             )
                         },
@@ -496,6 +525,8 @@ class AgentClient {
                 instructions,
                 this.profile,
                 {
+                    ...(modelContext.model ? { model: modelContext.model } : {}),
+                    ...(modelContext.provider ? { provider: modelContext.provider } : {}),
                     source: 'api_server',
                 },
             )
@@ -504,7 +535,7 @@ class AgentClient {
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 lastChunk = chunk
-                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, instructions, chunk, () => streamMessageId, async () => {
+                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, instructions, modelContext, chunk, () => streamMessageId, async () => {
                     const toolBaseId = streamMessageId
                     if (currentContent.trim()) {
                         await this.sendMessage(roomId, currentContent, streamMessageId, {
@@ -554,7 +585,7 @@ class AgentClient {
                     reasoning_content: reasoningContent || null,
                 })
                 this.emitMessageStreamEnd(roomId, streamMessageId)
-                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions)
+                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
                 onStatus?.('ready')
                 return
             }
@@ -580,6 +611,7 @@ class AgentClient {
         sessionId: string,
         bridge: AgentBridgeClient,
         instructions?: string,
+        modelContext: GroupModelContext = { model: '', provider: '' },
     ): Promise<void> {
         if (!this.storage?.getMessages) return
         try {
@@ -590,6 +622,7 @@ class AgentClient {
                 bridge,
                 history,
                 instructions,
+                modelContext,
                 'final',
             )
             if (cachedTokens == null || cachedTokens <= 0) return
@@ -675,6 +708,7 @@ class AgentClient {
         roomId: string,
         sessionId: string,
         instructions: string | undefined,
+        modelContext: GroupModelContext,
         chunk: AgentBridgeOutput,
         getCurrentMessageId: () => string,
         beforeToolStarted: () => Promise<string>,
@@ -683,7 +717,7 @@ class AgentClient {
         for (const ev of chunk.events || []) {
             const eventType = String((ev as any)?.event || '')
             if (eventType === 'bridge.context.ready') {
-                this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions)
+                this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions, modelContext)
             } else if (eventType === 'tool.started') {
                 const toolBaseId = await beforeToolStarted()
                 this.recordToolStarted(roomId, ev as Record<string, unknown>, toolBaseId)

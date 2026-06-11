@@ -43,11 +43,16 @@ const groupChatApiMock = vi.hoisted(() => {
 const clientApiMock = vi.hoisted(() => ({
   getApiKey: vi.fn(() => 'test-token'),
   getActiveProfileName: vi.fn(() => 'research'),
+  getStoredUsername: vi.fn(() => null),
+}))
+const authApiMock = vi.hoisted(() => ({
+  fetchCurrentUser: vi.fn(),
 }))
 const fetchMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => clientApiMock)
+vi.mock('@/api/auth', () => authApiMock)
 vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
 vi.stubGlobal('fetch', fetchMock)
 
@@ -104,6 +109,8 @@ describe('group chat store streaming merge', () => {
     groupChatApiMock.getStoredUserName.mockReturnValue('tester')
     clientApiMock.getApiKey.mockReturnValue('test-token')
     clientApiMock.getActiveProfileName.mockReturnValue('research')
+    clientApiMock.getStoredUsername.mockReturnValue(null)
+    authApiMock.fetchCurrentUser.mockRejectedValue(new Error('not signed in'))
     fetchMock.mockReset()
     groupChatApiMock.socket.on.mockClear()
     groupChatApiMock.socket.emit.mockReset()
@@ -346,6 +353,54 @@ describe('group chat store streaming merge', () => {
       expect.anything(),
       expect.any(Function),
     )
+  })
+
+  it('uses authenticated account identity and restores the persisted room member name', async () => {
+    groupChatApiMock.getStoredUserId.mockReturnValue('browser-local-id')
+    groupChatApiMock.getStoredUserName.mockReturnValue(null)
+    clientApiMock.getStoredUsername.mockReturnValue('alice-login')
+    authApiMock.fetchCurrentUser.mockResolvedValue({
+      id: 42,
+      username: 'alice-login',
+      role: 'admin',
+      status: 'active',
+      created_at: 1,
+      updated_at: 1,
+      last_login_at: null,
+      avatar: '',
+    })
+    groupChatApiMock.getRoomDetail.mockResolvedValue({
+      room,
+      messages: [],
+      agents: [],
+      members: [],
+    })
+    groupChatApiMock.socket.emit.mockImplementation((event: string, data?: any, ack?: Function) => {
+      if (event === 'join' && ack) {
+        expect(data).toMatchObject({ roomId: 'room-1' })
+        expect(data.name).toBeUndefined()
+        ack({
+          members: [{ id: 'member-1', userId: 'auth:42', name: 'Alice Display', description: '', joinedAt: 1 }],
+          agents: [],
+          typingUsers: [],
+          contextStatuses: [],
+        })
+      }
+      return groupChatApiMock.socket
+    })
+    const { useGroupChatStore } = await import('@/stores/hermes/group-chat')
+    const store = useGroupChatStore()
+
+    await store.connect()
+    await store.joinRoom('room-1')
+
+    expect(groupChatApiMock.connectGroupChat).toHaveBeenCalledWith({
+      userId: 'auth:42',
+      userName: undefined,
+      authUserId: 42,
+    })
+    expect(store.userId).toBe('auth:42')
+    expect(store.userName).toBe('Alice Display')
   })
 
   it('adds auth and active profile headers to group chat uploads', async () => {

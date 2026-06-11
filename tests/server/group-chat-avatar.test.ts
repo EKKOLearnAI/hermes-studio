@@ -82,4 +82,20 @@ describe('group chat member avatars', () => {
       { userId: 'anonymous-participant', name: 'Unmatched Display', avatar: '' },
     ])
   })
+
+  it('merges a browser-local member row into the authenticated account identity', async () => {
+    const { users, storage } = await initStorage()
+    const alice = users.createUser({ username: 'alice-login', password: 'pw' })!
+
+    storage.addRoomMember('room-1', 'browser-local-id', 'Alice Display', 'saved description', '', alice.id)
+    storage.addRoomMember('room-1', `auth:${alice.id}`, 'Alice Display', 'saved description', '', alice.id)
+
+    expect(storage.getRoomMembers('room-1')).toMatchObject([
+      {
+        userId: `auth:${alice.id}`,
+        name: 'Alice Display',
+        description: 'saved description',
+      },
+    ])
+  })
 })

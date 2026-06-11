@@ -8,7 +8,7 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
-import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
+import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
 import { config } from '../../../config'
 import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
@@ -97,6 +97,10 @@ interface Member {
     source?: 'human' | 'agent'
     avatar: string
     authUserId?: number | null
+}
+
+function authenticatedGroupUserId(authUserId: number): string {
+    return `auth:${authUserId}`
 }
 
 let _tablesEnsured = false
@@ -632,7 +636,8 @@ class ChatStorage {
             }
         }
 
-        const existing = this.getMemberByUserId(roomId, userId)
+        const existing = this.getMemberByUserId(roomId, userId) ||
+            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
         if (existing) {
             const nextAvatar = resolvedAvatar || existing.avatar || ''
             const nextAuthUserId = typeof authUserId === 'number' && authUserId > 0
@@ -640,8 +645,8 @@ class ChatStorage {
                 : existing.authUserId ?? null
             // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
-                'UPDATE gc_room_members SET userName = ?, description = ?, avatar = ?, authUserId = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
-            ).run(userName, description, nextAvatar, nextAuthUserId, Date.now(), roomId, userId)
+                'UPDATE gc_room_members SET userId = ?, userName = ?, description = ?, avatar = ?, authUserId = ?, updatedAt = ? WHERE id = ?'
+            ).run(userId, userName, description, nextAvatar, nextAuthUserId, Date.now(), existing.id)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -655,6 +660,12 @@ class ChatStorage {
         return (this.db()?.prepare(
             'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND userId = ?'
         ).get(roomId, userId) as any) ?? null
+    }
+
+    getMemberByAuthUserId(roomId: string, authUserId: number): Member | null {
+        return (this.db()?.prepare(
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND authUserId = ? ORDER BY updatedAt DESC LIMIT 1'
+        ).get(roomId, authUserId) as any) ?? null
     }
 
     updateMemberActivity(roomId: string, userId: string): void {
@@ -883,8 +894,10 @@ export class GroupChatServer {
         }
 
         const token = auth.token || socket.handshake.query.token || ''
-        if (await isAuthEnabled() && !await authenticateUserToken(String(token))) {
-            return next(new Error('Unauthorized'))
+        if (await isAuthEnabled()) {
+            const user = await authenticateUserToken(String(token))
+            if (!user) return next(new Error('Unauthorized'))
+            socket.data.authUser = user
         }
         next()
     }
@@ -893,16 +906,20 @@ export class GroupChatServer {
 
     private onConnection(socket: Socket): void {
         const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string; authUserId?: number }
-        const userId = auth.userId || socket.id
-        const userName = auth.name || `User-${userId.slice(0, 6)}`
-        const description = auth.description || ''
         const requestedSource = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET ? 'agent' : 'human'
+        const authenticatedUser = socket.data.authUser as AuthenticatedUser | undefined
+        const authUserId = requestedSource === 'human'
+            ? authenticatedUser?.id ?? (typeof auth.authUserId === 'number' && auth.authUserId > 0 ? auth.authUserId : undefined)
+            : undefined
+        const userId = authUserId ? authenticatedGroupUserId(authUserId) : auth.userId || socket.id
+        const userName = auth.name || authenticatedUser?.username || `User-${userId.slice(0, 6)}`
+        const description = auth.description || ''
 
         this.socketUserMap.set(socket.id, userId)
         this.socketRequestedSourceMap.set(socket.id, requestedSource)
         this.userInfoMap.set(userId, { name: userName, description })
-        if (typeof auth.authUserId === 'number') {
-            this.socketAuthUserIdMap.set(socket.id, auth.authUserId)
+        if (typeof authUserId === 'number') {
+            this.socketAuthUserIdMap.set(socket.id, authUserId)
         }
 
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
@@ -936,13 +953,17 @@ export class GroupChatServer {
             ack?.({ error: 'Reserved member identity' })
             return
         }
-        const existingMember = this.storage.getMemberByUserId(roomId, userId)
+        const socketAuthUserId = this.socketAuthUserIdMap.get(socket.id)
+        const existingMember = this.storage.getMemberByUserId(roomId, userId) ||
+            (typeof socketAuthUserId === 'number' ? this.storage.getMemberByAuthUserId(roomId, socketAuthUserId) : null)
         const userInfo = this.userInfoMap.get(userId) || {
             name: existingMember?.name || `User-${userId.slice(0, 6)}`,
             description: existingMember?.description || '',
         }
-        const userName = data.name || existingMember?.name || userInfo.name
-        const description = data.description || existingMember?.description || userInfo.description
+        const requestedName = typeof data.name === 'string' ? data.name.trim() : ''
+        const requestedDescription = typeof data.description === 'string' ? data.description.trim() : ''
+        const userName = requestedName || existingMember?.name || userInfo.name
+        const description = requestedDescription || existingMember?.description || userInfo.description
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })
