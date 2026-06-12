@@ -966,6 +966,7 @@ export default {
     showAllModels: '모든 모델 표시',
     searchPlaceholder: '모델 검색...',
     removeCustomModel: '목록에 없는 이 모델 제거',
+    refresh: '모델 목록 새로고침 (config.yaml 다시 불러오기)',
     more: '개 더',
     models: '모델 목록',
     manageVisibleModelsFor: '{name} 표시 모델 관리',

@@ -1039,6 +1039,7 @@ export default {
     customModelPlaceholder: '自訂模型名稱',
     customModelHint: '按 Enter 載入',
     removeCustomModel: '移除這個未列出的模型',
+    refresh: '重新整理模型列表（重新載入 config.yaml）',
     noProviders: '目前無 Provider，新增一個開始吧。',
     models: '模型清單',
     count: '個模型',

@@ -1045,6 +1045,7 @@ export default {
     customModelPlaceholder: 'Unlisted model ID',
     customModelHint: 'For provider-supported models not returned by the API; not a display rename. Press Enter to load.',
     removeCustomModel: 'Remove this unlisted model',
+    refresh: 'Refresh model list (reload config.yaml)',
     noProviders: 'No providers found. Add a custom provider to get started.',
     models: 'Models',
     count: 'models',

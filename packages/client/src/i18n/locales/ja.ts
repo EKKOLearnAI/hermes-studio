@@ -966,6 +966,7 @@ export default {
     showAllModels: 'すべてのモデルを表示',
     searchPlaceholder: 'モデルを検索...',
     removeCustomModel: 'この一覧外モデルを削除',
+    refresh: 'モデルリストを更新（config.yaml を再読み込み）',
     more: '件追加',
     models: 'モデル一覧',
     manageVisibleModelsFor: '{name} の表示モデルを管理',

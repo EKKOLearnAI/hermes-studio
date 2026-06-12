@@ -1045,6 +1045,7 @@ export default {
     customModelPlaceholder: '未列出的模型 ID',
     customModelHint: '仅用于 provider 支持但未返回的模型；不是重命名。按回车加载。',
     removeCustomModel: '移除这个未列出的模型',
+    refresh: '刷新模型列表（重新加载 config.yaml）',
     noProviders: '暂无 Provider，添加一个开始吧。',
     models: '模型列表',
     count: '个模型',
