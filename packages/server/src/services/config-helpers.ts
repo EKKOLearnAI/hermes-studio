@@ -235,6 +235,11 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
       return []
     }
     let models = data.data.map(m => m.id)
+    // Gemini returns model IDs with "models/" prefix. Strip to avoid double
+    // prefix when Hermes native adapter constructs .../models/{model}:generateContent
+    if (base.includes('generativelanguage.googleapis.com')) {
+      models = models.map(m => m.startsWith('models/') ? m.slice('models/'.length) : m)
+    }
     if (freeOnly) models = models.filter(m => m.endsWith(':free'))
     return models.sort()
   } catch (err: any) {
