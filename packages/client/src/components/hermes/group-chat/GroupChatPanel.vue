@@ -10,6 +10,7 @@ import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
+import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import ProfileSelector from '@/components/layout/ProfileSelector.vue'
 import ModelSelector from '@/components/layout/ModelSelector.vue'
 import LanguageSwitch from '@/components/layout/LanguageSwitch.vue'
@@ -92,10 +93,6 @@ function toggleSidebar() {
 
 function openPageSidebar() {
     showSidebar.value = true
-}
-
-function openSingleChatPage() {
-    router.push({ name: 'hermes.chat' })
 }
 
 function openSettingsPage() {
@@ -397,32 +394,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         <!-- Room sidebar -->
         <div v-if="showSidebar" class="room-sidebar">
             <div class="sidebar-header">
-                <button class="page-sidebar-tab" type="button" @click="showCreateModal = true">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    <span>{{ t('groupChat.createRoom') }}</span>
-                </button>
-            </div>
-            <div class="conversation-switch" role="tablist" aria-label="Conversation type">
-                <button
-                    class="conversation-switch-tab"
-                    type="button"
-                    role="tab"
-                    aria-selected="false"
-                    @click="openSingleChatPage"
-                >
-                    {{ t('sidebar.singleChat') }}
-                </button>
-                <button
-                    class="conversation-switch-tab active"
-                    type="button"
-                    role="tab"
-                    aria-selected="true"
-                >
-                    {{ t('sidebar.groupChat') }}
-                </button>
+                <PageSidebarNav
+                    active="group"
+                    :primary-label="t('groupChat.createRoom')"
+                    @primary="showCreateModal = true"
+                />
             </div>
             <div class="room-list">
                 <div

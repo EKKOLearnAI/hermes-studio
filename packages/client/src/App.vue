@@ -23,7 +23,7 @@ const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')
 const usesPageSidebar = computed(() =>
-  ['hermes.chat', 'hermes.session', 'hermes.groupChat', 'hermes.groupChatRoom'].includes(route.name as string),
+  ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.groupChat', 'hermes.groupChatRoom'].includes(route.name as string),
 )
 const showAppSidebar = computed(() => !isLoginPage.value && !usesPageSidebar.value)
 const showMobileMenuButton = computed(() => !isLoginPage.value && (showAppSidebar.value || usesPageSidebar.value))

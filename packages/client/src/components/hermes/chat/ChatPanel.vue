@@ -34,7 +34,7 @@ import SessionListItem from "./SessionListItem.vue";
 import OutlinePanel from "./OutlinePanel.vue";
 import FilesPanel from "./FilesPanel.vue";
 import TerminalPanel from "./TerminalPanel.vue";
-import { useSessionSearch } from "@/composables/useSessionSearch";
+import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import ProfileSelector from "@/components/layout/ProfileSelector.vue";
 import ModelSelector from "@/components/layout/ModelSelector.vue";
 import LanguageSwitch from "@/components/layout/LanguageSwitch.vue";
@@ -50,7 +50,6 @@ const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const router = useRouter();
 const message = useMessage();
 const { t } = useI18n();
-const { openSessionSearch } = useSessionSearch();
 const currentUsername = computed(() => getStoredUsername());
 
 const showOutline = ref(false);
@@ -145,6 +144,7 @@ function startToolResize(event: PointerEvent) {
 }
 
 async function handleSessionClick(sessionId: string) {
+  chatStore.clearSessionCompletedUnread(sessionId);
   await router.push({
     name: "hermes.session",
     params: { sessionId },
@@ -427,6 +427,9 @@ watch(
 );
 
 async function openNewChatModal() {
+  isBatchMode.value = false;
+  selectedSessionKeys.value.clear();
+  showBatchDeleteConfirm.value = false;
   showNewChatModal.value = true;
   newChatLoading.value = true;
   try {
@@ -718,10 +721,6 @@ function openSettingsPage() {
   router.push({ name: "hermes.settings" });
 }
 
-function openGroupChatPage() {
-  router.push({ name: "hermes.groupChat" });
-}
-
 function handleLogout() {
   localStorage.clear();
   window.location.reload();
@@ -977,51 +976,11 @@ async function handleSessionModelCustomSubmit() {
       :class="{ collapsed: !showSessions }"
     >
       <div v-if="showSessions" class="page-sidebar-top">
-        <div class="page-sidebar-tabs" role="tablist" aria-label="Chat actions">
-          <button class="page-sidebar-tab" type="button" @click="openNewChatModal">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>{{ t("chat.newChat") }}</span>
-          </button>
-          <button class="page-sidebar-tab" type="button" @click="openSessionSearch">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-            >
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" />
-            </svg>
-            <span>{{ t("sidebar.search") }}</span>
-          </button>
-          <button class="page-sidebar-tab" type="button">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-            >
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-            <span>{{ t("sidebar.apiRelay") }}</span>
-          </button>
-        </div>
+        <PageSidebarNav
+          active="chat"
+          :primary-label="t('chat.newChat')"
+          @primary="openNewChatModal"
+        />
         <div class="session-list-toolbar">
           <NSelect
             class="session-profile-filter"
@@ -1137,25 +1096,6 @@ async function handleSessionModelCustomSubmit() {
             </NButton>
           </div>
         </div>
-        <div class="conversation-switch" role="tablist" aria-label="Conversation type">
-          <button
-            class="conversation-switch-tab active"
-            type="button"
-            role="tab"
-            aria-selected="true"
-          >
-            {{ t("sidebar.singleChat") }}
-          </button>
-          <button
-            class="conversation-switch-tab"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            @click="openGroupChatPage"
-          >
-            {{ t("sidebar.groupChat") }}
-          </button>
-        </div>
       </div>
       <div v-if="showSessions" class="session-items">
         <div
@@ -1184,6 +1124,7 @@ async function handleSessionModelCustomSubmit() {
               chatStore.sessions.length > 1
             "
             :streaming="chatStore.isSessionLive(s.id)"
+            :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
             :show-profile="true"
@@ -1206,6 +1147,7 @@ async function handleSessionModelCustomSubmit() {
             chatStore.sessions.length > 1
           "
           :streaming="chatStore.isSessionLive(s.id)"
+          :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
           :selectable="isBatchMode"
           :selected="isSessionSelected(s)"
           :show-profile="true"

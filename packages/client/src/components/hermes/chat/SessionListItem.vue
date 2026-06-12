@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   pinned: boolean
   canDelete: boolean
   streaming?: boolean
+  completedUnread?: boolean
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
@@ -129,8 +130,8 @@ onUnmounted(() => {
               <path d="M8 3l8 0 0 5 3 5-14 0 3-5z" />
             </svg>
           </span>
+          <span v-if="completedUnread" class="session-item-unread-dot" aria-hidden="true" />
           <span class="session-item-title">
-            <svg v-if="streaming" class="session-item-streaming" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
             {{ session.title }}
           </span>
           <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
@@ -145,11 +146,13 @@ onUnmounted(() => {
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
       </span>
       <span class="session-item-agent-row">
-        <img
-          class="session-item-agent-logo"
-          :src="sessionAgentLogo.src"
-          :alt="sessionAgentLogo.label"
-        >
+        <span class="session-item-agent-logo-wrap" :class="{ streaming }">
+          <img
+            class="session-item-agent-logo"
+            :src="sessionAgentLogo.src"
+            :alt="sessionAgentLogo.label"
+          >
+        </span>
         <span v-if="props.showProfile" class="session-item-profile">
           <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
           <span class="session-item-profile-name">{{ profileName }}</span>
@@ -228,7 +231,8 @@ onUnmounted(() => {
 
 .session-item-content {
   flex: 1;
-  overflow: hidden;
+  min-width: 0;
+  overflow: visible;
 }
 
 .session-item-title-row {
@@ -243,6 +247,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -256,30 +261,21 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.session-item-streaming {
-  display: inline-block;
-  flex-shrink: 0;
-  margin-right: 4px;
-  vertical-align: middle;
-  animation: spin 1.2s linear infinite;
-  color: var(--accent-primary);
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .session-item-pin {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   color: var(--accent-primary);
+}
+
+.session-item-unread-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.12);
 }
 
 .session-item-time {
@@ -353,16 +349,87 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  margin-top: 4px;
+  margin-top: 3px;
+  padding: 3px 0;
+}
+
+.session-item-agent-logo-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.session-item-agent-logo-wrap.streaming::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px #ff6b6b,
+    0 0 10px rgba(255, 107, 107, 0.4),
+    0 0 20px rgba(255, 107, 107, 0.2);
+  animation: rainbow-glow 4s linear infinite;
 }
 
 .session-item-agent-logo {
-  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
   width: 18px;
   height: 18px;
   padding: 2px;
-  border-radius: 50%;
+  border-radius: inherit;
   object-fit: contain;
   background: #fff;
+}
+
+@keyframes rainbow-glow {
+  0% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
+  16.66% {
+    box-shadow:
+      0 0 0 2px #feca57,
+      0 0 10px rgba(254, 202, 87, 0.4),
+      0 0 20px rgba(254, 202, 87, 0.2);
+  }
+  33.33% {
+    box-shadow:
+      0 0 0 2px #48dbfb,
+      0 0 10px rgba(72, 219, 251, 0.4),
+      0 0 20px rgba(72, 219, 251, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px #ff9ff3,
+      0 0 10px rgba(255, 159, 243, 0.4),
+      0 0 20px rgba(255, 159, 243, 0.2);
+  }
+  66.66% {
+    box-shadow:
+      0 0 0 2px #54a0ff,
+      0 0 10px rgba(84, 160, 255, 0.4),
+      0 0 20px rgba(84, 160, 255, 0.2);
+  }
+  83.33% {
+    box-shadow:
+      0 0 0 2px #5f27cd,
+      0 0 10px rgba(95, 39, 205, 0.4),
+      0 0 20px rgba(95, 39, 205, 0.2);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
 }
 </style>

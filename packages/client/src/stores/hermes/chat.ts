@@ -552,6 +552,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+  /** Sessions that completed while the user was viewing another session. */
+  const completedUnreadSessions = ref<Set<string>>(new Set())
   const sessionProfileFilter = ref<string | null>(null)
   /** sessionId → queued message count */
   const queueLengths = ref<Map<string, number>>(new Map())
@@ -623,6 +625,31 @@ export const useChatStore = defineStore('chat', () => {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
 
+  function isSessionCompletedUnread(sessionId: string): boolean {
+    return completedUnreadSessions.value.has(sessionId)
+  }
+
+  function clearSessionCompletedUnread(sessionId: string) {
+    if (!completedUnreadSessions.value.has(sessionId)) return
+    const next = new Set(completedUnreadSessions.value)
+    next.delete(sessionId)
+    completedUnreadSessions.value = next
+  }
+
+  function markSessionCompletedUnread(sessionId: string, hasQueue = false) {
+    if (hasQueue) {
+      return
+    }
+    const next = new Set(completedUnreadSessions.value)
+    next.add(sessionId)
+    completedUnreadSessions.value = next
+  }
+
+  function pruneCompletedUnreadSessions(existingIds: Set<string>) {
+    const next = new Set([...completedUnreadSessions.value].filter(id => existingIds.has(id)))
+    if (next.size !== completedUnreadSessions.value.size) completedUnreadSessions.value = next
+  }
+
   function clearActiveSession() {
     const sid = activeSessionId.value
     activeSessionId.value = null
@@ -650,6 +677,7 @@ export const useChatStore = defineStore('chat', () => {
         if (prev?.contextTokens != null) s.contextTokens = prev.contextTokens
       }
       sessions.value = fresh
+      pruneCompletedUnreadSessions(new Set(sessions.value.map(s => s.id)))
 
       // Restore route-selected session first (tab-local source of truth),
       // then current in-memory session, then persisted legacy/default choice,
@@ -738,6 +766,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       sessions.value = next
+      pruneCompletedUnreadSessions(new Set(next.map(s => s.id)))
 
       // Defensive: re-bind activeSession to the (same) object now in the array,
       // by id, in case anything above changed array membership.
@@ -846,6 +875,7 @@ export const useChatStore = defineStore('chat', () => {
     const legacyActiveKey = legacyStorageKey()
     if (legacyActiveKey) removeItem(legacyActiveKey)
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
+    clearSessionCompletedUnread(sessionId)
 
     if (!activeSession.value) return
 
@@ -1995,6 +2025,7 @@ export const useChatStore = defineStore('chat', () => {
           if (eventRunMarker) activeRunMarker = eventRunMarker
           switch (evt.event) {
             case 'run.started':
+              clearSessionCompletedUnread(sid)
               serverWorking.value.add(sid)
               clearAgentEventMessages(sid)
               setAbortState(null)
@@ -2402,7 +2433,9 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
 
-              if ((evt as any).queue_remaining > 0) {
+              const hasQueue = (evt as any).queue_remaining > 0
+              markSessionCompletedUnread(sid, hasQueue)
+              if (hasQueue) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
               } else {
                 cleanup()
@@ -2590,6 +2623,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.started':
+          clearSessionCompletedUnread(sid)
           serverWorking.value.add(sid)
           clearAgentEventMessages(sid)
           setAbortState(null)
@@ -2953,11 +2987,13 @@ export const useChatStore = defineStore('chat', () => {
           }
 
           if (!hasQueue) {
+            markSessionCompletedUnread(sid)
             cleanup()
             activeAssistantMessageId = null
             reasoningAssistantMessageId = null
             activeRunMarker = null
           } else {
+            markSessionCompletedUnread(sid, true)
             // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
             reasoningAssistantMessageId = null
@@ -3293,6 +3329,8 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     isRunActive,
     isSessionLive,
+    isSessionCompletedUnread,
+    clearSessionCompletedUnread,
     sessionProfileFilter,
     compressionState,
     abortState,
