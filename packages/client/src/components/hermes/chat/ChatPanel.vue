@@ -2761,20 +2761,19 @@ async function handleSessionModelCustomSubmit() {
   &::before {
     content: "";
     position: absolute;
-    left: 2px;
+    left: 1px;
     top: 50%;
-    width: 10px;
-    height: 36px;
+    width: 12px;
+    height: 38px;
     transform: translateY(-50%);
-    border-radius: 999px;
+    border-radius: 6px;
     background:
-      linear-gradient($border-color, $border-color) center / 1px 100% no-repeat,
-      linear-gradient($text-muted, $text-muted) center 9px / 2px 2px no-repeat,
-      linear-gradient($text-muted, $text-muted) center 17px / 2px 2px no-repeat,
-      linear-gradient($text-muted, $text-muted) center 25px / 2px 2px no-repeat,
+      linear-gradient($text-muted, $text-muted) center 12px / 6px 1px no-repeat,
+      linear-gradient($text-muted, $text-muted) center 19px / 6px 1px no-repeat,
+      linear-gradient($text-muted, $text-muted) center 26px / 6px 1px no-repeat,
       $bg-card;
     border: 1px solid $border-color;
-    opacity: 0.78;
+    opacity: 0.9;
     transition: all $transition-fast;
     z-index: 2;
   }
@@ -2785,10 +2784,9 @@ async function handleSessionModelCustomSubmit() {
 
   &:hover::before {
     background:
-      linear-gradient(var(--accent-primary), var(--accent-primary)) center / 1px 100% no-repeat,
-      linear-gradient($text-muted, $text-muted) center 9px / 2px 2px no-repeat,
-      linear-gradient($text-muted, $text-muted) center 17px / 2px 2px no-repeat,
-      linear-gradient($text-muted, $text-muted) center 25px / 2px 2px no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 12px / 6px 1px no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 19px / 6px 1px no-repeat,
+      linear-gradient(var(--accent-primary), var(--accent-primary)) center 26px / 6px 1px no-repeat,
       $bg-card;
     border-color: var(--accent-primary);
     opacity: 1;
