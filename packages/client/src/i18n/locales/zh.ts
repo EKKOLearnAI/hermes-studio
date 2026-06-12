@@ -1221,6 +1221,9 @@ export default {
       urlPlaceholder: '粘贴图片/视频 URL，留空则使用默认',
       noPreview: '未设置自定义动画',
       enableThinking: '启用思考动画',
+      delete: '删除动画',
+      maxReached: '已达到最大数量 {max} 个',
+      savedItems: '已保存 {count} 个动画',
     },
     runtime: {
       activeProfile: '当前：{name}',

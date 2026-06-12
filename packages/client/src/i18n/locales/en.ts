@@ -1229,6 +1229,9 @@ export default {
       urlPlaceholder: 'Paste image/video URL or leave empty for default',
       noPreview: 'No custom animation set',
       enableThinking: 'Enable Thinking Animation',
+      delete: 'Delete animation',
+      maxReached: 'Maximum {max} animations reached',
+      savedItems: '{count} animation(s) saved',
     },
     runtime: {
       activeProfile: 'Active: {name}',
