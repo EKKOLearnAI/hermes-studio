@@ -1,3 +1,4 @@
+import { setupTerminalManager } from "./terminal-manager"
 import { app, BrowserWindow, Menu, Tray, shell, ipcMain, nativeImage, Notification } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -535,7 +536,8 @@ function runDesktopApp() {
     showMainWindow()
   })
 
-  app.whenReady().then(() => {
+  setupTerminalManager()
+app.whenReady().then(() => {
     if (QUIT_EXISTING) {
       quitApp()
       return

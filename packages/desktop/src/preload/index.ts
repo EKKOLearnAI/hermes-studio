@@ -8,6 +8,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close'): Promise<{ isMaximized: boolean }> => ipcRenderer.invoke('hermes-desktop:window-control', action),
   platform: process.platform,
   isDesktop: true,
+  createTerminal: (id: string, cwd?: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:create', { id, cwd }),
+  writeToTerminal: (id: string, data: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:write', { id, data }),
+  resizeTerminal: (id: string, cols: number, rows: number): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:resize', { id, cols, rows }),
+  killTerminal: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:kill', { id }),
 })
 
 const API_KEY_LS = 'hermes_api_key'
