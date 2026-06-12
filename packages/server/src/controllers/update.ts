@@ -333,41 +333,6 @@ function getCurrentNodeEnv() {
   }
 }
 
-function runNpm(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
-  const env = {
-    ...getCurrentNodeEnv(),
-    ...options.env,
-  }
-  const execution = npmExecution(args, env)
-  const label = options.logLabel || ''
-
-  if (label) appendPreviewActionLog(`${label}: ${execution.command} ${execution.args.join(' ')}${options.cwd ? `\ncwd: ${options.cwd}` : ''}`)
-  try {
-    const output = execFileSync(execution.command, execution.args, {
-      encoding: 'utf-8',
-      timeout: options.timeout,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
-      cwd: options.cwd,
-      windowsHide: true,
-    }).trim()
-    if (label) {
-      if (output) appendPreviewActionLog(`${label} output:\n${output}`)
-      appendPreviewActionLog(`${label} completed`)
-    }
-    return output
-  } catch (err: any) {
-    if (label) {
-      const stderr = err.stderr?.toString() || ''
-      const stdout = err.stdout?.toString() || ''
-      appendPreviewActionLog(`${label} failed`)
-      if (stdout) appendPreviewActionLog(`${label} stdout:\n${stdout}`)
-      if (stderr) appendPreviewActionLog(`${label} stderr:\n${stderr}`)
-    }
-    throw err
-  }
-}
-
 async function runNpmAsync(args: string[], options: { timeout?: number; cwd?: string; logLabel?: string; env?: NodeJS.ProcessEnv } = {}) {
   const env = {
     ...getCurrentNodeEnv(),
@@ -997,30 +962,30 @@ async function checkoutPreview(ref: string) {
   appendPreviewActionLog(`preview tag ready: ${ref}`)
 }
 
-function getGlobalRoot() {
-  return runNpm(['root', '-g'])
+async function getGlobalRootAsync() {
+  return runNpmAsync(['root', '-g'])
 }
 
-function getGlobalCliScript() {
-  const cli = getGlobalPackageBin(getGlobalRoot())
+async function getGlobalCliScriptAsync() {
+  const cli = getGlobalPackageBin(await getGlobalRootAsync())
   if (!existsSync(cli)) {
     throw new Error(`Updated hermes-web-ui CLI not found: ${cli}`)
   }
   return cli
 }
 
-function runUpdateInstall() {
+async function runUpdateInstall() {
   try {
-    runNpm(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
+    await runNpmAsync(['cache', 'clean', '--force'], { timeout: 2 * 60 * 1000 })
   } catch (err) {
     console.warn('[update] failed to clean npm cache, continuing update:', err)
   }
 
-  return runNpm(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
+  return runNpmAsync(['install', '-g', 'hermes-web-ui@latest'], { timeout: 10 * 60 * 1000 })
 }
 
-function spawnRestart(port: string) {
-  const cli = getGlobalCliScript()
+async function spawnRestart(port: string) {
+  const cli = await getGlobalCliScriptAsync()
 
   return spawn(process.execPath, [cli, 'restart', '--port', port], {
     detached: true,
@@ -1041,44 +1006,51 @@ export async function handleUpdate(ctx: any) {
   }
 
   updateInProgress = true
+  let keepUpdateLockForRestart = false
 
   try {
-    const output = runUpdateInstall()
+    const output = await runUpdateInstall()
 
     ctx.body = {
       success: true,
       message: output.trim() || 'hermes-web-ui updated successfully',
     }
 
+    keepUpdateLockForRestart = true
     setTimeout(() => {
-      let restart
-      try {
-        restart = spawnRestart(process.env.PORT || '8648')
-      } catch (err) {
-        updateInProgress = false
-        console.error('[update] failed to spawn restart:', err)
-        return
-      }
-
-      restart.on('error', (err) => {
-        updateInProgress = false
-        console.error('[update] restart process failed:', err)
-      })
-      restart.on('exit', (code, signal) => {
-        updateInProgress = false
-        const failed = (typeof code === 'number' && code !== 0) || Boolean(signal)
-        if (failed) {
-          console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+      void (async () => {
+        let restart
+        try {
+          restart = await spawnRestart(process.env.PORT || '8648')
+        } catch (err) {
+          updateInProgress = false
+          console.error('[update] failed to spawn restart:', err)
+          return
         }
-      })
-      restart.unref()
+
+        restart.on('error', (err) => {
+          updateInProgress = false
+          console.error('[update] restart process failed:', err)
+        })
+        restart.on('exit', (code, signal) => {
+          updateInProgress = false
+          const failed = (typeof code === 'number' && code !== 0) || Boolean(signal)
+          if (failed) {
+            console.error(`[update] restart process exited before replacing server: code=${code} signal=${signal}`)
+          }
+        })
+        restart.unref()
+      })()
     }, 3000)
   } catch (err: any) {
-    updateInProgress = false
     ctx.status = 500
     ctx.body = {
       success: false,
       message: err.stderr?.toString() || err.message || String(err),
+    }
+  } finally {
+    if (!keepUpdateLockForRestart) {
+      updateInProgress = false
     }
   }
 }
