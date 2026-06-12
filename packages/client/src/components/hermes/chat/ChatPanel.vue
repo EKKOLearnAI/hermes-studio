@@ -2731,6 +2731,7 @@ async function handleSessionModelCustomSubmit() {
   min-width: 320px;
   max-width: 100%;
   background: $bg-card;
+  border-left: 1px solid $border-color;
   display: flex;
   min-height: 0;
   overflow: hidden;
