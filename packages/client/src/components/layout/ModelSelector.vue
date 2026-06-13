@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -25,10 +25,12 @@ const activeModelGroups = computed(() => {
   return profileModels?.groups || []
 })
 
-const providerOptions = computed(() => {
-  const current = appStore.selectedProvider
+const providerOptions = computed(() =>
+  activeModelGroups.value.map(g => ({ label: g.label, value: g.provider }))
+)
+
+watch(() => appStore.selectedProvider, (current) => {
   customProvider.value = current
-  return activeModelGroups.value.map(g => ({ label: g.label, value: g.provider }))
 })
 
 const modelGroupsWithCustom = computed(() =>
@@ -47,11 +49,14 @@ const selectedModelInActiveProfile = computed(() =>
   ),
 )
 
-const selectedDisplayName = computed(() =>
-  selectedModelInActiveProfile.value
-    ? appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider)
-    : '',
-)
+const selectedDisplayName = computed(() => {
+  if (selectedModelInActiveProfile.value)
+    return appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider)
+  // 即使当前模型不在活跃 profile 的模型组中，仍显示原始模型名
+  if (appStore.selectedModel)
+    return appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider)
+  return ''
+})
 
 function isCustomModel(model: string, provider: string) {
   return (appStore.customModels[provider] || []).includes(model)
