@@ -168,6 +168,9 @@ CLI maintenance commands:
 
 ```bash
 # Delete persisted login IP lock records
+
+[![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/ekkolearnai-hermes-web-ui)
+
 hermes-web-ui clear-login-locks
 
 # Delete login locks and restart the running Web UI process
