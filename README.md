@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ekkolearnai-hermes-studio-badge.png)](https://mseep.ai/app/ekkolearnai-hermes-studio)
+
 <p align="center">
   <strong>Hermes Studio</strong>
   <a href="./README_zh.md">中文</a>
