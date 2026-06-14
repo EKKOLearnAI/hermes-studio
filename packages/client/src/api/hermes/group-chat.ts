@@ -48,6 +48,8 @@ export interface ChatMessage {
     reasoning_details?: string | null
     reasoning_content?: string | null
     isStreaming?: boolean
+    /** Stable ordering key set at stream start; unchanged across deltas and completion */
+    firstSeenAt?: number
     toolName?: string
     toolCallId?: string
     toolArgs?: unknown

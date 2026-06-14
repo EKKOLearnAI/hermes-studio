@@ -110,6 +110,7 @@ function mergeFinalMessage(existing: ChatMessage | null, msg: ChatMessage): Chat
         reasoning: hasText(msg.reasoning) ? msg.reasoning : existing?.reasoning ?? msg.reasoning ?? null,
         reasoning_content: hasText(msg.reasoning_content) ? msg.reasoning_content : existing?.reasoning_content ?? msg.reasoning_content ?? null,
         isStreaming: false,
+        firstSeenAt: existing?.firstSeenAt ?? msg.firstSeenAt ?? msg.timestamp,
         attachments: existing?.attachments || msg.attachments,
     }
 }
@@ -284,7 +285,7 @@ const currentUserAvatar = ref('')
     }
 
     // ─── Computed ───────────────────────────────────────────
-    const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => a.timestamp - b.timestamp)))
+    const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => (a.firstSeenAt ?? a.timestamp) - (b.firstSeenAt ?? b.timestamp))))
 
     const memberNames = computed(() => {
         return members.value.map(m => m.name)
@@ -388,6 +389,7 @@ const currentUserAvatar = ref('')
                 }
                 messages.value = [...messages.value]
             } else {
+                msg.firstSeenAt = msg.firstSeenAt ?? msg.timestamp
                 messages.value.push(msg)
                 loadedMessageCount.value += 1
                 totalMessages.value = Math.max(totalMessages.value + 1, loadedMessageCount.value)
