@@ -36,6 +36,13 @@ function codingAgentId(data: CodingAgentRunSocketData): CodingAgentId {
   return value === 'codex' ? 'codex' : 'claude-code'
 }
 
+function codexHermesMcpToolPrompt(): string[] {
+  return [
+    'Hermes Web UI LAN device capabilities are MCP tools, not MCP resources or resource templates. Do not use list_mcp_resources or list_mcp_resource_templates to decide whether Hermes LAN tools exist.',
+    'For LAN devices, call mcp__hermes-studio__hermes_lan_devices_scan to refresh discovery and mcp__hermes-studio__hermes_lan_devices_list to list known devices. Include profile and token arguments on each call.',
+  ]
+}
+
 export async function handleCodingAgentRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
@@ -93,6 +100,7 @@ export async function handleCodingAgentRun(
     const runPrompt = [
       includeBaseSystemPrompt ? getSystemPrompt() : '',
       ...authPrompt,
+      ...(agentId === 'codex' && authPrompt.length > 0 ? codexHermesMcpToolPrompt() : []),
     ].filter(Boolean).join('\n')
     await sendCodingAgentRunInput(sessionId, inputText, runPrompt)
   } catch (err) {

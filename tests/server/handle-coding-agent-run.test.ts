@@ -176,7 +176,12 @@ describe('handleCodingAgentRun', () => {
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith(
       'session-1',
       'hello codex',
-      'system prompt\n[Current Hermes profile: default]\n[Current Hermes Web UI model run token: run-token]',
+      expect.stringContaining('system prompt\n[Current Hermes profile: default]\n[Current Hermes Web UI model run token: run-token]'),
     )
+    const prompt = sendCodingAgentRunInputMock.mock.calls.at(-1)?.[2]
+    expect(prompt).toContain('Hermes Web UI LAN device capabilities are MCP tools')
+    expect(prompt).toContain('Do not use list_mcp_resources or list_mcp_resource_templates')
+    expect(prompt).toContain('mcp__hermes-studio__hermes_lan_devices_scan')
+    expect(prompt).toContain('mcp__hermes-studio__hermes_lan_devices_list')
   })
 })

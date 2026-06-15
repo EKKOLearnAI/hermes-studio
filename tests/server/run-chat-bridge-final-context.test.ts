@@ -242,6 +242,8 @@ describe('bridge run final context usage', () => {
     expect(instructions).toContain('[Current Hermes Web UI model run token: model-run-token]')
     expect(instructions).toContain('pass the current Hermes profile as the profile argument')
     expect(instructions).toContain('token argument')
+    expect(instructions).not.toContain('list_mcp_resources')
+    expect(instructions).not.toContain('mcp__hermes-studio__')
     expect(instructions).toContain('expires in 1 hour')
   })
 
