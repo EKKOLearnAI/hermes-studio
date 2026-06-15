@@ -1125,6 +1125,10 @@ defineExpose({
       width: 100%;
     }
   }
+
+  .tool-calls-panel .tool-call-item {
+    width: 100%;
+  }
 }
 
 @keyframes queue-spin {
@@ -1336,7 +1340,8 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  width: 420px;
+  max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
   font-size: 11px;
@@ -1361,8 +1366,11 @@ defineExpose({
 
   .tool-call-name {
     font-family: $font-code;
-    flex-shrink: 0;
+    flex: 0 1 auto;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tool-call-preview {
