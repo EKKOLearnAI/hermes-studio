@@ -49,9 +49,14 @@ describe('hermes-web-ui MCP server', () => {
         res.setHeader('content-type', 'application/json')
         res.end(JSON.stringify({
           openapi: '3.0.3',
+          tags: [
+            { name: 'Chat Run', description: 'Chat run operations' },
+            { name: 'Testing', description: 'Test helper operations' },
+          ],
           paths: {
             '/api/test-public-requester': {
               post: {
+                tags: ['Testing'],
                 requestBody: {
                   required: false,
                   content: {
@@ -66,6 +71,7 @@ describe('hermes-web-ui MCP server', () => {
             },
             '/api/chat-run/runs': {
               post: {
+                tags: ['Chat Run'],
                 requestBody: {
                   required: true,
                   content: {
@@ -152,9 +158,7 @@ describe('hermes-web-ui MCP server', () => {
         body: { ok: true },
       },
     })
-    writeRpc(child, 4, 'resources/read', {
-      uri: 'hermes://openapi.json',
-    })
+    writeRpc(child, 4, 'resources/list')
     writeRpc(child, 5, 'tools/call', {
       name: 'hermes_api_request',
       arguments: {
@@ -170,12 +174,17 @@ describe('hermes-web-ui MCP server', () => {
         method: 'POST',
       },
     })
+    writeRpc(child, 9, 'tools/call', {
+      name: 'hermes_api_openapi_get',
+      arguments: {},
+    })
 
     const initialized = await waitForRpc(responses, 1)
     expect(initialized.result.serverInfo).toMatchObject({
       name: 'hermes-web-ui-mcp',
       version: pkg.version,
     })
+    expect(initialized.result.capabilities).toEqual({ tools: {} })
 
     const list = await waitForRpc(responses, 2)
     expect(list.result.tools.some((tool: any) => tool.name === 'hermes_api_request')).toBe(true)
@@ -199,15 +208,9 @@ describe('hermes-web-ui MCP server', () => {
     })
 
     const resource = await waitForRpc(responses, 4)
-    expect(resource.error).toBeUndefined()
-    expect(resource.result.contents[0]).toMatchObject({
-      uri: 'hermes://openapi.json',
-      mimeType: 'application/json',
-    })
-    expect(JSON.parse(resource.result.contents[0].text)).toMatchObject({
-      openapi: '3.0.3',
-      authorization: 'Bearer profile-token',
-      profile: 'research',
+    expect(resource.error).toMatchObject({
+      code: -32601,
+      message: 'Method not found: resources/list',
     })
 
     const invalid = await waitForRpc(responses, 5)
@@ -218,18 +221,46 @@ describe('hermes-web-ui MCP server', () => {
     const compactManual = await waitForRpc(responses, 7)
     const compactPayload = JSON.parse(compactManual.result.content[0].text)
     expect(compactPayload).toMatchObject({
+      moduleCount: 2,
       operationCount: 1,
       operations: [{
         method: 'POST',
         path: '/api/chat-run/runs',
-        required: { body: ['input'] },
+        requestBody: {
+          fields: [
+            { name: 'input', required: true, type: 'string' },
+          ],
+        },
       }],
     })
     expect(compactPayload.paths).toBeUndefined()
 
+    const moduleManual = await waitForRpc(responses, 9)
+    const modulePayload = JSON.parse(moduleManual.result.content[0].text)
+    expect(modulePayload).toMatchObject({
+      moduleCount: 2,
+      operationCount: 2,
+      operationsOmitted: true,
+      modules: expect.arrayContaining([
+        {
+          tag: 'Chat Run',
+          operationCount: 1,
+          purpose: 'Start a chat or coding-agent run through the HTTP bridge and wait for the result.',
+          keywords: expect.arrayContaining(['chat', 'run']),
+          description: 'Chat run operations',
+        },
+        { tag: 'Testing', operationCount: 1, description: 'Test helper operations' },
+      ]),
+    })
+    expect(modulePayload.operations).toBeUndefined()
+
     const optionalManual = await waitForRpc(responses, 8)
     const optionalPayload = JSON.parse(optionalManual.result.content[0].text)
-    expect(optionalPayload.operations[0].required).toBeUndefined()
+    expect(optionalPayload.operations[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/test-public-requester',
+      requestBody: { required: false, fields: [] },
+    })
 
     writeRpc(child, 6, 'tools/call', {
       name: 'hermes_api_request',

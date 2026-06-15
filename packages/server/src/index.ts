@@ -303,8 +303,7 @@ export async function bootstrap() {
   registerDesktopShutdownRoute(app)
 
   // Register all routes (handles auth internally)
-  const proxyMiddleware = registerRoutes(app, [requireUserJwt, resolveUserProfile])
-  app.use(proxyMiddleware)
+  registerRoutes(app, [requireUserJwt, resolveUserProfile])
   console.log('[bootstrap] routes registered')
 
   // SPA fallback

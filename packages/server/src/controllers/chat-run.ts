@@ -1,4 +1,5 @@
 import type { Context } from 'koa'
+import { randomUUID } from 'crypto'
 import { io, type Socket } from 'socket.io-client'
 import { config } from '../config'
 
@@ -77,6 +78,16 @@ function userBody(body: ChatRunPayload): Record<string, unknown> {
   return payload
 }
 
+function generatedSessionId(): string {
+  return randomUUID()
+}
+
+function needsGeneratedCliSessionId(payload: Record<string, unknown>): boolean {
+  const source = typeof payload.source === 'string' ? payload.source.trim() : ''
+  const sessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : ''
+  return !sessionId && (!source || source === 'cli')
+}
+
 export async function runOnce(ctx: Context) {
   const body = (ctx.request.body || {}) as ChatRunPayload
   if (body.input == null) {
@@ -90,6 +101,7 @@ export async function runOnce(ctx: Context) {
   const token = bearerToken(ctx)
   const profile = profileFrom(ctx, body)
   const payload: Record<string, unknown> = { ...userBody(body), profile }
+  if (needsGeneratedCliSessionId(payload)) payload.session_id = generatedSessionId()
 
   ctx.body = await new Promise((resolve) => {
     const events: ChatRunEvent[] = []

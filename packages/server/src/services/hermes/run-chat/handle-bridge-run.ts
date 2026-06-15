@@ -37,6 +37,7 @@ import type { AuthenticatedUser } from '../../../middleware/user-auth'
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
 const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
+const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 5_000
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -520,7 +521,10 @@ export async function handleBridgeRun(
       queue_length: state.queue.length || 0,
     })
 
+    let lastChunk: AgentBridgeOutput | null = null
+    let sawTerminalChunk = false
     for await (const chunk of bridge.streamOutput(started.run_id)) {
+      lastChunk = chunk
       await applyBridgeChunkAsync(
         nsp,
         socket,
@@ -540,9 +544,48 @@ export async function handleBridgeRun(
         data.model_groups,
       )
       if (chunk.done) {
+        sawTerminalChunk = true
         void pollBridgeGeneratedTitleAfterRun(bridge, session_id, profile, emit)
         break
       }
+    }
+    if (!sawTerminalChunk && state.activeRunMarker === runMarker && state.isWorking) {
+      bridgeLogger.warn({
+        sessionId: session_id,
+        runId: started.run_id,
+      }, '[chat-run-socket] bridge stream ended without terminal chunk; completing local run state')
+      const terminalChunk: AgentBridgeOutput = {
+        ok: true,
+        run_id: lastChunk?.run_id || started.run_id,
+        session_id,
+        status: 'complete',
+        delta: '',
+        cursor: typeof lastChunk?.cursor === 'number' ? lastChunk.cursor : 0,
+        output: lastChunk?.output || state.bridgeOutput || '',
+        done: true,
+        result: lastChunk?.result,
+        error: lastChunk?.error ?? null,
+        events: [],
+        event_cursor: typeof lastChunk?.event_cursor === 'number' ? lastChunk.event_cursor : 0,
+      }
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        session_id,
+        runMarker,
+        terminalChunk,
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        fullInstructions,
+        { model: resolvedModel, provider: resolvedProvider },
+        currentInputTokens,
+        shouldPersistUserMessage && displayRole === 'user',
+        data.model_groups,
+      )
     }
   } catch (err: any) {
     if (state.activeRunMarker !== runMarker) return
@@ -1310,7 +1353,11 @@ async function maybeEnqueueGoalContinuation(args: {
 
   let decision
   try {
-    decision = await args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile)
+    decision = await withTimeout(
+      args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile),
+      BRIDGE_GOAL_EVALUATE_TIMEOUT_MS,
+      'goal evaluation timed out',
+    )
   } catch (err) {
     logger.warn(err, '[chat-run-socket] /goal evaluation failed for session %s', args.sessionId)
     return
@@ -1406,4 +1453,20 @@ function emitGoalStatus(
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      err => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }

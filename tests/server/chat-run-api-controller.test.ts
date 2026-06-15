@@ -76,4 +76,41 @@ describe('chat-run HTTP API controller', () => {
     })
     expect(ctx.body.events).toHaveLength(3)
   })
+
+  it('generates a session id for cli runs when none is provided', async () => {
+    const socket = makeSocket()
+    ioMock.mockReturnValue(socket)
+
+    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const ctx = {
+      get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
+      state: { profile: { name: 'default' } },
+      request: {
+        body: {
+          source: 'cli',
+          input: 'start a new chat',
+        },
+      },
+      status: 200,
+      body: undefined as any,
+    }
+
+    const pending = runOnce(ctx as any)
+    socket.emitNative('connect')
+    await pending
+
+    const emittedPayload = socket.emit.mock.calls.find(call => call[0] === 'run')?.[1] as Record<string, unknown>
+    expect(emittedPayload.session_id).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/))
+    expect(emittedPayload).toMatchObject({
+      source: 'cli',
+      input: 'start a new chat',
+      profile: 'default',
+    })
+    expect(ctx.status).toBe(200)
+    expect(ctx.body).toMatchObject({
+      ok: true,
+      status: 'completed',
+      session_id: emittedPayload.session_id,
+    })
+  })
 })

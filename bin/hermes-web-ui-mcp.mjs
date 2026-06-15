@@ -128,16 +128,6 @@ function jsonText(data) {
   }
 }
 
-function resourceText(uri, data) {
-  return {
-    contents: [{
-      uri,
-      mimeType: 'application/json',
-      text: JSON.stringify(data, null, 2),
-    }],
-  }
-}
-
 function errorText(message) {
   return {
     isError: true,
@@ -339,53 +329,183 @@ function schemaType(schema) {
   return undefined
 }
 
-function compactSchemaProperties(schema) {
-  if (!isRecord(schema?.properties)) return undefined
-  const result = {}
-  for (const [name, property] of Object.entries(schema.properties)) {
-    result[name] = {
-      type: schemaType(property) || 'unknown',
-      ...(property?.description ? { description: String(property.description) } : {}),
-      ...(property?.enum ? { enum: property.enum } : {}),
+function compactParameters(parameters) {
+  const path = []
+  const query = []
+  for (const parameter of Array.isArray(parameters) ? parameters : []) {
+    if (!parameter?.name) continue
+    const item = {
+      name: parameter.name,
+      required: parameter.required === true,
+      type: schemaType(parameter.schema) || 'string',
+      ...(Array.isArray(parameter.schema?.enum) ? { enum: parameter.schema.enum } : {}),
     }
+    if (parameter.in === 'path') path.push(item)
+    if (parameter.in === 'query') query.push(item)
   }
-  return result
+  return { path, query }
+}
+
+function compactBodyFields(requestBody) {
+  const schema = requestBody?.content?.['application/json']?.schema
+  if (!isRecord(schema?.properties)) return []
+  const required = new Set(Array.isArray(schema.required) ? schema.required : [])
+  return Object.entries(schema.properties).map(([name, property]) => {
+    return {
+      name,
+      required: required.has(name),
+      type: schemaType(property) || 'unknown',
+      ...(Array.isArray(property?.enum) ? { enum: property.enum } : {}),
+      ...(property?.description ? { description: String(property.description) } : {}),
+    }
+  })
+}
+
+const moduleHints = {
+  'API Docs': {
+    purpose: 'Discover the Web UI API catalog and generated OpenAPI metadata.',
+    keywords: ['操作手册', '接口文档', 'API 文档', 'openapi', 'route catalog'],
+  },
+  Auth: {
+    purpose: 'Manage Web UI authentication state and tokens.',
+    keywords: ['auth', 'login', 'token', 'session'],
+  },
+  'Chat Run': {
+    purpose: 'Start a chat or coding-agent run through the HTTP bridge and wait for the result.',
+    keywords: ['chat', 'run', 'execute', 'agent', 'model'],
+  },
+  'Coding Agents': {
+    purpose: 'Install, configure, and run coding agents such as Codex or Claude Code.',
+    keywords: ['codex', 'claude', 'coding agent', 'install', 'run'],
+  },
+  Config: {
+    purpose: 'Read and update Hermes Web UI configuration.',
+    keywords: ['config', 'settings', 'preferences'],
+  },
+  Devices: {
+    purpose: 'Discover, pair, and operate LAN peer devices, terminals, commands, and file transfer.',
+    keywords: ['device', 'lan', 'peer', 'terminal', 'file transfer'],
+  },
+  Files: {
+    purpose: 'Browse and operate files exposed through the Hermes file browser.',
+    keywords: ['files', 'browser', 'read', 'list', 'download'],
+  },
+  'Group Chat': {
+    purpose: 'Manage multi-participant group chat rooms and messages.',
+    keywords: ['group chat', 'room', 'participants', 'messages'],
+  },
+  Jobs: {
+    purpose: 'Create, inspect, update, and run scheduled or background jobs.',
+    keywords: ['jobs', 'schedule', 'cron', 'tasks', 'automation'],
+  },
+  Kanban: {
+    purpose: 'Manage boards, columns, cards, and task workflow state.',
+    keywords: ['kanban', 'board', 'task', 'card', 'workflow'],
+  },
+  MCP: {
+    purpose: 'Manage MCP servers, tools, and Web UI MCP integration.',
+    keywords: ['mcp', 'tools', 'server', 'integration'],
+  },
+  Media: {
+    purpose: 'Generate or manage media assets.',
+    keywords: ['media', 'image', 'generation', 'asset'],
+  },
+  Memory: {
+    purpose: 'Read and manage agent memory files.',
+    keywords: ['memory', 'agent memory', 'notes'],
+  },
+  Models: {
+    purpose: 'Inspect and configure model ids available to Hermes.',
+    keywords: ['models', 'model id', 'llm'],
+  },
+  Profiles: {
+    purpose: 'Manage Hermes profiles and profile-scoped runtime state.',
+    keywords: ['profile', 'workspace', 'account'],
+  },
+  Providers: {
+    purpose: 'Manage model provider configuration and credentials metadata.',
+    keywords: ['provider', 'model provider', 'api key', 'base url'],
+  },
+  Sessions: {
+    purpose: 'List, inspect, create, update, and delete chat sessions.',
+    keywords: ['sessions', 'conversation', 'chat history'],
+  },
+  Skills: {
+    purpose: 'Browse and manage skills available to Hermes agents.',
+    keywords: ['skills', 'agent skill', 'capability'],
+  },
+  Terminal: {
+    purpose: 'Open interactive terminal sessions over WebSocket.',
+    keywords: ['terminal', 'shell', 'websocket'],
+  },
+  'Write Gate': {
+    purpose: 'Review and approve Hermes Agent write operations.',
+    keywords: ['approval', 'write gate', 'review'],
+  },
 }
 
 function compactOperation(path, method, operation) {
-  const parameters = Array.isArray(operation.parameters) ? operation.parameters : []
-  const requestBody = operation.requestBody
-  const bodySchema = requestBody?.content?.['application/json']?.schema
-  const required = {
-    path: parameters.filter(p => p?.in === 'path' && p.required).map(p => p.name),
-    query: parameters.filter(p => p?.in === 'query' && p.required).map(p => p.name),
-    body: Array.isArray(bodySchema?.required) ? bodySchema.required : [],
-  }
-  const hasRequired = required.path.length || required.query.length || required.body.length
-  const properties = compactSchemaProperties(bodySchema)
+  const parameters = compactParameters(operation.parameters)
+  const body = compactBodyFields(operation.requestBody)
   return {
     method: method.toUpperCase(),
     path,
     ...(operation.operationId ? { operationId: operation.operationId } : {}),
     ...(Array.isArray(operation.tags) && operation.tags.length ? { tags: operation.tags } : {}),
     ...(operation.summary ? { summary: operation.summary } : {}),
-    ...(operation.description ? { description: operation.description } : {}),
-    ...(hasRequired ? { required } : {}),
-    ...(requestBody ? {
+    ...(parameters.path.length ? { pathParams: parameters.path } : {}),
+    ...(parameters.query.length ? { queryParams: parameters.query } : {}),
+    ...(operation.requestBody ? {
       requestBody: {
-        required: requestBody.required === true,
-        type: schemaType(bodySchema) || 'object',
-        ...(properties ? { properties } : {}),
+        required: operation.requestBody.required === true,
+        fields: body,
       },
     } : {}),
   }
 }
 
+function collectOpenApiModules(openapi) {
+  const descriptions = new Map()
+  for (const tag of Array.isArray(openapi?.tags) ? openapi.tags : []) {
+    if (typeof tag?.name === 'string') descriptions.set(tag.name, String(tag.description || ''))
+  }
+
+  const counts = new Map()
+  const paths = isRecord(openapi?.paths) ? openapi.paths : {}
+  for (const methods of Object.values(paths)) {
+    if (!isRecord(methods)) continue
+    for (const [method, operation] of Object.entries(methods)) {
+      if (!['get', 'post', 'put', 'patch', 'delete', 'head'].includes(method)) continue
+      const tags = Array.isArray(operation?.tags) && operation.tags.length ? operation.tags : ['Untagged']
+      for (const tag of tags) counts.set(tag, (counts.get(tag) || 0) + 1)
+    }
+  }
+
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([tag, operationCount]) => ({
+      tag,
+      operationCount,
+      ...(moduleHints[tag]?.purpose ? { purpose: moduleHints[tag].purpose } : {}),
+      ...(moduleHints[tag]?.keywords ? { keywords: moduleHints[tag].keywords } : {}),
+      ...(descriptions.get(tag) ? { description: descriptions.get(tag) } : {}),
+    }))
+}
+
 function compactOpenApiDocument(openapi, args = {}) {
   if (args.full === true) return openapi
   const filterPath = typeof args.path === 'string' && args.path.trim() ? pathWithoutQuery(args.path.trim()) : ''
-  const filterMethod = normalizeApiMethod(args.method)
+  const filterMethod = typeof args.method === 'string' && args.method.trim()
+    ? normalizeApiMethod(args.method)
+    : null
   const filterTag = typeof args.tag === 'string' && args.tag.trim() ? args.tag.trim() : ''
+  const filters = {
+    ...(filterPath ? { path: filterPath } : {}),
+    ...(filterMethod ? { method: filterMethod } : {}),
+    ...(filterTag ? { tag: filterTag } : {}),
+  }
+  const hasFilters = Object.keys(filters).length > 0
+  const modules = collectOpenApiModules(openapi)
   const operations = []
   const paths = isRecord(openapi?.paths) ? openapi.paths : {}
   for (const [path, methods] of Object.entries(paths)) {
@@ -398,17 +518,18 @@ function compactOpenApiDocument(openapi, args = {}) {
       operations.push(compactOperation(path, method, operation))
     }
   }
+
   return {
     title: openapi?.info?.title || 'Hermes Studio API',
     version: openapi?.info?.version || '',
-    usage: 'Call hermes_api_request with method, path, and JSON body/query matching the selected operation. Auth and profile are handled by the MCP server.',
-    filters: {
-      ...(filterPath ? { path: filterPath } : {}),
-      ...(filterMethod ? { method: filterMethod } : {}),
-      ...(filterTag ? { tag: filterTag } : {}),
-    },
+    usage: hasFilters
+      ? 'Use the selected operation details to call hermes_api_request with method, path, query, and body. Auth and profile are handled by the MCP server.'
+      : 'This catalog is large. First read module purpose and keywords to choose the right module, then call hermes_api_openapi_get again with tag, path, or method filters to fetch endpoint details on demand.',
+    moduleCount: modules.length,
+    modules,
+    ...(Object.keys(filters).length ? { filters } : {}),
     operationCount: operations.length,
-    operations,
+    ...(hasFilters ? { operations } : { operationsOmitted: true }),
   }
 }
 
@@ -443,24 +564,24 @@ function withAuthArgs(args, options = {}) {
 const tools = [
   {
     name: 'hermes_api_openapi_get',
-    description: 'Return a compact Hermes Studio operation manual generated from OpenAPI. Use optional path/method/tag filters for focused endpoint details before calling hermes_api_request.',
+    description: 'Return Hermes Studio API documentation as compact JSON. When the user asks to read/check the operation manual, API docs, endpoint docs, 接口文档, 接口手册, or 操作手册, call this tool without filters first to get the outline/module index. Without filters, returns only module purpose, keywords, and operation counts because the full API catalog is large. For endpoint details, call again with tag, path, or method filters, then use hermes_api_request.',
     inputSchema: inputSchema({
         path: {
           type: 'string',
-          description: 'Optional endpoint path filter, for example /api/chat-run/runs.',
+          description: 'Optional exact endpoint path filter for on-demand details, for example /api/chat-run/runs.',
         },
         method: {
           type: 'string',
           enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'],
-          description: 'Optional HTTP method filter.',
+          description: 'Optional HTTP method filter. Usually combine with path or tag.',
         },
         tag: {
           type: 'string',
-          description: 'Optional OpenAPI tag filter.',
+          description: 'Optional module/tag filter. Recommended flow: call without filters to list modules, then call with one module tag for details.',
         },
         full: {
           type: 'boolean',
-          description: 'Return the raw full OpenAPI JSON. Defaults to false; prefer compact output for agent use.',
+          description: 'Return the raw full OpenAPI JSON. Defaults to false; prefer compact JSON output for agent use.',
         },
       }),
   },
@@ -675,24 +796,6 @@ async function callTool(name, args = {}) {
   }
 }
 
-const resources = [
-  {
-    uri: 'hermes://openapi.json',
-    name: 'Hermes Studio Operation Manual',
-    description: 'Hermes Studio operation manual encoded as OpenAPI 3.0 JSON, covering endpoints, parameters, request bodies, and responses.',
-    mimeType: 'application/json',
-  },
-]
-
-async function readResource(uri) {
-  switch (uri) {
-    case 'hermes://openapi.json':
-      return resourceText(uri, await request('/api/openapi.json'))
-    default:
-      return null
-  }
-}
-
 async function handle(message) {
   if (!message || message.id === undefined) return null
 
@@ -704,7 +807,7 @@ async function handle(message) {
           id: message.id,
           result: {
             protocolVersion: message.params?.protocolVersion || '2024-11-05',
-            capabilities: { tools: {}, resources: {} },
+            capabilities: { tools: {} },
             serverInfo: { name: SERVER_NAME, version: VERSION },
           },
         }
@@ -716,19 +819,6 @@ async function handle(message) {
           id: message.id,
           result: await callTool(message.params?.name, message.params?.arguments || {}),
         }
-      case 'resources/list':
-        return { jsonrpc: '2.0', id: message.id, result: { resources } }
-      case 'resources/read': {
-        const result = await readResource(message.params?.uri)
-        if (!result) {
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            error: { code: -32602, message: `Unknown resource: ${message.params?.uri || ''}` },
-          }
-        }
-        return { jsonrpc: '2.0', id: message.id, result }
-      }
       default:
         return {
           jsonrpc: '2.0',
@@ -737,13 +827,6 @@ async function handle(message) {
         }
     }
   } catch (err) {
-    if (message.method === 'resources/read') {
-      return {
-        jsonrpc: '2.0',
-        id: message.id,
-        error: { code: -32000, message: err?.message || String(err) },
-      }
-    }
     return { jsonrpc: '2.0', id: message.id, result: errorText(err?.message || String(err)) }
   }
 }

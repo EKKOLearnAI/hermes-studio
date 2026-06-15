@@ -215,6 +215,64 @@ describe('bridge run final context usage', () => {
     }))
   })
 
+  it('releases working state when the bridge stream ends without a terminal chunk', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          session_id: 'session-1',
+          done: false,
+          status: 'running',
+          delta: 'partial reply',
+          cursor: 1,
+          output: 'partial reply',
+          events: [],
+          event_cursor: 0,
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(state.isWorking).toBe(false)
+    expect(state.isAborting).toBe(false)
+    expect(state.runId).toBeUndefined()
+    expect(state.activeRunMarker).toBeUndefined()
+    expect(emit).toHaveBeenCalledWith('message.delta', expect.objectContaining({
+      delta: 'partial reply',
+    }))
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'partial reply',
+      inputTokens: 11,
+      outputTokens: 7,
+      contextTokens: 12345,
+    }))
+  })
+
   it('stores a super admin model-run token for the profile without adding it to bridge instructions', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)

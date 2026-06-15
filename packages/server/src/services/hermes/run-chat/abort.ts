@@ -12,7 +12,7 @@ import { replaceState } from './compression'
 import { calcAndUpdateUsage } from './usage'
 import type { QueuedRun, SessionState } from './types'
 
-const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent is still stopping. New messages will be queued until the current run exits.'
+const ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE = 'Hermes Agent did not confirm stop before timeout. Local run state was released so you can continue.'
 
 function isBridgeRunSource(source?: string): boolean {
   return source === 'cli' || source === 'global_agent'
@@ -101,6 +101,12 @@ export async function handleAbort(
         message: ABORT_BRIDGE_SYNC_TIMEOUT_MESSAGE,
       })
       logger.warn({ sessionId, runId }, '[chat-run-socket][abort] CLI bridge interrupt did not sync before timeout')
+      try {
+        await bridge.destroy?.(sessionId, activeState.profile)
+      } catch (err) {
+        logger.warn(err, '[chat-run-socket][abort] failed to destroy timed-out CLI bridge session %s', sessionId)
+      }
+      await markAbortCompleted(nsp, socket, sessionId, runId || 'bridge_abort_timeout', sessionMap, runQueuedItem, false)
       return
     }
   } else if (activeState.source === 'coding_agent') {
@@ -119,6 +125,7 @@ export async function markAbortCompleted(
   runId: string,
   sessionMap: Map<string, SessionState>,
   runQueuedItem: (socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile?: string) => void,
+  synced = true,
 ) {
   const state = sessionMap.get(sessionId)
   if (!state) return
@@ -149,13 +156,13 @@ export async function markAbortCompleted(
     replaceState(sessionMap, sessionId, 'abort.completed', {
       event: 'abort.completed',
       run_id: runId,
-      synced: true,
+      synced,
       queue_length: state.queue.length + 1,
     })
     emitToSession(nsp, socket, sessionId, 'abort.completed', {
       event: 'abort.completed',
       run_id: runId,
-      synced: true,
+      synced,
       queue_length: state.queue.length + 1,
     })
     emitToSession(nsp, socket, sessionId, 'run.queued', {
@@ -171,9 +178,9 @@ export async function markAbortCompleted(
   emitToSession(nsp, socket, sessionId, 'abort.completed', {
     event: 'abort.completed',
     run_id: runId,
-    synced: true,
+    synced,
   })
-  logger.info({ sessionId, runId, synced: true }, '[chat-run-socket][abort] completed')
+  logger.info({ sessionId, runId, synced }, '[chat-run-socket][abort] completed')
 }
 
 function emitToSession(nsp: ReturnType<Server['of']>, socket: Socket, sessionId: string, event: string, payload: any) {
