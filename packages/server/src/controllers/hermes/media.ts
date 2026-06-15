@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'path'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -81,9 +82,7 @@ function buildApiUrl(baseUrl: string, pathWithV1: string): string {
 
 async function resolveFunCodexProvider(profile: string): Promise<FunCodexProvider | null> {
   const hermesConfig = await readConfigYamlForProfile(profile)
-  const customProviders = Array.isArray(hermesConfig.custom_providers)
-    ? hermesConfig.custom_providers as any[]
-    : []
+  const customProviders = getCompatibleCustomProviders(hermesConfig)
   const provider = customProviders.find(entry => String(entry?.name || '').trim() === APIKEY_IMAGE_PROVIDER)
   const apiKey = String(provider?.api_key || '').trim()
   const baseUrl = String(provider?.base_url || '').trim()

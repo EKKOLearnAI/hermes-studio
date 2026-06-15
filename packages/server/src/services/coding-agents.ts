@@ -7,6 +7,7 @@ import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
 import { getWebUiHome } from '../config'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile, safeReadFile } from './config-helpers'
+import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { registerClaudeCodeProxyTarget } from './agent-runner/proxies/claude-code-proxy'
 import { registerCodexProxyTarget } from './agent-runner/proxies/codex-proxy'
 import type { ApiMode } from './agent-runner/types'
@@ -471,7 +472,7 @@ async function resolveStoredProviderLaunchInput(
   const preset = PROVIDER_PRESETS.find(item => item.value === normalizedProvider)
   const candidates = providerLookupCandidates(provider)
 
-  const customProviders = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+  const customProviders = getCompatibleCustomProviders(config)
   const customEntry = customProviders.find((entry) => {
     const name = slugProviderName(String(entry?.name || ''))
     return candidates.includes(`custom:${name}`) || candidates.includes(`custom_${name}`) || candidates.includes(name)

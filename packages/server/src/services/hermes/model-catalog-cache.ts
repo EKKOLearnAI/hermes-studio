@@ -3,6 +3,7 @@ import { join } from 'path'
 import { config } from '../../config'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { fetchProviderModels, PROVIDER_ENV_MAP, readConfigYamlForProfile } from '../config-helpers'
+import { getCompatibleCustomProviders } from './custom-providers-compat'
 import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
@@ -267,19 +268,23 @@ async function collectRefreshCandidates(): Promise<RefreshCandidate[]> {
       })
     }
 
-    const customProviders = Array.isArray(configYaml.custom_providers) ? configYaml.custom_providers as any[] : []
+    const customProviders = getCompatibleCustomProviders(configYaml)
     for (const cp of customProviders) {
-      const name = String(cp?.name || '').trim()
-      const baseUrl = normalizeCatalogBaseUrl(cp?.base_url || '')
+      const name = cp.name
+      const baseUrl = normalizeCatalogBaseUrl(cp.base_url)
       if (!name || !baseUrl) continue
       const provider = providerKeyForCustom(name)
       const presetModels = presetsByProvider.get(name)?.models || []
+      // Respect the configured `models:` whitelist (v12+ dict) when present —
+      // those entries should always be reachable as fallbacks even before a
+      // live `/v1/models` probe runs.
+      const configuredModels = cp.models ? Object.keys(cp.models) : []
       mergeCandidate(candidates, {
         provider,
         label: name,
         base_url: baseUrl,
-        api_key: String(cp?.api_key || '').trim(),
-        fallback_models: uniqueModels([cp?.model, ...presetModels]),
+        api_key: cp.api_key || '',
+        fallback_models: uniqueModels([cp.model, ...configuredModels, ...presetModels]),
         profile,
       })
     }

@@ -3,6 +3,7 @@ import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveProfileDir, getActiveConfigPath, getActiveEnvPath, getProfileDir } from './hermes/hermes-profile'
+import { getCompatibleCustomProviders } from './hermes/custom-providers-compat'
 import { logger } from './logger'
 import { safeFileStore } from './safe-file-store'
 
@@ -262,22 +263,26 @@ export function buildModelGroups(config: Record<string, any>): { default: string
     defaultModel = modelSection.trim()
   }
 
-  // 2. Extract custom_providers section
-  const customProviders = config.custom_providers
-  if (Array.isArray(customProviders)) {
-    const customModels: ModelInfo[] = []
-    for (const entry of customProviders) {
-      if (entry && typeof entry === 'object') {
-        const cName = String(entry.name || '').trim()
-        const cModel = String(entry.model || '').trim()
-        if (cName && cModel) {
-          customModels.push({ id: cModel, label: `${cName}: ${cModel}` })
-        }
-      }
+  // 2. Aggregate custom providers from both schemas (legacy list + v12+ dict).
+  const customProviders = getCompatibleCustomProviders(config)
+  const customModels: ModelInfo[] = []
+  for (const entry of customProviders) {
+    const cName = entry.name.trim()
+    if (!cName) continue
+    const seen = new Set<string>()
+    const pushModel = (modelId: string) => {
+      const id = modelId.trim()
+      if (!id || seen.has(id)) return
+      seen.add(id)
+      customModels.push({ id, label: `${cName}: ${id}` })
     }
-    if (customModels.length > 0) {
-      groups.push({ provider: 'Custom', models: customModels })
+    if (entry.model) pushModel(entry.model)
+    if (entry.models && typeof entry.models === 'object') {
+      for (const id of Object.keys(entry.models)) pushModel(id)
     }
+  }
+  if (customModels.length > 0) {
+    groups.push({ provider: 'Custom', models: customModels })
   }
 
   return { default: defaultModel, groups }

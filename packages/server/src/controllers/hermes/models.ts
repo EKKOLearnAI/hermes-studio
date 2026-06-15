@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, updateConfigYamlForProfile, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
@@ -317,9 +318,9 @@ async function buildAvailableForProfile(
     currentDefault = String(modelSection.default || '').trim()
     currentDefaultProvider = String(modelSection.provider || '').trim()
     if (currentDefaultProvider === 'custom' && currentDefault) {
-      const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+      const cps = getCompatibleCustomProviders(config)
       const match = cps.find(
-        (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
+        (cp) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
           && cp.model === currentDefault,
       )
       if (match) currentDefaultProvider = providerKeyForCustom(String(match.name || ''))
@@ -391,9 +392,7 @@ async function buildAvailableForProfile(
     }
   }
 
-  const customProviders = Array.isArray(config.custom_providers)
-    ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
-    : []
+  const customProviders = getCompatibleCustomProviders(config)
   const customFetches = await Promise.allSettled(
     customProviders.map(async cp => {
       if (!cp.base_url) return null
@@ -404,7 +403,11 @@ async function buildAvailableForProfile(
       const builtinCatalogModels = isBuiltinProviderKey(providerKey)
         ? PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset?.models || []
         : []
-      let models = [...new Set([cp.model, ...builtinCatalogModels].filter(Boolean))]
+      // Pull configured models from the v12+ providers.<name>.models dict (if any)
+      // alongside the legacy single `model` field; both contribute to what the
+      // UI shows. `models` is normalized to a dict shape regardless of source.
+      const configuredModels = cp.models ? Object.keys(cp.models) : []
+      let models = [...new Set([cp.model, ...configuredModels, ...builtinCatalogModels].filter(Boolean) as string[])]
       const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl)
       if (cachedModels) models = [...new Set([...models, ...cachedModels])]
       return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
@@ -519,9 +522,9 @@ export async function getAvailable(ctx: any) {
       currentDefault = String(modelSection.default || '').trim()
       currentDefaultProvider = String(modelSection.provider || '').trim()
       // When hermes CLI sets provider: custom, resolve to custom:name
-      // by matching base_url + model against custom_providers
+      // by matching base_url + model against custom providers (v12 dict + legacy list).
       if (currentDefaultProvider === 'custom' && currentDefault) {
-        const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        const cps = getCompatibleCustomProviders(config) as any[]
         const match = cps.find(
           (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
             && cp.model === currentDefault,
@@ -656,18 +659,17 @@ export async function getAvailable(ctx: any) {
       }
     }
 
-    const customProviders = Array.isArray(config.custom_providers)
-      ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
-      : []
+    const customProviders = getCompatibleCustomProviders(config)
 
     const customFetches = await Promise.allSettled(
       customProviders.map(async cp => {
         if (!cp.base_url) return null
         const providerKey = `custom:${cp.name.trim().toLowerCase().replace(/ /g, '-')}`
         const baseUrl = cp.base_url.replace(/\/+$/, '')
-        let models = [cp.model]
+        const configuredModels = cp.models ? Object.keys(cp.models) : []
+        let models = [...new Set([cp.model, ...configuredModels].filter(Boolean) as string[])]
         if (cp.api_key) {
-          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
+          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([...models, ...fetched])] } catch { }
         }
         return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
       }),
