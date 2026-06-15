@@ -129,15 +129,44 @@ class AgentPool:
             existing = self._sessions.get(session_id)
             if existing is not None:
                 # If profile changed, destroy old session and recreate
-                config_changed = bool(
-                    (profile and existing.config.get("profile") != profile)
-                    or (requested_model and existing.config.get("model") != requested_model)
+                profile_changed = bool(profile and existing.config.get("profile") != profile)
+                runtime_changed = bool(
+                    (requested_model and existing.config.get("model") != requested_model)
                     or (requested_provider and existing.config.get("provider") != requested_provider)
                 )
+                config_changed = profile_changed or runtime_changed
                 if config_changed:
-                    if not existing.running:
+                    if profile_changed and not existing.running:
                         self._destroy_session(session_id)
+                    elif profile_changed:
+                        existing.last_used_at = time.time()
+                        return existing
+                    elif not existing.running:
+                        try:
+                            self._switch_loaded_session_model(
+                                existing,
+                                requested_model or str(existing.config.get("model") or ""),
+                                requested_provider or str(existing.config.get("provider") or ""),
+                                profile or str(existing.config.get("profile") or "default"),
+                                add_note=False,
+                            )
+                            existing.last_used_at = time.time()
+                            return existing
+                        except Exception as exc:
+                            print(
+                                "[hermes_bridge] session model hot switch failed; recreating "
+                                f"session={session_id} error={exc}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            self._destroy_session(session_id)
                     else:
+                        self._set_pending_session_model_switch(
+                            existing,
+                            requested_model or str(existing.config.get("model") or ""),
+                            requested_provider or str(existing.config.get("provider") or ""),
+                            profile or str(existing.config.get("profile") or "default"),
+                        )
                         existing.last_used_at = time.time()
                         return existing
                 else:
@@ -211,6 +240,175 @@ class AgentPool:
                 )
                 self._sessions[session_id] = session
                 return session
+
+    def _model_switch_note(self, old_model: str, new_model: str, provider: str) -> str:
+        provider_label = provider or "configured provider"
+        return (
+            f"[Note: model was just switched from {old_model or 'unknown'} to {new_model} "
+            f"via {provider_label}. Adjust your self-identification accordingly.]"
+        )
+
+    def _set_pending_session_model_switch(
+        self,
+        session: AgentSession,
+        model: str,
+        provider: str,
+        profile: str | None,
+    ) -> None:
+        requested_model = str(model or "").strip()
+        requested_provider = str(provider or "").strip()
+        if not requested_model:
+            return
+        old_model = str(session.config.get("model") or getattr(session.agent, "model", "") or "")
+        session.config["pending_model_switch"] = {
+            "model": requested_model,
+            "provider": requested_provider,
+            "profile": profile or session.config.get("profile") or "default",
+        }
+        session.config["pending_model_switch_note"] = self._model_switch_note(
+            old_model,
+            requested_model,
+            requested_provider or str(session.config.get("provider") or ""),
+        )
+
+    def _switch_loaded_session_model(
+        self,
+        session: AgentSession,
+        model: str,
+        provider: str,
+        profile: str | None,
+        *,
+        add_note: bool,
+    ) -> dict[str, Any]:
+        requested_model = str(model or "").strip()
+        requested_provider = str(provider or "").strip()
+        if not requested_model:
+            raise ValueError("model is required")
+
+        target_profile = str(profile or session.config.get("profile") or "default")
+        old_model = str(session.config.get("model") or getattr(session.agent, "model", "") or "")
+
+        with _profile_env(target_profile):
+            _refresh_worker_profile_env()
+            runtime = _resolve_runtime(requested_model, requested_provider or None)
+
+        resolved_provider = str(runtime.get("provider") or requested_provider or "")
+        switch_model = getattr(session.agent, "switch_model", None)
+        if not callable(switch_model):
+            raise RuntimeError("loaded agent does not support switch_model")
+
+        switch_model(
+            new_model=requested_model,
+            new_provider=resolved_provider,
+            api_key=runtime.get("api_key") or "",
+            base_url=runtime.get("base_url") or "",
+            api_mode=runtime.get("api_mode") or "",
+        )
+        session.config.update({
+            "profile": target_profile,
+            "model": requested_model,
+            "provider": resolved_provider,
+            "base_url": runtime.get("base_url"),
+            "api_mode": runtime.get("api_mode"),
+        })
+        session.config.pop("pending_model_switch", None)
+        if add_note:
+            session.config["pending_model_switch_note"] = self._model_switch_note(
+                old_model,
+                requested_model,
+                resolved_provider,
+            )
+        session.last_used_at = time.time()
+        print(
+            "[hermes_bridge] session model switched "
+            f"session={session.session_id} model={requested_model} provider={resolved_provider}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {
+            "session_id": session.session_id,
+            "model": requested_model,
+            "provider": resolved_provider,
+            "loaded": True,
+            "switched": True,
+        }
+
+    def _apply_pending_session_model_switch(self, session: AgentSession) -> None:
+        pending = session.config.get("pending_model_switch")
+        if not isinstance(pending, dict) or session.running:
+            return
+        try:
+            self._switch_loaded_session_model(
+                session,
+                str(pending.get("model") or ""),
+                str(pending.get("provider") or ""),
+                str(pending.get("profile") or session.config.get("profile") or "default"),
+                add_note=False,
+            )
+        except Exception as exc:
+            print(
+                "[hermes_bridge] pending session model switch failed "
+                f"session={session.session_id} error={exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _prepend_pending_model_switch_note(self, session: AgentSession, message: Any) -> Any:
+        note = str(session.config.pop("pending_model_switch_note", "") or "").strip()
+        if not note:
+            return message
+        if isinstance(message, str):
+            return f"{note}\n\n{message}"
+        if isinstance(message, list):
+            return [{"type": "text", "text": note}, *message]
+        return message
+
+    def switch_session_model(
+        self,
+        session_id: str,
+        model: str,
+        provider: str | None = None,
+        profile: str | None = None,
+    ) -> dict[str, Any]:
+        requested_model = str(model or "").strip()
+        requested_provider = str(provider or "").strip()
+        if not requested_model:
+            raise ValueError("model is required")
+        with self._lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            return {
+                "session_id": session_id,
+                "model": requested_model,
+                "provider": requested_provider,
+                "loaded": False,
+                "switched": False,
+                "reason": "session_not_loaded",
+            }
+        with session.lock:
+            if session.running:
+                self._set_pending_session_model_switch(
+                    session,
+                    requested_model,
+                    requested_provider,
+                    profile or str(session.config.get("profile") or "default"),
+                )
+                return {
+                    "session_id": session_id,
+                    "model": requested_model,
+                    "provider": requested_provider,
+                    "loaded": True,
+                    "switched": False,
+                    "deferred": True,
+                    "reason": "session_running",
+                }
+            return self._switch_loaded_session_model(
+                session,
+                requested_model,
+                requested_provider,
+                profile or str(session.config.get("profile") or "default"),
+                add_note=True,
+            )
 
     def _install_compression_hook(self, agent: Any, session_id: str) -> None:
         original = getattr(agent, "_compress_context", None)
@@ -892,6 +1090,7 @@ class AgentPool:
                     pass
                 self._prepersist_user_message(session, message, storage_message, conversation_history, profile, source)
                 db_count_after_prepersist = self._session_db_message_count(session.session_id, profile)
+                agent_message = self._prepend_pending_model_switch_note(session, message)
                 if force_compress:
                     compress = getattr(session.agent, "_compress_context", None)
                     if callable(compress):
@@ -932,7 +1131,7 @@ class AgentPool:
                         pass
                 try:
                     result = session.agent.run_conversation(
-                        message,
+                        agent_message,
                         **kwargs,
                     )
                 finally:
@@ -998,6 +1197,7 @@ class AgentPool:
                     session.running = False
                     session.current_run_id = None
                     session.last_used_at = time.time()
+                self._apply_pending_session_model_switch(session)
             except Exception as exc:
                 if not tail_synced:
                     try:
@@ -1020,6 +1220,7 @@ class AgentPool:
                     session.running = False
                     session.current_run_id = None
                     session.last_used_at = time.time()
+                self._apply_pending_session_model_switch(session)
             finally:
                 with self._lock:
                     self._approval_handlers.pop(session.session_id, None)

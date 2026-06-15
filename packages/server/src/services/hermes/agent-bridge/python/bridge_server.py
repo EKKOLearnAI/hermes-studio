@@ -169,6 +169,20 @@ class BridgeServer:
                 req.get("profile"),
             )
 
+        if action == "switch_session_model":
+            session_id = str(req.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required")
+            model = str(req.get("model") or "").strip()
+            if not model:
+                raise ValueError("model is required")
+            return self.pool.switch_session_model(
+                session_id,
+                model,
+                str(req.get("provider") or "").strip(),
+                req.get("profile"),
+            )
+
         if action == "goal_evaluate":
             session_id = str(req.get("session_id") or "").strip()
             if not session_id:
@@ -624,4 +638,3 @@ class BridgeServer:
                     Path(self.endpoint.removeprefix("ipc://")).unlink(missing_ok=True)
                 except OSError:
                     pass
-

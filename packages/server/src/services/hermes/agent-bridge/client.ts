@@ -135,6 +135,16 @@ export interface AgentBridgeCommandResult extends AgentBridgeResponse {
   max_turns?: number
 }
 
+export interface AgentBridgeSessionModelSwitch extends AgentBridgeResponse {
+  session_id: string
+  model: string
+  provider?: string
+  loaded: boolean
+  switched: boolean
+  deferred?: boolean
+  reason?: string
+}
+
 export interface AgentBridgeGoalEvaluation extends AgentBridgeResponse {
   session_id: string
   handled: boolean
@@ -451,6 +461,21 @@ export class AgentBridgeClient {
       action: 'command',
       session_id: sessionId,
       command,
+      ...(profile ? { profile } : {}),
+    })
+  }
+
+  switchSessionModel(
+    sessionId: string,
+    model: string,
+    provider?: string,
+    profile?: string,
+  ): Promise<AgentBridgeSessionModelSwitch> {
+    return this.request<AgentBridgeSessionModelSwitch>({
+      action: 'switch_session_model',
+      session_id: sessionId,
+      model,
+      ...(provider ? { provider } : {}),
       ...(profile ? { profile } : {}),
     })
   }

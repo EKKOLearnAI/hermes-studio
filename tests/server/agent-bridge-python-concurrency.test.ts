@@ -183,6 +183,120 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('hot-switches a loaded idle session model without recreating the session', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": f"https://{provider or 'openai'}.example/v1",
+        "api_key": f"key:{model}",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+
+class SwitchableAgent:
+    def __init__(self):
+        self.model = "old-model"
+        self.provider = "openai"
+        self.base_url = "https://old.example/v1"
+        self.api_key = "old-key"
+        self.api_mode = "chat_completions"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+        self.base_url = kwargs["base_url"]
+        self.api_key = kwargs["api_key"]
+        self.api_mode = kwargs["api_mode"]
+
+agent = SwitchableAgent()
+session = bridge.AgentSession(
+    session_id="session-model",
+    agent=agent,
+    config={"profile": "default", "model": "old-model", "provider": "openai"},
+)
+pool._sessions["session-model"] = session
+
+result = pool.switch_session_model("session-model", "new-model", "anthropic", "default")
+
+assert result["switched"] is True
+assert pool._sessions["session-model"] is session
+assert agent.switch_calls == [{
+    "new_model": "new-model",
+    "new_provider": "anthropic",
+    "api_key": "key:new-model",
+    "base_url": "https://anthropic.example/v1",
+    "api_mode": "chat_completions",
+}]
+assert session.config["model"] == "new-model"
+assert session.config["provider"] == "anthropic"
+assert "pending_model_switch_note" in session.config
+`)
+  })
+
+  it('defers a loaded session model switch while a run is active and applies it after completion', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": f"https://{provider or 'openai'}.example/v1",
+        "api_key": f"key:{model}",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+release = threading.Event()
+
+class RunningAgent:
+    def __init__(self):
+        self.model = "old-model"
+        self.provider = "openai"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+
+    def run_conversation(self, message, **kwargs):
+        release.wait(timeout=5)
+        return {"messages": [{"role": "assistant", "content": "done"}]}
+
+agent = RunningAgent()
+session, record, thread = start_manual_run(pool, "running-model", agent)
+session.config.update({"profile": "default", "model": "old-model", "provider": "openai"})
+assert wait_for(lambda: session.running)
+
+result = pool.switch_session_model("running-model", "new-model", "anthropic", "default")
+assert result["deferred"] is True
+assert agent.switch_calls == []
+
+release.set()
+thread.join(timeout=5)
+
+assert record.status == "complete"
+assert agent.switch_calls == [{
+    "new_model": "new-model",
+    "new_provider": "anthropic",
+    "api_key": "key:new-model",
+    "base_url": "https://anthropic.example/v1",
+    "api_mode": "chat_completions",
+}]
+assert session.config["model"] == "new-model"
+assert session.config["provider"] == "anthropic"
+assert "pending_model_switch" not in session.config
+`)
+  })
+
   it('syncs generated result tail to the session DB when the agent crashes after generation', () => {
     runPython(String.raw`
 ${harness}

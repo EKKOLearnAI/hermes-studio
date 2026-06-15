@@ -27,6 +27,8 @@ const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
+const bridgeSwitchSessionModelMock = vi.fn()
+const bridgeGetRuntimeStateMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
@@ -102,6 +104,15 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
 
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: vi.fn().mockImplementation(() => ({
+    switchSessionModel: bridgeSwitchSessionModelMock,
+  })),
+  getAgentBridgeManager: vi.fn(() => ({
+    getRuntimeState: bridgeGetRuntimeStateMock,
+  })),
+}))
+
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
@@ -159,6 +170,9 @@ describe('session conversations controller', () => {
     listUserProfilesMock.mockReturnValue([])
     readConfigYamlForProfileMock.mockReset()
     readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
+    bridgeSwitchSessionModelMock.mockReset()
+    bridgeGetRuntimeStateMock.mockReset()
+    bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
   })
 
@@ -661,6 +675,37 @@ describe('session conversations controller', () => {
 
     expect(localCreateSessionMock).not.toHaveBeenCalled()
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { model: 'grok-4', provider: 'xai' })
+    expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('notifies a loaded agent bridge session after storing the session model', async () => {
+    bridgeGetRuntimeStateMock.mockReturnValue({ ready: true, running: true, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
+    bridgeSwitchSessionModelMock.mockResolvedValue({
+      ok: true,
+      session_id: 'session-1',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      loaded: true,
+      switched: true,
+    })
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'travel' })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { model: 'claude-sonnet-4-6', provider: 'claude-oauth' } },
+      body: null,
+    }
+    await mod.setModel(ctx)
+
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { model: 'claude-sonnet-4-6', provider: 'claude-oauth' })
+    expect(bridgeSwitchSessionModelMock).toHaveBeenCalledWith(
+      'session-1',
+      'claude-sonnet-4-6',
+      'anthropic',
+      'travel',
+    )
     expect(ctx.body).toEqual({ ok: true })
   })
 

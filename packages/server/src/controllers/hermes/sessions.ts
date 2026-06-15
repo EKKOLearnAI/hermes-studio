@@ -24,6 +24,7 @@ import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
+import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -42,6 +43,31 @@ function filterPendingDeletedConversationSummaries(items: ConversationSummary[])
 function requestedProfile(ctx: any): string | undefined {
   const value = ctx.state?.profile?.name || (typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : '')
   return value || undefined
+}
+
+function runtimeProvider(provider: string): string {
+  return provider === 'claude-oauth' ? 'anthropic' : provider
+}
+
+async function notifyBridgeSessionModelChanged(
+  sessionId: string,
+  model: string,
+  provider: string,
+  profile?: string,
+): Promise<void> {
+  try {
+    const manager = getAgentBridgeManager()
+    const state = manager.getRuntimeState()
+    if (!state.ready || !state.running) return
+    const bridge = new AgentBridgeClient({
+      endpoint: state.endpoint,
+      timeoutMs: 5000,
+      connectRetryMs: 0,
+    })
+    await bridge.switchSessionModel(sessionId, model, runtimeProvider(provider), profile)
+  } catch (err) {
+    logger.warn(err, '[sessions] failed to notify bridge of session model change')
+  }
 }
 
 function explicitProfileFilter(ctx: any): string | undefined {
@@ -692,10 +718,14 @@ export async function setModel(ctx: any) {
   const id = ctx.params.id
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
+  const profile = existing?.profile || requestedProfile(ctx) || 'default'
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile, title: '' })
   }
-  updateSession(id, { model: model.trim(), provider: (provider || '').trim() } as any)
+  const cleanModel = model.trim()
+  const cleanProvider = (provider || '').trim()
+  updateSession(id, { model: cleanModel, provider: cleanProvider } as any)
+  await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
   ctx.body = { ok: true }
 }
 
