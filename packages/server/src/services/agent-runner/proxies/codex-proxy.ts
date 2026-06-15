@@ -79,15 +79,56 @@ function chatCompletionsUrl(target: CodexProxyTarget): string {
   return resolveChatCompletionsUrl(target.baseUrl)
 }
 
+function contentCharLength(content: any): number {
+  if (typeof content === 'string') return content.length
+  if (content == null) return 0
+  try {
+    return JSON.stringify(content).length
+  } catch {
+    return 0
+  }
+}
+
+function summarizeContentBlocks(content: any): any {
+  if (!Array.isArray(content)) return { content_chars: contentCharLength(content) }
+  return {
+    content_blocks: content.map((block: any, index: number) => ({
+      index,
+      type: block?.type,
+      text_chars: typeof block?.text === 'string'
+        ? block.text.length
+        : typeof block?.input_text === 'string'
+          ? block.input_text.length
+          : typeof block?.output_text === 'string'
+            ? block.output_text.length
+            : undefined,
+      tool_use_id: block?.tool_use_id,
+      id: block?.id,
+      name: block?.name,
+      input_chars: contentCharLength(block?.input),
+      content_chars: block?.text == null && block?.input_text == null && block?.output_text == null
+        ? contentCharLength(block?.content)
+        : undefined,
+    })),
+  }
+}
+
+function summarizeTools(tools: any): any[] {
+  if (!Array.isArray(tools)) return []
+  return tools.map((tool: any, index: number) => ({
+    index,
+    type: tool?.type,
+    name: tool?.function?.name || tool?.name,
+    description: tool?.function?.description || tool?.description,
+    parameters: tool?.function?.parameters || tool?.parameters || tool?.input_schema,
+  }))
+}
+
 function summarizeMessages(messages: any[]): any[] {
   return messages.map((message, index) => ({
     index,
     role: message?.role,
-    content_chars: typeof message?.content === 'string'
-      ? message.content.length
-      : message?.content == null
-        ? 0
-        : JSON.stringify(message.content).length,
+    ...summarizeContentBlocks(message?.content),
     tool_call_id: message?.tool_call_id,
     tool_calls: Array.isArray(message?.tool_calls)
       ? message.tool_calls.map((call: any) => ({
@@ -100,25 +141,36 @@ function summarizeMessages(messages: any[]): any[] {
   }))
 }
 
-function logCodexChatRequest(target: CodexProxyTarget, body: any) {
+function summarizeResponsesInput(input: any): any {
+  if (!Array.isArray(input)) return { input_chars: contentCharLength(input) }
+  return {
+    input: input.map((item: any, index: number) => ({
+      index,
+      type: item?.type,
+      role: item?.role,
+      id: item?.id,
+      call_id: item?.call_id,
+      name: item?.name,
+      status: item?.status,
+      arguments_chars: typeof item?.arguments === 'string' ? item.arguments.length : contentCharLength(item?.arguments),
+      ...summarizeContentBlocks(item?.content),
+    })),
+  }
+}
+
+function logCodexProxyRequest(target: CodexProxyTarget, route: 'chat_completions' | 'anthropic_messages' | 'codex_responses', url: string, body: any) {
   logger.info({
-    event: 'codex_proxy_chat_request',
+    event: 'codex_proxy_upstream_request',
+    route,
     provider: target.provider,
     model: target.model,
     apiMode: target.apiMode,
-    url: chatCompletionsUrl(target),
+    url,
     stream: body?.stream === true,
-    messages: summarizeMessages(Array.isArray(body?.messages) ? body.messages : []),
-    tools: Array.isArray(body?.tools)
-      ? body.tools.map((tool: any, index: number) => ({
-          index,
-          type: tool?.type,
-          name: tool?.function?.name,
-          description: tool?.function?.description,
-          parameters: tool?.function?.parameters,
-        }))
-      : [],
-  }, '[codex-proxy] chat request')
+    messages: Array.isArray(body?.messages) ? summarizeMessages(body.messages) : undefined,
+    ...('input' in Object(body) ? summarizeResponsesInput(body?.input) : {}),
+    tools: summarizeTools(body?.tools),
+  }, '[codex-proxy] upstream request')
 }
 
 function anthropicMessagesUrl(target: CodexProxyTarget): string {
@@ -132,7 +184,7 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any>
     throw err
   }
   const chatBody = responsesToOpenAiChat(body, target)
-  logCodexChatRequest(target, chatBody)
+  logCodexProxyRequest(target, 'chat_completions', chatCompletionsUrl(target), chatBody)
   return agentRunGateway.completeJson({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
@@ -146,6 +198,8 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
     ;(err as any).status = 501
     throw err
   }
+  const anthropicBody = responsesToAnthropicMessages(body, target)
+  logCodexProxyRequest(target, 'anthropic_messages', anthropicMessagesUrl(target), anthropicBody)
   return agentRunGateway.completeJson({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
@@ -153,7 +207,7 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
     },
-    body: responsesToAnthropicMessages(body, target),
+    body: anthropicBody,
   })
 }
 
@@ -163,10 +217,12 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
     ;(err as any).status = 501
     throw err
   }
+  const responsesBody = { ...body, model: target.model }
+  logCodexProxyRequest(target, 'codex_responses', resolveResponsesUrl(target.baseUrl), responsesBody)
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
-    body: { ...body, model: target.model },
+    body: responsesBody,
   })
 }
 
@@ -197,7 +253,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   }
 
   const chatBody = responsesToOpenAiChat(body, target, true)
-  logCodexChatRequest(target, chatBody)
+  logCodexProxyRequest(target, 'chat_completions', chatCompletionsUrl(target), chatBody)
   const stream = await agentRunGateway.streamBytes({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
@@ -213,6 +269,8 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
     throw err
   }
 
+  const anthropicBody = responsesToAnthropicMessages(body, target, true)
+  logCodexProxyRequest(target, 'anthropic_messages', anthropicMessagesUrl(target), anthropicBody)
   const stream = await agentRunGateway.streamBytes({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
@@ -220,7 +278,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
       'x-api-key': target.apiKey,
       'anthropic-version': '2023-06-01',
     },
-    body: responsesToAnthropicMessages(body, target, true),
+    body: anthropicBody,
   })
   return responsesEventStream(observableResponsesEvents(target, anthropicMessagesSseToResponsesEvents(stream, target)))
 }
@@ -232,10 +290,12 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
     throw err
   }
 
+  const responsesBody = { ...body, model: target.model, stream: true }
+  logCodexProxyRequest(target, 'codex_responses', resolveResponsesUrl(target.baseUrl), responsesBody)
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
-    body: { ...body, model: target.model, stream: true },
+    body: responsesBody,
   })
   return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream)))
 }
