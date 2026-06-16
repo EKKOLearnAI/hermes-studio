@@ -420,6 +420,9 @@ export default {
     outlineTitle: 'Conversation Outline',
     outlineEmpty: 'No conversation content',
     outlineUserQuestion: 'User question',
+    conversationNavigatorLabel: 'Conversation navigation',
+    conversationNavigatorTurn: 'Turn {index}: {title}',
+    conversationNavigatorUntitledTurn: 'Untitled message',
     inputPlaceholder: 'Type a message... (Enter to send, Shift+Enter for new line)',
     slashCommandArgs: {
       message: '<message>',

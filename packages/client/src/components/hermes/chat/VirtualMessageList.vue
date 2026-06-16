@@ -13,6 +13,11 @@ type VirtualItem = {
 }
 
 type AnchorAlign = "start" | "center";
+type AnchorScrollBehavior = "auto" | "smooth";
+type AnchorScrollOptions = {
+  behavior?: AnchorScrollBehavior;
+  respectReducedMotion?: boolean;
+}
 type AnchorTarget = {
   token: number;
   index: number;
@@ -95,6 +100,26 @@ function syncViewport() {
 
 function markProgrammaticScroll(ms = 120) {
   programmaticScrollUntil = Date.now() + ms;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+}
+
+function resolveAnchorBehavior(
+  behavior: AnchorScrollBehavior = "auto",
+  options: Pick<AnchorScrollOptions, "respectReducedMotion"> = {},
+): AnchorScrollBehavior {
+  const respectReducedMotion = options.respectReducedMotion ?? true;
+  return behavior === "smooth" && (!respectReducedMotion || !prefersReducedMotion()) ? "smooth" : "auto";
+}
+
+function setScrollerScrollTop(el: HTMLElement, top: number, behavior: AnchorScrollBehavior) {
+  if (behavior === "smooth" && typeof el.scrollTo === "function") {
+    el.scrollTo({ top, behavior: "smooth" });
+    return;
+  }
+  el.scrollTop = top;
 }
 
 function isProgrammaticScroll(): boolean {
@@ -218,7 +243,7 @@ function findTargetElement(messageId: string, anchorId: string): HTMLElement | n
   return null;
 }
 
-function alignElement(targetEl: HTMLElement, align: AnchorAlign) {
+function alignElement(targetEl: HTMLElement, align: AnchorAlign, behavior: AnchorScrollBehavior = "auto") {
   const el = getScrollerElement();
   if (!el) return;
 
@@ -229,8 +254,9 @@ function alignElement(targetEl: HTMLElement, align: AnchorAlign) {
     : targetRect.top - scrollerRect.top - 24;
 
   if (Math.abs(delta) > 1) {
-    markProgrammaticScroll();
-    el.scrollTop = Math.max(0, el.scrollTop + delta);
+    const nextScrollTop = Math.max(0, el.scrollTop + delta);
+    markProgrammaticScroll(behavior === "smooth" ? 700 : 120);
+    setScrollerScrollTop(el, nextScrollTop, behavior);
   }
   syncViewport();
 }
@@ -240,10 +266,14 @@ function findRowElement(index: number): HTMLElement | null {
   return el?.querySelector<HTMLElement>(`.virtual-row[data-virtual-index="${index}"]`) ?? null;
 }
 
-function scrollToItem(index: number, options?: ScrollToOptions) {
-  markProgrammaticScroll();
+function scrollToItem(index: number, options?: ScrollToOptions & { behavior?: AnchorScrollBehavior }) {
+  const behavior = options?.behavior ?? "auto";
+  markProgrammaticScroll(behavior === "smooth" ? 700 : 120);
   if (props.virtualized) {
-    scrollerRef.value?.scrollToItem(index, options);
+    scrollerRef.value?.scrollToItem(index, {
+      ...options,
+      smooth: behavior === "smooth",
+    });
     syncViewport();
     return;
   }
@@ -263,12 +293,14 @@ function scrollToItem(index: number, options?: ScrollToOptions) {
     ? rowRect.top + rowRect.height / 2 - (scrollerRect.top + scrollerRect.height / 2)
     : rowRect.top - scrollerRect.top + offset;
 
-  el.scrollTop = Math.max(0, el.scrollTop + delta);
+  const nextScrollTop = Math.max(0, el.scrollTop + delta);
+  setScrollerScrollTop(el, nextScrollTop, behavior);
   syncViewport();
 }
 
-function scheduleAnchorAlignment(token: number, frames = 1) {
+function scheduleAnchorAlignment(token: number, frames = 1, behavior: AnchorScrollBehavior = "auto") {
   if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
+  let initialBehavior = behavior;
 
   const step = (remaining: number) => {
     const target = activeAnchorTarget;
@@ -279,8 +311,10 @@ function scheduleAnchorAlignment(token: number, frames = 1) {
 
     const targetEl = findTargetElement(target.messageId, target.anchorId);
     if (targetEl) {
-      alignElement(targetEl, target.align);
-    } else {
+      const stepBehavior = initialBehavior;
+      initialBehavior = "auto";
+      alignElement(targetEl, target.align, stepBehavior);
+    } else if (initialBehavior !== "smooth") {
       scrollToItem(target.index, {
         align: target.align,
         offset: target.align === "start" ? -24 : 0,
@@ -327,10 +361,11 @@ function scrollToMessage(messageId: string) {
   });
 }
 
-function scrollToAnchor(messageId: string, anchorId: string) {
+function scrollToAnchor(messageId: string, anchorId: string, options: AnchorScrollOptions = {}) {
   const index = props.messages.findIndex(message => String(message.id) === messageId);
   if (index < 0) return;
 
+  const behavior = resolveAnchorBehavior(options.behavior, options);
   cancelAnchorAlignment();
   const token = anchorToken;
   activeAnchorTarget = {
@@ -342,8 +377,15 @@ function scrollToAnchor(messageId: string, anchorId: string) {
   };
 
   nextTick(() => {
-    scrollToItem(index, { align: "start", offset: -24 });
-    scheduleAnchorAlignment(token, 10);
+    const targetEl = findTargetElement(messageId, anchorId);
+    if (targetEl) {
+      alignElement(targetEl, "start", behavior);
+      if (behavior !== "smooth") scheduleAnchorAlignment(token, 10);
+      return;
+    }
+
+    scrollToItem(index, { align: "start", offset: -24, behavior });
+    scheduleAnchorAlignment(token, behavior === "smooth" ? 40 : 10, behavior);
   });
 }
 
@@ -443,6 +485,7 @@ defineExpose({
   scrollToBottom,
   scrollToMessage,
   scrollToAnchor,
+  getScrollerElement,
   captureScrollPosition,
   restoreScrollPosition,
   captureViewportPosition,

@@ -419,6 +419,9 @@ export default {
     outlineTitle: '会話アウトライン',
     outlineEmpty: '会話内容はありません',
     outlineUserQuestion: 'ユーザーの質問',
+    conversationNavigatorLabel: '会話ナビゲーション',
+    conversationNavigatorTurn: 'ターン {index}: {title}',
+    conversationNavigatorUntitledTurn: '無題のメッセージ',
     inputPlaceholder: 'メッセージを入力... (Enter で送信、Shift+Enter で改行)',
     slashCommandArgs: {
       message: '<メッセージ>',

@@ -420,6 +420,9 @@ export default {
     outlineTitle: '会话大纲',
     outlineEmpty: '暂无会话内容',
     outlineUserQuestion: '用户问题',
+    conversationNavigatorLabel: '会话导航',
+    conversationNavigatorTurn: '第 {index} 轮：{title}',
+    conversationNavigatorUntitledTurn: '未命名消息',
     inputPlaceholder: '输入消息... (Enter 发送，Shift+Enter 换行)',
     slashCommandArgs: {
       message: '<消息>',

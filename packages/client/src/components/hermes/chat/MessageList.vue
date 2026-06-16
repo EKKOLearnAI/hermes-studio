@@ -20,6 +20,7 @@ import { useI18n } from "vue-i18n";
 import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
+import ConversationNavigator, { type ConversationNavItem } from "./ConversationNavigator.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, useChatStore } from "@/stores/hermes/chat";
 import thinkingImage from "@/assets/thinking.gif";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
@@ -28,6 +29,8 @@ const chatStore = useChatStore();
 const { t } = useI18n();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
+const NAVIGATOR_MIN_TURNS = 4;
+const activeNavMessageId = ref<string | null>(null);
 const pendingInitialScrollSessionId = ref<string | null>(null);
 const showScrollBottomButton = ref(false);
 const thinkingElapsedMs = ref(0);
@@ -136,6 +139,34 @@ const displayMessages = computed(() => {
   });
 });
 
+function normalizeNavLabel(content: string): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) return t("chat.conversationNavigatorUntitledTurn");
+  return normalized.length > 56 ? `${normalized.slice(0, 56)}...` : normalized;
+}
+
+const conversationNavItems = computed<ConversationNavItem[]>(() =>
+  displayMessages.value
+    .filter((message) => message.role === "user")
+    .map((message, index) => ({
+      id: `turn-${message.id}`,
+      messageId: message.id,
+      index: index + 1,
+      label: t("chat.conversationNavigatorTurn", {
+        index: index + 1,
+        title: normalizeNavLabel(message.content || ""),
+      }),
+    })),
+);
+
+const showConversationNavigator = computed(
+  () => conversationNavItems.value.length >= NAVIGATOR_MIN_TURNS,
+);
+
+const activeNavItemId = computed(() =>
+  activeNavMessageId.value ? `turn-${activeNavMessageId.value}` : conversationNavItems.value[0]?.id || null,
+);
+
 const queuedMessages = computed(() => {
   const sid = chatStore.activeSessionId;
   if (!sid) return [];
@@ -146,9 +177,10 @@ const visibleClarify = computed(() => chatStore.activePendingClarify);
 const clarifyResponse = ref("");
 const hasFloatingPrompt = computed(() => !!visibleApproval.value || !!visibleClarify.value);
 const virtualListPadding = computed(() => {
-  if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return "20px 20px 380px";
-  if (queuedMessages.value.length > 0 || hasFloatingPrompt.value) return "20px 20px 260px";
-  return "20px";
+  const rightPadding = showConversationNavigator.value ? "clamp(44px, 7vw, 72px)" : "20px";
+  if (queuedMessages.value.length > 0 && hasFloatingPrompt.value) return `20px ${rightPadding} 380px 20px`;
+  if (queuedMessages.value.length > 0 || hasFloatingPrompt.value) return `20px ${rightPadding} 260px 20px`;
+  return `20px ${rightPadding} 20px 20px`;
 });
 
 const showHistoryArchiveLink = computed(() => {
@@ -197,6 +229,41 @@ function scrollToMessage(messageId: string) {
   listRef.value?.scrollToMessage(messageId);
 }
 
+function scrollToNavMessage(messageId: string) {
+  activeNavMessageId.value = messageId;
+  listRef.value?.scrollToAnchor(messageId, `message-${messageId}`, {
+    behavior: "smooth",
+    respectReducedMotion: false,
+  });
+}
+
+function getConversationScroller(): HTMLElement | null {
+  return listRef.value?.getScrollerElement?.() ?? null;
+}
+
+function computeActiveNavMessageId(): string | null {
+  const root = getConversationScroller();
+  if (!root || conversationNavItems.value.length === 0) return null;
+
+  const rootRect = root.getBoundingClientRect();
+  const activationY = rootRect.top + Math.min(root.clientHeight * 0.18, 96);
+  let active = conversationNavItems.value[0]?.messageId || null;
+
+  for (const item of conversationNavItems.value) {
+    const el = document.getElementById(`message-${item.messageId}`);
+    if (!(el instanceof HTMLElement) || !root.contains(el)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.top <= activationY) active = item.messageId;
+    else break;
+  }
+
+  return active;
+}
+
+function updateActiveNavMessageId() {
+  activeNavMessageId.value = computeActiveNavMessageId();
+}
+
 function scrollToAnchor(messageId: string, anchorId: string) {
   listRef.value?.scrollToAnchor(messageId, anchorId);
 }
@@ -207,6 +274,7 @@ function updateScrollBottomButton() {
 
 function handleListScroll() {
   updateScrollBottomButton();
+  updateActiveNavMessageId();
 }
 
 function handleScrollBottomClick() {
@@ -259,10 +327,12 @@ watch(
   () => chatStore.activeSessionId,
   async (id, previousId) => {
     saveSessionScrollPosition(previousId);
+    activeNavMessageId.value = null;
     if (!id) return;
     pendingInitialScrollSessionId.value = id;
     await nextTick();
     applyInitialSessionScroll(id);
+    void nextTick(updateActiveNavMessageId);
   },
   { immediate: true },
 );
@@ -280,7 +350,18 @@ watch(
 watch(
   () => displayMessages.value.length,
   () => {
-    void nextTick(updateScrollBottomButton);
+    void nextTick(() => {
+      updateScrollBottomButton();
+      updateActiveNavMessageId();
+    });
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => conversationNavItems.value.map((item) => item.messageId).join("|"),
+  () => {
+    void nextTick(updateActiveNavMessageId);
   },
   { flush: "post" },
 );
@@ -379,7 +460,10 @@ onBeforeUnmount(() => {
 });
 
 onMounted(() => {
-  void nextTick(updateScrollBottomButton);
+  void nextTick(() => {
+    updateScrollBottomButton();
+    updateActiveNavMessageId();
+  });
 });
 
 defineExpose({
@@ -390,7 +474,10 @@ defineExpose({
 </script>
 
 <template>
-  <div class="message-list-shell">
+  <div
+    class="message-list-shell"
+    :class="{ 'has-conversation-navigator': showConversationNavigator }"
+  >
     <VirtualMessageList
       :key="chatStore.activeSessionId || 'chat-empty'"
       ref="listRef"
@@ -600,8 +687,15 @@ defineExpose({
         </Transition>
       </template>
     </VirtualMessageList>
+    <ConversationNavigator
+      v-if="showConversationNavigator"
+      :items="conversationNavItems"
+      :active-id="activeNavItemId"
+      :label="t('chat.conversationNavigatorLabel')"
+      @navigate="scrollToNavMessage"
+    />
     <button
-      v-if="showScrollBottomButton"
+      v-if="showScrollBottomButton && !showConversationNavigator"
       type="button"
       class="scroll-bottom-button"
       :aria-label="t('chat.scrollToBottom')"

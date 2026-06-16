@@ -346,6 +346,9 @@ export default {
     outlineTitle: 'План беседы',
     outlineEmpty: 'Нет содержимого беседы',
     outlineUserQuestion: 'Вопрос пользователя',
+    conversationNavigatorLabel: 'Навигация по беседе',
+    conversationNavigatorTurn: 'Ход {index}: {title}',
+    conversationNavigatorUntitledTurn: 'Сообщение без названия',
     inputPlaceholder: 'Введите сообщение... (Enter — отправить, Shift+Enter — новая строка)',
     slashCommandArgs: {
       message: '<сообщение>',

@@ -419,6 +419,9 @@ export default {
     outlineTitle: 'Konversationsübersicht',
     outlineEmpty: 'Kein Konversationsinhalt',
     outlineUserQuestion: 'Benutzerfrage',
+    conversationNavigatorLabel: 'Konversationsnavigation',
+    conversationNavigatorTurn: 'Runde {index}: {title}',
+    conversationNavigatorUntitledTurn: 'Unbenannte Nachricht',
     inputPlaceholder: 'Nachricht eingeben... (Enter zum Senden, Shift+Enter fur neue Zeile)',
     slashCommandArgs: {
       message: '<Nachricht>',
