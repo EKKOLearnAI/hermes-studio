@@ -17,6 +17,25 @@ export type ContentBlock = ContentBlockImport
 export const LIVE_CHAT_MESSAGE_PAGE_SIZE = 150
 export const LIVE_CHAT_MAX_LOADED_MESSAGES = 300
 
+const BRIDGE_SLASH_COMMANDS = new Set([
+  'usage',
+  'status',
+  'abort',
+  'queue',
+  'skill',
+  'plan',
+  'goal',
+  'subgoal',
+  'clear',
+  'title',
+  'compress',
+  'steer',
+  'destroy',
+  'reload-mcp',
+  'reload-skills',
+  'reload_skills',
+])
+
 export interface Attachment {
   id: string
   name: string
@@ -119,6 +138,14 @@ interface CompressionState {
 
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+function isKnownBridgeSlashCommand(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed.startsWith('/')) return false
+  const match = trimmed.match(/^\/([a-zA-Z][\w-]*)(?:\s|$)/)
+  if (!match) return false
+  return BRIDGE_SLASH_COMMANDS.has(match[1].toLowerCase())
 }
 
 function isToolOutputError(output: unknown): boolean {
@@ -1790,6 +1817,8 @@ export const useChatStore = defineStore('chat', () => {
 
     primeCompletionBellIfEnabled()
 
+    const trimmedContent = content.trim()
+
     if (!activeSession.value) {
       const session = createSession()
       switchSession(session.id)
@@ -1801,18 +1830,18 @@ export const useChatStore = defineStore('chat', () => {
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
       : false
     const isCodingAgentSession = isCodingAgentLikeSession(activeSession.value)
-    const isBridgeSlashCommand = !isCodingAgentSession && content.trim().startsWith('/')
-    const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
-    const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(content.trim())
-    const isBridgeSkillCommand = isBridgeSlashCommand && /^\/skill(?:\s|$)/i.test(content.trim())
-    const isBridgeGoalCommand = isBridgeSlashCommand && /^\/goal(?:\s|$)/i.test(content.trim())
+    const isBridgeSlashCommand = !isCodingAgentSession && isKnownBridgeSlashCommand(trimmedContent)
+    const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(trimmedContent)
+    const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(trimmedContent)
+    const isBridgeSkillCommand = isBridgeSlashCommand && /^\/skill(?:\s|$)/i.test(trimmedContent)
+    const isBridgeGoalCommand = isBridgeSlashCommand && /^\/goal(?:\s|$)/i.test(trimmedContent)
     const wasLiveBeforeSend = isSessionLive(sid)
     const shouldQueue = wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand || isBridgeSkillCommand)
 
     const userMsg: Message = {
       id: uid(),
       role: isBridgeSlashCommand ? 'command' : 'user',
-      content: content.trim(),
+      content: trimmedContent,
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
       queued: shouldQueue,
@@ -1861,7 +1890,7 @@ export const useChatStore = defineStore('chat', () => {
         input = await buildContentBlocks(content, attachments, uploaded)
       } else {
         // No attachments: use plain text format
-        input = content.trim()
+        input = trimmedContent
       }
 
       const appStore = useAppStore()

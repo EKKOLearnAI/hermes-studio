@@ -228,12 +228,13 @@ const skillPickerItems = computed(() => {
   })
 })
 const filteredBridgeCommands = computed(() => {
-  const query = slashQuery.value.toLowerCase()
-  return bridgeCommands.value.filter(command =>
-    command.name.includes(query)
-    || command.insertText?.includes(query)
-    || command.description.toLowerCase().includes(query),
-  )
+  const query = slashQuery.value.trim().toLowerCase()
+  if (!query) return bridgeCommands.value
+  return bridgeCommands.value.filter((command) => {
+    const name = command.name.toLowerCase()
+    const insertText = command.insertText?.toLowerCase()
+    return name.startsWith(query) || insertText?.startsWith(query)
+  })
 })
 const filteredSkillPickerItems = computed(() => {
   const query = skillSearch.value.trim().toLowerCase()

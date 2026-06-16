@@ -73,7 +73,7 @@ export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessi
   if (!match) return null
   const rawName = match[1].toLowerCase()
   const name = COMMAND_ALIASES[rawName]
-  if (!name) return { name: 'status', rawName, args: match[2]?.trim() || '' }
+  if (!name) return null
   return { name, rawName, args: match[2]?.trim() || '' }
 }
 
@@ -89,8 +89,7 @@ export async function handleSessionCommand(
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
   ensureCommandSession(sessionId, command, ctx)
-  const isKnownCommand = Boolean(COMMAND_ALIASES[command.rawName])
-  if (command.name !== 'plan' && command.name !== 'skill' && isKnownCommand) {
+  if (command.name !== 'plan' && command.name !== 'skill') {
     persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
   }
 
@@ -196,17 +195,6 @@ export async function handleSessionCommand(
       action: 'error',
       terminal: !state.isWorking,
       message: result?.message || `Unknown bridge command: /${command.rawName}`,
-    })
-    return
-  }
-
-  if (!isKnownCommand) {
-    if (state.isWorking) emitQueuedState(ctx, sessionId, state)
-    emitCommand({
-      ok: false,
-      action: 'error',
-      terminal: !state.isWorking,
-      message: `Unknown bridge command: /${command.rawName}`,
     })
     return
   }
