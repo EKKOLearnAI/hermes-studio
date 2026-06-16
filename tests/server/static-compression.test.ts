@@ -7,6 +7,7 @@ import {
   createStaticCompressionMiddleware,
   isCompressibleContentType,
   selectStaticCompressionEncoding,
+  type StaticCompressionOptions,
 } from '../../packages/server/src/middleware/static-compression'
 
 interface RawResponse {
@@ -47,9 +48,14 @@ async function requestApp(app: Koa, headers: Record<string, string> = {}): Promi
   }
 }
 
-function createAssetApp(contentType: string, body: string | Buffer | Readable, contentLength?: number): Koa {
+function createAssetApp(
+  contentType: string,
+  body: string | Buffer | Readable,
+  contentLength?: number,
+  compressionOptions: StaticCompressionOptions = {},
+): Koa {
   const app = new Koa()
-  app.use(createStaticCompressionMiddleware({ minBytes: 0 }))
+  app.use(createStaticCompressionMiddleware({ minBytes: 0, ...compressionOptions }))
   app.use((ctx) => {
     ctx.type = contentType
     if (contentLength !== undefined) ctx.set('Content-Length', String(contentLength))
@@ -85,6 +91,32 @@ describe('static compression middleware', () => {
     expect(response.body.byteLength).toBeLessThan(Buffer.byteLength(source))
   })
 
+  it('falls back to gzip for large javascript assets instead of dynamic Brotli', async () => {
+    const source = 'export const route = "/chat";\n'.repeat(2048)
+    const response = await requestApp(
+      createAssetApp('application/javascript', source, undefined, { maxBrotliBytes: 1024 }),
+      { 'Accept-Encoding': 'gzip, br' },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers['content-encoding']).toBe('gzip')
+    expect(response.headers.vary).toContain('Accept-Encoding')
+    expect(gunzipSync(response.body).toString('utf8')).toBe(source)
+  })
+
+  it('marks large identity fallbacks as varying on Accept-Encoding', async () => {
+    const source = 'export const route = "/chat";\n'.repeat(2048)
+    const response = await requestApp(
+      createAssetApp('application/javascript', source, undefined, { maxBrotliBytes: 1024 }),
+      { 'Accept-Encoding': 'br' },
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers['content-encoding']).toBeUndefined()
+    expect(response.headers.vary).toContain('Accept-Encoding')
+    expect(response.body.toString('utf8')).toBe(source)
+  })
+
   it('compresses static file streams without preserving the original content length', async () => {
     const source = 'export const route = "/chat";\n'.repeat(200)
     const response = await requestApp(
@@ -118,6 +150,8 @@ describe('static compression middleware', () => {
     expect(selectStaticCompressionEncoding('gzip;q=0, br;q=1')).toBe('br')
     expect(selectStaticCompressionEncoding('*;q=0.8')).toBe('br')
     expect(selectStaticCompressionEncoding('gzip;q=0, br;q=0')).toBeNull()
+    expect(selectStaticCompressionEncoding('gzip, br', { bodyLength: 4096, maxBrotliBytes: 1024 })).toBe('gzip')
+    expect(selectStaticCompressionEncoding('br', { bodyLength: 4096, maxBrotliBytes: 1024 })).toBeNull()
 
     expect(isCompressibleContentType('text/html; charset=utf-8')).toBe(true)
     expect(isCompressibleContentType('application/manifest+json')).toBe(true)
