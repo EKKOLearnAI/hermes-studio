@@ -47,7 +47,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
         const session = getSession(sid)
         const profile = session?.profile || 'default'
         const dbDetail = await getSessionDetailPaginatedFromDbWithProfile(sid, profile)
-        if (dbDetail) actualDetail = dbDetail
+        if (dbDetail) actualDetail = dbDetail as any
       } catch (err) {
         logger.debug(err, '[chat-run-socket] state.db fallback failed for session %s', sid)
       }
