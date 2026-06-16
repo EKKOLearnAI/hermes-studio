@@ -85,6 +85,7 @@ export interface ModelVisibilityRule {
 
 export type ModelVisibility = Record<string, ModelVisibilityRule>
 export type CustomModels = Record<string, string[]>
+export type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 export interface AvailableModelGroup {
   provider: string   // credential pool key (e.g. "zai", "custom:subrouter.ai")
@@ -94,7 +95,7 @@ export interface AvailableModelGroup {
   /** Full unfiltered model catalog for this provider, used to restore hidden WUI models. */
   available_models?: string[]
   api_key: string
-  api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  api_mode?: ProviderApiMode
   builtin?: boolean
   /** Env var used by Hermes to override this provider's base URL. If present, the preset URL is editable. */
   base_url_env?: string
@@ -130,6 +131,7 @@ export interface CustomProvider {
   api_key: string
   model: string
   context_length?: number
+  api_mode?: ProviderApiMode
   providerKey?: string | null
 }
 
@@ -249,6 +251,7 @@ export async function updateProvider(poolKey: string, data: {
   base_url?: string
   api_key?: string
   model?: string
+  api_mode?: ProviderApiMode
 }): Promise<void> {
   await request(`/api/hermes/config/providers/${encodeURIComponent(poolKey)}`, {
     method: 'PUT',

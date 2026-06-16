@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { renameSession, setSessionWorkspace, batchDeleteSessions, exportSession } from "@/api/hermes/sessions";
 import type { AvailableModelGroup } from "@/api/hermes/system";
-import { fetchCodingAgentsStatus, type CodingAgentId } from "@/api/coding-agents";
+import { fetchCodingAgentsStatus, inferCodingAgentApiMode, normalizeCodingAgentApiMode, type CodingAgentApiMode, type CodingAgentId } from "@/api/coding-agents";
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
@@ -251,7 +251,7 @@ const newChatProvider = ref<string>("");
 const newChatModel = ref<string>("");
 const newChatBaseUrl = ref<string>("");
 const newChatApiKey = ref<string>("");
-const newChatApiMode = ref<"chat_completions" | "codex_responses" | "anthropic_messages">("codex_responses");
+const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatWorkspace = ref("");
 const newChatLoading = ref(false);
 const CODING_AGENT_AUTH_PROVIDER_KEYS = new Set(["openai-codex", "copilot", "xai-oauth", "nous", "google-gemini-cli", "claude-oauth"]);
@@ -366,28 +366,13 @@ const canConfirmNewChat = computed(() => {
   return true;
 });
 
-function defaultNewChatApiMode(group?: AvailableModelGroup) {
-  if (group?.api_mode) return group.api_mode;
+function defaultNewChatApiMode(group?: AvailableModelGroup): CodingAgentApiMode {
   const providerKey = String(group?.provider || newChatProvider.value || "").toLowerCase();
   const baseUrl = String(group?.base_url || newChatBaseUrl.value || "").toLowerCase();
-  if (
-    providerKey.includes("claude") ||
-    providerKey === "anthropic" ||
-    baseUrl.includes("anthropic") ||
-    baseUrl.includes("/anthropic")
-  ) {
-    return "anthropic_messages";
-  }
-  if (
-    providerKey === "deepseek" ||
-    providerKey === "lmstudio" ||
-    baseUrl.includes("deepseek") ||
-    baseUrl.includes("127.0.0.1") ||
-    baseUrl.includes("localhost")
-  ) {
-    return "chat_completions";
-  }
-  return "codex_responses";
+  return normalizeCodingAgentApiMode(
+    group?.api_mode,
+    inferCodingAgentApiMode(providerKey, baseUrl),
+  );
 }
 
 function syncNewChatApiMode() {

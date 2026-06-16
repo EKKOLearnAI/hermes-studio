@@ -1129,6 +1129,7 @@ export default {
     provider: 'Provider',
     contextLength: 'Context Length',
     contextLengthPlaceholder: 'e.g. 256000 (optional)',
+    apiMode: 'API Mode',
     local: 'Local ({host})',
     selectProviderRequired: 'Please select a provider',
     baseUrlRequired: 'Base URL is required',

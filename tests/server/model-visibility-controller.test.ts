@@ -370,6 +370,33 @@ describe('models controller — model visibility', () => {
     ]))
   })
 
+  it('loads api_mode from custom provider config entries', async () => {
+    mockReadConfigYamlForProfile.mockResolvedValue({
+      model: { default: 'research-model', provider: 'custom:research-proxy' },
+      custom_providers: [
+        {
+          name: 'research-proxy',
+          base_url: 'https://research.invalid/v1',
+          model: 'research-model',
+          api_key: 'sk-test',
+          api_mode: 'chat_completions',
+        },
+      ],
+    })
+
+    const ctx = makeCtx()
+    ctx.query = { profile: 'default' }
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.body.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'custom:research-proxy',
+        api_mode: 'chat_completions',
+        models: ['research-model'],
+      }),
+    ]))
+  })
+
   it('returns LM Studio configured default model when env credentials exist and catalog is empty', async () => {
     mockReadFile.mockResolvedValue('LM_API_KEY=local\nLM_BASE_URL=http://127.0.0.1:1234/v1\n')
     mockReadConfigYaml.mockResolvedValue({ model: { default: 'eee', provider: 'lmstudio' } })

@@ -3519,6 +3519,9 @@
                   "api_key": {
                     "type": "string"
                   },
+                  "api_mode": {
+                    "type": "string"
+                  },
                   "base_url": {
                     "type": "string"
                   },
@@ -3590,6 +3593,9 @@
                 "type": "object",
                 "properties": {
                   "api_key": {
+                    "type": "string"
+                  },
+                  "api_mode": {
                     "type": "string"
                   },
                   "base_url": {

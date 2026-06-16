@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { getBaseUrlValue, getApiKey } from '../client'
+import type { ProviderApiMode } from './system'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -30,8 +31,8 @@ export interface StartRunRequest {
   base_url?: string
   apiKey?: string
   api_key?: string
-  apiMode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
-  api_mode?: 'chat_completions' | 'codex_responses' | 'anthropic_messages'
+  apiMode?: ProviderApiMode
+  api_mode?: ProviderApiMode
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string

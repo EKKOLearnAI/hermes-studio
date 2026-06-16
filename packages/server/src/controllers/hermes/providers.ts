@@ -9,6 +9,7 @@ import { logger } from '../../services/logger'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
+type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -39,8 +40,22 @@ async function clearStoredAuthProvider(profile: string, poolKey: string) {
   } catch (err: any) { logger.error(err, 'Failed to clear auth credentials for %s', poolKey) }
 }
 
-function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number) {
+function normalizeApiMode(value: unknown): ProviderApiMode | undefined {
+  const apiMode = String(value || '').trim()
+  return apiMode === 'chat_completions' ||
+    apiMode === 'codex_responses' ||
+    apiMode === 'anthropic_messages' ||
+    apiMode === 'bedrock_converse' ||
+    apiMode === 'codex_app_server'
+    ? apiMode
+    : undefined
+}
+
+function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number, api_mode?: ProviderApiMode) {
   const entry: any = { name, base_url, api_key, model }
+  if (api_mode) {
+    entry.api_mode = api_mode
+  }
   if (context_length && context_length > 0) {
     entry.models = { [model]: { context_length } }
   }
@@ -85,13 +100,14 @@ function findProviderDictKey(config: any, poolKey: string, requestedProviderKey 
 }
 
 export async function create(ctx: any) {
-  const { name, base_url, api_key, model, context_length, providerKey } = ctx.request.body as {
-    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null
+  const { name, base_url, api_key, model, context_length, providerKey, api_mode } = ctx.request.body as {
+    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null; api_mode?: ProviderApiMode
   }
   const normalizedName = String(name || '').trim()
   const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
   const isBuiltin = poolKey in PROVIDER_ENV_MAP
   const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
+  const customApiMode = normalizeApiMode(api_mode)
   if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
   }
@@ -113,13 +129,14 @@ export async function create(ctx: any) {
           existing.model = model
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) existing.api_mode = preset.api_mode
+          else if (customApiMode) existing.api_mode = customApiMode
           if (context_length && context_length > 0) {
             if (!existing.models) existing.models = {}
             existing.models[model] = existing.models[model] || {}
             existing.models[model].context_length = context_length
           }
         } else {
-          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length)
+          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length, customApiMode)
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) entry.api_mode = preset.api_mode
           config.custom_providers.push(entry)
@@ -147,13 +164,14 @@ export async function create(ctx: any) {
             existing.model = model
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) existing.api_mode = preset.api_mode
+            else if (customApiMode) existing.api_mode = customApiMode
             if (context_length && context_length > 0) {
               if (!existing.models) existing.models = {}
               existing.models[model] = existing.models[model] || {}
               existing.models[model].context_length = context_length
             }
           } else {
-            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length)
+            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length, customApiMode)
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) entry.api_mode = preset.api_mode
             config.custom_providers.push(entry)
@@ -176,9 +194,10 @@ export async function create(ctx: any) {
 
 export async function update(ctx: any) {
   const poolKey = decodeURIComponent(ctx.params.poolKey)
-  const { name, base_url, api_key, model } = ctx.request.body as {
-    name?: string; base_url?: string; api_key?: string; model?: string
+  const { name, base_url, api_key, model, api_mode } = ctx.request.body as {
+    name?: string; base_url?: string; api_key?: string; model?: string; api_mode?: ProviderApiMode
   }
+  const customApiMode = normalizeApiMode(api_mode)
   try {
     const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
@@ -193,6 +212,7 @@ export async function update(ctx: any) {
         if (base_url !== undefined) entry.base_url = base_url
         if (api_key !== undefined) entry.api_key = api_key
         if (model !== undefined) entry.model = model
+        if (customApiMode !== undefined) entry.api_mode = customApiMode
         return { data: config, result: true }
       })
       if (!found) {
