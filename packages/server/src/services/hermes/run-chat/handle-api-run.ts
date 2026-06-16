@@ -11,6 +11,7 @@ import {
   updateSessionStats,
   getSessionDetailPaginated,
 } from '../../../db/hermes/session-store'
+import { getSessionDetailPaginatedFromDbWithProfile } from '../../../db/hermes/sessions-db'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger } from '../../logger'
 import { contentBlocksToString, extractTextForPreview, isContentBlockArray, convertContentBlocks } from './content-blocks'
@@ -36,7 +37,21 @@ export function resolveRunSource(source?: string, sessionId?: string): ChatRunSo
 
 export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<string, SessionState>): Promise<SessionState> {
   try {
-    const actualDetail = getSessionDetailPaginated(sid)
+    let actualDetail = getSessionDetailPaginated(sid)
+
+    // Fallback to hermes-agent state.db when local DB has no messages.
+    // This handles sessions created by older versions where messages may
+    // only exist in hermes-agent's state.db, not in web-ui's local DB.
+    if (!actualDetail?.messages?.length) {
+      try {
+        const session = getSession(sid)
+        const profile = session?.profile || 'default'
+        const dbDetail = await getSessionDetailPaginatedFromDbWithProfile(sid, profile)
+        if (dbDetail) actualDetail = dbDetail
+      } catch (err) {
+        logger.debug(err, '[chat-run-socket] state.db fallback failed for session %s', sid)
+      }
+    }
 
     const messages = actualDetail?.messages ? handleMessage(actualDetail.messages, sid) : []
 
