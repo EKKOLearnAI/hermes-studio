@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'path'
 
 const listConversationSummariesFromDbMock = vi.fn()
 const getConversationDetailFromDbMock = vi.fn()
@@ -32,6 +33,7 @@ const bridgeGetRuntimeStateMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
+const originalWorkspaceBase = process.env.WORKSPACE_BASE
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -174,6 +176,13 @@ describe('session conversations controller', () => {
     bridgeGetRuntimeStateMock.mockReset()
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
+  })
+
+  afterEach(() => {
+    vi.doUnmock('fs')
+    vi.doUnmock('fs/promises')
+    if (originalWorkspaceBase === undefined) delete process.env.WORKSPACE_BASE
+    else process.env.WORKSPACE_BASE = originalWorkspaceBase
   })
 
   it('lists conversations from the local session store', async () => {
@@ -929,6 +938,120 @@ describe('session conversations controller', () => {
     }))
     expect(localUpdateSessionMock.mock.calls.at(-1)?.[1].last_active).toBeGreaterThan(200)
     expect(ctx.body).toMatchObject({ ok: true, imported: true })
+  })
+
+  it('lists visible directory symlinks, skips broken links, and excludes external targets including junction-like dirents', async () => {
+    const workspaceBase = join(process.cwd(), 'workspace-base')
+    const currentPath = join(workspaceBase, 'parent')
+    const alphaPath = join(currentPath, 'alpha')
+    const safeLinkedPath = join(currentPath, 'linked-dir')
+    const externalLinkedPath = join(currentPath, 'linked-outside')
+    const externalJunctionPath = join(currentPath, 'junction-outside')
+    const directoryEntry = { name: 'alpha', isDirectory: () => true, isSymbolicLink: () => false }
+    const symlinkDirectoryEntry = { name: 'linked-dir', isDirectory: () => false, isSymbolicLink: () => true }
+    const externalSymlinkEntry = { name: 'linked-outside', isDirectory: () => false, isSymbolicLink: () => true }
+    const externalJunctionEntry = { name: 'junction-outside', isDirectory: () => true, isSymbolicLink: () => true }
+    const symlinkFileEntry = { name: 'linked-file', isDirectory: () => false, isSymbolicLink: () => true }
+    const brokenSymlinkEntry = { name: 'broken-link', isDirectory: () => false, isSymbolicLink: () => true }
+    const hiddenSymlinkEntry = { name: '.hidden-link', isDirectory: () => false, isSymbolicLink: () => true }
+    const fileEntry = { name: 'notes.txt', isDirectory: () => false, isSymbolicLink: () => false }
+    const existsSyncMock = vi.fn(() => true)
+    const readdirMock = vi.fn(async () => [
+      symlinkDirectoryEntry,
+      externalSymlinkEntry,
+      directoryEntry,
+      externalJunctionEntry,
+      symlinkFileEntry,
+      brokenSymlinkEntry,
+      hiddenSymlinkEntry,
+      fileEntry,
+    ])
+    const statMock = vi.fn(async (entryPath: string) => {
+      if (entryPath === safeLinkedPath) return { isDirectory: () => true }
+      if (entryPath === externalLinkedPath) return { isDirectory: () => true }
+      if (entryPath === join(currentPath, 'linked-file')) return { isDirectory: () => false }
+      if (entryPath === join(currentPath, 'broken-link')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      throw new Error(`unexpected stat path: ${entryPath}`)
+    })
+    const realpathMock = vi.fn(async (entryPath: string) => {
+      if (entryPath === workspaceBase) return workspaceBase
+      if (entryPath === currentPath) return currentPath
+      if (entryPath === alphaPath) return alphaPath
+      if (entryPath === safeLinkedPath) return join(workspaceBase, 'resolved-linked-dir')
+      if (entryPath === externalLinkedPath) return join(process.cwd(), 'outside-workspace')
+      if (entryPath === externalJunctionPath) return join(process.cwd(), 'outside-workspace-junction')
+      throw new Error(`unexpected realpath path: ${entryPath}`)
+    })
+
+    vi.doMock('fs', async () => ({
+      ...(await vi.importActual<typeof import('fs')>('fs')),
+      existsSync: existsSyncMock,
+    }))
+    vi.doMock('fs/promises', async () => ({
+      ...(await vi.importActual<typeof import('fs/promises')>('fs/promises')),
+      readdir: readdirMock,
+      realpath: realpathMock,
+      stat: statMock,
+    }))
+    process.env.WORKSPACE_BASE = workspaceBase
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: { path: 'parent' }, body: null }
+
+    await mod.listWorkspaceFolders(ctx)
+
+    expect(realpathMock).toHaveBeenCalledWith(workspaceBase)
+    expect(realpathMock).toHaveBeenCalledWith(currentPath)
+    expect(existsSyncMock).toHaveBeenCalledWith(currentPath)
+    expect(readdirMock).toHaveBeenCalledWith(currentPath, { withFileTypes: true })
+    expect(realpathMock).toHaveBeenCalledWith(alphaPath)
+    expect(statMock).toHaveBeenCalledWith(safeLinkedPath)
+    expect(statMock).toHaveBeenCalledWith(externalLinkedPath)
+    expect(statMock).toHaveBeenCalledWith(join(currentPath, 'linked-file'))
+    expect(statMock).toHaveBeenCalledWith(join(currentPath, 'broken-link'))
+    expect(realpathMock).toHaveBeenCalledWith(safeLinkedPath)
+    expect(realpathMock).toHaveBeenCalledWith(externalLinkedPath)
+    expect(realpathMock).toHaveBeenCalledWith(externalJunctionPath)
+    expect(statMock).not.toHaveBeenCalledWith(externalJunctionPath)
+    expect(statMock).not.toHaveBeenCalledWith(join(currentPath, '.hidden-link'))
+    expect(ctx.status).toBeUndefined()
+    expect(ctx.body).toEqual({
+      base: workspaceBase,
+      current: 'parent',
+      folders: [
+        { name: 'alpha', path: 'parent/alpha', fullPath: join(currentPath, 'alpha') },
+        { name: 'linked-dir', path: 'parent/linked-dir', fullPath: safeLinkedPath },
+      ],
+    })
+  })
+
+  it('rejects workspace folder creation through a symlink that resolves outside the workspace base', async () => {
+    const workspaceBase = join(process.cwd(), 'workspace-base')
+    const escapeLinkPath = join(workspaceBase, 'escape-link')
+    const mkdirMock = vi.fn()
+    const realpathMock = vi.fn(async (entryPath: string) => {
+      if (entryPath === workspaceBase) return workspaceBase
+      if (entryPath === escapeLinkPath) return join(process.cwd(), 'outside-workspace')
+      throw new Error(`unexpected realpath path: ${entryPath}`)
+    })
+
+    vi.doMock('fs/promises', async () => ({
+      ...(await vi.importActual<typeof import('fs/promises')>('fs/promises')),
+      mkdir: mkdirMock,
+      realpath: realpathMock,
+    }))
+    process.env.WORKSPACE_BASE = workspaceBase
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { request: { body: { parentPath: 'escape-link', name: 'child' } }, body: null }
+
+    await mod.createWorkspaceFolder(ctx)
+
+    expect(realpathMock).toHaveBeenCalledWith(workspaceBase)
+    expect(realpathMock).toHaveBeenCalledWith(escapeLinkPath)
+    expect(mkdirMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(403)
+    expect(ctx.body).toEqual({ error: 'Access denied' })
   })
 
   describe('exportSession', () => {

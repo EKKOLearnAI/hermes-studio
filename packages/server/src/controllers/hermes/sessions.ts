@@ -823,16 +823,11 @@ export async function listWorkspaceFolders(ctx: any) {
   const { resolve, join } = await import('path')
   const { readdir } = await import('fs/promises')
   const { existsSync } = await import('fs')
-  const { homedir } = await import('os')
-
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
+  const { base: WORKSPACE_BASE, realBase: realWorkspaceBase } = await getWorkspaceBaseInfo()
   const subPath = (ctx.query.path as string) || ''
 
-  // Security: prevent path traversal
   const fullPath = resolve(join(WORKSPACE_BASE, subPath))
-  if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
-    ctx.status = 403
-    ctx.body = { error: 'Access denied' }
+  if (!await ensureWorkspacePathAllowed(ctx, fullPath, WORKSPACE_BASE, realWorkspaceBase)) {
     return
   }
 
@@ -843,14 +838,37 @@ export async function listWorkspaceFolders(ctx: any) {
   }
 
   try {
+    const { realpath, stat } = await import('fs/promises')
     const entries = await readdir(fullPath, { withFileTypes: true })
-    const folders = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-      .map(e => ({
-        name: e.name,
-        path: subPath ? `${subPath}/${e.name}` : e.name,
-        fullPath: join(fullPath, e.name),
-      }))
+    const folders = (await Promise.all(entries.map(async (entry) => {
+      if (entry.name.startsWith('.')) return null
+
+      const entryFullPath = join(fullPath, entry.name)
+      let isDirectory = entry.isDirectory()
+
+      if (!isDirectory && entry.isSymbolicLink()) {
+        try {
+          const info = await stat(entryFullPath)
+          isDirectory = info.isDirectory()
+        } catch {
+          return null
+        }
+      }
+
+      if (!isDirectory) return null
+
+      try {
+        if (!isPathWithin(await realpath(entryFullPath), realWorkspaceBase)) return null
+      } catch {
+        return null
+      }
+
+      return {
+        name: entry.name,
+        path: subPath ? `${subPath}/${entry.name}` : entry.name,
+        fullPath: entryFullPath,
+      }
+    }))).filter((entry): entry is { name: string; path: string; fullPath: string } => Boolean(entry))
       .sort((a, b) => a.name.localeCompare(b.name))
 
     ctx.body = { base: WORKSPACE_BASE, current: subPath, folders }
@@ -869,14 +887,58 @@ function invalidWorkspaceFolderName(name: string): boolean {
     name.includes('\0')
 }
 
-async function resolveWorkspaceFolderPath(ctx: any, inputPath: string) {
-  const { resolve, join } = await import('path')
+async function getWorkspaceBaseInfo() {
+  const { realpath } = await import('fs/promises')
   const { homedir } = await import('os')
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
-  const fullPath = resolve(join(WORKSPACE_BASE, inputPath || ''))
-  if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
+  const { resolve } = await import('path')
+
+  const base = resolve(process.env.WORKSPACE_BASE?.trim() || homedir())
+  let realBase = base
+  try {
+    realBase = await realpath(base)
+  } catch {
+    // Fall back to lexical base; missing base will be handled by the caller.
+  }
+  return { base, realBase }
+}
+
+async function ensureWorkspacePathAllowed(ctx: any, fullPath: string, basePath: string, realBasePath: string): Promise<boolean> {
+  const { realpath } = await import('fs/promises')
+  const { dirname } = await import('path')
+
+  if (!isPathWithin(fullPath, basePath)) {
     ctx.status = 403
     ctx.body = { error: 'Access denied' }
+    return false
+  }
+
+  let pathToCheck = fullPath
+  while (true) {
+    try {
+      if (!isPathWithin(await realpath(pathToCheck), realBasePath)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return false
+      }
+      return true
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err
+      const parentPath = dirname(pathToCheck)
+      if (parentPath === pathToCheck) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return false
+      }
+      pathToCheck = parentPath
+    }
+  }
+}
+
+async function resolveWorkspaceFolderPath(ctx: any, inputPath: string) {
+  const { resolve, join } = await import('path')
+  const { base: WORKSPACE_BASE, realBase: realWorkspaceBase } = await getWorkspaceBaseInfo()
+  const fullPath = resolve(join(WORKSPACE_BASE, inputPath || ''))
+  if (!await ensureWorkspacePathAllowed(ctx, fullPath, WORKSPACE_BASE, realWorkspaceBase)) {
     return null
   }
   return { base: WORKSPACE_BASE, fullPath }
