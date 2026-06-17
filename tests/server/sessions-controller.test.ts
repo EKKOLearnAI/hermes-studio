@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listConversationSummariesFromDbMock = vi.fn()
 const getConversationDetailFromDbMock = vi.fn()
@@ -32,6 +35,7 @@ const bridgeGetRuntimeStateMock = vi.fn()
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
+const tempDirs: string[] = []
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -1049,7 +1053,32 @@ describe('session conversations controller', () => {
       expect(ctx.body).toEqual({ error: 'Session not found' })
     })
 
-    it('falls back to CLI when DB query fails', async () => {
+  it('lists workspace folders that are directories or symlinked directories', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'hermes-workspace-folders-'))
+    tempDirs.push(homeDir)
+    const baseDir = join(homeDir, 'workspace-base')
+    const realDir = join(homeDir, 'real-project')
+    mkdirSync(baseDir, { recursive: true })
+    mkdirSync(realDir, { recursive: true })
+    symlinkSync(realDir, join(baseDir, 'linked-project'))
+    mkdirSync(join(baseDir, 'visible-project'), { recursive: true })
+    mkdirSync(join(baseDir, '.hidden-project'), { recursive: true })
+
+    process.env.WORKSPACE_BASE = baseDir
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { query: {}, status: 200, body: null }
+
+    await mod.listWorkspaceFolders(ctx)
+
+    expect(ctx.body).toMatchObject({
+      base: baseDir,
+      current: '',
+    })
+    expect(ctx.body.folders.map((folder: any) => folder.name)).toEqual(['linked-project', 'visible-project'])
+    expect(ctx.body.folders[0].fullPath).toBe(join(baseDir, 'linked-project'))
+  })
+
+  it('falls back to CLI when DB query fails', async () => {
       const sessionData = { id: 'cli-123', title: 'CLI Session', messages: [] }
       localGetSessionDetailMock.mockReturnValue(sessionData)
 

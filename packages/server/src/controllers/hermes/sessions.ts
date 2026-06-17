@@ -894,7 +894,7 @@ export async function listWorkspaceFolders(ctx: any) {
   try {
     const entries = await readdir(fullPath, { withFileTypes: true })
     const folders = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .filter(e => (e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('.'))
       .map(e => ({
         name: e.name,
         path: subPath ? `${subPath}/${e.name}` : e.name,
