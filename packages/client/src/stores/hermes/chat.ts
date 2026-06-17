@@ -433,6 +433,14 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
   return result
 }
 
+function sessionActivitySeconds(s: SessionSummary): number {
+  return Math.max(
+    s.started_at || 0,
+    s.ended_at || 0,
+    s.last_active || 0,
+  )
+}
+
 function mapHermesSession(s: SessionSummary): Session {
   const isCodingAgentSession = s.source === 'coding_agent' || s.agent === 'claude' || s.agent === 'codex'
   const codingAgentId = s.agent === 'codex' ? 'codex' : s.agent === 'claude' ? 'claude-code' : undefined
@@ -441,6 +449,7 @@ function mapHermesSession(s: SessionSummary): Session {
         ? s.agent_mode
         : s.provider === 'global' ? 'global' : 'scoped')
     : undefined
+  const activitySeconds = sessionActivitySeconds(s)
   return {
     id: s.id,
     profile: s.profile || 'default',
@@ -453,7 +462,7 @@ function mapHermesSession(s: SessionSummary): Session {
     codingAgentMode,
     messages: [],
     createdAt: Math.round(s.started_at * 1000),
-    updatedAt: Math.round((s.last_active || s.ended_at || s.started_at) * 1000),
+    updatedAt: Math.round(activitySeconds * 1000),
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     messageCount: s.message_count,
@@ -625,7 +634,7 @@ export const useChatStore = defineStore('chat', () => {
     const byId = new Map<string, SessionSummary>()
     for (const session of [...localSessions, ...globalSessions]) byId.set(session.id, session)
     return [...byId.values()].sort((a, b) =>
-      (b.last_active || b.ended_at || b.started_at || 0) - (a.last_active || a.ended_at || a.started_at || 0),
+      sessionActivitySeconds(b) - sessionActivitySeconds(a),
     )
   }
 
