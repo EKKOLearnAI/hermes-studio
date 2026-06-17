@@ -47,7 +47,10 @@ const isSuperAdmin = computed(() => isStoredSuperAdmin());
 
 const showOutline = ref(false);
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
+const chatInputRef = ref<(InstanceType<typeof ChatInput> & { addFiles?: (files: File[]) => void }) | null>(null);
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
+const chatDropCounter = ref(0);
+const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
 const activeToolPanel = ref<"files" | "terminal">("files");
 const toolPanelWidth = ref(560);
@@ -130,6 +133,44 @@ function startToolResize(event: PointerEvent) {
   window.addEventListener("pointerup", stopToolResize);
   document.body.style.userSelect = "none";
   document.body.style.cursor = "col-resize";
+}
+
+function hasDraggedFiles(event: DragEvent) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function resetChatDropState() {
+  chatDropCounter.value = 0;
+  isChatDropActive.value = false;
+}
+
+function handleChatDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+}
+
+function handleChatDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  chatDropCounter.value += 1;
+  isChatDropActive.value = true;
+}
+
+function handleChatDragLeave(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  chatDropCounter.value -= 1;
+  if (chatDropCounter.value <= 0) resetChatDropState();
+}
+
+function handleChatDrop(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer?.files || []);
+  const target = event.target instanceof Element ? event.target : null;
+  resetChatDropState();
+  if (!files.length || target?.closest(".chat-input-area")) return;
+  chatInputRef.value?.addFiles?.(files);
 }
 
 async function handleSessionClick(sessionId: string) {
@@ -1524,10 +1565,18 @@ async function handleSessionModelCustomSubmit() {
       </header>
 
       <template v-if="currentMode === 'chat'">
-        <div ref="chatContentWrapperRef" class="chat-content-wrapper">
+        <div
+          ref="chatContentWrapperRef"
+          class="chat-content-wrapper"
+          :class="{ 'chat-content-wrapper--drop-active': isChatDropActive }"
+          @dragover="handleChatDragOver"
+          @dragenter="handleChatDragEnter"
+          @dragleave="handleChatDragLeave"
+          @drop="handleChatDrop"
+        >
           <div class="chat-main-content">
             <MessageList ref="messageListRef" />
-            <ChatInput />
+            <ChatInput ref="chatInputRef" />
           </div>
           <OutlinePanel
             v-if="showOutline"
@@ -2145,6 +2194,17 @@ async function handleSessionModelCustomSubmit() {
   position: relative;
   min-width: 0;
   max-width: 100%;
+}
+
+.chat-content-wrapper--drop-active::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  z-index: 30;
+  pointer-events: none;
+  border: 2px dashed var(--accent-info);
+  border-radius: 8px;
+  background: rgba(var(--accent-info-rgb), 0.05);
 }
 
 .chat-main-content {

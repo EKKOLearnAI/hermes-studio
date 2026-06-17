@@ -37,6 +37,9 @@ const contextRoomId = ref<string | null>(null)
 const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
+const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
+const chatDropCounter = ref(0)
+const isChatDropActive = ref(false)
 
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
@@ -82,6 +85,44 @@ function openPageSidebar() {
 
 function openSettingsPage() {
     router.push({ name: 'hermes.settings' })
+}
+
+function hasDraggedFiles(event: DragEvent) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function resetChatDropState() {
+    chatDropCounter.value = 0
+    isChatDropActive.value = false
+}
+
+function handleChatDragOver(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function handleChatDragEnter(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    chatDropCounter.value += 1
+    isChatDropActive.value = true
+}
+
+function handleChatDragLeave(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    chatDropCounter.value -= 1
+    if (chatDropCounter.value <= 0) resetChatDropState()
+}
+
+function handleChatDrop(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer?.files || [])
+    const target = event.target instanceof Element ? event.target : null
+    resetChatDropState()
+    if (!files.length || target?.closest('.chat-input-area')) return
+    groupChatInputRef.value?.addFiles?.(files)
 }
 
 function generateCode(): string {
@@ -412,7 +453,14 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         />
 
         <!-- Main chat area -->
-        <div class="chat-main">
+        <div
+            class="chat-main"
+            :class="{ 'chat-main--drop-active': isChatDropActive }"
+            @dragover="handleChatDragOver"
+            @dragenter="handleChatDragEnter"
+            @dragleave="handleChatDragLeave"
+            @drop="handleChatDrop"
+        >
             <div class="chat-header">
                 <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -556,7 +604,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         {{ store.typingText }}
                     </div>
                 </div>
-                <GroupChatInput @send="handleSendMessage" />
+                <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
             </template>
 
             <div v-else class="no-room">
@@ -1170,6 +1218,18 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex-direction: column;
     min-width: 0;
     background-color: transparent;
+    position: relative;
+}
+
+.chat-main--drop-active::after {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    z-index: 30;
+    pointer-events: none;
+    border: 2px dashed var(--accent-info);
+    border-radius: 8px;
+    background: rgba(var(--accent-info-rgb), 0.05);
 }
 
 .chat-header {

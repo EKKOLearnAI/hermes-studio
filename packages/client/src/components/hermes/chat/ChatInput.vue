@@ -586,6 +586,11 @@ function addFile(file: File) {
   })
 }
 
+function addFiles(files: File[]) {
+  for (const file of files) addFile(file)
+  if (files.length > 0) textareaRef.value?.focus()
+}
+
 function handleAttachClick() {
   fileInputRef.value?.click()
 }
@@ -593,7 +598,7 @@ function handleAttachClick() {
 function handleFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files) return
-  for (const file of input.files) addFile(file)
+  addFiles(Array.from(input.files))
   input.value = ''
 }
 
@@ -609,7 +614,7 @@ function handlePaste(e: ClipboardEvent) {
     if (!blob) continue
     const ext = item.type.split('/')[1] || 'png'
     const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })
-    addFile(file)
+    addFiles([file])
   }
 }
 
@@ -641,9 +646,10 @@ function handleDrop(e: DragEvent) {
   isDragging.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (!files.length) return
-  for (const file of files) addFile(file)
-  textareaRef.value?.focus()
+  addFiles(files)
 }
+
+defineExpose({ addFiles })
 
 // --- Send ---
 
