@@ -1474,7 +1474,7 @@ export default {
       apiKeyRequired: 'API key 為必填。',
       apiKeyRequiredForDiscovery: '取得模型需要 API key。',
       baseUrlRequired: 'Base URL 為必填。',
-      baseUrlHttpsRequired: '除 localhost 端點外，請使用 https://。',
+      baseUrlHttpsRequired: '請使用 http:// 或 https:// 協定。',
       baseUrlInvalid: '請輸入有效的 Base URL，包含 https://。',
       discoveryFailedManualFallback: '無法取得模型。你仍可以手動輸入模型名稱。',
       completeRequiredProviderFields: '儲存前請補齊必填 provider 欄位。',

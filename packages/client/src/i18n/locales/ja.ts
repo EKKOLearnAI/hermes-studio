@@ -1305,7 +1305,7 @@ export default {
       apiKeyRequired: 'API key は必須です。',
       apiKeyRequiredForDiscovery: 'モデル取得には API key が必要です。',
       baseUrlRequired: 'Base URL は必須です。',
-      baseUrlHttpsRequired: 'エンドポイントが localhost でない限り https:// を使用してください。',
+      baseUrlHttpsRequired: 'http:// または https:// を使用してください。',
       baseUrlInvalid: 'https:// を含む有効な Base URL を入力してください。',
       discoveryFailedManualFallback: 'モデルを取得できませんでした。モデル名は手動で入力できます。',
       completeRequiredProviderFields: '保存前に必須の provider フィールドを入力してください。',

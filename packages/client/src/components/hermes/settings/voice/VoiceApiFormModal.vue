@@ -168,7 +168,7 @@ function validateBaseUrl(value: string): string {
   if (!trimmed) return t('settings.voice.baseUrlRequired')
   try {
     const url = new URL(trimmed)
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       return t('settings.voice.baseUrlHttpsRequired')
     }
     return ''

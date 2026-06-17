@@ -1482,7 +1482,7 @@ export default {
       apiKeyRequired: 'API key is required.',
       apiKeyRequiredForDiscovery: 'API key is required to fetch models.',
       baseUrlRequired: 'Base URL is required.',
-      baseUrlHttpsRequired: 'Use https:// unless the endpoint is localhost.',
+      baseUrlHttpsRequired: 'Please use http:// or https://.',
       baseUrlInvalid: 'Enter a valid Base URL, including https://.',
       discoveryFailedManualFallback: 'Could not fetch models. You can still enter the model name manually.',
       completeRequiredProviderFields: 'Complete the required provider fields before saving.',

@@ -1339,7 +1339,7 @@ export default {
       apiKeyRequired: 'API key обязателен.',
       apiKeyRequiredForDiscovery: 'API key обязателен для получения моделей.',
       baseUrlRequired: 'Base URL обязателен.',
-      baseUrlHttpsRequired: 'Используйте https://, если endpoint не localhost.',
+      baseUrlHttpsRequired: 'Используйте http:// или https://.',
       baseUrlInvalid: 'Введите корректный Base URL, включая https://.',
       discoveryFailedManualFallback: 'Не удалось получить модели. Вы всё ещё можете ввести имя модели вручную.',
       completeRequiredProviderFields: 'Заполните обязательные поля provider перед сохранением.',

@@ -12,6 +12,16 @@ export function resetTtsDnsLookupForTests() {
   resolveHostname = dnsLookup
 }
 
+/**
+ * When HERMES_VOICE_ALLOW_INSECURE_URL is truthy, skip private-network and
+ * localhost blocking so that self-hosted / LAN deployments can reach internal
+ * TTS and STT endpoints over plain HTTP.
+ */
+export function isInsecureVoiceUrlAllowed(): boolean {
+  const raw = String(process.env.HERMES_VOICE_ALLOW_INSECURE_URL || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(raw)
+}
+
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
 }
@@ -83,13 +93,19 @@ export function assertSafeTtsBaseUrl(url: URL, providerLabel: string) {
     throw new Error(`${providerLabel} TTS baseUrl must not include credentials`)
   }
 
-  if (isBlockedHostname(url.hostname) || isBlockedIp(url.hostname)) {
-    throw new Error(`${providerLabel} TTS baseUrl cannot target localhost or private network addresses`)
+  if (!isInsecureVoiceUrlAllowed()) {
+    if (isBlockedHostname(url.hostname) || isBlockedIp(url.hostname)) {
+      throw new Error(`${providerLabel} TTS baseUrl cannot target localhost or private network addresses`)
+    }
   }
 }
 
 export async function assertSafeResolvedTtsBaseUrl(url: URL, providerLabel: string) {
   assertSafeTtsBaseUrl(url, providerLabel)
+
+  if (isInsecureVoiceUrlAllowed()) {
+    return
+  }
 
   if (isIP(normalizeHostname(url.hostname))) {
     return

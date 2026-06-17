@@ -1305,7 +1305,7 @@ export default {
       apiKeyRequired: 'API key는 필수입니다.',
       apiKeyRequiredForDiscovery: '모델을 가져오려면 API key가 필요합니다.',
       baseUrlRequired: 'Base URL은 필수입니다.',
-      baseUrlHttpsRequired: '엔드포인트가 localhost가 아니면 https://를 사용하세요.',
+      baseUrlHttpsRequired: 'http:// 또는 https:// 프로토콜을 사용하세요.',
       baseUrlInvalid: 'https://를 포함한 올바른 Base URL을 입력하세요.',
       discoveryFailedManualFallback: '모델을 가져올 수 없습니다. 모델 이름은 직접 입력할 수 있습니다.',
       completeRequiredProviderFields: '저장하기 전에 필수 provider 필드를 완료하세요.',
