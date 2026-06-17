@@ -290,9 +290,9 @@ class AgentClient {
         this.socket!.emit('message_reasoning_delta', { roomId, id: messageId, delta })
     }
 
-    emitMessageStreamEnd(roomId: string, messageId: string): void {
+    emitMessageStreamEnd(roomId: string, messageId: string, finishReason?: string): void {
         this.ensureConnected()
-        this.socket!.emit('message_stream_end', { roomId, id: messageId })
+        this.socket!.emit('message_stream_end', { roomId, id: messageId, finishReason: finishReason || 'stop' })
     }
 
     getJoinedRooms(): string[] {
@@ -561,7 +561,7 @@ class AgentClient {
             if (lastChunk?.status === 'error') {
                 logger.error(`[AgentClients] ${this.name}: bridge response failed: ${lastChunk.error || 'unknown error'}`)
                 await this.sendAgentErrorMessage(roomId, streamMessageId, lastChunk.error || 'Run failed', msg, reasoningContent)
-                this.emitMessageStreamEnd(roomId, streamMessageId)
+                this.emitMessageStreamEnd(roomId, streamMessageId, 'error')
                 this.stopTyping(roomId)
                 onStatus?.('ready')
                 return
@@ -581,20 +581,20 @@ class AgentClient {
                     reasoning: reasoningContent || null,
                     reasoning_content: reasoningContent || null,
                 })
-                this.emitMessageStreamEnd(roomId, streamMessageId)
+                this.emitMessageStreamEnd(roomId, streamMessageId, 'stop')
                 await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
                 onStatus?.('ready')
                 return
             }
             logger.warn(`[AgentClients] ${this.name}: bridge response completed without content`)
-            this.emitMessageStreamEnd(roomId, streamMessageId)
+            this.emitMessageStreamEnd(roomId, streamMessageId, 'stop')
             this.stopTyping(roomId)
             onStatus?.('ready')
         } catch (err: any) {
             logger.error(`[AgentClients] ${this.name}: error handling message: ${err.message}`)
             try {
                 await this.sendAgentErrorMessage(roomId, streamMessageId, err, msg, reasoningContent)
-                if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId)
+                if (streamStarted) this.emitMessageStreamEnd(roomId, streamMessageId, 'error')
             } catch (sendErr: any) {
                 logger.warn(`[AgentClients] ${this.name}: failed to send error message: ${sendErr.message}`)
             }

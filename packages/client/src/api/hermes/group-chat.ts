@@ -48,6 +48,7 @@ export interface ChatMessage {
     reasoning_details?: string | null
     reasoning_content?: string | null
     isStreaming?: boolean
+    isIncomplete?: boolean
     toolName?: string
     toolCallId?: string
     toolArgs?: unknown
@@ -55,6 +56,8 @@ export interface ChatMessage {
     toolResult?: unknown
     toolStatus?: 'running' | 'done' | 'error'
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
+    /** Captured at stream_start and never overwritten; used for stable sort order. */
+    firstSeenAt?: number
 }
 
 export interface MemberInfo {

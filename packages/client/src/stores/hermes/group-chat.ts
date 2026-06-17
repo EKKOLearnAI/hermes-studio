@@ -110,6 +110,8 @@ function mergeFinalMessage(existing: ChatMessage | null, msg: ChatMessage): Chat
         reasoning: hasText(msg.reasoning) ? msg.reasoning : existing?.reasoning ?? msg.reasoning ?? null,
         reasoning_content: hasText(msg.reasoning_content) ? msg.reasoning_content : existing?.reasoning_content ?? msg.reasoning_content ?? null,
         isStreaming: false,
+        isIncomplete: msg.isIncomplete ?? existing?.isIncomplete ?? undefined,
+        firstSeenAt: existing?.firstSeenAt || msg.firstSeenAt,
         attachments: existing?.attachments || msg.attachments,
     }
 }
@@ -284,7 +286,7 @@ const currentUserAvatar = ref('')
     }
 
     // ─── Computed ───────────────────────────────────────────
-    const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => a.timestamp - b.timestamp)))
+    const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => (a.firstSeenAt || a.timestamp) - (b.firstSeenAt || b.timestamp))))
 
     const memberNames = computed(() => {
         return members.value.map(m => m.name)
@@ -374,6 +376,8 @@ const currentUserAvatar = ref('')
                 !m.tool_calls?.length
             ))
             msg.isStreaming = true
+            // Capture firstSeenAt once — never overwritten, used for stable sort
+            msg.firstSeenAt = msg.firstSeenAt || msg.timestamp || Date.now()
             const idx = messages.value.findIndex(m => m.id === msg.id)
             if (idx >= 0) {
                 const existing = messages.value[idx]
@@ -418,9 +422,10 @@ const currentUserAvatar = ref('')
             messages.value = [...messages.value]
         })
 
-        socket.on('message_stream_end', (data: { roomId: string; id: string }) => {
+        socket.on('message_stream_end', (data: { roomId: string; id: string; finishReason?: string }) => {
             if (data.roomId !== currentRoomId.value) return
             const idx = messages.value.findIndex(m => m.id === data.id)
+            const isIncomplete = data.finishReason && data.finishReason !== 'stop'
             if (
                 idx >= 0 &&
                 !messages.value[idx].content?.trim() &&
@@ -429,9 +434,12 @@ const currentUserAvatar = ref('')
             ) {
                 messages.value.splice(idx, 1)
             } else if (idx >= 0) {
+                const content = messages.value[idx].content || ''
                 messages.value[idx] = {
                     ...messages.value[idx],
                     isStreaming: false,
+                    isIncomplete: isIncomplete || undefined,
+                    content: isIncomplete && content ? content + '  ⚠️ [回复中断]' : content,
                 }
                 messages.value = [...messages.value]
                 if (needsFinalContentRecovery(messages.value[idx])) {
