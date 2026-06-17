@@ -1916,6 +1916,7 @@ export default {
     addAgent: '添加智能体',
     selectProfile: '选择一个配置',
     agentAdded: '智能体已添加',
+    selectRoomFirst: '请先选择一个群组',
     agentAlreadyInRoom: '该智能体已在房间中',
     agentAddFailedCount: '{count} 个智能体未添加：{details}',
     noAgents: '当前房间暂无智能体',

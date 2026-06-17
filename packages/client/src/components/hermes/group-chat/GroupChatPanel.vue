@@ -304,7 +304,11 @@ onUnmounted(() => {
 })
 
 async function confirmAddAgent() {
-    if (!selectedProfile.value || !store.currentRoomId) return
+    if (!store.currentRoomId) {
+        message.warning(t('groupChat.selectRoomFirst'))
+        return
+    }
+    if (!selectedProfile.value) return
     try {
         await store.addAgentToRoom(store.currentRoomId, {
             profile: selectedProfile.value,

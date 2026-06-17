@@ -1663,6 +1663,7 @@ export default {
     addAgent: 'Добавить агента',
     selectProfile: 'Выберите профиль',
     agentAdded: 'Агент добавлен',
+    selectRoomFirst: 'Сначала выберите комнату',
     agentAlreadyInRoom: 'Агент уже в комнате',
     agentAddFailedCount: 'Не добавлено агентов: {count} — {details}',
     noAgents: 'В комнате нет агентов',

@@ -1919,6 +1919,7 @@ export default {
     addAgent: '에이전트 추가',
     selectProfile: '프로필 선택',
     agentAdded: '에이전트가 추가되었습니다',
+    selectRoomFirst: '먼저 방을 선택하세요',
     agentAlreadyInRoom: '해당 에이전트가 이미 방에 있습니다',
     agentAddFailedCount: '{count}개의 에이전트를 추가하지 못했습니다: {details}',
     noAgents: '이 방에 에이전트가 없습니다',

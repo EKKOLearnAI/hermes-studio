@@ -1917,6 +1917,7 @@ export default {
     addAgent: '新增智慧代理',
     selectProfile: '選擇一個設定檔',
     agentAdded: '智慧代理已新增',
+    selectRoomFirst: '請先選擇一個群組',
     agentAlreadyInRoom: '該智慧代理已在房間中',
     agentAddFailedCount: '{count} 個智慧代理未新增：{details}',
     noAgents: '目前房間無智慧代理',
