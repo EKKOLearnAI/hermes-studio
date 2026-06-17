@@ -54,6 +54,7 @@ export interface ChatMessage {
     toolPreview?: string
     toolResult?: unknown
     toolStatus?: 'running' | 'done' | 'error'
+    firstSeenAt?: number
     attachments?: Array<{ id: string; name: string; type: string; size: number; url: string }>
 }
 
