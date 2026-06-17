@@ -43,6 +43,11 @@ const JWT_AUDIENCE = 'hermes-web-ui'
 const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 30
 export const MODEL_RUN_EXPIRES_SECONDS = 60 * 60
 
+function userJwtExpiresSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = Number.parseInt(String(env.AUTH_JWT_EXPIRES_SECONDS || '').trim(), 10)
+  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_EXPIRES_SECONDS
+}
+
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
 }
@@ -151,7 +156,7 @@ export function verifyUserJwt(token: string, secret: string, now = Date.now()): 
 
 export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
   const secret = await getJwtSecret()
-  return signUserJwt(user, secret)
+  return signUserJwt(user, secret, Date.now(), userJwtExpiresSeconds())
 }
 
 export async function issueModelRunJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {

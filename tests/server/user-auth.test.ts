@@ -266,6 +266,26 @@ describe('user auth tables and middleware', () => {
     expect(userCount.count).toBe(1)
   })
 
+  it('uses AUTH_JWT_EXPIRES_SECONDS for issued login JWTs', async () => {
+    vi.stubEnv('AUTH_JWT_EXPIRES_SECONDS', '7200')
+    const { auth } = await initUsers()
+    const now = 1_000_000
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now)
+
+    const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
+    const payload = auth.verifyUserJwt(token, 'test-secret', now)
+
+    expect(payload).toMatchObject({
+      sub: '1',
+      username: 'admin',
+      role: 'super_admin',
+      iat: 1000,
+      exp: 1000 + 7200,
+    })
+
+    spy.mockRestore()
+  })
+
   it('signs and verifies user JWTs', async () => {
     const { auth } = await initUsers()
     const token = auth.signUserJwt({ id: 1, username: 'admin', role: 'super_admin' }, 'secret', 1000)
