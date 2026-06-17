@@ -66,16 +66,20 @@ describe('coding agent launch preparation', () => {
       rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       command: 'claude',
-      args: ['--dangerously-skip-permissions'],
+      args: [
+        '--append-system-prompt-file',
+        join(home, 'global-home', '.claude', 'hermes-rules.md'),
+        '--dangerously-skip-permissions',
+      ],
       env: {},
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --dangerously-skip-permissions`,
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --dangerously-skip-permissions`,
       files: [{
         key: 'prompt',
-        path: '~/.claude/CLAUDE.md',
-        absolutePath: join(home, 'global-home', '.claude', 'CLAUDE.md'),
+        path: '~/.claude/hermes-rules.md',
+        absolutePath: join(home, 'global-home', '.claude', 'hermes-rules.md'),
       }],
     })
-    const prompt = readFileSync(join(home, 'global-home', '.claude', 'CLAUDE.md'), 'utf-8')
+    const prompt = readFileSync(join(home, 'global-home', '.claude', 'hermes-rules.md'), 'utf-8')
     expect(prompt).toContain('<!-- BEGIN HERMES WEB UI PROMPT -->')
     expect(prompt).toContain('# 输出格式规范')
   })
@@ -94,8 +98,13 @@ describe('coding agent launch preparation', () => {
       mode: 'global',
       rootDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
       command: 'claude',
-      args: ['--permission-mode', 'auto'],
-      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --permission-mode auto`,
+      args: [
+        '--append-system-prompt-file',
+        join(home, 'global-home', '.claude', 'hermes-rules.md'),
+        '--permission-mode',
+        'auto',
+      ],
+      shellCommand: `cd ${join(home, 'coding-agent', 'workspace', 'default', 'global')} && claude --append-system-prompt-file ${join(home, 'global-home', '.claude', 'hermes-rules.md')} --permission-mode auto`,
     })
   })
 
@@ -125,7 +134,7 @@ describe('coding agent launch preparation', () => {
 
   it('preserves existing global Claude Code prompt files while updating the Hermes block', async () => {
     const home = makeHome()
-    const claudePromptPath = join(home, 'global-home', '.claude', 'CLAUDE.md')
+    const claudePromptPath = join(home, 'global-home', '.claude', 'hermes-rules.md')
     mkdirSync(dirname(claudePromptPath), { recursive: true })
     writeFileSync(claudePromptPath, 'Existing Claude notes\n')
 
@@ -173,6 +182,8 @@ describe('coding agent launch preparation', () => {
       join(result.rootDir, 'settings.json'),
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
+      '--append-system-prompt-file',
+      join(result.rootDir, 'hermes-rules.md'),
       '--dangerously-skip-permissions',
     ])
     expect(result.shellCommand).toContain(`cd ${join(home, 'coding-agent', 'workspace', 'default', 'openrouter')} &&`)
@@ -217,7 +228,7 @@ describe('coding agent launch preparation', () => {
       },
     })
 
-    const prompt = readFileSync(join(result.rootDir, 'CLAUDE.md'), 'utf-8')
+    const prompt = readFileSync(join(result.rootDir, 'hermes-rules.md'), 'utf-8')
     expect(prompt).toContain('# 输出格式规范')
     expect(prompt).toContain('当你的回复中包含图片、视频或文件引用时')
   })
@@ -241,6 +252,8 @@ describe('coding agent launch preparation', () => {
       'local',
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
+      '--append-system-prompt-file',
+      join(result.rootDir, 'hermes-rules.md'),
       '--dangerously-skip-permissions',
     ])
     expect(result.shellCommand).not.toContain('--setting-sources local')
@@ -269,6 +282,8 @@ describe('coding agent launch preparation', () => {
       'local',
       '--mcp-config',
       join(result.rootDir, 'mcp.json'),
+      '--append-system-prompt-file',
+      join(result.rootDir, 'hermes-rules.md'),
       '--permission-mode',
       'auto',
     ])
@@ -316,6 +331,9 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toContain(`model_catalog_json = "${join(result.rootDir, 'codex-model-catalog.json')}"`)
     expect(config).toContain('model_reasoning_summary = "auto"')
+    expect(config).toContain('developer_instructions = """')
+    expect(config).toContain('Hermes Studio MCP usage')
+    expect(config).toContain('# 输出格式规范')
     expect(config).toContain('[mcp_servers.hermes-studio]')
     expect(config).toContain(`command = "${process.execPath}"`)
     expect(config).toContain(`args = ["${join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs')}"]`)

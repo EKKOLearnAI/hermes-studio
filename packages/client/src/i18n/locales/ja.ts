@@ -1812,6 +1812,7 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_17_1: 'Codex と Claude Code の会話起動問題を修正しました',
     new_0_6_16_1: 'Provider 設定でカスタム API mode を保持し、LongCat プリセットを正しく扱い、v12 Provider の削除と auth/API-key 画像 Provider を含むモデルカタログ同期に対応しました',
     new_0_6_16_2: 'チャットコマンドに reload-skills、Web タイトル更新、未知のスラッシュコマンド透過、tool call と tool result を除いたクリーンな session context API を追加しました',
     new_0_6_16_3: 'セッションナビゲーションは Global Agent セッションの検索、新規セッションの最新アクティビティ順、復元したモバイルサイドバー操作、安定した設定フッターでより安定しました',

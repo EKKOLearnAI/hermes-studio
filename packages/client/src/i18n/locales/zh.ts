@@ -2078,6 +2078,7 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_6_17_1: '修复 Codex 和 Claude Code 的对话启动问题',
     new_0_6_16_1: 'Provider 设置会正确保存自定义 API mode，补齐 LongCat 预设，支持删除 v12 Provider，并让模型目录同步认证和 API-key 图像 Provider',
     new_0_6_16_2: '聊天命令新增 reload-skills、网页标题更新、未知斜杠命令透传，以及去掉 tool call 和 tool result 的干净 session context 接口',
     new_0_6_16_3: '会话导航更稳定：搜索包含 Global Agent 会话，新会话按最新活动时间排序，移动端侧栏控制恢复，底部设置入口也保持稳定',

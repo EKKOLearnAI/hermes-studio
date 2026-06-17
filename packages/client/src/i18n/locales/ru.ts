@@ -1825,6 +1825,7 @@ export default {
   },
 
   changelog: {
+    new_0_6_17_1: 'Исправлены проблемы запуска диалогов Codex и Claude Code',
     new_0_6_16_1: 'Настройки Provider теперь сохраняют пользовательские API mode, корректно покрывают LongCat, поддерживают удаление Provider v12 и синхронизируют каталоги моделей с auth и API-key image Provider',
     new_0_6_16_2: 'Команды чата получили reload-skills, обновление web title, passthrough неизвестных slash-команд и чистый session context API без tool calls и tool results',
     new_0_6_16_3: 'Навигация по сессиям стабильнее: поиск включает Global Agent sessions, новые сессии сортируются по последней активности, мобильные controls сайдбара восстановлены, footer настроек стабилен',

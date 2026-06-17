@@ -1813,6 +1813,7 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_17_1: 'Probleme beim Starten von Codex- und Claude-Code-Unterhaltungen wurden behoben',
     new_0_6_16_1: 'Provider-Einstellungen speichern jetzt eigene API-Modes, decken LongCat korrekt ab, unterstuetzen das Loeschen von v12-Providern und halten Modellkataloge mit Auth- und API-Key-Bildprovidern synchron',
     new_0_6_16_2: 'Chat-Befehle erhalten reload-skills, Web-Titelupdates, Durchreichen unbekannter Slash-Befehle und eine saubere Session-Context-API ohne Tool Calls und Tool Results',
     new_0_6_16_3: 'Sitzungsnavigation ist stabiler mit Global-Agent-Ergebnissen in der Suche, Sortierung neuer Sitzungen nach letzter Aktivitaet, wiederhergestellten mobilen Seitenleisten-Controls und stabilem Settings-Footer',

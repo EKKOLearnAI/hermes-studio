@@ -1813,6 +1813,7 @@ jobTriggered: 'Job ejecutado',
 
   // Registro de cambios
   changelog: {
+    new_0_6_17_1: 'Se corrigieron los problemas de inicio de conversaciones en Codex y Claude Code',
     new_0_6_16_1: 'Los ajustes de Provider ahora conservan modos API personalizados, cubren LongCat correctamente, permiten eliminar Providers v12 y sincronizan catalogos de modelos con Providers de autenticacion e imagen con API key',
     new_0_6_16_2: 'Los comandos de chat anaden reload-skills, actualizaciones de titulo web, passthrough de comandos slash desconocidos y una API limpia de contexto de sesion sin tool calls ni tool results',
     new_0_6_16_3: 'La navegacion de sesiones es mas estable con resultados de Global Agent en la busqueda, orden por actividad reciente para sesiones nuevas, controles moviles de barra lateral restaurados y footer de ajustes estable',

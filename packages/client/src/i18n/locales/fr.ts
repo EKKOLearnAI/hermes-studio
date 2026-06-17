@@ -1813,6 +1813,7 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_17_1: 'Correction des problemes de demarrage des conversations Codex et Claude Code',
     new_0_6_16_1: 'Les reglages Provider conservent maintenant les API modes personnalises, couvrent LongCat correctement, permettent de supprimer les Providers v12 et synchronisent les catalogues de modeles avec les Providers auth et image a API key',
     new_0_6_16_2: 'Les commandes de chat ajoutent reload-skills, les mises a jour de titre web, le passthrough des commandes slash inconnues et une API de contexte de session propre sans tool calls ni tool results',
     new_0_6_16_3: 'La navigation des sessions est plus stable avec les resultats Global Agent dans la recherche, le tri des nouvelles sessions par activite recente, les controles mobiles de barre laterale restaures et un footer de reglages stable',

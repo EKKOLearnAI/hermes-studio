@@ -2076,6 +2076,7 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_17_1: 'Fixed Codex and Claude Code conversation startup issues',
     new_0_6_16_1: 'Provider settings now preserve custom API modes, cover LongCat correctly, support deleting v12 provider entries, and keep model catalogs in sync with auth and API-key image providers',
     new_0_6_16_2: 'Chat commands gained reload-skills, web title updates, unknown slash passthrough, and a clean session-context API that omits tool calls and tool results',
     new_0_6_16_3: 'Session navigation is steadier with global-agent search results, newest-activity ordering for fresh sessions, restored mobile sidebar controls, and a stable settings footer',
