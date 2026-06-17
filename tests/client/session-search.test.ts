@@ -181,7 +181,7 @@ describe('session search modal', () => {
 
     expect(chatStoreMock.loadSessions).toHaveBeenCalled()
     expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', '17')
-    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.chat' })
+    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.session', params: { sessionId: 'match-1' } })
   })
 })
 

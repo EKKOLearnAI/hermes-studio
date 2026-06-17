@@ -31,10 +31,13 @@ import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
 import { markAbortCompleted } from './abort'
+import { writeModelRunProfileToken } from './model-run-prompt'
+import type { AuthenticatedUser } from '../../../middleware/user-auth'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
 const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
+const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 5_000
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -75,11 +78,15 @@ function isReplaceableLocalTitle(sessionId: string): boolean {
   return variants.has(current)
 }
 
+function isBridgeSessionSource(source?: string | null): boolean {
+  return source === 'cli' || source === 'global_agent'
+}
+
 function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (event: string, payload: any) => void): boolean {
   const nextTitle = normalizeTitleText(title)
   if (!nextTitle) return false
   const session = getSession(sessionId)
-  if (!session || session.source !== 'cli') return false
+  if (!session || !isBridgeSessionSource(session.source)) return false
   if (!isReplaceableLocalTitle(sessionId)) {
     logger.info('[chat-run-socket] skipped Hermes generated title for manually titled session %s', sessionId)
     return false
@@ -99,7 +106,7 @@ function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (even
 
 function shouldPollBridgeGeneratedTitle(sessionId: string): boolean {
   const session = getSession(sessionId)
-  if (!session || session.source !== 'cli') return false
+  if (!session || !isBridgeSessionSource(session.source)) return false
   const detail = getSessionDetail(sessionId)
   if (!detail) return false
   const userMessageCount = detail.messages.filter(message => message.role === 'user').length
@@ -290,7 +297,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -299,6 +306,7 @@ export async function handleBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { input, session_id, instructions } = data
+  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent' ? 'global_agent' : 'cli'
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
@@ -325,12 +333,13 @@ export async function handleBridgeRun(
     if (resolvedProvider && sessionRow.provider !== resolvedProvider) updates.provider = resolvedProvider
     if (Object.keys(updates).length > 0) updateSession(session_id, updates)
   }
-  const runContext = [
-    `[Current Hermes profile: ${profile}]`,
+  const socketUser = socket.data.user as AuthenticatedUser | undefined
+  await writeModelRunProfileToken(socketUser, profile)
+  const runPrompt = [
     workspace ? `[Current working directory: ${workspace}]` : '',
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
   ].filter(Boolean).join('\n')
-  fullInstructions = `\n${runContext}\n${fullInstructions}`
+  fullInstructions = `\n${runPrompt}\n${fullInstructions}`
 
   const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   const now = Math.floor(Date.now() / 1000)
@@ -346,7 +355,7 @@ export async function handleBridgeRun(
   state.isAborting = false
   state.events = []
   state.profile = profile
-  state.source = 'cli'
+  state.source = runSource
   state.activeRunMarker = runMarker
   state.runId = undefined
   state.abortController = undefined
@@ -387,7 +396,7 @@ export async function handleBridgeRun(
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
       const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
+      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
     }
     messageId = addMessage({
       session_id,
@@ -400,7 +409,7 @@ export async function handleBridgeRun(
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
+    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
   }
 
   socket.join(`session:${session_id}`)
@@ -512,7 +521,10 @@ export async function handleBridgeRun(
       queue_length: state.queue.length || 0,
     })
 
+    let lastChunk: AgentBridgeOutput | null = null
+    let sawTerminalChunk = false
     for await (const chunk of bridge.streamOutput(started.run_id)) {
+      lastChunk = chunk
       await applyBridgeChunkAsync(
         nsp,
         socket,
@@ -532,9 +544,48 @@ export async function handleBridgeRun(
         data.model_groups,
       )
       if (chunk.done) {
+        sawTerminalChunk = true
         void pollBridgeGeneratedTitleAfterRun(bridge, session_id, profile, emit)
         break
       }
+    }
+    if (!sawTerminalChunk && state.activeRunMarker === runMarker && state.isWorking) {
+      bridgeLogger.warn({
+        sessionId: session_id,
+        runId: started.run_id,
+      }, '[chat-run-socket] bridge stream ended without terminal chunk; completing local run state')
+      const terminalChunk: AgentBridgeOutput = {
+        ok: true,
+        run_id: lastChunk?.run_id || started.run_id,
+        session_id,
+        status: 'complete',
+        delta: '',
+        cursor: typeof lastChunk?.cursor === 'number' ? lastChunk.cursor : 0,
+        output: lastChunk?.output || state.bridgeOutput || '',
+        done: true,
+        result: lastChunk?.result,
+        error: lastChunk?.error ?? null,
+        events: [],
+        event_cursor: typeof lastChunk?.event_cursor === 'number' ? lastChunk.event_cursor : 0,
+      }
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        session_id,
+        runMarker,
+        terminalChunk,
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        fullInstructions,
+        { model: resolvedModel, provider: resolvedProvider },
+        currentInputTokens,
+        shouldPersistUserMessage && displayRole === 'user',
+        data.model_groups,
+      )
     }
   } catch (err: any) {
     if (state.activeRunMarker !== runMarker) return
@@ -597,6 +648,7 @@ export async function resumeBridgeRun(
     instructions: string
     model?: string | null
     provider?: string | null
+    source?: string | null
   },
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -613,7 +665,7 @@ export async function resumeBridgeRun(
   state.isWorking = true
   state.isAborting = state.isAborting === true
   state.profile = profile
-  state.source = 'cli'
+  state.source = args.source === 'global_agent' ? 'global_agent' : 'cli'
   state.runId = runId
   state.activeRunMarker = runMarker
   state.bridgeOutput = state.bridgeOutput || latestAssistantText(state)
@@ -1301,7 +1353,11 @@ async function maybeEnqueueGoalContinuation(args: {
 
   let decision
   try {
-    decision = await args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile)
+    decision = await withTimeout(
+      args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile),
+      BRIDGE_GOAL_EVALUATE_TIMEOUT_MS,
+      'goal evaluation timed out',
+    )
   } catch (err) {
     logger.warn(err, '[chat-run-socket] /goal evaluation failed for session %s', args.sessionId)
     return
@@ -1340,7 +1396,7 @@ async function maybeEnqueueGoalContinuation(args: {
     model_groups: args.modelGroups,
     instructions: undefined,
     profile: args.profile,
-    source: 'cli',
+    source: args.state.source === 'global_agent' ? 'global_agent' : 'cli',
     goalContinuation: true,
   }
   args.state.queue.push(next)
@@ -1397,4 +1453,20 @@ function emitGoalStatus(
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      err => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }

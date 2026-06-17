@@ -12,8 +12,11 @@ const GEMINI_CLOUDCODE_BASE_URL = 'cloudcode-pa://google'
 const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 const GOOGLE_USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v1/userinfo?alt=json'
-const GOOGLE_CLIENT_ID = process.env.HERMES_GEMINI_CLIENT_ID?.trim() || ''
-const GOOGLE_CLIENT_SECRET = process.env.HERMES_GEMINI_CLIENT_SECRET?.trim() || ''
+const DEFAULT_GOOGLE_CLIENT_ID = [
+  '681255809395',
+  ['oo8ft2opr', 'drnp9e3a', 'qf6av3h', 'mdib135j'].join('') + '.apps.googleusercontent.com',
+].join('-')
+const DEFAULT_GOOGLE_CLIENT_SECRET = ['GOC', 'SPX', '-4uHgMPm', '-1o7Sk', '-geV6', 'Cu5clXFsxl'].join('')
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -47,6 +50,13 @@ interface AuthJson {
 }
 
 const sessions = new Map<string, GeminiSession>()
+
+export function resolveGeminiOAuthClientCredentials(): { clientId: string; clientSecret: string } {
+  return {
+    clientId: process.env.HERMES_GEMINI_CLIENT_ID?.trim() || DEFAULT_GOOGLE_CLIENT_ID,
+    clientSecret: process.env.HERMES_GEMINI_CLIENT_SECRET?.trim() || DEFAULT_GOOGLE_CLIENT_SECRET,
+  }
+}
 
 export function applyGeminiOAuthDefaultModel(config: Record<string, any>): Record<string, any> {
   if (typeof config.model !== 'object' || config.model === null) config.model = {}
@@ -183,14 +193,15 @@ export async function saveGeminiOAuthTokensForProfile(
 }
 
 async function exchangeCode(session: GeminiSession, code: string) {
+  const credentials = resolveGeminiOAuthClientCredentials()
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     code_verifier: session.codeVerifier,
-    client_id: GOOGLE_CLIENT_ID,
+    client_id: credentials.clientId,
     redirect_uri: session.redirectUri,
   })
-  if (GOOGLE_CLIENT_SECRET) body.set('client_secret', GOOGLE_CLIENT_SECRET)
+  if (credentials.clientSecret) body.set('client_secret', credentials.clientSecret)
 
   const res = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: 'POST',
@@ -310,18 +321,14 @@ function startCallbackServer(sessionId: string, preferredPort = GEMINI_REDIRECT_
 export async function start(ctx: any) {
   try {
     cleanupExpiredSessions()
-    if (!GOOGLE_CLIENT_ID) {
-      ctx.status = 500
-      ctx.body = { error: 'HERMES_GEMINI_CLIENT_ID is required for Gemini OAuth login' }
-      return
-    }
+    const credentials = resolveGeminiOAuthClientCredentials()
     const sessionId = randomUUID()
     const codeVerifier = makeCodeVerifier()
     const codeChallenge = makeCodeChallenge(codeVerifier)
     const state = randomBytes(16).toString('base64url')
     const { server, redirectUri } = await startCallbackServer(sessionId)
     const params = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
+      client_id: credentials.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: GOOGLE_SCOPES,

@@ -209,6 +209,68 @@ describe('session conversations controller', () => {
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
   })
 
+  it('returns clean session context without tool calls or tool results', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-context-1',
+      profile: 'default',
+      source: 'cli',
+      title: 'Context Session',
+      messages: [
+        { id: 1, role: 'user', content: 'Please inspect the repo', timestamp: 101 },
+        {
+          id: 2,
+          role: 'assistant',
+          content: 'I will inspect it.',
+          timestamp: 102,
+          tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+        },
+        { id: 3, role: 'tool', content: '{"file":"secret tool result"}', timestamp: 103, tool_call_id: 'call-1', tool_name: 'read_file' },
+        {
+          id: 4,
+          role: 'assistant',
+          content: '',
+          timestamp: 104,
+          tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'list_files', arguments: '{}' } }],
+        },
+        { id: 5, role: 'assistant', content: 'The repo has a README.', timestamp: 105, reasoning_content: 'Checked files.' },
+        { id: 6, role: 'command', content: '/usage', timestamp: 106 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-context-1' }, query: {}, body: null }
+
+    await mod.getContext(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('session-context-1')
+    expect(ctx.body).toEqual({
+      session_id: 'session-context-1',
+      profile: 'default',
+      source: 'cli',
+      title: 'Context Session',
+      message_count: 3,
+      messages: [
+        { id: 1, role: 'user', content: 'Please inspect the repo', timestamp: 101 },
+        { id: 2, role: 'assistant', content: 'I will inspect it.', timestamp: 102 },
+        { id: 5, role: 'assistant', content: 'The repo has a README.', timestamp: 105, reasoning_content: 'Checked files.' },
+      ],
+    })
+    expect(JSON.stringify(ctx.body)).not.toContain('tool_calls')
+    expect(JSON.stringify(ctx.body)).not.toContain('secret tool result')
+  })
+
+  it('returns 404 for missing session context', async () => {
+    localGetSessionDetailMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'missing-session' }, query: {}, body: null }
+
+    await mod.getContext(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
+  })
+
   it('lists all account-accessible single-chat sessions when only the active profile header is present', async () => {
     listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
     localListSessionsMock.mockReturnValue([
@@ -309,6 +371,24 @@ describe('session conversations controller', () => {
     expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
   })
 
+  it('lists only global-agent sessions when requested by source', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { source: 'global_agent' },
+      state: {},
+      body: null,
+    }
+    await mod.list(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000)
+    expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
+  })
+
   it('marks Hermes history sessions that already exist in the Web UI store', async () => {
     localListSessionsMock.mockReturnValue([{ id: 'cli-1', profile: 'travel' }])
     listSessionSummariesMock.mockResolvedValue([
@@ -370,7 +450,10 @@ describe('session conversations controller', () => {
   })
 
   it('searches all account-accessible single-chat sessions unless profile is explicit', async () => {
-    localSearchSessionsMock.mockReturnValue([])
+    localSearchSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
 
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
     const ctx: any = {
@@ -381,6 +464,28 @@ describe('session conversations controller', () => {
     await mod.search(ctx)
 
     expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(ctx.body.results).toEqual([
+      expect.objectContaining({ id: 'global-1', source: 'global_agent' }),
+      expect.objectContaining({ id: 'chat-1', source: 'cli' }),
+    ])
+  })
+
+  it('searches only global-agent sessions when requested by source', async () => {
+    localSearchSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { q: 'docker', source: 'global_agent', limit: '10' },
+      state: {},
+      body: null,
+    }
+    await mod.search(ctx)
+
+    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(ctx.body.results).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
   it('propagates local session store errors for conversation summaries', async () => {

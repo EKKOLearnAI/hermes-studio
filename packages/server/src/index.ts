@@ -26,6 +26,8 @@ import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostar
 import { refreshConfiguredProviderModelCatalogsInBackground } from './services/hermes/model-catalog-cache'
 import { scanLanDevices, startLanDiscoveryResponder } from './services/lan-discovery'
 import { getLanPeerSocketManager, getLanPeerSocketPath } from './services/lan-peer-socket'
+import { startGlobalAgentServer } from './services/global-agent/server'
+import { startOutboundRelayClient } from './services/global-agent/outbound-relay-client'
 import { logger } from './services/logger'
 import { createStaticCompressionMiddleware } from './middleware/static-compression'
 import { requireUserJwt, resolveUserProfile } from './middleware/user-auth'
@@ -58,6 +60,8 @@ let chatRunServer: any = null
 let agentBridgeManager: any = null
 let desktopShutdownHandler: ShutdownHandler | null = null
 
+const LOCAL_GLOBAL_AGENT_CONNECTION_ID = 'local-global-agent'
+
 interface ListenResult {
   primary: any
   servers: any[]
@@ -76,6 +80,12 @@ async function listenWithFallback(app: Koa, port: number, host?: string): Promis
   console.log(`[bootstrap] listening on ${bindHost}:${port}`)
   const primary = await listen(app, port, bindHost)
   return { primary, servers: [primary] }
+}
+
+function getLoopbackBaseUrl(httpServer: any): string {
+  const address = httpServer?.address?.()
+  const port = typeof address === 'object' && address?.port ? address.port : config.port
+  return `http://127.0.0.1:${port}`
 }
 
 /**
@@ -293,8 +303,7 @@ export async function bootstrap() {
   registerDesktopShutdownRoute(app)
 
   // Register all routes (handles auth internally)
-  const proxyMiddleware = registerRoutes(app, [requireUserJwt, resolveUserProfile])
-  app.use(proxyMiddleware)
+  registerRoutes(app, [requireUserJwt, resolveUserProfile])
   console.log('[bootstrap] routes registered')
 
   // SPA fallback
@@ -330,6 +339,17 @@ export async function bootstrap() {
   chatRunServer = new ChatRunSocket(groupChatServer.getIO())
   setChatRunServer(chatRunServer)
   chatRunServer.init()
+
+  const loopbackBaseUrl = getLoopbackBaseUrl(server)
+  const globalAgentServer = startGlobalAgentServer(groupChatServer.getIO())
+  startOutboundRelayClient({
+    connectionId: LOCAL_GLOBAL_AGENT_CONNECTION_ID,
+    relayUrl: `${loopbackBaseUrl}${globalAgentServer.getNamespace()}`,
+    relayToken: globalAgentServer.getAuthToken(),
+    instanceId: LOCAL_GLOBAL_AGENT_CONNECTION_ID,
+    localBaseUrl: loopbackBaseUrl,
+  })
+  console.log('[bootstrap] local global agent connected')
 
   // Session deleter — periodically drain pending session deletes
   const { SessionDeleter } = await import('./services/hermes/session-deleter')

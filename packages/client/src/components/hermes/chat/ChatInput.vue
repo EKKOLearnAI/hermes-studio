@@ -18,6 +18,7 @@ import { transcribeSpeech } from '@/api/hermes/stt'
 import type { StoredSttProvider } from '@/api/hermes/stt-settings'
 import { useSttSettings } from '@/composables/useSttSettings'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
+import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-session-commands'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -175,28 +176,16 @@ const voiceDialogueError = computed(() =>
   ?? null,
 )
 
-const bridgeCommands = computed<SlashCommandOption[]>(() => [
-  { key: 'command:usage', name: 'usage', args: '', description: t('chat.slashCommands.usage') },
-  { key: 'command:status', name: 'status', args: '', description: t('chat.slashCommands.status') },
-  { key: 'command:abort', name: 'abort', args: '', description: t('chat.slashCommands.abort') },
-  { key: 'command:queue', name: 'queue', args: t('chat.slashCommandArgs.message'), description: t('chat.slashCommands.queue') },
-  { key: 'command:skill', name: 'skill', args: '', description: t('skills.title'), opensSkillPicker: true },
-  { key: 'command:plan', name: 'plan', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.plan') },
-  { key: 'command:goal', name: 'goal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.goal') },
-  { key: 'command:goal-status', name: 'goal', args: 'status', insertText: 'goal status', description: t('chat.slashCommands.goalStatus') },
-  { key: 'command:goal-pause', name: 'goal', args: 'pause', insertText: 'goal pause', description: t('chat.slashCommands.goalPause') },
-  { key: 'command:goal-resume', name: 'goal', args: 'resume', insertText: 'goal resume', description: t('chat.slashCommands.goalResume') },
-  { key: 'command:goal-done', name: 'goal', args: 'done', insertText: 'goal done', description: t('chat.slashCommands.goalDone') },
-  { key: 'command:goal-clear', name: 'goal', args: 'clear', insertText: 'goal clear', description: t('chat.slashCommands.goalClear') },
-  { key: 'command:subgoal', name: 'subgoal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.subgoal') },
-  { key: 'command:clear', name: 'clear', args: '', description: t('chat.slashCommands.clear') },
-  { key: 'command:clear-history', name: 'clear', args: '--history', insertText: 'clear --history', description: t('chat.slashCommands.clearHistory') },
-  { key: 'command:title', name: 'title', args: t('chat.slashCommandArgs.title'), description: t('chat.slashCommands.title') },
-  { key: 'command:compress', name: 'compress', args: '', description: t('chat.slashCommands.compress') },
-  { key: 'command:steer', name: 'steer', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.steer') },
-  { key: 'command:destroy', name: 'destroy', args: '', description: t('chat.slashCommands.destroy') },
-  { key: 'command:reload-mcp', name: 'reload-mcp', args: '', description: t('chat.slashCommands.reloadMcp') },
-])
+const bridgeCommands = computed<SlashCommandOption[]>(() =>
+  BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
+    key: command.key,
+    name: command.name,
+    args: command.argsKey ? t(command.argsKey) : command.args || '',
+    description: t(command.descriptionKey),
+    insertText: command.insertText,
+    opensSkillPicker: command.opensSkillPicker,
+  }))
+)
 
 const slashActive = ref(false)
 const slashQuery = ref('')
@@ -227,12 +216,13 @@ const skillPickerItems = computed(() => {
   })
 })
 const filteredBridgeCommands = computed(() => {
-  const query = slashQuery.value.toLowerCase()
-  return bridgeCommands.value.filter(command =>
-    command.name.includes(query)
-    || command.insertText?.includes(query)
-    || command.description.toLowerCase().includes(query),
-  )
+  const query = slashQuery.value.trim().toLowerCase()
+  if (!query) return bridgeCommands.value
+  return bridgeCommands.value.filter((command) => {
+    const name = command.name.toLowerCase()
+    const insertText = command.insertText?.toLowerCase()
+    return name.startsWith(query) || insertText?.startsWith(query)
+  })
 })
 const filteredSkillPickerItems = computed(() => {
   const query = skillSearch.value.trim().toLowerCase()
@@ -596,6 +586,11 @@ function addFile(file: File) {
   })
 }
 
+function addFiles(files: File[]) {
+  for (const file of files) addFile(file)
+  if (files.length > 0) textareaRef.value?.focus()
+}
+
 function handleAttachClick() {
   fileInputRef.value?.click()
 }
@@ -603,7 +598,7 @@ function handleAttachClick() {
 function handleFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files) return
-  for (const file of input.files) addFile(file)
+  addFiles(Array.from(input.files))
   input.value = ''
 }
 
@@ -619,7 +614,7 @@ function handlePaste(e: ClipboardEvent) {
     if (!blob) continue
     const ext = item.type.split('/')[1] || 'png'
     const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })
-    addFile(file)
+    addFiles([file])
   }
 }
 
@@ -651,9 +646,10 @@ function handleDrop(e: DragEvent) {
   isDragging.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (!files.length) return
-  for (const file of files) addFile(file)
-  textareaRef.value?.focus()
+  addFiles(files)
 }
+
+defineExpose({ addFiles })
 
 // --- Send ---
 
@@ -1088,17 +1084,20 @@ function isImage(type: string): boolean {
             {{ t('common.loading') }}
           </div>
           <template v-else>
-            <button
+            <div
               v-for="skill in filteredSkillPickerItems"
               :key="skill.key"
-              type="button"
+              role="button"
+              tabindex="0"
               class="skill-picker-item"
               @click="selectSkill(skill)"
+              @keydown.enter.prevent="selectSkill(skill)"
+              @keydown.space.prevent="selectSkill(skill)"
             >
-              <span class="skill-picker-command">/skill {{ skill.commandName }}</span>
-              <span class="skill-picker-name">{{ skill.name }}</span>
-              <span class="skill-picker-desc">{{ skill.description }}</span>
-            </button>
+              <div class="skill-picker-command">/skill {{ skill.commandName }}</div>
+              <div class="skill-picker-name">{{ skill.name }}</div>
+              <div class="skill-picker-desc">{{ skill.description }}</div>
+            </div>
           </template>
           <div v-if="!skillPickerLoading && filteredSkillPickerItems.length === 0" class="skill-picker-empty">
             {{ skillSearch ? t('skills.noMatch') : t('skills.noSkills') }}
@@ -1540,20 +1539,22 @@ function isImage(type: string): boolean {
 }
 
 .skill-picker-item {
-  display: grid;
-  grid-template-columns: minmax(160px, auto) minmax(120px, 0.6fr) minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  display: block;
+  flex: 0 0 76px;
   width: 100%;
-  min-height: 42px;
-  padding: 8px 10px;
+  height: 76px;
+  box-sizing: border-box;
+  padding: 7px 10px;
   border: 1px solid $border-color;
   border-radius: $radius-sm;
   background: $bg-secondary;
   color: $text-primary;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+  outline: none;
 
+  &:focus-visible,
   &:hover {
     border-color: rgba(var(--accent-primary-rgb), 0.5);
     background: rgba(var(--accent-primary-rgb), 0.08);
@@ -1561,27 +1562,37 @@ function isImage(type: string): boolean {
 }
 
 .skill-picker-command {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: $font-code;
   font-size: 12px;
+  line-height: 16px;
   color: $accent-primary;
   white-space: nowrap;
 }
 
 .skill-picker-name,
 .skill-picker-desc {
-  min-width: 0;
+  display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .skill-picker-name {
+  margin-top: 3px;
   font-size: 13px;
+  line-height: 18px;
   color: $text-primary;
 }
 
 .skill-picker-desc {
+  margin-top: 3px;
   font-size: 12px;
+  line-height: 16px;
   color: $text-secondary;
 }
 
@@ -1594,8 +1605,7 @@ function isImage(type: string): boolean {
 
 @media (max-width: 768px) {
   .skill-picker-item {
-    grid-template-columns: 1fr;
-    gap: 4px;
+    height: 76px;
   }
 }
 

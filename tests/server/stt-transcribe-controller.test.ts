@@ -415,7 +415,6 @@ describe('route registration ordering', () => {
     const ttsPublicMiddleware = async () => {}
     const ttsProtectedMiddleware = async () => {}
     const sttProtectedMiddleware = async () => {}
-    const proxyMiddleware = async () => {}
 
     vi.doMock('../../packages/server/src/routes/hermes/tts', () => ({
       ttsRoutes: { routes: vi.fn(() => ttsPublicMiddleware) },
@@ -424,23 +423,18 @@ describe('route registration ordering', () => {
     vi.doMock('../../packages/server/src/routes/hermes/stt', () => ({
       sttProtectedRoutes: { routes: vi.fn(() => sttProtectedMiddleware) },
     }))
-    vi.doMock('../../packages/server/src/routes/hermes/proxy', () => ({
-      proxyRoutes: { routes: vi.fn(() => async () => {}) },
-      proxyMiddleware,
-    }))
 
     const { registerRoutes } = await import('../../packages/server/src/routes/index')
     const use = vi.fn()
     const app = { use }
     const requireAuth = vi.fn(async () => {})
 
-    const returnedProxyMiddleware = registerRoutes(app as any, [requireAuth] as any)
+    registerRoutes(app as any, [requireAuth] as any)
     const mountedMiddleware = use.mock.calls.map(([middleware]) => middleware)
 
     expect(mountedMiddleware.indexOf(ttsPublicMiddleware)).toBeGreaterThanOrEqual(0)
     expect(mountedMiddleware.indexOf(requireAuth)).toBeGreaterThan(mountedMiddleware.indexOf(ttsPublicMiddleware))
     expect(mountedMiddleware.indexOf(sttProtectedMiddleware)).toBeGreaterThan(mountedMiddleware.indexOf(requireAuth))
     expect(mountedMiddleware.indexOf(sttProtectedMiddleware)).toBeGreaterThan(mountedMiddleware.indexOf(ttsProtectedMiddleware))
-    expect(returnedProxyMiddleware).toBe(proxyMiddleware)
   })
 })

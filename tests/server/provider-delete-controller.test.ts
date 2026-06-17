@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import YAML from 'js-yaml'
 
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +28,10 @@ function makeCtx(poolKey: string, overrides: Record<string, any> = {}) {
 
 function readAuth(profileDir = hermesHome) {
   return JSON.parse(readFileSync(join(profileDir, 'auth.json'), 'utf-8'))
+}
+
+function readYaml(filePath: string) {
+  return YAML.load(readFileSync(filePath, 'utf-8')) as any
 }
 
 describe('providers controller delete', () => {
@@ -138,6 +143,81 @@ describe('providers controller delete', () => {
     const authAfter = readAuth()
     expect(authAfter.credential_pool).not.toHaveProperty('custom:deepseek-proxy')
     expect(authAfter.credential_pool['custom:keep-provider']).toEqual([{ label: 'keep' }])
+  })
+
+  it('removes v12 providers dict entries when requested by source', async () => {
+    writeFileSync(join(hermesHome, 'config.yaml'), [
+      'model:',
+      '  provider: custom:dict-provider',
+      '  default: dict-model',
+      'providers:',
+      '  dict-provider:',
+      '    api: https://dict.invalid/v1',
+      '    api_key: dict-key',
+      '    default_model: dict-model',
+      '  keep-provider:',
+      '    api: https://keep.invalid/v1',
+      '    default_model: keep-model',
+      '',
+    ].join('\n'))
+    writeFileSync(join(hermesHome, 'auth.json'), JSON.stringify({
+      credential_pool: {
+        'custom:dict-provider': [{ label: 'dict' }],
+        'custom:keep-provider': [{ label: 'keep' }],
+      },
+    }, null, 2))
+
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('custom:dict-provider', {
+      query: { source: 'providers', providerKey: 'dict-provider' },
+    })
+
+    await remove(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.providers).not.toHaveProperty('dict-provider')
+    expect(configAfter.providers).toHaveProperty('keep-provider')
+    expect(configAfter.model).toEqual({
+      provider: 'custom:keep-provider',
+      default: 'keep-model',
+    })
+
+    const authAfter = readAuth()
+    expect(authAfter.credential_pool).not.toHaveProperty('custom:dict-provider')
+    expect(authAfter.credential_pool['custom:keep-provider']).toEqual([{ label: 'keep' }])
+  })
+
+  it('uses provider source to delete one side when legacy and dict providers share a name', async () => {
+    writeFileSync(join(hermesHome, 'config.yaml'), [
+      'model:',
+      '  provider: custom:shared',
+      '  default: legacy-model',
+      'custom_providers:',
+      '  - name: shared',
+      '    base_url: https://legacy.invalid/v1',
+      '    api_key: legacy-key',
+      '    model: legacy-model',
+      'providers:',
+      '  shared:',
+      '    api: https://dict.invalid/v1',
+      '    api_key: dict-key',
+      '    default_model: dict-model',
+      '',
+    ].join('\n'))
+
+    const { remove } = await loadProvidersController()
+    const ctx = makeCtx('custom:shared', {
+      query: { source: 'providers', providerKey: 'shared' },
+    })
+
+    await remove(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.providers).not.toHaveProperty('shared')
+    expect(configAfter.custom_providers).toHaveLength(1)
+    expect(configAfter.custom_providers[0].name).toBe('shared')
   })
 
   it('keeps OAuth-style provider deletion clearing stored auth entries', async () => {

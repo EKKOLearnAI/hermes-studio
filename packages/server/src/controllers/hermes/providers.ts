@@ -3,11 +3,13 @@ import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { updateConfigYamlForProfile, saveEnvValueForProfile, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { getCompatibleCustomProviders, normalizeCustomProviderEntry } from '../../services/hermes/custom-providers-compat'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'google-gemini-cli', 'claude-oauth'])
+type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -38,8 +40,22 @@ async function clearStoredAuthProvider(profile: string, poolKey: string) {
   } catch (err: any) { logger.error(err, 'Failed to clear auth credentials for %s', poolKey) }
 }
 
-function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number) {
+function normalizeApiMode(value: unknown): ProviderApiMode | undefined {
+  const apiMode = String(value || '').trim()
+  return apiMode === 'chat_completions' ||
+    apiMode === 'codex_responses' ||
+    apiMode === 'anthropic_messages' ||
+    apiMode === 'bedrock_converse' ||
+    apiMode === 'codex_app_server'
+    ? apiMode
+    : undefined
+}
+
+function buildProviderEntry(name: string, base_url: string, api_key: string, model: string, context_length?: number, api_mode?: ProviderApiMode) {
   const entry: any = { name, base_url, api_key, model }
+  if (api_mode) {
+    entry.api_mode = api_mode
+  }
   if (context_length && context_length > 0) {
     entry.models = { [model]: { context_length } }
   }
@@ -60,14 +76,38 @@ function shouldPersistBuiltinBaseUrl(poolKey: string, requestedBaseUrl: string):
   return normalizeBaseUrl(requestedBaseUrl) !== normalizeBaseUrl(presetBaseUrl)
 }
 
+function providerKeyForCustomName(name: string): string {
+  return `custom:${String(name || '').trim().toLowerCase().replace(/ /g, '-')}`
+}
+
+function findLegacyCustomProviderIndex(config: any, poolKey: string): number {
+  return Array.isArray(config.custom_providers)
+    ? (config.custom_providers as any[]).findIndex((e: any) => providerKeyForCustomName(e?.name) === poolKey)
+    : -1
+}
+
+function findProviderDictKey(config: any, poolKey: string, requestedProviderKey = ''): string {
+  const dict = config.providers
+  if (!dict || typeof dict !== 'object' || Array.isArray(dict)) return ''
+  if (requestedProviderKey && Object.prototype.hasOwnProperty.call(dict, requestedProviderKey)) {
+    return requestedProviderKey
+  }
+  for (const [key, entry] of Object.entries(dict)) {
+    const normalized = normalizeCustomProviderEntry(entry, key, 'providers')
+    if (normalized && providerKeyForCustomName(normalized.name) === poolKey) return key
+  }
+  return ''
+}
+
 export async function create(ctx: any) {
-  const { name, base_url, api_key, model, context_length, providerKey } = ctx.request.body as {
-    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null
+  const { name, base_url, api_key, model, context_length, providerKey, api_mode } = ctx.request.body as {
+    name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null; api_mode?: ProviderApiMode
   }
   const normalizedName = String(name || '').trim()
   const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
   const isBuiltin = poolKey in PROVIDER_ENV_MAP
   const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
+  const customApiMode = normalizeApiMode(api_mode)
   if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
   }
@@ -89,13 +129,14 @@ export async function create(ctx: any) {
           existing.model = model
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) existing.api_mode = preset.api_mode
+          else if (customApiMode) existing.api_mode = customApiMode
           if (context_length && context_length > 0) {
             if (!existing.models) existing.models = {}
             existing.models[model] = existing.models[model] || {}
             existing.models[model].context_length = context_length
           }
         } else {
-          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length)
+          const entry = buildProviderEntry(normalizedName.toLowerCase().replace(/ /g, '-'), effectiveBaseUrl, api_key, model, context_length, customApiMode)
           const preset = PROVIDER_PRESETS.find(p => p.value === poolKey.replace('custom:', ''))
           if (preset?.api_mode) entry.api_mode = preset.api_mode
           config.custom_providers.push(entry)
@@ -123,13 +164,14 @@ export async function create(ctx: any) {
             existing.model = model
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) existing.api_mode = preset.api_mode
+            else if (customApiMode) existing.api_mode = customApiMode
             if (context_length && context_length > 0) {
               if (!existing.models) existing.models = {}
               existing.models[model] = existing.models[model] || {}
               existing.models[model].context_length = context_length
             }
           } else {
-            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length)
+            const entry = buildProviderEntry(poolKey, effectiveBaseUrl, api_key, model, context_length, customApiMode)
             const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
             if (preset?.api_mode) entry.api_mode = preset.api_mode
             config.custom_providers.push(entry)
@@ -152,9 +194,10 @@ export async function create(ctx: any) {
 
 export async function update(ctx: any) {
   const poolKey = decodeURIComponent(ctx.params.poolKey)
-  const { name, base_url, api_key, model } = ctx.request.body as {
-    name?: string; base_url?: string; api_key?: string; model?: string
+  const { name, base_url, api_key, model, api_mode } = ctx.request.body as {
+    name?: string; base_url?: string; api_key?: string; model?: string; api_mode?: ProviderApiMode
   }
+  const customApiMode = normalizeApiMode(api_mode)
   try {
     const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
@@ -169,6 +212,7 @@ export async function update(ctx: any) {
         if (base_url !== undefined) entry.base_url = base_url
         if (api_key !== undefined) entry.api_key = api_key
         if (model !== undefined) entry.model = model
+        if (customApiMode !== undefined) entry.api_mode = customApiMode
         return { data: config, result: true }
       })
       if (!found) {
@@ -191,18 +235,34 @@ export async function update(ctx: any) {
 
 export async function remove(ctx: any) {
   const poolKey = decodeURIComponent(ctx.params.poolKey)
+  const query = ctx.query as { source?: string; providerKey?: string }
+  const requestedSource = query?.source === 'providers' || query?.source === 'custom_providers'
+    ? query.source
+    : ''
+  const requestedProviderKey = typeof query?.providerKey === 'string' ? query.providerKey.trim() : ''
   try {
     const profile = requestedProfile(ctx)
     const isCustom = poolKey.startsWith('custom:')
     const removed = await updateConfigYamlForProfile(profile, async (config) => {
       if (isCustom) {
-        const idx = Array.isArray(config.custom_providers)
-          ? (config.custom_providers as any[]).findIndex((e: any) => {
-            return `custom:${e.name.trim().toLowerCase().replace(/ /g, '-')}` === poolKey
-          })
-          : -1
-        if (idx === -1) return { data: config, result: false, write: false }
-        ;(config.custom_providers as any[]).splice(idx, 1)
+        const removeLegacy = requestedSource !== 'providers'
+        const removeDict = requestedSource !== 'custom_providers'
+        let didRemove = false
+        if (removeLegacy) {
+          const idx = findLegacyCustomProviderIndex(config, poolKey)
+          if (idx !== -1) {
+            ;(config.custom_providers as any[]).splice(idx, 1)
+            didRemove = true
+          }
+        }
+        if (!didRemove && removeDict) {
+          const dictKey = findProviderDictKey(config, poolKey, requestedProviderKey)
+          if (dictKey) {
+            delete config.providers[dictKey]
+            didRemove = true
+          }
+        }
+        if (!didRemove) return { data: config, result: false, write: false }
       } else {
         const envMapping = PROVIDER_ENV_MAP[poolKey]
         if (envMapping?.api_key_env) {
@@ -213,12 +273,12 @@ export async function remove(ctx: any) {
         }
       }
       if (config.model?.provider === poolKey) {
-        const remaining = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        const remaining = getCompatibleCustomProviders(config)
         if (remaining.length > 0) {
           const fallbackCp = remaining[0]
-          const fallbackKey = `custom:${fallbackCp.name.trim().toLowerCase().replace(/ /g, '-')}`
+          const fallbackKey = providerKeyForCustomName(fallbackCp.name)
           if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
-          config.model.default = fallbackCp.model
+          config.model.default = fallbackCp.model || Object.keys(fallbackCp.models || {})[0] || ''
           config.model.provider = fallbackKey
           delete config.model.base_url
           delete config.model.api_key

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getSystemPromptMock = vi.fn()
 const getSessionMock = vi.fn()
@@ -35,6 +38,8 @@ const syncBridgeReasoningToMessageMock = vi.fn()
 const recordBridgeToolStartedMock = vi.fn()
 const recordBridgeToolCompletedMock = vi.fn()
 const resolveBridgeRunModelConfigMock = vi.fn()
+const issueModelRunJwtMock = vi.fn(async () => 'model-run-token')
+const homes: string[] = []
 
 vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
@@ -87,12 +92,17 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () =>
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
 }))
 
+vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+  issueModelRunJwt: issueModelRunJwtMock,
+}))
+
 function makeSocket() {
   return {
     connected: true,
     emit: vi.fn(),
     join: vi.fn(),
     to: vi.fn(() => ({ emit: vi.fn() })),
+    data: {},
   } as any
 }
 
@@ -115,8 +125,12 @@ function makeState() {
 
 describe('bridge run final context usage', () => {
   beforeEach(() => {
+    const home = mkdtempSync(join(tmpdir(), 'hermes-bridge-run-token-'))
+    homes.push(home)
+    process.env.HERMES_WEB_UI_HOME = home
     vi.clearAllMocks()
     getSystemPromptMock.mockReturnValue('system prompt')
+    issueModelRunJwtMock.mockResolvedValue('model-run-token')
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', model: '', provider: '' })
     resolveBridgeRunModelConfigMock.mockResolvedValue({ model: 'gpt-test', provider: 'openai' })
     buildCompressedHistoryMock.mockResolvedValue([{ role: 'user', content: 'previous' }])
@@ -139,6 +153,11 @@ describe('bridge run final context usage', () => {
       const contextTokens = contextTokensWithCachedOverheadMock(state, messageTokens)
       return updateContextTokenUsageMock(sid, state, emit, contextTokens, usage)
     })
+  })
+
+  afterEach(() => {
+    delete process.env.HERMES_WEB_UI_HOME
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
   })
 
   it('refreshes full context tokens when a bridge run completes', async () => {
@@ -177,7 +196,7 @@ describe('bridge run final context usage', () => {
     expect(bridge.contextEstimate).toHaveBeenCalledWith(
       'session-1',
       [],
-      expect.stringContaining('[Current Hermes profile: default]'),
+      expect.not.stringContaining('[Current Hermes profile:'),
       'default',
       { model: 'gpt-test', provider: 'openai' },
     )
@@ -194,6 +213,151 @@ describe('bridge run final context usage', () => {
       outputTokens: 7,
       contextTokens: 12345,
     }))
+  })
+
+  it('releases working state when the bridge stream ends without a terminal chunk', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          session_id: 'session-1',
+          done: false,
+          status: 'running',
+          delta: 'partial reply',
+          cursor: 1,
+          output: 'partial reply',
+          events: [],
+          event_cursor: 0,
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(state.isWorking).toBe(false)
+    expect(state.isAborting).toBe(false)
+    expect(state.runId).toBeUndefined()
+    expect(state.activeRunMarker).toBeUndefined()
+    expect(emit).toHaveBeenCalledWith('message.delta', expect.objectContaining({
+      delta: 'partial reply',
+    }))
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'partial reply',
+      inputTokens: 11,
+      outputTokens: 7,
+      contextTokens: 12345,
+    }))
+  })
+
+  it('stores a super admin model-run token for the profile without adding it to bridge instructions', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    socket.data.user = { id: 1, username: 'admin', role: 'super_admin' }
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        fixed_context_tokens: 12327,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    const instructions = bridge.contextEstimate.mock.calls[0][2]
+    expect(issueModelRunJwtMock).toHaveBeenCalledWith({ id: 1, username: 'admin', role: 'super_admin' })
+    expect(readFileSync(join(process.env.HERMES_WEB_UI_HOME || '', 'profiles', 'default', '.model-run-token'), 'utf-8').trim()).toBe('model-run-token')
+    expect(instructions).not.toContain('[Current Hermes profile:')
+    expect(instructions).not.toContain('pass the current Hermes profile as the profile argument')
+    expect(instructions).not.toContain('model-run-token')
+    expect(instructions).not.toContain('Current Hermes Web UI model run token')
+    expect(instructions).not.toContain('token argument')
+    expect(instructions).not.toContain('list_mcp_resources')
+    expect(instructions).not.toContain('mcp__hermes-studio__')
+  })
+
+  it('creates global-agent bridge sessions with source global_agent', async () => {
+    getSessionMock.mockReturnValue(undefined)
+    addMessageMock.mockReturnValue(42)
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 42,
+        message_count: 1,
+        tool_count: 0,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1', source: 'global_agent' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'session-1',
+      source: 'global_agent',
+    }))
+    expect(state.source).toBe('global_agent')
   })
 
   it('evaluates active goals after a successful bridge run and queues continuation prompts', async () => {

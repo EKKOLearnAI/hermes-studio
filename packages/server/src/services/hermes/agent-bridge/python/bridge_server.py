@@ -18,6 +18,7 @@ from bridge_runtime import (
     _install_stop_signal_handlers,
     _jsonable,
     _positive_int,
+    _profile_env,
     _profile_home,
     _restore_profile_env,
     _start_parent_process_watchdog,
@@ -169,6 +170,9 @@ class BridgeServer:
                 req.get("profile"),
             )
 
+        if action == "skills_reload":
+            return self._reload_skills(req.get("profile"))
+
         if action == "switch_session_model":
             session_id = str(req.get("session_id") or "").strip()
             if not session_id:
@@ -284,6 +288,18 @@ class BridgeServer:
         if handler:
             return handler()
         return {"error": f"unknown MCP action: {action}", "ok": False}
+
+    def _reload_skills(self, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = profile or _worker_profile() or "default"
+        with _profile_env(resolved_profile):
+            from agent.skill_commands import reload_skills
+
+            result = reload_skills()
+        return {
+            "ok": True,
+            "action": "reload-skills",
+            **_jsonable(result),
+        }
 
     # ───── MCP sub-handlers ─────
 

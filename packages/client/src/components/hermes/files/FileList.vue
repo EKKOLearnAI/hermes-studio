@@ -106,7 +106,7 @@ async function handleDownload(entry: FileEntry) {
         >
           <div class="file-name">
             <span class="file-icon">{{ getFileIcon(entry) }}</span>
-            <span class="file-label">{{ entry.name }}</span>
+            <span class="file-label" :title="entry.name">{{ entry.name }}</span>
           </div>
           <div class="file-size">{{ entry.isDir ? '—' : formatSize(entry.size) }}</div>
           <div class="file-date">{{ formatDate(entry.modTime) }}</div>

@@ -10,6 +10,7 @@ import {
 } from '../../packages/server/src/controllers/hermes/anthropic-auth'
 import {
   applyGeminiOAuthDefaultModel,
+  resolveGeminiOAuthClientCredentials,
   saveGeminiOAuthTokensForProfile,
   status as geminiStatus,
 } from '../../packages/server/src/controllers/hermes/gemini-auth'
@@ -42,13 +43,22 @@ function makeCtx(profile: string): any {
 }
 
 describe('Anthropic and Gemini OAuth controllers', () => {
+  const originalGeminiClientId = process.env.HERMES_GEMINI_CLIENT_ID
+  const originalGeminiClientSecret = process.env.HERMES_GEMINI_CLIENT_SECRET
+
   beforeEach(() => {
     hermesHome = mkdtempSync(join(tmpdir(), 'hwui-oauth-providers-'))
     process.env.HERMES_HOME = hermesHome
+    delete process.env.HERMES_GEMINI_CLIENT_ID
+    delete process.env.HERMES_GEMINI_CLIENT_SECRET
   })
 
   afterEach(() => {
     delete process.env.HERMES_HOME
+    if (originalGeminiClientId === undefined) delete process.env.HERMES_GEMINI_CLIENT_ID
+    else process.env.HERMES_GEMINI_CLIENT_ID = originalGeminiClientId
+    if (originalGeminiClientSecret === undefined) delete process.env.HERMES_GEMINI_CLIENT_SECRET
+    else process.env.HERMES_GEMINI_CLIENT_SECRET = originalGeminiClientSecret
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''
   })
@@ -61,6 +71,20 @@ describe('Anthropic and Gemini OAuth controllers', () => {
     expect(applyGeminiOAuthDefaultModel({
       model: { provider: 'anthropic', default: 'claude-sonnet-4-6', base_url: 'x', api_key: 'y' },
     }).model).toEqual({ provider: 'google-gemini-cli', default: 'gemini-3.1-pro-preview' })
+  })
+
+  it('uses the public Gemini CLI OAuth client when env credentials are not configured', () => {
+    const defaults = resolveGeminiOAuthClientCredentials()
+    expect(defaults.clientId).toMatch(/^681255809395-.+\.apps\.googleusercontent\.com$/)
+    expect(defaults.clientSecret).toMatch(/^GOCSPX-.+$/)
+
+    process.env.HERMES_GEMINI_CLIENT_ID = 'custom-client-id'
+    process.env.HERMES_GEMINI_CLIENT_SECRET = 'custom-client-secret'
+
+    expect(resolveGeminiOAuthClientCredentials()).toEqual({
+      clientId: 'custom-client-id',
+      clientSecret: 'custom-client-secret',
+    })
   })
 
   it('persists Anthropic OAuth credentials in the request-scoped profile only', async () => {

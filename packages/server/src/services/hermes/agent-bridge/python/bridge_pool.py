@@ -1347,6 +1347,18 @@ class AgentPool:
                 return self._dispatch_goal_command(session_id, arg)
             if name == "subgoal":
                 return self._dispatch_subgoal_command(session_id, arg)
+            if name in {"reload-skills", "reload_skills"}:
+                from agent.skill_commands import reload_skills
+
+                result = reload_skills()
+                return {
+                    "session_id": session_id,
+                    "command": name,
+                    "handled": True,
+                    "type": "reload-skills",
+                    "action": "reload-skills",
+                    **_jsonable(result),
+                }
 
             try:
                 try:

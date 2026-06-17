@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../packages/server/src/controllers/auth', () => ({
   authStatus: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   login: vi.fn(async (ctx: any) => { ctx.body = { token: 'x' } }),
+  microcontrollerLogin: vi.fn(async (ctx: any) => { ctx.body = { token: 'x', profiles: [] } }),
   setupPassword: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   currentUser: vi.fn(async (ctx: any) => { ctx.body = { user: {} } }),
   changePassword: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),

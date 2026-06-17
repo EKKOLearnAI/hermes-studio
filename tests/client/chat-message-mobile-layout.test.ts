@@ -21,6 +21,10 @@ describe('chat message mobile layout guards', () => {
     expect(messageList).toContain('.streaming-indicator')
     expect(messageList).toContain('.tool-calls-panel')
     expect(messageList).toContain('.tool-call-preview')
+    expect(messageList).toContain('function toolPreviewText')
+    expect(messageList).toContain(':title="tc.toolPreview"')
+    expect(messageList).toContain('max-width: 34%;')
+    expect(messageList).toContain('flex: 1 1 0;')
     expect(messageList).toContain('width: 100%;')
     expect(messageList).toContain('max-width: none;')
 

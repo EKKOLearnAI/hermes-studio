@@ -49,6 +49,11 @@ function formatToolDuration(seconds: number): string {
   return `${mins}m ${secs}s`
 }
 
+function toolPreviewText(preview?: string): string {
+  const text = String(preview || '')
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text
+}
+
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -114,7 +119,10 @@ const emptyState = computed(() => {
 
 const displayMessages = computed(() => {
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return chatStore.messages.filter((m) => {
+  // Skip leading command/system messages before first user to avoid init noise
+  const firstUserIdx = chatStore.messages.findIndex(m => m.role === 'user');
+
+  return chatStore.messages.filter((m, idx) => {
     if (m.role === "tool") {
       return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
     }
@@ -125,6 +133,10 @@ const displayMessages = computed(() => {
       !!m.reasoning?.trim() &&
       currentToolCalls.value.length === 0
     ) {
+      return false;
+    }
+    // Skip command messages before the first user message
+    if (m.role === 'command' && firstUserIdx > 0 && idx < firstUserIdx) {
       return false;
     }
     return true;
@@ -538,9 +550,11 @@ defineExpose({
                 />
               </svg>
               <span class="tool-call-name">{{ tc.toolName }}</span>
-              <span v-if="tc.toolPreview" class="tool-call-preview">{{
-                tc.toolPreview
-              }}</span>
+              <span
+                v-if="tc.toolPreview"
+                class="tool-call-preview"
+                :title="tc.toolPreview"
+              >{{ toolPreviewText(tc.toolPreview) }}</span>
               <span
                 v-if="tc.toolDuration && tc.toolStatus !== 'running'"
                 class="tool-call-duration"
@@ -1357,6 +1371,15 @@ defineExpose({
   &.compression-item {
     color: $text-muted;
     font-size: 10px;
+
+    .tool-call-name {
+      flex: 1 1 auto;
+      max-width: none;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      overflow-wrap: anywhere;
+    }
   }
 
   .tool-call-icon {
@@ -1368,13 +1391,15 @@ defineExpose({
     font-family: $font-code;
     flex: 0 1 auto;
     min-width: 0;
+    max-width: 34%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .tool-call-preview {
-    flex: 1 1 auto;
+    display: block;
+    flex: 1 1 0;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

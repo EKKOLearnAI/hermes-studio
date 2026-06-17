@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import {
   anthropicMessagesUrl,
   chatCompletionsUrl,
@@ -178,6 +181,51 @@ describe('coding agent terminal output sanitizer', () => {
 })
 
 describe('coding agent run state', () => {
+  it('marks existing scoped Codex runners incompatible when Hermes MCP config is missing', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'hwui-codex-mcp-compat-'))
+    try {
+      writeFileSync(join(codexHome, 'config.toml'), 'model = "gpt-test"\n')
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).emitToChat = () => {}
+
+      manager.start({
+        agentSessionId: 'agent-session-1',
+        agentId: 'codex',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test-provider',
+        model: 'gpt-test',
+        sessionId: 'chat-session-1',
+        command: 'codex',
+        args: [],
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+        env: { CODEX_HOME: codexHome },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      expect(manager.isSessionLaunchCompatible('chat-session-1', {
+        agentId: 'codex',
+        mode: 'scoped',
+        provider: 'test-provider',
+        model: 'gpt-test',
+      })).toBe(false)
+
+      writeFileSync(join(codexHome, 'config.toml'), '[mcp_servers.hermes-studio]\ncommand = "node"\n')
+      expect(manager.isSessionLaunchCompatible('chat-session-1', {
+        agentId: 'codex',
+        mode: 'scoped',
+        provider: 'test-provider',
+        model: 'gpt-test',
+      })).toBe(true)
+
+      manager.shutdown()
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true })
+    }
+  })
+
   it('updates the shared chat session state during streaming', () => {
     const manager = new CodingAgentRunManager()
     const state: any = { messages: [], isWorking: false, events: [], queue: [] }

@@ -3,6 +3,7 @@ import { closeDb } from '../db'
 import { stopPreviewRuntime } from '../controllers/update'
 import { codingAgentRunManager } from './agent-runner/coding-agent-run-manager'
 import { shutdownManagedGateways } from './hermes/gateway-runner'
+import { stopOutboundRelayClient } from './global-agent/outbound-relay-client'
 
 const DEFAULT_SHUTDOWN_FORCE_EXIT_MS = 15_000
 const DEFAULT_DESKTOP_SHUTDOWN_FORCE_EXIT_MS = 15_000
@@ -90,6 +91,9 @@ export function createShutdownHandler(server: any, groupChatServer?: any, chatRu
         chatRunServer.close()
         logger.info('ChatRunSocket closed')
       }
+
+      stopOutboundRelayClient()
+      logger.info('Outbound relay clients closed')
 
       codingAgentRunManager.shutdown()
       logger.info('Coding agent hidden sessions closed')

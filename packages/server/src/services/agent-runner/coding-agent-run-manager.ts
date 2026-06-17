@@ -1,5 +1,5 @@
 import { dirname, join } from 'path'
-import { existsSync, accessSync, chmodSync, constants as fsConstants } from 'fs'
+import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../db/hermes/session-store'
@@ -19,6 +19,7 @@ const CODING_AGENT_TOOL_OUTPUT_STORAGE_LIMIT = 32 * 1024
 const CODING_AGENT_TOOL_OUTPUT_HEAD_CHARS = 24 * 1024
 const CODING_AGENT_TOOL_OUTPUT_TAIL_CHARS = 8 * 1024
 const CODEX_REASONING_SUMMARY_ARGS = ['-c', 'model_reasoning_summary="auto"']
+const HERMES_MCP_SERVER_NAME = 'hermes-studio'
 
 let pty: any = null
 
@@ -68,6 +69,7 @@ export interface CodingAgentRunLaunch {
   workspaceDir: string
   env?: NodeJS.ProcessEnv
   state?: SessionState
+  sessionSource?: 'global_agent'
 }
 
 interface ManagedCodingAgentRun {
@@ -102,6 +104,10 @@ interface ManagedCodingAgentRun {
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
   pendingChatCompletionPayload?: Record<string, unknown>
+}
+
+interface CodingAgentRunSendOptions {
+  systemPrompt?: string
 }
 
 function nowSeconds(): number {
@@ -187,6 +193,18 @@ function truncateCodingAgentToolOutputEvent(event: CanonicalResponsesEvent): Can
 
 function isPrintAgent(agentId: string): boolean {
   return agentId === 'claude-code' || agentId === 'codex'
+}
+
+function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
+  if (run.launch.agentId !== 'codex' || run.launch.mode !== 'scoped') return true
+  const codexHome = String(run.launch.env?.CODEX_HOME || '').trim()
+  if (!codexHome) return false
+  try {
+    const config = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
+    return config.includes(`[mcp_servers.${HERMES_MCP_SERVER_NAME}]`)
+  } catch {
+    return false
+  }
 }
 
 function childIsRunning(child?: ChildProcess): boolean {
@@ -374,6 +392,7 @@ export class CodingAgentRunManager {
       if (provider && run.launch.provider !== provider) return false
       if (model && run.launch.model !== model) return false
     }
+    if (!hasManagedHermesMcpConfig(run)) return false
     return true
   }
 
@@ -477,21 +496,22 @@ export class CodingAgentRunManager {
     return { runId: run.id, pid: proc.pid }
   }
 
-  send(sessionId: string, input: string): { runId: string } {
+  send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string } {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
     const text = String(input || '').trim()
     if (!text) throw new Error('Input is required')
+    const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     this.addUserMessage(run, text)
     this.touch(run)
     this.emitTerminalStatus(run, 'Input sent to coding agent.')
     if (run.launch.agentId === 'claude-code') {
-      this.startClaudePrintTurn(run, text)
+      this.startClaudePrintTurn(run, text, systemPrompt)
       return { runId: run.id }
     }
     if (run.launch.agentId === 'codex') {
-      this.startCodexExecTurn(run, text)
+      this.startCodexExecTurn(run, text, systemPrompt)
       return { runId: run.id }
     }
     if (!run.pty) throw new Error('Coding agent terminal is not available')
@@ -610,10 +630,11 @@ export class CodingAgentRunManager {
 
   private ensureDbSession(run: ManagedCodingAgentRun) {
     if (getSession(run.launch.sessionId)) return
+    const source = run.launch.sessionSource === 'global_agent' ? 'global_agent' : 'coding_agent'
     createSession({
       id: run.launch.sessionId,
       profile: run.launch.profile,
-        source: 'coding_agent',
+        source,
         agent: run.launch.agentId === 'codex' ? 'codex' : 'claude',
         agent_session_id: run.id,
         agent_native_session_id: run.launch.agentNativeSessionId,
@@ -680,7 +701,7 @@ export class CodingAgentRunManager {
     }
   }
 
-  private startClaudePrintTurn(run: ManagedCodingAgentRun, input: string) {
+  private startClaudePrintTurn(run: ManagedCodingAgentRun, input: string, systemPrompt = '') {
     if (childIsRunning(run.currentChild)) {
       throw new Error('Claude Code is still processing the previous input')
     }
@@ -713,6 +734,7 @@ export class CodingAgentRunManager {
     const args = [
       ...run.launch.args,
       ...nativeSessionArgs,
+      ...(systemPrompt ? ['--append-system-prompt', systemPrompt] : []),
       '-p',
       '--output-format',
       'stream-json',
@@ -1118,7 +1140,7 @@ export class CodingAgentRunManager {
     })
   }
 
-  private startCodexExecTurn(run: ManagedCodingAgentRun, input: string) {
+  private startCodexExecTurn(run: ManagedCodingAgentRun, input: string, systemPrompt = '') {
     if (childIsRunning(run.currentChild)) {
       throw new Error('Codex is still processing the previous input')
     }
@@ -1148,6 +1170,7 @@ export class CodingAgentRunManager {
     const commonArgs = [
       '--json',
       ...CODEX_REASONING_SUMMARY_ARGS,
+      ...(systemPrompt ? ['-c', `developer_instructions=${JSON.stringify(systemPrompt)}`] : []),
       ...run.launch.args,
       '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox',

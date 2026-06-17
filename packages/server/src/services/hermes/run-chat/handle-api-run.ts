@@ -26,10 +26,10 @@ import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
 
 export function resolveRunSource(source?: string, sessionId?: string): ChatRunSource {
-  if (source === 'api_server' || source === 'cli' || source === 'coding_agent') return source
+  if (source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent') return source
   if (sessionId) {
     const stored = getSession(sessionId)?.source
-    if (stored === 'api_server' || stored === 'cli' || stored === 'coding_agent') return stored
+    if (stored === 'api_server' || stored === 'cli' || stored === 'coding_agent' || stored === 'global_agent') return stored
   }
   return 'cli'
 }
@@ -133,7 +133,8 @@ export async function handleApiRun(
     state.isWorking = true
     state.events = []
     state.profile = profile
-    state.source = 'api_server'
+    const sessionSource: ChatRunSource = data.source === 'global_agent' ? 'global_agent' : 'api_server'
+    state.source = sessionSource
     state.activeRunMarker = runMarker
 
     let peerUserMessage: { id?: number; role: 'user'; content: string; timestamp: number } | null = null
@@ -151,7 +152,7 @@ export async function handleApiRun(
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview, workspace: data.workspace || undefined })
+        createSession({ id: session_id, profile, source: sessionSource, model, provider, title: preview, workspace: data.workspace || undefined })
       }
 
       const messageId = addMessage({
@@ -174,7 +175,7 @@ export async function handleApiRun(
       if (!getSession(session_id)) {
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-        createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview, workspace: data.workspace || undefined })
+        createSession({ id: session_id, profile, source: sessionSource, model, provider, title: preview, workspace: data.workspace || undefined })
       }
       const messageId = addMessage({
         session_id,

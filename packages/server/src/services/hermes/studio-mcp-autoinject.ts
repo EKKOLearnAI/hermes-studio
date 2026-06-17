@@ -88,11 +88,12 @@ function managedCommandConfig(): Record<string, unknown> {
   return { command: 'hermes-web-ui-mcp' }
 }
 
-function managedConfig(): Record<string, unknown> {
+function managedConfig(profile: string): Record<string, unknown> {
   const env: Record<string, string> = {
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
     HERMES_WEB_UI_HOME: config.appHome,
     HERMES_WEBUI_STATE_DIR: config.appHome,
+    HERMES_WEB_UI_PROFILE: profile,
     [MANAGED_ENV_KEY]: '1',
   }
 
@@ -130,6 +131,7 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     existing.env.HERMES_WEB_UI_URL === desiredEnv.HERMES_WEB_UI_URL &&
     existing.env.HERMES_WEB_UI_HOME === desiredEnv.HERMES_WEB_UI_HOME &&
     existing.env.HERMES_WEBUI_STATE_DIR === desiredEnv.HERMES_WEBUI_STATE_DIR &&
+    existing.env.HERMES_WEB_UI_PROFILE === desiredEnv.HERMES_WEB_UI_PROFILE &&
     existing.env.HERMES_WEB_UI_TOKEN === undefined &&
     existing.env[MANAGED_ENV_KEY] === desiredEnv[MANAGED_ENV_KEY]
 }
@@ -183,10 +185,10 @@ async function injectIntoProfile(profile: string, desired: Record<string, unknow
 }
 
 export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResult> {
-  const desired = managedConfig()
+  const commandInfo = managedConfig('default')
   const result: BundledMcpInjectionResult = {
     serverName: SERVER_NAME,
-    command: String(desired.command),
+    command: String(commandInfo.command),
     targets: [],
   }
 
@@ -201,6 +203,7 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
   }
 
   for (const profile of listProfileNamesFromDisk()) {
+    const desired = managedConfig(profile)
     result.targets.push(await injectIntoProfile(profile, desired))
   }
 
@@ -208,7 +211,7 @@ export async function injectBundledMcpServer(): Promise<BundledMcpInjectionResul
   if (changed.length > 0) {
     logger.info({
       serverName: SERVER_NAME,
-      command: desired.command,
+      command: commandInfo.command,
       targets: changed,
     }, '[mcp-autoinject] synced bundled MCP server')
   }

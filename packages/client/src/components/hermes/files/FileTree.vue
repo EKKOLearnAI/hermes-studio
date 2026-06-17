@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, h } from 'vue'
 import { NTree } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore } from '@/stores/hermes/files'
@@ -44,6 +44,11 @@ function handleRootClick() {
   filesStore.navigateTo('')
 }
 
+function renderLabel({ option }: { option: TreeOption }) {
+  const label = String(option.label || '')
+  return h('span', { class: 'tree-node-label', title: label }, label)
+}
+
 onMounted(async () => {
   treeData.value = await loadChildren('')
 })
@@ -62,6 +67,7 @@ onMounted(async () => {
       :data="treeData"
       :selected-keys="selectedKeys"
       :on-load="handleLoad"
+      :render-label="renderLabel"
       expand-on-click
       block-line
       @update:selected-keys="handleSelect"
@@ -90,5 +96,14 @@ onMounted(async () => {
   &:hover {
     background-color: rgba(var(--accent-primary-rgb), 0.06);
   }
+}
+
+:deep(.tree-node-label) {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 </style>

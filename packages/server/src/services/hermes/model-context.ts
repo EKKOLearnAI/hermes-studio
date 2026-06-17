@@ -5,6 +5,7 @@ import { PROVIDER_PRESETS } from '../../shared/providers'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { detectHermesHome } from './hermes-path'
+import { getCompatibleCustomProviders } from './custom-providers-compat'
 
 const HERMES_BASE = detectHermesHome()
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
@@ -186,7 +187,9 @@ function getModelBaseUrl(config: any): string | null {
 }
 
 function getCustomProviders(config: any): CustomProviderEntry[] {
-  return Array.isArray(config?.custom_providers) ? config.custom_providers as CustomProviderEntry[] : []
+  // Read from both legacy `custom_providers:` list and v12+ `providers:` dict
+  // so context-length resolution stays correct after a v11→v12 migration.
+  return getCompatibleCustomProviders(config) as unknown as CustomProviderEntry[]
 }
 
 function resolveCustomProviderEntry(config: any, modelName: string, provider: string | null): CustomProviderEntry | null {

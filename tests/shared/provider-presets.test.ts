@@ -9,6 +9,7 @@ import { PROVIDER_ENV_MAP } from '../../packages/server/src/services/config-help
 const OPENAI_CODEX_PROVIDER = 'openai-codex'
 const COPILOT_PROVIDER = 'copilot'
 const FUN_CODEX_PROVIDER = 'fun-codex'
+const LONGCAT_PROVIDER = 'longcat'
 const KIMI_CODING_PROVIDER = 'kimi-coding'
 const KIMI_CODING_CN_PROVIDER = 'kimi-coding-cn'
 const ALIBABA_CODING_PLAN_PROVIDER = 'alibaba-coding-plan'
@@ -40,6 +41,11 @@ describe('provider presets', () => {
 
   it('routes apikey.fun Codex through the Responses transport', () => {
     const preset = SERVER_PROVIDER_PRESETS.find((candidate) => candidate.value === FUN_CODEX_PROVIDER)
+    expect(preset?.api_mode).toBe('codex_responses')
+  })
+
+  it('routes LongCat through the Responses transport', () => {
+    const preset = SERVER_PROVIDER_PRESETS.find((candidate) => candidate.value === LONGCAT_PROVIDER)
     expect(preset?.api_mode).toBe('codex_responses')
   })
 

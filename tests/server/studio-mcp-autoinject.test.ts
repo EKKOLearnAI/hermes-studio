@@ -59,10 +59,13 @@ describe('studio MCP autoinject', () => {
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
         HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
         HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
+        HERMES_WEB_UI_PROFILE: 'default',
         HERMES_WEB_UI_MANAGED_MCP: '1',
       },
       enabled: true,
     })
+    const injectedWork = await updateConfigYamlForProfileMock.mock.calls[1][1]({})
+    expect(injectedWork.data.mcp_servers['hermes-studio'].env.HERMES_WEB_UI_PROFILE).toBe('work')
     expect(result.command).toBe(process.execPath)
   })
 
@@ -100,6 +103,7 @@ describe('studio MCP autoinject', () => {
             HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
             HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
             HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
+            HERMES_WEB_UI_PROFILE: 'default',
             HERMES_WEB_UI_MANAGED_MCP: '1',
           },
           enabled: false,
@@ -128,6 +132,7 @@ describe('studio MCP autoinject', () => {
             HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
             HERMES_WEB_UI_HOME: '/tmp/hermes-web-ui-home',
             HERMES_WEBUI_STATE_DIR: '/tmp/hermes-web-ui-home',
+            HERMES_WEB_UI_PROFILE: 'default',
             HERMES_WEB_UI_MANAGED_MCP: '1',
           },
           enabled: true,
@@ -162,6 +167,7 @@ describe('studio MCP autoinject', () => {
             HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
             HERMES_WEB_UI_HOME: '/tmp/hermes-web-ui-home',
             HERMES_WEBUI_STATE_DIR: '/tmp/hermes-web-ui-home',
+            HERMES_WEB_UI_PROFILE: 'default',
             HERMES_WEB_UI_MANAGED_MCP: '1',
             HERMES_WEB_UI_TOKEN: 'old-token',
           },

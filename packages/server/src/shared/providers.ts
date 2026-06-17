@@ -475,6 +475,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'longcat',
     builtin: true,
     base_url: 'https://api.longcat.chat/openai',
+    api_mode: 'codex_responses',
     models: ['LongCat-Flash-Lite', 'LongCat-2.0-Preview'],
   },
   {
@@ -482,7 +483,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'openai-codex',
     builtin: true,
     base_url: 'https://chatgpt.com/backend-api/codex',
-    models: ['gpt-5.5', 'gpt-5.4-mini', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
+    models: ['gpt-5.5', 'gpt-5.4-mini'],
   },
   {
     label: 'OpenAI API',

@@ -121,7 +121,34 @@ describe('user auth tables and middleware', () => {
     '/api/devices/peer-connections',
     '/api/devices/peer-connections/conn-1/terminals',
     '/api/devices/peer-connections/conn-1/exec',
-  ])('allows server token for local MCP device endpoint %s', async (path) => {
+  ])('rejects server token for local MCP device endpoint %s', async (path) => {
+    vi.stubEnv('AUTH_TOKEN', 'server-token')
+    const { auth } = await initUsers()
+    const ctx = {
+      path,
+      headers: { authorization: 'Bearer server-token' },
+      query: {},
+      ip: '127.0.0.1',
+      request: { ip: '127.0.0.1', body: {} },
+      req: { socket: { remoteAddress: '127.0.0.1' } },
+      state: {},
+      status: 200,
+      body: null,
+    } as any
+    const next = vi.fn(async () => {})
+
+    await auth.requireUserJwt(ctx, next)
+
+    expect(next).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(401)
+    expect(ctx.body).toEqual({ error: 'Unauthorized' })
+    expect(ctx.state.serverTokenAuth).toBeUndefined()
+  })
+
+  it.each([
+    '/api/hermes/media/apikey-image-generate',
+    '/api/hermes/media/grok-image-to-video',
+  ])('still allows server token for local media agent endpoint %s', async (path) => {
     vi.stubEnv('AUTH_TOKEN', 'server-token')
     const { auth } = await initUsers()
     const ctx = {
@@ -183,6 +210,28 @@ describe('user auth tables and middleware', () => {
     expect(ctx.body).toEqual({ error: 'Unauthorized' })
   })
 
+  it('requires super admin privileges after a valid user token reaches MCP device routes', async () => {
+    const { auth } = await initUsers()
+    const next = vi.fn(async () => {})
+    const adminCtx = {
+      state: { user: { id: 1, username: 'ops', role: 'admin' } },
+      status: 200,
+      body: null,
+    } as any
+    const superCtx = {
+      state: { user: { id: 2, username: 'root', role: 'super_admin' } },
+      status: 200,
+      body: null,
+    } as any
+
+    await auth.requireSuperAdmin(adminCtx, vi.fn(async () => {}))
+    await auth.requireSuperAdmin(superCtx, next)
+
+    expect(adminCtx.status).toBe(403)
+    expect(adminCtx.body).toEqual({ error: 'Super administrator privileges are required' })
+    expect(next).toHaveBeenCalledOnce()
+  })
+
   it('ignores stale profile headers for the aggregate available-models endpoint', async () => {
     const { auth } = await initUsers()
     const ctx = {
@@ -227,6 +276,28 @@ describe('user auth tables and middleware', () => {
     expect(payload?.role).toBe('super_admin')
 
     expect(auth.verifyUserJwt(token, 'wrong', 1000)).toBeNull()
+  })
+
+  it('signs model run JWTs with the same payload shape and a one hour expiry', async () => {
+    const { auth } = await initUsers()
+    const token = auth.signUserJwt(
+      { id: 1, username: 'admin', role: 'super_admin' },
+      'secret',
+      1000,
+      auth.MODEL_RUN_EXPIRES_SECONDS,
+    )
+
+    const payload = auth.verifyUserJwt(token, 'secret', 1000)
+    expect(payload).toMatchObject({
+      sub: '1',
+      username: 'admin',
+      role: 'super_admin',
+      type: 'access',
+      aud: 'hermes-web-ui',
+      iat: 1,
+      exp: 3601,
+    })
+    expect(auth.verifyUserJwt(token, 'secret', 1000 + 60 * 60 * 1000)).toBeNull()
   })
 
   it('authenticates JWTs passed as query tokens for download and websocket URLs', async () => {

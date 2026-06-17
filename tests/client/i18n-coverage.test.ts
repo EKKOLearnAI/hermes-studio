@@ -5,11 +5,33 @@ import { join, relative } from 'path'
 import { changelog } from '@/data/changelog'
 import { messages, supportedLocales } from '@/i18n/messages'
 import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
+import zhTW from '@/i18n/locales/zh-TW'
+import ja from '@/i18n/locales/ja'
+import ko from '@/i18n/locales/ko'
+import fr from '@/i18n/locales/fr'
+import es from '@/i18n/locales/es'
+import de from '@/i18n/locales/de'
+import pt from '@/i18n/locales/pt'
+import ru from '@/i18n/locales/ru'
 import { createI18n } from 'vue-i18n'
 
 const SOURCE_ROOT = join(process.cwd(), 'packages/client/src')
 
 const allMessages: Record<string, Record<string, unknown>> = { en }
+
+const rawMessages: Record<string, Record<string, unknown>> = {
+  en,
+  zh,
+  'zh-TW': zhTW,
+  ja,
+  ko,
+  fr,
+  es,
+  de,
+  pt,
+  ru,
+}
 
 function walkFiles(dir: string, files: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -109,6 +131,79 @@ const APPROVAL_AND_WRITE_GATE_LOCALIZED_KEYS = [
   'settings.session.skillsWriteApproval',
 ]
 
+const PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS: Record<string, string[]> = {
+  de: ['platform.qqAppId', 'platform.qqAppSecret'],
+  ja: ['platform.homeserver', 'platform.accountId'],
+  ko: ['platform.botToken', 'platform.accessToken', 'platform.homeserver', 'platform.weixinToken', 'platform.accountId'],
+  ru: ['platform.weixinToken'],
+}
+
+const PLATFORM_SETTINGS_LOCALIZED_KEYS = [
+  'platform.requireMention',
+  'platform.requireMentionGroup',
+  'platform.requireMentionChannel',
+  'platform.requireMentionRoom',
+  'platform.reactions',
+  'platform.reactionsHint',
+  'platform.freeResponseChats',
+  'platform.freeResponseChatsHint',
+  'platform.freeResponseChannels',
+  'platform.freeResponseChannelsHint',
+  'platform.freeResponseRooms',
+  'platform.freeResponseRoomsHint',
+  'platform.mentionPatterns',
+  'platform.mentionPatternsHint',
+  'platform.autoThread',
+  'platform.autoThreadHint',
+  'platform.autoThreadHintRoom',
+  'platform.dmMentionThreads',
+  'platform.dmMentionThreadsHint',
+  'platform.allowBots',
+  'platform.allowBotsHint',
+  'platform.allowedChannels',
+  'platform.allowedChannelsHint',
+  'platform.ignoredChannels',
+  'platform.ignoredChannelsHint',
+  'platform.noThreadChannels',
+  'platform.noThreadChannelsHint',
+  'platform.exclusiveTokenWarning',
+  'platform.botTokenHint',
+  'platform.accessTokenHint',
+  'platform.homeserverHint',
+  'platform.appIdHint',
+  'platform.appSecretHint',
+  'platform.encryptKey',
+  'platform.encryptKeyHint',
+  'platform.verificationToken',
+  'platform.verificationTokenHint',
+  'platform.clientIdHint',
+  'platform.clientSecretHint',
+  'platform.cardTemplateId',
+  'platform.cardTemplateIdHint',
+  'platform.botIdHint',
+  'platform.wecomSecretHint',
+  'platform.waEnabled',
+  'platform.waEnabledHint',
+  'platform.weixinTokenHint',
+  'platform.accountIdHint',
+  'platform.qrLogin',
+  'platform.qrRelogin',
+  'platform.qrFetching',
+  'platform.qrScanHint',
+  'platform.qrScanedHint',
+  'platform.qqAppIdHint',
+  'platform.qqAppSecretHint',
+  'platform.qqMarkdown',
+  'platform.qqMarkdownHint',
+  'platform.qqSandbox',
+  'platform.qqSandboxHint',
+  'platform.qqQrScanHint',
+  'platform.allowedUsers',
+  'platform.allowedUsersHint',
+  'platform.allowAllUsers',
+  'platform.allowAllUsersHint',
+]
+
 function labelLength(value: unknown): number {
   return typeof value === 'string' ? Array.from(value.replace(/\{[^}]+\}/g, '')).length : Infinity
 }
@@ -177,6 +272,24 @@ describe('i18n locale coverage', () => {
     expect(untranslated).toEqual([])
   })
 
+  it('localizes platform settings copy in every raw non-English locale instead of falling back to English', () => {
+    const untranslated = Object.entries(rawMessages).flatMap(([locale, localeMessages]) => {
+      if (locale === 'en') return []
+
+      const localeKeys = [
+        ...PLATFORM_SETTINGS_LOCALIZED_KEYS,
+        ...(PLATFORM_SETTINGS_LOCALE_SPECIFIC_LOCALIZED_KEYS[locale] || []),
+      ]
+
+      return localeKeys.flatMap((key) => {
+        const localeValue = getPath(localeMessages, key)
+        if (typeof localeValue === 'undefined') return [`${locale}: ${key} missing`]
+        return localeValue === getPath(en, key) ? [`${locale}: ${key}`] : []
+      })
+    })
+
+    expect(untranslated).toEqual([])
+  })
 
   it('keeps Skills Usage summary and table labels compact across locales', () => {
     const oversized = Object.entries(messages).flatMap(([locale, localeMessages]) =>

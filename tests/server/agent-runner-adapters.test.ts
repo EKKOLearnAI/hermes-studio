@@ -24,6 +24,7 @@ import {
 } from '../../packages/server/src/services/agent-runner/adapters/responses-stream'
 
 const target = { model: 'test-model' }
+const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }
 const anthropicTarget = { provider: 'deepseek', model: 'deepseek-reasoner', baseUrl: 'https://api.deepseek.com/v1' }
 
 describe('agent runner Responses adapters', () => {
@@ -70,6 +71,58 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('groups parallel Responses function calls before Chat tool results', () => {
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'check repo' }] },
+        { type: 'function_call', call_id: 'call_1', name: 'read_file', arguments: '{"path":"a.ts"}' },
+        { type: 'function_call', call_id: 'call_2', name: 'search', arguments: '{"q":"todo"}' },
+        { type: 'function_call_output', call_id: 'call_2', output: 'matches' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'file text' },
+        { role: 'user', content: [{ type: 'input_text', text: 'continue' }] },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, target).messages).toEqual([
+      { role: 'user', content: 'check repo' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"a.ts"}' },
+          },
+          {
+            id: 'call_2',
+            type: 'function',
+            function: { name: 'search', arguments: '{"q":"todo"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'call_1', content: 'file text' },
+      { role: 'tool', tool_call_id: 'call_2', content: 'matches' },
+      { role: 'user', content: 'continue' },
+    ])
+  })
+
+  it('drops incomplete Responses function call history for Chat providers', () => {
+    const body = {
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        { type: 'function_call', call_id: 'call_missing', name: 'search', arguments: '{"q":"x"}' },
+        { role: 'user', content: [{ type: 'input_text', text: 'next turn' }] },
+        { type: 'function_call_output', call_id: 'orphan_call', output: 'orphan' },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, target).messages).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'user', content: 'next turn' },
+    ])
+  })
+
   it('converts Responses input to Anthropic messages', () => {
     const body = {
       instructions: 'system text',
@@ -93,6 +146,59 @@ describe('agent runner Responses adapters', () => {
       ],
       tools: [{ name: 'lookup', description: 'Lookup', input_schema: { type: 'object' } }],
     })
+  })
+
+  it('expands Hermes MCP namespace tools for Chat and Anthropic providers', () => {
+    const body = {
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'list devices' }] }],
+      tools: [{ type: 'namespace', name: 'mcp__hermes_studio', description: 'Hermes tools' }],
+    }
+
+    expect(responsesToOpenAiChat(body, target).tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function',
+        function: expect.objectContaining({
+          name: 'hermes_lan_devices_scan',
+          parameters: expect.objectContaining({
+            properties: expect.objectContaining({
+              profile: expect.any(Object),
+              token: expect.any(Object),
+            }),
+          }),
+        }),
+      }),
+    ]))
+
+    expect(responsesToAnthropicMessages(body, target).tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'hermes_lan_devices_scan',
+        input_schema: expect.objectContaining({
+          properties: expect.objectContaining({
+            profile: expect.any(Object),
+            token: expect.any(Object),
+          }),
+        }),
+      }),
+    ]))
+  })
+
+  it('keeps unknown MCP namespaces callable through a generic function fallback', () => {
+    const body = {
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'call custom mcp' }] }],
+      tools: [{ type: 'namespace', name: 'mcp__custom_server', description: 'Custom server tools' }],
+    }
+
+    expect(responsesToOpenAiChat(body, target).tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function',
+        function: expect.objectContaining({
+          name: 'mcp__custom_server',
+          parameters: expect.objectContaining({
+            required: ['tool', 'arguments'],
+          }),
+        }),
+      }),
+    ]))
   })
 
   it('converts OpenAI Chat responses to Responses output', () => {
@@ -124,6 +230,54 @@ describe('agent runner Responses adapters', () => {
     })
   })
 
+  it('marks expanded Hermes MCP Chat tool calls with their Responses namespace', () => {
+    expect(openAiChatToResponses({
+      id: 'chatcmpl_1',
+      created: 123,
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'call_1',
+            function: { name: 'hermes_lan_devices_scan', arguments: '{"profile":"default"}' },
+          }],
+        },
+      }],
+    }, target)).toMatchObject({
+      output: [{
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'hermes_lan_devices_scan',
+        namespace: 'mcp__hermes_studio',
+      }],
+    })
+  })
+
+  it('normalizes generic MCP namespace function calls back to Responses MCP calls', () => {
+    expect(openAiChatToResponses({
+      id: 'chatcmpl_1',
+      created: 123,
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'call_1',
+            function: {
+              name: 'mcp__custom_server',
+              arguments: '{"tool":"custom_lookup","arguments":{"id":1}}',
+            },
+          }],
+        },
+      }],
+    }, target)).toMatchObject({
+      output: [{
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'custom_lookup',
+        arguments: '{"id":1}',
+        namespace: 'mcp__custom_server',
+      }],
+    })
+  })
+
   it('converts Anthropic messages to Responses output', () => {
     expect(anthropicMessageToResponses({
 	      id: 'msg_1',
@@ -143,6 +297,23 @@ describe('agent runner Responses adapters', () => {
 	        { type: 'function_call', call_id: 'toolu_1', name: 'lookup', arguments: '{"id":1}' },
       ],
       usage: { input_tokens: 4, output_tokens: 5, total_tokens: 9 },
+    })
+  })
+
+  it('marks expanded Hermes MCP Anthropic tool calls with their Responses namespace', () => {
+    expect(anthropicMessageToResponses({
+      id: 'msg_1',
+      content: [
+        { type: 'tool_use', id: 'toolu_1', name: 'hermes_lan_devices_list', input: { profile: 'default' } },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }, target)).toMatchObject({
+      output: [{
+        type: 'function_call',
+        call_id: 'toolu_1',
+        name: 'hermes_lan_devices_list',
+        namespace: 'mcp__hermes_studio',
+      }],
     })
   })
 })
@@ -165,7 +336,7 @@ async function collectAnthropicEvents(events: AsyncIterable<AnthropicStreamEvent
 }
 
 describe('agent runner Responses stream adapters', () => {
-	  it('normalizes OpenAI Chat SSE text and tool calls to Responses events', async () => {
+  it('normalizes OpenAI Chat SSE text and tool calls to Responses events', async () => {
 	    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
 	      'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\n',
 	      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
@@ -173,7 +344,7 @@ describe('agent runner Responses stream adapters', () => {
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}\n\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n',
       'data: [DONE]\n\n',
-    ]), target))
+    ]), codexTarget))
 
 	    expect(events.map(event => event.type)).toEqual([
 	      'response.created',
@@ -210,6 +381,27 @@ describe('agent runner Responses stream adapters', () => {
     })
   })
 
+  it('marks expanded Hermes MCP Chat SSE tool calls with their Responses namespace', async () => {
+    const events = await collectEvents(openAiChatSseToResponsesEvents(encodedChunks([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"hermes_lan_devices_scan","arguments":"{}"}}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]), codexTarget))
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'response.output_item.done',
+        data: expect.objectContaining({
+          item: expect.objectContaining({
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'hermes_lan_devices_scan',
+            namespace: 'mcp__hermes_studio',
+          }),
+        }),
+      }),
+    ]))
+  })
+
   it('normalizes Anthropic Messages SSE text and tool calls to Responses events', async () => {
 	    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
 	      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
@@ -217,7 +409,7 @@ describe('agent runner Responses stream adapters', () => {
 	      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
       'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}\r\n\r\n',
       'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"id\\":1}"}}\n\n',
-    ]), target))
+    ]), codexTarget))
 
 	    expect(events.map(event => event.type)).toEqual([
 	      'response.created',
@@ -248,6 +440,29 @@ describe('agent runner Responses stream adapters', () => {
         ],
       },
     })
+  })
+
+  it('marks expanded Hermes MCP Anthropic SSE tool calls with their Responses namespace', async () => {
+    const events = await collectEvents(anthropicMessagesSseToResponsesEvents(encodedChunks([
+      'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n',
+      'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"hermes_lan_devices_list","input":{}}}\n\n',
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"profile\\":\\"default\\"}"}}\n\n',
+      'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    ]), codexTarget))
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'response.output_item.done',
+        data: expect.objectContaining({
+          item: expect.objectContaining({
+            type: 'function_call',
+            call_id: 'toolu_1',
+            name: 'hermes_lan_devices_list',
+            namespace: 'mcp__hermes_studio',
+          }),
+        }),
+      }),
+    ]))
   })
 
   it('passes native Responses SSE events through as canonical events', async () => {

@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 
-type ActiveSection = 'chat' | 'history' | 'group'
+type ActiveSection = 'chat' | 'history' | 'group' | 'global'
 
 const props = defineProps<{
   active: ActiveSection
@@ -221,6 +221,10 @@ function openApiRelay() {
   padding: 2px;
   border-radius: $radius-sm;
   background: rgba(var(--accent-primary-rgb), 0.05);
+}
+
+.conversation-switch--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .conversation-switch-tab {

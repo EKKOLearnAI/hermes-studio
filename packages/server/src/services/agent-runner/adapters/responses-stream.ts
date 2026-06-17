@@ -1,7 +1,9 @@
 import { readSseFrameTexts } from '../sse'
+import { normalizeResponseFunctionCall, responseToolNamespaceForName } from './responses'
 
 export interface ResponsesStreamAdapterTarget {
   model: string
+  annotateMcpToolNamespaces?: boolean
 }
 
 export interface CanonicalResponsesEvent {
@@ -14,6 +16,27 @@ function safeJsonParse(value: string): any {
     return JSON.parse(value)
   } catch {
     return {}
+  }
+}
+
+function functionCallItem(input: {
+  id: string
+  callId?: string
+  name: string
+  arguments: string
+  annotateNamespace?: boolean
+}) {
+  const normalized = input.annotateNamespace
+    ? normalizeResponseFunctionCall(input.name, input.arguments)
+    : { name: input.name, arguments: input.arguments, namespace: undefined }
+  const namespace = input.annotateNamespace ? normalized.namespace || responseToolNamespaceForName(input.name) : undefined
+  return {
+    type: 'function_call',
+    id: input.id,
+    call_id: input.callId || input.id,
+    name: normalized.name,
+    arguments: normalized.arguments,
+    ...(namespace ? { namespace } : {}),
   }
 }
 
@@ -146,13 +169,7 @@ export async function* openAiChatSseToResponsesEvents(
               data: {
                 type: 'response.output_item.added',
                 output_index: textStarted ? index + 1 : index,
-                item: {
-                  type: 'function_call',
-                  id: call.id,
-                  call_id: call.id,
-                  name: call.name,
-                  arguments: '',
-                },
+                item: functionCallItem({ id: call.id, name: call.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces }),
               },
             }
           }
@@ -223,13 +240,7 @@ export async function* openAiChatSseToResponsesEvents(
 
   for (const [index, call] of toolCalls.entries()) {
     const outputIndex = textStarted ? index + 1 : index
-    const callItem = {
-      type: 'function_call',
-      id: call.id,
-      call_id: call.id,
-      name: call.name,
-      arguments: call.arguments || '{}',
-    }
+    const callItem = functionCallItem({ id: call.id, name: call.name, arguments: call.arguments || '{}', annotateNamespace: target.annotateMcpToolNamespaces })
     output.push(callItem)
     yield {
       type: 'response.output_item.done',
@@ -340,7 +351,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
         data: {
           type: 'response.output_item.added',
           output_index: textStarted ? index + 1 : index,
-          item: { type: 'function_call', id: block.id, call_id: block.id, name: block.name, arguments: '' },
+          item: functionCallItem({ id: block.id, name: block.name, arguments: '', annotateNamespace: target.annotateMcpToolNamespaces }),
         },
       }
     }
@@ -467,13 +478,7 @@ export async function* anthropicMessagesSseToResponsesEvents(
   }
   for (const [index, block] of toolBlocks.entries()) {
     const outputIndex = textStarted ? index + 1 : index
-    const item = {
-      type: 'function_call',
-      id: block.id,
-      call_id: block.id,
-      name: block.name,
-      arguments: block.arguments || '{}',
-    }
+    const item = functionCallItem({ id: block.id, name: block.name, arguments: block.arguments || '{}', annotateNamespace: target.annotateMcpToolNamespaces })
     output.push(item)
     yield {
       type: 'response.output_item.done',

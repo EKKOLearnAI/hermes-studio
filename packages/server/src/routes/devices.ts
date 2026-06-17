@@ -1,5 +1,6 @@
 import Router from '@koa/router'
 import * as ctrl from '../controllers/devices'
+import { requireSuperAdmin } from '../middleware/user-auth'
 
 export const devicePublicRoutes = new Router()
 export const deviceRoutes = new Router()
@@ -8,6 +9,7 @@ devicePublicRoutes.post('/api/devices/link-request', ctrl.requestDeviceLinkContr
 devicePublicRoutes.post('/api/devices/link-status', ctrl.requestDeviceLinkStatusController)
 devicePublicRoutes.get('/api/devices/link-info', ctrl.deviceLinkInfoController)
 
+deviceRoutes.use(requireSuperAdmin)
 deviceRoutes.get('/api/devices', ctrl.listDevices)
 deviceRoutes.get('/api/devices/pairing-link', ctrl.getDevicePairingLink)
 deviceRoutes.post('/api/devices/scan', ctrl.scanDevices)

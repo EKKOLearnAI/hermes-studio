@@ -46,6 +46,7 @@ async function loadRouteSession() {
 }
 
 onMounted(async () => {
+  chatStore.setRuntimeMode('default')
   appStore.loadModels()
   // 先加载 profile，确保缓存 key 使用正确的 profile name；同时预取显示设置，
   // 让聊天完成提示音不依赖用户先打开 Settings 页面。

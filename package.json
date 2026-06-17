@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -38,7 +38,7 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "cross-env HERMES_WEB_UI_BACKEND_PORT=8647 vite --host --port 8649 --strictPort",
     "dev:server": "nodemon",
-    "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
+    "build": "npm run openapi:generate && vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "harness:check": "node scripts/harness-check.mjs",
     "prepare": "[ -d dist ] || npm run build",
     "preview": "NODE_ENV=production vite preview",

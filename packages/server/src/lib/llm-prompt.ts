@@ -74,6 +74,18 @@ export const AI_OUTPUT_FORMAT_GUIDELINES = `
 `;
 
 /**
+ * Stable Hermes Studio MCP usage guidance. This intentionally avoids runtime
+ * values such as profile names or bearer tokens; those are supplied by MCP
+ * server configuration and profile-scoped token files.
+ */
+export const HERMES_MCP_USAGE_GUIDELINES = [
+  'Hermes Studio MCP usage: when the user asks to read/check the operation manual, API docs, endpoint docs, 接口文档, 接口手册, or 操作手册, immediately call hermes_api_openapi_get without filters to list API module outlines.',
+  'Use the module purpose and keywords from hermes_api_openapi_get to choose the right module, then call it again with a tag, path, or method filter before calling unfamiliar Web UI endpoints.',
+  'Use hermes_api_request with method, relative path, and JSON body/query fields that match the OpenAPI requestBody and parameters. Do not call full URLs.',
+  'Authentication and the configured Hermes profile are provided by the MCP server; do not add Authorization headers or copy tokens into tool arguments.',
+];
+
+/**
  * Get the complete system prompt with format guidelines
  * @param customPrompt - Optional custom system prompt to prepend
  * @returns Complete system prompt string
@@ -85,6 +97,7 @@ export function getSystemPrompt(customPrompt?: string): string {
     parts.push(customPrompt);
   }
 
+  parts.push(HERMES_MCP_USAGE_GUIDELINES.join('\n'));
   parts.push(AI_OUTPUT_FORMAT_GUIDELINES);
 
   return parts.join('\n\n');

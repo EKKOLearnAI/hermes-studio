@@ -9,6 +9,7 @@ const getHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session: {
 const importHermesSessionMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id } })
 const searchMock = vi.fn(async (ctx: any) => { ctx.body = { results: [{ id: 'search-1' }] } })
 const getMock = vi.fn(async (ctx: any) => { ctx.body = { session: { id: ctx.params.id } } })
+const getContextMock = vi.fn(async (ctx: any) => { ctx.body = { session_id: ctx.params.id, messages: [] } })
 const removeMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const renameMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const setWorkspaceMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
@@ -34,6 +35,7 @@ vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
   importHermesSession: importHermesSessionMock,
   search: searchMock,
   get: getMock,
+  getContext: getContextMock,
   remove: removeMock,
   batchRemove: batchRemoveMock,
   rename: renameMock,
@@ -62,6 +64,7 @@ describe('session routes', () => {
     importHermesSessionMock.mockClear()
     searchMock.mockClear()
     getMock.mockClear()
+    getContextMock.mockClear()
     removeMock.mockClear()
     renameMock.mockClear()
     setModelMock.mockClear()
@@ -88,6 +91,7 @@ describe('session routes', () => {
       '/api/hermes/sessions/usage',
       '/api/hermes/usage/stats',
       '/api/hermes/sessions/context-length',
+      '/api/hermes/sessions/:id/context',
       '/api/hermes/sessions/:id',
       '/api/hermes/sessions/:id/export',
       '/api/hermes/sessions/:id/usage',
@@ -96,6 +100,18 @@ describe('session routes', () => {
       '/api/hermes/workspace/folders',
       '/api/hermes/workspace/folders/rename',
     ]))
+  })
+
+  it('delegates session context route to the controller', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/context')
+    const handler = layer.stack[0]
+    const ctx: any = { query: {}, body: null, params: { id: 'session-1' } }
+
+    await handler(ctx)
+
+    expect(getContextMock).toHaveBeenCalledWith(ctx)
+    expect(ctx.body).toEqual({ session_id: 'session-1', messages: [] })
   })
 
   it('delegates workspace folder routes to the controller', async () => {

@@ -206,6 +206,80 @@ describe('config controller locked file updates', () => {
     expect(ctx.body.platforms.qqbot.allow_all_users).toBe(false)
   })
 
+  it('round-trips Feishu webhook credentials through env-backed platform settings', async () => {
+    await writeFile(join(hermesHome, 'config.yaml'), [
+      'platforms:',
+      '  feishu:',
+      '    extra:',
+      '      mode: webhook',
+      '      app_id: old-config-app',
+      '      encrypt_key: old-config-encrypt',
+      '      verification_token: old-config-verify',
+      '',
+    ].join('\n'), 'utf-8')
+    await writeFile(join(hermesHome, '.env'), 'OPENROUTER_API_KEY=keep\n', 'utf-8')
+    const { updateCredentials, getConfig } = await loadController()
+
+    await updateCredentials(makeCtx({
+      platform: 'feishu',
+      values: {
+        extra: {
+          app_id: 'cli_test_app',
+          app_secret: 'feishu-secret',
+          encrypt_key: 'feishu-encrypt',
+          verification_token: 'feishu-verify',
+        },
+      },
+    }))
+
+    const env = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(env).toContain('OPENROUTER_API_KEY=keep')
+    expect(env).toContain('FEISHU_APP_ID=cli_test_app')
+    expect(env).toContain('FEISHU_APP_SECRET=feishu-secret')
+    expect(env).toContain('FEISHU_ENCRYPT_KEY=feishu-encrypt')
+    expect(env).toContain('FEISHU_VERIFICATION_TOKEN=feishu-verify')
+
+    const migratedConfig = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(migratedConfig.platforms.feishu.extra.mode).toBe('webhook')
+    expect(migratedConfig.platforms.feishu.extra.app_id).toBeUndefined()
+    expect(migratedConfig.platforms.feishu.extra.app_secret).toBeUndefined()
+    expect(migratedConfig.platforms.feishu.extra.encrypt_key).toBeUndefined()
+    expect(migratedConfig.platforms.feishu.extra.verification_token).toBeUndefined()
+
+    const readCtx = makeCtx({})
+    await getConfig(readCtx)
+    expect(readCtx.body.platforms.feishu.extra.mode).toBe('webhook')
+    expect(readCtx.body.platforms.feishu.extra.app_id).toBe('cli_test_app')
+    expect(readCtx.body.platforms.feishu.extra.app_secret).toBe('feishu-secret')
+    expect(readCtx.body.platforms.feishu.extra.encrypt_key).toBe('feishu-encrypt')
+    expect(readCtx.body.platforms.feishu.extra.verification_token).toBe('feishu-verify')
+
+    await updateCredentials(makeCtx({
+      platform: 'feishu',
+      values: {
+        extra: {
+          app_id: '',
+          app_secret: '',
+          encrypt_key: '',
+          verification_token: '',
+        },
+      },
+    }))
+
+    const clearedEnv = await readFile(join(hermesHome, '.env'), 'utf-8')
+    expect(clearedEnv).toContain('OPENROUTER_API_KEY=keep')
+    expect(clearedEnv).not.toContain('FEISHU_APP_ID=')
+    expect(clearedEnv).not.toContain('FEISHU_APP_SECRET=')
+    expect(clearedEnv).not.toContain('FEISHU_ENCRYPT_KEY=')
+    expect(clearedEnv).not.toContain('FEISHU_VERIFICATION_TOKEN=')
+    const config = YAML.load(await readFile(join(hermesHome, 'config.yaml'), 'utf-8')) as any
+    expect(config.platforms.feishu.extra.mode).toBe('webhook')
+    expect(config.platforms.feishu.extra.app_id).toBeUndefined()
+    expect(config.platforms.feishu.extra.app_secret).toBeUndefined()
+    expect(config.platforms.feishu.extra.encrypt_key).toBeUndefined()
+    expect(config.platforms.feishu.extra.verification_token).toBeUndefined()
+  })
+
   it('reads and writes channel settings in the request-scoped profile only', async () => {
     const researchDir = join(hermesHome, 'profiles', 'research')
     await mkdir(researchDir, { recursive: true })

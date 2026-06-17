@@ -6,6 +6,11 @@ const handleApiRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
+const sessionCommandMocks = vi.hoisted(() => ({
+  handleSessionCommand: vi.fn(),
+  isSessionCommand: vi.fn(() => false),
+  parseSessionCommand: vi.fn(() => null),
+}))
 const bridgeMock = vi.hoisted(() => ({
   status: vi.fn(),
   statusIfLoaded: vi.fn(),
@@ -26,11 +31,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-
   handleCodingAgentRun: handleCodingAgentRunMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/session-command', () => ({
-  handleSessionCommand: vi.fn(),
-  isSessionCommand: vi.fn(() => false),
-  parseSessionCommand: vi.fn(() => null),
-}))
+vi.mock('../../packages/server/src/services/hermes/run-chat/session-command', () => sessionCommandMocks)
 
 vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
@@ -112,6 +113,35 @@ describe('ChatRunSocket queued bridge runs', () => {
       events: [],
       queue: [],
     })
+  })
+
+  it('dispatches unknown slash bridge input through the normal bridge run path', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { handlers, io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).onConnection(socket)
+
+    sessionCommandMocks.parseSessionCommand.mockReturnValueOnce(null)
+    sessionCommandMocks.isSessionCommand.mockReturnValueOnce(false)
+
+    await handlers.get('run')?.({
+      session_id: 'session-1',
+      input: '/terminal pwd',
+      source: 'cli',
+      queue_id: 'queue-terminal',
+      profile: 'default',
+    })
+
+    expect(sessionCommandMocks.parseSessionCommand).toHaveBeenCalledWith('/terminal pwd')
+    expect(sessionCommandMocks.handleSessionCommand).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(handleBridgeRunMock).toHaveBeenCalled())
+    const call = handleBridgeRunMock.mock.calls.at(-1)!
+    expect(call[2]).toEqual(expect.objectContaining({
+      input: '/terminal pwd',
+      source: 'cli',
+      queue_id: 'queue-terminal',
+    }))
+    expect(call[6]).toBe(false)
   })
 
   it('persists normal queued bridge messages when they are dequeued', async () => {
