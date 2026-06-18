@@ -195,6 +195,26 @@ describe('gateway-runner supervision', () => {
     expect(fakeChildren).toHaveLength(2)
   })
 
+  it('retires one managed profile gateway without scheduling a respawn', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const { retireManagedGatewayForProfile, startGatewayRunManaged } = await import(
+      '../../packages/server/src/services/hermes/gateway-runner'
+    )
+
+    startGatewayRunManaged('/usr/bin/hermes', { profileDir: '/tmp/delete-me' })
+    expect(fakeChildren).toHaveLength(1)
+
+    const retired = retireManagedGatewayForProfile('/tmp/delete-me', { timeoutMs: 5000 })
+    expect(fakeChildren[0].killSignals).toEqual(['SIGTERM'])
+
+    fakeChildren[0].emit('exit', 0, 'SIGTERM')
+    await expect(retired).resolves.toEqual({ signaled: 1, forced: 0, errors: 0 })
+    await vi.advanceTimersByTimeAsync(6000)
+
+    expect(fakeChildren).toHaveLength(1)
+  })
+
   it('stops managed gateways on shutdown without respawning them', async () => {
     vi.useFakeTimers()
     vi.resetModules()

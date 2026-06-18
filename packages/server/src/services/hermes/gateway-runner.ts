@@ -175,6 +175,44 @@ export async function shutdownManagedGateways(
   return { signaled, forced, errors }
 }
 
+export async function retireManagedGatewayForProfile(
+  profileDir: string,
+  opts: {
+    timeoutMs?: number
+    platform?: NodeJS.Platform
+    killWindowsProcessTree?: KillWindowsProcessTree
+  } = {},
+): Promise<ManagedGatewayShutdownResult> {
+  const state = profileState.get(profileDir)
+  if (!state) return { signaled: 0, forced: 0, errors: 0 }
+
+  clearRespawnTimer(state, profileDir)
+
+  const entry = state.current
+  state.current = null
+  profileState.delete(profileDir)
+
+  if (!entry) return { signaled: 0, forced: 0, errors: 0 }
+
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
+  const platform = opts.platform ?? process.platform
+  const killWindowsProcessTree = opts.killWindowsProcessTree ?? taskkillWindowsProcessTree
+
+  logger.info('[gateway-runner] retiring managed gateway profileDir=%s pid=%s', profileDir, entry.pid)
+  const result = await stopManagedGateway(entry, { timeoutMs, platform, killWindowsProcessTree })
+  const forced = result.forced ? 1 : 0
+  const errors = result.error ? 1 : 0
+
+  logger.info(
+    '[gateway-runner] managed gateway retire complete profileDir=%s signaled=1 forced=%s errors=%s',
+    profileDir,
+    forced,
+    errors,
+  )
+
+  return { signaled: 1, forced, errors }
+}
+
 export function startGatewayRunManaged(
   hermesBin: string,
   opts: { profileDir?: string } = {},
