@@ -49,7 +49,7 @@ export interface Message {
   // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
-  systemType?: 'command' | 'error'
+  systemType?: 'command' | 'error' | 'fork-divider'
   commandAction?: string
   commandData?: Record<string, unknown>
   finishReason?: string | null
@@ -104,6 +104,7 @@ export interface Session {
   contextTokens?: number
   endedAt?: number | null
   parentSessionId?: string | null
+  forkPointMessageId?: string | null
   parentTitle?: string | null
   parentLastMessage?: string | null
   parentLastMessageRole?: string | null
@@ -500,6 +501,7 @@ function mapHermesSession(s: SessionSummary): Session {
     outputTokens: s.output_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     parentSessionId: s.parent_session_id || null,
+    forkPointMessageId: (s as any).fork_point_message_id != null ? String((s as any).fork_point_message_id) : null,
     parentTitle: s.parent_title || null,
     parentLastMessage: s.parent_last_message || null,
     parentLastMessageRole: s.parent_last_message_role || null,
@@ -904,6 +906,7 @@ export const useChatStore = defineStore('chat', () => {
       target.hasMoreBefore = detail.hasMore
       if (detail.session.title) target.title = detail.session.title
       target.parentSessionId = detail.session.parent_session_id || target.parentSessionId || null
+      target.forkPointMessageId = (detail.session as any).fork_point_message_id != null ? String((detail.session as any).fork_point_message_id) : target.forkPointMessageId || null
       target.parentTitle = detail.session.parent_title || target.parentTitle || null
       target.parentLastMessage = detail.session.parent_last_message || target.parentLastMessage || null
       target.parentLastMessageRole = detail.session.parent_last_message_role || target.parentLastMessageRole || null
@@ -1032,6 +1035,7 @@ export const useChatStore = defineStore('chat', () => {
           if (data.outputTokens != null) target.outputTokens = data.outputTokens
           if ((data as any).contextTokens != null) target.contextTokens = (data as any).contextTokens
           target.parentSessionId = (data as any).parentSessionId || target.parentSessionId || null
+          target.forkPointMessageId = (data as any).forkPointMessageId != null ? String((data as any).forkPointMessageId) : target.forkPointMessageId || null
           target.parentTitle = (data as any).parentTitle || target.parentTitle || null
           target.parentLastMessage = (data as any).parentLastMessage || target.parentLastMessage || null
           target.parentLastMessageRole = (data as any).parentLastMessageRole || target.parentLastMessageRole || null
@@ -1466,6 +1470,7 @@ export const useChatStore = defineStore('chat', () => {
             parentSessionId: typeof branch.parentSessionId === 'string'
               ? branch.parentSessionId
               : typeof (evt as any).parentSessionId === 'string' ? (evt as any).parentSessionId : sid,
+            forkPointMessageId: branch.forkPointMessageId != null ? String(branch.forkPointMessageId) : null,
             parentTitle: typeof branch.parentTitle === 'string' ? branch.parentTitle : target?.title || null,
             parentLastMessage: typeof branch.parentLastMessage === 'string' ? branch.parentLastMessage : lastVisibleMessageContent(target?.messages),
             parentLastMessageRole: typeof branch.parentLastMessageRole === 'string' ? branch.parentLastMessageRole : lastVisibleMessageRole(target?.messages),

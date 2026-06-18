@@ -234,6 +234,7 @@ describe('branch session command', () => {
       branchSession: expect.objectContaining({
         title: 'Alternate',
         parentSessionId: 'session-1',
+        forkPointMessageId: null,
         parentTitle: 'Parent chat',
         parentLastMessage: 'Root answer',
         parentLastMessageRole: 'assistant',
@@ -262,6 +263,7 @@ describe('branch session command', () => {
     expect(branchEvent.branchSession).toEqual(expect.objectContaining({
       source: 'api_server',
       parentSessionId: 'session-1',
+      forkPointMessageId: null,
     }))
   })
 })

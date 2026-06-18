@@ -21,6 +21,7 @@ export interface HermesSessionRow {
   provider: string
   title: string | null
   parent_session_id: string | null
+  fork_point_message_id: string | null
   started_at: number
   ended_at: number | null
   end_reason: string | null
@@ -105,6 +106,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     provider: String(row.provider || ''),
     title,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
+    fork_point_message_id: row.fork_point_message_id != null ? String(row.fork_point_message_id) : null,
     started_at: Number(row.started_at || 0),
     ended_at: row.ended_at != null ? Number(row.ended_at) : null,
     end_reason: row.end_reason != null ? String(row.end_reason) : null,
@@ -174,6 +176,7 @@ export function createSession(data: {
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
       user_id: null, model: data.model || '', provider: data.provider || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
+      fork_point_message_id: null,
       started_at: now, ended_at: null, end_reason: null,
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
@@ -271,8 +274,9 @@ export function createBranchedSession(data: {
       data.messages.length,
     )
 
+    let forkPointMessageId: string | null = null
     for (const msg of data.messages) {
-      insertMessage.run(
+      const result = insertMessage.run(
         data.id,
         msg.role,
         normalizeMessageContentForStorageRole(msg.role, msg.content),
@@ -288,6 +292,13 @@ export function createBranchedSession(data: {
         msg.reasoning_details ?? null,
         msg.reasoning_content ?? null,
       )
+      if (result.lastInsertRowid != null) forkPointMessageId = String(result.lastInsertRowid)
+    }
+
+    if (forkPointMessageId) {
+      db.prepare(
+        `UPDATE ${SESSIONS_TABLE} SET fork_point_message_id = ? WHERE id = ?`,
+      ).run(forkPointMessageId, data.id)
     }
 
     // Preserve the parent's compressed runtime context for the fork. The child

@@ -483,6 +483,7 @@ export class ChatRunSocket {
       messagePageLimit: state.messagePageLimit,
       hasMoreBefore: state.hasMoreBefore,
       parentSessionId: sessionDetail?.parent_session_id || null,
+      forkPointMessageId: sessionDetail?.fork_point_message_id || null,
       parentTitle: sessionDetail?.parent_title || null,
       parentLastMessage: sessionDetail?.parent_last_message || null,
       parentLastMessageRole: sessionDetail?.parent_last_message_role || null,

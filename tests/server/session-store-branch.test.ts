@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => {
   const updateParentRun = vi.fn()
   const insertSessionRun = vi.fn()
-  const insertMessageRun = vi.fn()
+  const insertMessageRun = vi.fn(() => ({ lastInsertRowid: 42 }))
+  const updateForkPointRun = vi.fn()
   const selectSessionGet = vi.fn()
   const prepare = vi.fn((sql: string) => {
     if (sql.includes('UPDATE sessions SET ended_at')) return { run: updateParentRun }
+    if (sql.includes('UPDATE sessions SET fork_point_message_id')) return { run: updateForkPointRun }
     if (sql.includes('INSERT INTO sessions')) return { run: insertSessionRun }
     if (sql.includes('INSERT INTO messages')) return { run: insertMessageRun }
     if (sql.includes('SELECT * FROM sessions WHERE id = ?')) return { get: selectSessionGet }
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => {
     updateParentRun,
     insertSessionRun,
     insertMessageRun,
+    updateForkPointRun,
     selectSessionGet,
     prepare,
     exec,
@@ -51,6 +54,7 @@ describe('createBranchedSession', () => {
       provider: 'openai-codex',
       title: 'Forked child',
       parent_session_id: 'parent-session',
+      fork_point_message_id: '42',
       started_at: 123,
       ended_at: null,
       end_reason: null,
@@ -94,6 +98,7 @@ describe('createBranchedSession', () => {
     expect(result?.id).toBe('child-session')
     expect(mocks.exec).toHaveBeenNthCalledWith(1, 'BEGIN')
     expect(mocks.copyCompressionSnapshot).toHaveBeenCalledWith('parent-session', 'child-session')
+    expect(mocks.updateForkPointRun).toHaveBeenCalledWith('42', 'child-session')
     expect(mocks.exec).toHaveBeenLastCalledWith('COMMIT')
     expect(mocks.insertMessageRun).toHaveBeenCalledWith(
       'child-session',
