@@ -242,7 +242,13 @@ describe('plan session command', () => {
 
     for (const commandName of BRIDGE_SESSION_COMMAND_NAMES) {
       expect(isKnownBridgeSessionCommand(`/${commandName}`)).toBe(true)
-      expect(parseSessionCommand(`/${commandName}`)).toEqual(expect.objectContaining({ name: commandName }))
+      const parsed = parseSessionCommand(`/${commandName}`)
+      expect(parsed).not.toBeNull()
+      if (commandName === 'fork') {
+        expect(parsed).toEqual(expect.objectContaining({ name: 'branch', rawName: 'fork' }))
+      } else {
+        expect(parsed).toEqual(expect.objectContaining({ name: commandName }))
+      }
     }
 
     expect(isKnownBridgeSessionCommand('/reload_skills')).toBe(true)
