@@ -500,3 +500,37 @@ describe('ChatContextCompressor', () => {
     expect(saveCompressionSnapshotMock).toHaveBeenCalledWith('s1', 'updated summary', 22, 23)
   })
 })
+
+describe('countTokens', () => {
+  it('returns a positive estimate for normal text via the exact tokenizer', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    expect(countTokens('The quick brown fox jumps over the lazy dog.')).toBeGreaterThan(0)
+  })
+
+  it('does not hang on a long contiguous CJK run (quadratic BPE guard)', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    // A long run of CJK characters with no spaces forms a single huge
+    // pre-tokenizer "piece". js-tiktoken's BPE merge loop is O(n^2) over the
+    // bytes of that piece, which pins the event loop for seconds/minutes and
+    // never throws — so the guard must short-circuit to the heuristic instead
+    // of calling encode(). 30k chars would be ~90k bytes => ~8.1B ops unguarded.
+    const poison = '一'.repeat(30000)
+    const start = performance.now()
+    const tokens = countTokens(poison)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
+  it('still uses the exact tokenizer for long space-separated text', async () => {
+    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    // Long but with frequent spaces => no single piece exceeds the guard
+    // threshold, so the exact tiktoken path runs and stays fast.
+    const longText = 'word '.repeat(10000)
+    const start = performance.now()
+    const tokens = countTokens(longText)
+    const elapsedMs = performance.now() - start
+    expect(tokens).toBeGreaterThan(0)
+    expect(elapsedMs).toBeLessThan(1000)
+  })
+})

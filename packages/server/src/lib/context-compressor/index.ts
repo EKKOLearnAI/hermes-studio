@@ -114,17 +114,49 @@ function getEncoder() {
   return _encoder
 }
 
+// js-tiktoken's BPE merge loop is O(n²) over the bytes of a single
+// pre-tokenizer "piece". The GPT pat_str groups contiguous \p{L} characters
+// into one piece, and CJK text has no spaces, so a long CJK run becomes a
+// single huge piece (e.g. 14k chars → 42k bytes → ~1.8B ops) that pins the
+// event loop at 100% CPU and never returns — encode() doesn't throw, it just
+// hangs, so the catch-based heuristic fallback never fires. Detect that
+// pathological case up front and use the cheap heuristic instead. Normal text
+// (even very long, but space-separated) keeps the exact tiktoken path.
+const MAX_LETTER_RUN = 2000
+
+function hasPathologicalRun(text: string): boolean {
+  let maxRun = 0
+  let run = 0
+  for (let i = 0; i < text.length; i++) {
+    const cc = text.charCodeAt(i)
+    // ASCII letters or anything at/above CJK/extended ranges (>0x2e7f)
+    if ((cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122) || cc > 0x2e7f) {
+      if (++run > maxRun) maxRun = run
+      if (maxRun > MAX_LETTER_RUN) return true
+    } else {
+      run = 0
+    }
+  }
+  return false
+}
+
+function heuristicTokens(text: string): number {
+  const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
+  const other = text.length - cjk
+  return Math.ceil(cjk * 1.5 + other / 4)
+}
+
 export function countTokens(text: string): number {
+  if (hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     return getEncoder().encode(text).length
   } catch {
-    const cjk = (text.match(/[\u2e80-\u9fff\uac00-\ud7af\u3000-\u303f\uff00-\uffef]/g) || []).length
-    const other = text.length - cjk
-    return Math.ceil(cjk * 1.5 + other / 4)
+    return heuristicTokens(text)
   }
 }
 
 export function countTokensForModel(text: string, model: string): number {
+  if (hasPathologicalRun(text)) return heuristicTokens(text)
   try {
     const enc = encodingForModel(model as any)
     return enc.encode(text).length
