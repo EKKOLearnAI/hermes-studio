@@ -189,14 +189,14 @@ describe('group chat store streaming merge', () => {
     const store = await createJoinedStore()
 
     // Agent A starts first
-    emitSocket('message_stream_start', assistantMessage({ id: 'msg-a', timestamp: 100 }))
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-a', senderId: 'agent-a', senderName: 'Agent A', timestamp: 100 }))
     // Agent B starts second
-    emitSocket('message_stream_start', assistantMessage({ id: 'msg-b', timestamp: 200 }))
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-b', senderId: 'agent-b', senderName: 'Agent B', timestamp: 200 }))
 
     // Agent B finishes first (completes with a later timestamp)
-    emitSocket('message', assistantMessage({ id: 'msg-b', content: 'fast reply', timestamp: 300 }))
+    emitSocket('message', assistantMessage({ id: 'msg-b', senderId: 'agent-b', senderName: 'Agent B', content: 'fast reply', timestamp: 300 }))
     // Agent A finishes last (but started first)
-    emitSocket('message', assistantMessage({ id: 'msg-a', content: 'slow reply', timestamp: 400 }))
+    emitSocket('message', assistantMessage({ id: 'msg-a', senderId: 'agent-a', senderName: 'Agent A', content: 'slow reply', timestamp: 400 }))
 
     // sortedMessages should keep A (firstSeenAt=100) before B (firstSeenAt=200)
     expect(store.sortedMessages).toHaveLength(2)
