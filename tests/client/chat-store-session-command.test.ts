@@ -233,10 +233,21 @@ describe('chat store session.command fanout', () => {
     })
     expect(store.activeSessionId).toBe('branch-1')
     expect(chatApi.resumeSession).toHaveBeenCalledWith('branch-1', expect.any(Function), 'default', 'chat-run')
+
+    await store.switchSession('session-1')
+    expect(store.activeSessionId).toBe('session-1')
+    expect(store.activeSession?.id).toBe('session-1')
     expect(store.sessions.find((item: Session) => item.id === 'session-1')?.messages.at(-1)).toMatchObject({
       role: 'command',
       commandAction: 'branch',
       content: 'Branched session "Side path" from session-1.',
     })
+
+    await store.switchSession('branch-1')
+    expect(store.activeSessionId).toBe('branch-1')
+    expect(store.activeSession?.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Previous question' }),
+      expect.objectContaining({ role: 'assistant', content: 'Previous answer' }),
+    ])
   })
 })

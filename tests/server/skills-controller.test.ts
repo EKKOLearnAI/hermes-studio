@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Readable } from 'stream'
@@ -158,6 +158,76 @@ describe('skills controller', () => {
       expect(tools.skills).toEqual([
         expect.objectContaining({ name: 'dupe-skill', source: 'local', description: 'local copy' }),
         expect.objectContaining({ name: 'external-skill', source: 'external', description: 'external copy' }),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lists flat symlinked skills in the misc category', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-symlink-flat-skill-'))
+    const profileDir = join(root, 'profile')
+    const profileSkillsDir = join(profileDir, 'skills')
+    const sharedSkillDir = join(root, 'shared-skills', 'linked-flat-skill')
+
+    await mkdir(profileSkillsDir, { recursive: true })
+    await mkdir(sharedSkillDir, { recursive: true })
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Linked Flat Skill\nflat symlink copy\n', 'utf-8')
+    await symlink(sharedSkillDir, join(profileSkillsDir, 'linked-flat-skill'))
+
+    mockGetProfileDir.mockReturnValue(profileDir)
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { state: { profile: { name: 'research' } }, body: null }
+
+      await list(ctx)
+
+      expect(ctx.body.categories).toContainEqual(expect.objectContaining({
+        name: 'misc',
+        skills: [
+          expect.objectContaining({
+            name: 'linked-flat-skill',
+            source: 'local',
+            description: 'flat symlink copy',
+          }),
+        ],
+      }))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('traverses symlinked category entries without following hidden or cyclic links', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-symlink-category-skill-'))
+    const profileDir = join(root, 'profile')
+    const toolsDir = join(profileDir, 'skills', 'tools')
+    const linkedSkillDir = join(root, 'shared-skills', 'linked-skill')
+    const linkedCategoryDir = join(root, 'shared-skills', 'linked-category')
+
+    await mkdir(toolsDir, { recursive: true })
+    await mkdir(linkedSkillDir, { recursive: true })
+    await mkdir(linkedCategoryDir, { recursive: true })
+    await writeFile(join(toolsDir, 'DESCRIPTION.md'), '# Tools\n', 'utf-8')
+    await writeFile(join(linkedSkillDir, 'SKILL.md'), '# Linked Skill\nlinked skill copy\n', 'utf-8')
+    await writeFile(join(linkedCategoryDir, 'SKILL.md'), '# Linked Category Skill\nlinked category copy\n', 'utf-8')
+    await symlink(linkedSkillDir, join(toolsDir, 'linked-skill'))
+    await symlink(linkedCategoryDir, join(toolsDir, 'linked-group'))
+    await symlink(toolsDir, join(toolsDir, 'loop'))
+    await symlink(linkedSkillDir, join(toolsDir, '.hidden-skill'))
+
+    mockGetProfileDir.mockReturnValue(profileDir)
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { state: { profile: { name: 'research' } }, body: null }
+
+      await list(ctx)
+
+      const tools = ctx.body.categories.find((category: any) => category.name === 'tools')
+      expect(tools.skills).toEqual([
+        expect.objectContaining({ name: 'linked-group', description: 'linked category copy', source: 'local' }),
+        expect.objectContaining({ name: 'linked-skill', description: 'linked skill copy', source: 'local' }),
       ])
     } finally {
       await rm(root, { recursive: true, force: true })

@@ -109,6 +109,11 @@ const mimoModelOptions = [
   { label: t('settings.voice.mimoModelVoiceDesign'), value: 'mimo-v2.5-tts-voicedesign' },
   { label: t('settings.voice.mimoModelVoiceClone'), value: 'mimo-v2.5-tts-voiceclone' },
 ]
+
+const sttAudioTranscodeOptions = computed(() => [
+  { label: t('settings.voice.sttAudioTranscodeNone'), value: 'none' },
+  { label: t('settings.voice.sttAudioTranscodeFfmpeg'), value: 'ffmpeg' },
+])
 </script>
 
 <template>
@@ -204,6 +209,13 @@ const mimoModelOptions = [
         </template>
 
         <template v-if="connection.kind === 'stt' && connection.provider !== 'browser'">
+          <NFormItem :label="t('settings.voice.sttAudioTranscode')">
+            <NSelect
+              :value="stringField('audioTranscode') || 'none'"
+              :options="sttAudioTranscodeOptions"
+              @update:value="value => setField('audioTranscode', value)"
+            />
+          </NFormItem>
           <NFormItem :label="t('settings.voice.sttLanguage')">
             <NInput :value="stringField('language')" @update:value="value => setField('language', value)" />
           </NFormItem>

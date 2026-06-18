@@ -5,7 +5,7 @@ import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url
 export type StoredSttProvider = 'openai' | 'custom'
 export type ActiveSttProvider = 'browser' | StoredSttProvider
 
-const SETTINGS_KEYS = ['baseUrl', 'baseUrlPresets', 'model', 'language', 'prompt'] as const
+const SETTINGS_KEYS = ['baseUrl', 'baseUrlPresets', 'model', 'language', 'prompt', 'audioTranscode'] as const
 const SECRET_KEYS = ['apiKey'] as const
 
 type SttSettingKey = (typeof SETTINGS_KEYS)[number]
@@ -205,6 +205,13 @@ function sanitizeStoredSettings(provider: StoredSttProvider, input: Record<strin
 
     if (key === 'prompt') {
       out.prompt = value.slice(0, MAX_PROMPT_LENGTH)
+      continue
+    }
+
+    if (key === 'audioTranscode') {
+      if (value === 'ffmpeg' || value === 'none') {
+        out.audioTranscode = value
+      }
       continue
     }
 

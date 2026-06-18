@@ -5,6 +5,7 @@
 import { isSqliteAvailable, getDb } from '../index'
 import { SESSIONS_TABLE, MESSAGES_TABLE } from './schemas'
 import { normalizeMessageContentForStorageRole } from './message-content'
+import { copyCompressionSnapshot } from './compression-snapshot'
 
 // Re-export types for compatibility with sessions-db.ts consumers
 export interface HermesSessionRow {
@@ -288,6 +289,11 @@ export function createBranchedSession(data: {
         msg.reasoning_content ?? null,
       )
     }
+
+    // Preserve the parent's compressed runtime context for the fork. The child
+    // copies parent messages 1:1, so the snapshot index remains valid and the
+    // first child turn can use summary+tail instead of re-sending raw history.
+    copyCompressionSnapshot(data.parent_session_id, data.id)
     db.exec('COMMIT')
   } catch (e) {
     db.exec('ROLLBACK')

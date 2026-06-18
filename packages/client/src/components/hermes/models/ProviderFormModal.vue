@@ -10,7 +10,7 @@ import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import AnthropicLoginModal from './AnthropicLoginModal.vue'
 import GeminiLoginModal from './GeminiLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
-import { fetchProviderModels } from '@/api/hermes/system'
+import { fetchProviderModels, type ProviderApiMode } from '@/api/hermes/system'
 import { inferApiKeyFunPresetProvider, isApiKeyFunBaseUrl, type ApiKeyFunPresetProvider } from '@/utils/providerBaseUrl'
 
 const { t } = useI18n()
@@ -43,9 +43,17 @@ const formData = ref({
   api_key: '',
   model: '',
   context_length: null as number | null,
+  api_mode: 'chat_completions' as ProviderApiMode,
 })
 
 const modelOptions = ref<Array<{ label: string; value: string }>>([])
+const apiModeOptions: Array<{ label: string; value: ProviderApiMode }> = [
+  { label: 'chat_completions (/chat/completions)', value: 'chat_completions' },
+  { label: 'codex_responses (/responses)', value: 'codex_responses' },
+  { label: 'anthropic_messages (/messages)', value: 'anthropic_messages' },
+  { label: 'bedrock_converse (Converse API)', value: 'bedrock_converse' },
+  { label: 'codex_app_server (App Server)', value: 'codex_app_server' },
+]
 
 const CODEX_KEY = 'openai-codex'
 const NOUS_KEY = 'nous'
@@ -144,6 +152,7 @@ watch(selectedPreset, (val) => {
     if (group) {
       formData.value.name = group.label
       formData.value.base_url = group.base_url
+      formData.value.api_mode = group.api_mode || 'chat_completions'
       modelOptions.value = group.models.map((m: string) => ({ label: m, value: m }))
       if (group.models.length > 0) {
         formData.value.model = group.models[0]
@@ -180,7 +189,7 @@ watch(() => formData.value.model, (model) => {
 
 watch(providerType, () => {
   modelOptions.value = []
-  formData.value = { name: '', base_url: '', api_key: '', model: '', context_length: null }
+  formData.value = { name: '', base_url: '', api_key: '', model: '', context_length: null, api_mode: 'chat_completions' }
   selectedPreset.value = null
 })
 
@@ -301,6 +310,7 @@ async function handleSave() {
       api_key: formData.value.api_key.trim(),
       model: formData.value.model,
       context_length: contextLength,
+      api_mode: formData.value.api_mode,
       providerKey,
     })
     message.success(t('models.providerAdded'))
@@ -528,6 +538,13 @@ function handleClose() {
           :min="0"
           clearable
           style="width: 100%"
+        />
+      </NFormItem>
+
+      <NFormItem v-if="providerType === 'custom'" :label="t('models.apiMode')">
+        <NSelect
+          v-model:value="formData.api_mode"
+          :options="apiModeOptions"
         />
       </NFormItem>
     </NForm>

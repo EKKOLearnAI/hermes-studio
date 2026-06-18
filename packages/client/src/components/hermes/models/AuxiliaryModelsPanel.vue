@@ -333,7 +333,6 @@ watch(() => form.value.provider, (provider) => {
   border: 1px solid $border-color;
   border-radius: $radius-md;
   margin-bottom: 16px;
-  overflow: hidden;
 }
 
 .auxiliary-header {

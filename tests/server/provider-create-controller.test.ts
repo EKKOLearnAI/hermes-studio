@@ -121,8 +121,34 @@ describe('providers controller create', () => {
         base_url: 'https://api.longcat.chat/openai',
         api_key: 'longcat-key',
         model: 'LongCat-2.0-Preview',
+        api_mode: 'codex_responses',
       }),
     ])
     expect(readFileSync(join(hermesHome, '.env'), 'utf-8')).not.toContain('LONGCAT_API_KEY')
+  })
+
+  it('persists api_mode for custom providers', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({
+      name: 'Research Proxy',
+      base_url: 'https://research.invalid/v1',
+      api_key: 'research-key',
+      model: 'research-model',
+      api_mode: 'chat_completions',
+    })
+
+    await create(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.custom_providers).toEqual([
+      expect.objectContaining({
+        name: 'research-proxy',
+        base_url: 'https://research.invalid/v1',
+        api_key: 'research-key',
+        model: 'research-model',
+        api_mode: 'chat_completions',
+      }),
+    ])
   })
 })

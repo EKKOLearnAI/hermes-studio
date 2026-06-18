@@ -218,9 +218,6 @@ function summarizeProbeError(error: unknown): { summary: string; details: string
   if (/timeout|aborted/i.test(message)) {
     return { summary: 'Model discovery timed out. You can still enter the model manually.', details: message }
   }
-  if (/localhost|private network|metadata|resolved to/i.test(message)) {
-    return { summary: 'The Base URL targets a blocked local or private network address.', details: message }
-  }
   if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|ECONNRESET/i.test(message)) {
     return { summary: 'Could not reach the provider from the Web UI server. Check the Base URL and network access.', details: message }
   }

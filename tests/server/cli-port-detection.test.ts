@@ -157,6 +157,30 @@ describe('CLI port detection', () => {
     expect(getDaemonStopGraceMs()).toBe(9_000)
   })
 
+  it('skips browser launch when --no-open is provided', async () => {
+    const { shouldOpenBrowser } = await loadCli()
+
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'start'])).toBe(true)
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'start', '--no-open'])).toBe(false)
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'restart', '--port', '9000', '--no-open'])).toBe(false)
+  })
+
+  it('preserves --no-open when update respawns restart', async () => {
+    const { getRestartArgs } = await loadCli()
+
+    expect(getRestartArgs(9000, ['node', 'bin/hermes-web-ui.mjs', 'update', '--port', '9000'])).toEqual([
+      'restart',
+      '--port',
+      '9000',
+    ])
+    expect(getRestartArgs(9000, ['node', 'bin/hermes-web-ui.mjs', 'update', '--port', '9000', '--no-open'])).toEqual([
+      'restart',
+      '--port',
+      '9000',
+      '--no-open',
+    ])
+  })
+
   it('resets an existing admin user to the default password', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-cli-default-login-'))
     process.env.HERMES_WEB_UI_HOME = home

@@ -193,13 +193,9 @@ describe('openaiTtsProvider', () => {
     expect(url).toBe('https://api.example.com/v1/audio/speech?api-version=2024-01-01')
   })
 
-  it('rejects unsafe baseUrl values before fetch', async () => {
+  it('rejects invalid baseUrl values before fetch', async () => {
     for (const baseUrl of [
       'file:///tmp/tts',
-      'http://localhost:8000/v1',
-      'http://127.0.0.1:8000/v1',
-      'http://[::1]:8000/v1',
-      'http://169.254.169.254/latest',
       'https://user:pass@api.example.com/v1',
     ]) {
       await expect(
@@ -211,6 +207,24 @@ describe('openaiTtsProvider', () => {
     }
 
     expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('allows local or private baseUrl values', async () => {
+    for (const baseUrl of [
+      'http://localhost:8000/v1',
+      'http://127.0.0.1:8000/v1',
+      'http://[::1]:8000/v1',
+      'http://169.254.169.254/latest',
+    ]) {
+      mockFetch.mockResolvedValueOnce(new Response(Buffer.from('audio'), { status: 200 }))
+
+      await openaiTtsProvider.synthesize(
+        { text: 'Hello' },
+        { baseUrl },
+      )
+    }
+
+    expect(mockFetch).toHaveBeenCalledTimes(4)
   })
 
   it('throws non-ok responses with status and body text', async () => {

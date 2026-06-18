@@ -12,9 +12,13 @@ export type StaticCompressionEncoding = 'br' | 'gzip'
 
 export interface StaticCompressionOptions {
   minBytes?: number
+  maxBrotliBytes?: number
 }
 
 const DEFAULT_MIN_BYTES = 1024
+// Dynamic Brotli provides great ratios, but it can add seconds of TTFB on multi-megabyte
+// built assets. Cap it and fall back to gzip (or no compression) for larger responses.
+const DEFAULT_MAX_BROTLI_BYTES = 256 * 1024
 
 const COMPRESSIBLE_TYPES = new Set([
   'application/ecmascript',
@@ -64,12 +68,31 @@ function parseEncodingQuality(header: string, encoding: StaticCompressionEncodin
   return encodingQuality ?? wildcardQuality ?? 0
 }
 
-export function selectStaticCompressionEncoding(acceptEncoding: string): StaticCompressionEncoding | null {
+interface StaticCompressionSelectionOptions {
+  bodyLength?: number | null
+  maxBrotliBytes?: number
+}
+
+export function selectStaticCompressionEncoding(
+  acceptEncoding: string,
+  options: StaticCompressionSelectionOptions = {},
+): StaticCompressionEncoding | null {
   const brQuality = parseEncodingQuality(acceptEncoding, 'br')
   const gzipQuality = parseEncodingQuality(acceptEncoding, 'gzip')
+  const bodyLength = options.bodyLength ?? null
+  const maxBrotliBytes = options.maxBrotliBytes ?? DEFAULT_MAX_BROTLI_BYTES
 
   if (brQuality <= 0 && gzipQuality <= 0) return null
-  return brQuality >= gzipQuality ? 'br' : 'gzip'
+
+  if (brQuality >= gzipQuality) {
+    if (bodyLength !== null && bodyLength > maxBrotliBytes) {
+      return gzipQuality > 0 ? 'gzip' : null
+    }
+
+    return 'br'
+  }
+
+  return 'gzip'
 }
 
 function isReadableStream(value: unknown): value is Readable {
@@ -124,19 +147,24 @@ function createCompressionStream(encoding: StaticCompressionEncoding) {
 
 export function createStaticCompressionMiddleware(options: StaticCompressionOptions = {}): Middleware {
   const minBytes = options.minBytes ?? DEFAULT_MIN_BYTES
+  const maxBrotliBytes = options.maxBrotliBytes ?? DEFAULT_MAX_BROTLI_BYTES
 
   return async (ctx, next) => {
     await next()
 
     if (!shouldCompress(ctx, minBytes)) return
 
-    const encoding = selectStaticCompressionEncoding(ctx.get('Accept-Encoding'))
+    const body = ctx.body
+    const bodyLength = parseBodyLength(ctx, body)
+    ctx.vary('Accept-Encoding')
+    const encoding = selectStaticCompressionEncoding(ctx.get('Accept-Encoding'), {
+      bodyLength,
+      maxBrotliBytes,
+    })
     if (!encoding) return
 
-    ctx.vary('Accept-Encoding')
     ctx.set('Content-Encoding', encoding)
 
-    const body = ctx.body
     if (Buffer.isBuffer(body) || typeof body === 'string') {
       const original = Buffer.isBuffer(body) ? body : Buffer.from(body)
       const compressed = compressBuffer(original, encoding)

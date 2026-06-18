@@ -232,6 +232,64 @@ describe('chat store reasoning/tool boundaries', () => {
     ])
   })
 
+  it('queues unknown slash commands in bridge sessions as normal user input', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'cli'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('first input')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: RunEvent) => void
+    onEvent({ event: 'run.started', session_id: 'session-1' })
+
+    await store.sendMessage('/terminal pwd')
+
+    expect(chatApi.startRunViaSocket).toHaveBeenCalledTimes(2)
+    expect(store.queuedUserMessages.get('session-1')).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: '/terminal pwd',
+        queued: true,
+        systemType: undefined,
+      }),
+    ])
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'first input',
+        queued: false,
+      }),
+    ])
+  })
+
+  it('sends unknown slash commands in idle bridge sessions as normal user input', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'cli'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('/terminal pwd')
+
+    expect(chatApi.startRunViaSocket).toHaveBeenCalledTimes(1)
+    expect(chatApi.startRunViaSocket.mock.calls[0][0]).toEqual(expect.objectContaining({
+      input: '/terminal pwd',
+      session_id: 'session-1',
+      source: 'cli',
+    }))
+    expect(store.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: '/terminal pwd',
+        queued: false,
+        systemType: undefined,
+      }),
+    ])
+  })
+
   it('starts global coding-agent runs without provider credentials', async () => {
     const store = useChatStore()
     const session = makeSession()

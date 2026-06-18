@@ -76,7 +76,6 @@ const COMMAND_ALIASES: Record<string, CommandName> = {
   clear: 'clear',
   title: 'title',
   compress: 'compress',
-  branch: 'branch',
   fork: 'branch',
   steer: 'steer',
   destroy: 'destroy',
@@ -93,7 +92,7 @@ export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessi
   if (!match) return null
   const rawName = match[1].toLowerCase()
   const name = COMMAND_ALIASES[rawName]
-  if (!name) return { name: 'status', rawName, args: match[2]?.trim() || '' }
+  if (!name) return null
   return { name, rawName, args: match[2]?.trim() || '' }
 }
 
@@ -216,17 +215,6 @@ export async function handleSessionCommand(
       action: 'error',
       terminal: !state.isWorking,
       message: result?.message || `Unknown bridge command: /${command.rawName}`,
-    })
-    return
-  }
-
-  if (!isKnownCommand) {
-    if (state.isWorking) emitQueuedState(ctx, sessionId, state)
-    emitCommand({
-      ok: false,
-      action: 'error',
-      terminal: !state.isWorking,
-      message: `Unknown bridge command: /${command.rawName}`,
     })
     return
   }
@@ -595,6 +583,17 @@ export async function handleSessionCommand(
         return
       }
 
+      const parent = getSession(sessionId)
+      if (isCodingAgentBranchSource(parent)) {
+        emitCommand({
+          ok: false,
+          action: 'branch',
+          terminal: true,
+          message: 'Cannot branch coding agent sessions.',
+        })
+        return
+      }
+
       const fork = createBranchSession(sessionId, command.args, ctx)
       if (!fork) {
         emitCommand({
@@ -925,17 +924,17 @@ function persistCommandMessage(sessionId: string, state: SessionState, content: 
 
 function createBranchSession(parentSessionId: string, requestedTitle: string, ctx: SessionCommandContext): BranchSessionSummary | null {
   const parent = getSession(parentSessionId)
-  if (!parent) return null
+  if (!parent || isCodingAgentBranchSource(parent)) return null
 
   const detail = getSessionDetail(parentSessionId)
   const sourceMessages = detail?.messages || []
-  if (sourceMessages.length === 0) return null
+  const parentLast = getLastVisibleMessage(sourceMessages)
+  if (!parentLast) return null
 
   const nowSeconds = Math.floor(Date.now() / 1000)
   const newSessionId = generateBranchSessionId()
   const title = buildBranchTitle(requestedTitle, parent.title || parent.preview || '')
   const source = normalizeBranchSource(parent.source)
-  const parentLast = getLastVisibleMessage(sourceMessages)
 
   const persisted = createBranchedSession({
     id: newSessionId,
@@ -986,6 +985,11 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     messageCount: sourceMessages.length,
     workspace: parent.workspace || null,
   }
+}
+
+
+function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
+  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex'
 }
 
 function generateBranchSessionId(): string {

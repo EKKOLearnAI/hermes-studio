@@ -185,6 +185,27 @@ describe('group chat store streaming merge', () => {
     })
   })
 
+  it('preserves stable message order via sortedMessages when agents finish out of sequence', async () => {
+    const store = await createJoinedStore()
+
+    // Agent A starts first
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-a', senderId: 'agent-a', senderName: 'Agent A', timestamp: 100 }))
+    // Agent B starts second
+    emitSocket('message_stream_start', assistantMessage({ id: 'msg-b', senderId: 'agent-b', senderName: 'Agent B', timestamp: 200 }))
+
+    // Agent B finishes first (completes with a later timestamp)
+    emitSocket('message', assistantMessage({ id: 'msg-b', senderId: 'agent-b', senderName: 'Agent B', content: 'fast reply', timestamp: 300 }))
+    // Agent A finishes last (but started first)
+    emitSocket('message', assistantMessage({ id: 'msg-a', senderId: 'agent-a', senderName: 'Agent A', content: 'slow reply', timestamp: 400 }))
+
+    // sortedMessages should keep A (firstSeenAt=100) before B (firstSeenAt=200)
+    expect(store.sortedMessages).toHaveLength(2)
+    expect(store.sortedMessages[0].id).toBe('msg-a')
+    expect(store.sortedMessages[0].content).toBe('slow reply')
+    expect(store.sortedMessages[1].id).toBe('msg-b')
+    expect(store.sortedMessages[1].content).toBe('fast reply')
+  })
+
   it('ignores a late empty stream start for a completed message', async () => {
     const store = await createJoinedStore()
 

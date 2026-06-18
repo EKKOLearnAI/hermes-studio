@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const audioConvertMock = vi.hoisted(() => ({
+  transcodeToWav: vi.fn(async (audio: Buffer) => ({
+    audio: Buffer.from(`wav:${audio.toString('utf-8')}`),
+    mimeType: 'audio/wav',
+    fileName: 'audio.wav',
+  })),
+}))
+
+vi.mock('../../packages/server/src/services/hermes/stt-providers/audio-convert', () => audioConvertMock)
+
 import { transcribeWithProvider } from '../../packages/server/src/services/hermes/stt-providers'
 import { transcribeOpenAiCompatible } from '../../packages/server/src/services/hermes/stt-providers/openai'
-import { setTtsDnsLookupForTests } from '../../packages/server/src/services/hermes/tts-providers/url-safety'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -67,7 +76,7 @@ function getFormData(): FormData {
 describe('transcribeOpenAiCompatible', () => {
   beforeEach(() => {
     mockFetch.mockReset()
-    setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
+    audioConvertMock.transcodeToWav.mockClear()
   })
 
   it('posts multipart audio using server-side API key', async () => {
@@ -109,6 +118,31 @@ describe('transcribeOpenAiCompatible', () => {
     expect(file.name).toBe('speech.webm')
     expect(file.type).toBe('audio/webm')
     expect(Buffer.from(await file.arrayBuffer())).toEqual(Buffer.from('audio'))
+    expect(audioConvertMock.transcodeToWav).not.toHaveBeenCalled()
+  })
+
+  it('transcodes audio to wav only when ffmpeg is selected', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ text: 'hello from wav' }))
+
+    await transcribeOpenAiCompatible({
+      provider: 'openai',
+      audio: Buffer.from('audio'),
+      fileName: 'speech.webm',
+      mimeType: 'audio/webm',
+      settings: {
+        model: 'gpt-4o-transcribe',
+        audioTranscode: 'ffmpeg',
+      },
+      secrets: {
+        apiKey: 'server-secret',
+      },
+    })
+
+    expect(audioConvertMock.transcodeToWav).toHaveBeenCalledWith(Buffer.from('audio'), 'audio/webm')
+    const file = getFormData().get('file') as File
+    expect(file.name).toBe('audio.wav')
+    expect(file.type).toBe('audio/wav')
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(Buffer.from('wav:audio'))
   })
 
   it('rejects missing API key', async () => {
@@ -249,49 +283,25 @@ describe('transcribeOpenAiCompatible', () => {
     'http://[::1]:8000/v1/audio/transcriptions',
     'http://[fd00::1]:8000/v1/audio/transcriptions',
     'http://[fe90::1]:8000/v1/audio/transcriptions',
-  ])('rejects unsafe custom baseUrl %s before fetch', async (baseUrl) => {
-    await expect(
-      transcribeWithProvider({
-        provider: 'custom',
-        audio: Buffer.from('audio'),
-        fileName: 'speech.webm',
-        mimeType: 'audio/webm',
-        settings: {
-          baseUrl,
-          model: 'whisper-1',
-        },
-        secrets: {
-          apiKey: 'server-secret',
-        },
-      }),
-    ).rejects.toThrow(/Custom STT TTS baseUrl/)
+  ])('allows local or private custom baseUrl %s', async (baseUrl) => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ text: 'local transcript' }))
 
-    expect(mockFetch).not.toHaveBeenCalled()
-  })
+    const result = await transcribeWithProvider({
+      provider: 'custom',
+      audio: Buffer.from('audio'),
+      fileName: 'speech.webm',
+      mimeType: 'audio/webm',
+      settings: {
+        baseUrl,
+        model: 'whisper-1',
+      },
+      secrets: {
+        apiKey: 'server-secret',
+      },
+    })
 
-  it.each([
-    { records: [{ address: '10.0.0.4', family: 4 }] },
-    { records: [{ address: 'fd00::1', family: 6 }] },
-  ])('rejects DNS results that resolve to private network addresses before fetch: %j', async ({ records }) => {
-    setTtsDnsLookupForTests(vi.fn(async () => records) as any)
-
-    await expect(
-      transcribeWithProvider({
-        provider: 'custom',
-        audio: Buffer.from('audio'),
-        fileName: 'speech.webm',
-        mimeType: 'audio/webm',
-        settings: {
-          baseUrl: 'https://api.example.com/v1',
-          model: 'whisper-1',
-        },
-        secrets: {
-          apiKey: 'server-secret',
-        },
-      }),
-    ).rejects.toThrow('Custom STT TTS baseUrl resolved to localhost or private network addresses')
-
-    expect(mockFetch).not.toHaveBeenCalled()
+    expect(result.text).toBe('local transcript')
+    expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
   it('does not follow redirects to unsafe targets when fetch returns 302', async () => {

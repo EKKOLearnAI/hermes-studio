@@ -9,6 +9,7 @@ export interface SttStoredSettings {
   model?: string
   language?: string
   prompt?: string
+  audioTranscode?: 'none' | 'ffmpeg'
 }
 
 export interface SttStoredSecretsInput {

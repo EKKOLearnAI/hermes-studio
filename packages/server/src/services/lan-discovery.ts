@@ -212,7 +212,13 @@ export function startLanDiscoveryResponder(options: StartResponderOptions = {}):
   if (responderSocket) return responderSocket
 
   const httpPort = options.httpPort || config.port
-  const discoveryPort = discoveryPortForHttpPort(httpPort)
+  let discoveryPort: number
+  try {
+    discoveryPort = discoveryPortForHttpPort(httpPort)
+  } catch (err) {
+    logger.warn(err, '[lan-discovery] disabled responder for unmappable HTTP port %d', httpPort)
+    return null
+  }
   const getSystemInfo = options.getSystemInfo || getPublicSystemInfo
   const socket = dgram.createSocket('udp4')
 

@@ -236,29 +236,27 @@ describe('plan session command', () => {
     }))
   })
 
-  it('keeps unknown slash commands on the existing unknown-command path', async () => {
-    const state = { messages: [], isWorking: false, events: [], queue: [] }
-    const { bridge, namespaceEmit, nsp, runQueuedItem, sessionMap, socket } = makeContext(state)
-    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
-    const command = parseSessionCommand('/not-a-command test')!
+  it('keeps the client known-command registry accepted by the server parser', async () => {
+    const { BRIDGE_SESSION_COMMAND_NAMES, isKnownBridgeSessionCommand } = await import('../../packages/client/src/utils/hermes/bridge-session-commands')
+    const { parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
 
-    await handleSessionCommand('session-1', command, {
-      nsp: nsp as any,
-      socket: socket as any,
-      sessionMap,
-      bridge: bridge as any,
-      profile: 'default',
-      runQueuedItem,
-    })
+    for (const commandName of BRIDGE_SESSION_COMMAND_NAMES) {
+      expect(isKnownBridgeSessionCommand(`/${commandName}`)).toBe(true)
+      expect(parseSessionCommand(`/${commandName}`)).toEqual(expect.objectContaining({ name: commandName }))
+    }
 
-    expect(bridge.command).not.toHaveBeenCalled()
-    expect(runQueuedItem).not.toHaveBeenCalled()
-    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
-      command: 'not-a-command',
-      action: 'error',
-      message: 'Unknown bridge command: /not-a-command',
-      terminal: true,
+    expect(isKnownBridgeSessionCommand('/reload_skills')).toBe(true)
+    expect(parseSessionCommand('/reload_skills')).toEqual(expect.objectContaining({
+      name: 'reload-skills',
+      rawName: 'reload_skills',
     }))
+  })
+
+  it('returns null for unknown slash commands so bridge runs can pass them through', async () => {
+    const { isSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+
+    expect(parseSessionCommand('/not-a-command test')).toBeNull()
+    expect(isSessionCommand('/not-a-command test')).toBe(false)
   })
 
   it('starts an idle goal command as a hidden kickoff run', async () => {

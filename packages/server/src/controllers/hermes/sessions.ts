@@ -421,6 +421,55 @@ export async function get(ctx: any) {
   ctx.body = { session }
 }
 
+function cleanSessionContextMessages(messages: any[]): Array<{
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+  reasoning?: string | null
+  reasoning_content?: string | null
+}> {
+  return messages
+    .filter(message => message?.role === 'user' || message?.role === 'assistant')
+    .map(message => {
+      const content = typeof message.content === 'string'
+        ? message.content
+        : message.content == null ? '' : String(message.content)
+      return {
+        id: Number(message.id || 0),
+        role: message.role,
+        content,
+        timestamp: Number(message.timestamp || 0),
+        ...(message.reasoning != null ? { reasoning: message.reasoning } : {}),
+        ...(message.reasoning_content != null ? { reasoning_content: message.reasoning_content } : {}),
+      }
+    })
+    .filter(message => {
+      if (message.role === 'user') return true
+      return message.content.trim() || message.reasoning || message.reasoning_content
+    })
+}
+
+export async function getContext(ctx: any) {
+  const session = localGetSessionDetail(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+
+  const messages = cleanSessionContextMessages(session.messages || [])
+  ctx.body = {
+    session_id: session.id,
+    profile: session.profile || null,
+    source: session.source,
+    title: session.title || null,
+    messages,
+    message_count: messages.length,
+  }
+}
+
 /**
  * Get Hermes session detail only (exclude api_server source)
  * GET /api/hermes/sessions/hermes/:id

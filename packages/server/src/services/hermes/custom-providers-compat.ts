@@ -37,6 +37,8 @@ const CAMEL_ALIASES: Record<string, string> = {
   rateLimitDelay: 'rate_limit_delay',
 }
 
+type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
+
 export interface NormalizedCustomProvider {
   name: string
   base_url: string
@@ -44,7 +46,7 @@ export interface NormalizedCustomProvider {
   provider_key?: string
   api_key?: string
   key_env?: string
-  api_mode?: string
+  api_mode?: ProviderApiMode
   model?: string
   models?: Record<string, any>
   context_length?: number
@@ -60,6 +62,16 @@ function looksLikeUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+function normalizeApiMode(value: unknown): ProviderApiMode | undefined {
+  return value === 'chat_completions' ||
+    value === 'codex_responses' ||
+    value === 'anthropic_messages' ||
+    value === 'bedrock_converse' ||
+    value === 'codex_app_server'
+    ? value
+    : undefined
 }
 
 /**
@@ -128,7 +140,7 @@ export function normalizeCustomProviderEntry(
 
   const apiMode = e.api_mode || e.transport
   if (typeof apiMode === 'string' && apiMode.trim()) {
-    normalized.api_mode = apiMode.trim()
+    normalized.api_mode = normalizeApiMode(apiMode.trim())
   }
 
   const modelName = e.model || e.default_model

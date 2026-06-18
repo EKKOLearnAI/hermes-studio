@@ -135,6 +135,15 @@ describe('agent bridge manager command resolution', () => {
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('custom-category')
   })
 
+  it('removes inherited Anthropic auth token from the bridge process env', async () => {
+    process.env.ANTHROPIC_AUTH_TOKEN = 'stale-bearer-token'
+
+    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', undefined)
+
+    expect(env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
+  })
+
   it('uses an isolated default bridge endpoint while running under Vitest', async () => {
     const { DEFAULT_AGENT_BRIDGE_ENDPOINT } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
 

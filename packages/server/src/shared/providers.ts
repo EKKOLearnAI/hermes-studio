@@ -475,6 +475,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     value: 'longcat',
     builtin: true,
     base_url: 'https://api.longcat.chat/openai',
+    api_mode: 'codex_responses',
     models: ['LongCat-Flash-Lite', 'LongCat-2.0-Preview'],
   },
   {

@@ -8,6 +8,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    ffmpeg \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*

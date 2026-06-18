@@ -1,5 +1,6 @@
 import type { StoredSttProvider } from '../../../db/hermes/stt-settings-store'
 import { assertSafeResolvedTtsBaseUrl, normalizeSafeTtsBaseUrl } from '../tts-providers/url-safety'
+import { transcodeToWav } from './audio-convert'
 import type { SttTranscribeInput, SttTranscribeResult } from './types'
 
 export class SttProviderConfigError extends Error {}
@@ -82,9 +83,27 @@ export async function transcribeOpenAiCompatible(input: SttTranscribeInput): Pro
 
   await assertSafeResolvedTtsBaseUrl(new URL(baseUrl), getProviderLabel(input.provider))
 
+  // Transcode browser-recorded audio (typically webm/opus) to WAV so that
+  // upstream ASR services that only support mp3/wav can process it.
+  let audioBuffer = input.audio
+  let audioMimeType = input.mimeType
+  let audioFileName = input.fileName
+  if (input.settings.audioTranscode === 'ffmpeg' && audioMimeType !== 'audio/wav' && audioMimeType !== 'audio/x-wav') {
+    try {
+      const converted = await transcodeToWav(audioBuffer, audioMimeType)
+      if (converted.mimeType === 'audio/wav') {
+        audioBuffer = converted.audio
+        audioMimeType = converted.mimeType
+        audioFileName = converted.fileName || audioFileName
+      }
+    } catch {
+      // Transcoding is best-effort; fall through with the original audio.
+    }
+  }
+
   const form = new FormData()
-  const audioBytes = Uint8Array.from(input.audio)
-  form.append('file', new Blob([audioBytes], { type: trimOptional(input.mimeType) || 'application/octet-stream' }), trimOptional(input.fileName) || 'audio')
+  const audioBytes = Uint8Array.from(audioBuffer)
+  form.append('file', new Blob([audioBytes], { type: trimOptional(audioMimeType) || 'application/octet-stream' }), trimOptional(audioFileName) || 'audio')
   form.append('model', model)
   if (language) {
     form.append('language', language)

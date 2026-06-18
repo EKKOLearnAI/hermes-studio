@@ -120,11 +120,11 @@ describe('branch session command', () => {
     })
   })
 
-  it('parses /fork and /branch as branch commands', async () => {
+  it('parses /fork as the only user-facing fork command', async () => {
     const { parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
 
     expect(parseSessionCommand('/fork')).toMatchObject({ name: 'branch', rawName: 'fork', args: '' })
-    expect(parseSessionCommand('/branch alternate path')).toMatchObject({ name: 'branch', rawName: 'branch', args: 'alternate path' })
+    expect(parseSessionCommand('/branch alternate path')).toBeNull()
   })
 
   it('rejects /fork while the bridge session is running', async () => {
@@ -145,6 +145,48 @@ describe('branch session command', () => {
       ok: false,
       terminal: false,
       message: expect.stringContaining('Cannot branch while the session is running'),
+    }))
+  })
+
+  it('rejects /fork for coding agent sessions', async () => {
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { nsp, socket, namespaceEmit } = makeSocketHarness()
+    const sessionMap = new Map<string, any>([
+      ['session-1', { messages: [], isWorking: false, events: [], queue: [] }],
+    ])
+    getSessionMock.mockReturnValue(makeParentSession({ source: 'coding_agent', agent: 'codex' }))
+
+    await handleSessionCommand('session-1', parseSessionCommand('/fork side path')!, makeCtx(sessionMap, nsp, socket))
+
+    expect(createBranchedSessionMock).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      action: 'branch',
+      ok: false,
+      terminal: true,
+      message: expect.stringContaining('Cannot branch coding agent sessions'),
+    }))
+  })
+
+  it('rejects /fork when there are no visible conversation messages', async () => {
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { nsp, socket, namespaceEmit } = makeSocketHarness()
+    const sessionMap = new Map<string, any>([
+      ['session-1', { messages: [], isWorking: false, events: [], queue: [] }],
+    ])
+    getSessionDetailMock.mockReturnValueOnce({
+      messages: [
+        { id: 1, session_id: 'session-1', role: 'command', content: '/status', display_role: null, display_content: null, timestamp: 101, tool_call_id: null, tool_calls: null, tool_name: null, token_count: null, finish_reason: null, reasoning: null, reasoning_details: null, reasoning_content: null },
+      ],
+    })
+
+    await handleSessionCommand('session-1', parseSessionCommand('/fork empty')!, makeCtx(sessionMap, nsp, socket))
+
+    expect(createBranchedSessionMock).not.toHaveBeenCalled()
+    expect(namespaceEmit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      action: 'branch',
+      ok: false,
+      terminal: true,
+      message: expect.stringContaining('no conversation messages'),
     }))
   })
 

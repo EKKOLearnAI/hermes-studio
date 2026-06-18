@@ -29,7 +29,7 @@ describe('isExclusivePlatformKey', () => {
       'WHATSAPP_PHONE_NUMBER_ID',
       'SIGNAL_PHONE_NUMBER',
       'WEIXIN_TOKEN', 'WEIXIN_ACCOUNT_ID',
-      'FEISHU_APP_ID',
+      'FEISHU_APP_ID', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
     ]
     for (const k of samples) {
       expect(isExclusivePlatformKey(k)).toBe(true)
@@ -144,15 +144,24 @@ describe('disableExclusivePlatformsInConfig', () => {
       '  telegram:',
       '    enabled: true',
       '    bot_token: tg-token',
+      '  feishu:',
+      '    enabled: true',
+      '    extra:',
+      '      app_id: app-1',
+      '      encrypt_key: enc-1',
+      '      verification_token: verify-1',
       '  discord:',
       '    enabled: false',
       '',
     ].join('\n'))
 
     const result = disableExclusivePlatformsInConfig(p)
-    expect(result.disabled.sort()).toEqual(['telegram', 'weixin'])
+    expect(result.disabled.sort()).toEqual(['feishu', 'telegram', 'weixin'])
     // 节点直挂 + extra 子节点的凭据都应该被清掉
     expect(result.strippedConfigCredentials.sort()).toEqual([
+      'feishu.extra.app_id',
+      'feishu.extra.encrypt_key',
+      'feishu.extra.verification_token',
       'telegram.bot_token',
       'weixin.extra.account_id',
       'weixin.extra.app_id',
@@ -161,6 +170,7 @@ describe('disableExclusivePlatformsInConfig', () => {
 
     const after = readFileSync(p, 'utf-8')
     expect(after).toMatch(/weixin:[\s\S]*?enabled:\s*false/)
+    expect(after).toMatch(/feishu:[\s\S]*?enabled:\s*false/)
     expect(after).toMatch(/telegram:[\s\S]*?enabled:\s*false/)
     expect(after).toMatch(/cli:[\s\S]*?enabled:\s*true/)
     // 凭据已被清除

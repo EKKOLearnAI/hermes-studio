@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { NBadge, NButton, NDrawer, NDrawerContent, NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
@@ -7,14 +7,13 @@ import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
 import PendingWriteApprovals from '@/components/hermes/skills/PendingWriteApprovals.vue'
-import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
 import { fetchPendingWrites } from '@/api/hermes/write-gate'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
@@ -24,20 +23,12 @@ const selectedSkill = ref('')
 const searchQuery = ref('')
 const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
-const recommendations = ref('')
 const showImportModal = ref(false)
 const showExternalDirsModal = ref(false)
 const showWriteApprovalDrawer = ref(false)
 const pendingWriteCount = ref(0)
 const writeApprovalSupported = ref(true)
 let mobileQuery: MediaQueryList | null = null
-let recommendationsRequestSeq = 0
-
-const recommendationsPath = computed(() => {
-  return String(locale.value).startsWith('zh')
-    ? '/skill-recommendations.zh.md'
-    : '/skill-recommendations.en.md'
-})
 
 const selectedSkillData = computed(() => {
   if (!selectedCategory.value || !selectedSkill.value) return null
@@ -57,7 +48,6 @@ onMounted(() => {
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
   loadSkills()
-  loadRecommendations()
   loadPendingWriteCount()
 })
 
@@ -74,34 +64,13 @@ async function loadSkills() {
     const data = await fetchSkills()
     categories.value = data.categories
     archived.value = data.archived
+    ensureSelectedSkill()
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {
     loading.value = false
   }
 }
-
-async function loadRecommendations() {
-  const requestSeq = ++recommendationsRequestSeq
-  try {
-    const response = await fetch(recommendationsPath.value)
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const text = await response.text()
-    if (/^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
-      throw new Error('Skill recommendations file was not found')
-    }
-    if (requestSeq === recommendationsRequestSeq) {
-      recommendations.value = text
-    }
-  } catch (err) {
-    if (requestSeq === recommendationsRequestSeq) {
-      recommendations.value = ''
-    }
-    console.error('Failed to load skill recommendations:', err)
-  }
-}
-
-watch(recommendationsPath, loadRecommendations)
 
 async function loadPendingWriteCount() {
   try {
@@ -113,14 +82,22 @@ async function loadPendingWriteCount() {
   }
 }
 
+function ensureSelectedSkill() {
+  const currentCategory = categories.value.find(c => c.name === selectedCategory.value)
+  if (currentCategory?.skills.some(s => s.name === selectedSkill.value)) return
+
+  const firstCategory = categories.value.find(c => c.skills.length > 0)
+  const firstSkill = firstCategory?.skills[0]
+  selectedCategory.value = firstCategory?.name || ''
+  selectedSkill.value = firstSkill?.name || ''
+}
+
 function toggleFilter(filter: SourceFilter) {
   sourceFilter.value = sourceFilter.value === filter ? null : filter
 }
 
 function handleSelect(category: string, skill: string) {
   if (selectedCategory.value === category && selectedSkill.value === skill) {
-    selectedCategory.value = ''
-    selectedSkill.value = ''
     return
   }
   selectedCategory.value = category
@@ -292,16 +269,13 @@ function handlePinToggled(name: string, pinned: boolean) {
               :pinned="selectedSkillData?.pinned"
               @pin-toggled="handlePinToggled"
             />
-            <div v-else class="recommendations-panel">
-              <MarkdownRenderer v-if="recommendations" :content="recommendations" />
-              <div v-else class="empty-detail">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
-                  <polygon points="12 2 2 7 12 12 22 7 12 2" />
-                  <polyline points="2 17 12 22 22 17" />
-                  <polyline points="2 12 12 17 22 12" />
-                </svg>
-                <span>{{ t('skills.noMatch') }}</span>
-              </div>
+            <div v-else class="empty-detail">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+              <span>{{ t('skills.noSkills') }}</span>
             </div>
           </div>
         </div>
@@ -506,14 +480,4 @@ function handlePinToggled(name: string, pinned: boolean) {
   font-size: 13px;
 }
 
-.recommendations-panel {
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 4px 0 40px;
-
-  :deep(.markdown-body) {
-    font-size: 14px;
-    line-height: 1.7;
-  }
-}
 </style>

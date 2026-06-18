@@ -5,8 +5,10 @@ import { useI18n } from 'vue-i18n'
 import {
   deleteCodingAgent,
   fetchCodingAgentsStatus,
+  inferCodingAgentApiMode,
   installCodingAgent,
   launchCodingAgentNativeTerminal,
+  normalizeCodingAgentApiMode,
   prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
   writeCodingAgentConfigFile,
@@ -275,26 +277,10 @@ watch([selectableLaunchProviders, launchMode], () => {
 })
 
 function defaultLaunchApiMode(provider?: AvailableModelGroup | null): CodingAgentApiMode {
-  const providerKey = String(provider?.provider || '').toLowerCase()
-  const baseUrl = String(provider?.base_url || '').toLowerCase()
-  if (
-    providerKey.includes('claude') ||
-    providerKey === 'anthropic' ||
-    baseUrl.includes('anthropic') ||
-    baseUrl.includes('/anthropic')
-  ) {
-    return 'anthropic_messages'
-  }
-  if (
-    providerKey === 'deepseek' ||
-    providerKey === 'lmstudio' ||
-    baseUrl.includes('deepseek') ||
-    baseUrl.includes('127.0.0.1') ||
-    baseUrl.includes('localhost')
-  ) {
-    return 'chat_completions'
-  }
-  return 'codex_responses'
+  return normalizeCodingAgentApiMode(
+    provider?.api_mode,
+    inferCodingAgentApiMode(provider?.provider, provider?.base_url),
+  )
 }
 
 async function openLaunchModal(agentId: CodingAgentId) {

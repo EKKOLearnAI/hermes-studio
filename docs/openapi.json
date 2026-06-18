@@ -3,7 +3,7 @@
   "info": {
     "title": "Hermes Studio API",
     "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.6.15"
+    "version": "0.6.17"
   },
   "servers": [
     {
@@ -3519,6 +3519,9 @@
                   "api_key": {
                     "type": "string"
                   },
+                  "api_mode": {
+                    "type": "string"
+                  },
                   "base_url": {
                     "type": "string"
                   },
@@ -3590,6 +3593,9 @@
                 "type": "object",
                 "properties": {
                   "api_key": {
+                    "type": "string"
+                  },
+                  "api_mode": {
                     "type": "string"
                   },
                   "base_url": {
@@ -8823,6 +8829,42 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/hermes/sessions/{id}/context": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get context",
+        "description": "GET /api/hermes/sessions/:id/context",
+        "operationId": "getContext",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         },
         "parameters": [

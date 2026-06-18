@@ -62,6 +62,7 @@ class WorkerProcess:
                 "HERMES_AGENT_BRIDGE_WORKER_PROFILE": self.profile,
                 "HERMES_AGENT_BRIDGE_BROKER_PID": str(os.getpid()),
             }
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
             self.process = subprocess.Popen(
                 args,
                 env=env,

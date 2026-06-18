@@ -46,6 +46,15 @@ describe('LAN discovery', () => {
     expect(discoveryPortForHttpPort(8748)).toBe(48748)
   })
 
+  it('does not start a discovery responder for HTTP ports without a UDP mapping', () => {
+    const socket = startLanDiscoveryResponder({
+      httpPort: 54321,
+      getSystemInfo: async () => fakeInfo,
+    })
+
+    expect(socket).toBeNull()
+  })
+
   it('classifies well-known LAN endpoints', () => {
     expect(getLanEndpointKind(8648)).toBe('web')
     expect(getLanEndpointKind(8748)).toBe('desktop')

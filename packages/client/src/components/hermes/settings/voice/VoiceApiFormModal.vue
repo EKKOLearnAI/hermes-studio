@@ -30,6 +30,7 @@ const formData = ref({
   baseUrl: '',
   apiKey: '',
   model: '',
+  audioTranscode: 'none',
 })
 
 const modelManuallyEdited = ref(false)
@@ -70,6 +71,10 @@ const modelOptions = computed(() => {
   }
   return discovered
 })
+const sttAudioTranscodeOptions = computed(() => [
+  { label: t('settings.voice.sttAudioTranscodeNone'), value: 'none' },
+  { label: t('settings.voice.sttAudioTranscodeFfmpeg'), value: 'ffmpeg' },
+])
 
 const normalizedBaseUrl = computed(() => normalizeBaseUrl(formData.value.baseUrl))
 const baseUrlError = computed(() => {
@@ -136,7 +141,7 @@ onBeforeUnmount(() => cancelProbe())
 function resetForm() {
   selectedPresetId.value = null
   compatibility.value = 'openai-compatible'
-  formData.value = { baseUrl: '', apiKey: '', model: '' }
+  formData.value = { baseUrl: '', apiKey: '', model: '', audioTranscode: 'none' }
   modelManuallyEdited.value = false
   modelTouched.value = false
   baseUrlTouched.value = false
@@ -168,7 +173,7 @@ function validateBaseUrl(value: string): string {
   if (!trimmed) return t('settings.voice.baseUrlRequired')
   try {
     const url = new URL(trimmed)
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') {
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
       return t('settings.voice.baseUrlHttpsRequired')
     }
     return ''
@@ -193,6 +198,7 @@ function handlePresetChange(id: string) {
     baseUrl: preset?.baseUrl || '',
     model: preset?.defaultModel || '',
     apiKey: '',
+    audioTranscode: 'none',
   }
   modelManuallyEdited.value = false
   modelTouched.value = false
@@ -312,6 +318,7 @@ async function handleSave() {
       settings: {
         baseUrl: normalizeBaseUrl(formData.value.baseUrl),
         model: formData.value.model.trim(),
+        ...(props.kind === 'stt' ? { audioTranscode: formData.value.audioTranscode } : {}),
       },
       secrets: {
         apiKey: formData.value.apiKey.trim(),
@@ -431,6 +438,16 @@ async function handleSave() {
           </div>
           <div v-else-if="probeModels.length" class="helper-text">{{ t('settings.voice.modelsDiscovered', { count: probeModels.length }) }}</div>
           <div v-else-if="probeErrorSummary" class="helper-text">{{ t('settings.voice.discoveryFailedManualFallback') }}</div>
+        </section>
+
+        <section v-if="kind === 'stt'" class="form-section">
+          <NFormItem :label="t('settings.voice.sttAudioTranscode')">
+            <NSelect
+              v-model:value="formData.audioTranscode"
+              :options="sttAudioTranscodeOptions"
+              data-testid="voice-provider-audio-transcode"
+            />
+          </NFormItem>
         </section>
       </template>
     </NForm>

@@ -1473,6 +1473,15 @@ defineExpose({
   &.compression-item {
     color: $text-muted;
     font-size: 10px;
+
+    .tool-call-name {
+      flex: 1 1 auto;
+      max-width: none;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      overflow-wrap: anywhere;
+    }
   }
 
   .tool-call-icon {

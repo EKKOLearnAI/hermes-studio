@@ -83,13 +83,9 @@ describe('stt transcribe controller', () => {
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    const safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
-    safety.setTtsDnsLookupForTests(vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) as any)
   })
 
   afterEach(async () => {
-    const safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
-    safety.resetTtsDnsLookupForTests()
     db?.close()
     db = null
     vi.doUnmock('../../packages/server/src/db/index')
@@ -352,7 +348,7 @@ describe('stt transcribe controller', () => {
     'http://[::1]:8000/v1/audio/transcriptions',
     'http://[fd00::1]:8000/v1/audio/transcriptions',
     'http://[fe90::1]:8000/v1/audio/transcriptions',
-  ])('rejects unsafe custom baseUrl %s when saving settings', async (baseUrl) => {
+  ])('allows local or private custom baseUrl %s when saving settings', async (baseUrl) => {
     const { ctrl } = await initControllerAndStore()
     const ctx = makeJsonCtx(
       { id: 7, username: 'han', role: 'admin' },
@@ -370,10 +366,8 @@ describe('stt transcribe controller', () => {
 
     await ctrl.saveSettings(ctx)
 
-    expect(ctx.status).toBe(400)
-    expect(ctx.body).toEqual({
-      error: 'Custom STT TTS baseUrl cannot target localhost or private network addresses',
-    })
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.setting.settings.baseUrl).toContain(new URL(baseUrl).origin)
     expect(JSON.stringify(ctx.body)).not.toContain('server-secret')
     expect(mockFetch).not.toHaveBeenCalled()
   })

@@ -152,7 +152,7 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
   'claude-code': [
     { key: 'settings', path: '~/.claude/settings.json', scopedPath: 'settings.json', language: 'json' },
     { key: 'mcp', path: '~/.claude.json', scopedPath: 'mcp.json', language: 'json' },
-    { key: 'prompt', path: '~/.claude/CLAUDE.md', scopedPath: 'CLAUDE.md', language: 'markdown' },
+    { key: 'prompt', path: '~/.claude/hermes-rules.md', scopedPath: 'hermes-rules.md', language: 'markdown' },
   ],
   codex: [
     { key: 'auth', path: '~/.codex/auth.json', scopedPath: 'auth.json', language: 'json' },
@@ -728,6 +728,15 @@ function powerShellQuote(value: string): string {
 
 function tomlString(value: string): string {
   return JSON.stringify(value)
+}
+
+function tomlMultilineString(value: string): string {
+  const normalized = String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\\/g, '\\\\')
+    .replace(/"""/g, '\\"\\"\\"')
+  return `"""\n${normalized}\n"""`
 }
 
 function tomlStringArray(values: string[]): string {
@@ -1425,9 +1434,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   if (mode === 'global') {
     const scope = normalizeConfigScope({ profile: input.profile, provider: 'global' })
     const workspaceDir = resolveLaunchWorkspaceRoot(scope, input.workspace)
-    const args = tool.id === 'claude-code' ? claudeCodePermissionArgs() : []
     await mkdir(workspaceDir, { recursive: true })
     const files = await ensureGlobalCodingAgentPromptFile(tool.id)
+    const promptFile = files.find(file => file.key === 'prompt')?.absolutePath || ''
+    const args = tool.id === 'claude-code'
+      ? [
+          ...(promptFile ? ['--append-system-prompt-file', promptFile] : []),
+          ...claudeCodePermissionArgs(),
+        ]
+      : []
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
       env: {},
@@ -1520,12 +1535,15 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
     const settingsPath = join(rootDir, 'settings.json')
     const mcpPath = join(rootDir, 'mcp.json')
+    const promptPath = join(rootDir, 'hermes-rules.md')
     args = [
       '--settings',
       settingsPath,
       ...(input.isolateSettings ? ['--setting-sources', 'local'] : []),
       '--mcp-config',
       mcpPath,
+      '--append-system-prompt-file',
+      promptPath,
       ...claudeCodePermissionArgs(),
     ]
   } else {
@@ -1556,6 +1574,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       `model_provider = ${JSON.stringify(providerId)}`,
       `model = ${JSON.stringify(model)}`,
       'model_reasoning_summary = "auto"',
+      `developer_instructions = ${tomlMultilineString(getSystemPrompt().trim())}`,
       'disable_response_storage = true',
       '',
       `[model_providers.${providerId}]`,

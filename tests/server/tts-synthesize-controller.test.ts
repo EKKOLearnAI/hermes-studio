@@ -256,11 +256,8 @@ describe('tts synthesize controller', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'bad sk-test-secret-value key' } }), { status: 401, statusText: 'Unauthorized' }))
     globalThis.fetch = fetchMock as any
-    let safety: typeof import('../../packages/server/src/services/hermes/tts-providers/url-safety') | undefined
 
     try {
-      safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
-      safety.setTtsDnsLookupForTests(async () => [{ address: '93.184.216.34', family: 4 } as any])
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
       const { ctx } = createMockCtx({
         kind: 'tts',
@@ -297,7 +294,6 @@ describe('tts synthesize controller', () => {
       expect(JSON.stringify(failed.ctx.body)).not.toContain('sk-test-secret-value')
       expect(failed.ctx.body.manualModelAllowed).toBe(true)
     } finally {
-      safety?.resetTtsDnsLookupForTests()
       globalThis.fetch = originalFetch
     }
   })
@@ -306,11 +302,8 @@ describe('tts synthesize controller', () => {
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn()
     globalThis.fetch = fetchMock as any
-    let safety: typeof import('../../packages/server/src/services/hermes/tts-providers/url-safety') | undefined
 
     try {
-      safety = await import('../../packages/server/src/services/hermes/tts-providers/url-safety')
-      safety.setTtsDnsLookupForTests(async () => [{ address: '93.184.216.34', family: 4 } as any])
       const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
       const { ctx } = createMockCtx({
         kind: 'stt',
@@ -333,14 +326,15 @@ describe('tts synthesize controller', () => {
         normalizedBaseUrl: 'https://manual.example.test/v1',
       })
     } finally {
-      safety?.resetTtsDnsLookupForTests()
       globalThis.fetch = originalFetch
     }
   })
 
-  it('blocks local or private network provider probe targets before upstream fetch', async () => {
+  it('allows local or private network provider probe targets', async () => {
     const originalFetch = globalThis.fetch
-    const fetchMock = vi.fn()
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ id: 'tts-local' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     globalThis.fetch = fetchMock as any
 
     try {
@@ -356,10 +350,10 @@ describe('tts synthesize controller', () => {
 
       await ctrl.probeProvider(ctx)
 
-      expect(fetchMock).not.toHaveBeenCalled()
-      expect(ctx.status).toBe(400)
-      expect(ctx.body.ok).toBe(false)
-      expect(ctx.body.errorSummary).toContain('blocked local or private network')
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8080/v1/models', expect.any(Object))
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.ok).toBe(true)
+      expect(ctx.body.models).toEqual([expect.objectContaining({ id: 'tts-local' })])
       expect(JSON.stringify(ctx.body)).not.toContain('sk-tes...alue')
     } finally {
       globalThis.fetch = originalFetch

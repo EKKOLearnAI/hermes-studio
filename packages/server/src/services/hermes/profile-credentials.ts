@@ -63,6 +63,7 @@ export const EXCLUSIVE_PLATFORM_CREDENTIAL_KEYS = [
   'signing_secret', 'app_secret', 'client_secret',
   'access_token', 'webhook_secret',
   'account_id', 'phone_number_id', 'app_id',
+  'encrypt_key', 'verification_token',
 ]
 
 /** 判断 .env 中的 KEY 是否属于独占平台凭据 */
