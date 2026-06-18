@@ -21,16 +21,13 @@ import { NButton, NInput } from "naive-ui";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
 import { LIVE_CHAT_MAX_LOADED_MESSAGES, useChatStore } from "@/stores/hermes/chat";
-import thinkingImageLight from "@/assets/thinking-light.gif";
-import thinkingImageDark from "@/assets/thinking-dark.gif";
+import thinkingImage from "@/assets/thinking.gif";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
-import { useTheme } from "@/composables/useTheme";
 import { useProfilesStore } from "@/stores/hermes/profiles";
 
 const chatStore = useChatStore();
 const profilesStore = useProfilesStore();
 const { t } = useI18n();
-const { isDark } = useTheme();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
 const pendingInitialScrollSessionId = ref<string | null>(null);
@@ -184,7 +181,7 @@ const thinkingImageUrl = computed(() => {
   if (!enabled) return null;
   const custom = ta?.url;
   if (custom) return custom;
-  return isDark.value ? thinkingImageDark : thinkingImageLight;
+  return thinkingImage;
 });
 
 function removeQueuedMessage(messageId: string) {
