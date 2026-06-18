@@ -11,7 +11,7 @@ import {
   restartGatewayForProfile as restartGatewayRuntimeForProfile,
 } from '../../services/hermes/gateway-autostart'
 import { logger } from '../../services/logger'
-import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
+import { smartCloneCleanup, copyModelProviderAuthForClone } from '../../services/hermes/profile-credentials'
 import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
@@ -412,8 +412,10 @@ export async function create(ctx: any) {
     let strippedCredentials: string[] = []
     let disabledPlatforms: string[] = []
     let strippedConfigCredentials: string[] = []
+    let copiedAuthProviders: string[] = []
     if (clone) {
       try {
+        copiedAuthProviders = copyModelProviderAuthForClone(name)
         const cleanup = smartCloneCleanup(name)
         strippedCredentials = cleanup.strippedCredentials
         disabledPlatforms = cleanup.disabledPlatforms
@@ -421,11 +423,13 @@ export async function create(ctx: any) {
         if (
           strippedCredentials.length > 0 ||
           disabledPlatforms.length > 0 ||
-          strippedConfigCredentials.length > 0
+          strippedConfigCredentials.length > 0 ||
+          copiedAuthProviders.length > 0
         ) {
           logger.info(
-            'Smart clone cleanup for "%s": stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
+            'Smart clone cleanup for "%s": copied auth for %d model providers (%s), stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
             name,
+            copiedAuthProviders.length, copiedAuthProviders.join(','),
             strippedCredentials.length, strippedCredentials.join(','),
             disabledPlatforms.length, disabledPlatforms.join(','),
             strippedConfigCredentials.length, strippedConfigCredentials.join(','),
@@ -445,6 +449,7 @@ export async function create(ctx: any) {
       strippedCredentials,
       disabledPlatforms,
       strippedConfigCredentials,
+      copiedAuthProviders,
     }
   } catch (err: any) {
     ctx.status = 500

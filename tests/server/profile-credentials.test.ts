@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   isExclusivePlatformKey,
   stripExclusivePlatformCredentials,
   disableExclusivePlatformsInConfig,
+  copyModelProviderAuthForClone,
   EXCLUSIVE_PLATFORMS,
   EXCLUSIVE_PLATFORM_ENV_PATTERNS,
 } from '../../packages/server/src/services/hermes/profile-credentials'
 
+const originalHermesHome = process.env.HERMES_HOME
 let tmpDir: string
 
 beforeEach(() => {
@@ -17,6 +19,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (originalHermesHome === undefined) delete process.env.HERMES_HOME
+  else process.env.HERMES_HOME = originalHermesHome
   rmSync(tmpDir, { recursive: true, force: true })
 })
 
@@ -205,6 +209,100 @@ describe('disableExclusivePlatformsInConfig', () => {
     writeFileSync(p, 'platforms: [unclosed')
     expect(disableExclusivePlatformsInConfig(p))
       .toEqual({ disabled: [], strippedConfigCredentials: [] })
+  })
+})
+
+describe('copyModelProviderAuthForClone', () => {
+  it('copies only the cloned model provider OAuth auth from the active source profile', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        'openai-codex': { access_token: 'codex-provider-token' },
+        anthropic: { access_token: 'anthropic-provider-token' },
+      },
+      credential_pool: {
+        'openai-codex': [{ access_token: 'codex-pool-token' }],
+        anthropic: [{ access_token: 'anthropic-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: openai-codex',
+      '  default: gpt-5.5',
+      '',
+    ].join('\n'))
+
+    const copied = copyModelProviderAuthForClone('cloned')
+
+    expect(copied).toEqual(['openai-codex'])
+    const clonedAuth = JSON.parse(readFileSync(join(cloneDir, 'auth.json'), 'utf-8'))
+    expect(clonedAuth.providers['openai-codex']).toEqual({ access_token: 'codex-provider-token' })
+    expect(clonedAuth.credential_pool['openai-codex']).toEqual([{ access_token: 'codex-pool-token' }])
+    expect(clonedAuth.providers.anthropic).toBeUndefined()
+    expect(clonedAuth.credential_pool.anthropic).toBeUndefined()
+  })
+
+  it('copies the Claude OAuth runtime alias needed for chat execution', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        'claude-oauth': { access_token: 'claude-oauth-token' },
+        anthropic: { access_token: 'anthropic-runtime-token' },
+        'openai-codex': { access_token: 'codex-provider-token' },
+      },
+      credential_pool: {
+        'claude-oauth': [{ access_token: 'claude-oauth-pool-token' }],
+        anthropic: [{ access_token: 'anthropic-runtime-pool-token' }],
+        'openai-codex': [{ access_token: 'codex-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: claude-oauth',
+      '  default: claude-sonnet-4',
+      '',
+    ].join('\n'))
+
+    const copied = copyModelProviderAuthForClone('cloned')
+
+    expect(copied.sort()).toEqual(['anthropic', 'claude-oauth'])
+    const clonedAuth = JSON.parse(readFileSync(join(cloneDir, 'auth.json'), 'utf-8'))
+    expect(clonedAuth.providers['claude-oauth']).toEqual({ access_token: 'claude-oauth-token' })
+    expect(clonedAuth.providers.anthropic).toEqual({ access_token: 'anthropic-runtime-token' })
+    expect(clonedAuth.credential_pool['claude-oauth']).toEqual([{ access_token: 'claude-oauth-pool-token' }])
+    expect(clonedAuth.credential_pool.anthropic).toEqual([{ access_token: 'anthropic-runtime-pool-token' }])
+    expect(clonedAuth.providers['openai-codex']).toBeUndefined()
+    expect(clonedAuth.credential_pool['openai-codex']).toBeUndefined()
+  })
+
+  it('does not copy auth for API-key providers that should use env/config credentials', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        anthropic: { access_token: 'anthropic-provider-token' },
+      },
+      credential_pool: {
+        anthropic: [{ access_token: 'anthropic-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: anthropic',
+      '  default: claude-sonnet-4',
+      '',
+    ].join('\n'))
+
+    expect(copyModelProviderAuthForClone('cloned')).toEqual([])
+    expect(existsSync(join(cloneDir, 'auth.json'))).toBe(false)
   })
 })
 

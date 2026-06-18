@@ -103,6 +103,50 @@ describe('Profile Routes', () => {
       expect(hermesCli.createProfile).toHaveBeenCalledWith('test', true)
     })
 
+    it('clone creation copies only the configured model provider auth for the new profile', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-clone-auth-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      await writeFile(join(hermesHome, 'active_profile'), 'default\n', 'utf-8')
+      await writeFile(join(hermesHome, 'auth.json'), JSON.stringify({
+        providers: {
+          'openai-codex': { access_token: 'codex-provider-token' },
+          anthropic: { access_token: 'anthropic-provider-token' },
+        },
+        credential_pool: {
+          'openai-codex': [{ access_token: 'codex-pool-token' }],
+          anthropic: [{ access_token: 'anthropic-pool-token' }],
+        },
+      }, null, 2), 'utf-8')
+      vi.mocked(hermesCli.createProfile).mockImplementation(async (name: string) => {
+        const profileDir = join(hermesHome, 'profiles', name)
+        await mkdir(profileDir, { recursive: true })
+        await writeFile(join(profileDir, 'config.yaml'), [
+          'model:',
+          '  provider: openai-codex',
+          '  default: gpt-5.5',
+          '',
+        ].join('\n'), 'utf-8')
+        return 'Profile created'
+      })
+      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        request: { body: { name: 'cloned', clone: true } },
+        status: 200,
+        body: undefined,
+      }
+
+      await create(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.copiedAuthProviders).toEqual(['openai-codex'])
+      const clonedAuth = JSON.parse(readFileSync(join(hermesHome, 'profiles', 'cloned', 'auth.json'), 'utf-8'))
+      expect(clonedAuth.providers['openai-codex']).toEqual({ access_token: 'codex-provider-token' })
+      expect(clonedAuth.credential_pool['openai-codex']).toEqual([{ access_token: 'codex-pool-token' }])
+      expect(clonedAuth.providers.anthropic).toBeUndefined()
+      expect(clonedAuth.credential_pool.anthropic).toBeUndefined()
+    })
+
     it('deleteProfile calls CLI with name', async () => {
       vi.mocked(hermesCli.deleteProfile).mockResolvedValue(true)
 
