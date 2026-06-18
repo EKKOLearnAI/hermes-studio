@@ -369,15 +369,15 @@ describe('stt settings store', () => {
     'http://[::1]:8000/v1/audio/transcriptions',
     'http://[fd00::1]:8000/v1/audio/transcriptions',
     'http://[fe90::1]:8000/v1/audio/transcriptions',
-  ])('rejects unsafe base urls using the shared url safety rules: %s', async (baseUrl) => {
+  ])('allows local or private base urls using the shared url rules: %s', async (baseUrl) => {
     const { store } = await initStore()
 
-    expect(() => {
-      store.saveSttProviderSetting(7, 'openai', {
-        settings: {
-          baseUrl,
-        },
-      })
-    }).toThrow(/baseUrl/)
+    const saved = store.saveSttProviderSetting(7, 'openai', {
+      settings: {
+        baseUrl,
+      },
+    })
+
+    expect(saved.settings.baseUrl).toContain(new URL(baseUrl).origin)
   })
 })
