@@ -21,6 +21,7 @@ import {
 import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
+import { formatChatTimestamp } from "@/utils/chat-timestamp";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000;
 const JSON_STRING_DISPLAY_LIMIT = 200;
@@ -293,10 +294,7 @@ function formatDuration(ms: number): string {
   return r === 0 ? `${m}m` : `${m}m ${r}s`;
 }
 
-const timeStr = computed(() => {
-  const d = new Date(props.message.timestamp);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-});
+const timeStr = computed(() => formatChatTimestamp(props.message.timestamp));
 
 function isImage(type: string): boolean {
   return type.startsWith("image/");

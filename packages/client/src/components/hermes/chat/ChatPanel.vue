@@ -53,7 +53,10 @@ const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
 const activeToolPanel = ref<"files" | "terminal">("files");
-const toolPanelWidth = ref(560);
+const TOOL_PANEL_MIN_WIDTH = 360;
+const TOOL_PANEL_DEFAULT_WIDTH = 560;
+const TOOL_PANEL_STORAGE_KEY = "hermes.chat.toolPanelWidth";
+const toolPanelWidth = ref(loadToolPanelWidth());
 const toolResizeStart = ref<{ x: number; width: number } | null>(null);
 
 const currentMode = ref<"chat" | "live">("chat");
@@ -97,20 +100,38 @@ function handleOutlineNavigate(target: { messageId: string; anchorId: string }) 
   if (isMobile.value) showOutline.value = false;
 }
 
+function loadToolPanelWidth() {
+  if (typeof window === "undefined") return TOOL_PANEL_DEFAULT_WIDTH;
+  const saved = Number.parseInt(
+    window.localStorage.getItem(TOOL_PANEL_STORAGE_KEY) || "",
+    10,
+  );
+  return Number.isFinite(saved) ? Math.round(saved) : TOOL_PANEL_DEFAULT_WIDTH;
+}
+
 function toolPanelMaxWidth() {
+  if (typeof window === "undefined") return 1180;
+  if (isMobile.value) return window.innerWidth;
   const available = chatContentWrapperRef.value?.clientWidth || window.innerWidth;
-  return Math.max(320, available - 120);
+  return Math.max(320, Math.min(Math.floor(available * 0.88), available - 120));
+}
+
+function clampToolPanelWidth(width: number) {
+  const maxWidth = toolPanelMaxWidth();
+  const minWidth = Math.min(TOOL_PANEL_MIN_WIDTH, maxWidth);
+  return Math.min(maxWidth, Math.max(minWidth, Math.round(width)));
+}
+
+function handleToolPanelViewportResize() {
+  if (isMobile.value) return;
+  toolPanelWidth.value = clampToolPanelWidth(toolPanelWidth.value);
 }
 
 function handleToolResizeMove(event: PointerEvent) {
   const start = toolResizeStart.value;
   if (!start) return;
   const delta = start.x - event.clientX;
-  const maxWidth = toolPanelMaxWidth();
-  toolPanelWidth.value = Math.min(
-    Math.max(360, start.width + delta),
-    maxWidth,
-  );
+  toolPanelWidth.value = clampToolPanelWidth(start.width + delta);
 }
 
 function stopToolResize() {
@@ -118,6 +139,9 @@ function stopToolResize() {
   toolResizeStart.value = null;
   window.removeEventListener("pointermove", handleToolResizeMove);
   window.removeEventListener("pointerup", stopToolResize);
+  if (!isMobile.value) {
+    window.localStorage.setItem(TOOL_PANEL_STORAGE_KEY, String(toolPanelWidth.value));
+  }
   document.body.style.userSelect = "";
   document.body.style.cursor = "";
 }
@@ -198,6 +222,8 @@ onMounted(() => {
   handleMobileChange(mobileQuery);
   mobileQuery.addEventListener("change", handleMobileChange);
   window.addEventListener("hermes:open-page-sidebar", openPageSidebar);
+  window.addEventListener("resize", handleToolPanelViewportResize);
+  handleToolPanelViewportResize();
   if (profilesStore.profiles.length === 0) {
     void profilesStore.fetchProfiles();
   }
@@ -206,8 +232,15 @@ onMounted(() => {
 onUnmounted(() => {
   mobileQuery?.removeEventListener("change", handleMobileChange);
   window.removeEventListener("hermes:open-page-sidebar", openPageSidebar);
+  window.removeEventListener("resize", handleToolPanelViewportResize);
   stopToolResize();
 });
+watch(showToolPanel, async (visible) => {
+  if (!visible || isMobile.value) return;
+  await nextTick();
+  handleToolPanelViewportResize();
+});
+
 const showRenameModal = ref(false);
 const renameValue = ref("");
 const renameSessionId = ref<string | null>(null);

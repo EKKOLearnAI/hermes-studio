@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { getActiveProfileName, getApiKey, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/auth'
 import { getDownloadUrl } from '@/api/hermes/download'
+import { responseErrorMessage } from '@/utils/http-error'
 import type { Attachment, ContentBlock } from './chat'
 import {
     connectGroupChat,
@@ -41,7 +42,7 @@ async function uploadGroupFiles(attachments: Attachment[]): Promise<{ name: stri
         body: formData,
         headers,
     })
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+    if (!res.ok) throw new Error(await responseErrorMessage(res, 'Upload failed'))
     const data = await res.json() as { files: { name: string; path: string }[] }
     return data.files
 }

@@ -13,6 +13,7 @@ import { primeCompletionSound, playCompletionSound } from '@/utils/completion-so
 import { showCompletionNotification } from '@/utils/completion-notification'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 import { isKnownBridgeSessionCommand } from '@/utils/hermes/bridge-session-commands'
+import { responseErrorMessage } from '@/utils/http-error'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -177,7 +178,7 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
     body: formData,
     headers,
   })
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+  if (!res.ok) throw new Error(await responseErrorMessage(res, 'Upload failed'))
   const data = await res.json() as { files: { name: string; path: string }[] }
   return data.files
 }

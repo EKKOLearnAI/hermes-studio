@@ -17,6 +17,7 @@ import { useGlobalSpeech } from '@/composables/useSpeech'
 import { useVoiceSettings } from '@/composables/useVoiceSettings'
 import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import { getDownloadUrl } from '@/api/hermes/download'
+import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, RoomAgent, MemberInfo } from '@/api/hermes/group-chat'
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000
@@ -58,10 +59,7 @@ const agentInfo = computed(() => {
     return props.agents.find(a => a.agentId === props.message.senderId || a.name === props.message.senderName)
 })
 
-const timeStr = computed(() => {
-    const d = new Date(props.message.timestamp)
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-})
+const timeStr = computed(() => formatChatTimestamp(props.message.timestamp))
 
 const avatarProfileName = computed(() => agentInfo.value?.profile || props.message.senderName || props.message.senderId)
 const avatarProfile = computed(() => profilesStore.profiles.find(profile => profile.name === agentInfo.value?.profile))
