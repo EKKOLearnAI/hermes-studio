@@ -619,6 +619,8 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+  /** sessionIds with a terminal /fork command submitted but not settled yet */
+  const pendingForkCommands = ref<Set<string>>(new Set())
   /** Sessions that completed while the user was viewing another session. */
   const completedUnreadSessions = ref<Set<string>>(new Set())
   const sessionProfileFilter = ref<string | null>(null)
@@ -650,6 +652,10 @@ export const useChatStore = defineStore('chat', () => {
     const sid = activeSessionId.value
     if (sid == null) return false
     return streamStates.value.has(sid) || serverWorking.value.has(sid)
+  })
+  const isForkPending = computed(() => {
+    const sid = activeSessionId.value
+    return sid != null && pendingForkCommands.value.has(sid)
   })
   const isLoadingSessions = ref(false)
   const sessionsLoaded = ref(false)
@@ -687,6 +693,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingClarifies.value = new Map()
     streamStates.value = new Map()
     serverWorking.value = new Set()
+    pendingForkCommands.value = new Set()
     sessionsLoaded.value = false
     clearActiveSession()
   }
@@ -1404,6 +1411,7 @@ export const useChatStore = defineStore('chat', () => {
     if ((evt as any).terminal === true) {
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
+      pendingForkCommands.value.delete(sid)
     }
 
     if (action === 'clear' && command === 'clear') {
@@ -1903,6 +1911,10 @@ export const useChatStore = defineStore('chat', () => {
     const isBridgeForkCommand = isBridgeSlashCommand && /^\/fork(?:\s|$)/i.test(trimmedContent)
     const shouldOptimisticallyShowRunStatus = !isCodingAgentSession && !isBridgeForkCommand
     const wasLiveBeforeSend = isSessionLive(sid)
+    if (isBridgeForkCommand) {
+      if (pendingForkCommands.value.has(sid)) return
+      pendingForkCommands.value = new Set(pendingForkCommands.value).add(sid)
+    }
     const shouldQueue = wasLiveBeforeSend && (!isBridgeSlashCommand || isBridgePlanCommand || isBridgeSkillCommand)
 
     const userMsg: Message = {
@@ -2702,6 +2714,11 @@ export const useChatStore = defineStore('chat', () => {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {
+      if (isBridgeForkCommand) {
+        const nextPendingForkCommands = new Set(pendingForkCommands.value)
+        nextPendingForkCommands.delete(sid)
+        pendingForkCommands.value = nextPendingForkCommands
+      }
       if (shouldQueue && !runSubmitted) {
         dropQueuedUserMessage(sid, userMsg.id)
       }
@@ -3509,6 +3526,7 @@ export const useChatStore = defineStore('chat', () => {
     focusMessageId,
     messages,
     isStreaming,
+    isForkPending,
     isRunActive,
     isSessionLive,
     isSessionCompletedUnread,

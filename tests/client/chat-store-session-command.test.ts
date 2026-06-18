@@ -188,6 +188,39 @@ describe('chat store session.command fanout', () => {
     expect(store.isStreaming).toBe(false)
   })
 
+  it('debounces terminal fork commands until the session.command settles', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'cli'
+    session.messageCount = 2
+    session.messages = [
+      { id: 'user-1', role: 'user', content: 'Previous question', timestamp: 1 },
+      { id: 'assistant-1', role: 'assistant', content: 'Previous answer', timestamp: 2 },
+    ]
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('/fork')
+    await store.sendMessage('/fork')
+
+    expect(chatApi.startRunViaSocket).toHaveBeenCalledTimes(1)
+    expect(store.isStreaming).toBe(false)
+    expect(store.isForkPending).toBe(true)
+
+    chatApi.sessionCommandHandlers[0]({
+      event: 'session.command',
+      session_id: 'session-1',
+      command: 'fork',
+      action: 'branch',
+      ok: false,
+      message: 'Cannot branch: no conversation messages found to copy.',
+      terminal: true,
+    })
+
+    expect(store.isForkPending).toBe(false)
+  })
+
   it('clears stale working state when terminal session commands complete', () => {
     const store = useChatStore()
     const session = makeSession()
