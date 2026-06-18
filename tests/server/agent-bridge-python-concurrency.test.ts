@@ -1048,6 +1048,7 @@ original_getpid = bridge.os.getpid
 try:
     bridge.subprocess.Popen = fake_popen
     bridge.os.getpid = lambda: 4242
+    bridge.os.environ["ANTHROPIC_AUTH_TOKEN"] = "stale-bearer-token"
     proc_worker = bridge.WorkerProcess("default:compression:session-a", "default", "ipc:///tmp/worker.sock", "/agent", "/home")
     proc_worker._pipe_stderr = lambda: None
     proc_worker._wait_ready = lambda: None
@@ -1055,9 +1056,11 @@ try:
 finally:
     bridge.subprocess.Popen = original_popen
     bridge.os.getpid = original_getpid
+    bridge.os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
 assert created["env"]["HERMES_AGENT_BRIDGE_BROKER_PID"] == "4242"
 assert created["env"]["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] == "default"
+assert "ANTHROPIC_AUTH_TOKEN" not in created["env"]
 assert created["encoding"] == "utf-8"
 assert created["errors"] == "replace"
 

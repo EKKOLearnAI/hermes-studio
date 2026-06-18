@@ -88,7 +88,7 @@ function isLegacyGlobalDefaultEndpoint(endpoint: string): boolean {
 }
 
 export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string | undefined, agentRoot: string | undefined): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_AGENT_BRIDGE_ENDPOINT: endpoint,
     HERMES_HOME: hermesHome,
@@ -97,6 +97,8 @@ export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string 
     HERMES_OPENROUTER_APP_CATEGORIES: process.env.HERMES_OPENROUTER_APP_CATEGORIES || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_CATEGORIES,
     ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
   }
+  delete env.ANTHROPIC_AUTH_TOKEN
+  return env
 }
 
 function pathCandidates(agentRoot?: string): string[] {
