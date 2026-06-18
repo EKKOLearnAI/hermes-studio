@@ -292,9 +292,14 @@ function applyInitialSessionScroll(sessionId: string) {
 
   const session = chatStore.activeSession;
   if (session?.parentSessionId && session.forkPointMessageId) {
-    pendingInitialScrollSessionId.value = null;
-    scrollToMessage(forkDividerId(session.id));
-    return;
+    const dividerId = forkDividerId(session.id);
+    const hasDivider = displayMessagesWithForkDivider.value.some((message) => message.id === dividerId);
+    if (hasDivider) {
+      pendingInitialScrollSessionId.value = null;
+      scrollToMessage(dividerId);
+      return;
+    }
+    if (chatStore.isLoadingMessages || chatStore.messages.length === 0) return;
   }
 
   scrollToBottom(initialBottomScrollOptions);
@@ -356,8 +361,7 @@ watch(
     }
     await nextTick();
     if (chatStore.activeSessionId !== id) return;
-    scrollToBottom(initialBottomScrollOptions);
-    pendingInitialScrollSessionId.value = null;
+    applyInitialSessionScroll(id);
   },
   { flush: "post" },
 );

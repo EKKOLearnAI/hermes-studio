@@ -1137,6 +1137,7 @@ export async function getConversationMessagesPaginated(ctx: any) {
       model: session.model,
       title: session.title,
       parent_session_id: (session as any).parent_session_id,
+      fork_point_message_id: (session as any).fork_point_message_id,
       parent_title: (session as any).parent_title,
       parent_last_message: (session as any).parent_last_message,
       parent_last_message_role: (session as any).parent_last_message_role,
