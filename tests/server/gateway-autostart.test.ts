@@ -250,4 +250,24 @@ describe('gateway autostart status parsing', () => {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  it('does not fall back to the default profile when delete prep sees a missing profile', async () => {
+    const previousHermesHome = process.env.HERMES_HOME
+    const previousHermesBin = process.env.HERMES_BIN
+    const home = mkdtempSync(join(tmpdir(), 'wui-delete-gateway-missing-'))
+
+    try {
+      process.env.HERMES_HOME = home
+      process.env.HERMES_BIN = '/definitely/missing/hermes'
+
+      await expect(prepareGatewayForProfileDelete('missing')).resolves.toBeUndefined()
+      expect(existsSync(join(home, 'gateway_state.json'))).toBe(false)
+    } finally {
+      if (previousHermesHome === undefined) delete process.env.HERMES_HOME
+      else process.env.HERMES_HOME = previousHermesHome
+      if (previousHermesBin === undefined) delete process.env.HERMES_BIN
+      else process.env.HERMES_BIN = previousHermesBin
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })

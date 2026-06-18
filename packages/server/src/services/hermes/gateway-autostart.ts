@@ -4,7 +4,7 @@ import { join } from 'path'
 import { promisify } from 'util'
 import { readAppConfig, type GatewayAutoStartConfig } from '../app-config'
 import { logger } from '../logger'
-import { getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
+import { getHermesBaseDir, getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { retireManagedGatewayForProfile, startGatewayRunManaged } from './gateway-runner'
 import { parseGatewayStatusesFromProfileList } from './profile-list-parser'
 import { execHermesWithBin } from './hermes-process'
@@ -381,9 +381,19 @@ function writeGatewayDesiredStopped(profileDir: string): void {
   }
 }
 
+function getProfileDirForDelete(profile: string): string {
+  if (!profile || profile === 'default') return getProfileDir(profile)
+  return join(getHermesBaseDir(), 'profiles', profile)
+}
+
 export async function prepareGatewayForProfileDelete(profile: string): Promise<void> {
   const hermesBin = resolveHermesBin()
-  const profileDir = getProfileDir(profile)
+  const profileDir = getProfileDirForDelete(profile)
+
+  if (!existsSync(profileDir)) {
+    logger.info('[gateway-autostart] skipping profile delete gateway prep for missing profile profile=%s home=%s', profile, profileDir)
+    return
+  }
 
   writeGatewayDesiredStopped(profileDir)
 
