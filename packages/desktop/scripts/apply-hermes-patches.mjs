@@ -339,4 +339,72 @@ function appendSitecustomizePatch(id, marker, body) {
 appendSitecustomizePatch('brotlicffi-error-compat', brotlicffiCompatMarker, brotlicffiCompat)
 appendSitecustomizePatch('desktop-hidden-subprocess-defaults', desktopHiddenSubprocessMarker, desktopHiddenSubprocessDefaults)
 
+// ── local-parent-path-preserve ────────────────────────────────
+// Preserve parent PATH before ``bash -l`` resets it via ``/etc/profile``.
+// Without this, user-installed tools under ``~/.local/bin`` disappear from
+// the session snapshot and providers like nowledge-mem report "unavailable".
+//
+// Root cause: ``BaseEnvironment.init_session()`` calls ``_run_bash(...,
+// login=True)`` which spawns ``bash -l -c``.  On most Linux distros
+// ``/etc/profile`` unconditionally overwrites PATH with a static list,
+// discarding entries that ``_make_run_env`` added (e.g. ``~/.local/bin``
+// from the parent process).  The ``export -p`` snapshot then captures
+// the degraded PATH.
+//
+// Fix: stash the pre-login PATH in ``HERMES_INIT_PARENT_PATH`` inside
+// ``_run_bash``, then restore it in ``init_session``'s bootstrap script
+// before the ``export -p`` snapshot.
+
+const localEnvPath = join(sitePkgs, 'tools', 'environments', 'local.py')
+if (existsSync(localEnvPath)) {
+  console.log(`Patching ${localEnvPath}`)
+  let localSrc = readFileSync(localEnvPath, 'utf-8')
+  const localBefore = localSrc
+
+  localSrc = patchText(
+    localSrc,
+    'local-parent-path-preserve',
+    '# patch:local-parent-path-preserve',
+    '        run_env = _make_run_env(self.env)\n\n        # Recover when the cwd has been deleted',
+    '        run_env = _make_run_env(self.env)\n\n' +
+      '        # patch:local-parent-path-preserve -- stash PATH before bash -l overwrites it\n' +
+      '        _path_key = _path_env_key(run_env)\n' +
+      '        if _path_key is not None and _path_key in run_env:\n' +
+      '            run_env["HERMES_INIT_PARENT_PATH"] = run_env[_path_key]\n\n' +
+      '        # Recover when the cwd has been deleted',
+  )
+
+  if (localSrc !== localBefore) {
+    writeFileSync(localEnvPath, localSrc)
+  }
+}
+
+// ── base-restore-parent-path ──────────────────────────────────
+// Restore the stashed parent PATH before ``export -p`` captures the
+// session snapshot, so user-added PATH entries survive login shells.
+
+const baseEnvPath = join(sitePkgs, 'tools', 'environments', 'base.py')
+if (existsSync(baseEnvPath)) {
+  console.log(`Patching ${baseEnvPath}`)
+  let baseSrc = readFileSync(baseEnvPath, 'utf-8')
+  const baseBefore = baseSrc
+
+  baseSrc = patchText(
+    baseSrc,
+    'base-restore-parent-path',
+    '# patch:base-restore-parent-path',
+    '        bootstrap = (\n            f"export -p > {_quoted_snap}\\n"',
+    '        bootstrap = (\n' +
+      '            # patch:base-restore-parent-path -- restore parent PATH before snapshot\n' +
+      '            f\'[ -n "$HERMES_INIT_PARENT_PATH" ] && export PATH="$HERMES_INIT_PARENT_PATH"\\n\'\n' +
+      '            f"unset HERMES_INIT_PARENT_PATH\\n"\n' +
+      '            f"export -p > {_quoted_snap}\\n"',
+  )
+
+  if (baseSrc !== baseBefore) {
+    writeFileSync(baseEnvPath, baseSrc)
+  }
+}
+
 console.log(`Done. Applied ${applied}, skipped ${skipped}.`)
+
