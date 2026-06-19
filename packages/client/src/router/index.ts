@@ -98,6 +98,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/MemoryView.vue'),
     },
     {
+      path: '/hermes/personal-os',
+      name: 'hermes.personalOS',
+      component: () => import('@/views/hermes/PersonalOSView.vue'),
+    },
+    {
       path: '/hermes/settings',
       name: 'hermes.settings',
       component: () => import('@/views/hermes/SettingsView.vue'),

@@ -157,6 +157,15 @@ function openVersionManagement() {
             </svg>
             <span>{{ t("sidebar.memory") }}</span>
           </RouteLinkItem>
+          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.personalOS' }" :active="selectedKey === 'hermes.personalOS'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+              <path d="M12 12l8-4.5" />
+              <path d="M12 12v9" />
+              <path d="M12 12L4 7.5" />
+            </svg>
+            <span>{{ t("sidebar.personalOS") }}</span>
+          </RouteLinkItem>
           <RouteLinkItem class="nav-item" :to="{ name: 'hermes.models' }" :active="selectedKey === 'hermes.models'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3" />
