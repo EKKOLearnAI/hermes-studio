@@ -195,7 +195,7 @@ export async function buildDbHistory(
 
   return sourceMessages.map((m, idx, arr) => {
     const msg: any = { role: m.role, content: m.content || '' }
-    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+    if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
     if (m.tool_calls?.length) {
       const cleanedToolCalls = m.tool_calls
         .filter((tc: any) => tc.id && tc.id.length > 0)
@@ -460,7 +460,7 @@ export async function compressHistory(
 
     const compressed = result.messages.map(m => {
       const msg: any = { role: m.role, content: m.content, tool_call_id: m.tool_call_id, name: m.name }
-      if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+      if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
       if (m.tool_calls?.length) {
         const cleanedToolCalls = m.tool_calls
           .filter((tc: any) => tc.id && tc.id.length > 0)
@@ -548,7 +548,7 @@ export async function forceCompressBridgeHistory(
   })
   const compressedMessages = result.messages.map(m => {
     const msg: any = { role: m.role, content: m.content }
-    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+    if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
     if (m.tool_calls?.length) {
       const cleanedToolCalls = m.tool_calls
         .filter((tc: any) => tc.id && tc.id.length > 0)

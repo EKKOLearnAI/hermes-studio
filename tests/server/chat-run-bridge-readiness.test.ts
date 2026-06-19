@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handleBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const resumeBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
-const handleApiRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
@@ -20,8 +19,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', 
   resumeBridgeRun: resumeBridgeRunMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/handle-api-run', () => ({
-  handleApiRun: handleApiRunMock,
+vi.mock('../../packages/server/src/services/hermes/run-chat/load-state', () => ({
   loadSessionStateFromDb: loadSessionStateFromDbMock,
   resolveRunSource: vi.fn((source?: string) => source || 'cli'),
 }))
@@ -111,7 +109,6 @@ describe('ensureBridgeReadyForChatRun', () => {
     bridgeMock.statusIfLoaded.mockReset()
     handleBridgeRunMock.mockReset()
     resumeBridgeRunMock.mockReset()
-    handleApiRunMock.mockReset()
     handleCodingAgentRunMock.mockReset()
     loadSessionStateFromDbMock.mockReset()
     getSessionMock.mockReset()
@@ -183,7 +180,6 @@ describe('ChatRunSocket bridge readiness gating', () => {
     bridgeMock.statusIfLoaded.mockReset()
     handleBridgeRunMock.mockReset()
     resumeBridgeRunMock.mockReset()
-    handleApiRunMock.mockReset()
     handleCodingAgentRunMock.mockReset()
     loadSessionStateFromDbMock.mockReset()
     ensureReadyMock.mockResolvedValue({
@@ -228,7 +224,7 @@ describe('ChatRunSocket bridge readiness gating', () => {
     }))
   })
 
-  it('does not gate runs when resolveRunSource resolves api_server in tests', async () => {
+  it('routes legacy api_server runs through the bridge path', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
     const { handlers, io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
@@ -236,9 +232,12 @@ describe('ChatRunSocket bridge readiness gating', () => {
     ;(server as any).onConnection(socket)
     await handlers.get('run')?.({ input: 'hello', session_id: 'session-1', source: 'api_server' })
 
-    expect(ensureReadyMock).not.toHaveBeenCalled()
-    expect(handleApiRunMock).toHaveBeenCalledTimes(1)
-    expect(handleBridgeRunMock).not.toHaveBeenCalled()
+    expect(ensureReadyMock).toHaveBeenCalledTimes(1)
+    expect(handleBridgeRunMock).toHaveBeenCalledTimes(1)
+    expect(handleBridgeRunMock.mock.calls[0][2]).toEqual(expect.objectContaining({
+      input: 'hello',
+      source: 'api_server',
+    }))
     expect(socket.emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
   })
 
@@ -261,7 +260,6 @@ describe('ChatRunSocket bridge readiness gating', () => {
       source: 'cli',
       session_source: 'global_agent',
     }))
-    expect(handleApiRunMock).not.toHaveBeenCalled()
     expect(socket.emit).not.toHaveBeenCalledWith('run.failed', expect.anything())
   })
 
@@ -292,7 +290,6 @@ describe('ChatRunSocket bridge readiness gating', () => {
       expect.any(Map),
     )
     expect(handleBridgeRunMock).not.toHaveBeenCalled()
-    expect(handleApiRunMock).not.toHaveBeenCalled()
   })
 
   it('continues with remaining queued bridge runs when readiness fails before a dequeued run starts', async () => {

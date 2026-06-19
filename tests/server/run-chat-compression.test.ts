@@ -94,6 +94,51 @@ describe('run chat compression trigger', () => {
     readConfigYamlForProfileMock.mockResolvedValue({})
   })
 
+  it('preserves empty assistant reasoning_content in bridge history', async () => {
+    getSessionDetailMock.mockReturnValue({
+      messages: [
+        {
+          id: 1,
+          session_id: 'session-1',
+          role: 'assistant',
+          content: 'called a tool',
+          timestamp: 1,
+          tool_call_id: null,
+          tool_calls: null,
+          tool_name: null,
+          finish_reason: null,
+          reasoning_content: '',
+        },
+        {
+          id: 2,
+          session_id: 'session-1',
+          role: 'user',
+          content: 'next',
+          timestamp: 2,
+          tool_call_id: null,
+          tool_calls: null,
+          tool_name: null,
+          finish_reason: null,
+          reasoning_content: null,
+        },
+      ],
+    })
+
+    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const history = await buildCompressedHistory(
+      'session-1',
+      'default',
+      'http://upstream',
+      undefined,
+      vi.fn(),
+      new Map(),
+    )
+
+    expect(history).toEqual([
+      { role: 'assistant', content: 'called a tool', reasoning_content: '' },
+    ])
+  })
+
   it('does not compress long low-token history just because it has more than 150 messages', async () => {
     const messages = Array.from({ length: 152 }, (_, index) => ({
       id: index + 1,

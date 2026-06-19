@@ -2,7 +2,6 @@
  * ChatRunSocket — Socket.IO namespace /chat-run.
  *
  * Thin orchestrator that delegates to specialized modules:
- * - handle-api-run.ts   → upstream /v1/responses streaming
  * - handle-bridge-run.ts → CLI bridge runs
  * - abort.ts             → run cancellation
  * - compression.ts       → context window management
@@ -16,11 +15,11 @@ import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '.
 import { AgentBridgeClient } from '../agent-bridge'
 import { getAgentBridgeManager } from '../agent-bridge/manager'
 import { redactAgentBridgeError } from '../agent-bridge/redact'
-import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle-api-run'
 import { handleBridgeRun, resumeBridgeRun } from './handle-bridge-run'
 import { handleCodingAgentRun } from './handle-coding-agent-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
+import { loadSessionStateFromDb, resolveRunSource } from './load-state'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
@@ -381,7 +380,7 @@ export class ChatRunSocket {
     const source = resolveRunSource(data.source, data.session_id)
     if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input)) return
 
-    if (isBridgeRunSource(source)) {
+    if (source !== 'coding_agent') {
       const bridgeReady = await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
         let shouldDequeueNext = false
@@ -443,22 +442,12 @@ export class ChatRunSocket {
       return
     }
 
-    if (source === 'coding_agent') {
-      await handleCodingAgentRun(
-        this.nsp,
-        socket,
-        data,
-        profile,
-        this.sessionMap,
-      )
-      return
-    }
-
-    await handleApiRun(
-      this.nsp, socket, data, profile,
+    await handleCodingAgentRun(
+      this.nsp,
+      socket,
+      data,
+      profile,
       this.sessionMap,
-      skipUserMessage,
-      this.dequeueNextQueuedRun.bind(this),
     )
   }
 
