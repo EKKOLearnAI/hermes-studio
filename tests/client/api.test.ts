@@ -108,27 +108,32 @@ describe('API Client', () => {
 
     it('clears token and redirects on 401 for local BFF endpoints', async () => {
       setApiKey('secret-key')
+      localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({ ok: false, status: 401 })
 
       await expect(request('/api/hermes/sessions')).rejects.toThrow('Unauthorized')
       expect(hasApiKey()).toBe(false)
+      expect(localStorage.getItem('hermes_active_profile_name')).toBeNull()
       expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
     })
 
     it('emits a global auth notice on local 403 responses', async () => {
       const listener = vi.fn()
       window.addEventListener('hermes-auth-notice', listener)
+      localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({ ok: false, status: 403, text: () => Promise.resolve('Forbidden') })
 
       await expect(request('/api/hermes/profiles')).rejects.toThrow('API Error 403')
 
       expect(listener).toHaveBeenCalledOnce()
       expect(listener.mock.calls[0][0].detail).toEqual({ kind: 'forbidden' })
+      expect(localStorage.getItem('hermes_active_profile_name')).toBe('research')
       window.removeEventListener('hermes-auth-notice', listener)
     })
 
     it('clears token and redirects when the JWT user no longer exists', async () => {
       setApiKey('stale-jwt')
+      localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({
         ok: false,
         status: 403,
@@ -138,15 +143,18 @@ describe('API Client', () => {
       await expect(request('/api/hermes/profiles')).rejects.toThrow('API Error 403')
 
       expect(hasApiKey()).toBe(false)
+      expect(localStorage.getItem('hermes_active_profile_name')).toBeNull()
       expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
     })
 
     it('does NOT clear token on 401 for proxied v1 endpoints', async () => {
       setApiKey('secret-key')
+      localStorage.setItem('hermes_active_profile_name', 'research')
       mockFetch.mockResolvedValue({ ok: false, status: 401, text: () => Promise.resolve('') })
 
       await expect(request('/api/hermes/v1/runs')).rejects.toThrow('API Error 401')
       expect(hasApiKey()).toBe(true)
+      expect(localStorage.getItem('hermes_active_profile_name')).toBe('research')
     })
 
     it('throws error on non-401 failure', async () => {
