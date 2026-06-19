@@ -1,15 +1,18 @@
 # Personal Data Inventory
 
 - Migration date: 2026-06-19
-- Active Hermes home candidate: `C:\Users\Administrator\AppData\Local\hermes`
+- Hermes home candidates:
+  - Agent canonical home: `C:\Users\Administrator\.hermes`
+  - Desktop/Studio Windows home: `C:\Users\Administrator\AppData\Local\hermes`
 - Environment `HERMES_HOME`: not set in this shell
 - Full Hermes home backup path: `D:\code\hermes-data-backups\20260619-171540-full-hermes`
+- Agent canonical home backup path: `D:\code\hermes-data-backups\20260619-174833-userprofile-hermes`
 - Selective personal data backup path: `D:\code\hermes-data-backups\20260619-170725-personal-data`
 - Earlier full recursive backup attempt: `D:\code\hermes-data-backups\20260619-170417` timed out before completion because the Hermes home includes large runtime/debug directories. Treat this directory as incomplete and do not use it for rollback.
 
 ## Backed Up Data
 
-The validated full backup copied the complete Hermes home with `robocopy /E /XJ /R:1 /W:1 /MT:16`.
+The validated full backups copied both Hermes home candidates with `robocopy /E /XJ /R:1 /W:1 /MT:16`.
 
 - Personal State database: `personal_state.db`
 - Core runtime databases: `state.db`, `response_store.db`, `kanban.db`
@@ -31,10 +34,10 @@ These entries were skipped only by the earlier selective backup. They are includ
 
 ## Migration Notes
 
-The preferred Studio migration strategy is in-place reuse of `C:\Users\Administrator\AppData\Local\hermes` for canonical Hermes data. The backup exists for rollback and validation. Studio should read `personal_state.db` from the same Hermes home rather than creating a second Personal State store.
+The preferred Studio migration strategy is in-place reuse of `C:\Users\Administrator\.hermes` for canonical Hermes Agent data. Hermes Agent defaults to `~\.hermes` when `HERMES_HOME` is unset, so Studio must run with `HERMES_HOME=C:\Users\Administrator\.hermes` or otherwise be configured to read that same root for Personal State.
 
-Use `D:\code\hermes-data-backups\20260619-171540-full-hermes` as the primary rollback backup. Use `D:\code\hermes-data-backups\20260619-170725-personal-data` as a smaller convenience backup for inspecting user-facing data.
+Use `D:\code\hermes-data-backups\20260619-174833-userprofile-hermes` as the primary rollback backup for Agent-owned Personal State. Use `D:\code\hermes-data-backups\20260619-171540-full-hermes` for the Windows desktop/studio home. Use `D:\code\hermes-data-backups\20260619-170725-personal-data` as a smaller convenience backup for inspecting user-facing data.
 
 Upload/artifact search did not find a dedicated top-level user upload or artifact directory. Matches were inside runtime source, dependencies, debug extraction, or package files, and are covered by the full backup.
 
-SQLite integrity checks passed for `personal_state.db`, `state.db`, `response_store.db`, and `kanban.db` after backup.
+SQLite integrity checks passed for `C:\Users\Administrator\.hermes\personal_state.db`, `state.db`, and `kanban.db`. SQLite integrity checks also passed for `%LOCALAPPDATA%\hermes\personal_state.db`, `state.db`, `response_store.db`, and `kanban.db`.
