@@ -179,6 +179,9 @@ async function handleSessionClick(sessionId: string) {
     name: chatStore.runtimeMode === "global_agent" ? "hermes.globalAgentSession" : "hermes.session",
     params: { sessionId },
   });
+  if (chatStore.activeSessionId !== sessionId) {
+    await chatStore.switchSession(sessionId);
+  }
   if (mobileQuery?.matches) showSessions.value = false;
 }
 
