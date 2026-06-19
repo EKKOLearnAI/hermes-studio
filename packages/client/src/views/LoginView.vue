@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { setApiKey, hasApiKey } from "@/api/client";
+import { setApiKey, hasApiKey, getBaseUrlValue, setServerUrl, clearApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 
 const { t } = useI18n();
@@ -13,6 +13,9 @@ const password = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
 const showLockResetHint = ref(false);
+const currentServerUrl = ref("");
+const editUrl = ref("");
+const showUrlEditor = ref(false);
 
 // If already has a key, try to go to main page
 if (hasApiKey()) {
@@ -20,12 +23,32 @@ if (hasApiKey()) {
 }
 
 onMounted(async () => {
+  currentServerUrl.value = getBaseUrlValue();
+  editUrl.value = currentServerUrl.value;
+  // Show URL editor if user has a custom URL set
+  showUrlEditor.value = !!currentServerUrl.value;
+
   try {
     await fetchAuthStatus();
   } catch {
     // Login remains available; the submit request will surface connection errors.
   }
 });
+
+function handleApplyUrl() {
+  const url = editUrl.value.trim().replace(/\/+$/, "");
+  if (url === currentServerUrl.value) return;
+  setServerUrl(url);
+  clearApiKey();
+  window.location.reload();
+}
+
+function handleClearUrl() {
+  editUrl.value = "";
+  setServerUrl("");
+  clearApiKey();
+  window.location.reload();
+}
 
 async function handleLogin() {
   await handlePasswordLogin();
@@ -67,6 +90,35 @@ async function handlePasswordLogin() {
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
       <p class="login-default-hint">{{ t("login.defaultCredentialsHint") }}</p>
+
+      <!-- Server URL editor (always visible for custom URL, collapsible for same-origin) -->
+      <div class="server-hint">{{ t('login.serverHint') }}</div>
+      <div class="server-section">
+        <div class="server-current" @click="showUrlEditor = !showUrlEditor">
+          <span class="server-dot" :class="{ connected: !currentServerUrl }"></span>
+          <span class="server-display">
+            {{ currentServerUrl || t('settings.connection.same_origin') }}
+          </span>
+          <svg class="server-chevron" :class="{ open: showUrlEditor }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div v-if="showUrlEditor" class="server-editor">
+          <input
+            v-model="editUrl"
+            type="text"
+            class="login-input server-input"
+            :placeholder="t('settings.connection.placeholder')"
+            @keyup.enter="handleApplyUrl"
+          />
+          <div class="server-editor-btns">
+            <button type="button" class="server-btn apply" @click="handleApplyUrl">
+              {{ t('settings.connection.switch') }}
+            </button>
+            <button v-if="currentServerUrl" type="button" class="server-btn reset" @click="handleClearUrl">
+              {{ t('settings.connection.reset') }}
+            </button>
+          </div>
+        </div>
+      </div>
 
       <form class="login-form" @submit.prevent="handleLogin">
         <input
@@ -143,10 +195,112 @@ async function handlePasswordLogin() {
 }
 
 .login-default-hint {
-  margin: 0 0 28px;
+  margin: 0 0 20px;
   font-family: $font-code;
   font-size: 13px;
   color: $text-secondary;
+}
+
+.server-hint {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.server-section {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.server-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  cursor: pointer;
+  transition: border-color $transition-fast;
+  font-size: 12px;
+
+  &:hover {
+    border-color: $accent-primary;
+  }
+}
+
+.server-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: $warning;
+  flex-shrink: 0;
+
+  &.connected {
+    background: $success;
+  }
+}
+
+.server-display {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-secondary;
+  font-family: $font-code;
+}
+
+.server-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+  color: $text-muted;
+
+  &.open {
+    transform: rotate(180deg);
+  }
+}
+
+.server-editor {
+  margin-top: 8px;
+}
+
+.server-input {
+  font-size: 13px !important;
+  padding: 10px 12px !important;
+}
+
+.server-editor-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.server-btn {
+  padding: 6px 14px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all $transition-fast;
+
+  &.apply {
+    background: $text-primary;
+    color: var(--text-on-accent);
+    border-color: transparent;
+  }
+
+  &.reset {
+    background: transparent;
+    color: $text-secondary;
+
+    &:hover {
+      color: $error;
+      border-color: rgba(var(--error-rgb), 0.3);
+    }
+  }
 }
 
 .login-form {
@@ -220,7 +374,7 @@ async function handlePasswordLogin() {
 
   &:disabled {
     opacity: 0.5;
-    cursor: not-allowed;
+    cursor: not-forced;
   }
 }
 </style>

@@ -12,6 +12,7 @@ export default {
     tokenLogin: '令牌登录',
     usernamePlaceholder: '用户名',
     passwordPlaceholder: '密码',
+    serverHint: '如需连接远程后端，请展开下方配置服务器地址。\n远程后端需要允许来自本站跨域请求。',
     defaultCredentialsHint: '默认登录名：admin，默认密码：123456',
     credentialsRequired: '请输入用户名和密码',
     invalidCredentials: '用户名或密码错误',
@@ -72,7 +73,6 @@ export default {
       active: '启用',
       disabled: '禁用',
     },
-  },
 
   // 通用
   common: {
@@ -291,7 +291,6 @@ export default {
       completed: '已完成',
       failed: '失败',
     },
-  },
 
   devices: {
     title: '设备',
@@ -361,7 +360,6 @@ export default {
       desktop: '桌面端',
       custom: '自定义',
     },
-  },
 
   performance: {
     title: '性能监控',
@@ -464,7 +462,6 @@ export default {
         high: '高',
         xhigh: '超高',
       },
-    },
     autoPlaySpeech: '自动播放语音',
     voiceInput: {
       startCapture: '开始语音输入',
@@ -680,7 +677,6 @@ export default {
         hours: '{count}小时前',
         days: '{count}天前',
       },
-    },
     detail: {
       status: '状态',
       assignee: '负责人',
@@ -738,7 +734,6 @@ export default {
       total: '总计',
       tasks: '任务数',
     },
-  },
 
   // 定时任务
   jobs: {
@@ -806,7 +801,6 @@ export default {
       runs: '次运行',
       noRuns: '暂无运行历史。',
     },
-  },
 
   // 技能
   skills: {
@@ -966,7 +960,6 @@ export default {
       scanCwd: '扫描 cwd',
       projectPlugins: '项目插件',
     },
-  },
 
   // 记忆
   memory: {
@@ -1225,7 +1218,6 @@ export default {
       profileRestarted: '配置已重启：{name}',
       profileRestartFailed: '重启配置失败',
     },
-  },
 
   // 日志
   logs: {
@@ -1253,6 +1245,24 @@ export default {
       apiServer: 'API 服务器',
       models: '模型',
       voice: '语音',
+      connection: '连接',
+    connection: {
+      title: '后端连接',
+      description: '配置 Hermes Web UI 后端服务器地址。留空则使用当前页面地址。',
+      clientCommandHint: '远程后端需要以 hermes-web-ui client 命令运行，否则无法连接。',
+      corsHint: '本功能需要后端开启允许跨域请求，你可以使用 hermes-web-ui client 命令运行 Hermes Studio，会默认允许所有跨域请求（CORS_ORIGINS=*），当然你也可以自行设置跨域白名单。',
+      placeholder: '例如: http://192.168.1.100:6060',
+      namePlaceholder: '服务器名称（可选）',
+      current: '当前连接',
+      same_origin: '同源（当前页面地址）',
+      reset: '重置为默认',
+      saved: '已保存',
+      reload_hint: '刷新页面以应用新地址。',
+      saveToList: '添加到保存列表',
+      savedServers: '已保存的服务器',
+      active: '当前使用',
+      switch: '切换',
+      removeConfirm: '确定移除这个服务器吗？',
     },
     models: {
       apiKey: 'API Key',
@@ -1421,7 +1431,6 @@ export default {
         token: 'API Token',
         pairing: '设备配对',
       },
-    },
     userAvatar: {
       title: '用户头像',
       upload: '上传图片',
@@ -1694,7 +1703,6 @@ export default {
       mimoStylePromptHint: '可选，用自然语言描述语音风格',
       mimoStylePromptPlaceholder: '例如：用轻快上扬的语调，语速稍快',
     },
-  },
   githubPreview: {
     title: "版本预览",
     description: "将选中的 GitHub tag 克隆到 Web UI 预览工作目录，安装依赖并以开发端口运行。",
@@ -1805,7 +1813,6 @@ export default {
       claudeRun: "Print mode 最适合 API 驱动的单次任务。",
       codexRun: "Codex 单次任务需要在 git 仓库中运行。",
     },
-  },
 
   // 平台频道设置
   platform: {

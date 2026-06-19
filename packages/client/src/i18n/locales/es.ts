@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Nombre de usuario',
     passwordPlaceholder: 'Contrasena',
+    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
     defaultCredentialsHint: 'Nombre de usuario predeterminado: admin. Contrasena predeterminada: 123456.',
     credentialsRequired: 'Por favor, introduzca nombre de usuario y contrasena',
     invalidCredentials: 'Nombre de usuario o contrasena incorrectos',
@@ -72,7 +73,6 @@ export default {
       active: 'Activo',
       disabled: 'Desactivado',
     },
-  },
 
   // Common
   common: {
@@ -291,7 +291,6 @@ export default {
       completed: 'Completada',
       failed: 'Fallida',
     },
-  },
 
   devices: {
     title: 'Dispositivos',
@@ -361,7 +360,6 @@ export default {
       desktop: 'Escritorio',
       custom: 'Personalizado',
     },
-  },
 
   performance: {
     title: 'Rendimiento',
@@ -460,7 +458,6 @@ export default {
         high: 'Alto',
         xhigh: 'Extra alto',
       },
-    },
     showToolCalls: 'Mostrar llamadas de herramientas',
     hideToolCalls: 'Ocultar llamadas de herramientas',
     messageQueue: 'Cola de mensajes',
@@ -602,7 +599,6 @@ export default {
       microphoneUnsupported: 'La captura de microfono no es compatible con este navegador.',
       microphoneRecordingFailed: 'Fallo la grabacion del microfono.',
     },
-  },
 
   // Jobs
   jobs: {
@@ -670,7 +666,6 @@ jobTriggered: 'Job ejecutado',
       runs: 'ejecuciones',
       noRuns: 'No se encontró historial.',
     },
-  },
 
   // Skills
   skills: {
@@ -830,7 +825,6 @@ jobTriggered: 'Job ejecutado',
       scanCwd: 'Escanear cwd',
       projectPlugins: 'Plugins del proyecto',
     },
-  },
 
   // Memory
   memory: {
@@ -1089,7 +1083,6 @@ jobTriggered: 'Job ejecutado',
       profileRestarted: 'Perfil reiniciado: {name}',
       profileRestartFailed: 'No se pudo reiniciar el perfil',
     },
-  },
 
   // Logs
   logs: {
@@ -1117,6 +1110,24 @@ jobTriggered: 'Job ejecutado',
       apiServer: 'Servidor API',
       models: 'Modelos',
       voice: 'Voz',
+      connection: 'Conexión',
+    connection: {
+      title: 'Conexión del backend',
+      description: 'Configure la dirección del servidor backend de Hermes Web UI. Déjelo vacío para usar la dirección de la página actual.',
+      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
+      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
+      placeholder: 'ej. http://192.168.1.100:6060',
+      namePlaceholder: 'Nombre del servidor (opcional)',
+      current: 'Conexión actual',
+      same_origin: 'Mismo origen (dirección de la página actual)',
+      reset: 'Restablecer por defecto',
+      saved: 'Guardado',
+      reload_hint: 'Recargue la página para aplicar la nueva dirección.',
+      saveToList: 'Agregar a la lista',
+      savedServers: 'Servidores guardados',
+      active: 'Activo',
+      switch: 'Cambiar',
+      removeConfirm: '¿Eliminar este servidor?',
     },
     display: {
       streaming: 'Respuestas en streaming',
@@ -1537,7 +1548,6 @@ jobTriggered: 'Job ejecutado',
         token: 'API token',
         pairing: 'Device pairing',
       },
-    },
     userAvatar: {
       title: 'Avatar de usuario',
       upload: 'Subir imagen',
@@ -1559,7 +1569,6 @@ jobTriggered: 'Job ejecutado',
       saveFailed: 'Error al guardar',
       saved: 'Guardado',
     },
-  },
   githubPreview: {
     title: "Vista previa de versión",
     description: "Clona el tag de GitHub seleccionado en el espacio de vista previa de Web UI, instala dependencias y lo ejecuta con los puertos de desarrollo.",
@@ -1670,7 +1679,6 @@ jobTriggered: 'Job ejecutado',
       claudeRun: "Print mode es la ruta más limpia para tareas únicas impulsadas por API.",
       codexRun: "Las tareas únicas de Codex deben ejecutarse dentro de un repositorio git.",
     },
-  },
 
   // Platform channel settings
   platform: {
@@ -2049,7 +2057,6 @@ jobTriggered: 'Job ejecutado',
         hours: 'hace {count} h',
         days: 'hace {count} d',
       },
-    },
     board: {
       create: 'Nuevo tablero',
       archive: 'Archivar tablero',
@@ -2148,5 +2155,4 @@ jobTriggered: 'Job ejecutado',
       total: 'Total',
       tasks: 'Tareas',
     },
-  },
 }

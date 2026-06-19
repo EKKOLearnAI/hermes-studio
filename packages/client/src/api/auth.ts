@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, getBaseUrlValue } from './client'
 
 export interface AuthStatus {
   hasPasswordLogin: boolean
@@ -6,13 +6,15 @@ export interface AuthStatus {
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
-  const res = await fetch('/api/auth/status')
+  const base = getBaseUrlValue()
+  const res = await fetch(`${base}/api/auth/status`)
   if (!res.ok) throw new Error('Failed to fetch auth status')
   return res.json()
 }
 
 export async function loginWithPassword(username: string, password: string): Promise<string> {
-  const res = await fetch('/api/auth/login', {
+  const base = getBaseUrlValue()
+  const res = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),

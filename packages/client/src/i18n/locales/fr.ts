@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Jeton',
     usernamePlaceholder: 'Nom d\'utilisateur',
     passwordPlaceholder: 'Mot de passe',
+    homeserverHint: 'URL du serveur domestique Matrix',
     defaultCredentialsHint: 'Nom d utilisateur par defaut : admin. Mot de passe par defaut : 123456.',
     credentialsRequired: 'Veuillez entrer le nom d\'utilisateur et le mot de passe',
     invalidCredentials: 'Nom d\'utilisateur ou mot de passe incorrect',
@@ -72,7 +73,6 @@ export default {
       active: 'Actif',
       disabled: 'Desactive',
     },
-  },
 
   // Common
   common: {
@@ -291,7 +291,6 @@ export default {
       completed: 'Terminé',
       failed: 'Échec',
     },
-  },
 
   devices: {
     title: 'Appareils',
@@ -361,7 +360,6 @@ export default {
       desktop: 'Bureau',
       custom: 'Personnalisé',
     },
-  },
 
   performance: {
     title: 'Performance',
@@ -460,7 +458,6 @@ export default {
         high: 'Élevé',
         xhigh: 'Très élevé',
       },
-    },
     showToolCalls: 'Afficher les appels d’outils',
     hideToolCalls: 'Masquer les appels d’outils',
     messageQueue: 'File de messages',
@@ -602,7 +599,6 @@ export default {
       microphoneUnsupported: 'La capture micro n est pas prise en charge par ce navigateur.',
       microphoneRecordingFailed: 'L enregistrement micro a echoue.',
     },
-  },
 
   // Jobs
   jobs: {
@@ -670,7 +666,6 @@ jobTriggered: 'Job declenche',
       runs: 'exécutions',
       noRuns: 'Aucun historique trouvé.',
     },
-  },
 
   // Skills
   skills: {
@@ -830,7 +825,6 @@ jobTriggered: 'Job declenche',
       scanCwd: 'Analyser cwd',
       projectPlugins: 'Plugins du projet',
     },
-  },
 
   // Memory
   memory: {
@@ -1089,7 +1083,6 @@ jobTriggered: 'Job declenche',
       profileRestarted: 'Profil redémarré : {name}',
       profileRestartFailed: 'Échec du redémarrage du profil',
     },
-  },
 
   // Logs
   logs: {
@@ -1117,6 +1110,24 @@ jobTriggered: 'Job declenche',
       apiServer: 'Serveur API',
       models: 'Modèles',
       voice: 'Voix',
+      connection: 'Connexion',
+    connection: {
+      title: 'Connexion backend',
+      description: "Configurez l'adresse du serveur backend Hermes Web UI. Laissez vide pour utiliser l'adresse de la page actuelle.",
+      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
+      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
+      placeholder: 'ex. http://192.168.1.100:6060',
+      namePlaceholder: 'Nom du serveur (optionnel)',
+      current: 'Connexion actuelle',
+      same_origin: 'Même origine (adresse de la page actuelle)',
+      reset: 'Réinitialiser par défaut',
+      saved: 'Enregistré',
+      reload_hint: "Rechargez la page pour appliquer la nouvelle adresse.",
+      saveToList: 'Ajouter à la liste',
+      savedServers: 'Serveurs enregistrés',
+      active: 'Actif',
+      switch: 'Basculer',
+      removeConfirm: 'Supprimer ce serveur ?',
     },
     display: {
       streaming: 'Reponses en continu',
@@ -1537,7 +1548,6 @@ jobTriggered: 'Job declenche',
         token: 'API token',
         pairing: 'Device pairing',
       },
-    },
     userAvatar: {
       title: 'Avatar utilisateur',
       upload: 'Importer une image',
@@ -1559,7 +1569,6 @@ jobTriggered: 'Job declenche',
       saveFailed: 'Échec de l’enregistrement',
       saved: 'Enregistré',
     },
-  },
   githubPreview: {
     title: "Aperçu de version",
     description: "Clone le tag GitHub sélectionné dans l’espace de prévisualisation Web UI, installe les dépendances, puis lance l’application sur les ports de développement.",
@@ -1670,7 +1679,6 @@ jobTriggered: 'Job declenche',
       claudeRun: "Print mode est le chemin le plus propre pour les tâches ponctuelles pilotées par API.",
       codexRun: "Les tâches ponctuelles Codex doivent s’exécuter dans un dépôt git.",
     },
-  },
 
   // Platform channel settings
   platform: {
@@ -2049,7 +2057,6 @@ jobTriggered: 'Job declenche',
         hours: 'il y a {count} h',
         days: 'il y a {count} j',
       },
-    },
     board: {
       create: 'Nouveau tableau',
       archive: 'Archiver le tableau',
@@ -2148,5 +2155,4 @@ jobTriggered: 'Job declenche',
       total: 'Total',
       tasks: 'Tâches',
     },
-  },
 }

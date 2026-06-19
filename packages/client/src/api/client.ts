@@ -1,7 +1,6 @@
 import router from '@/router'
 
 const DEFAULT_BASE_URL = ''
-const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
 
 function isDesktopShell(): boolean {
   return typeof window !== 'undefined' &&
@@ -22,17 +21,62 @@ export function setServerUrl(url: string) {
   localStorage.setItem('hermes_server_url', url)
 }
 
+// --- Multi-server management ---
+
+export interface SavedServer {
+  url: string
+  name: string
+}
+
+const SAVED_SERVERS_KEY = 'hermes_saved_servers'
+
+export function getSavedServers(): SavedServer[] {
+  try {
+    const raw = localStorage.getItem(SAVED_SERVERS_KEY)
+    if (!raw) return []
+    return JSON.parse(raw) as SavedServer[]
+  } catch {
+    return []
+  }
+}
+
+export function saveSavedServers(servers: SavedServer[]) {
+  localStorage.setItem(SAVED_SERVERS_KEY, JSON.stringify(servers))
+}
+
+export function addSavedServer(url: string, name: string): SavedServer[] {
+  const servers = getSavedServers()
+  const cleanUrl = url.trim().replace(/\/+$/, '')
+  if (!cleanUrl) return servers
+  // Avoid duplicates
+  const exists = servers.find(s => s.url === cleanUrl)
+  if (exists) {
+    exists.name = name || exists.name
+  } else {
+    servers.push({ url: cleanUrl, name: name || cleanUrl })
+  }
+  saveSavedServers(servers)
+  return servers
+}
+
+export function removeSavedServer(url: string): SavedServer[] {
+  const servers = getSavedServers().filter(s => s.url !== url)
+  saveSavedServers(servers)
+  return servers
+}
+
+export function switchServer(url: string) {
+  const cleanUrl = url.trim().replace(/\/+$/, '')
+  setServerUrl(cleanUrl)
+  clearApiKey()
+}
+
 export function setApiKey(key: string) {
   localStorage.setItem('hermes_api_key', key)
 }
 
 export function clearApiKey() {
   localStorage.removeItem('hermes_api_key')
-}
-
-function clearAuthSessionState() {
-  clearApiKey()
-  localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
 }
 
 export function hasApiKey(): boolean {
@@ -74,7 +118,7 @@ export function getStoredUsername(): string | null {
 }
 
 export function getActiveProfileName(): string | null {
-  return localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY)
+  return localStorage.getItem('hermes_active_profile_name')
 }
 
 function bodyHasProfileSelector(body: BodyInit | null | undefined): boolean {
@@ -175,7 +219,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     !path.startsWith('/v1/')
 
   if (res.status === 401 && isLocalBff) {
-    clearAuthSessionState()
+    clearApiKey()
     emitAuthNotice('expired')
     if (router.currentRoute.value.name !== 'login') {
       router.replace({ name: 'login' })
@@ -187,7 +231,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     const text = await res.text().catch(() => '')
     if (res.status === 403 && isLocalBff) {
       if (text.includes('User is disabled or does not exist')) {
-        clearAuthSessionState()
+        clearApiKey()
         emitAuthNotice('expired')
         if (router.currentRoute.value.name !== 'login') {
           router.replace({ name: 'login' })

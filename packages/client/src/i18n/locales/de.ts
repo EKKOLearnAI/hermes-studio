@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Benutzername',
     passwordPlaceholder: 'Passwort',
+    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
     defaultCredentialsHint: 'Standard-Benutzername: admin. Standard-Passwort: 123456.',
     credentialsRequired: 'Bitte Benutzername und Passwort eingeben',
     invalidCredentials: 'Ungultiger Benutzername oder Passwort',
@@ -72,7 +73,6 @@ export default {
       active: 'Aktiv',
       disabled: 'Deaktiviert',
     },
-  },
 
   // Common
   common: {
@@ -291,7 +291,6 @@ export default {
       completed: 'Abgeschlossen',
       failed: 'Fehlgeschlagen',
     },
-  },
 
   devices: {
     title: 'Geräte',
@@ -361,7 +360,6 @@ export default {
       desktop: 'Desktop-App',
       custom: 'Benutzerdefiniert',
     },
-  },
 
   performance: {
     title: 'Leistung',
@@ -460,7 +458,6 @@ export default {
         high: 'Hoch',
         xhigh: 'Sehr hoch',
       },
-    },
     showToolCalls: 'Tool-Aufrufe anzeigen',
     hideToolCalls: 'Tool-Aufrufe ausblenden',
     messageQueue: 'Nachrichtenwarteschlange',
@@ -602,7 +599,6 @@ export default {
       microphoneUnsupported: 'Mikrofonaufnahme wird in diesem Browser nicht unterstuetzt.',
       microphoneRecordingFailed: 'Mikrofonaufnahme fehlgeschlagen.',
     },
-  },
 
   // Jobs
   jobs: {
@@ -670,7 +666,6 @@ jobTriggered: 'Job ausgelost',
       runs: 'Läufe',
       noRuns: 'Kein Verlauf gefunden.',
     },
-  },
 
   // Skills
   skills: {
@@ -830,7 +825,6 @@ jobTriggered: 'Job ausgelost',
       scanCwd: 'Arbeitsverzeichnis scannen',
       projectPlugins: 'Projekt-Plugins',
     },
-  },
 
   // Memory
   memory: {
@@ -1089,7 +1083,6 @@ jobTriggered: 'Job ausgelost',
       profileRestarted: 'Profil neu gestartet: {name}',
       profileRestartFailed: 'Profil-Neustart fehlgeschlagen',
     },
-  },
 
   // Logs
   logs: {
@@ -1117,6 +1110,24 @@ jobTriggered: 'Job ausgelost',
       apiServer: 'API-Server',
       models: 'Modelle',
       voice: 'Sprache',
+      connection: 'Verbindung',
+    connection: {
+      title: 'Backend-Verbindung',
+      description: 'Konfigurieren Sie die Adresse des Hermes Web UI Backend-Servers. Leer lassen, um die aktuelle Seitenadresse zu verwenden.',
+      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
+      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
+      placeholder: 'z.B. http://192.168.1.100:6060',
+      namePlaceholder: 'Servername (optional)',
+      current: 'Aktuelle Verbindung',
+      same_origin: 'Gleicher Ursprung (aktuelle Seitenadresse)',
+      reset: 'Auf Standard zurücksetzen',
+      saved: 'Gespeichert',
+      reload_hint: 'Seite neu laden, um die neue Adresse anzuwenden.',
+      saveToList: 'Zur Liste hinzufügen',
+      savedServers: 'Gespeicherte Server',
+      active: 'Aktiv',
+      switch: 'Wechseln',
+      removeConfirm: 'Diesen Server entfernen?',
     },
     display: {
       streaming: 'Streaming-Antworten',
@@ -1537,7 +1548,6 @@ jobTriggered: 'Job ausgelost',
         token: 'API token',
         pairing: 'Device pairing',
       },
-    },
     userAvatar: {
       title: 'Benutzeravatar',
       upload: 'Bild hochladen',
@@ -1559,7 +1569,6 @@ jobTriggered: 'Job ausgelost',
       saveFailed: 'Speichern fehlgeschlagen',
       saved: 'Gespeichert',
     },
-  },
   githubPreview: {
     title: "Versionsvorschau",
     description: "Klont den ausgewählten GitHub-Tag in den Web-UI-Vorschaubereich, installiert Abhängigkeiten und startet ihn mit den Entwicklungsports.",
@@ -1670,7 +1679,6 @@ jobTriggered: 'Job ausgelost',
       claudeRun: "Print mode ist der sauberste Weg fur API-gesteuerte Einmalaufgaben.",
       codexRun: "Codex-Einmalaufgaben mussen in einem Git-Repository laufen.",
     },
-  },
 
   // Platform channel settings
   platform: {
@@ -2049,7 +2057,6 @@ jobTriggered: 'Job ausgelost',
         hours: 'vor {count} Std.',
         days: 'vor {count} Tg.',
       },
-    },
     board: {
       create: 'Neues Board',
       archive: 'Board archivieren',
@@ -2148,5 +2155,4 @@ jobTriggered: 'Job ausgelost',
       total: 'Gesamt',
       tasks: 'Aufgaben',
     },
-  },
 }

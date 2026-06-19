@@ -12,6 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Username',
     passwordPlaceholder: 'Password',
+    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
     defaultCredentialsHint: 'Default username: admin. Default password: 123456.',
     credentialsRequired: 'Please enter username and password',
     invalidCredentials: 'Invalid username or password',
@@ -72,7 +73,6 @@ export default {
       active: 'Active',
       disabled: 'Disabled',
     },
-  },
 
   // Common
   common: {
@@ -291,7 +291,6 @@ export default {
       completed: 'Completed',
       failed: 'Failed',
     },
-  },
 
   devices: {
     title: 'Devices',
@@ -361,7 +360,6 @@ export default {
       desktop: 'Desktop',
       custom: 'Custom',
     },
-  },
 
   performance: {
     title: 'Performance',
@@ -464,7 +462,6 @@ export default {
         high: 'High',
         xhigh: 'Extra high',
       },
-    },
     autoPlaySpeech: 'Auto-play voice',
     voiceInput: {
       startCapture: 'Start voice capture',
@@ -680,7 +677,6 @@ export default {
         hours: '{count}h ago',
         days: '{count}d ago',
       },
-    },
     detail: {
       status: 'Status',
       assignee: 'Assignee',
@@ -738,7 +734,6 @@ export default {
       total: 'Total',
       tasks: 'Tasks',
     },
-  },
 
   // Jobs
   jobs: {
@@ -806,7 +801,6 @@ export default {
       runs: 'runs',
       noRuns: 'No run history found.',
     },
-  },
 
   // Skills
   skills: {
@@ -966,7 +960,6 @@ export default {
       scanCwd: 'Scan cwd',
       projectPlugins: 'Project plugins',
     },
-  },
 
   // Memory
   memory: {
@@ -1233,7 +1226,6 @@ export default {
       profileRestarted: 'Profile restarted: {name}',
       profileRestartFailed: 'Failed to restart profile',
     },
-  },
 
   // Logs
   logs: {
@@ -1261,6 +1253,24 @@ export default {
       apiServer: 'API Server',
       models: 'Models',
       voice: 'Voice',
+      connection: 'Connection',
+    connection: {
+      title: 'Backend Connection',
+      description: 'Configure the Hermes Web UI backend server address. Leave empty to use the current page origin.',
+      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
+      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
+      placeholder: 'e.g. http://192.168.1.100:6060',
+      namePlaceholder: 'Server name (optional)',
+      current: 'Current connection',
+      same_origin: 'Same origin (current page address)',
+      reset: 'Reset to default',
+      saved: 'Saved',
+      reload_hint: 'Reload the page to apply the new address.',
+      saveToList: 'Add to saved list',
+      savedServers: 'Saved Servers',
+      active: 'Active',
+      switch: 'Switch',
+      removeConfirm: 'Remove this server?',
     },
     models: {
       apiKey: 'API Key',
@@ -1429,7 +1439,6 @@ export default {
         token: 'API token',
         pairing: 'Device pairing',
       },
-    },
     userAvatar: {
       title: 'User Avatar',
       upload: 'Upload Image',
@@ -1702,7 +1711,6 @@ export default {
       mimoStylePromptHint: 'Optional — describe the speaking style in natural language',
       mimoStylePromptPlaceholder: 'e.g., Bright and bouncy tone, fast pace',
     },
-  },
   githubPreview: {
     title: "Version Preview",
     description: "Clone a selected GitHub tag into the Web UI preview workspace, install dependencies, and run it with the development ports.",
@@ -1813,7 +1821,6 @@ export default {
       claudeRun: "Print mode is the cleanest path for API-driven one-shot tasks.",
       codexRun: "Codex one-shot tasks must run inside a git repository.",
     },
-  },
 
   // Platform channel settings
   platform: {
