@@ -183,8 +183,8 @@ groupChatRoutes.get('/api/hermes/group-chat/rooms/:roomId', async (ctx) => {
     }
 
     const offset = ctx.query.offset ? Math.max(0, parseInt(ctx.query.offset as string, 10) || 0) : 0
-    const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 300) : 300
-    const messages = chatServer.getStorage().getMessages(ctx.params.roomId, limit, offset)
+    const limit = ctx.query.limit ? Math.max(1, parseInt(ctx.query.limit as string, 10) || 150) : 150
+    const messages = chatServer.getStorage().getRecentMessagesForUI(ctx.params.roomId, limit, offset)
     const total = chatServer.getStorage().getMessageCount(ctx.params.roomId)
     const agents = chatServer.getStorage().getRoomAgents(ctx.params.roomId)
     const members = chatServer.getStorage().getRoomMembers(ctx.params.roomId)
@@ -412,4 +412,31 @@ groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/compress', async (ctx
         ctx.status = 500
         ctx.body = { error: err.message }
     }
+})
+
+// Leave room
+groupChatRoutes.post('/api/hermes/group-chat/rooms/:roomId/leave', async (ctx) => {
+    if (!chatServer) { ctx.status = 503; ctx.body = { error: 'Group chat not initialized' }; return }
+    const { roomId } = ctx.params
+    const storage = chatServer.getStorage()
+    if (!storage.getRoom(roomId)) { ctx.status = 404; ctx.body = { error: 'Room not found' }; return }
+    const authUserId = ctx.state.authUserId
+    const agents = storage.getRoomAgents(roomId)
+    if (authUserId) {
+        const userId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).stub || '' // simplified
+        for (const agent of agents) {
+            if (agent.name === 'default' || agent.profile === 'default') {
+                storage.removeRoomAgent(roomId, agent.id || agent.agentId)
+                chatServer.agentClients.removeAgentFromRoom(roomId, agent.agentId)
+                storage.removeRoomMembersForAgent(roomId, agent)
+            }
+        }
+    }
+    const db = (storage as any).db?.()
+    if (db && authUserId) db.prepare('DELETE FROM gc_room_members WHERE roomId = ? AND authUserId = ?').run(roomId, authUserId)
+    const remainingAgents = storage.getRoomAgents(roomId)
+    const remainingMembers = storage.getRoomMembers(roomId)
+    if (chatServer.io) chatServer.io.to('room:' + roomId).emit('member_left', { roomId, agents: remainingAgents, members: remainingMembers })
+    if (remainingAgents.length === 0) storage.deleteRoom(roomId)
+    ctx.body = { success: true, agents: remainingAgents, members: remainingMembers }
 })
