@@ -86,6 +86,7 @@ interface SystemMemoryUsage {
 
 let previousSystemCpu: CpuTimesSample | null = null
 let previousWebCpu: WebCpuSample | null = null
+let previousCgroupCpuNs: { at: number; usageNs: number } | null = null
 const previousWindowsProcessCpu = new Map<number, ProcessCpuSample>()
 
 function safeCpus(): ReturnType<typeof cpus> {
@@ -124,7 +125,136 @@ function procCpuCount(): number {
 }
 
 function safeCpuCount(): number {
+  // Inside a container, report the CPU quota (cores) as the effective cpu count.
+  const cgroupQuota = readCgroupCpuQuota()
+  if (cgroupQuota != null && cgroupQuota > 0) return Math.ceil(cgroupQuota)
   return safeCpus().length || procCpuCount() || 1
+}
+
+// ── Container / cgroup detection ──
+
+function readCgroupFile(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf-8').trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Detect whether we're running inside a container and which cgroup version is active.
+ * Returns 'v1' | 'v2' | null.
+ * Note: We deliberately do NOT early-return on /.dockerenv because being in a container
+ * doesn't tell us which cgroup version is in use. We must probe the filesystem.
+ */
+function detectCgroupVersion(): 'v1' | 'v2' | null {
+  // cgroup v2 unified hierarchy
+  if (readCgroupFile('/sys/fs/cgroup/cgroup.controllers') !== null) return 'v2'
+  // cgroup v1 memory controller
+  if (readCgroupFile('/sys/fs/cgroup/memory/memory.usage_in_bytes') !== null) return 'v1'
+  return null
+}
+
+/**
+ * Read container CPU quota (in cores) from cgroup.
+ * Returns null if not in a container or quota is unlimited.
+ */
+function readCgroupCpuQuota(): number | null {
+  const version = detectCgroupVersion()
+  if (version === 'v2') {
+    const line = readCgroupFile('/sys/fs/cgroup/cpu.max')
+    if (line) {
+      const [quotaStr, periodStr] = line.split(/\s+/)
+      const quota = Number(quotaStr)
+      const period = Number(periodStr)
+      if (quota > 0 && period > 0) return quota / period
+    }
+    return null
+  }
+  if (version === 'v1') {
+    const quotaStr = readCgroupFile('/sys/fs/cgroup/cpu/cpu.cfs_quota_us')
+    const periodStr = readCgroupFile('/sys/fs/cgroup/cpu/cpu.cfs_period_us')
+    if (quotaStr && periodStr) {
+      const quota = Number(quotaStr)
+      const period = Number(periodStr)
+      if (quota > 0 && period > 0) return quota / period
+    }
+    return null
+  }
+  return null
+}
+
+/**
+ * Read container CPU usage (in nanoseconds) from cgroup.
+ * Returns null if not in a container.
+ */
+function readCgroupCpuUsageNs(): number | null {
+  const version = detectCgroupVersion()
+  if (version === 'v2') {
+    const stat = readCgroupFile('/sys/fs/cgroup/cpu.stat')
+    if (stat) {
+      const match = stat.match(/^usage_usec\s+(\d+)$/m)
+      if (match) return Number(match[1]) * 1000
+    }
+    return null
+  }
+  if (version === 'v1') {
+    const str = readCgroupFile('/sys/fs/cgroup/cpuacct/cpuacct.usage')
+    if (str) return Number(str)
+    return null
+  }
+  return null
+}
+
+/**
+ * Read container memory limit (bytes) from cgroup.
+ * Returns null if not in a container or limit is effectively unlimited.
+ */
+function readCgroupMemoryLimit(): number | null {
+  const version = detectCgroupVersion()
+  if (version === 'v2') {
+    const str = readCgroupFile('/sys/fs/cgroup/memory.max')
+    if (str && str !== 'max') {
+      const value = Number(str)
+      if (Number.isFinite(value) && value > 0) return value
+    }
+    return null
+  }
+  if (version === 'v1') {
+    const str = readCgroupFile('/sys/fs/cgroup/memory/memory.limit_in_bytes')
+    if (str) {
+      const value = Number(str)
+      // "9223372036854771712" means unlimited on 64-bit systems
+      if (Number.isFinite(value) && value > 0 && value < 2 ** 60) return value
+    }
+    return null
+  }
+  return null
+}
+
+/**
+ * Read container memory usage (bytes) from cgroup.
+ * Returns null if not in a container.
+ */
+function readCgroupMemoryUsage(): number | null {
+  const version = detectCgroupVersion()
+  if (version === 'v2') {
+    const str = readCgroupFile('/sys/fs/cgroup/memory.current')
+    if (str) {
+      const value = Number(str)
+      if (Number.isFinite(value) && value >= 0) return value
+    }
+    return null
+  }
+  if (version === 'v1') {
+    const str = readCgroupFile('/sys/fs/cgroup/memory/memory.usage_in_bytes')
+    if (str) {
+      const value = Number(str)
+      if (Number.isFinite(value) && value >= 0) return value
+    }
+    return null
+  }
+  return null
 }
 
 function safeLoadAverage(): number[] {
@@ -177,6 +307,10 @@ function readCpuTimes(): CpuTimesSample {
 }
 
 function sampleSystemCpuPercent(): number | null {
+  // Inside a container, use cgroup CPU usage vs quota for accurate metrics.
+  const cgroupUsage = sampleCgroupCpuPercent()
+  if (cgroupUsage !== null) return cgroupUsage
+
   try {
     const current = readCpuTimes()
     const previous = previousSystemCpu
@@ -187,6 +321,30 @@ function sampleSystemCpuPercent(): number | null {
     const totalDelta = current.total - previous.total
     if (totalDelta <= 0) return null
     return clampPercent(((totalDelta - idleDelta) / totalDelta) * 100)
+  } catch {
+    return null
+  }
+}
+
+function sampleCgroupCpuPercent(): number | null {
+  try {
+    const cpuQuota = readCgroupCpuQuota()
+    const usageNs = readCgroupCpuUsageNs()
+    if (usageNs == null) return null
+
+    const now = Date.now()
+    const previous = previousCgroupCpuNs
+    previousCgroupCpuNs = { at: now, usageNs }
+    if (!previous) return null
+
+    const elapsedNs = (now - previous.at) * 1_000_000
+    const usedNs = usageNs - previous.usageNs
+    if (elapsedNs <= 0 || usedNs < 0) return null
+
+    // If a CPU quota is set, base percent on quota cores; otherwise on host cores.
+    const cores = cpuQuota ?? safeCpuCount()
+    if (cores <= 0) return null
+    return clampPercent((usedNs / elapsedNs / cores) * 100)
   } catch {
     return null
   }
@@ -290,6 +448,21 @@ function collectSystemMemoryUsage(): SystemMemoryUsage {
   if (platform() === 'darwin') {
     return collectMacSystemMemoryUsage() || fallbackSystemMemoryUsage()
   }
+
+  // Inside a container, use cgroup memory limit for accurate metrics.
+  const limit = readCgroupMemoryLimit()
+  const usage = readCgroupMemoryUsage()
+  if (limit != null && usage != null) {
+    const usedMemory = Math.min(limit, usage)
+    const freeMemory = Math.max(0, limit - usedMemory)
+    return {
+      totalMemoryBytes: limit,
+      freeMemoryBytes: freeMemory,
+      usedMemoryBytes: usedMemory,
+      memoryPercent: clampPercent((usedMemory / limit) * 100),
+    }
+  }
+
   return fallbackSystemMemoryUsage()
 }
 
