@@ -1,5 +1,6 @@
 import type { Context } from 'koa'
 import { existsSync, readFileSync } from 'fs'
+import { chmod, chown, stat } from 'fs/promises'
 import { join } from 'path'
 import { getHermesBin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
@@ -20,6 +21,59 @@ function resolveProfileDir(profile: string): string {
 
 function getJobsPath(profile: string): string {
   return join(resolveProfileDir(profile), 'cron', 'jobs.json')
+}
+
+const CRON_MANAGED_FILES = [
+  { relativePath: 'cron/jobs.json', defaultMode: 0o644 },
+  { relativePath: '.env', defaultMode: 0o600 },
+] as const
+
+interface FileAccessMetadata {
+  path: string
+  mode: number
+  uid?: number
+  gid?: number
+}
+
+async function statAccessMetadata(path: string): Promise<FileAccessMetadata | null> {
+  try {
+    const stats = await stat(path)
+    return {
+      path,
+      mode: stats.mode & 0o777,
+      uid: stats.uid,
+      gid: stats.gid,
+    }
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+export async function captureCronManagedFileMetadata(profileDir: string): Promise<FileAccessMetadata[]> {
+  const profileMetadata = await statAccessMetadata(profileDir)
+  return Promise.all(CRON_MANAGED_FILES.map(async (file) => {
+    const target = join(profileDir, ...file.relativePath.split('/'))
+    const existing = await statAccessMetadata(target)
+    return {
+      path: target,
+      mode: existing?.mode ?? file.defaultMode,
+      uid: existing?.uid ?? profileMetadata?.uid,
+      gid: existing?.gid ?? profileMetadata?.gid,
+    }
+  }))
+}
+
+export async function restoreCronManagedFileMetadata(metadata: FileAccessMetadata[]): Promise<void> {
+  for (const entry of metadata) {
+    if (!existsSync(entry.path)) continue
+    await chmod(entry.path, entry.mode)
+    if (process.platform !== 'win32' && typeof entry.uid === 'number' && typeof entry.gid === 'number') {
+      await chown(entry.path, entry.uid, entry.gid).catch((err: any) => {
+        if (err?.code !== 'ENOENT' && err?.code !== 'EPERM' && err?.code !== 'EINVAL') throw err
+      })
+    }
+  }
 }
 
 function normalizeJob(job: JobRecord): JobRecord {
@@ -116,6 +170,7 @@ function getSkills(body: Record<string, any>): string[] | null {
 
 async function runHermesCron(profile: string, args: string[]): Promise<void> {
   const profileDir = resolveProfileDir(profile)
+  const metadata = await captureCronManagedFileMetadata(profileDir)
   try {
     await execHermesWithBin(getHermesBin(), args, {
       cwd: process.cwd(),
@@ -128,6 +183,8 @@ async function runHermesCron(profile: string, args: string[]): Promise<void> {
     const stderr = String(error?.stderr || '').trim()
     const stdout = String(error?.stdout || '').trim()
     throw new Error(stderr || stdout || error?.message || 'Hermes cron command failed')
+  } finally {
+    await restoreCronManagedFileMetadata(metadata)
   }
 }
 

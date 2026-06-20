@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -24,7 +24,7 @@ vi.mock('child_process', () => ({
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
-import { create, pause, remove, resume, run as runJob, update } from '../../packages/server/src/controllers/hermes/jobs'
+import { captureCronManagedFileMetadata, create, pause, remove, restoreCronManagedFileMetadata, resume, run as runJob, update } from '../../packages/server/src/controllers/hermes/jobs'
 
 function createMockCtx(overrides: Record<string, any> = {}) {
   const ctx: any = {
@@ -79,6 +79,43 @@ describe('Hermes jobs controller', () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true })
     tempDir = ''
     testState.profileDir = ''
+  })
+
+  it('restores existing cron-managed file modes after Hermes CLI rewrites them', async () => {
+    const cronDir = join(tempDir, 'cron')
+    mkdirSync(cronDir, { recursive: true })
+    const jobsPath = join(cronDir, 'jobs.json')
+    const envPath = join(tempDir, '.env')
+    writeFileSync(jobsPath, '{"jobs":[]}')
+    writeFileSync(envPath, 'TOKEN=secret\n')
+    chmodSync(jobsPath, 0o644)
+    chmodSync(envPath, 0o600)
+
+    const metadata = await captureCronManagedFileMetadata(tempDir)
+
+    chmodSync(jobsPath, 0o600)
+    chmodSync(envPath, 0o644)
+    await restoreCronManagedFileMetadata(metadata)
+
+    expect(statSync(jobsPath).mode & 0o777).toBe(0o644)
+    expect(statSync(envPath).mode & 0o777).toBe(0o600)
+  })
+
+  it('uses safe default modes for cron-managed files created by Hermes CLI', async () => {
+    const metadata = await captureCronManagedFileMetadata(tempDir)
+    const cronDir = join(tempDir, 'cron')
+    mkdirSync(cronDir, { recursive: true })
+    const jobsPath = join(cronDir, 'jobs.json')
+    const envPath = join(tempDir, '.env')
+    writeFileSync(jobsPath, '{"jobs":[]}')
+    writeFileSync(envPath, 'TOKEN=secret\n')
+    chmodSync(jobsPath, 0o600)
+    chmodSync(envPath, 0o644)
+
+    await restoreCronManagedFileMetadata(metadata)
+
+    expect(statSync(jobsPath).mode & 0o777).toBe(0o644)
+    expect(statSync(envPath).mode & 0o777).toBe(0o600)
   })
 
   it('returns 404 before editing when the local cron job does not exist', async () => {
