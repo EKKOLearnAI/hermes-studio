@@ -870,7 +870,7 @@ export async function usageStats(ctx: any) {
  */
 export async function listWorkspaceFolders(ctx: any) {
   const { resolve, join } = await import('path')
-  const { readdir } = await import('fs/promises')
+  const { readdir, stat } = await import('fs/promises')
   const { existsSync } = await import('fs')
   const { homedir } = await import('os')
 
@@ -893,13 +893,27 @@ export async function listWorkspaceFolders(ctx: any) {
 
   try {
     const entries = await readdir(fullPath, { withFileTypes: true })
-    const folders = entries
-      .filter(e => (e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('.'))
-      .map(e => ({
+    const folders = (await Promise.all(entries.map(async e => {
+      if (e.name.startsWith('.')) return null
+
+      const entryPath = join(fullPath, e.name)
+      if (!e.isDirectory()) {
+        if (!e.isSymbolicLink()) return null
+        try {
+          const target = await stat(entryPath)
+          if (!target.isDirectory()) return null
+        } catch {
+          return null
+        }
+      }
+
+      return {
         name: e.name,
-        path: subPath ? `${subPath}/${e.name}` : e.name,
-        fullPath: join(fullPath, e.name),
-      }))
+        path: subPath ? subPath + '/' + e.name : e.name,
+        fullPath: entryPath,
+      }
+    })))
+      .filter((folder): folder is { name: string; path: string; fullPath: string } => folder !== null)
       .sort((a, b) => a.name.localeCompare(b.name))
 
     ctx.body = { base: WORKSPACE_BASE, current: subPath, folders }

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,7 @@ const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
 const tempDirs: string[] = []
+const originalWorkspaceBase = process.env.WORKSPACE_BASE
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -178,6 +179,19 @@ describe('session conversations controller', () => {
     bridgeGetRuntimeStateMock.mockReset()
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
+  })
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+
+    if (originalWorkspaceBase === undefined) {
+      delete process.env.WORKSPACE_BASE
+    } else {
+      process.env.WORKSPACE_BASE = originalWorkspaceBase
+    }
   })
 
   it('lists conversations from the local session store', async () => {
@@ -1058,11 +1072,29 @@ describe('session conversations controller', () => {
     tempDirs.push(homeDir)
     const baseDir = join(homeDir, 'workspace-base')
     const realDir = join(homeDir, 'real-project')
+    const realFile = join(homeDir, 'not-a-project.txt')
     mkdirSync(baseDir, { recursive: true })
     mkdirSync(realDir, { recursive: true })
-    symlinkSync(realDir, join(baseDir, 'linked-project'))
+    writeFileSync(realFile, 'not a folder')
+
+    const trySymlink = (target: string, linkPath: string, type: 'dir' | 'file' | 'junction') => {
+      try {
+        symlinkSync(target, linkPath, type)
+        return true
+      } catch (err: any) {
+        if (err?.code === 'EPERM' || err?.code === 'EACCES') return false
+        throw err
+      }
+    }
+
+    const dirLinkType = process.platform === 'win32' ? 'junction' : 'dir'
+    const linkedDirCreated = trySymlink(realDir, join(baseDir, 'linked-project'), dirLinkType)
+    trySymlink(realFile, join(baseDir, 'linked-file'), 'file')
+    trySymlink(join(homeDir, 'missing-project'), join(baseDir, 'broken-project'), 'dir')
     mkdirSync(join(baseDir, 'visible-project'), { recursive: true })
     mkdirSync(join(baseDir, '.hidden-project'), { recursive: true })
+
+    if (!linkedDirCreated) return
 
     process.env.WORKSPACE_BASE = baseDir
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
