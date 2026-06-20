@@ -170,7 +170,7 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
     }
 }
 
-async async function handleLeaveRoom(roomId: string) {
+async function handleLeaveRoom(roomId: string) {
         await store.leaveCurrentRoom()
         router.push({ name: 'hermes.groupChat' })
     }
