@@ -12,7 +12,7 @@ export default {
     tokenLogin: 'Вход по токену',
     usernamePlaceholder: 'Имя пользователя',
     passwordPlaceholder: 'Пароль',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: 'Для подключения к удалённому бэкенду разверните ниже, чтобы настроить адрес сервера. Удалённый бэкенд должен быть запущен с командой hermes-web-ui client.',
     defaultCredentialsHint: 'Логин по умолчанию: admin, пароль по умолчанию: 123456',
     credentialsRequired: 'Введите имя пользователя и пароль',
     invalidCredentials: 'Неверное имя пользователя или пароль',
@@ -71,6 +71,7 @@ export default {
       active: 'Включён',
       disabled: 'Отключён',
     },
+  },
 
 
   common: {
@@ -213,6 +214,7 @@ export default {
       completed: 'Завершено',
       failed: 'Ошибка',
     },
+  },
 
   codingAgents: {
     installFailedHermesHint: 'Installation failed. Ask Hermes to install it for you.',
@@ -287,6 +289,7 @@ export default {
       desktop: 'Настольное приложение',
       custom: 'Пользовательский',
     },
+  },
 
   performance: {
     title: 'Мониторинг производительности',
@@ -377,6 +380,7 @@ export default {
         high: 'Высокая',
         xhigh: 'Очень высокая',
       },
+    },
     autoPlaySpeech: 'Автовоспроизведение речи',
     voiceInput: {
       startCapture: 'Начать голосовой ввод',
@@ -581,6 +585,7 @@ export default {
         hours: '{count} ч. назад',
         days: '{count} дн. назад',
       },
+    },
     detail: {
       status: 'Статус',
       assignee: 'Ответственный',
@@ -638,6 +643,7 @@ export default {
       total: 'Всего',
       tasks: 'задач',
     },
+  },
 
 
   jobs: {
@@ -705,6 +711,7 @@ export default {
       runs: 'запусков',
       noRuns: 'Нет истории выполнения.',
     },
+  },
 
 
   skills: {
@@ -823,6 +830,7 @@ export default {
       scanCwd: 'Сканировать cwd',
       projectPlugins: 'Плагины проекта',
     },
+  },
 
 
   memory: {
@@ -1080,6 +1088,7 @@ export default {
       profileRestarted: 'Профиль перезапущен: {name}',
       profileRestartFailed: 'Ошибка перезапуска профиля',
     },
+  },
 
 
   logs: {
@@ -1108,23 +1117,6 @@ export default {
       models: 'Модели',
       voice: 'Голос',
       connection: 'Подключение',
-    connection: {
-      title: 'Подключение к бэкенду',
-      description: 'Настройте адрес сервера бэкенда Hermes Web UI. Оставьте пустым для использования адреса текущей страницы.',
-      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
-      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
-      placeholder: 'напр. http://192.168.1.100:6060',
-      namePlaceholder: 'Имя сервера (необязательно)',
-      current: 'Текущее подключение',
-      same_origin: 'Тот же источник (адрес текущей страницы)',
-      reset: 'Сбросить по умолчанию',
-      saved: 'Сохранено',
-      reload_hint: 'Перезагрузите страницу для применения нового адреса.',
-      saveToList: 'Добавить в список',
-      savedServers: 'Сохранённые серверы',
-      active: 'Активен',
-      switch: 'Переключить',
-      removeConfirm: 'Удалить этот сервер?',
     },
     models: {
       apiKey: 'API-ключ',
@@ -1133,6 +1125,25 @@ export default {
       saved: 'Сохранено',
       saveFailed: 'Ошибка сохранения',
       noProviders: 'Нет настроенных моделей',
+    connection: {
+      title: 'Подключение к бэкенду',
+      description: 'Настройте адрес сервера Hermes Web UI. Оставьте пустым, чтобы использовать текущий адрес страницы.',
+      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
+      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
+      placeholder: 'напр. http://192.168.1.100:6060',
+      namePlaceholder: 'Имя сервера (необязательно)',
+      current: 'Текущее подключение',
+      same_origin: 'Тот же источник (текущий адрес страницы)',
+      reset: 'Сбросить по умолчанию',
+      saved: 'Сохранено',
+      reload_hint: 'Перезагрузите страницу, чтобы применить новый адрес.',
+      saveToList: 'Добавить в список',
+      savedServers: 'Сохранённые серверы',
+      active: 'Активный',
+      switch: 'Переключить',
+      removeConfirm: 'Удалить этот сервер?',
+    },
+
     },
     display: {
       streaming: 'Потоковый ответ',
@@ -1293,6 +1304,7 @@ export default {
         token: 'API token',
         pairing: 'Device pairing',
       },
+    },
     userAvatar: {
       title: 'Аватар пользователя',
       upload: 'Загрузить изображение',
@@ -1560,6 +1572,7 @@ export default {
       mimoStylePromptHint: 'Необязательно. Опишите желаемый стиль речи естественным языком',
       mimoStylePromptPlaceholder: 'Например: используйте лёгкий, приподнятый тон, темп речи чуть выше среднего',
     },
+  },
 
 
   platform: {

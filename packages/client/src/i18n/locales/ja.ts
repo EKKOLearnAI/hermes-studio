@@ -12,7 +12,7 @@ export default {
     tokenLogin: 'トークン',
     usernamePlaceholder: 'ユーザー名',
     passwordPlaceholder: 'パスワード',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: 'リモートバックエンドに接続するには、以下を展開してサーバーアドレスを設定します。リモートバックエンドは hermes-web-ui client コマンドで実行されている必要があります。',
     defaultCredentialsHint: '既定のユーザー名：admin、既定のパスワード：123456',
     credentialsRequired: 'ユーザー名とパスワードを入力してください',
     invalidCredentials: 'ユーザー名またはパスワードが正しくありません',
@@ -73,6 +73,7 @@ export default {
       active: '有効',
       disabled: '無効',
     },
+  },
 
   // 共通
   common: {
@@ -291,6 +292,7 @@ export default {
       completed: '完了',
       failed: '失敗',
     },
+  },
 
   devices: {
     title: 'デバイス',
@@ -360,6 +362,7 @@ export default {
       desktop: 'デスクトップ',
       custom: 'カスタム',
     },
+  },
 
   performance: {
     title: 'パフォーマンス',
@@ -458,6 +461,7 @@ export default {
         high: '高',
         xhigh: '最高',
       },
+    },
     showToolCalls: 'ツール呼び出しを表示',
     hideToolCalls: 'ツール呼び出しを非表示',
     messageQueue: 'メッセージキュー',
@@ -599,6 +603,7 @@ export default {
       microphoneUnsupported: 'このブラウザはマイク録音に対応していません。',
       microphoneRecordingFailed: 'マイク録音に失敗しました。',
     },
+  },
 
   // スケジュールジョブ
   jobs: {
@@ -666,6 +671,7 @@ export default {
       runs: '件',
       noRuns: '実行履歴がありません。',
     },
+  },
 
   // スキル
   skills: {
@@ -825,6 +831,7 @@ export default {
       scanCwd: 'cwd をスキャン',
       projectPlugins: 'プロジェクトプラグイン',
     },
+  },
 
   // メモリ
   memory: {
@@ -1083,6 +1090,7 @@ export default {
       profileRestarted: 'プロファイルを再起動しました: {name}',
       profileRestartFailed: 'プロファイルの再起動に失敗しました',
     },
+  },
 
   // ログ
   logs: {
@@ -1117,17 +1125,19 @@ export default {
       clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
       corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
       placeholder: '例: http://192.168.1.100:6060',
-      namePlaceholder: 'サーバー名（任意）',
+      namePlaceholder: 'サーバー名（オプション）',
       current: '現在の接続',
-      same_origin: '同源（現在のページアドレス）',
-      reset: 'デフォルトに戻す',
+      same_origin: '同一オリジン（現在のページアドレス）',
+      reset: 'デフォルトにリセット',
       saved: '保存済み',
-      reload_hint: 'ページを再読み込みして新しいアドレスを適用します。',
+      reload_hint: '新しいアドレスを適用するにはページを再読み込みしてください。',
       saveToList: 'リストに追加',
       savedServers: '保存されたサーバー',
       active: 'アクティブ',
       switch: '切り替え',
       removeConfirm: 'このサーバーを削除しますか？',
+    },
+
     },
     display: {
       streaming: 'ストリームレスポンス',
@@ -1548,6 +1558,7 @@ export default {
         token: 'API token',
         pairing: 'Device pairing',
       },
+    },
     userAvatar: {
       title: 'ユーザーアバター',
       upload: '画像をアップロード',
@@ -1569,6 +1580,7 @@ export default {
       saveFailed: '保存に失敗しました',
       saved: '保存しました',
     },
+  },
   githubPreview: {
     title: "バージョンプレビュー",
     description: "選択した GitHub tag を Web UI のプレビュー作業ディレクトリへクローンし、依存関係をインストールして開発ポートで起動します。",
@@ -1679,6 +1691,7 @@ export default {
       claudeRun: "API 駆動の単発タスクには print mode が最も素直な経路です。",
       codexRun: "Codex の単発タスクは git リポジトリ内で実行する必要があります。",
     },
+  },
 
   platform: {
     requireMention: "メンションが必要",
@@ -2056,6 +2069,7 @@ export default {
         hours: '{count}時間前',
         days: '{count}日前',
       },
+    },
     board: {
       create: '新規ボード',
       archive: 'ボードをアーカイブ',
@@ -2154,4 +2168,5 @@ export default {
       total: '合計',
       tasks: 'タスク数',
     },
+  },
 }

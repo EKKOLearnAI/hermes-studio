@@ -12,7 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Benutzername',
     passwordPlaceholder: 'Passwort',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: 'Um eine Verbindung zu einem Remote-Backend herzustellen, erweitern Sie unten, um die Serveradresse zu konfigurieren. Das Remote-Backend muss mit dem Befehl hermes-web-ui client gestartet werden.',
     defaultCredentialsHint: 'Standard-Benutzername: admin. Standard-Passwort: 123456.',
     credentialsRequired: 'Bitte Benutzername und Passwort eingeben',
     invalidCredentials: 'Ungultiger Benutzername oder Passwort',
@@ -73,6 +73,7 @@ export default {
       active: 'Aktiv',
       disabled: 'Deaktiviert',
     },
+  },
 
   // Common
   common: {
@@ -291,6 +292,7 @@ export default {
       completed: 'Abgeschlossen',
       failed: 'Fehlgeschlagen',
     },
+  },
 
   devices: {
     title: 'Geräte',
@@ -360,6 +362,7 @@ export default {
       desktop: 'Desktop-App',
       custom: 'Benutzerdefiniert',
     },
+  },
 
   performance: {
     title: 'Leistung',
@@ -458,6 +461,7 @@ export default {
         high: 'Hoch',
         xhigh: 'Sehr hoch',
       },
+    },
     showToolCalls: 'Tool-Aufrufe anzeigen',
     hideToolCalls: 'Tool-Aufrufe ausblenden',
     messageQueue: 'Nachrichtenwarteschlange',
@@ -599,6 +603,7 @@ export default {
       microphoneUnsupported: 'Mikrofonaufnahme wird in diesem Browser nicht unterstuetzt.',
       microphoneRecordingFailed: 'Mikrofonaufnahme fehlgeschlagen.',
     },
+  },
 
   // Jobs
   jobs: {
@@ -666,6 +671,7 @@ jobTriggered: 'Job ausgelost',
       runs: 'Läufe',
       noRuns: 'Kein Verlauf gefunden.',
     },
+  },
 
   // Skills
   skills: {
@@ -825,6 +831,7 @@ jobTriggered: 'Job ausgelost',
       scanCwd: 'Arbeitsverzeichnis scannen',
       projectPlugins: 'Projekt-Plugins',
     },
+  },
 
   // Memory
   memory: {
@@ -1083,6 +1090,7 @@ jobTriggered: 'Job ausgelost',
       profileRestarted: 'Profil neu gestartet: {name}',
       profileRestartFailed: 'Profil-Neustart fehlgeschlagen',
     },
+  },
 
   // Logs
   logs: {
@@ -1128,6 +1136,8 @@ jobTriggered: 'Job ausgelost',
       active: 'Aktiv',
       switch: 'Wechseln',
       removeConfirm: 'Diesen Server entfernen?',
+    },
+
     },
     display: {
       streaming: 'Streaming-Antworten',
@@ -1548,6 +1558,7 @@ jobTriggered: 'Job ausgelost',
         token: 'API token',
         pairing: 'Device pairing',
       },
+    },
     userAvatar: {
       title: 'Benutzeravatar',
       upload: 'Bild hochladen',
@@ -1569,6 +1580,7 @@ jobTriggered: 'Job ausgelost',
       saveFailed: 'Speichern fehlgeschlagen',
       saved: 'Gespeichert',
     },
+  },
   githubPreview: {
     title: "Versionsvorschau",
     description: "Klont den ausgewählten GitHub-Tag in den Web-UI-Vorschaubereich, installiert Abhängigkeiten und startet ihn mit den Entwicklungsports.",
@@ -1679,6 +1691,7 @@ jobTriggered: 'Job ausgelost',
       claudeRun: "Print mode ist der sauberste Weg fur API-gesteuerte Einmalaufgaben.",
       codexRun: "Codex-Einmalaufgaben mussen in einem Git-Repository laufen.",
     },
+  },
 
   // Platform channel settings
   platform: {
@@ -2057,6 +2070,7 @@ jobTriggered: 'Job ausgelost',
         hours: 'vor {count} Std.',
         days: 'vor {count} Tg.',
       },
+    },
     board: {
       create: 'Neues Board',
       archive: 'Board archivieren',
@@ -2155,4 +2169,5 @@ jobTriggered: 'Job ausgelost',
       total: 'Gesamt',
       tasks: 'Aufgaben',
     },
+  },
 }

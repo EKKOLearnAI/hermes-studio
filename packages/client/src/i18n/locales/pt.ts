@@ -12,7 +12,7 @@ export default {
     tokenLogin: 'Token',
     usernamePlaceholder: 'Nome de usuario',
     passwordPlaceholder: 'Senha',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: 'Para conectar a um backend remoto, expanda abaixo para configurar o endereço do servidor. O backend remoto deve ser executado com o comando hermes-web-ui client.',
     defaultCredentialsHint: 'Nome de usuario padrao: admin. Senha padrao: 123456.',
     credentialsRequired: 'Por favor, insira nome de usuario e senha',
     invalidCredentials: 'Nome de usuario ou senha incorretos',
@@ -73,6 +73,7 @@ export default {
       active: 'Ativo',
       disabled: 'Desativado',
     },
+  },
 
   // Common
   common: {
@@ -291,6 +292,7 @@ export default {
       completed: 'Concluída',
       failed: 'Falhou',
     },
+  },
 
   devices: {
     title: 'Dispositivos',
@@ -360,6 +362,7 @@ export default {
       desktop: 'Aplicativo desktop',
       custom: 'Personalizado',
     },
+  },
 
   performance: {
     title: 'Desempenho',
@@ -458,6 +461,7 @@ export default {
         high: 'Alto',
         xhigh: 'Ultra',
       },
+    },
     showToolCalls: 'Mostrar chamadas de ferramentas',
     hideToolCalls: 'Ocultar chamadas de ferramentas',
     messageQueue: 'Fila de mensagens',
@@ -599,6 +603,7 @@ export default {
       microphoneUnsupported: 'A captura do microfone nao e suportada neste navegador.',
       microphoneRecordingFailed: 'A gravacao do microfone falhou.',
     },
+  },
 
   // Jobs
   jobs: {
@@ -666,6 +671,7 @@ jobTriggered: 'Job acionado',
       runs: 'execuções',
       noRuns: 'Nenhum histórico encontrado.',
     },
+  },
 
   // Skills
   skills: {
@@ -825,6 +831,7 @@ jobTriggered: 'Job acionado',
       scanCwd: 'Verificar cwd',
       projectPlugins: 'Plugins do projeto',
     },
+  },
 
   // Memory
   memory: {
@@ -1083,6 +1090,7 @@ jobTriggered: 'Job acionado',
       profileRestarted: 'Perfil reiniciado: {name}',
       profileRestartFailed: 'Falha ao reiniciar perfil',
     },
+  },
 
   // Logs
   logs: {
@@ -1128,6 +1136,8 @@ jobTriggered: 'Job acionado',
       active: 'Ativo',
       switch: 'Alternar',
       removeConfirm: 'Remover este servidor?',
+    },
+
     },
     display: {
       streaming: 'Respostas em streaming',
@@ -1548,6 +1558,7 @@ jobTriggered: 'Job acionado',
         token: 'API token',
         pairing: 'Device pairing',
       },
+    },
     userAvatar: {
       title: 'Avatar do usuário',
       upload: 'Enviar imagem',
@@ -1569,6 +1580,7 @@ jobTriggered: 'Job acionado',
       saveFailed: 'Falha ao salvar',
       saved: 'Salvo',
     },
+  },
   githubPreview: {
     title: "Prévia de versão",
     description: "Clona a tag do GitHub selecionada para o workspace de prévia do Web UI, instala dependências e executa com as portas de desenvolvimento.",
@@ -1679,6 +1691,7 @@ jobTriggered: 'Job acionado',
       claudeRun: "Print mode é o caminho mais limpo para tarefas únicas orientadas por API.",
       codexRun: "Tarefas únicas do Codex devem ser executadas dentro de um repositório git.",
     },
+  },
 
   // Platform channel settings
   platform: {
@@ -2057,6 +2070,7 @@ jobTriggered: 'Job acionado',
         hours: 'há {count} h',
         days: 'há {count} d',
       },
+    },
     board: {
       create: 'Novo quadro',
       archive: 'Arquivar quadro',
@@ -2155,4 +2169,5 @@ jobTriggered: 'Job acionado',
       total: 'Total',
       tasks: 'Tarefas',
     },
+  },
 }

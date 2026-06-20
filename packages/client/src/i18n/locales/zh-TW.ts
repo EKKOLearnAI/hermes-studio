@@ -12,7 +12,7 @@ export default {
     tokenLogin: '權杖登入',
     usernamePlaceholder: '使用者名稱',
     passwordPlaceholder: '密碼',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: '要連線遠端後端，請展開下方設定伺服器位址。遠端後端必須使用 hermes-web-ui client 指令啟動。',
     defaultCredentialsHint: '預設登入名：admin，預設密碼：123456',
     credentialsRequired: '請輸入使用者名稱和密碼',
     invalidCredentials: '使用者名稱或密碼錯誤',
@@ -73,6 +73,7 @@ export default {
       active: '啟用',
       disabled: '停用',
     },
+  },
 
   // 通用
   common: {
@@ -291,6 +292,7 @@ export default {
       completed: '已完成',
       failed: '失敗',
     },
+  },
 
   devices: {
     title: '裝置',
@@ -360,6 +362,7 @@ export default {
       desktop: '桌面端',
       custom: '自訂',
     },
+  },
 
   performance: {
     title: '效能監控',
@@ -461,6 +464,7 @@ export default {
         high: '高',
         xhigh: '超高',
       },
+    },
     autoPlaySpeech: '自動播放語音',
     voiceInput: {
       startCapture: '開始語音輸入',
@@ -677,6 +681,7 @@ export default {
         hours: '{count} 小時前',
         days: '{count} 天前',
       },
+    },
     detail: {
       status: '狀態',
       assignee: '負責人',
@@ -734,6 +739,7 @@ export default {
       total: '總計',
       tasks: '任務數',
     },
+  },
 
   // 排程任務
   jobs: {
@@ -801,6 +807,7 @@ export default {
       runs: '次執行',
       noRuns: '目前無執行歷史。',
     },
+  },
 
   // 技能
   skills: {
@@ -960,6 +967,7 @@ export default {
       scanCwd: '掃描 cwd',
       projectPlugins: '專案插件',
     },
+  },
 
   // 記憶
   memory: {
@@ -1218,6 +1226,7 @@ export default {
       profileRestarted: '設定檔已重啟：{name}',
       profileRestartFailed: '重啟設定檔失敗',
     },
+  },
 
   // 日誌
   logs: {
@@ -1246,23 +1255,6 @@ export default {
       models: '模型',
       voice: '語音',
       connection: '連線',
-    connection: {
-      title: '後端連線',
-      description: '設定 Hermes Web UI 後端伺服器位址。留空則使用當前頁面位址。',
-      clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
-      corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
-      placeholder: '例如: http://192.168.1.100:6060',
-      namePlaceholder: '伺服器名稱（選填）',
-      current: '當前連線',
-      same_origin: '同源（當前頁面位址）',
-      reset: '重置為預設',
-      saved: '已儲存',
-      reload_hint: '重新載入頁面以套用新位址。',
-      saveToList: '加入儲存清單',
-      savedServers: '已儲存的伺服器',
-      active: '使用中',
-      switch: '切換',
-      removeConfirm: '確定移除此伺服器？',
     },
     models: {
       apiKey: 'API Key',
@@ -1271,6 +1263,25 @@ export default {
       saved: '已儲存',
       saveFailed: '儲存失敗',
       noProviders: '目前無已設定的模型',
+    connection: {
+      title: 'Backend 連線',
+      description: '設定 Hermes Web UI 後端伺服器位址。留空則使用目前頁面位址。',
+      clientCommandHint: '遠端後端必須使用 hermes-web-ui client 指令啟動，否則無法連線。',
+      corsHint: '前後端在不同網域時，後端需設定 CORS 允許跨域請求（CORS_ORIGINS=*）。',
+      placeholder: '例如 http://192.168.1.100:6060',
+      namePlaceholder: '伺服器名稱（選填）',
+      current: '目前連線',
+      same_origin: '同源（目前頁面位址）',
+      reset: '重設為預設值',
+      saved: '已儲存',
+      reload_hint: '重新載入頁面以套用新位址。',
+      saveToList: '新增至清單',
+      savedServers: '已儲存的伺服器',
+      active: '啟用',
+      switch: '切換',
+      removeConfirm: '移除此伺服器？',
+    },
+
     },
     display: {
       streaming: '串流回應',
@@ -1431,6 +1442,7 @@ export default {
         token: 'API Token',
         pairing: '裝置配對',
       },
+    },
     userAvatar: {
       title: '使用者頭像',
       upload: '上傳圖片',
@@ -1703,6 +1715,7 @@ export default {
       mimoStylePromptHint: '可選，用自然語言描述語音風格',
       mimoStylePromptPlaceholder: '例如：用輕快上揚的語調，語速稍快',
     },
+  },
   githubPreview: {
     title: "版本預覽",
     description: "將選取的 GitHub tag 複製到 Web UI 預覽工作目錄，安裝依賴並以開發連接埠執行。",
@@ -1813,6 +1826,7 @@ export default {
       claudeRun: "Print mode 最適合 API 驅動的單次任務。",
       codexRun: "Codex 單次任務需要在 git 倉庫中執行。",
     },
+  },
 
   // 平台頻道設定
   platform: {

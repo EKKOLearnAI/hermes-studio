@@ -12,7 +12,7 @@ export default {
     tokenLogin: '토큰',
     usernamePlaceholder: '사용자 이름',
     passwordPlaceholder: '비밀번호',
-    serverHint: 'To connect to a remote backend, expand below to configure the server address. The remote backend must be running with the hermes-web-ui client command.',
+    serverHint: '원격 백엔드에 연결하려면 아래를 펼쳐 서버 주소를 구성하세요. 원격 백엔드는 hermes-web-ui client 명령으로 실행되어야 합니다.',
     defaultCredentialsHint: '기본 로그인 이름: admin, 기본 비밀번호: 123456',
     credentialsRequired: '사용자 이름과 비밀번호를 입력해 주세요',
     invalidCredentials: '사용자 이름 또는 비밀번호가 올바르지 않습니다',
@@ -73,6 +73,7 @@ export default {
       active: '활성',
       disabled: '비활성',
     },
+  },
 
   // 공통
   common: {
@@ -291,6 +292,7 @@ export default {
       completed: '완료',
       failed: '실패',
     },
+  },
 
   devices: {
     title: '기기',
@@ -360,6 +362,7 @@ export default {
       desktop: '데스크톱',
       custom: '사용자 지정',
     },
+  },
 
   performance: {
     title: '성능 모니터링',
@@ -458,6 +461,7 @@ export default {
         high: '높음',
         xhigh: '매우 높음',
       },
+    },
     showToolCalls: '도구 호출 표시',
     hideToolCalls: '도구 호출 숨기기',
     messageQueue: '메시지 대기열',
@@ -599,6 +603,7 @@ export default {
       microphoneUnsupported: '이 브라우저는 마이크 녹음을 지원하지 않습니다.',
       microphoneRecordingFailed: '마이크 녹음에 실패했습니다.',
     },
+  },
 
   // 예약 작업
   jobs: {
@@ -666,6 +671,7 @@ export default {
       runs: '회 실행',
       noRuns: '실행 기록이 없습니다.',
     },
+  },
 
   // 스킬
   skills: {
@@ -825,6 +831,7 @@ export default {
       scanCwd: 'cwd 스캔',
       projectPlugins: '프로젝트 플러그인',
     },
+  },
 
   // 메모리
   memory: {
@@ -1083,6 +1090,7 @@ export default {
       profileRestarted: '프로필이 재시작되었습니다: {name}',
       profileRestartFailed: '프로필 재시작 실패',
     },
+  },
 
   // 로그
   logs: {
@@ -1113,21 +1121,23 @@ export default {
       connection: '연결',
     connection: {
       title: '백엔드 연결',
-      description: 'Hermes Web UI 백엔드 서버 주소를 설정합니다. 비워두면 현재 페이지 주소를 사용합니다.',
+      description: 'Hermes Web UI 백엔드 서버 주소를 구성합니다. 현재 페이지 주소를 사용하려면 비워 두세요.',
       clientCommandHint: 'The remote backend must be running with the hermes-web-ui client command, otherwise it cannot connect.',
       corsHint: 'When the frontend and backend are on different domains, the backend must configure CORS to allow cross-origin requests (CORS_ORIGINS=*).',
       placeholder: '예: http://192.168.1.100:6060',
       namePlaceholder: '서버 이름 (선택)',
       current: '현재 연결',
       same_origin: '동일 출처 (현재 페이지 주소)',
-      reset: '기본값으로 초기화',
+      reset: '기본값으로 재설정',
       saved: '저장됨',
-      reload_hint: '페이지를 새로고침하여 새 주소를 적용합니다.',
+      reload_hint: '새 주소를 적용하려면 페이지를 새로고침하세요.',
       saveToList: '목록에 추가',
       savedServers: '저장된 서버',
       active: '활성',
       switch: '전환',
       removeConfirm: '이 서버를 제거하시겠습니까?',
+    },
+
     },
     display: {
       streaming: '스트리밍 응답',
@@ -1548,6 +1558,7 @@ export default {
         token: 'API token',
         pairing: 'Device pairing',
       },
+    },
     userAvatar: {
       title: '사용자 아바타',
       upload: '이미지 업로드',
@@ -1569,6 +1580,7 @@ export default {
       saveFailed: '저장 실패',
       saved: '저장됨',
     },
+  },
   githubPreview: {
     title: "버전 미리보기",
     description: "선택한 GitHub tag 를 Web UI 미리보기 작업 디렉터리에 클론하고, 의존성을 설치한 뒤 개발 포트로 실행합니다.",
@@ -1679,6 +1691,7 @@ export default {
       claudeRun: "API 기반 단발 작업에는 print mode가 가장 깔끔한 경로입니다.",
       codexRun: "Codex 단발 작업은 git 저장소 안에서 실행해야 합니다.",
     },
+  },
 
   platform: {
     requireMention: "{'@'}멘션 필요",
@@ -2056,6 +2069,7 @@ export default {
         hours: '{count}시간 전',
         days: '{count}일 전',
       },
+    },
     board: {
       create: '새 보드',
       archive: '보드 보관',
@@ -2154,4 +2168,5 @@ export default {
       total: '합계',
       tasks: '작업 수',
     },
+  },
 }
