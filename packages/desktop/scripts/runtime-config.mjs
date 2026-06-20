@@ -1,4 +1,4 @@
-export const DEFAULT_HERMES_VERSION = '0.16.0'
+export const DEFAULT_HERMES_VERSION = '0.17.0'
 
 export function hermesVersion(env = process.env) {
   return env.HERMES_VERSION || DEFAULT_HERMES_VERSION
