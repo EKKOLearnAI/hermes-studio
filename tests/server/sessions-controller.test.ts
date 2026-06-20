@@ -521,6 +521,24 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('treats missing conversation message arrays as empty', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'root',
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'root' }, query: { humanOnly: 'false' }, body: null }
+    await mod.getConversationMessages(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('root')
+    expect(ctx.body).toEqual({
+      session_id: 'root',
+      messages: [],
+      visible_count: 0,
+      thread_session_count: 1,
+    })
+  })
+
   it('returns 404 when local conversation detail is missing', async () => {
     localGetSessionDetailMock.mockReturnValue(null)
 
