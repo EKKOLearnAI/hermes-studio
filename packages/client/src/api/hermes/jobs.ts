@@ -89,6 +89,7 @@ export interface JobFormValues {
   schedule: string
   prompt: string
   deliver: string
+  skills: string[]
   repeat_times: number | null
 }
 
@@ -136,11 +137,15 @@ export function buildJobUpdateRequest(original: Job, form: JobFormValues): Updat
   const originalSchedule = scheduleToEditableInput(original.schedule, original.schedule_display || '')
   const originalRepeat = jobRepeatToEditValue(original.repeat)
   const originalDeliver = original.deliver || 'origin'
+  const originalSkills = original.skills || (original.skill ? [original.skill] : [])
 
   if (form.name !== original.name) payload.name = form.name
   if (form.schedule !== originalSchedule) payload.schedule = form.schedule
   if (form.prompt !== (original.prompt || '')) payload.prompt = form.prompt
   if (form.deliver !== originalDeliver) payload.deliver = form.deliver
+  if (form.skills.length !== originalSkills.length || form.skills.some((skill, index) => skill !== originalSkills[index])) {
+    payload.skills = form.skills
+  }
   if (form.repeat_times !== originalRepeat) payload.repeat = form.repeat_times
 
   return payload

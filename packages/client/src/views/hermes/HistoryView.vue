@@ -12,6 +12,8 @@ import { copyToClipboard } from '@/utils/clipboard'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
+import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
+import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
 import { batchDeleteSessions, deleteSession, fetchHermesSessions, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 
 const appStore = useAppStore()
@@ -53,10 +55,15 @@ const contextMenuX = ref(0)
 const contextMenuY = ref(0)
 let hermesSessionsRequestId = 0
 
-const HISTORY_PAGE_SIZE = 300
+const HISTORY_PAGE_SIZE = 150
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
   historyMessageListRef.value?.scrollToAnchor(target.messageId, target.anchorId)
+  if (isMobile.value) showOutline.value = false
+}
+
+function openNewChatPage() {
+  void router.push({ name: 'hermes.chat' })
 }
 
 async function loadHermesSessions() {
@@ -296,6 +303,10 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   }
 }
 
+function openPageSidebar() {
+  showSessions.value = true
+}
+
 onMounted(async () => {
   appStore.loadModels()
   await profilesStore.fetchProfiles()
@@ -305,10 +316,12 @@ onMounted(async () => {
   mobileQuery = window.matchMedia('(max-width: 768px)')
   handleMobileChange(mobileQuery)
   mobileQuery.addEventListener('change', handleMobileChange)
+  window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
 })
 
 onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
+  window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
 })
 
 watch([routeSessionId, routeProfile], async ([sessionId]) => {
@@ -663,76 +676,81 @@ function handleBatchDeleteConfirm() {
   <div class="history-panel">
     <div class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
     <aside class="session-list" :class="{ collapsed: !showSessions }">
-      <div class="session-list-header">
-        <span v-if="showSessions" class="session-list-title">{{ t('chat.hermesHistory') }}</span>
-        <div class="session-list-actions">
-          <button class="session-close-btn" @click="showSessions = false">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-          <NButton
-            v-if="!isBatchMode"
-            quaternary
-            size="tiny"
-            :disabled="hermesSessions.length === 0"
-            :title="t('chat.toggleBatchMode')"
-            @click="toggleBatchMode"
-          >
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-              </svg>
-            </template>
-          </NButton>
-          <NButton
-            v-if="isBatchMode"
-            quaternary
-            size="tiny"
-            :disabled="!canSelectAll || isBatchDeleting"
-            :title="allSessionsSelected ? t('common.cancel') : t('chat.selectAll')"
-            @click="toggleSelectAllSessions"
-          >
-            <template #icon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-              </svg>
-            </template>
-          </NButton>
-          <NPopconfirm
-            v-if="isBatchMode && selectedCount > 0"
-            v-model:show="showBatchDeleteConfirm"
-            :positive-button-props="{ loading: isBatchDeleting, disabled: isBatchDeleting }"
-            :negative-button-props="{ disabled: isBatchDeleting }"
-            @positive-click="handleBatchDeleteConfirm"
-          >
-            <template #trigger>
-              <NButton quaternary size="tiny" type="error" :loading="isBatchDeleting" :disabled="isBatchDeleting">
-                <template #icon>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  </svg>
-                </template>
-              </NButton>
-            </template>
-            {{ t('chat.confirmBatchDelete', { count: selectedCount }) }}
-          </NPopconfirm>
-          <NButton
-            v-if="isBatchMode"
-            quaternary
-            size="tiny"
-            :disabled="isBatchDeleting"
-            @click="toggleBatchMode"
-          >
-            <template #icon>
+      <div v-if="showSessions" class="page-sidebar-top">
+        <PageSidebarNav
+          active="history"
+          :primary-label="t('chat.newChat')"
+          hide-mode-switch
+          @primary="openNewChatPage"
+        />
+        <div class="session-list-toolbar">
+          <span class="session-list-title">{{ t('chat.hermesHistory') }}</span>
+          <div class="session-list-actions">
+            <button class="session-close-btn" @click="showSessions = false">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </template>
-          </NButton>
+            </button>
+            <NButton
+              v-if="!isBatchMode"
+              quaternary
+              size="tiny"
+              :disabled="hermesSessions.length === 0"
+              :title="t('chat.toggleBatchMode')"
+              @click="toggleBatchMode"
+            >
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+              </template>
+            </NButton>
+            <NButton
+              v-if="isBatchMode"
+              quaternary
+              size="tiny"
+              :disabled="!canSelectAll || isBatchDeleting"
+              :title="allSessionsSelected ? t('common.cancel') : t('chat.selectAll')"
+              @click="toggleSelectAllSessions"
+            >
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                </svg>
+              </template>
+            </NButton>
+            <NPopconfirm
+              v-if="isBatchMode && selectedCount > 0"
+              v-model:show="showBatchDeleteConfirm"
+              :positive-button-props="{ loading: isBatchDeleting, disabled: isBatchDeleting }"
+              :negative-button-props="{ disabled: isBatchDeleting }"
+              @positive-click="handleBatchDeleteConfirm"
+            >
+              <template #trigger>
+                <NButton quaternary size="tiny" type="error" :loading="isBatchDeleting" :disabled="isBatchDeleting">
+                  <template #icon>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                  </template>
+                </NButton>
+              </template>
+              {{ t('chat.confirmBatchDelete', { count: selectedCount }) }}
+            </NPopconfirm>
+            <NButton
+              v-if="isBatchMode"
+              quaternary
+              size="tiny"
+              :disabled="isBatchDeleting"
+              @click="toggleBatchMode"
+            >
+              <template #icon>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </template>
+            </NButton>
+          </div>
         </div>
-      </div>
-      <div v-if="showSessions" class="session-scope-note">
-        {{ t('chat.historyScopeHint') }}
       </div>
       <div v-if="showSessions" class="session-items">
         <div v-if="hermesSessionsLoading && hermesSessions.length === 0" class="session-loading">{{ t('common.loading') }}</div>
@@ -753,7 +771,7 @@ function handleBatchDeleteConfirm() {
             :streaming="false"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
-            :show-profile="false"
+            :show-profile="true"
             @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id, s.profile)"
@@ -778,7 +796,7 @@ function handleBatchDeleteConfirm() {
               :streaming="false"
               :selectable="isBatchMode"
               :selected="isSessionSelected(s)"
-              :show-profile="false"
+              :show-profile="true"
               @select="isBatchMode ? toggleSessionSelection(s) : handleSessionClick(s.id, s.profile)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id, s.profile)"
@@ -787,6 +805,7 @@ function handleBatchDeleteConfirm() {
           </template>
         </template>
       </div>
+      <PageSidebarFooter v-if="showSessions" />
     </aside>
 
     <NDropdown
@@ -803,7 +822,7 @@ function handleBatchDeleteConfirm() {
     <div class="chat-main">
       <header class="chat-header">
         <div class="header-left">
-          <NButton quaternary size="small" @click="showSessions = !showSessions" circle>
+          <NButton class="history-sidebar-toggle" quaternary size="small" @click="showSessions = !showSessions" circle>
             <template #icon>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
             </template>
@@ -879,7 +898,7 @@ function handleBatchDeleteConfirm() {
 }
 
 .session-list {
-  width: 220px;
+  width: $sidebar-width;
   border-right: 1px solid $border-color;
   display: flex;
   flex-direction: column;
@@ -902,7 +921,7 @@ function handleBatchDeleteConfirm() {
     z-index: 120;
     background: $bg-card;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
-    width: 280px;
+    width: $sidebar-width;
 
     &.collapsed {
       transform: translateX(-100%);
@@ -930,6 +949,20 @@ function handleBatchDeleteConfirm() {
       pointer-events: auto;
     }
   }
+}
+
+.page-sidebar-top {
+  flex-shrink: 0;
+  padding: 12px;
+  border-bottom: 1px solid $border-color;
+}
+
+.session-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .session-list-header {
@@ -966,17 +999,6 @@ function handleBatchDeleteConfirm() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-}
-
-.session-scope-note {
-  margin: 0 12px 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba($accent-primary, 0.16);
-  border-radius: $radius-sm;
-  background: rgba($accent-primary, 0.06);
-  color: $text-secondary;
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .session-group-header {
@@ -1030,128 +1052,6 @@ function handleBatchDeleteConfirm() {
   text-align: center;
 }
 
-:deep(.session-item) {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  background: none;
-  border-radius: $radius-sm;
-  cursor: pointer;
-  text-align: left;
-  color: $text-secondary;
-  transition: all $transition-fast;
-  margin-bottom: 2px;
-
-  &:hover {
-    background: rgba($accent-primary, 0.06);
-    color: $text-primary;
-
-    .session-item-delete {
-      opacity: 1;
-    }
-  }
-
-  &.active {
-    background: rgba(var(--accent-primary-rgb), 0.12);
-    color: $text-primary;
-    font-weight: 500;
-  }
-
-  &.active .session-item-title {
-    color: $accent-primary;
-  }
-}
-
-:deep(.session-item-content) {
-  flex: 1;
-  overflow: hidden;
-}
-
-:deep(.session-item-title-row) {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-:deep(.session-item-title) {
-  display: block;
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-:deep(.session-item-streaming) {
-  display: inline-block;
-  flex-shrink: 0;
-  margin-right: 4px;
-  vertical-align: middle;
-  animation: spin 1.2s linear infinite;
-  color: $accent-primary;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-:deep(.session-item-pin) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: $accent-primary;
-}
-
-:deep(.session-item-time) {
-  font-size: 11px;
-  color: $text-muted;
-}
-
-:deep(.session-item-meta) {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-:deep(.session-item-model) {
-  font-size: 10px;
-  color: $accent-primary;
-  background: rgba($accent-primary, 0.08);
-  padding: 0 5px;
-  border-radius: 3px;
-  line-height: 16px;
-  flex-shrink: 0;
-  max-width: 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-:deep(.session-item-delete) {
-  flex-shrink: 0;
-  opacity: 0.5;
-  padding: 2px;
-  border: none;
-  background: none;
-  color: $text-muted;
-  cursor: pointer;
-  border-radius: 3px;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $error;
-    background: rgba($error, 0.1);
-  }
-}
-
 .chat-main {
   flex: 1;
   display: flex;
@@ -1178,16 +1078,23 @@ function handleBatchDeleteConfirm() {
   min-width: 0;
 }
 
+.header-left :deep(.n-button) {
+  flex: 0 0 auto;
+}
+
 .header-session-title {
   font-size: 16px;
   font-weight: 600;
   color: $text-primary;
+  line-height: 28px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .source-badge {
+  display: inline-flex;
+  align-items: center;
   font-size: 10px;
   color: $text-muted;
   background: rgba($text-muted, 0.12);
@@ -1195,6 +1102,7 @@ function handleBatchDeleteConfirm() {
   border-radius: 8px;
   flex-shrink: 0;
   white-space: nowrap;
+  height: 18px;
   line-height: 16px;
 }
 
@@ -1209,14 +1117,21 @@ function handleBatchDeleteConfirm() {
   .chat-header {
     padding: 16px 12px 16px 52px;
   }
+
+  .history-sidebar-toggle {
+    display: none;
+  }
 }
 
 .workspace-badge {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   color: $text-muted;
   background: rgba(255, 255, 255, 0.05);
   padding: 2px 8px;
   border-radius: 4px;
+  height: 20px;
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;

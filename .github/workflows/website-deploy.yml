@@ -19,6 +19,11 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      download_version:
+        description: "Optional release/download version used for website download links (defaults to package.json)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -58,6 +63,8 @@ jobs:
         run: npx vue-tsc -p tsconfig.website.json --noEmit
 
       - name: Build website
+        env:
+          WEBSITE_DOWNLOAD_VERSION: ${{ github.event.inputs.download_version }}
         run: npm run build:website
 
       - name: Prepare SSH

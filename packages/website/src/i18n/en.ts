@@ -1,6 +1,6 @@
 export default {
   brand: {
-    name: 'Hermes Web UI',
+    name: 'Hermes Studio',
     logoAlt: 'Hermes',
   },
   ui: {
@@ -20,42 +20,57 @@ export default {
     github: 'GitHub',
   },
   hero: {
-    title: 'Self-Hosted AI Chat Dashboard',
-    subtitle: 'Open-source AI agent dashboard — streaming chat, multi-model routing, Kanban boards, usage analytics, web terminal, all in one self-hosted interface.',
-    cta: 'Get Started',
+    navLabel: 'Hero navigation',
+    nav: {
+      workspace: 'Workspace',
+      runtime: 'Runtime',
+      automation: 'Automation',
+      deploy: 'Deploy',
+    },
+    badge: 'Local-first AI Agent Workspace',
+    title: 'Hermes Studio',
+    subtitle: 'A desktop app and local control plane for Hermes Agent. Chat, manage profiles, run coding agents, inspect files, automate jobs, and keep your runtime under your control.',
+    cta: 'Download Desktop',
+    docsCta: 'Read Docs',
     viewGithub: 'View on GitHub',
+    downloadDesktop: 'Download Desktop',
+    latestRelease: 'Latest Release',
+    getInstallers: 'Get Installers',
+    docsTitle: 'Documentation',
+    docsLibrary: 'Library',
     install: 'npm install -g hermes-web-ui',
+    previewAlt: 'Hermes Studio dashboard preview',
   },
   features: {
-    title: 'Everything You Need',
-    desc: 'A complete AI agent management dashboard with rich features out of the box.',
+    title: 'One Local Console for Hermes Agent',
+    desc: 'Hermes Studio brings chat, runtime management, automation, files, coding agents, and release-ready desktop distribution into one workspace.',
     streaming: {
-      title: 'Streaming Chat',
-      desc: 'Real-time Socket.IO-powered AI conversations with multi-session management, Markdown rendering, and code syntax highlighting.',
+      title: 'Agent Chat',
+      desc: 'Streaming Hermes Agent conversations with sessions, Markdown, tool traces, uploads, downloads, model badges, and context usage.',
     },
     platforms: {
-      title: '8 Platforms',
-      desc: 'Unified management for Telegram, Discord, Slack, WhatsApp, Matrix, Feishu, WeChat, and WeCom channels.',
+      title: 'Platform Channels',
+      desc: 'Configure Telegram, Discord, Slack, WhatsApp, Matrix, Feishu, WeChat, and WeCom credentials and behavior from one page.',
     },
     multiModel: {
-      title: 'Multi-Model',
-      desc: 'Support for Claude, GPT, Gemini, DeepSeek, and any OpenAI-compatible provider with auto-discovery.',
+      title: 'Models & Providers',
+      desc: 'Discover models from profile credentials, manage OpenAI-compatible providers, switch defaults, and use OAuth flows for supported services.',
     },
     groupChat: {
       title: 'Group Chat',
       desc: 'Multi-agent chat rooms with mention routing, context compression, and real-time collaboration.',
     },
     kanban: {
-      title: 'Kanban Board',
-      desc: 'Visual task management with 7 status columns, assignee tracking, and filtering for AI-driven workflows.',
+      title: 'Jobs & Kanban',
+      desc: 'Schedule cron jobs, trigger runs immediately, and organize agent work on a profile-aware Kanban board.',
     },
     analytics: {
       title: 'Usage Analytics',
       desc: 'Token usage breakdown, cost tracking, cache hit rates, model distribution, and 30-day trends.',
     },
     profiles: {
-      title: 'Multi-Profile',
-      desc: 'Account-authorized Hermes profiles with isolated config, models, uploads, jobs, usage, memory, skills, plugins, and providers.',
+      title: 'Profiles & Access',
+      desc: 'Account-authorized Hermes profiles with isolated config, models, uploads, jobs, usage, memory, skills, plugins, providers, and visibility.',
     },
     files: {
       title: 'File Browser',
@@ -66,16 +81,16 @@ export default {
       desc: 'Full PTY terminal in the browser with multi-session support via WebSocket and xterm.js.',
     },
     quickInstall: {
-      title: 'One Command',
-      desc: 'Install and start with a single command. Initializes Web UI data, starts the bridge, and opens the browser.',
+      title: 'Desktop Runtime',
+      desc: 'Windows, macOS, and Linux desktop builds bundle the Web UI runtime and manage Hermes Studio state separately from Hermes Agent data.',
     },
     i18n: {
-      title: '8 Languages',
-      desc: 'Built-in support for English, Chinese, German, Spanish, French, Japanese, Korean, and Portuguese.',
+      title: 'Coding Agents & MCP',
+      desc: 'Launch local coding-agent sessions, use Codex and Claude Code proxy routes, and manage the bundled hermes-studio MCP server.',
     },
     theme: {
-      title: 'Dark / Light',
-      desc: 'Pure Ink monochrome design with smooth theme switching. Responsive layout for mobile and desktop.',
+      title: 'Updates & Releases',
+      desc: 'Desktop updates check Cloudflare first with GitHub fallback, while full desktop releases are manually promoted to GitHub Latest.',
     },
   },
   platforms: {
@@ -92,24 +107,29 @@ export default {
   },
   screenshots: {
     localUrl: 'http://localhost:8648',
+    tourLabel: 'Product tour',
     previous: 'Previous screenshot',
     next: 'Next screenshot',
     goTo: 'View screenshot {number}',
     items: [
-      { src: '/image1.png', alt: 'AI chat with image generation' },
-      { src: '/image2.png', alt: 'Chat and file browser' },
-      { src: '/image3.png', alt: 'Multi-panel workspace' },
-      { src: '/image4.png', alt: 'Kanban board' },
+      {
+        src: '/image.gif',
+        alt: 'Hermes Studio product walkthrough',
+        title: 'Hermes Studio Workflow',
+        desc: 'Chat with coding agents, preview versions, manage runtime assets, and browse your workspace in one app.',
+      },
     ],
   },
   install: {
     title: 'Quick Start',
-    desc: 'Download the desktop app or run Hermes Web UI yourself.',
+    desc: 'Download the desktop app or run Hermes Studio yourself.',
     desktop: {
       title: 'Desktop',
       download: 'Download',
+      githubDownload: 'GitHub Download',
+      cloudflareDownload: 'Cloudflare Download',
       allDownloads: 'View all release assets',
-      prereq: 'Desktop builds bundle the Web UI runtime.',
+      prereq: 'Desktop builds bundle the Hermes Studio runtime.',
       downloads: [
         {
           title: 'macOS Apple Silicon',
@@ -154,7 +174,7 @@ export default {
     },
     source: {
       title: 'From Source',
-      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-web-ui.git',
+      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-studio.git',
       cmd2: 'cd hermes-web-ui && npm install && npm run dev',
     },
     prereq: 'Requires Node.js >= 23',
@@ -171,6 +191,9 @@ export default {
     description: 'Self-hosted AI chat dashboard for Hermes Agent.',
     license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
+    github: 'Open GitHub',
+    douyin: 'Open Douyin',
+    xiaohongshu: 'Open Xiaohongshu',
   },
   docs: {
     placeholder: 'Select a section from the sidebar to get started.',
@@ -178,19 +201,20 @@ export default {
       gettingStarted: 'Getting Started',
       configuration: 'Configuration',
       features: 'Features',
+      hermesStudioManual: 'Client Manual',
       platforms: 'Platform Guides',
       api: 'API Reference',
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Hermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
+      intro: 'Hermes Studio is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
         content: 'Install globally via npm. Node.js 23 or higher is required.',
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Hermes Web UI will automatically generate an auth token, initialize local data, start the Hermes agent bridge, and open the dashboard in your browser.',
+        content: 'On first start, Hermes Studio will automatically generate an auth token, initialize local data, start the Hermes agent bridge, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
@@ -199,16 +223,18 @@ export default {
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Hermes Web UI can be configured via environment variables.',
+      intro: 'Hermes Studio can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
           ['PORT', 'Server listen port (default: 8648)'],
           ['BIND_HOST', 'Server bind host (default: 0.0.0.0). Set :: explicitly to enable IPv6 listening.'],
-          ['HERMES_WEB_UI_HOME', 'Web UI data home for auth token, credentials, logs, DB, and default uploads'],
+          ['HERMES_WEB_UI_HOME', 'Hermes Studio data home for auth token, credentials, logs, DB, and default uploads'],
           ['HERMES_WEBUI_STATE_DIR', 'Compatibility alias for HERMES_WEB_UI_HOME'],
+          ['HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT', 'Disable startup injection of the managed hermes-studio MCP server into Hermes profile configs'],
+          ['HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT', 'Allow managed MCP injection when HERMES_WEB_UI_HOME is under a temporary directory, such as Version Preview runtimes'],
           ['UPLOAD_DIR', 'Custom upload root. Uploaded files are stored below profile-scoped subdirectories.'],
-          ['CORS_ORIGINS', 'CORS origin config (default: *)'],
+          ['CORS_ORIGINS', 'Cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests (default: same host only; set * only for intentional legacy wildcard CORS)'],
           ['AUTH_TOKEN', 'Custom bearer token; overrides the auto-generated token'],
           ['AUTH_JWT_SECRET', 'JWT signing secret override for username/password sessions'],
           ['PROFILE', 'Startup/default Hermes profile'],
@@ -240,9 +266,13 @@ export default {
           ['HERMES_OPENROUTER_APP_REFERER', 'OpenRouter attribution referer sent by bridge runs'],
           ['HERMES_OPENROUTER_APP_TITLE', 'OpenRouter attribution title sent by bridge runs'],
           ['HERMES_OPENROUTER_APP_CATEGORIES', 'OpenRouter attribution categories sent by bridge runs'],
-          ['HERMES_WEB_UI_MANAGED_GATEWAY', 'Force managed legacy gateway process handling'],
-          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Controls whether Web UI shutdown also stops managed gateway processes'],
-          ['GATEWAY_HOST', 'Default gateway host written into profile config for legacy gateway compatibility'],
+          ['HERMES_WEB_UI_MANAGED_GATEWAY', 'Controls Web UI-managed Hermes gateway handling. Enabled by default; set 0/false/off to use hermes gateway start'],
+          ['HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART', 'Skip startup gateway checks/autostart for dashboard-only deployments where another service owns Hermes gateway lifecycle'],
+          ['HERMES_WEB_UI_DISABLE_SKILL_INJECTION', 'Skip startup bundled skill injection when skills are managed outside Hermes Web UI. Enabled injection only updates Web UI-managed or identical bundled copies; local edits are skipped'],
+          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Controls whether Hermes Studio shutdown also stops managed gateway processes'],
+          ['HERMES_GATEWAY_URL / GATEWAY_URL', 'Explicit Hermes gateway upstream URL for proxy routes'],
+          ['GATEWAY_HOST', 'Default Hermes gateway upstream host for proxy routes'],
+          ['GATEWAY_PORT', 'Default Hermes gateway upstream port for proxy routes'],
           ['HERMES_WEB_UI_PREVIEW_REPO', 'GitHub repository used by Version Preview'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT', 'Version Preview broker endpoint transport. Set tcp to use loopback TCP for Preview on macOS/Linux; when unset, Preview follows HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT', 'Directly overrides the Version Preview broker endpoint for deployments that need a fully custom Preview bridge address'],
@@ -252,7 +282,7 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. HERMES_AGENT_BRIDGE_ENDPOINT controls the Node-to-broker address, while HERMES_AGENT_BRIDGE_WORKER_TRANSPORT controls the broker-to-profile-worker transport. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
+        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Hermes Studio server and talks directly to the Hermes Agent runtime. HERMES_AGENT_BRIDGE_ENDPOINT controls the Node-to-broker address, while HERMES_AGENT_BRIDGE_WORKER_TRANSPORT controls the broker-to-profile-worker transport. Switching the frontend Hermes Profile changes later request context only; it does not restart the bridge or clear other running tasks.',
       },
       profiles: {
         title: 'Profiles',
@@ -261,10 +291,10 @@ export default {
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Hermes Web UI.',
+      intro: 'Explore the core features of Hermes Studio.',
       chat: {
         title: 'AI Chat',
-        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Web UI local session database.',
+        content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, profile-scoped upload, path-based download, and Ctrl+K search across the Hermes Studio local session database.',
       },
       kanban: {
         title: 'Kanban Board',
@@ -297,6 +327,39 @@ export default {
       analytics: {
         title: 'Usage Analytics',
         content: 'Track token usage (input/output), estimated costs, cache hit rates, session counts, and model distribution. View 30-day daily trends with interactive charts.',
+      },
+    },
+    hermesStudioManual: {
+      title: 'Hermes Studio Client Manual',
+      intro: 'This page publishes the complete Hermes Studio 0.6.12 client operations manual. The full manual is currently authored in Chinese and covers day-to-day usage, configuration, operations, acceptance review, internal training, visible navigation, dialogs, status pages, key actions, common workflows, and risk notes.',
+      open: {
+        title: 'Open the full manual',
+        content: 'The uploaded manual preserves the original HTML layout, annotated screenshots, tables, and PDF export. Use the HTML version for online browsing and the PDF version for offline review, archiving, or training distribution.',
+        links: [
+          {
+            label: 'Open the Chinese HTML manual',
+            href: '/docs/hermes-studio-0.6.12-full-cn/index.html',
+            description: 'Includes the full table of contents, annotated screenshots, workflow sections, tables, and operational notes.',
+          },
+          {
+            label: 'Download the Chinese PDF manual',
+            href: '/docs/hermes-studio-0.6.12-full-cn/hermes-studio-0.6.12-full-cn.pdf',
+            description: 'Best for offline reading, archival use, printing, and training handouts.',
+          },
+        ],
+      },
+      scope: {
+        title: 'Scope',
+        rows: [
+          ['Version', 'Hermes Studio 0.6.12 client operations manual'],
+          ['Language', 'Full manual in Chinese, with bilingual website entry copy'],
+          ['Coverage', 'Login, chat, history, memory, skills, plugins, files, terminal, jobs, group chat, Kanban, usage, logs, MCP, platform integrations, devices, settings, backup, security, and troubleshooting'],
+          ['Audience', 'Individual users, administrators, support teams, acceptance reviewers, and internal training teams'],
+        ],
+      },
+      maintenance: {
+        title: 'Maintenance note',
+        content: 'When the website, reference docs, Hermes agent docs, and the current client UI differ, the manual treats the currently visible client interface as the operational source of truth. For future releases, replace the uploaded HTML/PDF assets and update the version scope on this page.',
       },
     },
     platforms: {
@@ -337,14 +400,14 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
+      intro: 'Hermes Studio provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
         content: 'The Koa server handles session management, profile CRUD, account- and profile-scoped management, config read/write, log access, skill listing, memory operations, and static assets.',
       },
       proxy: {
         title: 'Chat Streaming',
-        content: 'Chat runs use the /chat-run Socket.IO namespace and the Hermes agent bridge. Legacy gateway proxy routes are kept only for compatibility where applicable.',
+        content: 'Chat runs use the /chat-run Socket.IO namespace and the Hermes agent bridge. Gateway proxy routes are kept only for compatibility where applicable.',
       },
       auth: {
         title: 'Authentication',

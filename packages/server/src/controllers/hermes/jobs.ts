@@ -131,6 +131,10 @@ async function runHermesCron(profile: string, args: string[]): Promise<void> {
   }
 }
 
+function getCronArgs(profile: string, command: string, ...args: string[]): string[] {
+  return ['cron', command, '--profile', profile, ...args]
+}
+
 function sendJobNotFound(ctx: Context): void {
   ctx.status = 404
   ctx.body = { error: { message: 'Job not found' } }
@@ -179,7 +183,7 @@ export async function create(ctx: Context) {
   }
 
   const beforeJobs = readJobs(profile, true)
-  const args = ['cron', 'create']
+  const args = getCronArgs(profile, 'create')
   const name = String(body.name || '').trim()
   if (name) args.push('--name', name)
   if (body.deliver != null && String(body.deliver).trim()) args.push('--deliver', String(body.deliver).trim())
@@ -216,7 +220,7 @@ export async function update(ctx: Context) {
   const body = getBody(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
-  const args = ['cron', 'edit', ctx.params.id]
+  const args = getCronArgs(profile, 'edit', ctx.params.id)
   if (body.schedule != null || body.schedule_display != null) {
     args.push('--schedule', String(body.schedule ?? body.schedule_display))
   }
@@ -261,7 +265,7 @@ export async function remove(ctx: Context) {
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
   try {
-    await runHermesCron(profile, ['cron', 'remove', ctx.params.id])
+    await runHermesCron(profile, getCronArgs(profile, 'remove', ctx.params.id))
     ctx.body = { ok: true }
   } catch (error: any) {
     sendCommandError(ctx, error)
@@ -273,7 +277,7 @@ export async function pause(ctx: Context) {
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
   try {
-    await runHermesCron(profile, ['cron', 'pause', ctx.params.id])
+    await runHermesCron(profile, getCronArgs(profile, 'pause', ctx.params.id))
     const job = findJob(profile, ctx.params.id)
     ctx.body = { job }
   } catch (error: any) {
@@ -286,7 +290,7 @@ export async function resume(ctx: Context) {
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
   try {
-    await runHermesCron(profile, ['cron', 'resume', ctx.params.id])
+    await runHermesCron(profile, getCronArgs(profile, 'resume', ctx.params.id))
     const job = findJob(profile, ctx.params.id)
     ctx.body = { job }
   } catch (error: any) {
@@ -299,7 +303,7 @@ export async function run(ctx: Context) {
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
   try {
-    await runHermesCron(profile, ['cron', 'run', ctx.params.id])
+    await runHermesCron(profile, getCronArgs(profile, 'run', ctx.params.id))
     const job = findJob(profile, ctx.params.id)
     ctx.body = { job }
   } catch (error: any) {

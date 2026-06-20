@@ -25,7 +25,7 @@ function boardArgs(board?: string | null): string[] {
 
 // ─── Types ──────────────────────────────────────────────────────
 
-export type KanbanTaskStatus = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done' | 'archived'
+export type KanbanTaskStatus = 'triage' | 'todo' | 'scheduled' | 'ready' | 'running' | 'blocked' | 'review' | 'done' | 'archived'
 
 export interface KanbanTask {
   id: string
@@ -516,6 +516,14 @@ export async function createTask(
     assignee?: string
     priority?: number
     tenant?: string
+    workspace?: string
+    branch?: string
+    triage?: boolean
+    skills?: string[]
+    maxRuntime?: string
+    maxRetries?: number
+    goalMode?: boolean
+    goalMaxTurns?: number
   },
 ): Promise<KanbanTask> {
   const args = [...boardArgs(opts?.board), 'create', title, '--json']
@@ -523,6 +531,16 @@ export async function createTask(
   if (opts?.assignee) args.push('--assignee', opts.assignee)
   if (opts?.priority !== undefined) args.push('--priority', String(opts.priority))
   if (opts?.tenant) args.push('--tenant', opts.tenant)
+  if (opts?.workspace) args.push('--workspace', opts.workspace)
+  if (opts?.branch) args.push('--branch', opts.branch)
+  if (opts?.triage) args.push('--triage')
+  if (opts?.maxRuntime) args.push('--max-runtime', opts.maxRuntime)
+  if (opts?.maxRetries !== undefined) args.push('--max-retries', String(opts.maxRetries))
+  if (opts?.goalMode) args.push('--goal')
+  if (opts?.goalMaxTurns !== undefined) args.push('--goal-max-turns', String(opts.goalMaxTurns))
+  for (const skill of opts?.skills || []) {
+    if (skill.trim()) args.push('--skill', skill.trim())
+  }
 
   try {
     const { stdout } = await execHermes(args, {

@@ -497,49 +497,52 @@ async function saveToolsVisibility() {
       </div>
     </header>
 
-    <div class="mcp-content">
-      <NAlert v-if="error" type="error" class="mcp-notice">
-        {{ error }}
-      </NAlert>
-
-      <div class="summary-grid">
-        <div class="summary-card">
-          <span class="summary-label">{{ t('mcp.total') }}</span>
-          <strong>{{ summary.total }}</strong>
-        </div>
-        <div class="summary-card success">
-          <span class="summary-label">{{ t('mcp.connected') }}</span>
-          <strong>{{ summary.connected }}</strong>
-        </div>
-        <div class="summary-card warning">
-          <span class="summary-label">{{ t('mcp.disconnected') }}</span>
-          <strong>{{ summary.disconnected }}</strong>
-        </div>
-        <div class="summary-card info">
-          <span class="summary-label">{{ t('mcp.tool') }}</span>
-          <strong>{{ summary.totalTools }}</strong>
-        </div>
+    <div class="mcp-content" :class="{ 'is-loading': loading && servers.length === 0 }">
+      <div v-if="loading && servers.length === 0" class="mcp-loading-state">
+        <NSpin />
       </div>
+      <template v-else>
+        <NAlert v-if="error" type="error" class="mcp-notice">
+          {{ error }}
+        </NAlert>
 
-      <div class="toolbar-row">
-        <NInput
-          v-model:value="searchQuery"
-          :placeholder="t('mcp.searchPlaceholder')"
-          clearable
-          size="small"
-          class="search-input"
-        />
-        <div class="btn-group">
-          <NButton size="small" type="primary" @click="handleReload()">
-            {{ t('mcp.reloadAll') }}
-          </NButton>
-          <NButton type="primary" size="small" @click="openAddModal">
-            {{ t('mcp.addServer') }}
-          </NButton>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <span class="summary-label">{{ t('mcp.total') }}</span>
+            <strong>{{ summary.total }}</strong>
+          </div>
+          <div class="summary-card success">
+            <span class="summary-label">{{ t('mcp.connected') }}</span>
+            <strong>{{ summary.connected }}</strong>
+          </div>
+          <div class="summary-card warning">
+            <span class="summary-label">{{ t('mcp.disconnected') }}</span>
+            <strong>{{ summary.disconnected }}</strong>
+          </div>
+          <div class="summary-card info">
+            <span class="summary-label">{{ t('mcp.tool') }}</span>
+            <strong>{{ summary.totalTools }}</strong>
+          </div>
         </div>
-      </div>
 
-      <NSpin :show="loading && servers.length === 0">
+        <div class="toolbar-row">
+          <NInput
+            v-model:value="searchQuery"
+            :placeholder="t('mcp.searchPlaceholder')"
+            clearable
+            size="small"
+            class="search-input"
+          />
+          <div class="btn-group">
+            <NButton size="small" type="primary" @click="handleReload()">
+              {{ t('mcp.reloadAll') }}
+            </NButton>
+            <NButton type="primary" size="small" @click="openAddModal">
+              {{ t('mcp.addServer') }}
+            </NButton>
+          </div>
+        </div>
+
         <div v-if="filteredServers.length" class="servers-grid">
           <McpServerCard
             v-for="server in filteredServers"
@@ -554,8 +557,8 @@ async function saveToolsVisibility() {
             @manage-tools="openToolsModal"
           />
         </div>
-        <NEmpty v-else-if="!loading" :description="t('mcp.empty')" />
-      </NSpin>
+        <NEmpty v-else :description="t('mcp.empty')" />
+      </template>
     </div>
 
     <NModal v-model:show="showModal" :title="modalMode === 'add' ? t('mcp.addTitle') : t('mcp.editTitle')" preset="card" :style="{ width: 'min(520px, calc(100vw - 32px))' }">
@@ -657,8 +660,19 @@ async function saveToolsVisibility() {
 
 .mcp-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px;
+
+  &.is-loading {
+    display: grid;
+    place-items: center;
+  }
+}
+
+.mcp-loading-state {
+  display: grid;
+  place-items: center;
 }
 
 .page-header {

@@ -1,6 +1,6 @@
 export default {
   brand: {
-    name: 'Hermes Web UI',
+    name: 'Hermes Studio',
     logoAlt: 'Hermes',
   },
   ui: {
@@ -20,42 +20,57 @@ export default {
     github: 'GitHub',
   },
   hero: {
-    title: '自托管 AI 聊天仪表板',
-    subtitle: '开源 AI Agent 仪表板 — 流式对话、多模型调度、看板管理、用量分析、Web 终端，一个界面掌控一切。',
-    cta: '快速开始',
+    navLabel: 'Hero 导航',
+    nav: {
+      workspace: '工作区',
+      runtime: '运行时',
+      automation: '自动化',
+      deploy: '部署',
+    },
+    badge: '本地优先的 AI Agent 工作区',
+    title: 'Hermes Studio',
+    subtitle: '面向 Hermes Agent 的桌面应用和本地控制台。聊天、管理 Profile、运行 Coding Agent、查看文件、自动化任务，并掌控自己的运行环境。',
+    cta: '下载桌面版',
+    docsCta: '查看文档',
     viewGithub: '查看 GitHub',
+    downloadDesktop: '下载桌面版',
+    latestRelease: '最新版本',
+    getInstallers: '获取安装包',
+    docsTitle: '文档',
+    docsLibrary: '资料库',
     install: 'npm install -g hermes-web-ui',
+    previewAlt: 'Hermes Studio 仪表板预览',
   },
   features: {
-    title: '功能齐全',
-    desc: '开箱即用的完整 AI Agent 管理仪表板。',
+    title: 'Hermes Agent 的本地控制台',
+    desc: 'Hermes Studio 把聊天、运行时管理、自动化、文件、Coding Agent 和桌面分发整合到一个工作区。',
     streaming: {
-      title: '流式聊天',
-      desc: '基于 Socket.IO 的实时 AI 对话，支持多会话管理、Markdown 渲染和代码语法高亮。',
+      title: 'Agent 聊天',
+      desc: 'Hermes Agent 流式对话，支持会话、Markdown、工具轨迹、上传下载、模型标签和上下文用量。',
     },
     platforms: {
-      title: '8 大平台',
-      desc: '统一管理 Telegram、Discord、Slack、WhatsApp、Matrix、飞书、微信、企业微信。',
+      title: '平台渠道',
+      desc: '在一个页面配置 Telegram、Discord、Slack、WhatsApp、Matrix、飞书、微信和企业微信的凭证与行为。',
     },
     multiModel: {
-      title: '多模型支持',
-      desc: '支持 Claude、GPT、Gemini、DeepSeek 及任何 OpenAI 兼容模型，自动发现。',
+      title: '模型与 Provider',
+      desc: '从 Profile 凭证自动发现模型，管理 OpenAI 兼容 Provider，切换默认模型，并使用受支持服务的 OAuth 流程。',
     },
     groupChat: {
       title: '群聊协作',
       desc: '多 Agent 聊天室，支持提及路由、上下文压缩和实时协作。',
     },
     kanban: {
-      title: '看板管理',
-      desc: '可视化任务看板，7 个状态列，支持任务分配和筛选。',
+      title: '任务与看板',
+      desc: '创建 Cron 任务、立即触发执行，并在按 Profile 管理的 Kanban 看板中组织 Agent 工作。',
     },
     analytics: {
       title: '用量分析',
       desc: 'Token 用量、费用追踪、缓存命中率、模型分布和 30 天趋势。',
     },
     profiles: {
-      title: '多配置',
-      desc: '按账号授权的 Hermes Profile，隔离配置、模型、上传、任务、用量、记忆、技能、插件和 Provider。',
+      title: 'Profile 与权限',
+      desc: '按账号授权的 Hermes Profile，隔离配置、模型、上传、任务、用量、记忆、技能、插件、Provider 和可见性。',
     },
     files: {
       title: '文件管理',
@@ -66,16 +81,16 @@ export default {
       desc: '浏览器内完整 PTY 终端，基于 WebSocket 和 xterm.js 的多会话支持。',
     },
     quickInstall: {
-      title: '一键安装',
-      desc: '一条命令安装启动。初始化 Web UI 数据、启动 bridge 并打开浏览器。',
+      title: '桌面运行时',
+      desc: 'Windows、macOS 和 Linux 桌面版内置 Web UI 运行时，并把 Hermes Studio 状态与 Hermes Agent 数据分开管理。',
     },
     i18n: {
-      title: '8 种语言',
-      desc: '内置英语、中文、德语、西班牙语、法语、日语、韩语和葡萄牙语。',
+      title: 'Coding Agent 与 MCP',
+      desc: '启动本地 Coding Agent 会话，使用 Codex 和 Claude Code 代理路由，并管理内置 hermes-studio MCP Server。',
     },
     theme: {
-      title: '暗色 / 亮色',
-      desc: '水墨单色设计，平滑主题切换，响应式布局适配移动端和桌面端。',
+      title: '更新与发布',
+      desc: '桌面更新优先检查 Cloudflare，并保留 GitHub 兜底；完整桌面 release 成功后才提升为 GitHub Latest。',
     },
   },
   platforms: {
@@ -92,24 +107,29 @@ export default {
   },
   screenshots: {
     localUrl: 'http://localhost:8648',
+    tourLabel: '产品导览',
     previous: '上一张截图',
     next: '下一张截图',
     goTo: '查看第 {number} 张截图',
     items: [
-      { src: '/image1.png', alt: '带图片生成的 AI 聊天界面' },
-      { src: '/image2.png', alt: '聊天和文件浏览器界面' },
-      { src: '/image3.png', alt: '多面板工作区界面' },
-      { src: '/image4.png', alt: '看板管理界面' },
+      {
+        src: '/image.gif',
+        alt: 'Hermes Studio 产品流程演示',
+        title: 'Hermes Studio 工作流',
+        desc: '在一个应用里完成 Agent 对话、版本预览、Runtime 管理和工作区浏览。',
+      },
     ],
   },
   install: {
     title: '快速开始',
-    desc: '下载桌面应用，或自行运行 Hermes Web UI。',
+    desc: '下载桌面应用，或自行运行 Hermes Studio。',
     desktop: {
       title: '桌面版',
       download: '下载',
+      githubDownload: 'GitHub 下载',
+      cloudflareDownload: 'Cloudflare 下载',
       allDownloads: '查看全部发布文件',
-      prereq: '桌面版已内置 Web UI 运行时。',
+      prereq: '桌面版已内置 Hermes Studio 运行时。',
       downloads: [
         {
           title: 'macOS Apple Silicon',
@@ -154,7 +174,7 @@ export default {
     },
     source: {
       title: '源码安装',
-      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-web-ui.git',
+      cmd1: 'git clone https://github.com/EKKOLearnAI/hermes-studio.git',
       cmd2: 'cd hermes-web-ui && npm install && npm run dev',
     },
     prereq: '需要 Node.js >= 23',
@@ -171,6 +191,9 @@ export default {
     description: 'Hermes Agent 的自托管 AI 聊天仪表板。',
     license: 'BSL-1.1 开源协议',
     madeWith: '使用 Vue 3、Naive UI 和 TypeScript 构建。',
+    github: '打开 GitHub',
+    douyin: '打开抖音',
+    xiaohongshu: '打开小红书',
   },
   docs: {
     placeholder: '从侧边栏选择一个章节开始阅读。',
@@ -178,19 +201,20 @@ export default {
       gettingStarted: '快速开始',
       configuration: '配置说明',
       features: '功能详解',
+      hermesStudioManual: '客户端手册',
       platforms: '平台接入',
       api: 'API 参考',
     },
     gettingStarted: {
       title: '快速开始',
-      intro: 'Hermes Web UI 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Hermes Agent CLI 并提供美观的 Web 界面。',
+      intro: 'Hermes Studio 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Hermes Agent CLI 并提供美观的 Web 界面。',
       install: {
         title: '安装',
         content: '通过 npm 全局安装。需要 Node.js 23 或更高版本。',
       },
       firstRun: {
         title: '首次运行',
-        content: '首次启动时，Hermes Web UI 会自动生成认证令牌、初始化本地数据、启动 Hermes agent bridge 并在浏览器中打开仪表板。',
+        content: '首次启动时，Hermes Studio 会自动生成认证令牌、初始化本地数据、启动 Hermes agent bridge 并在浏览器中打开仪表板。',
       },
       login: {
         title: '登录',
@@ -199,16 +223,18 @@ export default {
     },
     configuration: {
       title: '配置说明',
-      intro: 'Hermes Web UI 可通过环境变量进行配置。',
+      intro: 'Hermes Studio 可通过环境变量进行配置。',
       envVars: {
         title: '环境变量',
         rows: [
           ['PORT', '服务器监听端口（默认：8648）'],
           ['BIND_HOST', '服务器绑定地址（默认：0.0.0.0）。如需 IPv6，请显式设置为 ::。'],
-          ['HERMES_WEB_UI_HOME', 'Web UI 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
+          ['HERMES_WEB_UI_HOME', 'Hermes Studio 数据目录，用于认证 token、登录凭据、日志、数据库和默认上传目录'],
           ['HERMES_WEBUI_STATE_DIR', 'HERMES_WEB_UI_HOME 的兼容别名'],
+          ['HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT', '关闭启动时向 Hermes profile 配置自动注入托管的 hermes-studio MCP server'],
+          ['HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT', '当 HERMES_WEB_UI_HOME 位于临时目录（例如 Version Preview runtime）时，仍允许托管 MCP 自动注入'],
           ['UPLOAD_DIR', '自定义上传根目录。文件会保存在按 Profile 隔离的子目录下'],
-          ['CORS_ORIGINS', 'CORS 来源配置（默认：*）'],
+          ['CORS_ORIGINS', 'HTTP、Socket.IO、WebSocket 跨源 allowlist（默认：仅同 host；只有明确需要旧版 wildcard CORS 时才设置为 *）'],
           ['AUTH_TOKEN', '自定义 bearer token，会覆盖自动生成的 token'],
           ['AUTH_JWT_SECRET', '用户名/密码会话的 JWT 签名密钥覆盖'],
           ['PROFILE', '启动/默认 Hermes profile'],
@@ -240,9 +266,13 @@ export default {
           ['HERMES_OPENROUTER_APP_REFERER', 'bridge 运行发送给 OpenRouter 的 attribution referer'],
           ['HERMES_OPENROUTER_APP_TITLE', 'bridge 运行发送给 OpenRouter 的 attribution title'],
           ['HERMES_OPENROUTER_APP_CATEGORIES', 'bridge 运行发送给 OpenRouter 的 attribution categories'],
-          ['HERMES_WEB_UI_MANAGED_GATEWAY', '强制启用旧 gateway 进程托管'],
-          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Web UI 关闭时是否同时停止托管的 gateway 进程'],
-          ['GATEWAY_HOST', '旧 gateway 兼容配置中写入 profile 的默认 gateway host'],
+          ['HERMES_WEB_UI_MANAGED_GATEWAY', '控制 Web UI 托管 Hermes gateway。默认开启；设为 0/false/off 时改用 hermes gateway start'],
+          ['HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART', '跳过启动时的 gateway 检查/自动启动；适用于由其它服务管理 Hermes gateway 的 dashboard-only 部署'],
+          ['HERMES_WEB_UI_DISABLE_SKILL_INJECTION', '跳过启动时的内置 skill 注入；适用于由 Hermes Web UI 外部管理 skills 的部署。启用注入时只更新 Web UI 管理或完全相同的内置副本，本地修改会跳过'],
+          ['HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN', 'Hermes Studio 关闭时是否同时停止托管的 gateway 进程'],
+          ['HERMES_GATEWAY_URL / GATEWAY_URL', 'proxy 路由使用的 Hermes gateway upstream URL'],
+          ['GATEWAY_HOST', 'proxy 路由使用的默认 Hermes gateway upstream host'],
+          ['GATEWAY_PORT', 'proxy 路由使用的默认 Hermes gateway upstream port'],
           ['HERMES_WEB_UI_PREVIEW_REPO', 'Version Preview 使用的 GitHub 仓库'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT', 'Version Preview 的 broker endpoint transport。设为 tcp 可让预览环境在 macOS/Linux 上也使用 loopback TCP；未设置时会跟随 HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp'],
           ['HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_ENDPOINT', '直接覆盖 Version Preview 的 broker endpoint；用于需要完全自定义预览 bridge 地址的部署'],
@@ -252,7 +282,7 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge 运行时',
-        content: '聊天运行通过 Hermes agent bridge 处理。它随 Web UI 服务一起运行，并直接连接 Hermes Agent runtime。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 与 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 与各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
+        content: '聊天运行通过 Hermes agent bridge 处理。它随 Hermes Studio 服务一起运行，并直接连接 Hermes Agent runtime。HERMES_AGENT_BRIDGE_ENDPOINT 控制 Node 与 bridge broker 的连接地址；HERMES_AGENT_BRIDGE_WORKER_TRANSPORT 控制 broker 与各 Profile worker 的连接方式。前端切换 Hermes Profile 只影响后续请求上下文，不会重启 bridge 或清理其他正在运行的任务。',
       },
       profiles: {
         title: '配置文件',
@@ -261,10 +291,10 @@ export default {
     },
     features: {
       title: '功能详解',
-      intro: '探索 Hermes Web UI 的核心功能。',
+      intro: '探索 Hermes Studio 的核心功能。',
       chat: {
         title: 'AI 聊天',
-        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Web UI 本地会话库。',
+        content: '通过 Socket.IO /chat-run 实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、按 Profile 上传、按路径下载，以及 Ctrl+K 搜索 Hermes Studio 本地会话库。',
       },
       kanban: {
         title: '看板管理',
@@ -297,6 +327,39 @@ export default {
       analytics: {
         title: '用量分析',
         content: '追踪 Token 用量（输入/输出）、预估费用、缓存命中率、会话数和模型分布。查看 30 天日趋势交互图表。',
+      },
+    },
+    hermesStudioManual: {
+      title: 'Hermes Studio 客户端完整操作手册',
+      intro: '这份手册面向 Hermes Studio 桌面客户端和 Web 界面的使用、配置、运维、验收与内部培训场景，覆盖当前客户端可见导航、设置、弹窗、状态页、关键按钮、常见流程和风险提示。',
+      open: {
+        title: '打开完整手册',
+        content: '完整手册保留原始 HTML 排版、截图标注和 PDF 版本。HTML 版本适合在线浏览，PDF 版本适合归档、打印和离线分发。',
+        links: [
+          {
+            label: '在线打开中文 HTML 手册',
+            href: '/docs/hermes-studio-0.6.12-full-cn/index.html',
+            description: '包含目录、截图、表格、风险提示和完整操作章节。',
+          },
+          {
+            label: '下载中文 PDF 手册',
+            href: '/docs/hermes-studio-0.6.12-full-cn/hermes-studio-0.6.12-full-cn.pdf',
+            description: '适合离线阅读、归档和培训材料分发。',
+          },
+        ],
+      },
+      scope: {
+        title: '适用范围',
+        rows: [
+          ['适用版本', 'Hermes Studio 0.6.12 客户端操作手册'],
+          ['文档语言', '中文完整手册；官网提供中英文入口说明'],
+          ['覆盖内容', '登录、聊天、历史、记忆、技能、插件、文件、终端、任务、群聊、看板、用量、日志、MCP、平台集成、设备、设置、备份、安全和故障排除'],
+          ['推荐读者', '个人用户、管理员、技术支持、交付验收人员和内部培训对象'],
+        ],
+      },
+      maintenance: {
+        title: '维护说明',
+        content: '当官网、说明文档、Hermes 智能体文档与当前客户端界面存在差异时，操作步骤以当前客户端实际可见界面为准。后续版本更新时，请同步替换 HTML/PDF 资源并更新本页的适用版本说明。',
       },
     },
     platforms: {
@@ -337,14 +400,14 @@ export default {
     },
     api: {
       title: 'API 参考',
-      intro: 'Hermes Web UI 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
+      intro: 'Hermes Studio 提供本地 BFF API，并通过 Socket.IO 端点进行聊天流式通信。',
       local: {
         title: '本地 BFF 端点',
         content: 'Koa 服务器处理会话管理、Profile CRUD、分账户分 Profile 管理、配置读写、日志访问、技能列表、记忆操作和静态资源。',
       },
       proxy: {
         title: '聊天流式通信',
-        content: '聊天运行使用 /chat-run Socket.IO 命名空间和 Hermes agent bridge。旧 gateway proxy 路由仅在兼容场景下保留。',
+        content: '聊天运行使用 /chat-run Socket.IO 命名空间和 Hermes agent bridge。gateway proxy 路由仅在兼容场景下保留。',
       },
       auth: {
         title: '认证',

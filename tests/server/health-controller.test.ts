@@ -9,26 +9,74 @@ function readRootPackage() {
   }
 }
 
-async function loadHealthControllerWithoutInjectedVersion() {
+type LoadHealthControllerOptions = {
+  injectedVersion?: string
+  bridgeReadiness?: any
+  bridgeReadinessError?: Error
+  managerError?: Error
+  runtimeStateError?: Error
+}
+
+const defaultBridgeReadiness = {
+  endpoint: 'tcp://127.0.0.1:8123',
+  endpointKind: 'tcp',
+  status: 'ready',
+  reachable: true,
+  ready: true,
+  running: true,
+  attached: false,
+  starting: false,
+  stopping: false,
+  restartScheduled: false,
+  restartAttempts: 0,
+  pid: 4321,
+}
+
+async function loadHealthController(options: LoadHealthControllerOptions = {}) {
   vi.resetModules()
-  delete (globalThis as any).__APP_VERSION__
+
+  if (typeof options.injectedVersion === 'string') {
+    ;(globalThis as any).__APP_VERSION__ = options.injectedVersion
+  } else {
+    delete (globalThis as any).__APP_VERSION__
+  }
 
   vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
   }))
 
-  return import('../../packages/server/src/controllers/health')
+  const checkReadiness = options.bridgeReadinessError
+    ? vi.fn().mockRejectedValue(options.bridgeReadinessError)
+    : vi.fn().mockResolvedValue(options.bridgeReadiness || defaultBridgeReadiness)
+  const getRuntimeState = options.runtimeStateError
+    ? vi.fn(() => { throw options.runtimeStateError })
+    : vi.fn(() => ({
+        endpoint: options.bridgeReadiness?.endpoint || 'ipc:///tmp/hermes-agent-bridge.sock',
+      }))
+  const getAgentBridgeManager = options.managerError
+    ? vi.fn(() => { throw options.managerError })
+    : vi.fn(() => ({ checkReadiness, getRuntimeState }))
+
+  vi.doMock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+    getAgentBridgeManager,
+  }))
+
+  const health = await import('../../packages/server/src/controllers/health')
+
+  return {
+    ...health,
+    getAgentBridgeManager,
+    checkReadiness,
+    getRuntimeState,
+  }
+}
+
+async function loadHealthControllerWithoutInjectedVersion(options: Omit<LoadHealthControllerOptions, 'injectedVersion'> = {}) {
+  return loadHealthController(options)
 }
 
 async function loadHealthControllerWithInjectedVersion(version: string) {
-  vi.resetModules()
-  ;(globalThis as any).__APP_VERSION__ = version
-
-  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
-    getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n'),
-  }))
-
-  return import('../../packages/server/src/controllers/health')
+  return loadHealthController({ injectedVersion: version })
 }
 
 function createMockCtx() {
@@ -100,4 +148,112 @@ describe('health controller version metadata', () => {
 
     await expect(checkLatestVersion()).resolves.toBeUndefined()
   })
+
+  it('includes sanitized agent bridge readiness fields without leaking the endpoint path', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck, getAgentBridgeManager, checkReadiness } = await loadHealthControllerWithoutInjectedVersion({
+      bridgeReadiness: {
+        endpoint: 'ipc:///tmp/hermes-agent-bridge.sock',
+        endpointKind: 'ipc',
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        attached: false,
+        starting: false,
+        stopping: false,
+        restartScheduled: true,
+        restartAttempts: 3,
+        pid: 9876,
+        error: 'connect ENOENT /tmp/hermes-agent-bridge.sock',
+      },
+    })
+    const ctx = createMockCtx()
+
+    await healthCheck(ctx)
+
+    expect(getAgentBridgeManager).toHaveBeenCalledTimes(1)
+    expect(checkReadiness).toHaveBeenCalledWith({ timeoutMs: 75, connectRetryMs: 0 })
+    expect(ctx.body.agent_bridge).toEqual({
+      status: 'unreachable',
+      reachable: false,
+      ready: false,
+      running: false,
+      attached: false,
+      starting: false,
+      stopping: false,
+      restart_scheduled: true,
+      restart_attempts: 3,
+      endpoint_kind: 'ipc',
+      pid: 9876,
+      error: 'connect ENOENT [redacted endpoint]',
+    })
+    expect(ctx.body.agent_bridge).not.toHaveProperty('endpoint')
+    expect(JSON.stringify(ctx.body.agent_bridge)).not.toContain('/tmp/hermes-agent-bridge.sock')
+  })
+
+  it('handles agent bridge readiness probe errors without failing the health check', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck, checkReadiness, getRuntimeState } = await loadHealthControllerWithoutInjectedVersion({
+      bridgeReadinessError: new Error('bridge manager unavailable at ipc:///tmp/hermes-agent-bridge.sock (ENOENT /tmp/hermes-agent-bridge.sock)'),
+    })
+    const ctx = createMockCtx()
+
+    await expect(healthCheck(ctx)).resolves.toBeUndefined()
+
+    expect(checkReadiness).toHaveBeenCalledWith({ timeoutMs: 75, connectRetryMs: 0 })
+    expect(getRuntimeState).toHaveBeenCalledTimes(1)
+    expect(ctx.body.status).toBe('ok')
+    expect(ctx.body.gateway).toBe('running')
+    expect(ctx.body.agent_bridge).toEqual({
+      status: 'unknown',
+      reachable: false,
+      error: 'bridge manager unavailable at [redacted endpoint] (ENOENT [redacted endpoint])',
+    })
+    expect(JSON.stringify(ctx.body.agent_bridge)).not.toContain('/tmp/hermes-agent-bridge.sock')
+    expect(JSON.stringify(ctx.body.agent_bridge)).not.toContain('ipc:///tmp/hermes-agent-bridge.sock')
+  })
+
+  it('handles manager construction errors without failing the base health check', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck, getAgentBridgeManager, checkReadiness } = await loadHealthControllerWithoutInjectedVersion({
+      managerError: new Error('bad bridge config /tmp/hermes-agent-bridge.sock'),
+    })
+    const ctx = createMockCtx()
+
+    await expect(healthCheck(ctx)).resolves.toBeUndefined()
+
+    expect(getAgentBridgeManager).toHaveBeenCalledTimes(1)
+    expect(checkReadiness).not.toHaveBeenCalled()
+    expect(ctx.body.status).toBe('ok')
+    expect(ctx.body.agent_bridge).toEqual({
+      status: 'unknown',
+      reachable: false,
+      error: 'bad bridge config [redacted endpoint]',
+    })
+  })
+
+  it('handles runtime-state errors without failing the base health check', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+
+    const { healthCheck, getRuntimeState, checkReadiness } = await loadHealthControllerWithoutInjectedVersion({
+      runtimeStateError: new Error('runtime state unavailable'),
+    })
+    const ctx = createMockCtx()
+
+    await expect(healthCheck(ctx)).resolves.toBeUndefined()
+
+    expect(getRuntimeState).toHaveBeenCalledTimes(1)
+    expect(checkReadiness).not.toHaveBeenCalled()
+    expect(ctx.body.status).toBe('ok')
+    expect(ctx.body.agent_bridge).toEqual({
+      status: 'unknown',
+      reachable: false,
+      error: 'runtime state unavailable',
+    })
+  })
+
 })

@@ -2,7 +2,7 @@
 import { ref, nextTick } from 'vue'
 import { NDropdown, useMessage, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { useFilesStore, isTextFile, isImageFile, isMarkdownFile } from '@/stores/hermes/files'
+import { useFilesStore, isTextFile, isPreviewableFile } from '@/stores/hermes/files'
 import { downloadFile } from '@/api/hermes/download'
 import type { FileEntry } from '@/api/hermes/files'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -20,6 +20,7 @@ const targetEntry = ref<FileEntry | null>(null)
 
 const emit = defineEmits<{
   (e: 'rename', entry: FileEntry): void
+  (e: 'newFolder', entry: FileEntry): void
 }>()
 
 function show(e: MouseEvent, entry: FileEntry) {
@@ -43,13 +44,14 @@ function getOptions() {
     if (isTextFile(entry.name)) {
       options.push({ label: t('files.edit'), key: 'edit' })
     }
-    if (isImageFile(entry.name) || isMarkdownFile(entry.name)) {
+    if (isPreviewableFile(entry.name)) {
       options.push({ label: t('files.preview'), key: 'preview' })
     }
     options.push({ label: t('files.download'), key: 'download' })
   }
   options.push({ type: 'divider', key: 'd1' })
   options.push({ label: t('files.copyPath'), key: 'copyPath' })
+  options.push({ label: t('files.newFolder'), key: 'newFolder' })
   options.push({ label: t('files.rename'), key: 'rename' })
   options.push({ type: 'divider', key: 'd2' })
   options.push({ label: t('files.delete'), key: 'delete' })
@@ -85,6 +87,9 @@ async function handleSelect(key: string) {
     }
     case 'rename':
       emit('rename', entry)
+      break
+    case 'newFolder':
+      emit('newFolder', entry)
       break
     case 'delete':
       dialog.warning({

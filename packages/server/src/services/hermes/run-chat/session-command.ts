@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io'
-import { addMessage, clearSessionMessages, createSession, getSession, renameSession, updateSessionStats } from '../../../db/hermes/session-store'
+import { addMessage, clearSessionMessages, createBranchedSession, createSession, getSession, getSessionDetail, renameSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { logger } from '../../logger'
 import type { AgentBridgeClient } from '../agent-bridge'
 import { flushBridgePendingToDb } from './bridge-message'
@@ -7,22 +7,25 @@ import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeH
 import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
-import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { ChatRunSource, ContentBlock, QueuedRun, SessionState } from './types'
 
 type CommandName =
   | 'usage'
   | 'status'
   | 'abort'
   | 'queue'
+  | 'skill'
   | 'plan'
   | 'goal'
   | 'subgoal'
   | 'clear'
   | 'title'
   | 'compress'
+  | 'branch'
   | 'steer'
   | 'destroy'
   | 'reload-mcp'
+  | 'reload-skills'
 
 interface ParsedSessionCommand {
   name: CommandName
@@ -44,21 +47,42 @@ interface SessionCommandContext {
   runQueuedItem: (socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile?: string) => void
 }
 
+interface BranchSessionSummary {
+  id: string
+  profile: string
+  source: ChatRunSource
+  title: string
+  model: string | null
+  provider: string | null
+  parentSessionId: string
+  forkPointMessageId: string | null
+  parentTitle: string | null
+  parentLastMessage: string | null
+  parentLastMessageRole: string | null
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+  workspace: string | null
+}
+
 const COMMAND_ALIASES: Record<string, CommandName> = {
   usage: 'usage',
   status: 'status',
   abort: 'abort',
   queue: 'queue',
+  skill: 'skill',
   plan: 'plan',
   goal: 'goal',
   subgoal: 'subgoal',
   clear: 'clear',
   title: 'title',
   compress: 'compress',
+  fork: 'branch',
   steer: 'steer',
   destroy: 'destroy',
-  destory: 'destroy',
   'reload-mcp': 'reload-mcp',
+  'reload-skills': 'reload-skills',
+  reload_skills: 'reload-skills',
 }
 
 export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessionCommand | null {
@@ -69,7 +93,7 @@ export function parseSessionCommand(input: string | ContentBlock[]): ParsedSessi
   if (!match) return null
   const rawName = match[1].toLowerCase()
   const name = COMMAND_ALIASES[rawName]
-  if (!name) return { name: 'status', rawName, args: match[2]?.trim() || '' }
+  if (!name) return null
   return { name, rawName, args: match[2]?.trim() || '' }
 }
 
@@ -84,8 +108,9 @@ export async function handleSessionCommand(
 ): Promise<void> {
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
-  ensureCommandSession(sessionId, ctx)
-  if (command.name !== 'plan') {
+  ensureCommandSession(sessionId, command, ctx)
+  const isKnownCommand = Boolean(COMMAND_ALIASES[command.rawName])
+  if (command.name !== 'plan' && command.name !== 'skill' && command.name !== 'branch' && isKnownCommand) {
     persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
   }
 
@@ -101,12 +126,96 @@ export async function handleSessionCommand(
     })
   }
 
-  if (!COMMAND_ALIASES[command.rawName]) {
+  if (command.name === 'skill') {
+    const displayCommand = `/${command.rawName}${command.args ? ` ${command.args}` : ''}`
+    const skillParts = command.args.split(/\s+/, 2)
+    const skillName = skillParts[0]?.trim()
+    if (!skillName) {
+      emitCommand({
+        ok: false,
+        action: 'skill',
+        terminal: !state.isWorking,
+        message: 'Usage: /skill <skill-name> [instructions]',
+      })
+      return
+    }
+    const rest = command.args.slice(skillName.length).trim()
+    const bridgeCommand = `/${skillName}${rest ? ` ${rest}` : ''}`
+    let result
+    try {
+      result = await ctx.bridge.command(sessionId, bridgeCommand, ctx.profile)
+    } catch (err) {
+      if (state.isWorking) emitQueuedState(ctx, sessionId, state)
+      emitCommand({
+        ok: false,
+        action: 'skill',
+        terminal: !state.isWorking,
+        message: `Skill command failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+
+    const expandedPrompt = typeof result.message === 'string' ? result.message.trim() : ''
+    if (result.handled && expandedPrompt && (result.type === 'skill' || result.type === 'bundle')) {
+      logger.info(
+        '[chat-run-socket] /skill resolved session=%s profile=%s skill=%s bridge_type=%s',
+        sessionId,
+        ctx.profile,
+        skillName,
+        result.type,
+      )
+      logger.info(
+        '[chat-run-socket] /skill expanded prompt session=%s profile=%s skill=%s chars=%d expanded_prompt=%s',
+        sessionId,
+        ctx.profile,
+        skillName,
+        expandedPrompt.length,
+        expandedPrompt,
+      )
+      const next: QueuedRun = {
+        queue_id: ctx.queueId || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        input: expandedPrompt,
+        displayInput: displayCommand,
+        displayRole: 'command',
+        storageMessage: expandedPrompt,
+        model: ctx.model,
+        provider: ctx.provider,
+        model_groups: ctx.model_groups,
+        instructions: ctx.instructions,
+        profile: ctx.profile,
+        source: 'cli',
+        originSocketId: ctx.socket.id,
+      }
+
+      if (state.isWorking) {
+        state.queue.push(next)
+        emitQueuedState(ctx, sessionId, state)
+        return
+      }
+
+      emitCommand({
+        action: result.type === 'bundle' ? 'bundle' : 'skill',
+        terminal: false,
+        started: true,
+      })
+      ctx.runQueuedItem(ctx.socket, sessionId, next, ctx.profile)
+      return
+    }
+
+    logger.warn(
+      '[chat-run-socket] /skill unresolved session=%s profile=%s skill=%s bridge_type=%s message=%s',
+      sessionId,
+      ctx.profile,
+      skillName,
+      typeof result.type === 'string' ? result.type : '',
+      typeof result.message === 'string' ? result.message : '',
+    )
+    if (state.isWorking) emitQueuedState(ctx, sessionId, state)
     emitCommand({
       ok: false,
       action: 'error',
       terminal: !state.isWorking,
-      message: `Unknown bridge command: /${command.rawName}`,
+      message: result?.message || `Unknown bridge command: /${command.rawName}`,
     })
     return
   }
@@ -463,6 +572,58 @@ export async function handleSessionCommand(
       return
     }
 
+    case 'branch': {
+      const bridgeStatus = await getBridgeSessionStatus(ctx, sessionId)
+      if (state.isWorking || bridgeStatus?.running === true) {
+        emitCommand({
+          ok: false,
+          action: 'branch',
+          terminal: false,
+          message: 'Cannot branch while the session is running. Wait for it to finish or use /abort first.',
+        })
+        return
+      }
+
+      const parent = getSession(sessionId)
+      if (isCodingAgentBranchSource(parent)) {
+        emitCommand({
+          ok: false,
+          action: 'branch',
+          terminal: true,
+          message: 'Cannot branch coding agent sessions.',
+        })
+        return
+      }
+
+      const fork = createBranchSession(sessionId, command.args, ctx)
+      if (!fork) {
+        emitCommand({
+          ok: false,
+          action: 'branch',
+          terminal: true,
+          message: 'Cannot branch: no conversation messages found to copy.',
+        })
+        return
+      }
+
+      // Do not seed an empty in-memory child state here. The child transcript has
+      // just been copied into SQLite, and the immediate client switch/resume must
+      // hydrate it from the DB so the fork opens with copied messages plus
+      // lineage metadata instead of an empty "new conversation" view.
+      ctx.sessionMap.delete(fork.id)
+
+      emitCommand({
+        action: 'branch',
+        terminal: true,
+        parentSessionId: sessionId,
+        newSessionId: fork.id,
+        newSessionTitle: fork.title,
+        branchSession: fork,
+        message: `Branched session "${fork.title || fork.id}" from ${sessionId}.`,
+      })
+      return
+    }
+
     case 'steer': {
       if (!command.args) {
         emitCommand({ ok: false, action: 'steer', terminal: !state.isWorking, message: 'Usage: /steer <instruction>' })
@@ -501,6 +662,34 @@ export async function handleSessionCommand(
           action: 'reload-mcp',
           terminal: !state.isWorking,
           message: `MCP reload failed: ${err instanceof Error ? err.message : String(err)}`,
+        })
+      }
+      return
+    }
+
+    case 'reload-skills': {
+      if (state.isWorking) {
+        emitCommand({
+          ok: false,
+          action: 'reload-skills',
+          terminal: false,
+          message: 'Skills reload can only run while the session is idle. Wait for the current run to finish or abort it first.',
+        })
+        return
+      }
+      try {
+        const result = await reloadSkillsThroughBridge(ctx, sessionId)
+        emitCommand({
+          action: 'reload-skills',
+          message: formatReloadSkillsMessage(result),
+          result,
+        })
+      } catch (err) {
+        emitCommand({
+          ok: false,
+          action: 'reload-skills',
+          terminal: !state.isWorking,
+          message: `Skills reload failed: ${err instanceof Error ? err.message : String(err)}`,
         })
       }
       return
@@ -650,15 +839,70 @@ function parseGoalTurnProgress(message: string): { used: number; max: number } |
   return { used, max }
 }
 
-function ensureCommandSession(sessionId: string, ctx: SessionCommandContext) {
+async function reloadSkillsThroughBridge(
+  ctx: SessionCommandContext,
+  sessionId: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return await ctx.bridge.reloadSkills(ctx.profile)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (!message.includes('unknown action: skills_reload')) throw err
+  }
+
+  const result = await ctx.bridge.command(sessionId, 'reload-skills', ctx.profile)
+  if (result.handled && result.action === 'reload-skills') return result
+  throw new Error(
+    'The running Agent Bridge does not support /reload-skills yet. Restart the bridge and try again.',
+  )
+}
+
+function formatReloadSkillsMessage(result: Record<string, unknown>): string {
+  const added = Array.isArray(result.added) ? result.added : []
+  const removed = Array.isArray(result.removed) ? result.removed : []
+  const total = typeof result.total === 'number' && Number.isFinite(result.total)
+    ? result.total
+    : null
+  const lines = ['Skills reloaded successfully.']
+  if (!added.length && !removed.length) {
+    lines.push(total === null ? 'No skill changes detected.' : `No skill changes detected. Total skills: ${total}.`)
+    return lines.join('\n')
+  }
+  if (added.length) {
+    lines.push('Added skills:')
+    for (const item of added) lines.push(`- ${formatReloadSkillItem(item)}`)
+  }
+  if (removed.length) {
+    lines.push('Removed skills:')
+    for (const item of removed) lines.push(`- ${formatReloadSkillItem(item)}`)
+  }
+  if (total !== null) lines.push(`Total skills: ${total}.`)
+  return lines.join('\n')
+}
+
+function formatReloadSkillItem(item: unknown): string {
+  if (!item || typeof item !== 'object') return String(item || '')
+  const record = item as Record<string, unknown>
+  const name = typeof record.name === 'string' ? record.name : ''
+  const description = typeof record.description === 'string' ? record.description : ''
+  return description ? `${name}: ${description}` : name
+}
+
+function ensureCommandSession(sessionId: string, command: ParsedSessionCommand, ctx: SessionCommandContext) {
   if (getSession(sessionId)) return
   createSession({
     id: sessionId,
     profile: ctx.profile,
     source: 'cli',
     model: ctx.model,
-    title: 'Bridge command',
+    title: buildCommandSessionTitle(command),
   })
+}
+
+function buildCommandSessionTitle(command: ParsedSessionCommand): string {
+  const prefix = `[${command.rawName}]`
+  const args = command.args.replace(/\s+/g, ' ').trim()
+  return args ? `${prefix} ${args}`.slice(0, 120) : prefix
 }
 
 function persistCommandMessage(sessionId: string, state: SessionState, content: string) {
@@ -677,6 +921,118 @@ function persistCommandMessage(sessionId: string, state: SessionState, content: 
     timestamp: now,
   })
   updateSessionStats(sessionId)
+}
+
+function createBranchSession(parentSessionId: string, requestedTitle: string, ctx: SessionCommandContext): BranchSessionSummary | null {
+  const parent = getSession(parentSessionId)
+  if (!parent || isCodingAgentBranchSource(parent)) return null
+
+  const detail = getSessionDetail(parentSessionId)
+  const sourceMessages = detail?.messages || []
+  const parentLast = getLastVisibleMessage(sourceMessages)
+  if (!parentLast) return null
+
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const newSessionId = generateBranchSessionId()
+  const title = buildBranchTitle(requestedTitle, parent.title || parent.preview || '')
+  const source = normalizeBranchSource(parent.source)
+
+  const persisted = createBranchedSession({
+    id: newSessionId,
+    profile: parent.profile || ctx.profile || 'default',
+    source,
+    agent: parent.agent || (source === 'cli' ? 'hermes' : ''),
+    agent_mode: parent.agent_mode || '',
+    agent_session_id: parent.agent_session_id || '',
+    agent_native_session_id: parent.agent_native_session_id || '',
+    model: parent.model || ctx.model || '',
+    provider: parent.provider || ctx.provider || '',
+    title,
+    parent_session_id: parentSessionId,
+    workspace: parent.workspace || undefined,
+    ended_at: nowSeconds,
+    last_active: nowSeconds,
+    messages: sourceMessages.map(message => ({
+      role: message.role,
+      content: message.content,
+      display_role: message.display_role,
+      display_content: message.display_content,
+      tool_call_id: message.tool_call_id,
+      tool_calls: message.tool_calls,
+      tool_name: message.tool_name,
+      timestamp: message.timestamp,
+      token_count: message.token_count,
+      finish_reason: message.finish_reason,
+      reasoning: message.reasoning,
+      reasoning_details: message.reasoning_details,
+      reasoning_content: message.reasoning_content,
+    })),
+  })
+  if (!persisted) return null
+
+  return {
+    id: newSessionId,
+    profile: parent.profile || ctx.profile || 'default',
+    source,
+    title,
+    model: parent.model || ctx.model || null,
+    provider: parent.provider || ctx.provider || null,
+    parentSessionId,
+    forkPointMessageId: persisted.fork_point_message_id || null,
+    parentTitle: parent.title || parent.preview || null,
+    parentLastMessage: parentLast?.content || null,
+    parentLastMessageRole: parentLast?.role || null,
+    createdAt: nowSeconds * 1000,
+    updatedAt: nowSeconds * 1000,
+    messageCount: sourceMessages.length,
+    workspace: parent.workspace || null,
+  }
+}
+
+
+function isCodingAgentBranchSource(session: { source?: string | null; agent?: string | null } | null | undefined): boolean {
+  return session?.source === 'coding_agent' || session?.agent === 'claude' || session?.agent === 'codex'
+}
+
+function generateBranchSessionId(): string {
+  const now = new Date()
+  const ts = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '_',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('')
+  return `${ts}_${Math.random().toString(16).slice(2, 8)}`
+}
+
+function buildBranchTitle(requestedTitle: string, parentTitle: string): string {
+  const explicit = requestedTitle.replace(/\s+/g, ' ').trim()
+  if (explicit) return explicit.slice(0, 120)
+  const base = parentTitle.replace(/\s+/g, ' ').trim() || 'branch'
+  const prefix = 'branch: '
+  return `${prefix}${base.slice(0, Math.max(0, 120 - prefix.length))}`
+}
+
+function normalizeBranchSource(source: string | null | undefined): ChatRunSource {
+  if (source === 'api_server' || source === 'cli' || source === 'global_agent') return source
+  return 'cli'
+}
+
+function getLastVisibleMessage(messages: Array<{ role: string; content: string }>): { role: string; content: string } | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]
+    if (message.role !== 'user' && message.role !== 'assistant') continue
+    const content = String(message.content || '').replace(/\s+/g, ' ').trim()
+    if (!content) continue
+    return {
+      role: message.role,
+      content: content.length > 280 ? `${content.slice(0, 277)}...` : content,
+    }
+  }
+  return null
 }
 
 function emitToSession(nsp: ReturnType<Server['of']>, socket: Socket, sessionId: string, event: string, payload: any) {

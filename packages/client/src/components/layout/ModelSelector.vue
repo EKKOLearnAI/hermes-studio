@@ -5,6 +5,10 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
+const emit = defineEmits<{
+  'modal-show-change': [show: boolean]
+}>()
+
 const { t } = useI18n()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -87,7 +91,7 @@ function handleSelect(model: string, provider: string) {
   const meta = activeModelGroups.value.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, provider)
-  showModal.value = false
+  setModalShow(false)
   searchQuery.value = ''
 }
 
@@ -106,9 +110,14 @@ function handleCustomSubmit() {
   const meta = activeModelGroups.value.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
   appStore.switchModel(model, customProvider.value)
-  showModal.value = false
+  setModalShow(false)
   searchQuery.value = ''
   customInput.value = ''
+}
+
+function setModalShow(show: boolean) {
+  showModal.value = show
+  emit('modal-show-change', show)
 }
 
 function openModal() {
@@ -116,13 +125,53 @@ function openModal() {
   searchQuery.value = ''
   customInput.value = ''
   customProvider.value = appStore.selectedProvider
-  showModal.value = true
+  setModalShow(true)
+}
+
+function handleModalShowChange(show: boolean) {
+  setModalShow(show)
+}
+
+const refreshing = ref(false)
+
+async function handleRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  const startedAt = Date.now()
+  try {
+    await appStore.reloadModels({ preserveSelection: true })
+  } finally {
+    // 保证旋转动画至少可见一圈，避免请求太快图标闪一下
+    const elapsed = Date.now() - startedAt
+    const minSpin = 600
+    if (elapsed < minSpin) await new Promise(resolve => setTimeout(resolve, minSpin - elapsed))
+    refreshing.value = false
+  }
 }
 </script>
 
 <template>
   <div class="model-selector">
-    <div class="model-label">{{ t('models.title') }}</div>
+    <div class="model-label-row">
+      <div class="model-label">{{ t('models.title') }}</div>
+      <button
+        class="model-refresh"
+        type="button"
+        :disabled="refreshing"
+        :title="t('models.refresh')"
+        :aria-label="t('models.refresh')"
+        @click="handleRefresh"
+      >
+        <svg
+          :class="{ spinning: refreshing }"
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        >
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      </button>
+    </div>
     <button class="model-trigger" @click="openModal">
       <span class="model-name" :title="appStore.selectedModel">{{ selectedDisplayName || '—' }}</span>
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,11 +180,12 @@ function openModal() {
     </button>
 
     <NModal
-      v-model:show="showModal"
+      :show="showModal"
       preset="card"
       :title="t('models.title')"
       :style="{ width: 'min(480px, calc(100vw - 32px))' }"
       :mask-closable="true"
+      @update:show="handleModalShowChange"
     >
       <NInput
         v-model:value="searchQuery"
@@ -230,13 +280,53 @@ function openModal() {
   margin-bottom: 8px;
 }
 
+.model-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .model-label {
   font-size: 11px;
   font-weight: 600;
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 6px;
+}
+
+.model-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: $radius-sm;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  transition: color $transition-fast, background-color $transition-fast;
+
+  &:hover:not(:disabled) {
+    background: $bg-secondary;
+    color: $text-primary;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+
+  svg.spinning {
+    animation: model-refresh-spin 0.8s linear infinite;
+  }
+}
+
+@keyframes model-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .model-trigger {

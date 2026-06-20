@@ -26,8 +26,10 @@ packages/server/node_modules/
 .hermes-web-ui/
 packages/desktop/dist/
 packages/desktop/release/
+packages/desktop/resources/
 packages/desktop/resources/python/
 packages/desktop/node_modules/
+packages/*/.pio/
 
 # Hermes config files (should be in user data directory, not project root)
 config.yaml

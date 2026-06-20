@@ -6,7 +6,11 @@ import { updateUsage } from '../../../db/hermes/usage-store'
 import { countTokens } from '../../../lib/context-compressor'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { convertContentBlocksForAgent, isContentBlockArray } from '../run-chat/content-blocks'
+import { resolveBridgeRunModelConfig } from '../run-chat/model-config'
 import type { ContentBlock } from '../run-chat/types'
+import type { StoredMessage } from '../context-engine/types'
+import { buildProjectedGroupChatHistory, projectGroupChatMessage } from './context-projection'
+import { sliceGroupMessagesForSnapshotTail } from './group-message-ordering'
 import {
     isAllAgentsMentioned,
     resolveMentionTargets,
@@ -35,15 +39,30 @@ interface MessageData {
 }
 
 type MentionMessage = {
+    messageId?: string
     content: string
     senderName: string
     senderId: string
     timestamp: number
+    role?: string
     input?: string | ContentBlock[]
     mentionDepth?: number
 }
 
+export function mentionMessageToStoredContextMessage(roomId: string, msg: MentionMessage): StoredMessage {
+    return {
+        id: msg.messageId || '',
+        roomId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+    }
+}
+
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
+export type GroupModelContext = { model: string; provider: string }
 
 interface BridgeContextCache {
     fixedContextTokens: number
@@ -58,6 +77,10 @@ interface BridgeContextCache {
     provider?: string
 }
 
+export async function resolveGroupAgentModelContext(profile: string): Promise<GroupModelContext> {
+    return resolveBridgeRunModelConfig({ profile })
+}
+
 export function estimateGroupHistoryMessageTokens(history: Array<{ content?: unknown }>): number {
     return history.reduce((sum, message) => sum + countTokens(String(message.content || '')), 0)
 }
@@ -70,6 +93,16 @@ export function groupContextTokensWithFixedOverhead(
         return undefined
     }
     return Math.floor(fixedContextTokens) + estimateGroupHistoryMessageTokens(history)
+}
+
+export function isGroupBridgeContextCacheCompatible(
+    cache: { model?: string; provider?: string } | null | undefined,
+    modelContext: GroupModelContext,
+): boolean {
+    if (!cache) return false
+    if (modelContext.model && cache.model !== modelContext.model) return false
+    if (modelContext.provider && cache.provider !== modelContext.provider) return false
+    return true
 }
 
 export function groupBridgeReasoningDeltaFromEvent(event: Record<string, unknown>): string | null {
@@ -289,7 +322,12 @@ class AgentClient {
             : undefined
     }
 
-    private cacheBridgeContext(sessionId: string, data: Record<string, unknown> | AgentBridgeContextEstimate, instructions?: string): void {
+    private cacheBridgeContext(
+        sessionId: string,
+        data: Record<string, unknown> | AgentBridgeContextEstimate,
+        instructions?: string,
+        modelContext: GroupModelContext = { model: '', provider: '' },
+    ): void {
         const fixedContextTokens = this.finiteToken(data.fixed_context_tokens)
         if (fixedContextTokens == null) return
         this.bridgeContextCache.set(sessionId, {
@@ -301,8 +339,8 @@ class AgentClient {
             toolCount: this.finiteToken(data.tool_count),
             toolNames: Array.isArray(data.tool_names) ? data.tool_names.map(String) : undefined,
             profile: typeof data.profile === 'string' ? data.profile : undefined,
-            model: typeof data.model === 'string' ? data.model : undefined,
-            provider: typeof data.provider === 'string' ? data.provider : undefined,
+            model: typeof data.model === 'string' ? data.model : modelContext.model || undefined,
+            provider: typeof data.provider === 'string' ? data.provider : modelContext.provider || undefined,
         })
     }
 
@@ -310,10 +348,11 @@ class AgentClient {
         return estimateGroupHistoryMessageTokens(history)
     }
 
-    private estimateWithCachedBridgeContext(sessionId: string, history: GroupEstimateMessage[], instructions?: string): number | undefined {
+    private estimateWithCachedBridgeContext(sessionId: string, history: GroupEstimateMessage[], instructions: string | undefined, modelContext: GroupModelContext): number | undefined {
         const cache = this.bridgeContextCache.get(sessionId)
         if (!cache) return undefined
         if (cache.instructions !== instructions) return undefined
+        if (!isGroupBridgeContextCacheCompatible(cache, modelContext)) return undefined
         return groupContextTokensWithFixedOverhead(cache.fixedContextTokens, history)
     }
 
@@ -323,9 +362,10 @@ class AgentClient {
         bridge: AgentBridgeClient,
         history: GroupEstimateMessage[],
         instructions: string | undefined,
+        modelContext: GroupModelContext,
         phase: string,
     ): Promise<number | undefined> {
-        const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions)
+        const cachedTokens = this.estimateWithCachedBridgeContext(sessionId, history, instructions, modelContext)
         if (cachedTokens != null) {
             logger.info({
                 roomId,
@@ -347,8 +387,12 @@ class AgentClient {
             history,
             instructions,
             this.profile,
+            {
+                ...(modelContext.model ? { model: modelContext.model } : {}),
+                ...(modelContext.provider ? { provider: modelContext.provider } : {}),
+            },
         )
-        this.cacheBridgeContext(sessionId, estimate, instructions)
+        this.cacheBridgeContext(sessionId, estimate, instructions, modelContext)
         const totalTokens = Number(estimate.token_count || 0)
         logger.info({
             roomId,
@@ -402,6 +446,7 @@ class AgentClient {
             const bridge = new AgentBridgeClient()
             const sessionSeed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
             const sessionId = groupBridgeSessionId(roomId, this.profile, this.name, sessionSeed)
+            const modelContext = await resolveGroupAgentModelContext(this.profile)
 
             if (this.contextEngine && this.storage) {
                 try {
@@ -430,7 +475,7 @@ class AgentClient {
                         members,
                         upstream: '',
                         apiKey: null,
-                        currentMessage: msg,
+                        currentMessage: mentionMessageToStoredContextMessage(roomId, msg),
                         compression,
                         profile: this.profile,
                         onProgress: (event: { status: 'compressing'; messageCount: number; tokenCount: number }) => {
@@ -446,6 +491,7 @@ class AgentClient {
                                 bridge,
                                 history,
                                 estimateInstructions,
+                                modelContext,
                                 'build',
                             )
                         },
@@ -479,11 +525,8 @@ class AgentClient {
                     return { ...block, text: `${routedPrefix}\n\n原始消息：${text || msg.content}` }
                 })
                 : `${routedPrefix}\n\n原始消息：${stripMentionRoutingTokens(msg.content, this.name) || msg.content}`
-            const runContext = [
-                `[Current Hermes profile: ${this.profile}]`,
-                'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
-            ].join('\n')
-            instructions = instructions ? `${runContext}\n${instructions}` : runContext
+            const runPrompt = 'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.'
+            instructions = instructions ? `${runPrompt}\n${instructions}` : runPrompt
             const bridgeInput: AgentBridgeMessage = isContentBlockArray(input)
                 ? await convertContentBlocksForAgent(input)
                 : input
@@ -496,6 +539,8 @@ class AgentClient {
                 instructions,
                 this.profile,
                 {
+                    ...(modelContext.model ? { model: modelContext.model } : {}),
+                    ...(modelContext.provider ? { provider: modelContext.provider } : {}),
                     source: 'api_server',
                 },
             )
@@ -504,7 +549,7 @@ class AgentClient {
             streamStarted = true
             for await (const chunk of bridge.streamOutput(started.run_id, { timeoutMs: 120000 })) {
                 lastChunk = chunk
-                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, instructions, chunk, () => streamMessageId, async () => {
+                reasoningContent += await this.recordBridgeEvents(roomId, sessionId, instructions, modelContext, chunk, () => streamMessageId, async () => {
                     const toolBaseId = streamMessageId
                     if (currentContent.trim()) {
                         await this.sendMessage(roomId, currentContent, streamMessageId, {
@@ -554,7 +599,7 @@ class AgentClient {
                     reasoning_content: reasoningContent || null,
                 })
                 this.emitMessageStreamEnd(roomId, streamMessageId)
-                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions)
+                await this.refreshRoomFullContextEstimate(roomId, sessionId, bridge, instructions, modelContext)
                 onStatus?.('ready')
                 return
             }
@@ -580,8 +625,9 @@ class AgentClient {
         sessionId: string,
         bridge: AgentBridgeClient,
         instructions?: string,
+        modelContext: GroupModelContext = { model: '', provider: '' },
     ): Promise<void> {
-        if (!this.storage?.getMessages) return
+        if (!this.storage?.getMessagesForContext) return
         try {
             const history = this.buildRoomEstimateHistory(roomId)
             const cachedTokens = await this.estimateGroupContextTokens(
@@ -590,6 +636,7 @@ class AgentClient {
                 bridge,
                 history,
                 instructions,
+                modelContext,
                 'final',
             )
             if (cachedTokens == null || cachedTokens <= 0) return
@@ -602,55 +649,17 @@ class AgentClient {
     }
 
     private buildRoomEstimateHistory(roomId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
-        const messages = this.storage?.getMessages?.(roomId) || []
+        const messages: StoredMessage[] = this.storage?.getMessagesForContext?.(roomId) || []
+        const snapshot = this.storage?.getContextSnapshot?.(roomId)
+        if (snapshot?.summary) {
+            const tail = sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId).messages
+            return buildProjectedGroupChatHistory(snapshot.summary, tail, { agentId: this.agentId, socketId: this.socket?.id, name: this.name })
+        }
         return messages.map((message: any) => this.mapRoomMessageForEstimate(message))
     }
 
     private mapRoomMessageForEstimate(message: any): { role: 'user' | 'assistant'; content: string } {
-        const senderName = String(message?.senderName || 'unknown')
-        const role = String(message?.role || 'user')
-        const isOwnAgent = message?.senderId === this.socket?.id || senderName === this.name
-
-        if (role === 'tool') {
-            const label = message?.tool_name ? `Tool result: ${message.tool_name}` : 'Tool result'
-            return { role: 'user', content: `[${senderName}] [${label}]\n${message?.content || ''}` }
-        }
-
-        if (role === 'assistant' && Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
-            const toolsInfo = message.tool_calls.map((toolCall: any) => {
-                const name = toolCall?.function?.name || 'unknown'
-                let args = String(toolCall?.function?.arguments || '{}')
-                if (args.length > 4000) args = `${args.slice(0, 4000)}...`
-                return `[Calling tool: ${name} with arguments: ${args}]`
-            }).join('\n')
-            const content = String(message?.content || '').trim()
-            return {
-                role: isOwnAgent ? 'assistant' : 'user',
-                content: content
-                    ? `${this.formatAttributedContent(senderName, content)}\n${this.formatAttributionPrefix(senderName)}${toolsInfo}`
-                    : `${this.formatAttributionPrefix(senderName)}${toolsInfo}`,
-            }
-        }
-
-        return {
-            role: isOwnAgent ? 'assistant' : 'user',
-            content: this.formatAttributedContent(senderName, String(message?.content || '')),
-        }
-    }
-
-    private formatAttributedContent(senderName: string, content: string): string {
-        return `${this.formatAttributionPrefix(senderName)}${this.stripMentions(content)}`
-    }
-
-    private formatAttributionPrefix(senderName: string): string {
-        return `[${senderName}]: `
-    }
-
-    private stripMentions(content: string): string {
-        return String(content || '')
-            .replace(/@([^\s@]+)/g, '')
-            .replace(/[ \t]{2,}/g, ' ')
-            .replace(/^\s+/, '')
+        return projectGroupChatMessage(message, { agentId: this.agentId, socketId: this.socket?.id, name: this.name })
     }
 
     private async sendAgentErrorMessage(
@@ -675,6 +684,7 @@ class AgentClient {
         roomId: string,
         sessionId: string,
         instructions: string | undefined,
+        modelContext: GroupModelContext,
         chunk: AgentBridgeOutput,
         getCurrentMessageId: () => string,
         beforeToolStarted: () => Promise<string>,
@@ -683,7 +693,7 @@ class AgentClient {
         for (const ev of chunk.events || []) {
             const eventType = String((ev as any)?.event || '')
             if (eventType === 'bridge.context.ready') {
-                this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions)
+                this.cacheBridgeContext(sessionId, ev as Record<string, unknown>, instructions, modelContext)
             } else if (eventType === 'tool.started') {
                 const toolBaseId = await beforeToolStarted()
                 this.recordToolStarted(roomId, ev as Record<string, unknown>, toolBaseId)

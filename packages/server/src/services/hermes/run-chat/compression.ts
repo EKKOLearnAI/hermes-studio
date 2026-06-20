@@ -24,6 +24,11 @@ interface RunChatCompressionConfig {
   compressor: Partial<CompressorConfig>
 }
 
+interface CompressionModelContext {
+  model?: string | null
+  provider?: string | null
+}
+
 export class ContextWindowTooSmallError extends Error {
   constructor(message: string) {
     super(message)
@@ -96,6 +101,50 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, n))
 }
 
+function readDefaultModelContext(config: Record<string, any>, fallback: CompressionModelContext): CompressionModelContext {
+  const modelConfig = config?.model
+  if (typeof modelConfig === 'string') {
+    const model = modelConfig.trim()
+    return {
+      model: model || fallback.model,
+      provider: fallback.provider,
+    }
+  }
+  if (modelConfig && typeof modelConfig === 'object' && !Array.isArray(modelConfig)) {
+    const model = String(modelConfig.default || '').trim()
+    const provider = String(modelConfig.provider || '').trim()
+    return {
+      model: model || fallback.model,
+      provider: provider || fallback.provider,
+    }
+  }
+  return fallback
+}
+
+async function resolveCompressionModelContext(
+  profile: string,
+  fallback: CompressionModelContext,
+): Promise<CompressionModelContext> {
+  let config: Record<string, any> = {}
+  try {
+    config = await readConfigYamlForProfile(profile)
+  } catch (err) {
+    logger.warn(err, '[context-compress] failed to read auxiliary compression model config for profile %s, using session model', profile)
+    return fallback
+  }
+
+  const compression = config?.auxiliary?.compression
+  if (!compression || typeof compression !== 'object' || Array.isArray(compression)) return fallback
+
+  const provider = typeof compression.provider === 'string' ? compression.provider.trim() : ''
+  if (!provider || provider === 'auto') return fallback
+  if (provider === 'main') return readDefaultModelContext(config, fallback)
+
+  const model = typeof compression.model === 'string' ? compression.model.trim() : ''
+  if (!model) return fallback
+  return { model, provider }
+}
+
 async function getRunChatCompressionConfig(profile: string, contextLength: number): Promise<RunChatCompressionConfig> {
   let raw: Record<string, any> = {}
   try {
@@ -146,7 +195,7 @@ export async function buildDbHistory(
 
   return sourceMessages.map((m, idx, arr) => {
     const msg: any = { role: m.role, content: m.content || '' }
-    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+    if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
     if (m.tool_calls?.length) {
       const cleanedToolCalls = m.tool_calls
         .filter((tc: any) => tc.id && tc.id.length > 0)
@@ -194,7 +243,7 @@ export async function buildCompressedHistory(
   apiKey: string | undefined,
   emit: (event: string, payload: any) => void,
   sessionMap: Map<string, SessionState>,
-  modelContext: { model?: string | null; provider?: string | null } = {},
+  modelContext: CompressionModelContext = {},
   contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>,
   currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
@@ -351,7 +400,7 @@ export async function compressHistory(
   totalTokens: number,
   emit: (event: string, payload: any) => void,
   sessionMap: Map<string, SessionState>,
-  modelContext: { model?: string | null; provider?: string | null } = {},
+  modelContext: CompressionModelContext = {},
   compressionConfig?: Partial<CompressorConfig>,
   currentInputTokens = 0,
 ): Promise<ChatMessage[]> {
@@ -369,11 +418,15 @@ export async function compressHistory(
   try {
     const session = getSession(sessionId)
     const summarizerProfile = session?.profile || 'default'
+    const summarizerModelContext = await resolveCompressionModelContext(summarizerProfile, {
+      model: modelContext.model || session?.model,
+      provider: modelContext.provider || session?.provider,
+    })
     const compressor = new ChatContextCompressor({ config: compressionConfig })
     const result = await compressor.compress(history, upstream, apiKey, sessionId, {
       profile: summarizerProfile,
-      model: modelContext.model || session?.model,
-      provider: modelContext.provider || session?.provider,
+      model: summarizerModelContext.model,
+      provider: summarizerModelContext.provider,
       workerKey: `${summarizerProfile}:compression:${sessionId}`,
     })
     const afterTokens = await calcAndUpdateUsage(sessionId, cState, emit)
@@ -407,7 +460,7 @@ export async function compressHistory(
 
     const compressed = result.messages.map(m => {
       const msg: any = { role: m.role, content: m.content, tool_call_id: m.tool_call_id, name: m.name }
-      if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+      if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
       if (m.tool_calls?.length) {
         const cleanedToolCalls = m.tool_calls
           .filter((tc: any) => tc.id && tc.id.length > 0)
@@ -483,15 +536,19 @@ export async function forceCompressBridgeHistory(
 
   const compressor = new ChatContextCompressor({ config: compressionConfig.compressor })
   const summarizerProfile = session?.profile || profile || 'default'
-  const result = await compressor.compress(history, upstream, apiKey, sessionId, {
-    profile: summarizerProfile,
+  const summarizerModelContext = await resolveCompressionModelContext(summarizerProfile, {
     model: session?.model,
     provider: session?.provider,
+  })
+  const result = await compressor.compress(history, upstream, apiKey, sessionId, {
+    profile: summarizerProfile,
+    model: summarizerModelContext.model,
+    provider: summarizerModelContext.provider,
     workerKey: `${summarizerProfile}:compression:${sessionId}`,
   })
   const compressedMessages = result.messages.map(m => {
     const msg: any = { role: m.role, content: m.content }
-    if (m.reasoning_content) msg.reasoning_content = m.reasoning_content
+    if (m.reasoning_content != null) msg.reasoning_content = m.reasoning_content
     if (m.tool_calls?.length) {
       const cleanedToolCalls = m.tool_calls
         .filter((tc: any) => tc.id && tc.id.length > 0)

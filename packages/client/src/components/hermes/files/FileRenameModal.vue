@@ -13,6 +13,7 @@ const props = defineProps<{
   show: boolean
   mode: 'newFile' | 'newFolder' | 'rename'
   entry?: FileEntry | null
+  targetPath?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -58,7 +59,7 @@ async function handleSubmit() {
         message.success(t('files.created'))
         break
       case 'newFolder':
-        await filesStore.createDir(inputValue.value.trim())
+        await filesStore.createDir(inputValue.value.trim(), props.targetPath || undefined)
         message.success(t('files.created'))
         break
       case 'rename':

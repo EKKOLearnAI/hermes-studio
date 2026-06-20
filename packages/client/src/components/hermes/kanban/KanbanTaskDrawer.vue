@@ -11,6 +11,8 @@ import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import type { Session, Message } from '@/stores/hermes/chat'
 import type { KanbanTaskDetail } from '@/api/hermes/kanban'
 
+const RUN_HISTORY_PAGE_SIZE = 10
+
 const props = defineProps<{
   taskId: string | null
 }>()
@@ -18,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   updated: []
+  navigate: [taskId: string]
 }>()
 
 const { t } = useI18n()
@@ -33,6 +36,13 @@ const showBlockInput = ref(false)
 const completeSummary = ref('')
 const showCompleteInput = ref(false)
 const showMessagesModal = ref(false)
+const commentBody = ref('')
+const taskLog = ref<string | null>(null)
+const taskLogLoading = ref(false)
+const diagnostics = ref<unknown[] | null>(null)
+const diagnosticsLoading = ref(false)
+const recoveryReason = ref('')
+const runHistoryPage = ref(1)
 
 const completionSummary = computed(() => {
   if (!detail.value) return ''
@@ -58,8 +68,33 @@ const latestRunProfile = computed(() => {
   return [...detail.value.runs].reverse().find(run => run.profile)?.profile || null
 })
 
+function isActiveTask(taskId: string, board: string): boolean {
+  return props.taskId === taskId && kanbanStore.selectedBoard === board
+}
+
+function resetTaskScopedState() {
+  assignProfile.value = null
+  blockReason.value = ''
+  showBlockInput.value = false
+  completeSummary.value = ''
+  showCompleteInput.value = false
+  showMessagesModal.value = false
+  commentBody.value = ''
+  taskLog.value = null
+  taskLogLoading.value = false
+  diagnostics.value = null
+  diagnosticsLoading.value = false
+  recoveryReason.value = ''
+  runHistoryPage.value = 1
+  sessionResults.value = []
+  sessionLoading.value = false
+  showSessions.value = false
+}
+
 async function searchTaskSessions() {
   if (!detail.value) return
+  const taskId = detail.value.task.id
+  const board = kanbanStore.selectedBoard
   const profile = latestRunProfile.value
   if (!profile) return
   showSessions.value = !showSessions.value
@@ -67,13 +102,13 @@ async function searchTaskSessions() {
   sessionLoading.value = true
   try {
     const res = await request<{ results: any[] }>(
-      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(detail.value.task.id)}&profile=${encodeURIComponent(profile)}&board=${encodeURIComponent(kanbanStore.selectedBoard)}`
+      `/api/hermes/kanban/search-sessions?task_id=${encodeURIComponent(taskId)}&profile=${encodeURIComponent(profile)}&board=${encodeURIComponent(board)}`
     )
-    sessionResults.value = res.results
+    if (isActiveTask(taskId, board)) sessionResults.value = res.results
   } catch {
-    sessionResults.value = []
+    if (isActiveTask(taskId, board)) sessionResults.value = []
   } finally {
-    sessionLoading.value = false
+    if (isActiveTask(taskId, board)) sessionLoading.value = false
   }
 }
 
@@ -111,7 +146,27 @@ const assigneeOptions = computed(() => {
     .map(a => ({ label: a.name, value: a.name }))
 })
 
+const runHistoryPageCount = computed(() => {
+  const total = detail.value?.runs.length || 0
+  return Math.max(1, Math.ceil(total / RUN_HISTORY_PAGE_SIZE))
+})
+
+const visibleRuns = computed(() => {
+  const runs = detail.value?.runs || []
+  const start = (runHistoryPage.value - 1) * RUN_HISTORY_PAGE_SIZE
+  return runs.slice(start, start + RUN_HISTORY_PAGE_SIZE)
+})
+
+const runHistoryRange = computed(() => {
+  const total = detail.value?.runs.length || 0
+  if (!total) return ''
+  const start = (runHistoryPage.value - 1) * RUN_HISTORY_PAGE_SIZE + 1
+  const end = Math.min(start + RUN_HISTORY_PAGE_SIZE - 1, total)
+  return `${start}-${end} / ${total}`
+})
+
 watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, board]) => {
+  resetTaskScopedState()
   if (!id) {
     detail.value = null
     return
@@ -119,19 +174,25 @@ watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, boar
   loading.value = true
   try {
     const nextDetail = await getTask(id, { board })
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       detail.value = nextDetail
     }
   } catch (err: any) {
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       message.error(t('kanban.message.loadFailed'))
     }
   } finally {
-    if (props.taskId === id && kanbanStore.selectedBoard === board) {
+    if (isActiveTask(id, board)) {
       loading.value = false
     }
   }
 }, { immediate: true })
+
+watch(() => detail.value?.runs.length || 0, () => {
+  if (runHistoryPage.value > runHistoryPageCount.value) {
+    runHistoryPage.value = runHistoryPageCount.value
+  }
+})
 
 function formatTime(ts: number | null) {
   if (!ts) return '—'
@@ -184,17 +245,123 @@ async function handleUnblock() {
 
 async function handleAssign() {
   if (!props.taskId || !assignProfile.value) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
   try {
-    await kanbanStore.assignTask(props.taskId, assignProfile.value)
-    message.success(t('kanban.message.taskAssigned'))
-    assignProfile.value = null
+    await kanbanStore.assignTask(taskId, assignProfile.value)
+    if (isActiveTask(taskId, board)) {
+      message.success(t('kanban.message.taskAssigned'))
+      assignProfile.value = null
+    }
     if (detail.value) {
-      detail.value = await getTask(props.taskId, { board: kanbanStore.selectedBoard })
+      const nextDetail = await getTask(taskId, { board })
+      if (isActiveTask(taskId, board)) detail.value = nextDetail
+    }
+    emit('updated')
+  } catch (err: any) {
+    if (isActiveTask(taskId, board)) message.error(err.message)
+  }
+}
+
+async function handleAddComment() {
+  if (!props.taskId || !commentBody.value.trim()) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
+  try {
+    await kanbanStore.addComment(taskId, commentBody.value.trim())
+    const nextDetail = await getTask(taskId, { board })
+    if (isActiveTask(taskId, board)) {
+      commentBody.value = ''
+      detail.value = nextDetail
+      message.success(t('kanban.message.commentAdded'))
+    }
+    emit('updated')
+  } catch (err: any) {
+    if (isActiveTask(taskId, board)) message.error(err.message)
+  }
+}
+
+async function handleLoadLog() {
+  if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
+  taskLogLoading.value = true
+  try {
+    const log = await kanbanStore.getTaskLog(taskId, 20000)
+    if (isActiveTask(taskId, board)) {
+      taskLog.value = log.exists ? log.content : t('kanban.detail.noLog')
+    }
+  } catch (err: any) {
+    if (isActiveTask(taskId, board)) message.error(err.message)
+  } finally {
+    if (isActiveTask(taskId, board)) taskLogLoading.value = false
+  }
+}
+
+async function handleLoadDiagnostics() {
+  if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
+  diagnosticsLoading.value = true
+  try {
+    const nextDiagnostics = await kanbanStore.getDiagnostics({ task: taskId, severity: 'warning' })
+    if (isActiveTask(taskId, board)) {
+      diagnostics.value = nextDiagnostics
+    }
+  } catch (err: any) {
+    if (isActiveTask(taskId, board)) message.error(err.message)
+  } finally {
+    if (isActiveTask(taskId, board)) diagnosticsLoading.value = false
+  }
+}
+
+async function handleReclaim() {
+  if (!props.taskId) return
+  try {
+    await kanbanStore.reclaimTask(props.taskId, recoveryReason.value.trim() || undefined)
+    message.success(t('kanban.message.taskReclaimed'))
+    emit('updated')
+    emit('close')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+async function handleReassign() {
+  if (!props.taskId || !assignProfile.value) return
+  try {
+    await kanbanStore.reassignTask(props.taskId, assignProfile.value, {
+      reclaim: detail.value?.task.status === 'running',
+      reason: recoveryReason.value.trim() || undefined,
+    })
+    message.success(t('kanban.message.taskReassigned'))
+    emit('updated')
+    emit('close')
+  } catch (err: any) {
+    message.error(err.message)
+  }
+}
+
+async function handleSpecify() {
+  if (!props.taskId) return
+  const taskId = props.taskId
+  const board = kanbanStore.selectedBoard
+  try {
+    await kanbanStore.specifyTask(taskId)
+    const nextDetail = await getTask(taskId, { board })
+    if (isActiveTask(taskId, board)) {
+      message.success(t('kanban.message.taskSpecified'))
+      detail.value = nextDetail
     }
     emit('updated')
   } catch (err: any) {
     message.error(err.message)
   }
+}
+
+function handleNavigateTask(taskId: string) {
+  emit('updated')
+  emit('navigate', taskId)
 }
 </script>
 
@@ -208,6 +375,22 @@ async function handleAssign() {
             <div class="detail-row">
               <span class="detail-label">{{ t('kanban.detail.status') }}</span>
               <span class="detail-value status-badge" :class="detail.task.status">{{ localizedTaskStatus }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Task ID</span>
+              <span class="detail-value task-id-value">{{ detail.task.id }}</span>
+            </div>
+            <div v-if="detail.parents?.length" class="detail-row">
+              <span class="detail-label">Parent</span>
+              <span class="detail-value">
+                <a v-for="pid in detail.parents" :key="pid" class="task-link" @click="handleNavigateTask(pid)">{{ pid }}</a>
+              </span>
+            </div>
+            <div v-if="detail.children?.length" class="detail-row">
+              <span class="detail-label">Children</span>
+              <span class="detail-value">
+                <a v-for="cid in detail.children" :key="cid" class="task-link" @click="handleNavigateTask(cid)">{{ cid }}</a>
+              </span>
             </div>
             <div class="detail-row">
               <span class="detail-label">{{ t('kanban.detail.assignee') }}</span>
@@ -276,6 +459,12 @@ async function handleAssign() {
               <NSelect v-model:value="assignProfile" :options="assigneeOptions" size="small" :placeholder="t('kanban.action.assignTo')" style="flex: 1;" />
               <NButton size="small" :disabled="!assignProfile" @click="handleAssign">{{ t('kanban.action.assign') }}</NButton>
             </div>
+            <div class="recovery-group">
+              <NInput v-model:value="recoveryReason" size="small" :placeholder="t('kanban.action.recoveryReason')" />
+              <NButton size="small" secondary @click="handleReclaim">{{ t('kanban.action.reclaim') }}</NButton>
+              <NButton size="small" secondary :disabled="!assignProfile" @click="handleReassign">{{ t('kanban.action.reassign') }}</NButton>
+              <NButton v-if="detail.task.status === 'triage'" size="small" secondary @click="handleSpecify">{{ t('kanban.action.specify') }}</NButton>
+            </div>
           </div>
 
           <!-- Related Sessions -->
@@ -299,8 +488,15 @@ async function handleAssign() {
 
           <!-- Runs -->
           <div v-if="detail.runs.length > 0" class="detail-section">
-            <div class="section-title">{{ t('kanban.detail.runs') }}</div>
-            <div v-for="run in detail.runs" :key="run.id" class="run-item">
+            <div class="section-title run-history-title">
+              <span>{{ t('kanban.detail.runs') }}</span>
+              <span class="run-history-range">{{ runHistoryRange }}</span>
+              <div v-if="runHistoryPageCount > 1" class="run-history-controls">
+                <NButton size="tiny" secondary :disabled="runHistoryPage <= 1" @click="runHistoryPage -= 1">‹</NButton>
+                <NButton size="tiny" secondary :disabled="runHistoryPage >= runHistoryPageCount" @click="runHistoryPage += 1">›</NButton>
+              </div>
+            </div>
+            <div v-for="run in visibleRuns" :key="run.id" class="run-item">
               <div class="run-header">
                 <span class="run-status" :class="run.status">{{ run.status }}</span>
                 <span class="run-profile">{{ run.profile || '—' }}</span>
@@ -321,6 +517,23 @@ async function handleAssign() {
               </div>
               <div class="comment-body">{{ comment.body }}</div>
             </div>
+          </div>
+          <div v-if="canMutateTask" class="detail-section">
+            <div class="section-title">{{ t('kanban.detail.addComment') }}</div>
+            <div class="comment-input">
+              <NInput v-model:value="commentBody" type="textarea" :rows="3" :placeholder="t('kanban.detail.commentPlaceholder')" />
+              <NButton size="small" type="primary" :disabled="!commentBody.trim()" @click="handleAddComment">{{ t('common.add') }}</NButton>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <div class="section-title">{{ t('kanban.detail.operations') }}</div>
+            <div class="action-group">
+              <NButton size="small" secondary :loading="taskLogLoading" @click="handleLoadLog">{{ t('kanban.action.loadLog') }}</NButton>
+              <NButton size="small" secondary :loading="diagnosticsLoading" @click="handleLoadDiagnostics">{{ t('kanban.action.loadDiagnostics') }}</NButton>
+            </div>
+            <pre v-if="taskLog !== null" class="log-output">{{ taskLog }}</pre>
+            <pre v-if="diagnostics !== null" class="log-output">{{ JSON.stringify(diagnostics, null, 2) }}</pre>
           </div>
 
           <!-- Events -->
@@ -358,6 +571,26 @@ async function handleAssign() {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 10px;
+}
+
+.run-history-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-history-range {
+  color: $text-muted;
+  font-family: $font-code;
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: auto;
+  text-transform: none;
+}
+
+.run-history-controls {
+  display: flex;
+  gap: 4px;
 }
 
 .result-summary {
@@ -474,6 +707,35 @@ async function handleAssign() {
 .detail-value {
   font-size: 12px;
   color: $text-primary;
+}
+
+.task-id-value {
+  font-family: $font-code;
+  font-size: 11px;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  user-select: all;
+}
+
+.task-link {
+  font-family: $font-code;
+  font-size: 11px;
+  color: $accent-primary;
+  cursor: pointer;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  transition: background $transition-fast;
+
+  &:hover {
+    background: rgba(var(--accent-primary-rgb), 0.14);
+    text-decoration: underline;
+  }
+
+  &:not(:last-child) {
+    margin-right: 4px;
+  }
 }
 
 .status-badge {
@@ -666,6 +928,39 @@ async function handleAssign() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.recovery-group,
+.comment-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.comment-input {
+  align-items: flex-start;
+}
+
+.comment-input :deep(.n-input) {
+  flex: 1;
+  min-width: 220px;
+}
+
+.log-output {
+  margin: 10px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid $border-light;
+  border-radius: $radius-sm;
+  background: rgba(var(--accent-primary-rgb), 0.03);
+  color: $text-secondary;
+  font-family: $font-code;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .session-msg {

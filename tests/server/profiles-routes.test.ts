@@ -18,6 +18,12 @@ const sessionDeleterMocks = vi.hoisted(() => ({
   switchProfile: vi.fn(),
 }))
 
+const gatewayAutostartMocks = vi.hoisted(() => ({
+  getGatewayRuntimeStatusForProfile: vi.fn(),
+  prepareGatewayForProfileDelete: vi.fn(),
+  restartGatewayForProfile: vi.fn(),
+}))
+
 // Mock hermes-cli
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   listProfiles: vi.fn(),
@@ -55,6 +61,12 @@ vi.mock('../../packages/server/src/services/hermes/session-deleter', () => ({
   },
 }))
 
+vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => ({
+  getGatewayRuntimeStatusForProfile: gatewayAutostartMocks.getGatewayRuntimeStatusForProfile,
+  prepareGatewayForProfileDelete: gatewayAutostartMocks.prepareGatewayForProfileDelete,
+  restartGatewayForProfile: gatewayAutostartMocks.restartGatewayForProfile,
+}))
+
 import * as hermesCli from '../../packages/server/src/services/hermes/hermes-cli'
 
 describe('Profile Routes', () => {
@@ -65,6 +77,7 @@ describe('Profile Routes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     agentBridgeMocks.destroyProfile.mockResolvedValue({ destroyed: 0 })
+    gatewayAutostartMocks.prepareGatewayForProfileDelete.mockResolvedValue(undefined)
     skillInjectorMocks.injectMissingSkills.mockResolvedValue({ targets: [] })
     skillInjectorMocks.resolveTargetDirForProfile.mockImplementation((name: string) => join('/tmp/hermes-skills', name))
   })
@@ -103,6 +116,50 @@ describe('Profile Routes', () => {
       expect(hermesCli.createProfile).toHaveBeenCalledWith('test', true)
     })
 
+    it('clone creation copies only the configured model provider auth for the new profile', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-clone-auth-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      await writeFile(join(hermesHome, 'active_profile'), 'default\n', 'utf-8')
+      await writeFile(join(hermesHome, 'auth.json'), JSON.stringify({
+        providers: {
+          'openai-codex': { access_token: 'codex-provider-token' },
+          anthropic: { access_token: 'anthropic-provider-token' },
+        },
+        credential_pool: {
+          'openai-codex': [{ access_token: 'codex-pool-token' }],
+          anthropic: [{ access_token: 'anthropic-pool-token' }],
+        },
+      }, null, 2), 'utf-8')
+      vi.mocked(hermesCli.createProfile).mockImplementation(async (name: string) => {
+        const profileDir = join(hermesHome, 'profiles', name)
+        await mkdir(profileDir, { recursive: true })
+        await writeFile(join(profileDir, 'config.yaml'), [
+          'model:',
+          '  provider: openai-codex',
+          '  default: gpt-5.5',
+          '',
+        ].join('\n'), 'utf-8')
+        return 'Profile created'
+      })
+      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        request: { body: { name: 'cloned', clone: true } },
+        status: 200,
+        body: undefined,
+      }
+
+      await create(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.copiedAuthProviders).toEqual(['openai-codex'])
+      const clonedAuth = JSON.parse(readFileSync(join(hermesHome, 'profiles', 'cloned', 'auth.json'), 'utf-8'))
+      expect(clonedAuth.providers['openai-codex']).toEqual({ access_token: 'codex-provider-token' })
+      expect(clonedAuth.credential_pool['openai-codex']).toEqual([{ access_token: 'codex-pool-token' }])
+      expect(clonedAuth.providers.anthropic).toBeUndefined()
+      expect(clonedAuth.credential_pool.anthropic).toBeUndefined()
+    })
+
     it('deleteProfile calls CLI with name', async () => {
       vi.mocked(hermesCli.deleteProfile).mockResolvedValue(true)
 
@@ -120,7 +177,67 @@ describe('Profile Routes', () => {
     })
   })
 
+  describe('profile rename validation', () => {
+    it('rejects reserved profile names before calling Hermes CLI', async () => {
+      vi.mocked(hermesCli.renameProfile).mockResolvedValue(true)
+      const { rename } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        params: { name: 'work' },
+        request: { body: { new_name: 'hermes' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await rename(ctx)
+
+      expect(ctx.status).toBe(400)
+      expect(ctx.body).toEqual({ error: "Profile name 'hermes' is reserved and cannot be used" })
+      expect(hermesCli.renameProfile).not.toHaveBeenCalled()
+    })
+  })
+
   describe('profile deletion fallback', () => {
+    it('prepares the profile gateway for deletion before calling Hermes CLI delete', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-delete-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      const profileDir = join(hermesHome, 'profiles', 'work')
+      await mkdir(profileDir, { recursive: true })
+      await writeFile(join(profileDir, 'config.yaml'), 'model:\n  default: test\n', 'utf-8')
+
+      gatewayAutostartMocks.prepareGatewayForProfileDelete.mockImplementation(async () => {
+        await rm(profileDir, { recursive: true, force: true })
+      })
+      vi.mocked(hermesCli.deleteProfile).mockResolvedValue(true)
+      const { remove } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = { params: { name: 'work' }, status: 200, body: undefined }
+
+      await remove(ctx)
+
+      expect(gatewayAutostartMocks.prepareGatewayForProfileDelete).toHaveBeenCalledWith('work')
+      expect(hermesCli.deleteProfile).toHaveBeenCalledWith('work')
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toEqual({ success: true })
+    })
+
+    it('does not return success when Hermes CLI reports delete success but the profile directory remains', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-delete-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      const profileDir = join(hermesHome, 'profiles', 'work')
+      await mkdir(profileDir, { recursive: true })
+      await writeFile(join(profileDir, 'config.yaml'), 'model:\n  default: test\n', 'utf-8')
+      vi.mocked(hermesCli.deleteProfile).mockResolvedValue(true)
+      const { remove } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = { params: { name: 'work' }, status: 200, body: undefined }
+
+      await remove(ctx)
+
+      expect(ctx.status).toBe(500)
+      expect(ctx.body).toEqual({ error: 'Failed to delete profile: profile directory still exists' })
+      expect(existsSync(profileDir)).toBe(true)
+    })
+
     it('removes a reserved profile directory when Hermes CLI refuses to delete it', async () => {
       const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-delete-'))
       tempHomes.push(hermesHome)

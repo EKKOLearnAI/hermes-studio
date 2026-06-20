@@ -7,7 +7,6 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => ({
     profileModelGroups: [],
-    displayModelName: (model: string) => model,
   }),
 }))
 
@@ -134,5 +133,89 @@ describe('SessionListItem', () => {
     link.element.addEventListener('click', event => event.preventDefault())
     await link.trigger('click', { ctrlKey: true })
     expect(wrapper.emitted('select')).toBeUndefined()
+  })
+
+  it('renders the Hermes logo for Hermes sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: { ...session, source: 'cli', agent: 'hermes' },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/hermes.png')
+    expect(logo.attributes('alt')).toBe('Hermes')
+    expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
+  })
+
+  it('defaults old sessions without agent metadata to the Hermes logo', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: { ...session, source: undefined, agent: undefined, codingAgentId: undefined },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/hermes.png')
+    expect(logo.attributes('alt')).toBe('Hermes')
+    expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
+  })
+
+  it('renders the Claude Code logo for Claude coding agent sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: { ...session, source: 'coding_agent', agent: 'claude', codingAgentId: 'claude-code' },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/claude-code.svg')
+    expect(logo.attributes('alt')).toBe('Claude Code')
+    expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
+  })
+
+  it('renders the Codex logo for Codex coding agent sessions', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session: { ...session, source: 'coding_agent', agent: 'codex', codingAgentId: 'codex' },
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const logo = wrapper.get('.session-item-agent-logo')
+    expect(logo.attributes('src')).toBe('/coding-agents/codex-openai.png')
+    expect(logo.attributes('alt')).toBe('Codex')
+    expect(wrapper.find('.session-item-agent-name').exists()).toBe(false)
   })
 })

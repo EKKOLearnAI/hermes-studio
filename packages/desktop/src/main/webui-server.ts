@@ -6,14 +6,54 @@ import { dirname, delimiter, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { app } from 'electron'
-import { webuiServerEntry, webuiDir, hermesBin, webUiHome, hermesHome, tokenFile, pythonDir } from './paths'
+import {
+  bundledBrowserExecutable,
+  bundledGit,
+  bundledNode,
+  gitPathDirs,
+  webuiServerEntry,
+  webuiDir,
+  hermesBin,
+  webUiHome,
+  hermesHome,
+  nodeBinDir,
+  tokenFile,
+  pythonDir,
+} from './paths'
 
 const DEFAULT_PORT = 8748
-const DEFAULT_READY_TIMEOUT_MS = 30_000
+const DEFAULT_READY_TIMEOUT_MS = 120_000
+const DEFAULT_FULL_STARTUP_WAIT_MS = 0
+const DEFAULT_STOP_TIMEOUT_MS = 20_000
+const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 18_000
+const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
+const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
 const execFileAsync = promisify(execFile)
 
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
+let currentServerPort = DEFAULT_PORT
+
+function killProcessTree(proc: ChildProcess): void {
+  if (!proc.pid || proc.killed) return
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      killer.once('error', () => undefined)
+      return
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    proc.kill('SIGKILL')
+  } catch {
+    /* ignore */
+  }
+}
 
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
@@ -24,6 +64,78 @@ function envPositiveInt(name: string): number | undefined {
 
 function readyTimeoutMs(): number {
   return envPositiveInt('HERMES_DESKTOP_READY_TIMEOUT_MS') || DEFAULT_READY_TIMEOUT_MS
+}
+
+function fullStartupWaitMs(): number {
+  const raw = process.env.HERMES_DESKTOP_FULL_STARTUP_WAIT_MS
+  if (raw === undefined) return DEFAULT_FULL_STARTUP_WAIT_MS
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_FULL_STARTUP_WAIT_MS
+}
+
+function gracefulStopTimeoutMs(): number {
+  return envPositiveInt('HERMES_DESKTOP_GRACEFUL_STOP_TIMEOUT_MS') || DEFAULT_GRACEFUL_STOP_TIMEOUT_MS
+}
+
+function timeoutAfter(ms: number, message: string): Promise<void> {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    timer.unref?.()
+  })
+}
+
+function createAgentBridgeStartupTracker(): {
+  observe: (chunk: Buffer) => void
+  wait: (timeoutMs: number) => Promise<void>
+} {
+  let output = ''
+  let state: 'pending' | 'started' | 'failed' = 'pending'
+  let resolveReady: (() => void) | null = null
+  let rejectReady: ((err: Error) => void) | null = null
+
+  const settle = (nextState: 'started' | 'failed') => {
+    if (state !== 'pending') return
+    state = nextState
+    if (nextState === 'started') {
+      resolveReady?.()
+    } else {
+      rejectReady?.(new Error('Agent bridge failed to start'))
+    }
+  }
+
+  const observe = (chunk: Buffer) => {
+    if (state !== 'pending') return
+    output = (output + chunk.toString('utf-8')).slice(-4096)
+    if (output.includes(AGENT_BRIDGE_STARTED_MARKER)) {
+      settle('started')
+    } else if (output.includes(AGENT_BRIDGE_FAILED_MARKER)) {
+      settle('failed')
+    }
+  }
+
+  const wait = (timeoutMs: number) => {
+    if (state === 'started') return Promise.resolve()
+    if (state === 'failed') return Promise.reject(new Error('Agent bridge failed to start'))
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (state !== 'pending') return
+        state = 'failed'
+        reject(new Error(`Agent bridge did not become ready within ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      resolveReady = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      rejectReady = (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    })
+  }
+
+  return { observe, wait }
 }
 
 function ensureToken(): string {
@@ -192,6 +304,7 @@ async function getFreeTcpPortInRange(min: number, max: number): Promise<number> 
 export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   ensureNativeModules()
   const token = ensureToken()
+  currentServerPort = port
   const entry = webuiServerEntry()
   if (!existsSync(entry)) {
     throw new Error(`Web UI server entry not found at ${entry}. Run: npm run build:webui`)
@@ -210,20 +323,28 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
-  const bundledPythonNoWindow = isWin
-    ? join(pythonDir(), 'pythonw.exe')
-    : bundledPython
+  const bundledAgentBrowserBin = isWin
+    ? join(pythonDir(), 'node')
+    : join(pythonDir(), 'node', 'bin')
+  const bundledNodeBin = nodeBinDir()
+  const bundledGitPath = gitPathDirs().join(delimiter)
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
   const nvmNodeBinPaths = getNvmNodeBinPaths()
   const runtimePath = mergePathEntries(
     dirname(hermesBin()),
+    bundledAgentBrowserBin,
+    bundledNodeBin,
+    bundledGitPath,
     loginShellPath,
     nvmNodeBinPaths,
     process.env.PATH,
+    process.env.Path,
     COMMON_USER_BIN_DIRS.join(delimiter),
   )
+  const browserExecutable = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim() || bundledBrowserExecutable()
+  const gitBin = bundledGit()
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
   const env: NodeJS.ProcessEnv = {
@@ -232,14 +353,27 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     NODE_ENV: 'production',
     HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
+    // The bridge and its per-profile workers need working stdout/stderr for
+    // ready handshakes. Use python.exe on Windows and hide windows at the
+    // process creation layer instead of switching the bridge to pythonw.exe.
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
-    HERMES_AGENT_CLI_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
+    HERMES_AGENT_CLI_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
+    HERMES_AGENT_NODE: bundledNode(),
+    HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
+    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || join(agentHome, 'agent-browser'),
+    ...(browserExecutable ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutable } : {}),
+    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
+    ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
     // SIGKILL of the bridge child within ~150ms). TCP on 127.0.0.1 works
     // identically and avoids the issue cross-platform.
     HERMES_AGENT_BRIDGE_ENDPOINT: `tcp://127.0.0.1:${bridgePort}`,
+    // Desktop opens the UI as soon as the Web UI HTTP server is ready, while
+    // the Python bridge starts in the background. Let the first chat/context
+    // request wait for broker readiness instead of failing during cold start.
+    HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS: process.env.HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS ?? '120000',
     // Force TCP for worker endpoints too (upstream #1106). Same EDR/sandbox
     // reason as above — default ipc:// unix sockets in /tmp get killed.
     HERMES_AGENT_BRIDGE_WORKER_TRANSPORT: 'tcp',
@@ -257,8 +391,9 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // HERMES_HOME/.env or by configuring per-platform allowlists.
     GATEWAY_ALLOW_ALL_USERS: process.env.GATEWAY_ALLOW_ALL_USERS ?? 'true',
     // Keep the bundled Hermes Agent, bridge, gateway, and Web UI path helpers
-    // on the same data directory. Native Windows uses %LOCALAPPDATA%\hermes;
-    // macOS/Linux keep the standard ~/.hermes layout.
+    // on the same data directory. Native Windows uses an existing
+    // %LOCALAPPDATA%\hermes or %APPDATA%\hermes; otherwise all platforms keep
+    // the standard ~/.hermes layout.
     HERMES_HOME: agentHome,
     HERMES_WEB_UI_HOME: home,
     HERMES_WEBUI_STATE_DIR: home,
@@ -269,15 +404,20 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   }
 
   serverProc = spawn(process.execPath, [entry], {
+    cwd: webuiDir(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
 
+  const bridgeStartup = createAgentBridgeStartupTracker()
+
   serverProc.stdout?.on('data', (chunk: Buffer) => {
+    bridgeStartup.observe(chunk)
     process.stdout.write(`[webui] ${chunk}`)
   })
   serverProc.stderr?.on('data', (chunk: Buffer) => {
+    bridgeStartup.observe(chunk)
     process.stderr.write(`[webui] ${chunk}`)
   })
   serverProc.on('exit', (code, signal) => {
@@ -288,37 +428,77 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     }
   })
 
-  await waitForReady(port, readyTimeoutMs())
+  const timeoutMs = readyTimeoutMs()
+  const bridgeReady = bridgeStartup.wait(timeoutMs)
+  await waitForReady(port, timeoutMs)
+  const fullStartupTimeoutMs = fullStartupWaitMs()
+  if (fullStartupTimeoutMs > 0) {
+    await Promise.race([
+      bridgeReady,
+      timeoutAfter(fullStartupTimeoutMs, `Agent bridge did not become ready within ${fullStartupTimeoutMs}ms`),
+    ]).catch(err => {
+      console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+    })
+    void bridgeReady.catch(() => undefined)
+  } else {
+    void bridgeReady.catch(err => {
+      console.warn(`[webui] agent bridge was not ready during startup: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
   return getServerUrl(port)
 }
 
 async function waitForReady(port: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  const url = `http://127.0.0.1:${port}/api/health`
+  const url = `http://127.0.0.1:${port}/`
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(1000) })
-      if (res.ok || res.status === 401) return // 401 = up but auth-gated, server is alive
+      if (res.ok) return
     } catch {
       /* not ready yet */
     }
     await new Promise(r => setTimeout(r, 300))
   }
-  throw new Error(`Web UI server did not become ready within ${timeoutMs}ms`)
+  throw new Error(`Web UI shell did not become ready within ${timeoutMs}ms`)
 }
 
-export function stopWebUiServer(): Promise<void> {
-  return new Promise(resolve => {
-    if (!serverProc || serverProc.killed) return resolve()
-    const proc = serverProc
+async function requestGracefulShutdown(port: number, token: string): Promise<void> {
+  const timeoutMs = gracefulStopTimeoutMs()
+  const response = await fetch(`http://127.0.0.1:${port}/api/desktop/shutdown`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!response.ok && response.status !== 202) {
+    throw new Error(`desktop shutdown returned HTTP ${response.status}`)
+  }
+}
+
+export async function stopWebUiServer(): Promise<void> {
+  if (!serverProc || serverProc.killed) return
+
+  const proc = serverProc
+  const exited = new Promise<void>(resolve => {
+    proc.once('exit', () => resolve())
+  })
+  const forceAfter = new Promise<void>(resolve => {
     const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL') } catch { /* */ }
+      killProcessTree(proc)
       resolve()
-    }, 3000)
+    }, envPositiveInt('HERMES_DESKTOP_STOP_TIMEOUT_MS') || DEFAULT_STOP_TIMEOUT_MS)
     proc.once('exit', () => {
       clearTimeout(timer)
       resolve()
     })
-    try { proc.kill('SIGTERM') } catch { resolve() }
   })
+
+  try {
+    await requestGracefulShutdown(currentServerPort, ensureToken())
+  } catch (err) {
+    console.warn(`[webui] graceful shutdown request failed: ${err instanceof Error ? err.message : String(err)}`)
+    killProcessTree(proc)
+  }
+
+  await Promise.race([exited, forceAfter])
 }

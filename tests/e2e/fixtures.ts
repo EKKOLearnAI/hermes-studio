@@ -1,6 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test'
 
-export const TEST_ACCESS_KEY = 'playwright-access-key'
+export const TEST_ACCESS_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJwbGF5d3JpZ2h0Iiwicm9sZSI6InN1cGVyX2FkbWluIiwidHlwZSI6ImFjY2VzcyIsImF1ZCI6Imhlcm1lcy13ZWItdWkiLCJpYXQiOjE3NjAwMDAwMDAsImV4cCI6NDEwMjQ0NDgwMH0.playwright-signature'
 
 export interface MockedRequest {
   method: string
@@ -54,6 +54,22 @@ const sampleJob = {
   origin: null,
   last_delivery_error: null,
 }
+
+const sampleAuxiliaryModelTasks = [
+  { key: 'vision', label: 'Vision', default_timeout: 120, default_download_timeout: 30 },
+  { key: 'web_extract', label: 'Web extract', default_timeout: 360 },
+  { key: 'compression', label: 'Compression', default_timeout: 120 },
+  { key: 'skills_hub', label: 'Skills hub', default_timeout: 30 },
+  { key: 'approval', label: 'Approval', default_timeout: 30 },
+  { key: 'mcp', label: 'MCP', default_timeout: 30 },
+  { key: 'title_generation', label: 'Title generation', default_timeout: 30 },
+  { key: 'triage_specifier', label: 'Triage specifier', default_timeout: 120 },
+  { key: 'kanban_decomposer', label: 'Kanban decomposer', default_timeout: 180 },
+  { key: 'profile_describer', label: 'Profile describer', default_timeout: 60 },
+  { key: 'curator', label: 'Curator', default_timeout: 600 },
+  { key: 'session_search', label: 'Session search', default_timeout: 30 },
+  { key: 'flush_memories', label: 'Flush memories', default_timeout: 30 },
+]
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -125,8 +141,22 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           created_at: 0,
           updated_at: 0,
           last_login_at: 0,
+          avatar: '',
         },
       }))
+      return
+    }
+
+    if (pathname === '/api/auth/avatar') {
+      if (request.method() === 'GET') {
+        await route.fulfill(jsonResponse({ avatar: '' }))
+        return
+      }
+      if (request.method() === 'PUT') {
+        await route.fulfill(jsonResponse({ success: true, avatar: '' }))
+        return
+      }
+      await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
       return
     }
 
@@ -174,6 +204,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/hermes/provider-models') {
       await route.fulfill(jsonResponse({ models: ['proxy-model-a', 'proxy-model-b'] }))
+      return
+    }
+
+    if (pathname === '/api/hermes/config/auxiliary-models') {
+      await route.fulfill(jsonResponse({ tasks: sampleAuxiliaryModelTasks, auxiliary: {} }))
       return
     }
 

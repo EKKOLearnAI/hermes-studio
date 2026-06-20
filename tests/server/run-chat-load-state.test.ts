@@ -45,7 +45,6 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
 }))
 
 vi.mock('../../packages/server/src/services/hermes/run-chat/message-format', () => ({
-  convertHistoryFormat: vi.fn((messages: any[]) => messages),
   handleMessage: vi.fn((messages: any[]) => messages),
 }))
 
@@ -112,7 +111,7 @@ describe('loadSessionStateFromDb', () => {
   })
 
   it('hydrates contextTokens from the same snapshot-aware history used for bridge runs', async () => {
-    const { loadSessionStateFromDb } = await import('../../packages/server/src/services/hermes/run-chat/handle-api-run')
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/services/hermes/run-chat/load-state')
 
     const state = await loadSessionStateFromDb('session-1', new Map())
 

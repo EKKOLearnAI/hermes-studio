@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NAlert, NButton, NDescriptions, NDescriptionsItem, NSelect, NSpace, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
@@ -9,6 +9,7 @@ import {
   preparePreview,
   startPreview,
   stopPreview,
+  type PreviewActionResponse,
   type PreviewStatus,
   type PreviewTag,
 } from '@/api/hermes/system'
@@ -22,6 +23,9 @@ const actionLoading = ref('')
 const tags = ref<PreviewTag[]>([])
 const selectedTag = ref('')
 const status = ref<PreviewStatus | null>(null)
+const lastHandledCompletion = ref('')
+const completionNotificationsReady = ref(false)
+let pollTimer: number | null = null
 
 const tagOptions = computed(() => tags.value.map(tag => ({
   label: tag.name,
@@ -29,6 +33,14 @@ const tagOptions = computed(() => tags.value.map(tag => ({
 })))
 const actionLog = computed(() => status.value?.action_log || '')
 const devLog = computed(() => status.value?.dev_log || '')
+const activeAction = computed(() => actionLoading.value || status.value?.active_action || '')
+const hasActiveAction = computed(() => Boolean(activeAction.value))
+const actionSuccessKeys: Record<string, string> = {
+  prepare: 'githubPreview.prepareSuccess',
+  install: 'githubPreview.installSuccess',
+  start: 'githubPreview.startSuccess',
+  stop: 'githubPreview.stopSuccess',
+}
 
 function applyErrorStatus(err: any) {
   const messageText = String(err?.message || '')
@@ -88,7 +100,7 @@ async function handleRefresh() {
   }
 }
 
-async function runAction(action: string, fn: () => Promise<PreviewStatus & { success?: boolean; message?: string; code?: string }>, successKey: string) {
+async function runAction(action: string, fn: () => Promise<PreviewActionResponse>, successKey: string) {
   actionLoading.value = action
   try {
     const res = await fn()
@@ -97,7 +109,9 @@ async function runAction(action: string, fn: () => Promise<PreviewStatus & { suc
       message.warning(errorCodeMessage(res.code, res.message))
       return
     }
-    message.success(t(successKey))
+    if (!res.accepted && !res.active_action) {
+      message.success(t(successKey))
+    }
   } catch (err: any) {
     applyErrorStatus(err)
     const payload = parseErrorPayload(err)
@@ -105,6 +119,25 @@ async function runAction(action: string, fn: () => Promise<PreviewStatus & { suc
   } finally {
     actionLoading.value = ''
   }
+}
+
+async function pollStatus() {
+  try {
+    await loadStatus()
+  } catch {}
+}
+
+function startPolling() {
+  if (pollTimer) return
+  pollTimer = window.setInterval(() => {
+    void pollStatus()
+  }, 2000)
+}
+
+function stopPolling() {
+  if (!pollTimer) return
+  window.clearInterval(pollTimer)
+  pollTimer = null
 }
 
 function requireTag(): string | null {
@@ -124,7 +157,7 @@ async function handlePrepare() {
 async function handleInstall() {
   await runAction('install', async () => {
     const res = await installPreview()
-    if (res.success !== false && !res.installed) {
+    if (res.success !== false && !res.accepted && !res.active_action && !res.installed) {
       return {
         ...res,
         success: false,
@@ -145,7 +178,41 @@ async function handleStop() {
 
 onMounted(async () => {
   await handleRefresh()
+  lastHandledCompletion.value = status.value?.last_action_completed_at || ''
+  completionNotificationsReady.value = true
 })
+
+onUnmounted(() => {
+  stopPolling()
+})
+
+watch(
+  () => status.value?.active_action || '',
+  (action) => {
+    if (action) startPolling()
+    else stopPolling()
+  },
+)
+
+watch(
+  () => status.value?.last_action_completed_at || '',
+  (completedAt) => {
+    if (!completedAt) return
+    if (!completionNotificationsReady.value) {
+      lastHandledCompletion.value = completedAt
+      return
+    }
+    if (completedAt === lastHandledCompletion.value || actionLoading.value) return
+    lastHandledCompletion.value = completedAt
+    const completedAction = status.value?.last_action || ''
+    if (status.value?.last_action_success === false) {
+      message.error(errorCodeMessage(status.value.last_action_code, status.value.last_action_message))
+      return
+    }
+    const successKey = actionSuccessKeys[completedAction]
+    if (successKey) message.success(t(successKey))
+  },
+)
 </script>
 
 <template>
@@ -161,16 +228,16 @@ onMounted(async () => {
           :placeholder="t('githubPreview.selectTag')"
         />
         <NSpace>
-          <NButton type="primary" :loading="actionLoading === 'prepare'" :disabled="!selectedTag" @click="handlePrepare">
+          <NButton type="primary" :loading="activeAction === 'prepare'" :disabled="hasActiveAction || !selectedTag" @click="handlePrepare">
             {{ t('githubPreview.prepare') }}
           </NButton>
-          <NButton :loading="actionLoading === 'install'" :disabled="!status?.has_package" @click="handleInstall">
+          <NButton :loading="activeAction === 'install'" :disabled="hasActiveAction || !status?.has_package" @click="handleInstall">
             {{ t('githubPreview.install') }}
           </NButton>
-          <NButton type="success" :loading="actionLoading === 'start'" :disabled="!status?.installed" @click="handleStart">
+          <NButton type="success" :loading="activeAction === 'start'" :disabled="hasActiveAction || !status?.installed" @click="handleStart">
             {{ t('githubPreview.start') }}
           </NButton>
-          <NButton :loading="actionLoading === 'stop'" :disabled="!status?.running" @click="handleStop">
+          <NButton :loading="activeAction === 'stop'" :disabled="hasActiveAction || !status?.running" @click="handleStop">
             {{ t('githubPreview.stop') }}
           </NButton>
           <NButton :loading="loading || tagsLoading" @click="handleRefresh">

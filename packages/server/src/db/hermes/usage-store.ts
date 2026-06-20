@@ -12,6 +12,17 @@ export interface UsageRecord {
   created_at: number
 }
 
+function hasUpdatedAtColumn(): boolean {
+  const db = getDb()
+  if (!db) return false
+  try {
+    const rows = db.prepare(`PRAGMA table_info("${TABLE}")`).all() as unknown
+    return Array.isArray(rows) && rows.some((row: any) => row?.name === 'updated_at')
+  } catch {
+    return false
+  }
+}
+
 export function updateUsage(
   sessionId: string,
   data: {
@@ -32,10 +43,37 @@ export function updateUsage(
   const profile = data.profile || 'default'
   if (isSqliteAvailable()) {
     const db = getDb()!
+    const columns = [
+      'session_id',
+      'input_tokens',
+      'output_tokens',
+      'cache_read_tokens',
+      'cache_write_tokens',
+      'reasoning_tokens',
+      'model',
+      'profile',
+      'created_at',
+    ]
+    const values = columns.map(() => '?')
+    const params = [
+      sessionId,
+      data.inputTokens,
+      data.outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      reasoningTokens,
+      model,
+      profile,
+      now,
+    ]
+    if (hasUpdatedAtColumn()) {
+      columns.push('updated_at')
+      values.push('?')
+      params.push(now)
+    }
     db.prepare(
-      `INSERT INTO ${TABLE} (session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(sessionId, data.inputTokens, data.outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, model, profile, now)
+      `INSERT INTO ${TABLE} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
+    ).run(...params)
   } else {
     jsonSet(TABLE, sessionId, {
       input_tokens: data.inputTokens,

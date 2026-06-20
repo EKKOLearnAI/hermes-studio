@@ -36,7 +36,12 @@ export interface ConversationSummary {
   id: string
   profile?: string | null
   source: string
+  agent?: string
+  agent_mode?: string
+  agent_session_id?: string
+  agent_native_session_id?: string
   model: string
+  provider?: string
   title: string | null
   started_at: number
   ended_at: number | null

@@ -10,6 +10,8 @@ import {
   scheduleToEditableInput,
 } from '@/api/hermes/jobs'
 import type { CreateJobRequest, Job } from '@/api/hermes/jobs'
+import { fetchSkills } from '@/api/hermes/skills'
+import type { SkillInfo } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -29,12 +31,15 @@ const message = useMessage()
 
 const showModal = ref(true)
 const loading = ref(false)
+const skillsLoading = ref(false)
+const skillOptions = ref<Array<{ label: string; value: string }>>([])
 
 const formData = ref({
   name: '',
   schedule: '',
   prompt: '',
   deliver: 'origin',
+  skills: [] as string[],
   repeat_times: null as number | null,
 })
 
@@ -112,10 +117,34 @@ const targetOptions = computed(() => {
 
 const originalJob = ref<Job | null>(null)
 
+function buildSkillOptions(skills: SkillInfo[]): Array<{ label: string; value: string }> {
+  const byName = new Map<string, SkillInfo>()
+  for (const skill of skills) {
+    if (skill.enabled === false) continue
+    if (!byName.has(skill.name)) byName.set(skill.name, skill)
+  }
+  return [...byName.values()]
+    .map(skill => ({ label: skill.name, value: skill.name }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+async function loadSkillOptions() {
+  skillsLoading.value = true
+  try {
+    const data = await fetchSkills()
+    skillOptions.value = buildSkillOptions(data.categories.flatMap(category => category.skills || []))
+  } catch {
+    skillOptions.value = []
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
 onMounted(async () => {
   if (Object.keys(settingsStore.platforms || {}).length === 0) {
     await settingsStore.fetchSettings()
   }
+  await loadSkillOptions()
 
   if (props.jobId) {
     try {
@@ -126,6 +155,7 @@ onMounted(async () => {
         schedule: scheduleToEditableInput(job.schedule, job.schedule_display || ''),
         prompt: job.prompt,
         deliver: job.deliver || 'origin',
+        skills: job.skills || (job.skill ? [job.skill] : []),
         repeat_times: jobRepeatToEditValue(job.repeat),
       }
     } catch (e: any) {
@@ -165,6 +195,7 @@ async function handleSave() {
         schedule: formData.value.schedule,
         prompt: formData.value.prompt,
         deliver: formData.value.deliver,
+        skills: formData.value.skills,
         repeat: formData.value.repeat_times ?? undefined,
       }
       await jobsStore.createJob(payload)
@@ -227,6 +258,18 @@ function handleClose() {
           :rows="4"
           maxlength="5000"
           show-count
+        />
+      </NFormItem>
+
+      <NFormItem :label="t('jobs.skills')">
+        <NSelect
+          v-model:value="formData.skills"
+          multiple
+          filterable
+          clearable
+          :loading="skillsLoading"
+          :options="skillOptions"
+          :placeholder="t('jobs.skillsPlaceholder')"
         />
       </NFormItem>
 

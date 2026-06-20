@@ -16,6 +16,8 @@ const isDark = savedBrightness === 'dark' || (savedBrightness === 'system' && pr
 
 // Resolve style
 const isComic = savedStyle === 'comic'
+const isDesktopShell =
+  (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true
 
 // Apply classes to prevent FOUC
 if (isDark) {
@@ -23,6 +25,9 @@ if (isDark) {
 }
 if (isComic) {
   document.documentElement.classList.add('comic')
+}
+if (isDesktopShell) {
+  document.documentElement.classList.add('hermes-desktop-shell')
 }
 
 // Read token from URL BEFORE router initializes (hash router strips params)
@@ -37,4 +42,6 @@ const app = createApp(App)
 app.use(createPinia())
 app.use(i18n)
 app.use(router)
-app.mount('#app')
+router.isReady().finally(() => {
+  app.mount('#app')
+})

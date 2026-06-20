@@ -70,13 +70,19 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 const message = useMessage()
 
+function diffFoldLabel(hiddenCount: number): string {
+  return t('chat.unchangedLines', { count: hiddenCount })
+}
+
 const md: MarkdownIt = new MarkdownItConstructor({
   html: false,
   breaks: true,
   linkify: true,
   typographer: true,
   highlight(str: string, lang: string): string {
-    return renderHighlightedCodeBlock(str, lang, t('common.copy'))
+    return renderHighlightedCodeBlock(str, lang, t('common.copy'), {
+      formatDiffFoldLabel: diffFoldLabel,
+    })
   },
 })
 
@@ -128,6 +134,15 @@ function normalizeLocalFilePath(path: string): string {
   return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
 }
 
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov'])
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'])
+
+function hasExtension(path: string, extensions: Set<string>): boolean {
+  const clean = path.split('?')[0].split('#')[0]
+  const ext = clean.split('.').pop()?.toLowerCase()
+  return !!ext && extensions.has(ext)
+}
+
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
 
@@ -166,16 +181,31 @@ const renderedHtml = computed(() => {
 
     const path = normalizeLocalFilePath(rawPath)
     const fileName = filename.trim()
-    const ext = path.split('.').pop()?.toLowerCase()
 
     // Video files: render as video player
-    if (ext === 'mp4' || ext === 'webm' || ext === 'mov') {
+    if (hasExtension(path, VIDEO_EXTENSIONS)) {
       const downloadUrl = getDownloadUrl(path)
       return `<div class="markdown-video-container">
         <video class="markdown-video" controls preload="metadata" src="${downloadUrl}"></video>
         <div class="markdown-video-footer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span class="att-name">${fileName}</span>
+        </div>
+      </div>`
+    }
+
+    // Audio files: render as inline audio player
+    if (hasExtension(path, AUDIO_EXTENSIONS)) {
+      const downloadUrl = getDownloadUrl(path)
+      return `<div class="markdown-audio-container">
+        <audio class="markdown-audio" controls preload="metadata" src="${downloadUrl}"></audio>
+        <div class="markdown-audio-footer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 18V5l12-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="18" cy="16" r="3" />
           </svg>
           <span class="att-name">${fileName}</span>
         </div>
@@ -501,13 +531,19 @@ function closeTextPreview(): void {
 .markdown-body {
   font-size: 14px;
   line-height: 1.65;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
   overflow-x: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 
   p {
     margin: 0 0 8px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
 
     &:last-child {
       margin-bottom: 0;
@@ -521,6 +557,9 @@ function closeTextPreview(): void {
 
   li {
     margin: 2px 0;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 
   strong {
@@ -536,6 +575,8 @@ function closeTextPreview(): void {
     color: $accent-primary;
     text-decoration: underline;
     text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 
     &:hover {
       color: $accent-hover;
@@ -575,6 +616,36 @@ function closeTextPreview(): void {
     padding: 8px 12px;
     background: rgba(0, 0, 0, 0.85);
     color: #fff;
+    font-size: 12px;
+
+    .att-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .markdown-audio-container {
+    margin: 12px 0;
+    padding: 10px 12px;
+    border: 1px solid $border-light;
+    border-radius: $radius-sm;
+    background-color: rgba(0, 0, 0, 0.04);
+  }
+
+  .markdown-audio {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .markdown-audio-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    color: $text-secondary;
     font-size: 12px;
 
     .att-name {
@@ -651,10 +722,14 @@ function closeTextPreview(): void {
     font-family: $font-code;
     font-size: 13px;
     color: $accent-primary;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
     margin: 8px 0;
     display: block;

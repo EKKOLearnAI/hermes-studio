@@ -60,6 +60,20 @@ describe('run chat model config', () => {
     expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
+  it('maps Claude OAuth to the Anthropic runtime provider', async () => {
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+
+    const result = await resolveBridgeRunModelConfig({
+      profile: 'default',
+      requestedModel: 'claude-sonnet-4-6',
+      requestedProvider: 'claude-oauth',
+      modelGroups: [{ provider: 'claude-oauth', models: ['claude-sonnet-4-6'] }],
+    })
+
+    expect(result).toEqual({ model: 'claude-sonnet-4-6', provider: 'anthropic' })
+    expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
+  })
+
   it('falls back to the profile default when the candidate model is unavailable', async () => {
     const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
 

@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resolveTerminalCwd } from '../../packages/server/src/routes/hermes/terminal'
+import { canOpenTerminal, resolveTerminalCwd } from '../../packages/server/src/routes/hermes/terminal'
 
 const tmpRoots: string[] = []
 
@@ -37,5 +37,13 @@ describe('terminal cwd resolution', () => {
   it('falls back to the profile directory when configured cwd is missing', () => {
     const profileDir = makeTmpRoot()
     expect(resolveTerminalCwd({ cwd: 'missing' }, profileDir)).toBe(profileDir)
+  })
+})
+
+describe('terminal authorization', () => {
+  it('only allows super administrators to open terminal websocket sessions', () => {
+    expect(canOpenTerminal({ role: 'super_admin' })).toBe(true)
+    expect(canOpenTerminal({ role: 'admin' })).toBe(false)
+    expect(canOpenTerminal(null)).toBe(false)
   })
 })

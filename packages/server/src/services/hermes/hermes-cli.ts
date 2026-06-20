@@ -4,7 +4,6 @@ import { join } from 'path'
 import { promisify } from 'util'
 import YAML from 'js-yaml'
 import { logger } from '../logger'
-import { stripLegacyApiServerGatewayConfig, updateConfigYaml } from '../config-helpers'
 import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from './hermes-profile'
 import { startGatewayRunManaged } from './gateway-runner'
 import { isGatewayRunningForProfile } from './gateway-autostart'
@@ -165,17 +164,6 @@ function activeGatewayExecOpts() {
       ...process.env,
       HERMES_HOME: getActiveProfileDir(),
     },
-  }
-}
-
-async function clearLegacyApiServerGatewayConfig(): Promise<void> {
-  try {
-    await updateConfigYaml((config) => {
-      const result = stripLegacyApiServerGatewayConfig(config)
-      return { data: result.config, result: undefined, write: result.changed }
-    })
-  } catch (err) {
-    logger.warn(err, 'Failed to clear legacy api_server gateway config before restart')
   }
 }
 
@@ -464,7 +452,6 @@ export async function startGatewayBackground(): Promise<number | null> {
  * `gateway run` when the environment does not support `gateway restart`.
  */
 export async function restartGateway(): Promise<string> {
-  await clearLegacyApiServerGatewayConfig()
   const profileDir = getActiveProfileDir()
   if (isDocker || isTermux || process.platform === 'win32') {
     await stopGatewayForActiveProfile()

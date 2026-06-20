@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
-import { getSession, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
+import { getSession, getSessionDetail, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
@@ -30,11 +30,87 @@ import type { ContentBlock, QueuedRun, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta, flushPendingToolCallMarkup } from './bridge-delta'
+import { markAbortCompleted } from './abort'
+import { writeModelRunProfileToken } from './model-run-prompt'
+import type { AuthenticatedUser } from '../../../middleware/user-auth'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
+const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
+const BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS = 45_000
+const BRIDGE_GOAL_EVALUATE_TIMEOUT_MS = 120_000
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeTitleText(value: unknown): string {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function fallbackTitleFromText(text: string, limit: number, ellipsis: boolean): string {
+  const normalized = normalizeTitleText(text)
+  if (!normalized) return ''
+  if (normalized.length <= limit) return normalized
+  return ellipsis ? `${normalized.slice(0, limit)}...` : normalized.slice(0, limit)
+}
+
+function isReplaceableLocalTitle(sessionId: string): boolean {
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const current = normalizeTitleText(detail.title)
+  if (!current) return true
+  const variants = new Set<string>([''])
+  const preview = normalizeTitleText(detail.preview)
+  if (preview) {
+    variants.add(preview)
+    variants.add(fallbackTitleFromText(preview, 40, true))
+    variants.add(fallbackTitleFromText(preview, 63, false))
+    variants.add(fallbackTitleFromText(preview, 100, false))
+  }
+  const firstUser = detail.messages.find(message => message.role === 'user' && normalizeTitleText(message.content))
+  const firstUserText = normalizeTitleText(firstUser?.content)
+  if (firstUserText) {
+    variants.add(firstUserText)
+    variants.add(fallbackTitleFromText(firstUserText, 40, true))
+    variants.add(fallbackTitleFromText(firstUserText, 63, false))
+    variants.add(fallbackTitleFromText(firstUserText, 100, false))
+  }
+  return variants.has(current)
+}
+
+function isBridgeSessionSource(source?: string | null): boolean {
+  return source === 'cli' || source === 'global_agent'
+}
+
+function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (event: string, payload: any) => void): boolean {
+  const nextTitle = normalizeTitleText(title)
+  if (!nextTitle) return false
+  const session = getSession(sessionId)
+  if (!session || !isBridgeSessionSource(session.source)) return false
+  if (!isReplaceableLocalTitle(sessionId)) {
+    logger.info('[chat-run-socket] skipped Hermes generated title for manually titled session %s', sessionId)
+    return false
+  }
+  if (normalizeTitleText(session.title) === nextTitle) return false
+  updateSession(sessionId, {
+    title: nextTitle,
+    last_active: Math.floor(Date.now() / 1000),
+  } as any)
+  emit('session.title.updated', {
+    event: 'session.title.updated',
+    session_id: sessionId,
+    title: nextTitle,
+  })
+  return true
+}
+
+function shouldPollBridgeGeneratedTitle(sessionId: string): boolean {
+  const session = getSession(sessionId)
+  if (!session || !isBridgeSessionSource(session.source)) return false
+  const detail = getSessionDetail(sessionId)
+  if (!detail) return false
+  const userMessageCount = detail.messages.filter(message => message.role === 'user').length
+  return userMessageCount <= 2 && isReplaceableLocalTitle(sessionId)
 }
 
 function looksLikeAgentFailure(value: string): boolean {
@@ -221,7 +297,7 @@ async function ensureBridgeFixedContext(args: {
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; queue_id?: string; peerExcludeSocketId?: string },
+  data: { input: string | ContentBlock[]; display_input?: string | ContentBlock[] | null; display_role?: 'user' | 'command'; storage_message?: string; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; workspace?: string | null; source?: string; session_source?: 'global_agent'; queue_id?: string; peerExcludeSocketId?: string; reasoning_effort?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -230,6 +306,7 @@ export async function handleBridgeRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
 ) {
   const { input, session_id, instructions } = data
+  const runSource = data.session_source === 'global_agent' || data.source === 'global_agent' ? 'global_agent' : 'cli'
   if (!session_id) {
     socket.emit('run.failed', { event: 'run.failed', error: 'session_id is required for cli source' })
     return
@@ -239,6 +316,7 @@ export async function handleBridgeRun(
     ? `${getSystemPrompt()}\n${instructions}`
     : getSystemPrompt()
   const sessionRow = getSession(session_id)
+  const workspace = sessionRow?.workspace || String(data.workspace || '').trim()
   const sessionModel = sessionRow?.model || ''
   const sessionProvider = sessionRow?.provider || ''
   const { model: resolvedModel, provider: resolvedProvider } = await resolveBridgeRunModelConfig({
@@ -255,12 +333,13 @@ export async function handleBridgeRun(
     if (resolvedProvider && sessionRow.provider !== resolvedProvider) updates.provider = resolvedProvider
     if (Object.keys(updates).length > 0) updateSession(session_id, updates)
   }
-  const runContext = [
-    `[Current Hermes profile: ${profile}]`,
-    sessionRow?.workspace ? `[Current working directory: ${sessionRow.workspace}]` : '',
+  const socketUser = socket.data.user as AuthenticatedUser | undefined
+  await writeModelRunProfileToken(socketUser, profile)
+  const runPrompt = [
+    workspace ? `[Current working directory: ${workspace}]` : '',
     'When calling Hermes Web UI endpoints from tools or skills, include the current Hermes profile as the X-Hermes-Profile header if the endpoint supports profile-scoped behavior.',
   ].filter(Boolean).join('\n')
-  fullInstructions = `\n${runContext}\n${fullInstructions}`
+  fullInstructions = `\n${runPrompt}\n${fullInstructions}`
 
   const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   const now = Math.floor(Date.now() / 1000)
@@ -276,7 +355,7 @@ export async function handleBridgeRun(
   state.isAborting = false
   state.events = []
   state.profile = profile
-  state.source = 'cli'
+  state.source = runSource
   state.activeRunMarker = runMarker
   state.runId = undefined
   state.abortController = undefined
@@ -291,10 +370,15 @@ export async function handleBridgeRun(
   const displayInput = data.display_input === undefined ? input : data.display_input
   const inputStr = displayInput == null ? '' : contentBlocksToString(displayInput)
   const actualInputStr = contentBlocksToString(input)
+  const storageInputStr = data.storage_message !== undefined ? data.storage_message : inputStr
+  const shouldStoreInputInsteadOfDisplay = data.storage_message !== undefined && data.storage_message !== inputStr
   const currentInputUsage = estimateUsageTokensFromMessages([{ role: 'user', content: actualInputStr }])
   const currentInputTokens = currentInputUsage.inputTokens
   const shouldPersistUserMessage = !skipUserMessage && displayInput !== null
   const displayRole = data.display_role === 'command' ? 'command' : 'user'
+  const storageRole = shouldStoreInputInsteadOfDisplay ? 'user' : displayRole
+  const displayRoleForStorage = shouldStoreInputInsteadOfDisplay ? displayRole : null
+  const displayContentForStorage = shouldStoreInputInsteadOfDisplay ? inputStr : null
   let messageId: number | string | undefined
 
   if (shouldPersistUserMessage) {
@@ -302,26 +386,30 @@ export async function handleBridgeRun(
       id: state.messages.length + 1,
       session_id,
       runMarker,
-      role: displayRole,
-      content: inputStr,
+      role: storageRole,
+      content: storageInputStr,
+      display_role: displayRoleForStorage,
+      display_content: displayContentForStorage,
       timestamp: now,
     })
 
     if (!getSession(session_id)) {
       const previewText = extractTextForPreview(displayInput || input)
       const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-      createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+      createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
     }
     messageId = addMessage({
       session_id,
-      role: displayRole,
-      content: inputStr,
+      role: storageRole,
+      content: storageInputStr,
+      display_role: displayRoleForStorage,
+      display_content: displayContentForStorage,
       timestamp: now,
     })
   } else if (!getSession(session_id)) {
     const previewText = displayInput === null ? extractTextForPreview(input) : extractTextForPreview(displayInput || input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
-    createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+    createSession({ id: session_id, profile, source: runSource, model: resolvedModel, provider: resolvedProvider, title: preview, workspace: data.workspace || undefined })
   }
 
   socket.join(`session:${session_id}`)
@@ -334,8 +422,8 @@ export async function handleBridgeRun(
       session_id,
       message: {
         id: data.queue_id || messageId,
-        role: displayRole,
-        content: inputStr,
+        role: displayRoleForStorage || storageRole,
+        content: displayContentForStorage || storageInputStr,
         timestamp: now,
       },
     })
@@ -412,6 +500,8 @@ export async function handleBridgeRun(
         ...(bridgeStorageInput !== undefined ? { storage_message: bridgeStorageInput } : {}),
         ...(resolvedModel ? { model: resolvedModel } : {}),
         ...(resolvedProvider ? { provider: resolvedProvider } : {}),
+        // Local patch (reasoning-effort): per-session reasoning effort override.
+        ...(data.reasoning_effort ? { reasoning_effort: data.reasoning_effort } : {}),
       },
     )
     state.runId = started.run_id
@@ -431,7 +521,10 @@ export async function handleBridgeRun(
       queue_length: state.queue.length || 0,
     })
 
+    let lastChunk: AgentBridgeOutput | null = null
+    let sawTerminalChunk = false
     for await (const chunk of bridge.streamOutput(started.run_id)) {
+      lastChunk = chunk
       await applyBridgeChunkAsync(
         nsp,
         socket,
@@ -450,7 +543,49 @@ export async function handleBridgeRun(
         shouldPersistUserMessage && displayRole === 'user',
         data.model_groups,
       )
-      if (chunk.done) break
+      if (chunk.done) {
+        sawTerminalChunk = true
+        void pollBridgeGeneratedTitleAfterRun(bridge, session_id, profile, emit)
+        break
+      }
+    }
+    if (!sawTerminalChunk && state.activeRunMarker === runMarker && state.isWorking) {
+      bridgeLogger.warn({
+        sessionId: session_id,
+        runId: started.run_id,
+      }, '[chat-run-socket] bridge stream ended without terminal chunk; completing local run state')
+      const terminalChunk: AgentBridgeOutput = {
+        ok: true,
+        run_id: lastChunk?.run_id || started.run_id,
+        session_id,
+        status: 'complete',
+        delta: '',
+        cursor: typeof lastChunk?.cursor === 'number' ? lastChunk.cursor : 0,
+        output: lastChunk?.output || state.bridgeOutput || '',
+        done: true,
+        result: lastChunk?.result,
+        error: lastChunk?.error ?? null,
+        events: [],
+        event_cursor: typeof lastChunk?.event_cursor === 'number' ? lastChunk.event_cursor : 0,
+      }
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        session_id,
+        runMarker,
+        terminalChunk,
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        fullInstructions,
+        { model: resolvedModel, provider: resolvedProvider },
+        currentInputTokens,
+        shouldPersistUserMessage && displayRole === 'user',
+        data.model_groups,
+      )
     }
   } catch (err: any) {
     if (state.activeRunMarker !== runMarker) return
@@ -492,6 +627,148 @@ export async function handleBridgeRun(
       queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+  }
+}
+
+function latestAssistantText(state: SessionState): string {
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const message = state.messages[i]
+    if (message.role === 'assistant') return message.content || ''
+  }
+  return ''
+}
+
+export async function resumeBridgeRun(
+  nsp: ReturnType<Server['of']>,
+  socket: Socket,
+  args: {
+    sessionId: string
+    runId: string
+    profile: string
+    instructions: string
+    model?: string | null
+    provider?: string | null
+    source?: string | null
+  },
+  sessionMap: Map<string, SessionState>,
+  bridge: AgentBridgeClient,
+  dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
+) {
+  const { sessionId, runId, profile, instructions } = args
+  let state = sessionMap.get(sessionId)
+  if (!state) {
+    state = { messages: [], isWorking: false, events: [], queue: [] }
+    sessionMap.set(sessionId, state)
+  }
+
+  const runMarker = state.activeRunMarker || `cli_resume_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  state.isWorking = true
+  state.isAborting = state.isAborting === true
+  state.profile = profile
+  state.source = args.source === 'global_agent' ? 'global_agent' : 'cli'
+  state.runId = runId
+  state.activeRunMarker = runMarker
+  state.bridgeOutput = state.bridgeOutput || latestAssistantText(state)
+  state.bridgePendingAssistantContent = state.bridgePendingAssistantContent || ''
+  state.bridgePendingReasoningContent = state.bridgePendingReasoningContent || ''
+  state.bridgePendingToolCallMarkup = state.bridgePendingToolCallMarkup || ''
+  state.bridgePendingTools = state.bridgePendingTools || []
+  state.bridgeToolCounter = state.bridgeToolCounter || 0
+
+  const emit = (event: string, payload: any) => {
+    const tagged = { ...payload, session_id: sessionId }
+    nsp.to(`session:${sessionId}`).emit(event, tagged)
+    if (!nsp.adapter.rooms.get(`session:${sessionId}`)?.size && socket.connected) {
+      socket.emit(event, tagged)
+    }
+  }
+
+  let cursor = 0
+  let eventCursor = 0
+  try {
+    const snapshot = await bridge.getResult(runId)
+    const deltas = Array.isArray(snapshot.deltas) ? snapshot.deltas.map(String) : []
+    const output = typeof snapshot.output === 'string' ? snapshot.output : deltas.join('')
+    const persisted = state.bridgeOutput || ''
+    const missingOutput = output && output.startsWith(persisted) ? output.slice(persisted.length) : ''
+    if (missingOutput) {
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        sessionId,
+        runMarker,
+        {
+          ok: true,
+          run_id: runId,
+          session_id: sessionId,
+          status: 'running',
+          delta: missingOutput,
+          cursor: deltas.length,
+          output,
+          done: false,
+          events: [],
+          event_cursor: Array.isArray(snapshot.events) ? snapshot.events.length : 0,
+          error: null,
+        },
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        instructions,
+        { model: args.model, provider: args.provider },
+      )
+    }
+    cursor = deltas.length
+    eventCursor = Array.isArray(snapshot.events) ? snapshot.events.length : 0
+  } catch (err) {
+    bridgeLogger.warn({
+      err: err instanceof Error ? { message: err.message, name: err.name } : err,
+      sessionId,
+      runId,
+    }, '[chat-run-socket] failed to snapshot running bridge run before resume')
+  }
+
+  try {
+    for (;;) {
+      const chunk = await bridge.getOutput(runId, cursor, eventCursor)
+      cursor = chunk.cursor
+      eventCursor = chunk.event_cursor
+      if (chunk.delta || chunk.done || (chunk.events && chunk.events.length > 0)) {
+        await applyBridgeChunkAsync(
+          nsp,
+          socket,
+          state,
+          sessionId,
+          runMarker,
+          chunk,
+          emit,
+          profile,
+          sessionMap,
+          bridge,
+          dequeueNextQueuedRun,
+          instructions,
+          { model: args.model, provider: args.provider },
+        )
+      }
+      if (chunk.done) return
+      await delay(100)
+    }
+  } catch (err) {
+    if (state.activeRunMarker !== runMarker) return
+    state.isWorking = false
+    state.isAborting = false
+    state.profile = undefined
+    state.runId = undefined
+    state.activeRunMarker = undefined
+    state.events = []
+    emit('run.failed', {
+      event: 'run.failed',
+      run_id: runId,
+      error: err instanceof Error ? err.message : String(err),
+      resumed: true,
+    })
   }
 }
 
@@ -621,7 +898,9 @@ async function applyBridgeChunkAsync(
       processBridgeTextDelta(state, sessionId, runMarker, chunk.run_id, String((ev as any).delta || ''), emit)
       continue
     }
-    if (evType === 'bridge.context.ready') {
+    if (evType === 'session.title.updated') {
+      syncBridgeGeneratedTitle(sessionId, (ev as any).title, emit)
+    } else if (evType === 'bridge.context.ready') {
       cacheBridgeContext(state, ev)
       const usage = await calcAndUpdateUsage(sessionId, state, emit)
       const snapshotAware = await estimateSnapshotAwareMessageTokens({
@@ -925,7 +1204,19 @@ async function applyBridgeChunkAsync(
       sessionId,
       runId: chunk.run_id,
       status: chunk.status,
-    }, '[chat-run-socket][abort] suppressing CLI bridge terminal chunk during abort')
+    }, '[chat-run-socket][abort] completing CLI bridge abort after terminal chunk')
+    await markAbortCompleted(
+      nsp,
+      socket,
+      sessionId,
+      chunk.run_id || runMarker,
+      sessionMap,
+      (queuedSocket, queuedSessionId, nextQueuedRun, fallbackProfile) => {
+        const queuedState = sessionMap.get(queuedSessionId)
+        if (queuedState) queuedState.queue.unshift(nextQueuedRun)
+        dequeueNextQueuedRun(queuedSocket, queuedSessionId, fallbackProfile)
+      },
+    )
     return
   }
 
@@ -1005,6 +1296,31 @@ async function applyBridgeChunkAsync(
   }
 }
 
+async function pollBridgeGeneratedTitleAfterRun(
+  bridge: AgentBridgeClient,
+  sessionId: string,
+  profile: string,
+  emit: (event: string, payload: any) => void,
+) {
+  if (!shouldPollBridgeGeneratedTitle(sessionId)) return
+  const deadline = Date.now() + BRIDGE_TITLE_EVENT_POLL_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    await delay(BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS)
+    let title = ''
+    try {
+      const result = await bridge.getSessionTitle(sessionId, profile, { timeoutMs: 2000 })
+      title = normalizeTitleText(result.title)
+    } catch (err) {
+      logger.debug(err, '[chat-run-socket] stopped polling bridge generated title for session %s', sessionId)
+      return
+    }
+    if (title) {
+      syncBridgeGeneratedTitle(sessionId, title, emit)
+      return
+    }
+  }
+}
+
 function bridgeFinalResponse(chunk: AgentBridgeOutput, state: SessionState): string {
   const result = chunk.result && typeof chunk.result === 'object' && !Array.isArray(chunk.result)
     ? chunk.result as Record<string, unknown>
@@ -1037,7 +1353,11 @@ async function maybeEnqueueGoalContinuation(args: {
 
   let decision
   try {
-    decision = await args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile)
+    decision = await withTimeout(
+      args.bridge.goalEvaluate(args.sessionId, finalResponse, args.profile),
+      BRIDGE_GOAL_EVALUATE_TIMEOUT_MS,
+      'goal evaluation timed out',
+    )
   } catch (err) {
     logger.warn(err, '[chat-run-socket] /goal evaluation failed for session %s', args.sessionId)
     return
@@ -1076,7 +1396,7 @@ async function maybeEnqueueGoalContinuation(args: {
     model_groups: args.modelGroups,
     instructions: undefined,
     profile: args.profile,
-    source: 'cli',
+    source: args.state.source === 'global_agent' ? 'global_agent' : 'cli',
     goalContinuation: true,
   }
   args.state.queue.push(next)
@@ -1133,4 +1453,20 @@ function emitGoalStatus(
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      err => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }

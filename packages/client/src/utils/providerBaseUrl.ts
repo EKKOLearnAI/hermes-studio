@@ -1,16 +1,24 @@
-const APIKEY_FUN_BASE_URL = 'https://api.apikey.fun/v1'
+export type ApiKeyFunPresetProvider = 'fun-codex' | 'fun-claude'
 
-export function normalizeCustomProviderBaseUrl(baseUrl: string): string {
+export function isApiKeyFunBaseUrl(baseUrl: string): boolean {
   const value = baseUrl.trim()
-  if (!value) return value
+  if (!value) return false
 
   try {
     const parsed = new URL(value)
-    if (parsed.hostname.toLowerCase() === 'api.apikey.fun') return APIKEY_FUN_BASE_URL
+    const hostname = parsed.hostname.toLowerCase()
+    return hostname === 'apikey.fun' || hostname.endsWith('.apikey.fun')
   } catch {
-    // Fall back to a string match so partially typed values still normalize on submit.
-    if (/^https:\/\/api\.apikey\.fun(?:\/|$)/i.test(value)) return APIKEY_FUN_BASE_URL
+    // Fall back to a string match so partially typed values still route on submit.
+    return /^(?:https?:\/\/)?(?:[a-z0-9-]+\.)*apikey\.fun(?:\/|$)/i.test(value)
   }
+}
 
-  return value
+export function inferApiKeyFunPresetProvider(model: string): ApiKeyFunPresetProvider | null {
+  const normalized = model.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized.startsWith('claude')) return 'fun-claude'
+  if (normalized.startsWith('gpt') || normalized.includes('codex')) return 'fun-codex'
+
+  return null
 }

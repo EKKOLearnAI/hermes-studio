@@ -55,8 +55,16 @@ export const lightThemeOverrides: GlobalThemeOverrides = {
     border: '1px solid #e0e0e0',
     borderHover: '1px solid #999999',
     borderFocus: '1px solid #333333',
+    borderDisabled: '1px solid #ebebeb',
+    groupLabelBorder: '1px solid #e0e0e0',
     placeholderColor: '#999999',
     caretColor: '#1a1a1a',
+  },
+  InternalSelection: {
+    border: '1px solid #e0e0e0',
+    borderHover: '1px solid #999999',
+    borderActive: '1px solid #333333',
+    borderFocus: '1px solid #333333',
   },
   Card: {
     color: '#ffffff',
@@ -122,11 +130,19 @@ export const darkThemeOverrides: GlobalThemeOverrides = {
   Input: {
     color: '#2a2a2a',
     colorFocus: '#2a2a2a',
-    border: '1px solid #3a3a3a',
-    borderHover: '1px solid #666666',
+    border: '1px solid #555555',
+    borderHover: '1px solid #777777',
     borderFocus: '1px solid #e0e0e0',
+    borderDisabled: '1px solid #3a3a3a',
+    groupLabelBorder: '1px solid #555555',
     placeholderColor: '#666666',
     caretColor: '#e0e0e0',
+  },
+  InternalSelection: {
+    border: '1px solid #555555',
+    borderHover: '1px solid #777777',
+    borderActive: '1px solid #e0e0e0',
+    borderFocus: '1px solid #e0e0e0',
   },
   Card: {
     color: '#2a2a2a',

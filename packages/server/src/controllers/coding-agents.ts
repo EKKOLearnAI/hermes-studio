@@ -6,6 +6,9 @@ import {
   openCodingAgentNativeTerminal,
   prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
+  sendCodingAgentRunInput,
+  startCodingAgentRun,
+  stopCodingAgentRun,
   writeCodingAgentConfigFile,
   type CodingAgentConfigScope,
 } from '../services/coding-agents'
@@ -115,5 +118,52 @@ export async function nativeLaunch(ctx: Context) {
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to launch native terminal' }
+  }
+}
+
+export async function startRun(ctx: Context) {
+  try {
+    const body = ctx.request.body as {
+      sessionId?: string
+      mode?: any
+      profile?: string
+      provider?: string
+      model?: string
+      baseUrl?: string
+      apiKey?: string
+      apiMode?: any
+    }
+    ctx.body = await startCodingAgentRun(ctx.params.id, {
+      sessionId: String(body.sessionId || ''),
+      mode: body.mode,
+      profile: ctx.state.profile?.name || body.profile,
+      provider: body.provider,
+      model: body.model,
+      baseUrl: body.baseUrl,
+      apiKey: body.apiKey,
+      apiMode: body.apiMode,
+    })
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to start coding agent run' }
+  }
+}
+
+export async function sendRunInput(ctx: Context) {
+  try {
+    const body = ctx.request.body as { input?: string }
+    ctx.body = await sendCodingAgentRunInput(String(ctx.params.sessionId || ''), String(body.input || ''))
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to send coding agent input' }
+  }
+}
+
+export async function stopRun(ctx: Context) {
+  try {
+    ctx.body = await stopCodingAgentRun(String(ctx.params.sessionId || ''))
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to stop coding agent run' }
   }
 }

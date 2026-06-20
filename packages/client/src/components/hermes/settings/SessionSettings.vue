@@ -46,6 +46,17 @@ async function toggleRequireAuth(value: boolean) {
     message.error(t("settings.saveFailed"));
   }
 }
+
+async function toggleWriteApproval(section: "memory" | "skills", value: boolean) {
+  try {
+    settingsStore.updateLocal(section, { write_approval: value });
+    await settingsStore.saveSection(section, { write_approval: value });
+    message.success(t("settings.saved"));
+  } catch (err: any) {
+    message.error(t("settings.saveFailed"));
+  }
+}
+
 </script>
 
 <template>
@@ -55,6 +66,24 @@ async function toggleRequireAuth(value: boolean) {
       :hint="t('settings.session.requireAuthHint')"
     >
       <NSwitch :value="settingsStore.approvals.mode === 'manual'" @update:value="toggleRequireAuth" />
+    </SettingRow>
+    <SettingRow
+      :label="t('settings.session.memoryWriteApproval')"
+      :hint="t('settings.session.memoryWriteApprovalHint')"
+    >
+      <NSwitch
+        :value="settingsStore.memory.write_approval === true"
+        @update:value="(value) => toggleWriteApproval('memory', value)"
+      />
+    </SettingRow>
+    <SettingRow
+      :label="t('settings.session.skillsWriteApproval')"
+      :hint="t('settings.session.skillsWriteApprovalHint')"
+    >
+      <NSwitch
+        :value="settingsStore.skills.write_approval === true"
+        @update:value="(value) => toggleWriteApproval('skills', value)"
+      />
     </SettingRow>
     <SettingRow
       :label="t('settings.session.mode')"

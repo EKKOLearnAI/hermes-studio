@@ -6,14 +6,12 @@ on:
       tag:
         description: "Existing release tag to attach artifacts to (e.g. v0.6.5)"
         required: true
-  release:
-    types: [published]
 
 permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  group: desktop-release-${{ github.event.inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -28,18 +26,22 @@ jobs:
             runner: macos-14
             target_os: darwin
             target_arch: arm64
-            electron_target: "--mac dmg --arm64"
+            electron_target: "--mac dmg zip --arm64"
             artifact_files: |
               packages/desktop/release/*.dmg
               packages/desktop/release/*.dmg.blockmap
+              packages/desktop/release/*.zip
+              packages/desktop/release/*.zip.blockmap
           - label: macOS x64
             runner: macos-15-intel
             target_os: darwin
             target_arch: x64
-            electron_target: "--mac dmg --x64"
+            electron_target: "--mac dmg zip --x64"
             artifact_files: |
               packages/desktop/release/*.dmg
               packages/desktop/release/*.dmg.blockmap
+              packages/desktop/release/*.zip
+              packages/desktop/release/*.zip.blockmap
           - label: Windows x64
             runner: windows-latest
             target_os: win32
@@ -48,6 +50,7 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.exe
               packages/desktop/release/*.exe.blockmap
+              packages/desktop/release/latest*.yml
           - label: Linux x64
             runner: ubuntu-22.04
             target_os: linux
@@ -56,6 +59,7 @@ jobs:
             artifact_files: |
               packages/desktop/release/*.AppImage
               packages/desktop/release/*.deb
+              packages/desktop/release/latest*.yml
           - label: Linux arm64
             runner: ubuntu-22.04-arm
             target_os: linux
@@ -63,12 +67,13 @@ jobs:
             electron_target: "--linux AppImage --arm64"
             artifact_files: |
               packages/desktop/release/*.AppImage
+              packages/desktop/release/latest*.yml
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ref: ${{ github.event.inputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,9 +83,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             packages/desktop/package-lock.json
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
 
       - name: Install web UI dependencies
         run: |
@@ -96,11 +98,11 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --prefix packages/desktop --no-audit --no-fund
 
-      - name: Prepare bundled Python
+      - name: Write runtime release metadata
+        shell: bash
         env:
-          TARGET_OS: ${{ matrix.target_os }}
-          TARGET_ARCH: ${{ matrix.target_arch }}
-        run: npm --prefix packages/desktop run prepare:python
+          HERMES_DESKTOP_RUNTIME_RELEASE_TAG: ${{ vars.HERMES_DESKTOP_RUNTIME_RELEASE_TAG }}
+        run: npm --prefix packages/desktop run write:runtime-release
 
       - name: Configure macOS signing
         if: matrix.target_os == 'darwin'
@@ -146,11 +148,71 @@ jobs:
 
       - name: Build desktop artifact
         shell: bash
-        run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
+        run: |
+          if [ "${{ matrix.target_os }}" = "darwin" ]; then
+            ulimit -n 10240 || true
+            echo "File descriptor limit: $(ulimit -n)"
+          fi
+          npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
+
+      - name: Upload macOS update manifest artifact
+        if: matrix.target_os == 'darwin'
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-mac-${{ matrix.target_arch }}
+          path: packages/desktop/release/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          tag_name: ${{ github.event.inputs.tag }}
           fail_on_unmatched_files: true
           files: ${{ matrix.artifact_files }}
+
+  mac-update-manifest:
+    name: Merge macOS updater manifest
+    needs: desktop
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - name: Download macOS update manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: latest-mac-*
+          path: /tmp/hermes-mac-manifests
+          merge-multiple: false
+
+      - name: Merge macOS update manifests
+        shell: bash
+        run: |
+          node packages/desktop/scripts/merge-mac-latest-yml.mjs \
+            /tmp/hermes-mac-manifests/latest-mac-arm64/latest-mac.yml \
+            /tmp/hermes-mac-manifests/latest-mac-x64/latest-mac.yml \
+            > /tmp/latest-mac.yml
+
+      - name: Upload merged macOS updater manifest to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          fail_on_unmatched_files: true
+          files: /tmp/latest-mac.yml
+
+  mark-latest:
+    name: Mark desktop release as latest
+    needs: mac-update-manifest
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Mark release as latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest

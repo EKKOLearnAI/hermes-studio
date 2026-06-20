@@ -1,5 +1,13 @@
 import { getActiveProfileName, getApiKey, getBaseUrlValue } from '../client'
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 /**
  * Construct a download URL with auth token as query parameter.
  * Token is passed via query param because <a> tags cannot set headers.
@@ -21,10 +29,10 @@ export function getDownloadUrl(filePath: string, fileName?: string): string {
 
   // Decode the path first in case it's already encoded (e.g., from AI responses)
   // URLSearchParams will encode it again, so we need to start with decoded text
-  const decodedPath = decodeURIComponent(filePath)
+  const decodedPath = safeDecodeURIComponent(filePath)
   const params = new URLSearchParams({ path: decodedPath })
   if (fileName) {
-    const decodedName = decodeURIComponent(fileName)
+    const decodedName = safeDecodeURIComponent(fileName)
     params.set('name', decodedName)
   }
   const profileName = getActiveProfileName()

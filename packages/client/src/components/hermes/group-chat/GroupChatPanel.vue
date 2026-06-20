@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber, NDropdown, type DropdownOption } from 'naive-ui'
@@ -9,6 +9,7 @@ import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
+import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent } from '@/api/hermes/group-chat'
@@ -36,6 +37,9 @@ const contextRoomId = ref<string | null>(null)
 const showRoomContextMenu = ref(false)
 const roomContextMenuX = ref(0)
 const roomContextMenuY = ref(0)
+const groupChatInputRef = ref<(InstanceType<typeof GroupChatInput> & { addFiles?: (files: File[]) => void }) | null>(null)
+const chatDropCounter = ref(0)
+const isChatDropActive = ref(false)
 
 const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
@@ -51,6 +55,19 @@ function agentAvatarName(agent: RoomAgent): string {
 }
 
 const hasRoom = computed(() => !!store.currentRoomId)
+
+/** Resolve the current user's custom avatar — first from the member list, then from the cached current-user value. */
+const userMemberAvatar = computed(() => {
+    // Prefer the live member list (populated when a room is active)
+    const member = store.members.find(m => m.userId === store.userId)
+    const raw = member?.avatar || store.currentUserAvatar
+    if (!raw) return null
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+        if (parsed && parsed.type === 'image' && parsed.dataUrl) return parsed
+    } catch { /* malformed JSON — fall through to multiavatar */ }
+    return null
+})
 const visibleApproval = computed(() => store.activePendingApproval)
 
 function formatTokens(tokens: number): string {
@@ -60,6 +77,52 @@ function formatTokens(tokens: number): string {
 
 function toggleSidebar() {
     showSidebar.value = !showSidebar.value
+}
+
+function openPageSidebar() {
+    showSidebar.value = true
+}
+
+function openSettingsPage() {
+    router.push({ name: 'hermes.settings' })
+}
+
+function hasDraggedFiles(event: DragEvent) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function resetChatDropState() {
+    chatDropCounter.value = 0
+    isChatDropActive.value = false
+}
+
+function handleChatDragOver(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function handleChatDragEnter(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    chatDropCounter.value += 1
+    isChatDropActive.value = true
+}
+
+function handleChatDragLeave(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    chatDropCounter.value -= 1
+    if (chatDropCounter.value <= 0) resetChatDropState()
+}
+
+function handleChatDrop(event: DragEvent) {
+    if (!hasRoom.value || !hasDraggedFiles(event)) return
+    event.preventDefault()
+    const files = Array.from(event.dataTransfer?.files || [])
+    const target = event.target instanceof Element ? event.target : null
+    resetChatDropState()
+    if (!files.length || target?.closest('.chat-input-area')) return
+    groupChatInputRef.value?.addFiles?.(files)
 }
 
 function generateCode(): string {
@@ -223,13 +286,22 @@ async function handleAddAgent() {
 }
 
 onMounted(() => {
+    window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     if (profilesStore.profiles.length === 0) {
         void profilesStore.fetchProfiles()
     }
 })
 
+onUnmounted(() => {
+    window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
+})
+
 async function confirmAddAgent() {
-    if (!selectedProfile.value || !store.currentRoomId) return
+    if (!store.currentRoomId) {
+        message.warning(t('groupChat.selectRoomFirst'))
+        return
+    }
+    if (!selectedProfile.value) return
     try {
         await store.addAgentToRoom(store.currentRoomId, {
             profile: selectedProfile.value,
@@ -326,14 +398,11 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         <!-- Room sidebar -->
         <div v-if="showSidebar" class="room-sidebar">
             <div class="sidebar-header">
-                <span class="sidebar-title">{{ t('groupChat.title') }}</span>
-                <div class="sidebar-actions">
-                    <button class="icon-btn" :title="t('groupChat.createRoom')" @click="showCreateModal = true">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                    </button>
-                </div>
+                <PageSidebarNav
+                    active="group"
+                    :primary-label="t('groupChat.createRoom')"
+                    @primary="showCreateModal = true"
+                />
             </div>
             <div class="room-list">
                 <div
@@ -365,6 +434,16 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     {{ t('groupChat.noRooms') }}
                 </div>
             </div>
+            <div class="page-sidebar-bottom">
+                <button class="page-sidebar-menu-btn" type="button" @click="openSettingsPage">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                    <span>{{ t('sidebar.settings') }}</span>
+                    <!-- <SettingsCircuitBadge /> -->
+                </button>
+            </div>
         </div>
 
         <NDropdown
@@ -379,9 +458,16 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
         />
 
         <!-- Main chat area -->
-        <div class="chat-main">
+        <div
+            class="chat-main"
+            :class="{ 'chat-main--drop-active': isChatDropActive }"
+            @dragover="handleChatDragOver"
+            @dragenter="handleChatDragEnter"
+            @dragleave="handleChatDragLeave"
+            @drop="handleChatDrop"
+        >
             <div class="chat-header">
-                <button class="icon-btn" @click="toggleSidebar">
+                <button class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
                     </svg>
@@ -394,7 +480,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                             <div class="avatar-stack-inner">
                                 <!-- User avatar first -->
                                 <span class="avatar-stack-item" :style="{ zIndex: store.agents.length + 1 }">
-                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                                    <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                                 </span>
                                 <span
                                     v-for="(agent, index) in store.agents.slice(-4)"
@@ -409,7 +495,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         </template>
                         <div class="agent-popover">
                             <div class="agent-popover-item" style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--n-border-color, #efeff5);">
-                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                                <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                                 <div class="agent-popover-info">
                                     <span class="agent-popover-name">{{ store.userName || 'You' }}</span>
                                     <span class="agent-popover-profile">{{ t('groupChat.you') }}</span>
@@ -431,7 +517,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                     <!-- Only user avatar, no agents -->
                     <div v-else-if="store.userName" class="avatar-stack-inner">
                         <span class="avatar-stack-item">
-                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :size="28" />
+                            <ProfileAvatar class="agent-avatar" :name="store.userName || store.userId" :avatar="userMemberAvatar" :size="28" />
                         </span>
                     </div>
                     <button class="icon-btn" :title="t('groupChat.addAgent')" @click="handleAddAgent">
@@ -458,7 +544,44 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
             </div>
 
             <template v-if="hasRoom">
-                <GroupMessageList />
+                <div class="group-message-shell">
+                    <GroupMessageList />
+                    <Transition name="approval-float">
+                        <div v-if="visibleApproval" class="approval-float-panel">
+                            <div class="approval-float-header">
+                                <span class="approval-float-icon" aria-hidden="true">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                                        <path d="m9 12 2 2 4-4" />
+                                    </svg>
+                                </span>
+                                <span>{{ t('chat.approvalKicker') }}</span>
+                            </div>
+                            <div class="approval-float-title">
+                                <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
+                            </div>
+                            <div class="approval-float-desc">{{ visibleApproval.description }}</div>
+                            <code class="approval-float-command">{{ visibleApproval.command }}</code>
+                            <div class="approval-float-actions">
+                                <NButton v-if="visibleApproval.isMemoryWrite" size="small" type="primary" @click="handleApproval('once')">
+                                    {{ t('chat.approvalAgree') }}
+                                </NButton>
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
+                                    {{ t('chat.approvalAllowOnce') }}
+                                </NButton>
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
+                                    {{ t('chat.approvalAllowSession') }}
+                                </NButton>
+                                <NButton v-if="!visibleApproval.isMemoryWrite && visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
+                                    {{ t('chat.approvalAlways') }}
+                                </NButton>
+                                <NButton v-if="visibleApproval.isMemoryWrite || visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
+                                    {{ t('chat.approvalDeny') }}
+                                </NButton>
+                            </div>
+                        </div>
+                    </Transition>
+                </div>
                 <div v-if="store.contextStatuses.size > 0 || (store.typingText && store.contextStatuses.size === 0)" class="status-bar">
                     <div v-if="store.contextStatuses.size > 0" class="context-status-list">
                         <div v-for="[name, status] in store.contextStatuses" :key="name" class="context-status">
@@ -486,39 +609,7 @@ async function handleApproval(choice: 'once' | 'session' | 'always' | 'deny') {
                         {{ store.typingText }}
                     </div>
                 </div>
-                <div v-if="visibleApproval" class="approval-bar">
-                    <div class="approval-icon" aria-hidden="true">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
-                            <path d="m9 12 2 2 4-4" />
-                        </svg>
-                    </div>
-                    <div class="approval-content">
-                        <div class="approval-main">
-                            <div class="approval-kicker">{{ t('chat.approvalKicker') }}</div>
-                            <div class="approval-title">
-                                <span v-if="visibleApproval.agentName">@{{ visibleApproval.agentName }} · </span>{{ t('chat.approvalTitle') }}
-                            </div>
-                            <div class="approval-desc">{{ visibleApproval.description }}</div>
-                            <code class="approval-command">{{ visibleApproval.command }}</code>
-                        </div>
-                        <div class="approval-actions">
-                            <NButton v-if="visibleApproval.choices.includes('once')" size="small" type="primary" @click="handleApproval('once')">
-                                {{ t('chat.approvalAllowOnce') }}
-                            </NButton>
-                            <NButton v-if="visibleApproval.choices.includes('session')" size="small" secondary @click="handleApproval('session')">
-                                {{ t('chat.approvalAllowSession') }}
-                            </NButton>
-                            <NButton v-if="visibleApproval.choices.includes('always')" size="small" secondary @click="handleApproval('always')">
-                                {{ t('chat.approvalAlways') }}
-                            </NButton>
-                            <NButton v-if="visibleApproval.choices.includes('deny')" size="small" type="error" secondary @click="handleApproval('deny')">
-                                {{ t('chat.approvalDeny') }}
-                            </NButton>
-                        </div>
-                    </div>
-                </div>
-                <GroupChatInput @send="handleSendMessage" />
+                <GroupChatInput ref="groupChatInputRef" @send="handleSendMessage" />
             </template>
 
             <div v-else class="no-room">
@@ -666,10 +757,19 @@ export default defineComponent({ components: { CreateRoomForm } })
     height: 100%;
     overflow: hidden;
     position: relative;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .sidebar-backdrop {
     display: none;
+}
+
+.group-message-shell {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
 }
 
 @media (max-width: $breakpoint-mobile) {
@@ -745,66 +845,68 @@ export default defineComponent({ components: { CreateRoomForm } })
     }
 }
 
-.approval-bar {
+.approval-float-panel {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    z-index: 8;
+    width: min(720px, calc(100% - 32px));
+    padding: 10px;
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.14);
+    backdrop-filter: blur(14px);
+
+    .dark & {
+        background: #262626;
+    }
+}
+
+.approval-float-header {
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    margin: 0 16px 12px;
-    padding: 12px;
-    border: 1px solid $border-color;
-    border-radius: 8px;
-    background: $bg-card;
-    box-shadow: none;
-}
-
-.approval-icon {
-    display: grid;
-    place-items: center;
-    flex: 0 0 32px;
-    width: 32px;
-    height: 32px;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px 8px;
     color: var(--accent-primary);
-    background: rgba(var(--accent-primary-rgb), 0.12);
-    border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
-    border-radius: 8px;
-}
-
-.approval-content {
-    flex: 1;
-    min-width: 0;
-}
-
-.approval-main {
-    min-width: 0;
-}
-
-.approval-kicker {
-    margin-bottom: 2px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--accent-primary);
 }
 
-.approval-title {
+.approval-float-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb), 0.12);
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+}
+
+.approval-float-title {
+    padding: 0 4px;
     font-size: 14px;
     font-weight: 700;
     line-height: 1.3;
     color: $text-primary;
 }
 
-.approval-desc {
-    margin-top: 4px;
+.approval-float-desc {
+    padding: 0 4px;
+    margin-top: 5px;
     font-size: 12px;
     line-height: 1.45;
     color: $text-secondary;
 }
 
-.approval-command {
+.approval-float-command {
     display: block;
-    margin-top: 8px;
+    margin: 8px 4px 0;
     max-height: 96px;
     overflow: auto;
     white-space: pre-wrap;
@@ -813,52 +915,55 @@ export default defineComponent({ components: { CreateRoomForm } })
     font-size: 11px;
     line-height: 1.45;
     color: $text-primary;
-    background: $bg-secondary;
+    background: rgba(255, 255, 255, 0.68);
     border: 1px solid $border-color;
-    border-radius: 6px;
+    border-radius: 11px;
     padding: 8px 10px;
+
+    .dark & {
+        background: rgba(255, 255, 255, 0.08);
+    }
 }
 
-.approval-actions {
+.approval-float-actions {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 8px;
     margin-top: 10px;
-    padding-top: 10px;
+    padding: 10px 4px 0;
     border-top: 1px solid $border-color;
 }
 
-@media (max-width: 768px) {
-    .approval-bar {
-        margin: 0 10px 10px;
-        padding: 10px;
+@media (max-width: 640px) {
+    .approval-float-panel {
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        width: auto;
+        padding: 7px;
+        border-radius: 14px;
     }
 
-    .approval-icon {
-        flex-basis: 28px;
-        width: 28px;
-        height: 28px;
-    }
-
-    .approval-actions {
+    .approval-float-actions {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .approval-actions :deep(.n-button) {
+    .approval-float-actions :deep(.n-button) {
         width: 100%;
     }
 }
 
-@media (max-width: 420px) {
-    .approval-bar {
-        gap: 8px;
-    }
+.approval-float-enter-active,
+.approval-float-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
 
-    .approval-actions {
-        grid-template-columns: 1fr;
-    }
+.approval-float-enter-from,
+.approval-float-leave-to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
 }
 
 .typing-indicator {
@@ -895,7 +1000,7 @@ export default defineComponent({ components: { CreateRoomForm } })
 // ─── Room Sidebar ────────────────────────────────────────
 
 .room-sidebar {
-    width: 220px;
+    width: $sidebar-width;
     flex-shrink: 0;
     border-right: 1px solid $border-color;
     display: flex;
@@ -903,21 +1008,80 @@ export default defineComponent({ components: { CreateRoomForm } })
 }
 
 .sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     padding: 12px;
     flex-shrink: 0;
+}
 
-    .sidebar-title {
-        font-size: 15px;
-        font-weight: 600;
+.page-sidebar-tab {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    border: none;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-secondary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition:
+        background-color $transition-fast,
+        color $transition-fast;
+
+    svg {
+        flex-shrink: 0;
+    }
+
+    span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        line-height: 18px;
+    }
+
+    &:hover {
+        background: rgba(var(--accent-primary-rgb), 0.06);
+        color: $text-primary;
+    }
+}
+
+.conversation-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
+    margin: 0 12px 8px;
+    padding: 2px;
+    border-radius: $radius-sm;
+    background: rgba(var(--accent-primary-rgb), 0.05);
+    flex-shrink: 0;
+}
+
+.conversation-switch-tab {
+    min-width: 0;
+    height: 28px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 16px;
+    cursor: pointer;
+    transition:
+        background-color $transition-fast,
+        color $transition-fast;
+
+    &:hover {
         color: $text-primary;
     }
 
-    .sidebar-actions {
-        display: flex;
-        gap: 4px;
+    &.active {
+        background: $bg-card;
+        color: $text-primary;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
     }
 }
 
@@ -1013,6 +1177,44 @@ export default defineComponent({ components: { CreateRoomForm } })
     color: $text-muted;
 }
 
+.page-sidebar-bottom {
+    flex-shrink: 0;
+    padding: 10px 12px;
+}
+
+.page-sidebar-menu-btn {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    border: none;
+    border-radius: $radius-sm;
+    background: transparent;
+    color: $text-secondary;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition:
+        background-color $transition-fast,
+        color $transition-fast;
+
+    &:hover {
+        background: rgba(var(--accent-primary-rgb), 0.06);
+        color: $text-primary;
+    }
+
+    span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        line-height: 18px;
+    }
+}
+
 // ─── Chat Main ──────────────────────────────────────────
 
 .chat-main {
@@ -1021,6 +1223,18 @@ export default defineComponent({ components: { CreateRoomForm } })
     flex-direction: column;
     min-width: 0;
     background-color: transparent;
+    position: relative;
+}
+
+.chat-main--drop-active::after {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    z-index: 30;
+    pointer-events: none;
+    border: 2px dashed var(--accent-info);
+    border-radius: 8px;
+    background: rgba(var(--accent-info-rgb), 0.05);
 }
 
 .chat-header {
@@ -1319,5 +1533,10 @@ export default defineComponent({ components: { CreateRoomForm } })
     .chat-header {
         padding: 16px 12px 16px 52px;
     }
+
+    .header-sidebar-toggle {
+        display: none;
+    }
+
 }
 </style>

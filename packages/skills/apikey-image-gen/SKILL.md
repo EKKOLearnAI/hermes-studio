@@ -1,13 +1,13 @@
 ---
 name: apikey-image-gen
-description: "Generate or edit images through Hermes Web UI using the selected/requested profile's fun-codex provider from config.yaml."
+description: "Generate or edit images through Hermes Web UI using the selected/requested profile's configured API-key image provider from config.yaml."
 version: 1.0.0
 author: Ekko
 license: MIT
 platforms: [linux, macos, windows, termux]
 metadata:
   hermes:
-    tags: [api.apikey.fun, image-generation, image-editing, media]
+    tags: [api.apikey.fun, custom-provider, image-generation, image-editing, media]
 prerequisites:
   commands: [curl]
 ---
@@ -16,7 +16,7 @@ prerequisites:
 
 Use this skill when the user wants to generate an image, generate an image from a reference image, or edit an existing image.
 
-Always call Hermes Web UI's media endpoint. Do not call `api.apikey.fun` directly, and do not ask the user for an API key. The server reads the selected/requested profile's `config.yaml` and uses the `custom_providers` entry named `fun-codex`:
+Always call Hermes Web UI's media endpoint. Do not call an upstream image API directly, and do not ask the user for an API key. The server reads the selected/requested profile's `config.yaml` and uses a configured custom provider. By default it uses the provider named `fun-codex`, but callers may request another configured provider by sending `provider`, `provider_name`, or `custom_provider`.
 
 Do not use any built-in image generation tool as a fallback. If the Hermes Web UI endpoint returns `401`, `403`, connection failure, or any other error, stop and report the Hermes Web UI error to the user.
 
@@ -29,6 +29,16 @@ custom_providers:
     api_mode: codex_responses
 ```
 
+Example with another configured provider:
+
+```yaml
+custom_providers:
+  - name: agnes
+    base_url: https://agnes.example/v1
+    api_key_env: AGNES_API_KEY
+    model: agnes-image-2.1-flash
+```
+
 Endpoint:
 
 ```bash
@@ -39,7 +49,14 @@ Resolve the Hermes Web UI base URL in this order:
 
 1. `HERMES_WEB_UI_URL` environment variable, if set.
 2. `http://127.0.0.1:${PORT}`, if `PORT` is set.
-3. `http://127.0.0.1:8648` for local development.
+3. `http://127.0.0.1:8648` for the Web UI single-server default.
+
+Common local ports:
+
+- Development API backend: `http://127.0.0.1:8647`. Use this with `npm run dev`; do not target the Vite frontend port.
+- Web UI single-server default: `http://127.0.0.1:8648`.
+- Desktop app default: `http://127.0.0.1:8748`.
+- Custom port: set `HERMES_WEB_UI_URL` to the full base URL, or set `PORT` to use `http://127.0.0.1:${PORT}`.
 
 When Hermes Web UI is running from Docker Compose, the default external URL is `http://127.0.0.1:6060`.
 
@@ -84,6 +101,7 @@ Use when there is no input image.
 ```
 
 The server calls `POST /v1/images/generations` against the `fun-codex` base URL.
+If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ### Image To Image
 
@@ -100,6 +118,7 @@ Use when the user provides a reference image and wants a new image based on it.
 ```
 
 The server calls `POST /v1/responses` against the `fun-codex` base URL.
+If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ### Image Edit
 
@@ -116,18 +135,22 @@ Use when the user wants to modify an existing image while preserving parts of it
 ```
 
 The server calls `POST /v1/images/edits` against the `fun-codex` base URL.
+If `provider`, `provider_name`, or `custom_provider` is present, the server calls the requested provider's base URL instead.
 
 ## Request Fields
 
 - `mode`: `text`, `image`, or `edit`.
 - `prompt`: required.
+- `provider`: optional configured custom provider name. Defaults to `fun-codex`. `custom:<name>` is accepted and normalized to `<name>`.
+- `provider_name`: optional alias for `provider`.
+- `custom_provider`: optional alias for `provider`.
 - `image_path`: local png, jpeg, or webp path. Required for `image` and `edit` unless using `image_url` or `image_base64`.
 - `image_url`: optional alternative image input.
 - `image_base64`: optional alternative image input. If it is not a data URI, include `mime_type`.
 - `n`: number of images. Defaults to `1`.
 - `size`: defaults to `1024x1024`. Common values: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`, `2160x3840`, `auto`.
 - `quality`: defaults to `auto`.
-- `model`: optional override. Text/edit default to `gpt-image-2`; image mode defaults to the `fun-codex` model in `config.yaml`.
+- `model`: optional override. If omitted, text/edit modes use `gpt-image-2`; image mode uses the selected provider's `model` when configured, then falls back to `gpt-5.4-mini`.
 - `image_model`: optional image tool model for image mode. Defaults to `gpt-image-2`.
 - `output_path`: optional absolute output file path. If omitted, the server saves to `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/media/*.png`.
 - `timeout_ms`: defaults to `600000`.
@@ -161,6 +184,7 @@ curl -sS -X POST "$BASE_URL/api/hermes/media/apikey-image-generate" \
   -H 'Content-Type: application/json' \
   -d '{
     "mode": "text",
+    "provider": "fun-codex",
     "prompt": "A cinematic 4K photo of a silver robot hand holding a small glowing cube",
     "size": "3840x2160",
     "output_path": "/absolute/path/to/output.png"
@@ -180,3 +204,4 @@ Successful responses include:
 ```
 
 If the response code is `missing_fun_codex_provider`, tell the user to configure `fun-codex` in the selected/requested profile's `config.yaml`.
+If the response code is `missing_apikey_image_provider`, tell the user to configure the requested provider in the selected/requested profile's `config.yaml`, or omit `provider` to use the default `fun-codex` provider.

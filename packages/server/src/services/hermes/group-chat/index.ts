@@ -8,7 +8,11 @@ import { ContextEngine } from '../context-engine/compressor'
 import { SessionDeleter } from '../session-deleter'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { AgentBridgeClient } from '../agent-bridge'
-import { authenticateUserToken, isAuthEnabled } from '../../../middleware/user-auth'
+import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
+import { findUserByUsername, getUserAvatar } from '../../../db/hermes/users-store'
+import { config } from '../../../config'
+import { createSocketIoCorsOrigin, shouldRejectUpgradeOrigin } from '../../../security'
+import { paginateRecentGroupMessagesCanonical, sliceGroupMessagesCanonical, sliceGroupMessagesForSnapshotTail, type GroupMessageCursorCutoff } from './group-message-ordering'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -92,6 +96,12 @@ interface Member {
     online: boolean
     socketId: string
     source?: 'human' | 'agent'
+    avatar: string
+    authUserId?: number | null
+}
+
+function authenticatedGroupUserId(authUserId: number): string {
+    return `auth:${authUserId}`
 }
 
 let _tablesEnsured = false
@@ -148,44 +158,15 @@ function maxAgentMentionDepth(): number {
     return Math.min(10, Math.floor(value))
 }
 
-function groupRunOrder(id: string): { baseId: string; phase: number } {
-    const value = String(id || '')
-    const partMatch = value.match(/^(.*)_part_(\d+)(?:_(toolcall|toolresult)_.+)?$/)
-    if (partMatch) {
-        const part = Number(partMatch[2] || 0)
-        const kind = partMatch[3] || 'assistant'
-        const offset = kind === 'toolcall' ? 1 : kind === 'toolresult' ? 2 : 0
-        return { baseId: partMatch[1], phase: part * 3 + offset }
-    }
-    const toolIdx = value.indexOf('_toolcall_')
-    if (toolIdx >= 0) return { baseId: value.slice(0, toolIdx), phase: 0 }
-    const resultIdx = value.indexOf('_toolresult_')
-    if (resultIdx >= 0) return { baseId: value.slice(0, resultIdx), phase: 1 }
-    return { baseId: value, phase: 2 }
-}
-
-function sortGroupMessages<T extends { id: string; timestamp: number }>(messages: T[]): T[] {
-    const baseMinTimestamp = new Map<string, number>()
-    for (const msg of messages) {
-        const { baseId } = groupRunOrder(msg.id)
-        const existing = baseMinTimestamp.get(baseId)
-        if (existing == null || msg.timestamp < existing) baseMinTimestamp.set(baseId, msg.timestamp)
-    }
-    return [...messages].sort((a, b) => {
-        const ao = groupRunOrder(a.id)
-        const bo = groupRunOrder(b.id)
-        const at = baseMinTimestamp.get(ao.baseId) ?? a.timestamp
-        const bt = baseMinTimestamp.get(bo.baseId) ?? b.timestamp
-        if (at !== bt) return at - bt
-        if (ao.baseId !== bo.baseId) return ao.baseId.localeCompare(bo.baseId)
-        if (ao.phase !== bo.phase) return ao.phase - bo.phase
-        if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp
-        return a.id.localeCompare(b.id)
-    })
-}
-
 class ChatStorage {
     private db() { return getDb() }
+
+    private mapStoredMessageRow(row: any): ChatMessage {
+        return {
+            ...row,
+            tool_calls: parseJsonArray(row.tool_calls),
+        }
+    }
 
     init(): void {
         if (_tablesEnsured) return
@@ -382,12 +363,15 @@ class ChatStorage {
 
     private estimateRoomTotalTokens(roomId: string, messages: ChatMessage[]): number {
         const snapshot = this.getContextSnapshot(roomId)
-        if (snapshot && messages.length) {
-            const snapshotIdx = messages.findIndex(m => m.id === snapshot.lastMessageId)
-            const newMessages = snapshotIdx >= 0
-                ? messages.slice(snapshotIdx + 1)
-                : messages.filter(m => m.timestamp > snapshot.lastMessageTimestamp)
-            const newUsage = this.estimateUsageTokensFromMessages(newMessages)
+        if (snapshot) {
+            const snapshotTail = messages.length
+                ? sliceGroupMessagesForSnapshotTail(messages, snapshot.lastMessageId)
+                : { messages: [], snapshotCursorFound: true }
+            const newUsage = this.estimateUsageTokensFromMessages(snapshotTail.messages)
+            // Missing cursor usually means pruneMessages() removed the anchor row while leaving
+            // the snapshot. The summary still covers the older conversation, and without the
+            // exact boundary we conservatively treat the retained transcript as the verbatim
+            // post-summary tail instead of guessing with timestamps.
             return countTokens(SUMMARY_PREFIX + snapshot.summary) + newUsage.inputTokens + newUsage.outputTokens
         }
         const usage = this.estimateUsageTokensFromMessages(messages)
@@ -396,14 +380,18 @@ class ChatStorage {
 
     // ─── Messages ─────────────────────────────────────────────
 
-    getMessages(roomId: string, limit = 300, offset = 0): ChatMessage[] {
+    getRecentMessagesForUI(roomId: string, limit = 150, offset = 0): ChatMessage[] {
         const rows = (this.db()?.prepare(
-            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?'
-        ).all(roomId, limit, offset) || []) as any[]
-        return sortGroupMessages(rows.map(row => ({
-            ...row,
-            tool_calls: parseJsonArray(row.tool_calls),
-        })))
+            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+        ).all(roomId) || []) as any[]
+        return paginateRecentGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), { limit, offset })
+    }
+
+    getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): ChatMessage[] {
+        const rows = (this.db()?.prepare(
+            'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE roomId = ?'
+        ).all(roomId) || []) as any[]
+        return sliceGroupMessagesCanonical(rows.map(row => this.mapStoredMessageRow(row)), cutoff).messages
     }
 
     getMessageCount(roomId: string): number {
@@ -418,10 +406,7 @@ class ChatStorage {
             'SELECT id, roomId, senderId, senderName, content, timestamp, role, tool_call_id, tool_calls, tool_name, finish_reason, reasoning, reasoning_details, reasoning_content FROM gc_messages WHERE id = ?'
         ).get(messageId) as any
         if (!row) return null
-        return {
-            ...row,
-            tool_calls: parseJsonArray(row.tool_calls),
-        }
+        return this.mapStoredMessageRow(row)
     }
 
     addMessage(msg: ChatMessage): void {
@@ -469,7 +454,7 @@ class ChatStorage {
             const message = existing && options.preserveExistingTimestamp ? { ...msg, timestamp: existing.timestamp } : msg
             this.upsertMessage(message)
             this.pruneMessages(msg.roomId)
-            const messages = this.getMessages(msg.roomId)
+            const messages = this.getMessagesForContext(msg.roomId)
             const totalTokens = this.estimateRoomTotalTokens(msg.roomId, messages)
             this.updateRoomTotalTokens(msg.roomId, totalTokens)
             db.exec('COMMIT')
@@ -565,9 +550,9 @@ class ChatStorage {
 
     // ─── Room Members ──────────────────────────────────────
 
-    getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number }[] {
-        return (this.db()?.prepare(
-            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt
+    getRoomMembers(roomId: string): { id: string; userId: string; name: string; description: string; joinedAt: number; avatar: string }[] {
+        const members = (this.db()?.prepare(
+            `SELECT m.id, m.userId, m.userName as name, m.description, m.joinedAt, m.avatar, m.authUserId
              FROM gc_room_members m
              WHERE m.roomId = ?
                AND NOT EXISTS (
@@ -576,7 +561,29 @@ class ChatStorage {
                    AND (a.agentId = m.userId OR (m.userId NOT GLOB '????????-????-????-????-????????????' AND COALESCE(m.description, '') = '' AND a.name = m.userName))
                )
              ORDER BY m.joinedAt`
-        ).all(roomId) || []) as unknown as { id: string; userId: string; name: string; description: string; joinedAt: number }[]
+        ).all(roomId) || []) as unknown as {
+            id: string
+            userId: string
+            name: string
+            description: string
+            joinedAt: number
+            avatar: string
+            authUserId?: number | null
+        }[]
+
+        for (const member of members) {
+            try {
+                if (typeof member.authUserId === 'number' && member.authUserId > 0) {
+                    member.avatar = getUserAvatar(member.authUserId) || member.avatar || ''
+                } else if (member.name) {
+                    const user = findUserByUsername(member.name)
+                    if (user?.avatar) member.avatar = user.avatar
+                }
+            } catch {
+                // ignore individual lookup failures
+            }
+        }
+        return members.map(({ authUserId: _authUserId, ...member }) => member)
     }
 
     removeRoomMembersForAgent(roomId: string, agent: Pick<RoomAgent, 'agentId' | 'name'>): void {
@@ -587,26 +594,54 @@ class ChatStorage {
         ).run(roomId, agent.agentId, agent.name)
     }
 
-    addRoomMember(roomId: string, userId: string, userName: string, description: string): void {
-        const existing = this.getMemberByUserId(roomId, userId)
+    addRoomMember(roomId: string, userId: string, userName: string, description: string, avatar: string = '', authUserId?: number): void {
+        let resolvedAvatar = avatar
+        if (!resolvedAvatar && typeof authUserId === 'number' && authUserId > 0) {
+            try {
+                resolvedAvatar = getUserAvatar(authUserId) || ''
+            } catch {
+                // ignore lookup failures
+            }
+        }
+        if (!resolvedAvatar && userName) {
+            try {
+                const user = findUserByUsername(userName)
+                if (user) resolvedAvatar = user.avatar || ''
+            } catch {
+                // ignore lookup failures
+            }
+        }
+
+        const existing = this.getMemberByUserId(roomId, userId) ||
+            (typeof authUserId === 'number' && authUserId > 0 ? this.getMemberByAuthUserId(roomId, authUserId) : null)
         if (existing) {
-            // Update name/description on rejoin, refresh updatedAt
+            const nextAvatar = resolvedAvatar || existing.avatar || ''
+            const nextAuthUserId = typeof authUserId === 'number' && authUserId > 0
+                ? authUserId
+                : existing.authUserId ?? null
+            // Update name/description/avatar on rejoin, refresh updatedAt
             this.db()?.prepare(
-                'UPDATE gc_room_members SET userName = ?, description = ?, updatedAt = ? WHERE roomId = ? AND userId = ?'
-            ).run(userName, description, Date.now(), roomId, userId)
+                'UPDATE gc_room_members SET userId = ?, userName = ?, description = ?, avatar = ?, authUserId = ?, updatedAt = ? WHERE id = ?'
+            ).run(userId, userName, description, nextAvatar, nextAuthUserId, Date.now(), existing.id)
             return
         }
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const now = Date.now()
         this.db()?.prepare(
-            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).run(id, roomId, userId, userName, description, now, now)
+            'INSERT INTO gc_room_members (id, roomId, userId, userName, description, joinedAt, updatedAt, avatar, authUserId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, roomId, userId, userName, description, now, now, resolvedAvatar, authUserId ?? null)
     }
 
     getMemberByUserId(roomId: string, userId: string): Member | null {
         return (this.db()?.prepare(
-            'SELECT id, userId, userName as name, description, joinedAt FROM gc_room_members WHERE roomId = ? AND userId = ?'
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND userId = ?'
         ).get(roomId, userId) as any) ?? null
+    }
+
+    getMemberByAuthUserId(roomId: string, authUserId: number): Member | null {
+        return (this.db()?.prepare(
+            'SELECT id, userId, userName as name, description, joinedAt, avatar, authUserId FROM gc_room_members WHERE roomId = ? AND authUserId = ? ORDER BY updatedAt DESC LIMIT 1'
+        ).get(roomId, authUserId) as any) ?? null
     }
 
     updateMemberActivity(roomId: string, userId: string): void {
@@ -636,7 +671,7 @@ class ChatRoom {
         this.name = name || id
     }
 
-    addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human'): Member {
+    addOrUpdateMember(socketId: string, userId: string, name: string, description: string, source: 'human' | 'agent' = 'human', avatar: string = ''): Member {
         const existing = this.members.get(userId)
         if (existing) {
             existing.name = name
@@ -644,9 +679,10 @@ class ChatRoom {
             existing.online = true
             existing.socketId = socketId
             existing.source = source
+            if (avatar) existing.avatar = avatar
             return existing
         }
-        const member: Member = { id: socketId, userId, name, description, joinedAt: Date.now(), online: true, socketId, source }
+        const member: Member = { id: socketId, userId, name, description, joinedAt: Date.now(), online: true, socketId, source, avatar }
         this.members.set(userId, member)
         return member
     }
@@ -689,6 +725,8 @@ export class GroupChatServer {
     private userInfoMap = new Map<string, { name: string; description: string }>()
     /** Map: socket.id → requested participant source from handshake */
     private socketRequestedSourceMap = new Map<string, 'human' | 'agent'>()
+    /** Map: socket.id → numeric users.id from the web UI auth (for avatar resolution) */
+    private socketAuthUserIdMap = new Map<string, number>()
     readonly agentClients = new AgentClients()
     private _contextEngine: ContextEngine | null = null
     private _restoreScheduled = false
@@ -703,7 +741,14 @@ export class GroupChatServer {
         const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
         this.io = new Server(servers[0], {
-            cors: { origin: '*' },
+            cors: { origin: createSocketIoCorsOrigin(config.corsOrigins) },
+            allowRequest: (req, callback) => {
+                if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {
+                    callback('origin not allowed', false)
+                    return
+                }
+                callback(null, true)
+            },
             pingInterval: 25_000,
             pingTimeout: 90_000,
             connectionStateRecovery: {
@@ -825,8 +870,10 @@ export class GroupChatServer {
         }
 
         const token = auth.token || socket.handshake.query.token || ''
-        if (await isAuthEnabled() && !await authenticateUserToken(String(token))) {
-            return next(new Error('Unauthorized'))
+        if (await isAuthEnabled()) {
+            const user = await authenticateUserToken(String(token))
+            if (!user) return next(new Error('Unauthorized'))
+            socket.data.authUser = user
         }
         next()
     }
@@ -834,15 +881,22 @@ export class GroupChatServer {
     // ─── Connection ─────────────────────────────────────────────
 
     private onConnection(socket: Socket): void {
-        const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string }
-        const userId = auth.userId || socket.id
-        const userName = auth.name || `User-${userId.slice(0, 6)}`
-        const description = auth.description || ''
+        const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string; authUserId?: number }
         const requestedSource = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET ? 'agent' : 'human'
+        const authenticatedUser = socket.data.authUser as AuthenticatedUser | undefined
+        const authUserId = requestedSource === 'human'
+            ? authenticatedUser?.id ?? (typeof auth.authUserId === 'number' && auth.authUserId > 0 ? auth.authUserId : undefined)
+            : undefined
+        const userId = authUserId ? authenticatedGroupUserId(authUserId) : auth.userId || socket.id
+        const userName = auth.name || authenticatedUser?.username || `User-${userId.slice(0, 6)}`
+        const description = auth.description || ''
 
         this.socketUserMap.set(socket.id, userId)
         this.socketRequestedSourceMap.set(socket.id, requestedSource)
         this.userInfoMap.set(userId, { name: userName, description })
+        if (typeof authUserId === 'number') {
+            this.socketAuthUserIdMap.set(socket.id, authUserId)
+        }
 
         logger.debug(`[GroupChat] Connected: ${userName} (socket=${socket.id}, user=${userId})`)
 
@@ -875,13 +929,17 @@ export class GroupChatServer {
             ack?.({ error: 'Reserved member identity' })
             return
         }
-        const existingMember = this.storage.getMemberByUserId(roomId, userId)
+        const socketAuthUserId = this.socketAuthUserIdMap.get(socket.id)
+        const existingMember = this.storage.getMemberByUserId(roomId, userId) ||
+            (typeof socketAuthUserId === 'number' ? this.storage.getMemberByAuthUserId(roomId, socketAuthUserId) : null)
         const userInfo = this.userInfoMap.get(userId) || {
             name: existingMember?.name || `User-${userId.slice(0, 6)}`,
             description: existingMember?.description || '',
         }
-        const userName = data.name || existingMember?.name || userInfo.name
-        const description = data.description || existingMember?.description || userInfo.description
+        const requestedName = typeof data.name === 'string' ? data.name.trim() : ''
+        const requestedDescription = typeof data.description === 'string' ? data.description.trim() : ''
+        const userName = requestedName || existingMember?.name || userInfo.name
+        const description = requestedDescription || existingMember?.description || userInfo.description
 
         // Update stored user info
         this.userInfoMap.set(userId, { name: userName, description })
@@ -893,15 +951,37 @@ export class GroupChatServer {
             this.storage.saveRoom(roomId, roomId)
         }
 
+        // Look up the user's avatar via their numeric users.id from the web UI session.
+        // Falls back to name-based lookup for clients that don't pass authUserId.
+        let userAvatar = ''
+        let authUserId: number | undefined
+        if (source !== 'agent') {
+            authUserId = this.socketAuthUserIdMap.get(socket.id)
+            if (typeof authUserId === 'number') {
+                try {
+                    userAvatar = getUserAvatar(authUserId) || ''
+                } catch (err) {
+                    logger.info(`[GroupChat] avatar lookup by id=${authUserId} failed: ${(err as Error).message}`)
+                }
+            } else if (userName) {
+                try {
+                    const matched = findUserByUsername(userName)
+                    if (matched) userAvatar = matched.avatar || ''
+                } catch (err) {
+                    logger.info(`[GroupChat] avatar lookup by name '${userName}' failed: ${(err as Error).message}`)
+                }
+            }
+        }
+
         // Persist only human members. Agent sockets are runtime participants
         // tracked through gc_room_agents and AgentClients; storing them in
         // gc_room_members makes member counts grow on reconnect/restore.
         if (source !== 'agent') {
-            this.storage.addRoomMember(roomId, userId, userName, description)
+            this.storage.addRoomMember(roomId, userId, userName, description, userAvatar, authUserId)
         }
 
         // Add to in-memory online participants (keyed by userId)
-        room.addOrUpdateMember(socketId, userId, userName, description, source)
+        room.addOrUpdateMember(socketId, userId, userName, description, source, userAvatar)
         socket.join(roomId)
 
         if (source !== 'agent') {
@@ -914,7 +994,7 @@ export class GroupChatServer {
         }
 
         // Load history from SQLite
-        const messages = this.storage.getMessages(roomId)
+        const messages = this.storage.getRecentMessagesForUI(roomId)
         const agents = this.storage.getRoomAgents(roomId)
 
         ack?.({
@@ -980,11 +1060,13 @@ export class GroupChatServer {
             // Agent replies are allowed to mention other agents, but mentionDepth
             // bounds chained agent-to-agent handoffs so one prompt cannot loop forever.
             this.agentClients.processMentions(roomId, {
+                messageId: savedMsg.id,
                 content: contentToText(savedMsg.content),
                 input: Array.isArray(data.content) ? data.content : undefined,
                 senderName: savedMsg.senderName,
                 senderId: savedMsg.senderId,
                 timestamp: savedMsg.timestamp,
+                role: savedMsg.role,
                 mentionDepth,
             }).catch((err) => {
                 logger.error(`[GroupChat] processMentions error: ${err.message}`)
@@ -1216,6 +1298,7 @@ export class GroupChatServer {
         this.leaveAllRooms(socket, socketId)
         this.socketUserMap.delete(socketId)
         this.socketRequestedSourceMap.delete(socketId)
+        this.socketAuthUserIdMap.delete(socketId)
         // Don't delete userInfoMap — it persists across reconnects
     }
 

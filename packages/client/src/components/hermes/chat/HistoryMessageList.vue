@@ -10,7 +10,7 @@ const historySessionScrollPositions = new Map<string, HistorySessionScrollSnapsh
 </script>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
+import { ref, computed, nextTick, onBeforeUnmount, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
@@ -28,6 +28,7 @@ const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
 const pendingInitialScrollSessionId = ref<string | null>(null);
+const showScrollBottomButton = ref(false);
 const activeSession = computed(() => props.session || null);
 const listInstanceKey = computed(() => activeSession.value?.id ? `history-${activeSession.value.id}` : "history-empty");
 
@@ -47,6 +48,7 @@ function isNearBottom(threshold = 200): boolean {
 
 function scrollToBottom() {
   listRef.value?.scrollToBottom();
+  showScrollBottomButton.value = false;
 }
 
 function scrollToMessage(messageId: string) {
@@ -55,6 +57,18 @@ function scrollToMessage(messageId: string) {
 
 function scrollToAnchor(messageId: string, anchorId: string) {
   listRef.value?.scrollToAnchor(messageId, anchorId);
+}
+
+function updateScrollBottomButton() {
+  showScrollBottomButton.value = displayMessages.value.length > 0 && !isNearBottom(1000);
+}
+
+function handleListScroll() {
+  updateScrollBottomButton();
+}
+
+function handleScrollBottomClick() {
+  scrollToBottom();
 }
 
 function saveSessionScrollPosition(sessionId: string | null | undefined) {
@@ -94,6 +108,7 @@ async function handleTopReach() {
   if (!loaded) return;
   await nextTick();
   listRef.value?.restoreScrollPosition(snapshot);
+  updateScrollBottomButton();
 }
 
 watch(
@@ -138,12 +153,25 @@ watch(
     }
     if (!isNearBottom()) return;
     scrollToBottom();
+    void nextTick(updateScrollBottomButton);
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => displayMessages.value.length,
+  () => {
+    void nextTick(updateScrollBottomButton);
   },
   { flush: "post" },
 );
 
 onBeforeUnmount(() => {
   saveSessionScrollPosition(activeSession.value?.id);
+});
+
+onMounted(() => {
+  void nextTick(updateScrollBottomButton);
 });
 
 defineExpose({
@@ -154,37 +182,70 @@ defineExpose({
 </script>
 
 <template>
-  <VirtualMessageList
-    :key="listInstanceKey"
-    ref="listRef"
-    :messages="displayMessages"
-    @top-reach="handleTopReach"
-  >
-    <template #empty>
-      <div class="empty-state">
-        <img src="/logo.png" alt="Hermes" class="empty-logo" />
-        <p>{{ t("chat.emptyState") }}</p>
-      </div>
-    </template>
-    <template #before>
-      <div
-        v-if="activeSession?.hasMoreBefore || activeSession?.isLoadingOlderMessages"
-        class="history-loader"
+  <div class="history-message-list-shell">
+    <VirtualMessageList
+      :key="listInstanceKey"
+      ref="listRef"
+      :messages="displayMessages"
+      @scroll="handleListScroll"
+      @top-reach="handleTopReach"
+    >
+      <template #empty>
+        <div class="empty-state">
+          <img :src="'/coding-agents/hermes.png'" alt="Hermes" class="empty-logo" />
+          <p>{{ t("chat.emptyState") }}</p>
+        </div>
+      </template>
+      <template #before>
+        <div
+          v-if="activeSession?.hasMoreBefore || activeSession?.isLoadingOlderMessages"
+          class="history-loader"
+        >
+          <span v-if="activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
+        </div>
+      </template>
+      <template #item="{ message: msg }">
+        <MessageItem
+          :message="msg"
+          :highlight="chatStore.focusMessageId === msg.id"
+        />
+      </template>
+    </VirtualMessageList>
+    <button
+      v-if="showScrollBottomButton"
+      type="button"
+      class="scroll-bottom-button"
+      :aria-label="t('chat.scrollToBottom')"
+      :title="t('chat.scrollToBottom')"
+      @click="handleScrollBottomClick"
+    >
+      <svg
+        class="scroll-bottom-icon"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
       >
-        <span v-if="activeSession?.isLoadingOlderMessages" class="history-loader-spinner"></span>
-      </div>
-    </template>
-    <template #item="{ message: msg }">
-      <MessageItem
-        :message="msg"
-        :highlight="chatStore.focusMessageId === msg.id"
-      />
-    </template>
-  </VirtualMessageList>
+        <path d="m7 10 5 5 5-5" />
+        <path d="M6 19h12" />
+      </svg>
+    </button>
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
+
+.history-message-list-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
 
 .empty-state {
   flex: 1;
@@ -226,6 +287,38 @@ defineExpose({
     border-color: rgba(255, 255, 255, 0.18);
     border-top-color: $accent-primary;
   }
+}
+
+.scroll-bottom-button {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 7;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--accent-primary);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
+  padding: 0;
+  cursor: pointer;
+
+  .dark & {
+    background: rgba(38, 38, 38, 0.94);
+  }
+}
+
+.scroll-bottom-button:hover {
+  background: rgba(var(--accent-primary-rgb), 0.1);
+}
+
+.scroll-bottom-icon {
+  width: 19px;
+  height: 19px;
 }
 
 @keyframes spin {

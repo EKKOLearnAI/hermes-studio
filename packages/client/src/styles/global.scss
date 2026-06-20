@@ -84,7 +84,16 @@ html.theme-transitioning *::after {
               box-shadow 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
 }
 
-html, body, #app {
+html, body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#app {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -98,6 +107,33 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+// Teleported overlays must remain clickable above Electron drag regions.
+.hermes-desktop-shell {
+  .n-drawer,
+  .n-drawer *,
+  .n-modal,
+  .n-modal *,
+  .n-dialog,
+  .n-dialog *,
+  .n-popover,
+  .n-popover *,
+  .n-dropdown,
+  .n-dropdown *,
+  .n-select-menu,
+  .n-select-menu *,
+  .n-base-select-menu,
+  .n-base-select-menu *,
+  .n-message-container,
+  .n-message-container *,
+  .n-notification-container,
+  .n-notification-container *,
+  .drawer-overlay,
+  .drawer-panel,
+  .drawer-panel * {
+    -webkit-app-region: no-drag;
+  }
 }
 
 
@@ -118,9 +154,11 @@ a {
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
+  background: transparent;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece {
   background: transparent;
 }
 
@@ -131,6 +169,15 @@ a {
   &:hover {
     background: $text-muted;
   }
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: $border-color transparent;
 }
 
 ::selection {
@@ -203,5 +250,18 @@ a {
   .input-md,
   .input-lg {
     width: 100%;
+  }
+}
+
+// Prevent iOS Safari auto-zoom on input focus by ensuring font-size is at least 16px
+@media (max-width: 768px) {
+  input,
+  textarea,
+  select,
+  .n-input,
+  .n-input__input-element,
+  .n-input__textarea-el,
+  .n-input__textarea-element {
+    font-size: 16px !important;
   }
 }

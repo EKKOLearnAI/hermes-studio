@@ -1,5 +1,5 @@
 import Router from '@koa/router'
-import { claudeProxyMessages, claudeProxyModels } from '../services/claude-code-proxy'
+import { claudeProxyMessages, claudeProxyModels } from '../services/agent-runner/proxies/claude-code-proxy'
 
 export const claudeCodeProxyRoutes = new Router()
 

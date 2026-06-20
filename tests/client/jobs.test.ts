@@ -80,6 +80,7 @@ describe('Hermes jobs edit payloads', () => {
       schedule: 'every 7200m',
       prompt,
       deliver: 'origin',
+      skills: [],
       repeat_times: null,
     })
 
@@ -96,10 +97,26 @@ describe('Hermes jobs edit payloads', () => {
       schedule: 'every 14400m',
       prompt: original.prompt,
       deliver: 'origin',
+      skills: [],
       repeat_times: null,
     })
 
     expect(payload).toEqual({ schedule: 'every 14400m' })
+  })
+
+  it('sends changed skill selections', () => {
+    const original = makeJob({ skills: ['planner'] })
+
+    const payload = buildJobUpdateRequest(original, {
+      name: original.name,
+      schedule: 'every 7200m',
+      prompt: original.prompt,
+      deliver: 'origin',
+      skills: ['planner', 'reviewer'],
+      repeat_times: null,
+    })
+
+    expect(payload).toEqual({ skills: ['planner', 'reviewer'] })
   })
 
   it('does not send a PATCH body with structured schedule objects', async () => {

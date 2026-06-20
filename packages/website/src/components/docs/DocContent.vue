@@ -14,6 +14,11 @@ interface DocSection {
   title: string
   content: string
   rows?: string[][]
+  links?: {
+    label: string
+    href: string
+    description?: string
+  }[]
 }
 
 const sections = computed<DocSection[]>(() => {
@@ -32,6 +37,13 @@ const sections = computed<DocSection[]>(() => {
       title: rt(section.title || ''),
       content: rt(section.content || ''),
       rows: Array.isArray(section.rows) ? section.rows : undefined,
+      links: Array.isArray(section.links)
+        ? section.links.map((link: Record<string, any>) => ({
+          label: rt(link.label || ''),
+          href: String(link.href || ''),
+          description: link.description ? rt(link.description) : undefined,
+        })).filter((link: { href: string }) => link.href)
+        : undefined,
     })
   }
 
@@ -47,6 +59,20 @@ const sections = computed<DocSection[]>(() => {
     <div v-for="(section, i) in sections" :key="i" class="doc-section">
       <h2 class="doc-section-title">{{ section.title }}</h2>
       <p v-if="section.content" class="doc-section-text">{{ section.content }}</p>
+
+      <div v-if="section.links?.length" class="doc-link-list">
+        <a
+          v-for="link in section.links"
+          :key="link.href"
+          class="doc-link-card"
+          :href="link.href"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span class="doc-link-label">{{ link.label }}</span>
+          <span v-if="link.description" class="doc-link-description">{{ link.description }}</span>
+        </a>
+      </div>
 
       <table v-if="section.rows?.length" class="doc-table">
         <tbody>
@@ -102,6 +128,42 @@ const sections = computed<DocSection[]>(() => {
   font-size: 15px;
   line-height: 1.7;
   color: var(--text-secondary);
+}
+
+.doc-link-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.doc-link-card {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: all $transition-fast;
+
+  &:hover {
+    border-color: var(--text-muted);
+    background: var(--bg-secondary);
+    text-decoration: none;
+  }
+}
+
+.doc-link-label {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.doc-link-description {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .doc-table {

@@ -295,6 +295,85 @@ describe('App Store', () => {
     expect(mockSystemApi.fetchAvailableModels).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the manually selected model on refresh with preserveSelection when it still exists', async () => {
+    const deepseekGroup = {
+      provider: 'deepseek',
+      label: 'DeepSeek',
+      base_url: 'https://api.deepseek.com/v1',
+      api_key: '',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+    }
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-chat',
+      default_provider: 'deepseek',
+      groups: [deepseekGroup],
+      allProviders: [],
+    })
+    mockSystemApi.updateDefaultModel.mockResolvedValue(undefined)
+    const store = useAppStore()
+
+    await store.loadModels()
+    expect(store.selectedModel).toBe('deepseek-chat')
+
+    // User manually switches away from the config default
+    await store.switchModel('deepseek-reasoner', 'deepseek')
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+
+    // config.yaml now points at a different default and grows a new model
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-chat',
+      default_provider: 'deepseek',
+      groups: [{ ...deepseekGroup, models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4'] }],
+      allProviders: [],
+    })
+
+    await store.reloadModels({ preserveSelection: true })
+
+    expect(store.modelGroups[0].models).toContain('deepseek-v4')
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+    expect(store.selectedProvider).toBe('deepseek')
+  })
+
+  it('falls back to the config default on refresh when the selected model disappeared', async () => {
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-reasoner',
+      default_provider: 'deepseek',
+      groups: [{
+        provider: 'deepseek',
+        label: 'DeepSeek',
+        base_url: 'https://api.deepseek.com/v1',
+        api_key: '',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+      }],
+      allProviders: [],
+    })
+    mockSystemApi.updateDefaultModel.mockResolvedValue(undefined)
+    const store = useAppStore()
+
+    await store.loadModels()
+    await store.switchModel('deepseek-chat', 'deepseek')
+    expect(store.selectedModel).toBe('deepseek-chat')
+
+    // deepseek-chat got removed from config.yaml
+    mockSystemApi.fetchAvailableModels.mockResolvedValue({
+      default: 'deepseek-reasoner',
+      default_provider: 'deepseek',
+      groups: [{
+        provider: 'deepseek',
+        label: 'DeepSeek',
+        base_url: 'https://api.deepseek.com/v1',
+        api_key: '',
+        models: ['deepseek-reasoner'],
+      }],
+      allProviders: [],
+    })
+
+    await store.reloadModels({ preserveSelection: true })
+
+    expect(store.selectedModel).toBe('deepseek-reasoner')
+    expect(store.selectedProvider).toBe('deepseek')
+  })
+
   it('waits only up to the run timeout for the first available models request', async () => {
     vi.useFakeTimers()
     mockSystemApi.fetchAvailableModels.mockReturnValue(new Promise(() => {}))

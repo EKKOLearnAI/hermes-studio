@@ -61,6 +61,7 @@ export interface TerminalConfig {
   docker_container_name?: string
   cwd?: string
   singularity_image?: string
+  ssh_port?: number
 }
 
 /**
@@ -74,13 +75,18 @@ export function normalizePlatformPath(filePath: string, platform = process.platf
   return `${drive.toUpperCase()}:\\${rest.replace(/\//g, '\\')}`
 }
 
+function hasTraversalSegment(filePath: string): boolean {
+  return filePath.replace(/\\/g, '/').split('/').some(part => part === '..')
+}
+
 export function validatePath(filePath: string): string {
   if (!filePath) throw Object.assign(new Error('Missing file path'), { code: 'missing_path' })
-  const resolved = resolve(normalizePlatformPath(filePath))
-  const normalized = normalize(resolved)
-  if (normalized.includes('..')) {
+  const platformPath = normalizePlatformPath(filePath)
+  if (hasTraversalSegment(platformPath)) {
     throw Object.assign(new Error('Invalid file path'), { code: 'invalid_path' })
   }
+  const resolved = resolve(platformPath)
+  const normalized = normalize(resolved)
   if (!isAbsolute(normalized)) {
     throw Object.assign(new Error('Path must be absolute'), { code: 'invalid_path' })
   }
@@ -421,18 +427,20 @@ export class SSHFileProvider implements FileProvider {
   private host: string
   private user: string
   private keyPath?: string
+  private port?: number
   private homeDir: string
 
-  constructor(host: string, user: string, keyPath?: string, homeDir = getActiveProfileDir()) {
+  constructor(host: string, user: string, keyPath?: string, homeDir = getActiveProfileDir(), port?: number) {
     this.host = host
     this.user = user
     this.keyPath = keyPath
+    this.port = port
     this.homeDir = homeDir
   }
 
   private sshArgs(): string[] {
-    // StrictHostKeyChecking disabled for automated tooling with user-configured hosts
     const args = ['-o', 'StrictHostKeyChecking=no', '-o', 'BatchMode=yes']
+    if (this.port) args.push('-p', String(this.port))
     if (this.keyPath) args.push('-i', this.keyPath)
     args.push(`${this.user}@${this.host}`)
     return args
@@ -740,7 +748,7 @@ export function getTerminalConfig(profile?: string): TerminalConfig {
 /**
  * Read SSH env vars from hermes .env file.
  */
-function getSSHEnvVars(profile?: string): { host?: string; user?: string; key?: string } {
+function getSSHEnvVars(profile?: string): { host?: string; user?: string; key?: string; port?: number } {
   try {
     const envPath = envPathForProfile(profile)
     if (!existsSync(envPath)) return {}
@@ -761,6 +769,7 @@ function getSSHEnvVars(profile?: string): { host?: string; user?: string; key?: 
       host: vars.TERMINAL_SSH_HOST,
       user: vars.TERMINAL_SSH_USER,
       key: vars.TERMINAL_SSH_KEY,
+      port: vars.TERMINAL_SSH_PORT ? parseInt(vars.TERMINAL_SSH_PORT, 10) : undefined,
     }
   } catch {
     return {}
@@ -827,7 +836,7 @@ export async function createFileProvider(profile?: string): Promise<FileProvider
           { code: 'backend_error' },
         )
       }
-      provider = new SSHFileProvider(ssh.host, ssh.user, ssh.key, homeDir)
+      provider = new SSHFileProvider(ssh.host, ssh.user, ssh.key, homeDir, ssh.port)
       break
     }
     case 'singularity': {

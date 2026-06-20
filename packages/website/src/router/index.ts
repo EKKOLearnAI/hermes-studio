@@ -35,6 +35,12 @@ const router = createRouter({
           meta: { page: 'features' },
         },
         {
+          path: 'hermes-studio-manual',
+          name: 'docs.hermes-studio-manual',
+          component: EmptyView,
+          meta: { page: 'hermesStudioManual' },
+        },
+        {
           path: 'platforms',
           name: 'docs.platforms',
           component: EmptyView,

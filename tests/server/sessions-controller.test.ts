@@ -27,6 +27,11 @@ const loggerWarnMock = vi.fn()
 const getCompressionSnapshotMock = vi.fn()
 const listUserProfilesMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
+const bridgeSwitchSessionModelMock = vi.fn()
+const bridgeGetRuntimeStateMock = vi.fn()
+const codingAgentRunManagerMock = vi.hoisted(() => ({
+  stop: vi.fn(),
+}))
 
 vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -99,8 +104,21 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
 
+vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+  AgentBridgeClient: vi.fn().mockImplementation(() => ({
+    switchSessionModel: bridgeSwitchSessionModelMock,
+  })),
+  getAgentBridgeManager: vi.fn(() => ({
+    getRuntimeState: bridgeGetRuntimeStateMock,
+  })),
+}))
+
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
+}))
+
+vi.mock('../../packages/server/src/services/agent-runner/coding-agent-run-manager', () => ({
+  codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
 vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
@@ -152,6 +170,10 @@ describe('session conversations controller', () => {
     listUserProfilesMock.mockReturnValue([])
     readConfigYamlForProfileMock.mockReset()
     readConfigYamlForProfileMock.mockResolvedValue({ model: { default: 'gpt-default', provider: 'openai' } })
+    bridgeSwitchSessionModelMock.mockReset()
+    bridgeGetRuntimeStateMock.mockReset()
+    bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
+    codingAgentRunManagerMock.stop.mockReset()
   })
 
   it('lists conversations from the local session store', async () => {
@@ -185,6 +207,68 @@ describe('session conversations controller', () => {
     expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 5)
     expect(listConversationSummariesMock).not.toHaveBeenCalled()
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
+  })
+
+  it('returns clean session context without tool calls or tool results', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'session-context-1',
+      profile: 'default',
+      source: 'cli',
+      title: 'Context Session',
+      messages: [
+        { id: 1, role: 'user', content: 'Please inspect the repo', timestamp: 101 },
+        {
+          id: 2,
+          role: 'assistant',
+          content: 'I will inspect it.',
+          timestamp: 102,
+          tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+        },
+        { id: 3, role: 'tool', content: '{"file":"secret tool result"}', timestamp: 103, tool_call_id: 'call-1', tool_name: 'read_file' },
+        {
+          id: 4,
+          role: 'assistant',
+          content: '',
+          timestamp: 104,
+          tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'list_files', arguments: '{}' } }],
+        },
+        { id: 5, role: 'assistant', content: 'The repo has a README.', timestamp: 105, reasoning_content: 'Checked files.' },
+        { id: 6, role: 'command', content: '/usage', timestamp: 106 },
+      ],
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'session-context-1' }, query: {}, body: null }
+
+    await mod.getContext(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('session-context-1')
+    expect(ctx.body).toEqual({
+      session_id: 'session-context-1',
+      profile: 'default',
+      source: 'cli',
+      title: 'Context Session',
+      message_count: 3,
+      messages: [
+        { id: 1, role: 'user', content: 'Please inspect the repo', timestamp: 101 },
+        { id: 2, role: 'assistant', content: 'I will inspect it.', timestamp: 102 },
+        { id: 5, role: 'assistant', content: 'The repo has a README.', timestamp: 105, reasoning_content: 'Checked files.' },
+      ],
+    })
+    expect(JSON.stringify(ctx.body)).not.toContain('tool_calls')
+    expect(JSON.stringify(ctx.body)).not.toContain('secret tool result')
+  })
+
+  it('returns 404 for missing session context', async () => {
+    localGetSessionDetailMock.mockReturnValue(null)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'missing-session' }, query: {}, body: null }
+
+    await mod.getContext(ctx)
+
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
   })
 
   it('lists all account-accessible single-chat sessions when only the active profile header is present', async () => {
@@ -287,6 +371,65 @@ describe('session conversations controller', () => {
     expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
   })
 
+  it('lists only global-agent sessions when requested by source', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { source: 'global_agent' },
+      state: {},
+      body: null,
+    }
+    await mod.list(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000)
+    expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
+  })
+
+  it('counts visible single-chat sessions with the same filters as the list endpoint', async () => {
+    listUserProfilesMock.mockReturnValue([{ profile_name: 'default' }, { profile_name: 'travel' }])
+    localListSessionsMock.mockReturnValue([
+      { id: 'default-session', profile: 'default', source: 'cli' },
+      { id: 'travel-session', profile: 'travel', source: 'coding_agent' },
+      { id: 'secret-session', profile: 'secret', source: 'cli' },
+      { id: 'unknown-profile-session', profile: 'missing', source: 'cli' },
+      { id: 'api-session', profile: 'default', source: 'api_server' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: {},
+      state: {
+        user: { id: 1, role: 'admin' },
+      },
+      body: null,
+    }
+    await mod.count(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2147483647)
+    expect(ctx.body).toEqual({ count: 3 })
+  })
+
+  it('counts sessions for an explicit profile and source', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'travel-global', profile: 'travel', source: 'global_agent' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { profile: 'travel', source: 'global_agent' },
+      state: {},
+      body: null,
+    }
+    await mod.count(ctx)
+
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', 'global_agent', 2147483647)
+    expect(ctx.body).toEqual({ count: 1 })
+  })
+
   it('marks Hermes history sessions that already exist in the Web UI store', async () => {
     localListSessionsMock.mockReturnValue([{ id: 'cli-1', profile: 'travel' }])
     listSessionSummariesMock.mockResolvedValue([
@@ -348,7 +491,10 @@ describe('session conversations controller', () => {
   })
 
   it('searches all account-accessible single-chat sessions unless profile is explicit', async () => {
-    localSearchSessionsMock.mockReturnValue([])
+    localSearchSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
 
     const mod = await import('../../packages/server/src/controllers/hermes/sessions')
     const ctx: any = {
@@ -359,6 +505,28 @@ describe('session conversations controller', () => {
     await mod.search(ctx)
 
     expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(ctx.body.results).toEqual([
+      expect.objectContaining({ id: 'global-1', source: 'global_agent' }),
+      expect.objectContaining({ id: 'chat-1', source: 'cli' }),
+    ])
+  })
+
+  it('searches only global-agent sessions when requested by source', async () => {
+    localSearchSessionsMock.mockReturnValue([
+      { id: 'global-1', profile: 'default', source: 'global_agent' },
+      { id: 'chat-1', profile: 'default', source: 'cli' },
+    ])
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      query: { q: 'docker', source: 'global_agent', limit: '10' },
+      state: {},
+      body: null,
+    }
+    await mod.search(ctx)
+
+    expect(localSearchSessionsMock).toHaveBeenCalledWith(undefined, 'docker', 10)
+    expect(ctx.body.results).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
   it('propagates local session store errors for conversation summaries', async () => {
@@ -390,6 +558,24 @@ describe('session conversations controller', () => {
       session_id: 'root',
       messages: [{ id: 1, session_id: 'root', role: 'user', content: 'hello', timestamp: 1 }],
       visible_count: 1,
+      thread_session_count: 1,
+    })
+  })
+
+  it('treats missing conversation message arrays as empty', async () => {
+    localGetSessionDetailMock.mockReturnValue({
+      id: 'root',
+    })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'root' }, query: { humanOnly: 'false' }, body: null }
+    await mod.getConversationMessages(ctx)
+
+    expect(localGetSessionDetailMock).toHaveBeenCalledWith('root')
+    expect(ctx.body).toEqual({
+      session_id: 'root',
+      messages: [],
+      visible_count: 0,
       thread_session_count: 1,
     })
   })
@@ -653,6 +839,37 @@ describe('session conversations controller', () => {
 
     expect(localCreateSessionMock).not.toHaveBeenCalled()
     expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { model: 'grok-4', provider: 'xai' })
+    expect(bridgeSwitchSessionModelMock).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('notifies a loaded agent bridge session after storing the session model', async () => {
+    bridgeGetRuntimeStateMock.mockReturnValue({ ready: true, running: true, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
+    bridgeSwitchSessionModelMock.mockResolvedValue({
+      ok: true,
+      session_id: 'session-1',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      loaded: true,
+      switched: true,
+    })
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'travel' })
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { model: 'claude-sonnet-4-6', provider: 'claude-oauth' } },
+      body: null,
+    }
+    await mod.setModel(ctx)
+
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('session-1', { model: 'claude-sonnet-4-6', provider: 'claude-oauth' })
+    expect(bridgeSwitchSessionModelMock).toHaveBeenCalledWith(
+      'session-1',
+      'claude-sonnet-4-6',
+      'anthropic',
+      'travel',
+    )
     expect(ctx.body).toEqual({ ok: true })
   })
 
@@ -673,6 +890,29 @@ describe('session conversations controller', () => {
       ok: true,
       deleted: false,
       hermes: { attempted: true, deleted: true, profile: 'travel', error: undefined },
+    })
+  })
+
+  it('deletes a local coding-agent session without invoking Hermes CLI deletion', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'codex-session',
+      profile: 'default',
+      source: 'coding_agent',
+    })
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = { params: { id: 'codex-session' }, body: null }
+    await mod.remove(ctx)
+
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
+    expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
+    expect(ctx.body).toEqual({
+      ok: true,
+      deleted: true,
+      hermes: { attempted: false, deleted: false, profile: 'default' },
     })
   })
 
@@ -710,6 +950,32 @@ describe('session conversations controller', () => {
     expect(localDeleteSessionMock).toHaveBeenCalledWith('default-session')
     expect(localDeleteSessionMock).toHaveBeenCalledWith('travel-session')
     expect(ctx.body).toMatchObject({ ok: true, deleted: 2, failed: 0, hermesDeleted: 2 })
+  })
+
+  it('batch deletes local coding-agent sessions without invoking Hermes CLI deletion', async () => {
+    getSessionMock.mockReturnValue({
+      id: 'codex-session',
+      profile: 'default',
+      source: 'coding_agent',
+    })
+    localDeleteSessionMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const ctx: any = {
+      request: {
+        body: {
+          sessions: [{ id: 'codex-session', profile: 'default' }],
+        },
+      },
+      body: null,
+    }
+    await mod.batchRemove(ctx)
+
+    expect(codingAgentRunManagerMock.stop).toHaveBeenCalledWith('codex-session', { reportClosed: false })
+    expect(getExactSessionDetailFromDbWithProfileMock).not.toHaveBeenCalled()
+    expect(deleteHermesSessionForProfileMock).not.toHaveBeenCalled()
+    expect(localDeleteSessionMock).toHaveBeenCalledWith('codex-session')
+    expect(ctx.body).toMatchObject({ ok: true, deleted: 1, failed: 0, hermesDeleted: 0 })
   })
 
   it('imports a Hermes session into the local Web UI store', async () => {

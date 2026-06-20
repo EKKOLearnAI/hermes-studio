@@ -23,6 +23,8 @@ import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
+import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -41,6 +43,31 @@ function filterPendingDeletedConversationSummaries(items: ConversationSummary[])
 function requestedProfile(ctx: any): string | undefined {
   const value = ctx.state?.profile?.name || (typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : '')
   return value || undefined
+}
+
+function runtimeProvider(provider: string): string {
+  return provider === 'claude-oauth' ? 'anthropic' : provider
+}
+
+async function notifyBridgeSessionModelChanged(
+  sessionId: string,
+  model: string,
+  provider: string,
+  profile?: string,
+): Promise<void> {
+  try {
+    const manager = getAgentBridgeManager()
+    const state = manager.getRuntimeState()
+    if (!state.ready || !state.running) return
+    const bridge = new AgentBridgeClient({
+      endpoint: state.endpoint,
+      timeoutMs: 5000,
+      connectRetryMs: 0,
+    })
+    await bridge.switchSessionModel(sessionId, model, runtimeProvider(provider), profile)
+  } catch (err) {
+    logger.warn(err, '[sessions] failed to notify bridge of session model change')
+  }
 }
 
 function explicitProfileFilter(ctx: any): string | undefined {
@@ -70,6 +97,26 @@ function denySessionAccess(ctx: any, session: any | null | undefined): boolean {
   ctx.status = 403
   ctx.body = { error: `Profile "${session.profile || 'default'}" is not available for this user` }
   return true
+}
+
+function isVisibleWebUiSessionSource(source?: string | null): boolean {
+  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent'
+}
+
+function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
+  if (source === 'global_agent') return sessionSource === 'global_agent'
+  return isVisibleWebUiSessionSource(sessionSource)
+}
+
+function isHermesHistorySessionSource(source?: string | null): boolean {
+  return source !== 'api_server' && source !== 'global_agent'
+}
+
+function isCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
+  return session?.source === 'coding_agent' ||
+    session?.agent === 'claude' ||
+    session?.agent === 'codex' ||
+    Boolean(session?.agent_session_id)
 }
 
 interface HermesDeleteResult {
@@ -253,6 +300,10 @@ export async function listConversations(ctx: any) {
     id: s.id,
     profile: s.profile || null,
     source: s.source,
+    agent: s.agent,
+    agent_mode: s.agent_mode,
+    agent_session_id: s.agent_session_id,
+    agent_native_session_id: s.agent_native_session_id,
     model: s.model,
     provider: s.provider,
     title: s.title,
@@ -288,7 +339,7 @@ export async function getConversationMessages(ctx: any) {
     return
   }
   if (denySessionAccess(ctx, detail)) return
-  const messages = detail.messages
+  const messages = (detail.messages || [])
     .filter(m => {
       if (humanOnly && m.role !== 'user' && m.role !== 'assistant') return false
       if (!m.content) return false
@@ -319,10 +370,22 @@ export async function list(ctx: any) {
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
     sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
-      (s.source === 'api_server' || s.source === 'cli') &&
+      isRequestedSessionSource(source, s.source) &&
       (!knownProfiles || knownProfiles.has(s.profile || 'default')),
     )),
   }
+}
+
+export async function count(ctx: any) {
+  const source = (ctx.query.source as string) || undefined
+  const profile = explicitProfileFilter(ctx)
+  const allSessions = localListSessions(profile, source, 2147483647)
+  const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
+  const sessions = filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+    isRequestedSessionSource(source, s.source) &&
+    (!knownProfiles || knownProfiles.has(s.profile || 'default')),
+  ))
+  ctx.body = { count: sessions.length }
 }
 
 /**
@@ -341,18 +404,20 @@ export async function listHermesSessions(ctx: any) {
       ...(profile ? { ...session, profile } : session),
       webui_imported: importedIds.has(session.id),
     }))
-  ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => s.source !== 'api_server')) }
+  ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => isHermesHistorySessionSource(s.source))) }
 }
 
 export async function search(ctx: any) {
   const q = typeof ctx.query.q === 'string' ? ctx.query.q : ''
+  const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const profile = explicitProfileFilter(ctx)
   const results = localSearchSessions(profile, q, limit && limit > 0 ? limit : 20)
   const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
   ctx.body = {
     results: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, results).filter(s =>
-      !knownProfiles || knownProfiles.has(s.profile || 'default'),
+      isRequestedSessionSource(source, s.source) &&
+      (!knownProfiles || knownProfiles.has(s.profile || 'default')),
     )),
   }
 }
@@ -368,6 +433,55 @@ export async function get(ctx: any) {
   ctx.body = { session }
 }
 
+function cleanSessionContextMessages(messages: any[]): Array<{
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+  reasoning?: string | null
+  reasoning_content?: string | null
+}> {
+  return messages
+    .filter(message => message?.role === 'user' || message?.role === 'assistant')
+    .map(message => {
+      const content = typeof message.content === 'string'
+        ? message.content
+        : message.content == null ? '' : String(message.content)
+      return {
+        id: Number(message.id || 0),
+        role: message.role,
+        content,
+        timestamp: Number(message.timestamp || 0),
+        ...(message.reasoning != null ? { reasoning: message.reasoning } : {}),
+        ...(message.reasoning_content != null ? { reasoning_content: message.reasoning_content } : {}),
+      }
+    })
+    .filter(message => {
+      if (message.role === 'user') return true
+      return message.content.trim() || message.reasoning || message.reasoning_content
+    })
+}
+
+export async function getContext(ctx: any) {
+  const session = localGetSessionDetail(ctx.params.id)
+  if (!session) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (denySessionAccess(ctx, session)) return
+
+  const messages = cleanSessionContextMessages(session.messages || [])
+  ctx.body = {
+    session_id: session.id,
+    profile: session.profile || null,
+    source: session.source,
+    title: session.title || null,
+    messages,
+    message_count: messages.length,
+  }
+}
+
 /**
  * Get Hermes session detail only (exclude api_server source)
  * GET /api/hermes/sessions/hermes/:id
@@ -380,7 +494,7 @@ export async function getHermesSession(ctx: any) {
   // used by chat rendering and compression.
   const localSession = localGetSessionDetail(ctx.params.id)
   const localSessionProfile = (localSession?.profile || 'default') as string
-  if (localSession && localSession.source !== 'api_server' && (!profile || localSessionProfile === profile)) {
+  if (localSession && isHermesHistorySessionSource(localSession.source) && (!profile || localSessionProfile === profile)) {
     if (denySessionAccess(ctx, localSession)) return
     ctx.body = { session: localSession }
     return
@@ -391,7 +505,7 @@ export async function getHermesSession(ctx: any) {
     const session = profile
       ? await getSessionDetailFromDbWithProfile(ctx.params.id, profile)
       : await getSessionDetailFromDb(ctx.params.id)
-    if (session && session.source !== 'api_server') {
+    if (session && isHermesHistorySessionSource(session.source)) {
       const sessionWithProfile = profile ? { ...session, profile } : session
       if (denySessionAccess(ctx, sessionWithProfile)) return
       ctx.body = { session: sessionWithProfile }
@@ -408,8 +522,8 @@ export async function getHermesSession(ctx: any) {
     ctx.body = { error: 'Session not found' }
     return
   }
-  // Filter out api_server sessions
-  if (session.source === 'api_server') {
+  // Filter out Web UI-only session sources.
+  if (!isHermesHistorySessionSource(session.source)) {
     ctx.status = 404
     ctx.body = { error: 'Session not found' }
     return
@@ -511,7 +625,11 @@ export async function remove(ctx: any) {
   const existing = localGetSession(sessionId)
   if (denySessionAccess(ctx, existing)) return
   const hermesProfile = requestedProfile(ctx) || existing?.profile || getActiveProfileName()
-  const hermes = await deleteHermesSessionIfPresent(sessionId, hermesProfile)
+  const codingAgentSession = isCodingAgentSession(existing)
+  if (codingAgentSession) codingAgentRunManager.stop(sessionId, { reportClosed: false })
+  const hermes = codingAgentSession
+    ? { attempted: false, deleted: false, profile: hermesProfile }
+    : await deleteHermesSessionIfPresent(sessionId, hermesProfile)
   const localDeleted = existing ? localDeleteSession(sessionId) : true
   if (!localDeleted) {
     ctx.status = 500
@@ -577,7 +695,11 @@ export async function batchRemove(ctx: any) {
       continue
     }
 
-    const hermes = await deleteHermesSessionIfPresent(id, targetProfile)
+    const codingAgentSession = isCodingAgentSession(existing)
+    if (codingAgentSession) codingAgentRunManager.stop(id, { reportClosed: false })
+    const hermes = codingAgentSession
+      ? { attempted: false, deleted: false, profile: targetProfile || 'default' }
+      : await deleteHermesSessionIfPresent(id, targetProfile)
     if (hermes.deleted) {
       results.hermesDeleted++
     } else if (hermes.attempted && hermes.error) {
@@ -679,10 +801,14 @@ export async function setModel(ctx: any) {
   const id = ctx.params.id
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
+  const profile = existing?.profile || requestedProfile(ctx) || 'default'
   if (!existing) {
-    createSession({ id, profile: requestedProfile(ctx) || 'default', title: '' })
+    createSession({ id, profile, title: '' })
   }
-  updateSession(id, { model: model.trim(), provider: (provider || '').trim() } as any)
+  const cleanModel = model.trim()
+  const cleanProvider = (provider || '').trim()
+  updateSession(id, { model: cleanModel, provider: cleanProvider } as any)
+  await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
   ctx.body = { ok: true }
 }
 
@@ -752,14 +878,15 @@ export async function usageStats(ctx: any) {
 /**
  * List folders under workspace base path for folder picker.
  * GET /api/hermes/workspace/folders?path=<relative_path>
- * Base: /opt/data/workspace (overridable via WORKSPACE_BASE env)
+ * Base: current user's home directory (overridable via WORKSPACE_BASE env)
  */
 export async function listWorkspaceFolders(ctx: any) {
   const { resolve, join } = await import('path')
   const { readdir } = await import('fs/promises')
   const { existsSync } = await import('fs')
+  const { homedir } = await import('os')
 
-  const WORKSPACE_BASE = process.env.WORKSPACE_BASE || '/opt/data/workspace'
+  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
   const subPath = (ctx.query.path as string) || ''
 
   // Security: prevent path traversal
@@ -791,6 +918,132 @@ export async function listWorkspaceFolders(ctx: any) {
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
+  }
+}
+
+function invalidWorkspaceFolderName(name: string): boolean {
+  return !name ||
+    name === '.' ||
+    name === '..' ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('\0')
+}
+
+async function resolveWorkspaceFolderPath(ctx: any, inputPath: string) {
+  const { resolve, join } = await import('path')
+  const { homedir } = await import('os')
+  const WORKSPACE_BASE = process.env.WORKSPACE_BASE?.trim() || homedir()
+  const fullPath = resolve(join(WORKSPACE_BASE, inputPath || ''))
+  if (!isPathWithin(fullPath, WORKSPACE_BASE)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return null
+  }
+  return { base: WORKSPACE_BASE, fullPath }
+}
+
+export async function createWorkspaceFolder(ctx: any) {
+  const { join } = await import('path')
+  const { mkdir } = await import('fs/promises')
+  const { parentPath, name } = ctx.request.body as { parentPath?: string; name?: string }
+  const folderName = String(name || '').trim()
+  if (invalidWorkspaceFolderName(folderName)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid folder name' }
+    return
+  }
+
+  const resolvedParent = await resolveWorkspaceFolderPath(ctx, String(parentPath || ''))
+  if (!resolvedParent) return
+  const targetPath = join(resolvedParent.fullPath, folderName)
+  if (!isPathWithin(targetPath, resolvedParent.base)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
+
+  try {
+    await mkdir(targetPath)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err?.code === 'EEXIST' ? 409 : 500
+    ctx.body = { error: err.message || 'Failed to create folder' }
+  }
+}
+
+export async function renameWorkspaceFolder(ctx: any) {
+  const { dirname, join } = await import('path')
+  const { rename, stat } = await import('fs/promises')
+  const { path, name } = ctx.request.body as { path?: string; name?: string }
+  const folderName = String(name || '').trim()
+  const currentPath = String(path || '').trim()
+  if (!currentPath) {
+    ctx.status = 400
+    ctx.body = { error: 'Path is required' }
+    return
+  }
+  if (invalidWorkspaceFolderName(folderName)) {
+    ctx.status = 400
+    ctx.body = { error: 'Invalid folder name' }
+    return
+  }
+
+  const resolvedCurrent = await resolveWorkspaceFolderPath(ctx, currentPath)
+  if (!resolvedCurrent) return
+  const parentPath = dirname(resolvedCurrent.fullPath)
+  const targetPath = join(parentPath, folderName)
+  if (!isPathWithin(targetPath, resolvedCurrent.base)) {
+    ctx.status = 403
+    ctx.body = { error: 'Access denied' }
+    return
+  }
+
+  try {
+    const info = await stat(resolvedCurrent.fullPath)
+    if (!info.isDirectory()) {
+      ctx.status = 400
+      ctx.body = { error: 'Path is not a directory' }
+      return
+    }
+    await rename(resolvedCurrent.fullPath, targetPath)
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err?.code === 'EEXIST' ? 409 : err?.code === 'ENOENT' ? 404 : 500
+    ctx.body = { error: err.message || 'Failed to rename folder' }
+  }
+}
+
+export async function deleteWorkspaceFolder(ctx: any) {
+  const { rm, stat } = await import('fs/promises')
+  const { path } = ctx.request.body as { path?: string }
+  const currentPath = String(path || '').trim()
+  if (!currentPath) {
+    ctx.status = 400
+    ctx.body = { error: 'Path is required' }
+    return
+  }
+
+  const resolvedCurrent = await resolveWorkspaceFolderPath(ctx, currentPath)
+  if (!resolvedCurrent) return
+  if (resolvedCurrent.fullPath === resolvedCurrent.base) {
+    ctx.status = 400
+    ctx.body = { error: 'Cannot delete workspace root' }
+    return
+  }
+
+  try {
+    const info = await stat(resolvedCurrent.fullPath)
+    if (!info.isDirectory()) {
+      ctx.status = 400
+      ctx.body = { error: 'Path is not a directory' }
+      return
+    }
+    await rm(resolvedCurrent.fullPath, { recursive: true })
+    ctx.body = { ok: true }
+  } catch (err: any) {
+    ctx.status = err?.code === 'ENOENT' ? 404 : 500
+    ctx.body = { error: err.message || 'Failed to delete folder' }
   }
 }
 
@@ -871,7 +1124,7 @@ function serializeAsText(title: string | null, messages: any[]): string {
 
 export async function getConversationMessagesPaginated(ctx: any) {
   const offset = ctx.query.offset ? parseInt(ctx.query.offset as string, 10) : 0
-  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 50
+  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 150
   const profile = requestedProfile(ctx)
 
   const { getSessionDetailPaginated } = await import('../../db/hermes/session-store')
@@ -895,6 +1148,11 @@ export async function getConversationMessagesPaginated(ctx: any) {
       source: session.source,
       model: session.model,
       title: session.title,
+      parent_session_id: (session as any).parent_session_id,
+      fork_point_message_id: (session as any).fork_point_message_id,
+      parent_title: (session as any).parent_title,
+      parent_last_message: (session as any).parent_last_message,
+      parent_last_message_role: (session as any).parent_last_message_role,
       started_at: session.started_at,
       ended_at: session.ended_at,
       last_active: session.last_active,

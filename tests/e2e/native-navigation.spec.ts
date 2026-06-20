@@ -17,13 +17,13 @@ const sampleSession = {
 test('sidebar navigation exposes native links', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
-  await page.goto('/#/hermes/chat')
+  await page.goto('/#/hermes/jobs')
 
   const models = page.locator('aside.sidebar').getByRole('link', { name: /^Models$/ })
   await expect(models).toHaveAttribute('href', '#/hermes/models')
 
-  const history = page.locator('aside.sidebar').getByRole('link', { name: /^History$/ })
-  await expect(history).toHaveAttribute('href', '#/hermes/history')
+  const settings = page.locator('aside.sidebar').getByRole('link', { name: /^Settings$/ })
+  await expect(settings).toHaveAttribute('href', '#/hermes/settings')
 })
 
 test('session rows expose native session links', async ({ page }) => {

@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   isExclusivePlatformKey,
   stripExclusivePlatformCredentials,
   disableExclusivePlatformsInConfig,
+  copyModelProviderAuthForClone,
   EXCLUSIVE_PLATFORMS,
   EXCLUSIVE_PLATFORM_ENV_PATTERNS,
 } from '../../packages/server/src/services/hermes/profile-credentials'
 
+const originalHermesHome = process.env.HERMES_HOME
 let tmpDir: string
 
 beforeEach(() => {
@@ -17,6 +19,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (originalHermesHome === undefined) delete process.env.HERMES_HOME
+  else process.env.HERMES_HOME = originalHermesHome
   rmSync(tmpDir, { recursive: true, force: true })
 })
 
@@ -29,7 +33,7 @@ describe('isExclusivePlatformKey', () => {
       'WHATSAPP_PHONE_NUMBER_ID',
       'SIGNAL_PHONE_NUMBER',
       'WEIXIN_TOKEN', 'WEIXIN_ACCOUNT_ID',
-      'FEISHU_APP_ID',
+      'FEISHU_APP_ID', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
     ]
     for (const k of samples) {
       expect(isExclusivePlatformKey(k)).toBe(true)
@@ -144,15 +148,24 @@ describe('disableExclusivePlatformsInConfig', () => {
       '  telegram:',
       '    enabled: true',
       '    bot_token: tg-token',
+      '  feishu:',
+      '    enabled: true',
+      '    extra:',
+      '      app_id: app-1',
+      '      encrypt_key: enc-1',
+      '      verification_token: verify-1',
       '  discord:',
       '    enabled: false',
       '',
     ].join('\n'))
 
     const result = disableExclusivePlatformsInConfig(p)
-    expect(result.disabled.sort()).toEqual(['telegram', 'weixin'])
+    expect(result.disabled.sort()).toEqual(['feishu', 'telegram', 'weixin'])
     // 节点直挂 + extra 子节点的凭据都应该被清掉
     expect(result.strippedConfigCredentials.sort()).toEqual([
+      'feishu.extra.app_id',
+      'feishu.extra.encrypt_key',
+      'feishu.extra.verification_token',
       'telegram.bot_token',
       'weixin.extra.account_id',
       'weixin.extra.app_id',
@@ -161,6 +174,7 @@ describe('disableExclusivePlatformsInConfig', () => {
 
     const after = readFileSync(p, 'utf-8')
     expect(after).toMatch(/weixin:[\s\S]*?enabled:\s*false/)
+    expect(after).toMatch(/feishu:[\s\S]*?enabled:\s*false/)
     expect(after).toMatch(/telegram:[\s\S]*?enabled:\s*false/)
     expect(after).toMatch(/cli:[\s\S]*?enabled:\s*true/)
     // 凭据已被清除
@@ -195,6 +209,124 @@ describe('disableExclusivePlatformsInConfig', () => {
     writeFileSync(p, 'platforms: [unclosed')
     expect(disableExclusivePlatformsInConfig(p))
       .toEqual({ disabled: [], strippedConfigCredentials: [] })
+  })
+})
+
+describe('copyModelProviderAuthForClone', () => {
+  it('copies only the cloned model provider OAuth auth from the active source profile', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        'openai-codex': { access_token: 'codex-provider-token' },
+        anthropic: { access_token: 'anthropic-provider-token' },
+      },
+      credential_pool: {
+        'openai-codex': [{ access_token: 'codex-pool-token' }],
+        anthropic: [{ access_token: 'anthropic-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: openai-codex',
+      '  default: gpt-5.5',
+      '',
+    ].join('\n'))
+
+    const copied = copyModelProviderAuthForClone('cloned')
+
+    expect(copied).toEqual(['openai-codex'])
+    const clonedAuth = JSON.parse(readFileSync(join(cloneDir, 'auth.json'), 'utf-8'))
+    expect(clonedAuth.providers['openai-codex']).toEqual({ access_token: 'codex-provider-token' })
+    expect(clonedAuth.credential_pool['openai-codex']).toEqual([{ access_token: 'codex-pool-token' }])
+    expect(clonedAuth.providers.anthropic).toBeUndefined()
+    expect(clonedAuth.credential_pool.anthropic).toBeUndefined()
+  })
+
+  it('copies the Claude OAuth runtime alias needed for chat execution', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        'claude-oauth': { access_token: 'claude-oauth-token' },
+        anthropic: { access_token: 'anthropic-runtime-token' },
+        'openai-codex': { access_token: 'codex-provider-token' },
+      },
+      credential_pool: {
+        'claude-oauth': [{ access_token: 'claude-oauth-pool-token' }],
+        anthropic: [{ access_token: 'anthropic-runtime-pool-token' }],
+        'openai-codex': [{ access_token: 'codex-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: claude-oauth',
+      '  default: claude-sonnet-4',
+      '',
+    ].join('\n'))
+
+    const copied = copyModelProviderAuthForClone('cloned')
+
+    expect(copied.sort()).toEqual(['anthropic', 'claude-oauth'])
+    const clonedAuth = JSON.parse(readFileSync(join(cloneDir, 'auth.json'), 'utf-8'))
+    expect(clonedAuth.providers['claude-oauth']).toEqual({ access_token: 'claude-oauth-token' })
+    expect(clonedAuth.providers.anthropic).toEqual({ access_token: 'anthropic-runtime-token' })
+    expect(clonedAuth.credential_pool['claude-oauth']).toEqual([{ access_token: 'claude-oauth-pool-token' }])
+    expect(clonedAuth.credential_pool.anthropic).toEqual([{ access_token: 'anthropic-runtime-pool-token' }])
+    expect(clonedAuth.providers['openai-codex']).toBeUndefined()
+    expect(clonedAuth.credential_pool['openai-codex']).toBeUndefined()
+  })
+
+  it('does not copy auth for API-key providers that should use env/config credentials', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        anthropic: { access_token: 'anthropic-provider-token' },
+      },
+      credential_pool: {
+        anthropic: [{ access_token: 'anthropic-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: anthropic',
+      '  default: claude-sonnet-4',
+      '',
+    ].join('\n'))
+
+    expect(copyModelProviderAuthForClone('cloned')).toEqual([])
+    expect(existsSync(join(cloneDir, 'auth.json'))).toBe(false)
+  })
+
+  it('does not copy auth for keyless providers that are not stored OAuth providers', () => {
+    process.env.HERMES_HOME = tmpDir
+    writeFileSync(join(tmpDir, 'active_profile'), 'default\n')
+    writeFileSync(join(tmpDir, 'auth.json'), JSON.stringify({
+      providers: {
+        'fun-codex': { access_token: 'stale-fun-token' },
+      },
+      credential_pool: {
+        'fun-codex': [{ access_token: 'stale-fun-pool-token' }],
+      },
+    }, null, 2))
+    const cloneDir = join(tmpDir, 'profiles', 'cloned')
+    mkdirSync(cloneDir, { recursive: true })
+    writeFileSync(join(cloneDir, 'config.yaml'), [
+      'model:',
+      '  provider: fun-codex',
+      '  default: gpt-5.5',
+      '',
+    ].join('\n'))
+
+    expect(copyModelProviderAuthForClone('cloned')).toEqual([])
+    expect(existsSync(join(cloneDir, 'auth.json'))).toBe(false)
   })
 })
 

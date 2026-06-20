@@ -1,95 +1,40 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useScrollReveal } from '@/composables/useScrollReveal'
 
 interface ScreenshotItem {
   src: string
   alt: string
+  title: string
+  desc: string
 }
 
-const { t, tm } = useI18n()
+const { tm } = useI18n()
 useScrollReveal()
 
 const images = computed(() => tm('screenshots.items') as ScreenshotItem[])
-const activeIndex = ref(0)
-let timer: ReturnType<typeof setInterval>
-
-function next() {
-  activeIndex.value = (activeIndex.value + 1) % images.value.length
-}
-
-function prev() {
-  activeIndex.value = (activeIndex.value - 1 + images.value.length) % images.value.length
-}
-
-function setActive(i: number) {
-  activeIndex.value = i
-  resetTimer()
-}
-
-function resetTimer() {
-  clearInterval(timer)
-  timer = setInterval(next, 5000)
-}
-
-onMounted(() => {
-  timer = setInterval(next, 5000)
-})
-
-onUnmounted(() => {
-  clearInterval(timer)
-})
+const screenshot = computed(() => images.value[0] as ScreenshotItem)
 </script>
 
 <template>
   <section class="screenshots-section">
     <div class="screenshots-inner reveal">
-      <!-- Browser frame mockup -->
-      <div class="browser-frame">
-        <div class="browser-bar">
-          <div class="browser-dots">
-            <span class="dot red" />
-            <span class="dot yellow" />
-            <span class="dot green" />
-          </div>
-          <div class="browser-url">
-            <span>{{ t('screenshots.localUrl') }}</span>
-          </div>
-          <div class="browser-spacer" />
+      <div class="showcase-shell">
+        <div class="showcase-copy">
+          <h2>{{ screenshot.title }}</h2>
+          <p>{{ screenshot.desc }}</p>
         </div>
-        <div class="browser-viewport">
-          <transition name="slide" mode="out-in">
+
+        <div class="showcase-stage">
+          <div class="screenshot-frame">
             <img
-              :key="activeIndex"
-              :src="images[activeIndex].src"
-              :alt="images[activeIndex].alt"
+              :src="screenshot.src"
+              :alt="screenshot.alt"
               class="screenshot-img"
             />
-          </transition>
+          </div>
         </div>
-      </div>
-
-      <!-- Navigation -->
-      <div class="screenshot-nav">
-        <button class="nav-arrow" :aria-label="t('screenshots.previous')" @click="prev(); resetTimer()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6" /></svg>
-        </button>
-
-        <div class="screenshot-dots">
-          <button
-            v-for="(_img, i) in images"
-            :key="i"
-            class="dot-btn"
-            :aria-label="t('screenshots.goTo', { number: i + 1 })"
-            :class="{ active: activeIndex === i }"
-            @click="setActive(i)"
-          />
-        </div>
-
-        <button class="nav-arrow" :aria-label="t('screenshots.next')" @click="next(); resetTimer()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
-        </button>
       </div>
     </div>
   </section>
@@ -97,164 +42,101 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .screenshots-section {
-  padding: 0 24px;
-  margin-top: 48px;
-  margin-bottom: 24px;
+  padding: 66px 18px 28px;
+  background: transparent;
 
   @media (max-width: $breakpoint-mobile) {
-    padding: 0 12px;
-    margin-top: 32px;
-    margin-bottom: 16px;
+    padding: 44px 10px 18px;
   }
 }
 
 .screenshots-inner {
-  max-width: 920px;
+  max-width: 1120px;
   margin: 0 auto;
 }
 
-// ─── Browser Frame ──────────────────────────
-
-.browser-frame {
-  border-radius: $radius-lg;
-  border: 1px solid var(--border-color);
+.showcase-shell {
+  position: relative;
   overflow: hidden;
-  background: var(--bg-secondary);
+  border-radius: 34px;
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  background:
+    radial-gradient(circle at 14% 16%, rgba(229, 185, 77, 0.12), rgba(229, 185, 77, 0) 28%),
+    radial-gradient(circle at 88% 0%, rgba(68, 111, 174, 0.11), rgba(68, 111, 174, 0) 30%),
+    rgba(255, 255, 255, 0.62);
   box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.06),
-    0 20px 60px rgba(0, 0, 0, 0.08);
-  transition: transform 0.4s ease, box-shadow 0.4s ease;
+    0 24px 80px rgba(30, 50, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.84);
+  padding: clamp(20px, 3vw, 34px);
 
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow:
-      0 8px 24px rgba(0, 0, 0, 0.08),
-      0 32px 80px rgba(0, 0, 0, 0.12);
+  @media (max-width: $breakpoint-mobile) {
+    border-radius: 24px;
+    padding: 16px;
   }
 }
 
-.browser-bar {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  gap: 12px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-card);
+.showcase-copy {
+  max-width: 660px;
+  min-height: 128px;
+  margin-bottom: 22px;
+
+  h2 {
+    margin: 0;
+    color: rgba(30, 38, 52, 0.92);
+    font-size: clamp(30px, 4vw, 52px);
+    font-weight: 650;
+    line-height: 1.05;
+  }
+
+  p {
+    margin: 12px 0 0;
+    color: rgba(42, 50, 64, 0.66);
+    font-size: 16px;
+    line-height: 1.65;
+  }
 }
 
-.browser-dots {
-  display: flex;
-  gap: 6px;
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-
-  &.red { background: #ff5f57; }
-  &.yellow { background: #febc2e; }
-  &.green { background: #28c840; }
-}
-
-.browser-url {
-  flex: 1;
-  background: var(--bg-secondary);
-  border-radius: 4px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-family: $font-code;
-  text-align: center;
-}
-
-.browser-spacer {
-  width: 52px;
-}
-
-.browser-viewport {
+.showcase-stage {
   position: relative;
+  isolation: isolate;
+  display: flex;
+  justify-content: center;
+}
+
+.screenshot-frame {
+  position: relative;
+  z-index: 1;
+  align-self: start;
   width: 100%;
-  background: var(--bg-secondary);
+  max-width: 860px;
+  min-width: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(242, 245, 249, 0.82));
+  box-shadow:
+    0 14px 34px rgba(30, 50, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+
+  &:hover {
+    box-shadow:
+      0 16px 40px rgba(30, 50, 90, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    width: 92%;
+    margin: 0 auto;
+    border-radius: 10px;
+  }
 }
 
 .screenshot-img {
   width: 100%;
   display: block;
+  height: auto;
 }
 
-// ─── Slide Transition ───────────────────────
-
-.slide-enter-active,
-.slide-leave-active {
-  transition: all 0.4s ease;
-}
-
-.slide-enter-from {
-  opacity: 0;
-  transform: translateX(24px);
-}
-
-.slide-leave-to {
-  opacity: 0;
-  transform: translateX(-24px);
-}
-
-// ─── Navigation ─────────────────────────────
-
-.screenshot-nav {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.nav-arrow {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: var(--text-primary);
-    border-color: var(--text-muted);
-  }
-
-  svg {
-    width: 16px;
-    height: 16px;
-  }
-}
-
-.screenshot-dots {
-  display: flex;
-  gap: 8px;
-}
-
-.dot-btn {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: none;
-  background: var(--border-color);
-  cursor: pointer;
-  transition: all $transition-fast;
-
-  &.active {
-    background: var(--accent-primary);
-    transform: scale(1.3);
-  }
-
-  &:hover:not(.active) {
-    background: var(--text-muted);
-  }
-}
 </style>

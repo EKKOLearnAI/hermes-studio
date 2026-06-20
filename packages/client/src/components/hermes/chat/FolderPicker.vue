@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { NSpin } from 'naive-ui'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { NButton, NDropdown, NInput, NModal, NSpace, NSpin, useDialog, useMessage } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 import { request } from '@/api/client'
+import { copyToClipboard } from '@/utils/clipboard'
 
 interface FolderEntry {
   name: string
@@ -32,6 +34,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: string | null]
 }>()
 
+const { t } = useI18n()
+const dialog = useDialog()
+const message = useMessage()
 const loading = ref(false)
 const basePath = ref('')
 const folders = ref<FolderEntry[]>([])
@@ -39,8 +44,23 @@ const expandedPaths = ref<Set<string>>(new Set())
 const childrenCache = ref<Map<string, FolderEntry[]>>(new Map())
 const loadingPaths = ref<Set<string>>(new Set())
 const selectedPath = ref(props.modelValue || '')
+const loadFailed = ref(false)
+const contextMenuVisible = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
+const contextTarget = ref<FolderEntry | null>(null)
+const renameModalVisible = ref(false)
+const renameMode = ref<'create' | 'rename'>('create')
+const renameInput = ref('')
+const actionLoading = ref(false)
 
 watch(() => props.modelValue, (v) => { selectedPath.value = v || '' })
+
+function updateSelectedPath(value: string | null) {
+  const next = String(value || '').trim()
+  selectedPath.value = next
+  emit('update:modelValue', next || null)
+}
 
 async function loadFolders(subPath = ''): Promise<FolderListResponse | null> {
   try {
@@ -51,13 +71,31 @@ async function loadFolders(subPath = ''): Promise<FolderListResponse | null> {
   }
 }
 
-onMounted(async () => {
-  loading.value = true
-  const res = await loadFolders()
-  if (res) {
+function relativeParentPath(path: string) {
+  const parts = path.split('/').filter(Boolean)
+  parts.pop()
+  return parts.join('/')
+}
+
+async function refreshFolderList(subPath = '') {
+  const res = await loadFolders(subPath)
+  if (!res) {
+    loadFailed.value = true
+    return
+  }
+  loadFailed.value = false
+  if (!subPath) {
     basePath.value = res.base
     folders.value = res.folders
+    return
   }
+  childrenCache.value.set(subPath, res.folders)
+  childrenCache.value = new Map(childrenCache.value)
+}
+
+onMounted(async () => {
+  loading.value = true
+  await refreshFolderList()
   loading.value = false
 })
 
@@ -83,14 +121,147 @@ async function toggleExpand(folder: FolderEntry) {
 }
 
 function selectFolder(folder: FolderEntry) {
-  const fullPath = `${basePath.value}/${folder.path}`
-  selectedPath.value = fullPath
-  emit('update:modelValue', fullPath)
+  updateSelectedPath(folder.fullPath)
 }
 
 function selectBase() {
-  selectedPath.value = basePath.value
-  emit('update:modelValue', basePath.value)
+  updateSelectedPath(basePath.value)
+}
+
+async function openFolder(folder: FolderEntry | null) {
+  if (!folder) {
+    selectBase()
+    return
+  }
+  selectFolder(folder)
+  if (!expandedPaths.value.has(folder.path)) {
+    await toggleExpand(folder)
+  }
+}
+
+function showContextMenu(event: MouseEvent, folder: FolderEntry | null) {
+  event.preventDefault()
+  event.stopPropagation()
+  contextTarget.value = folder
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  contextMenuVisible.value = false
+  void nextTick(() => {
+    contextMenuVisible.value = true
+  })
+}
+
+const contextOptions = computed(() => {
+  const options: any[] = [
+    { label: t('files.open'), key: 'open' },
+    { type: 'divider', key: 'd1' },
+    { label: t('files.copyPath'), key: 'copyPath' },
+    { label: t('files.newFolder'), key: 'newFolder' },
+  ]
+  if (contextTarget.value) {
+    options.push({ label: t('files.rename'), key: 'rename' })
+    options.push({ type: 'divider', key: 'd2' })
+    options.push({ label: t('files.delete'), key: 'delete' })
+  }
+  return options
+})
+
+function handleContextOutside() {
+  contextMenuVisible.value = false
+}
+
+function openRenameModal(mode: 'create' | 'rename') {
+  renameMode.value = mode
+  renameInput.value = mode === 'rename' ? contextTarget.value?.name || '' : ''
+  renameModalVisible.value = true
+}
+
+async function handleContextSelect(key: string) {
+  contextMenuVisible.value = false
+  const folder = contextTarget.value
+  switch (key) {
+    case 'open':
+      await openFolder(folder)
+      break
+    case 'copyPath': {
+      const path = folder?.fullPath || basePath.value
+      const ok = await copyToClipboard(path)
+      message[ok ? 'success' : 'error'](ok ? t('files.pathCopied') : `${t('files.pathCopied')} ✗`)
+      break
+    }
+    case 'newFolder':
+      openRenameModal('create')
+      break
+    case 'rename':
+      if (folder) openRenameModal('rename')
+      break
+    case 'delete':
+      if (!folder) return
+      dialog.warning({
+        title: t('files.delete'),
+        content: t('files.confirmDeleteDir', { name: folder.name }),
+        positiveText: t('common.delete'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          try {
+            await request('/api/hermes/workspace/folders', {
+              method: 'DELETE',
+              body: JSON.stringify({ path: folder.path }),
+            })
+            if (selectedPath.value === folder.fullPath || selectedPath.value.startsWith(`${folder.fullPath}/`)) {
+              updateSelectedPath(null)
+            }
+            expandedPaths.value.delete(folder.path)
+            expandedPaths.value = new Set(expandedPaths.value)
+            childrenCache.value.delete(folder.path)
+            childrenCache.value = new Map(childrenCache.value)
+            await refreshFolderList(relativeParentPath(folder.path))
+            message.success(t('files.deleted'))
+          } catch {
+            message.error(t('files.deleteFailed'))
+          }
+        },
+      })
+      break
+  }
+}
+
+async function submitRenameModal() {
+  const name = renameInput.value.trim()
+  if (!name) return
+  actionLoading.value = true
+  try {
+    if (renameMode.value === 'create') {
+      const parentPath = contextTarget.value?.path || ''
+      await request('/api/hermes/workspace/folders', {
+        method: 'POST',
+        body: JSON.stringify({ parentPath, name }),
+      })
+      if (parentPath) {
+        expandedPaths.value.add(parentPath)
+        expandedPaths.value = new Set(expandedPaths.value)
+      }
+      await refreshFolderList(parentPath)
+      message.success(t('files.created'))
+    } else if (contextTarget.value) {
+      const oldFolder = contextTarget.value
+      await request('/api/hermes/workspace/folders/rename', {
+        method: 'POST',
+        body: JSON.stringify({ path: oldFolder.path, name }),
+      })
+      const parentPath = relativeParentPath(oldFolder.path)
+      await refreshFolderList(parentPath)
+      if (selectedPath.value === oldFolder.fullPath || selectedPath.value.startsWith(`${oldFolder.fullPath}/`)) {
+        updateSelectedPath(null)
+      }
+      message.success(t('files.renamed'))
+    }
+    renameModalVisible.value = false
+  } catch {
+    message.error(renameMode.value === 'rename' ? t('files.renameFailed') : t('files.createFailed'))
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 /** Build a flat list by DFS traversal of expanded nodes */
@@ -122,15 +293,25 @@ const flatNodes = computed<FlatNode[]>(() => {
 
 <template>
   <div class="folder-picker">
+    <NInput
+      :value="selectedPath"
+      :placeholder="t('chat.workspacePlaceholder')"
+      clearable
+      size="small"
+      class="folder-path-input"
+      @update:value="updateSelectedPath"
+    />
     <div v-if="loading" class="folder-picker-loading">
       <NSpin size="small" />
     </div>
     <div v-else class="folder-tree">
       <!-- Base path as root -->
       <div
+        v-if="basePath"
         class="folder-item root"
         :class="{ selected: selectedPath === basePath }"
         @click="selectBase"
+        @contextmenu="showContextMenu($event, null)"
       >
         <span class="folder-icon">📂</span>
         <span class="folder-name">{{ basePath || '/' }}</span>
@@ -141,15 +322,17 @@ const flatNodes = computed<FlatNode[]>(() => {
         v-for="node in flatNodes"
         :key="node.folder.path"
         class="folder-item"
-        :class="{ selected: selectedPath === `${basePath}/${node.folder.path}` }"
+        :class="{ selected: selectedPath === node.folder.fullPath }"
         :style="{ paddingLeft: `${12 + node.depth * 16}px` }"
+        @click="selectFolder(node.folder)"
+        @contextmenu="showContextMenu($event, node.folder)"
       >
         <span class="folder-expand" @click.stop="toggleExpand(node.folder)">
           <template v-if="node.isLoading">⏳</template>
           <template v-else>{{ node.isExpanded ? '▼' : '▶' }}</template>
         </span>
-        <span class="folder-icon" @click="selectFolder(node.folder)">📁</span>
-        <span class="folder-name" @click="selectFolder(node.folder)">{{ node.folder.name }}</span>
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">{{ node.folder.name }}</span>
       </div>
 
       <!-- Empty children indicator for expanded folders with no children -->
@@ -159,31 +342,76 @@ const flatNodes = computed<FlatNode[]>(() => {
           class="folder-item empty"
           :style="{ paddingLeft: `${28 + node.depth * 16}px` }"
         >
-          <span class="folder-empty-text">（空）</span>
+          <span class="folder-empty-text">{{ t('chat.folderPickerEmpty') }}</span>
         </div>
       </template>
 
-      <div v-if="folders.length === 0 && !loading" class="folder-empty">
-        暂无工作区文件夹
+      <div v-if="(folders.length === 0 || loadFailed) && !loading" class="folder-empty">
+        {{ t('chat.folderPickerNoFolders') }}
       </div>
     </div>
 
     <!-- Selected path display -->
     <div v-if="selectedPath" class="folder-selected">
-      <span class="folder-selected-label">已选择：</span>
+      <span class="folder-selected-label">{{ t('chat.folderPickerSelected') }}</span>
       <span class="folder-selected-path">{{ selectedPath }}</span>
     </div>
+
+    <NDropdown
+      :show="contextMenuVisible"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      :options="contextOptions"
+      placement="bottom-start"
+      trigger="manual"
+      @select="handleContextSelect"
+      @clickoutside="handleContextOutside"
+    />
+
+    <NModal
+      v-model:show="renameModalVisible"
+      preset="dialog"
+      :title="renameMode === 'rename' ? t('files.rename') : t('files.newFolder')"
+      style="width: 400px;"
+    >
+      <NInput
+        v-model:value="renameInput"
+        :placeholder="renameMode === 'rename' ? t('files.renameTo') : t('files.newFolderName')"
+      />
+      <template #action>
+        <NSpace justify="end">
+          <NButton size="small" @click="renameModalVisible = false">
+            {{ t('common.cancel') }}
+          </NButton>
+          <NButton size="small" type="primary" :loading="actionLoading" :disabled="!renameInput.trim()" @click="submitRenameModal">
+            {{ t('common.confirm') }}
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </div>
 </template>
 
 <style scoped lang="scss">
 .folder-picker {
   max-height: 360px;
-  overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   padding: 8px;
   background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.folder-path-input {
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.folder-tree {
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .folder-picker-loading {
@@ -265,6 +493,8 @@ const flatNodes = computed<FlatNode[]>(() => {
   display: flex;
   gap: 4px;
   align-items: center;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .folder-selected-label {
@@ -277,5 +507,6 @@ const flatNodes = computed<FlatNode[]>(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 </style>

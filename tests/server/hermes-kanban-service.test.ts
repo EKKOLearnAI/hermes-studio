@@ -166,17 +166,30 @@ describe('hermes kanban service', () => {
     mockExecFileAsync
       .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'task-1' }]) })
       .mockResolvedValueOnce({ stdout: JSON.stringify({ id: 'task-2' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ id: 'task-3' }) })
       .mockResolvedValueOnce({ stdout: JSON.stringify({ total: 1, by_status: {}, by_assignee: {} }) })
       .mockResolvedValueOnce({ stdout: JSON.stringify([{ id: 'archived-1', status: 'archived' }, { id: 'archived-2', status: 'archived' }]) })
 
     await expect(service.listTasks({ board: 'project-a', status: 'todo', assignee: 'alice', tenant: 'ops', includeArchived: true })).resolves.toEqual([{ id: 'task-1' }])
     await expect(service.createTask('Ship', { board: 'project-a', body: 'write', assignee: 'alice', priority: 3, tenant: 'ops' })).resolves.toEqual({ id: 'task-2' })
+    await expect(service.createTask('Plan', {
+      board: 'project-a',
+      workspace: 'worktree:/repo',
+      branch: 'kanban-ui',
+      triage: true,
+      skills: ['planner', ' reviewer '],
+      maxRuntime: '2h',
+      maxRetries: 3,
+      goalMode: true,
+      goalMaxTurns: 12,
+    })).resolves.toEqual({ id: 'task-3' })
     await expect(service.getStats({ board: 'project-a' })).resolves.toEqual({ total: 3, by_status: { archived: 2 }, by_assignee: {} })
 
     expect(mockExecFileAsync.mock.calls[0][1]).toEqual(['kanban', '--board', 'project-a', 'list', '--json', '--archived', '--status', 'todo', '--assignee', 'alice', '--tenant', 'ops'])
     expect(mockExecFileAsync.mock.calls[1][1]).toEqual(['kanban', '--board', 'project-a', 'create', 'Ship', '--json', '--body', 'write', '--assignee', 'alice', '--priority', '3', '--tenant', 'ops'])
-    expect(mockExecFileAsync.mock.calls[2][1]).toEqual(['kanban', '--board', 'project-a', 'stats', '--json'])
-    expect(mockExecFileAsync.mock.calls[3][1]).toEqual(['kanban', '--board', 'project-a', 'list', '--json', '--archived', '--status', 'archived'])
+    expect(mockExecFileAsync.mock.calls[2][1]).toEqual(['kanban', '--board', 'project-a', 'create', 'Plan', '--json', '--workspace', 'worktree:/repo', '--branch', 'kanban-ui', '--triage', '--max-runtime', '2h', '--max-retries', '3', '--goal', '--goal-max-turns', '12', '--skill', 'planner', '--skill', 'reviewer'])
+    expect(mockExecFileAsync.mock.calls[3][1]).toEqual(['kanban', '--board', 'project-a', 'stats', '--json'])
+    expect(mockExecFileAsync.mock.calls[4][1]).toEqual(['kanban', '--board', 'project-a', 'list', '--json', '--archived', '--status', 'archived'])
   })
 
   it('normalizes omitted board to default instead of falling through to CLI current', async () => {

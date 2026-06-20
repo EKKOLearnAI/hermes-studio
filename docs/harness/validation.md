@@ -27,21 +27,31 @@ npm run build
 | Server controller/service/db | focused `npm run test -- tests/server/<file>` |
 | Auth, profile, or credential behavior | focused server tests plus relevant e2e auth tests |
 | Chat, Socket.IO, group chat | focused server tests plus relevant e2e chat tests |
+| Chat session chain, Agent Bridge, compression, or Group Chat | Add one `docs/chat-chain-changes/*.md` fragment with date, PR/commit, touched feature, and behavior impact; then run `npm run harness:check` plus focused chat/bridge/group-chat tests |
 | Desktop packaging | `npm run harness:check`, `npm run build`, and a platform-specific desktop build when practical |
 | GitHub workflow | `npm run harness:check` and `actionlint` when available |
 | Package manifests | `npm ci --ignore-scripts` and lockfile workflow expectations |
 
 ## CI Mapping
 
-- Build workflow: installs dependencies, runs coverage, builds production assets,
-  then runs a Linux desktop smoke test on pull requests.
+- Build workflow: installs dependencies, runs coverage, and builds production
+  assets on pushes and pull requests.
 - Playwright workflow: runs browser e2e tests.
 - NPM lockfile workflow: verifies `package-lock.json` is synchronized.
-- Desktop release workflow: builds and uploads platform-specific desktop artifacts
-  for release tags.
+- Desktop release and manual desktop build workflows build and upload
+  platform-specific desktop artifacts.
 - Docker workflow: builds and publishes release images.
 
 ## Release Workflow Guardrail
+
+Published GitHub Releases should still trigger Web UI artifact packaging and
+Docker image publishing, but those workflows must keep the GitHub Release out
+of latest.
+
+Full desktop packaging is manually dispatched through
+`.github/workflows/desktop-release.yml`; published GitHub Releases must not
+automatically start desktop packaging. After a full desktop release finishes,
+the workflow must mark the target GitHub Release as latest.
 
 Desktop release jobs must upload only the artifacts that their matrix target can
 produce. Keep artifact globs in matrix data and keep `fail_on_unmatched_files:
@@ -51,7 +61,7 @@ Expected desktop release outputs:
 
 | Target | Required release globs |
 | --- | --- |
-| macOS | `*.dmg`, `*.dmg.blockmap`, `latest*.yml` |
+| macOS | `*.dmg`, `*.dmg.blockmap`, `*.zip`, `*.zip.blockmap`, `latest*.yml` |
 | Windows | `*.exe`, `*.exe.blockmap`, `latest*.yml` |
 | Linux x64 | `*.AppImage`, `*.deb`, `latest*.yml` |
 | Linux arm64 | `*.AppImage`, `latest*.yml` |

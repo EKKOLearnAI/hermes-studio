@@ -7,8 +7,19 @@ This is intentionally separate from the current Web UI chat path.
 
 ## Python Service
 
+Python bridge code lives under `python/` so it stays separate from the Node/TS
+bridge client and manager code. The executable entrypoint is
+`python/hermes_bridge.py`, and the implementation is split across sibling
+Python modules:
+
+- `bridge_runtime.py` - environment, config, import discovery, JSON helpers.
+- `bridge_pool.py` - in-process agent sessions, runs, callbacks, approvals.
+- `bridge_server.py` - worker-side request handling.
+- `bridge_transport.py` - socket protocol and worker process helpers.
+- `bridge_broker.py` - broker-side profile worker routing.
+
 ```bash
-python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
+python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
 ```
 
 Default endpoint:
@@ -27,14 +38,14 @@ tcp://127.0.0.1:18765
 Override with:
 
 ```bash
-HERMES_AGENT_BRIDGE_ENDPOINT=tcp://127.0.0.1:8765 python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
+HERMES_AGENT_BRIDGE_ENDPOINT=tcp://127.0.0.1:8765 python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
 ```
 
 Profile workers use the same platform defaults: TCP on Windows and IPC on
 macOS/Linux. Override worker transport with:
 
 ```bash
-HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp HERMES_AGENT_BRIDGE_WORKER_PORT_BASE=18780 python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
+HERMES_AGENT_BRIDGE_WORKER_TRANSPORT=tcp HERMES_AGENT_BRIDGE_WORKER_PORT_BASE=18780 python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
 ```
 
 The service discovers Hermes Agent in this order:
@@ -57,7 +68,7 @@ Default agent root:
 You can pass both paths explicitly:
 
 ```bash
-python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py \
+python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py \
   --agent-root ~/.hermes/hermes-agent \
   --hermes-home ~/.hermes
 ```
@@ -95,5 +106,5 @@ matches CLI chat. Override it only if a caller intentionally needs a distinct
 platform identity:
 
 ```bash
-HERMES_AGENT_BRIDGE_PLATFORM=agent-bridge python packages/server/src/services/hermes/agent-bridge/hermes_bridge.py
+HERMES_AGENT_BRIDGE_PLATFORM=agent-bridge python packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py
 ```

@@ -2,6 +2,10 @@ import { readConfigYamlForProfile } from '../../config-helpers'
 
 export type RunModelGroup = { provider: string; models: string[] }
 
+function runtimeProvider(provider: string): string {
+  return provider === 'claude-oauth' ? 'anthropic' : provider
+}
+
 async function resolveDefaultModelConfig(profile: string): Promise<{ model: string; provider: string }> {
   try {
     const config = await readConfigYamlForProfile(profile)
@@ -12,7 +16,7 @@ async function resolveDefaultModelConfig(profile: string): Promise<{ model: stri
     const provider = typeof modelConfig === 'object'
       ? String(modelConfig?.provider || '').trim()
       : ''
-    return { model, provider }
+    return { model, provider: runtimeProvider(provider) }
   } catch {
     return { model: '', provider: '' }
   }
@@ -43,5 +47,5 @@ export async function resolveBridgeRunModelConfig(options: {
   const shouldUseDefault = !candidateModel || !candidateProvider || (hasGroups && !candidateAvailable)
   return shouldUseDefault
     ? resolveDefaultModelConfig(options.profile)
-    : { model: candidateModel, provider: candidateProvider }
+    : { model: candidateModel, provider: runtimeProvider(candidateProvider) }
 }

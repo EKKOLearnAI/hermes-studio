@@ -12,6 +12,7 @@ export const useModelsStore = defineStore('models', () => {
   const defaultModel = ref('')
   const defaultProvider = ref('')
   const loading = ref(false)
+  const refreshingModelCache = ref(false)
 
   const customProviders = computed(() =>
     providers.value.filter(g => g.provider.startsWith('custom:')),
@@ -50,6 +51,18 @@ export const useModelsStore = defineStore('models', () => {
     }
   }
 
+  async function refreshModelCache() {
+    if (!hasApiKey()) return
+    refreshingModelCache.value = true
+    try {
+      await systemApi.refreshProviderModelCache()
+      await fetchProviders()
+      await useAppStore().reloadModels()
+    } finally {
+      refreshingModelCache.value = false
+    }
+  }
+
   async function setDefaultModel(modelId: string, provider: string) {
     await systemApi.updateDefaultModel({ default: modelId, provider })
     defaultModel.value = modelId
@@ -64,8 +77,8 @@ export const useModelsStore = defineStore('models', () => {
     await useAppStore().reloadModels()
   }
 
-  async function removeProvider(name: string) {
-    await systemApi.removeCustomProvider(name)
+  async function removeProvider(name: string, options: { source?: 'custom_providers' | 'providers'; providerKey?: string } = {}) {
+    await systemApi.removeCustomProvider(name, options)
     await fetchProviders()
     await useAppStore().reloadModels()
   }
@@ -76,10 +89,12 @@ export const useModelsStore = defineStore('models', () => {
     defaultModel,
     defaultProvider,
     loading,
+    refreshingModelCache,
     customProviders,
     builtinProviders,
     allModels,
     fetchProviders,
+    refreshModelCache,
     setDefaultModel,
     addProvider,
     removeProvider,

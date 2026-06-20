@@ -3,6 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
+const UNIFIED_DIFF_SAMPLE = `diff --git a/foo.ts b/foo.ts
+index 1111111..2222222 100644
+--- a/foo.ts
++++ b/foo.ts
+@@ -1,2 +1,2 @@
+-const value = 1
++const value = 2
+ console.log(value)
+`
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key,
@@ -70,6 +80,113 @@ describe('MessageItem tool details', () => {
     expect(blocks).toHaveLength(2)
     expect(blocks[0].find('.code-lang').text()).toBe('json')
     expect(blocks[1].find('.code-lang').text()).toBe('json')
+  })
+
+  it('renders patch tool results with diff highlighting instead of plain text', async () => {
+    const patchResult = [
+      '*** Begin Patch',
+      '*** Update File: src/demo.ts',
+      '@@',
+      '-old',
+      '+new',
+      '*** End Patch',
+    ].join('\n')
+
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'patch-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'patch',
+          toolResult: patchResult,
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const code = wrapper.find('.tool-details code.hljs')
+    expect(wrapper.find('.tool-details .code-lang').text()).toBe('diff')
+    expect(code.findAll('span').length).toBeGreaterThan(0)
+  })
+
+  it('normalizes non-string runtime tool payloads before rendering', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-object-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolArgs: { query: 'object args' },
+          toolResult: 42,
+          toolStatus: 'done',
+        } as unknown as Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const blocks = wrapper.findAll('.tool-details .hljs-code-block')
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].find('.code-lang').text()).toBe('json')
+    expect(blocks[0].find('code').text()).toContain('object args')
+    expect(blocks[1].find('.code-lang').text()).toBe('json')
+    expect(blocks[1].find('code').text()).toBe('42')
+  })
+
+  it('renders falsy non-string runtime tool payloads', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-zero-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolResult: 0,
+          toolStatus: 'done',
+        } as unknown as Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const block = wrapper.find('.tool-details .hljs-code-block')
+    expect(block.exists()).toBe(true)
+    expect(block.find('.code-lang').text()).toBe('json')
+    expect(block.find('code').text()).toBe('0')
+  })
+
+  it('keeps plain string false payloads as text', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-text-false-result',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'runtime_payload',
+          toolResult: 'false',
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const block = wrapper.find('.tool-details .hljs-code-block')
+    expect(block.exists()).toBe(true)
+    expect(block.find('.code-lang').text()).toBe('text')
+    expect(block.find('code').text()).toBe('false')
   })
 
   it('copies tool detail code through the delegated click handler', async () => {
@@ -218,5 +335,93 @@ describe('MessageItem tool details', () => {
 
     await wrapper.find('.tool-details [data-copy-code="true"]').trigger('click')
     expect(writeText).toHaveBeenCalledWith(fullResult)
+  })
+
+  it('renders raw unified diff tool payloads with semantic diff classes', async () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-diff',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'apply_patch',
+          toolResult: UNIFIED_DIFF_SAMPLE,
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const toolDetails = wrapper.find('.tool-details')
+    expect(toolDetails.find('.code-lang').text()).toBe('diff')
+    expect(toolDetails.find('.hljs-unified-diff').exists()).toBe(true)
+    expect(toolDetails.find('.diff-line-file-header').exists()).toBe(true)
+    expect(toolDetails.find('.diff-line-hunk-header').exists()).toBe(true)
+    expect(toolDetails.find('.diff-line-number-old').text()).toBe('1')
+    expect(toolDetails.find('.diff-line-number-new').text()).toBe('1')
+    expect(toolDetails.find('.diff-line-added .diff-line-content').text()).toBe('+const value = 2')
+    expect(toolDetails.find('.diff-line-removed .diff-line-content').text()).toBe('-const value = 1')
+  })
+
+  it('does not truncate large unified diff tool results', async () => {
+    const largeDiff = `diff --git a/foo.ts b/foo.ts\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1,1 +1,1 @@\n-${'a'.repeat(1600)}\n+${'b'.repeat(1600)}\n`
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-diff-large',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'git_show',
+          toolResult: largeDiff,
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const toolDetails = wrapper.find('.tool-details')
+    expect(toolDetails.find('.code-lang').text()).toBe('diff')
+    expect(toolDetails.find('.diff-line-added .diff-line-content').text()).toContain('b'.repeat(1600))
+    expect(toolDetails.text()).not.toContain('chat.truncated')
+  })
+
+  it('shows only an embedded difference field when a JSON tool result contains a unified diff', async () => {
+    const writeText = vi.mocked(navigator.clipboard.writeText)
+    const largeDiff = `diff --git a/foo.ts b/foo.ts\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1,1 +1,1 @@\n-${'a'.repeat(1600)}\n+${'b'.repeat(1600)}\n`
+    const fullResult = {
+      summary: 'metadata should stay out of the visible diff display',
+      difference: largeDiff,
+      ok: true,
+    }
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'tool-json-diff-large',
+          role: 'tool',
+          content: '',
+          timestamp: Date.now(),
+          toolName: 'git_show',
+          toolResult: JSON.stringify(fullResult),
+          toolStatus: 'done',
+        } satisfies Message,
+      },
+    })
+
+    await wrapper.find('.tool-line').trigger('click')
+
+    const toolDetails = wrapper.find('.tool-details')
+    const code = toolDetails.find('code.hljs')
+    expect(toolDetails.find('.code-lang').text()).toBe('diff')
+    expect(toolDetails.find('.hljs-unified-diff').exists()).toBe(true)
+    expect(toolDetails.find('.diff-line-added .diff-line-content').text()).toContain('b'.repeat(1600))
+    expect(code.text()).not.toContain('metadata should stay out')
+    expect(toolDetails.text()).not.toContain('chat.truncated')
+
+    await wrapper.find('.tool-details [data-copy-source="tool-result"] [data-copy-code="true"]').trigger('click')
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(fullResult, null, 2))
   })
 })

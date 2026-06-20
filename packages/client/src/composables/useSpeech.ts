@@ -1,6 +1,10 @@
 import { ref, computed, onUnmounted } from 'vue'
-import { generateSpeech, playAudioBlob } from '@/api/hermes/tts'
-import { getApiKey } from '@/api/client'
+import {
+  generateSpeech,
+  playAudioBlob,
+  synthesizeSpeech,
+  type TtsProviderId,
+} from '@/api/hermes/tts'
 
 export interface SpeechOptions {
   lang?: string      // 语言 'zh-CN', 'en-US' 等
@@ -14,14 +18,20 @@ export interface OpenaiTtsOptions {
   voice?: string
   rate?: string   // Edge TTS rate format, e.g. "+20%"
   pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
+  stylePrompt?: string
+  provider?: 'edge' | 'openai' | 'custom' | 'doubao'
 }
 
 export interface MimoTtsOptions {
   baseUrl: string
-  apiKey: string
+  apiKey?: string
+  authMode?: 'api-key' | 'bearer' | 'both'
   model: string
-  voice: string               // preset voice ID (preset mode) or data URI (clone mode)
+  voice?: string              // preset voice ID (preset mode)
+  voiceMode?: 'preset' | 'voiceDesign' | 'voiceClone'
   voiceDesignDesc?: string    // voice design description text (voice design mode)
+  voiceCloneDataUri?: string  // reference audio data URI (voice clone mode)
+  voiceCloneFormat?: 'mp3' | 'wav'
   stylePrompt?: string        // natural language style instruction
 }
 
@@ -44,7 +54,7 @@ interface SpeechQueueItem {
  * 优先后端 TTS（Edge → Google），失败降级浏览器 speechSynthesis
  */
 export function useSpeech() {
-  const synth = window.speechSynthesis
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   const availableVoices = ref<SpeechSynthesisVoice[]>([])
   const state = ref<SpeechState>({
     isPlaying: false,
@@ -66,10 +76,16 @@ export function useSpeech() {
 
   // 加载可用语音列表
   function loadVoices() {
-    availableVoices.value = synth.getVoices()
+    try {
+      availableVoices.value = typeof synth?.getVoices === 'function' ? synth.getVoices() : []
+    } catch {
+      availableVoices.value = []
+    }
   }
 
-  synth.addEventListener('voiceschanged', loadVoices)
+  if (typeof synth?.addEventListener === 'function') {
+    synth.addEventListener('voiceschanged', loadVoices)
+  }
   loadVoices()
 
   /**
@@ -91,7 +107,7 @@ export function useSpeech() {
     // 移除 HTML 标签
     text = text.replace(/<[^>]+>/g, '')
 
-    text = text.replace(/[^\p{L}\p{N}\s。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
+    text = text.replace(/[^\p{L}\p{N}\s.。!?;,，。！？；：、""''（）【】《》\n一-鿿㐀-䶿]/gu, '')
 
     text = text.replace(/\s+/g, ' ').trim()
 
@@ -99,7 +115,12 @@ export function useSpeech() {
   }
 
   const isSupported = computed(() => {
-    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
+    return Boolean(
+      typeof window !== 'undefined' &&
+      window.speechSynthesis &&
+      typeof window.speechSynthesis.speak === 'function' &&
+      typeof window.SpeechSynthesisUtterance === 'function',
+    )
   })
 
   function getDefaultVoice(): SpeechSynthesisVoice | null {
@@ -126,8 +147,12 @@ export function useSpeech() {
       currentAudio.src = ''
       currentAudio = null
     }
+    currentTtsAbort?.abort()
+    currentTtsAbort = null
+    stopCustomAudioPlayback()
+    clearCustomPlaybackState()
     // Stop browser speech
-    if (synth.speaking || synth.pending || synth.paused) {
+    if (synth && (synth.speaking || synth.pending || synth.paused) && typeof synth.cancel === 'function') {
       synth.cancel()
     }
     utterance = null
@@ -189,7 +214,17 @@ export function useSpeech() {
 
   function speakViaBrowser(messageId: string, text: string, options: SpeechOptions, token?: number) {
     token = token || ++playbackToken
-    utterance = new SpeechSynthesisUtterance(text)
+    if (!isSupported.value || !synth) {
+      state.value = {
+        isPlaying: false,
+        isPaused: false,
+        currentMessageId: null,
+        progress: 0,
+        engine: 'none',
+      }
+      return
+    }
+    utterance = new window.SpeechSynthesisUtterance(text)
     const activeUtterance = utterance
 
     utterance.rate = 1
@@ -254,9 +289,114 @@ export function useSpeech() {
     synth.speak(utterance)
   }
 
-  // ─── OpenAI-compatible TTS Engine ────────────────────────────
+  // ─── OpenAI-compatible / unified custom TTS Engine ───────────
+
+  type OpenaiCompatibleProviderId = Exclude<TtsProviderId, 'mimo'>
 
   let customAudio: HTMLAudioElement | null = null
+  let customAudioUrl: string | null = null
+  let currentTtsAbort: AbortController | null = null
+
+  function isAbortError(err: unknown): boolean {
+    return err instanceof Error && err.name === 'AbortError'
+  }
+
+  function clearCustomPlaybackState() {
+    isCustomPlaying.value = false
+    isCustomPaused.value = false
+    currentCustomMessageId.value = null
+  }
+
+  function revokeCustomAudioUrl() {
+    if (!customAudioUrl) return
+    URL.revokeObjectURL(customAudioUrl)
+    customAudioUrl = null
+  }
+
+  function stopCustomAudioPlayback() {
+    if (customAudio) {
+      customAudio.pause()
+      customAudio.src = ''
+      customAudio = null
+    }
+    revokeCustomAudioUrl()
+  }
+
+  function resolveOpenaiProvider(opts: OpenaiTtsOptions): OpenaiCompatibleProviderId {
+    if (opts.provider) {
+      return opts.provider
+    }
+    if (opts.baseUrl.startsWith('/api/tts/proxy')) {
+      return 'edge'
+    }
+    if (opts.model) {
+      return 'openai'
+    }
+    return 'custom'
+  }
+
+  function attachCustomAudioHandlers(audio: HTMLAudioElement, token: number, errorMessage: string) {
+    audio.onended = () => {
+      if (token !== playbackToken) return
+      stopCustomAudioPlayback()
+      clearCustomPlaybackState()
+    }
+
+    audio.onerror = () => {
+      if (token !== playbackToken) return
+      stopCustomAudioPlayback()
+      console.warn(errorMessage)
+      clearCustomPlaybackState()
+    }
+  }
+
+  async function playUnifiedCustomTts(
+    messageId: string,
+    text: string,
+    provider: TtsProviderId,
+    options: Record<string, unknown>,
+    token: number,
+    playbackErrorMessage: string,
+  ) {
+    currentTtsAbort?.abort()
+    stopCustomAudioPlayback()
+
+    isCustomPlaying.value = true
+    isCustomPaused.value = false
+    currentCustomMessageId.value = messageId
+
+    const abortController = new AbortController()
+    currentTtsAbort = abortController
+
+    try {
+      const { audio } = await synthesizeSpeech({
+        provider,
+        text,
+        options,
+        signal: abortController.signal,
+      })
+
+      if (token !== playbackToken) return
+
+      customAudioUrl = URL.createObjectURL(audio)
+      const nextAudio = new Audio(customAudioUrl)
+      customAudio = nextAudio
+      attachCustomAudioHandlers(nextAudio, token, playbackErrorMessage)
+      await nextAudio.play()
+    } catch (err) {
+      if (token !== playbackToken) return
+      stopCustomAudioPlayback()
+      clearCustomPlaybackState()
+      if (isAbortError(err)) {
+        return
+      }
+      throw err
+    } finally {
+      if (currentTtsAbort === abortController) {
+        currentTtsAbort = null
+      }
+    }
+  }
 
   async function openaiPlay(
     messageId: string,
@@ -267,103 +407,65 @@ export function useSpeech() {
     if (!text) return
 
     const token = ++playbackToken
+    const provider = resolveOpenaiProvider(opts)
+    const { provider: _provider, ...providerOptions } = opts
 
-    isCustomPlaying.value = true
-    isCustomPaused.value = false
-    currentCustomMessageId.value = messageId
+    await playUnifiedCustomTts(
+      messageId,
+      text,
+      provider,
+      providerOptions as unknown as Record<string, unknown>,
+      token,
+      '[useSpeech] Custom TTS audio playback error',
+    )
+  }
 
-    const url = `${opts.baseUrl.replace(/\/+$/, '')}/audio/speech`
-    const body: Record<string, any> = {
-      model: opts.model || 'tts-1',
-      input: text,
-      voice: opts.voice || 'alloy',
-    }
-    // Edge TTS proxy 支持 rate/pitch 参数
-    if (opts.rate) body.rate = opts.rate
-    if (opts.pitch) body.pitch = opts.pitch
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    if (opts.apiKey) {
-      headers['Authorization'] = `Bearer ${opts.apiKey}`
-    } else if (opts.baseUrl.startsWith('/')) {
-      // 本地代理请求自动附加 JWT
-      const jwt = getApiKey()
-      if (jwt) headers['Authorization'] = `Bearer ${jwt}`
+  function resumeCustomAudio() {
+    if (!customAudio) {
+      clearCustomPlaybackState()
+      return
     }
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
+    customAudio.play()
+      .then(() => {
+        isCustomPaused.value = false
       })
+      .catch((err) => {
+        console.warn('[useSpeech] Custom TTS audio resume failed:', err)
+        isCustomPaused.value = true
+      })
+  }
 
-      if (token !== playbackToken) return
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '')
-        throw new Error(`OpenAI TTS 返回 ${res.status}: ${errText || res.statusText}`)
-      }
-
-      const audioBlob = await res.blob()
-      if (token !== playbackToken) return
-
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      customAudio = audio
-
-      audio.onended = () => {
-        if (token !== playbackToken) return
-        URL.revokeObjectURL(audioUrl)
-        isCustomPlaying.value = false
-        isCustomPaused.value = false
-        currentCustomMessageId.value = null
-        customAudio = null
-      }
-
-      audio.onerror = () => {
-        if (token !== playbackToken) return
-        URL.revokeObjectURL(audioUrl)
-        console.warn('[useSpeech] Custom TTS audio playback error')
-        isCustomPlaying.value = false
-        isCustomPaused.value = false
-        currentCustomMessageId.value = null
-        customAudio = null
-      }
-
-      await audio.play()
-    } catch (err) {
-      if (token !== playbackToken) return
-      console.error('[useSpeech] OpenAI TTS 请求失败:', err)
-      isCustomPlaying.value = false
-      isCustomPaused.value = false
-      currentCustomMessageId.value = null
-      throw err
+  function pauseCustomAudio() {
+    if (!isCustomPlaying.value || isCustomPaused.value) return false
+    if (!customAudio) {
+      // Synthesis is still pending; pausing should interrupt instead of letting
+      // audio start later while the UI already shows a paused state.
+      stop(false)
+      return true
     }
+    customAudio.pause()
+    isCustomPaused.value = true
+    return true
+  }
+
+  function startCustomPlayback(promise: Promise<void>) {
+    void promise.catch(() => {
+      // openaiPlay/mimoPlay already clear state; inline card UI handles failures.
+      // Toggle callers are fire-and-forget UI actions; do not leak unhandled rejections.
+    })
   }
 
   function openaiToggle(messageId: string, content: string, opts: OpenaiTtsOptions) {
     if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
       if (isCustomPaused.value) {
-        if (customAudio) {
-          customAudio.play()
-        }
-        isCustomPaused.value = false
+        resumeCustomAudio()
       } else {
-        if (customAudio) {
-          customAudio.pause()
-        }
-        isCustomPaused.value = true
+        pauseCustomAudio()
       }
     } else {
       stop(false)
-      if (customAudio) {
-        customAudio.pause()
-        customAudio = null
-      }
-      openaiPlay(messageId, content, opts)
+      startCustomPlayback(openaiPlay(messageId, content, opts))
     }
   }
 
@@ -379,133 +481,26 @@ export function useSpeech() {
 
     const token = ++playbackToken
 
-    isCustomPlaying.value = true
-    isCustomPaused.value = false
-    currentCustomMessageId.value = messageId
-
-    // Build messages based on model type
-    const messages: Array<{ role: string; content: string }> = []
-
-    if (opts.model === 'mimo-v2.5-tts-voicedesign') {
-      // Voice design: user message = voice description (+ appended style prompt)
-      const desc = opts.voiceDesignDesc || ''
-      const userContent = opts.stylePrompt
-        ? `${desc}\n风格指令：${opts.stylePrompt}`
-        : desc
-      messages.push({ role: 'user', content: userContent || '默认音色' })
-    } else {
-      // Preset voices: user message = style prompt or empty
-      messages.push({ role: 'user', content: opts.stylePrompt || '' })
-    }
-
-    // assistant message = synthesis text
-    messages.push({ role: 'assistant', content: text })
-
-    const audio: Record<string, any> = { format: 'wav' }
-    // Voice design model does not accept audio.voice
-    if (opts.model !== 'mimo-v2.5-tts-voicedesign') {
-      audio.voice = opts.voice
-    }
-
-    const body: Record<string, any> = {
-      model: opts.model,
-      messages,
-      audio,
-    }
-
-    const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'api-key': opts.apiKey,
-    }
-
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      })
-
-      if (token !== playbackToken) return
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '')
-        throw new Error(`MiMo TTS 返回 ${res.status}: ${errText || res.statusText}`)
-      }
-
-      const json = await res.json()
-      if (token !== playbackToken) return
-
-      const audioBase64 = json?.choices?.[0]?.message?.audio?.data
-      if (!audioBase64) {
-        throw new Error('MiMo TTS 响应中未找到音频数据')
-      }
-
-      // base64 → binary → Blob
-      const binaryStr = atob(audioBase64)
-      const bytes = new Uint8Array(binaryStr.length)
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i)
-      }
-      const audioBlob = new Blob([bytes], { type: 'audio/wav' })
-
-      if (token !== playbackToken) return
-
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      customAudio = audio
-
-      audio.onended = () => {
-        if (token !== playbackToken) return
-        URL.revokeObjectURL(audioUrl)
-        isCustomPlaying.value = false
-        isCustomPaused.value = false
-        currentCustomMessageId.value = null
-        customAudio = null
-      }
-
-      audio.onerror = () => {
-        if (token !== playbackToken) return
-        URL.revokeObjectURL(audioUrl)
-        console.warn('[useSpeech] MiMo TTS audio playback error')
-        isCustomPlaying.value = false
-        isCustomPaused.value = false
-        currentCustomMessageId.value = null
-        customAudio = null
-      }
-
-      await audio.play()
-    } catch (err) {
-      if (token !== playbackToken) return
-      console.error('[useSpeech] MiMo TTS 请求失败:', err)
-      isCustomPlaying.value = false
-      isCustomPaused.value = false
-      currentCustomMessageId.value = null
-      throw err
-    }
+    await playUnifiedCustomTts(
+      messageId,
+      text,
+      'mimo',
+      opts as unknown as Record<string, unknown>,
+      token,
+      '[useSpeech] MiMo TTS audio playback error',
+    )
   }
 
   function mimoToggle(messageId: string, content: string, opts: MimoTtsOptions) {
     if (currentCustomMessageId.value === messageId && isCustomPlaying.value) {
       if (isCustomPaused.value) {
-        if (customAudio) {
-          customAudio.play()
-        }
-        isCustomPaused.value = false
+        resumeCustomAudio()
       } else {
-        if (customAudio) {
-          customAudio.pause()
-        }
-        isCustomPaused.value = true
+        pauseCustomAudio()
       }
     } else {
       stop(false)
-      if (customAudio) {
-        customAudio.pause()
-        customAudio = null
-      }
-      mimoPlay(messageId, content, opts)
+      startCustomPlayback(mimoPlay(messageId, content, opts))
     }
   }
 
@@ -555,6 +550,27 @@ export function useSpeech() {
     speak(messageId, text, options)
   }
 
+  function toggleBrowser(messageId: string, content: string, options: SpeechOptions = {}) {
+    if (state.value.currentMessageId && state.value.currentMessageId !== messageId) {
+      stop(false)
+    }
+
+    if (state.value.currentMessageId === messageId) {
+      if (state.value.isPaused) {
+        resume()
+      } else if (state.value.isPlaying) {
+        pause()
+      }
+      return
+    }
+
+    const text = extractReadableText(content)
+    if (!text) return
+
+    stop(false)
+    speakViaBrowser(messageId, text, options)
+  }
+
   function enqueue(messageId: string, content: string, options: SpeechOptions = {}) {
     if (!extractReadableText(content)) return
     speechQueue.push({ messageId, content, options })
@@ -562,20 +578,25 @@ export function useSpeech() {
   }
 
   function pause() {
+    if (pauseCustomAudio()) return
     if (state.value.engine === 'tts' && currentAudio) {
       currentAudio.pause()
       state.value.isPaused = true
-    } else if (synth.speaking && !state.value.isPaused) {
+    } else if (state.value.engine === 'browser' && !state.value.isPaused && typeof synth?.pause === 'function') {
       synth.pause()
       state.value.isPaused = true
     }
   }
 
   function resume() {
+    if (isCustomPlaying.value && isCustomPaused.value) {
+      resumeCustomAudio()
+      return
+    }
     if (state.value.isPaused) {
       if (state.value.engine === 'tts' && currentAudio) {
         currentAudio.play()
-      } else {
+      } else if (typeof synth?.resume === 'function') {
         synth.resume()
       }
       state.value.isPaused = false
@@ -596,7 +617,9 @@ export function useSpeech() {
 
   onUnmounted(() => {
     stop()
-    synth.removeEventListener('voiceschanged', loadVoices)
+    if (typeof synth?.removeEventListener === 'function') {
+      synth.removeEventListener('voiceschanged', loadVoices)
+    }
   })
 
   return {
@@ -618,6 +641,7 @@ export function useSpeech() {
     resume,
     stop,
     toggle,
+    toggleBrowser,
     enqueue,
     getDefaultVoice,
     extractReadableText,

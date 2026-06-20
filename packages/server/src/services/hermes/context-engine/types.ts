@@ -1,3 +1,5 @@
+import type { GroupMessageCursorCutoff } from '../group-chat/group-message-ordering'
+
 // ─── Message Types ──────────────────────────────────────────
 
 /** Raw message from SQLite messages table */
@@ -76,7 +78,7 @@ export interface SummaryCacheEntry {
 // ─── Dependency Injection ──────────────────────────────────
 
 export interface MessageFetcher {
-    getMessages(roomId: string, limit?: number): StoredMessage[]
+    getMessagesForContext(roomId: string, cutoff?: GroupMessageCursorCutoff): StoredMessage[]
     getContextSnapshot(roomId: string): ContextSnapshot | null
     saveContextSnapshot(roomId: string, summary: string, lastMessageId: string, lastMessageTimestamp: number): void
     deleteContextSnapshot(roomId: string): void

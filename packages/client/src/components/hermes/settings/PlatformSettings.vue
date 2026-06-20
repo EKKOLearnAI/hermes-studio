@@ -369,7 +369,13 @@ watch(
           <NInput :value="credentialDraft('feishu').extra?.app_id || ''" :loading="isSavingPlatform('feishu')" clearable size="small" class="input-lg" placeholder="cli_..." @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, app_id: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.appSecret')" :hint="t('platform.appSecretHint')">
-          <NInput :value="credentialDraft('feishu').extra?.app_secret || ''" :loading="isSavingPlatform('feishu')" clearable size="small" class="input-lg" placeholder="App Secret" @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, app_secret: v } })" />
+          <NInput :value="credentialDraft('feishu').extra?.app_secret || ''" :loading="isSavingPlatform('feishu')" type="password" show-password-on="click" clearable size="small" class="input-lg" placeholder="App Secret" @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, app_secret: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.encryptKey')" :hint="t('platform.encryptKeyHint')">
+          <NInput :value="credentialDraft('feishu').extra?.encrypt_key || ''" :loading="isSavingPlatform('feishu')" type="password" show-password-on="click" clearable size="small" class="input-lg" placeholder="Encrypt Key" @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, encrypt_key: v } })" />
+        </SettingRow>
+        <SettingRow :label="t('platform.verificationToken')" :hint="t('platform.verificationTokenHint')">
+          <NInput :value="credentialDraft('feishu').extra?.verification_token || ''" :loading="isSavingPlatform('feishu')" type="password" show-password-on="click" clearable size="small" class="input-lg" placeholder="Verification Token" @update:value="v => setCredentialDraft('feishu', { extra: { ...credentialDraft('feishu').extra, verification_token: v } })" />
         </SettingRow>
         <SettingRow :label="t('platform.requireMention')" :hint="t('platform.requireMentionGroup')">
           <NSwitch :value="configDraft('feishu').require_mention" :loading="isSavingPlatform('feishu')" @update:value="v => setConfigDraft('feishu', { require_mention: v })" />
