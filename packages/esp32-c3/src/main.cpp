@@ -158,6 +158,7 @@ struct McuAudioSegment {
   String mimeType;
   uint8_t channels = 2;
   uint32_t durationMs = 0;
+  bool completionManagedByServer = false;
 };
 
 McuAudioSegment mcuAudioQueue[kMaxMcuAudioQueue];
@@ -2761,6 +2762,7 @@ void startNextMcuAudio() {
   if (mcuCurrentAudio.url.length() > 0) {
     bool played = playPcmUrl(mcuCurrentAudio.url, mcuCurrentAudio.channels);
     String interruptedInteractionId = mcuCurrentAudio.interactionId;
+    bool completionManagedByServer = mcuCurrentAudio.completionManagedByServer;
     finishMcuAudio(!played);
     if (mcuVoiceAfterAudioInterrupt) {
       mcuVoiceAfterAudioInterrupt = false;
@@ -2779,7 +2781,7 @@ void startNextMcuAudio() {
     }
     if (played) {
       startNextMcuAudio();
-      if (!mcuAudioPlaying && mcuAudioCount == 0) {
+      if (!completionManagedByServer && !mcuAudioPlaying && mcuAudioCount == 0) {
         markMcuInteraction(interruptedInteractionId, F("completed"), F(""));
         broadcastMcuStatus();
       }
@@ -2916,6 +2918,7 @@ void handleMcuAudioEnqueue(uint8_t clientId, const String &message) {
   int channels = jsonIntValue(message, F("channels"));
   segment.channels = channels == 1 ? 1 : 2;
   segment.durationMs = static_cast<uint32_t>(jsonIntValue(message, F("durationMs")));
+  segment.completionManagedByServer = true;
 
   bool queued = enqueueMcuAudio(segment);
   String json;
@@ -4064,9 +4067,10 @@ void handleHealth() {
 void tickMcuInteraction() {
   if (mcuAudioPlaying && mcuAudioDurationMs > 0 &&
       millis() - mcuAudioStartedAtMs >= mcuAudioDurationMs) {
+    bool completionManagedByServer = mcuCurrentAudio.completionManagedByServer;
     finishMcuAudio(false);
     startNextMcuAudio();
-    if (!mcuAudioPlaying && mcuAudioCount == 0 &&
+    if (!completionManagedByServer && !mcuAudioPlaying && mcuAudioCount == 0 &&
         (mcuInteractionStatus == F("speaking") || mcuInteractionStatus == F("completed"))) {
       markMcuInteraction(mcuInteractionId, F("completed"), F(""));
       broadcastMcuStatus();
