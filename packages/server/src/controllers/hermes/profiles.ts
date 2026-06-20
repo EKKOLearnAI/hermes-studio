@@ -8,10 +8,11 @@ import { SessionDeleter } from '../../services/hermes/session-deleter'
 import { AgentBridgeClient } from '../../services/hermes/agent-bridge'
 import {
   getGatewayRuntimeStatusForProfile,
+  prepareGatewayForProfileDelete,
   restartGatewayForProfile as restartGatewayRuntimeForProfile,
 } from '../../services/hermes/gateway-autostart'
 import { logger } from '../../services/logger'
-import { smartCloneCleanup } from '../../services/hermes/profile-credentials'
+import { smartCloneCleanup, copyModelProviderAuthForClone } from '../../services/hermes/profile-credentials'
 import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
@@ -133,6 +134,12 @@ function deleteForbiddenProfileFromDisk(name: string): boolean {
   } catch {}
   logger.warn('[deleteProfile] removed reserved profile "%s" from disk after Hermes CLI rejected deletion', name)
   return true
+}
+
+function profileDirectoryExists(name: string): boolean {
+  if (!name || name === 'default') return true
+  const base = detectHermesRootHome()
+  return existsSync(join(base, 'profiles', name))
 }
 
 function filterVisibleProfiles(profiles: HermesProfile[]): HermesProfile[] {
@@ -412,8 +419,10 @@ export async function create(ctx: any) {
     let strippedCredentials: string[] = []
     let disabledPlatforms: string[] = []
     let strippedConfigCredentials: string[] = []
+    let copiedAuthProviders: string[] = []
     if (clone) {
       try {
+        copiedAuthProviders = copyModelProviderAuthForClone(name)
         const cleanup = smartCloneCleanup(name)
         strippedCredentials = cleanup.strippedCredentials
         disabledPlatforms = cleanup.disabledPlatforms
@@ -421,11 +430,13 @@ export async function create(ctx: any) {
         if (
           strippedCredentials.length > 0 ||
           disabledPlatforms.length > 0 ||
-          strippedConfigCredentials.length > 0
+          strippedConfigCredentials.length > 0 ||
+          copiedAuthProviders.length > 0
         ) {
           logger.info(
-            'Smart clone cleanup for "%s": stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
+            'Smart clone cleanup for "%s": copied auth for %d model providers (%s), stripped %d env credentials (%s), disabled %d platforms (%s), stripped %d config credentials (%s)',
             name,
+            copiedAuthProviders.length, copiedAuthProviders.join(','),
             strippedCredentials.length, strippedCredentials.join(','),
             disabledPlatforms.length, disabledPlatforms.join(','),
             strippedConfigCredentials.length, strippedConfigCredentials.join(','),
@@ -445,6 +456,7 @@ export async function create(ctx: any) {
       strippedCredentials,
       disabledPlatforms,
       strippedConfigCredentials,
+      copiedAuthProviders,
     }
   } catch (err: any) {
     ctx.status = 500
@@ -647,10 +659,16 @@ export async function remove(ctx: any) {
     } catch (err) {
       logger.warn(err, '[profiles] failed to destroy bridge sessions for deleted profile "%s"', name)
     }
+
+    await prepareGatewayForProfileDelete(name)
+
     const ok = await hermesCli.deleteProfile(name)
-    if (ok) {
+    if (ok && !profileDirectoryExists(name)) {
       removeProfileMetadata(name)
       ctx.body = { success: true }
+    } else if (ok) {
+      ctx.status = 500
+      ctx.body = { error: 'Failed to delete profile: profile directory still exists' }
     } else if (deleteForbiddenProfileFromDisk(name)) {
       removeProfileMetadata(name)
       ctx.body = { success: true, fallback: 'removed_reserved_profile_from_disk' }
@@ -670,6 +688,11 @@ export async function rename(ctx: any) {
   if (!new_name) {
     ctx.status = 400
     ctx.body = { error: 'Missing new_name' }
+    return
+  }
+  if (isForbiddenProfileName(new_name)) {
+    ctx.status = 400
+    ctx.body = { error: `Profile name '${new_name}' is reserved and cannot be used` }
     return
   }
   try {

@@ -12,13 +12,29 @@
  * 操作前会备份原文件为 `.bak.<timestamp>`。
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import yaml from 'js-yaml'
 import { detectHermesHome } from './hermes-path'
 
-const HERMES_BASE = detectHermesHome()
+function hermesBase(): string {
+  return detectHermesHome()
+}
+
+function profileDir(profileName: string): string {
+  const base = hermesBase()
+  return profileName === 'default'
+    ? base
+    : join(base, 'profiles', profileName)
+}
+
+function activeProfileName(): string {
+  try {
+    return readFileSync(join(hermesBase(), 'active_profile'), 'utf-8').trim() || 'default'
+  } catch {
+    return 'default'
+  }
+}
 
 /**
  * 已知"独占型"平台的环境变量前缀正则
@@ -63,6 +79,7 @@ export const EXCLUSIVE_PLATFORM_CREDENTIAL_KEYS = [
   'signing_secret', 'app_secret', 'client_secret',
   'access_token', 'webhook_secret',
   'account_id', 'phone_number_id', 'app_id',
+  'encrypt_key', 'verification_token',
 ]
 
 /** 判断 .env 中的 KEY 是否属于独占平台凭据 */
@@ -170,18 +187,98 @@ export interface SmartCloneCleanup {
   strippedConfigCredentials: string[]
 }
 
+function configuredModelProvider(configPath: string): string {
+  if (!existsSync(configPath)) return ''
+  let cfg: any
+  try {
+    cfg = yaml.load(readFileSync(configPath, 'utf-8'), { json: true })
+  } catch {
+    return ''
+  }
+  const provider = cfg?.model && typeof cfg.model === 'object'
+    ? String(cfg.model.provider || '').trim()
+    : ''
+  if (!provider || provider === 'custom') return ''
+  return provider
+}
+
+function readAuthJson(path: string): any {
+  if (!existsSync(path)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function authProviderKeysForModelProvider(provider: string): string[] {
+  return provider === 'claude-oauth' ? ['claude-oauth', 'anthropic'] : [provider]
+}
+
+const MODEL_AUTH_PROVIDERS = new Set([
+  'openai-codex',
+  'claude-oauth',
+  'xai-oauth',
+  'google-gemini-cli',
+  'nous',
+])
+
+/**
+ * Copy the source profile's OAuth auth for the cloned profile's configured model
+ * provider only.
+ *
+ * Hermes CLI `profile create --clone` copies config/.env/SOUL/skills, but not
+ * `auth.json`. OAuth-only model providers such as `openai-codex` then look
+ * configured in the cloned profile while `/available-models?profile=<clone>`
+ * returns no groups because the profile-local auth file is missing. Copying only
+ * the provider keys required by the cloned `model.provider` preserves model
+ * access without copying unrelated provider or platform credentials across
+ * profiles. Claude OAuth also copies its `anthropic` runtime alias because chat
+ * execution rewrites `claude-oauth` to `anthropic`.
+ */
+export function copyModelProviderAuthForClone(profileName: string): string[] {
+  if (!profileName || profileName === 'default') return []
+  const targetDir = profileDir(profileName)
+  const provider = configuredModelProvider(join(targetDir, 'config.yaml'))
+  if (!MODEL_AUTH_PROVIDERS.has(provider)) return []
+
+  const sourceDir = profileDir(activeProfileName())
+  const sourceAuth = readAuthJson(join(sourceDir, 'auth.json'))
+  const targetAuthPath = join(targetDir, 'auth.json')
+  const targetAuth = readAuthJson(targetAuthPath)
+  const copied = new Set<string>()
+
+  for (const authProvider of authProviderKeysForModelProvider(provider)) {
+    if (sourceAuth.providers?.[authProvider] && !targetAuth.providers?.[authProvider]) {
+      targetAuth.providers = { ...(targetAuth.providers || {}), [authProvider]: sourceAuth.providers[authProvider] }
+      copied.add(authProvider)
+    }
+    if (sourceAuth.credential_pool?.[authProvider] && !targetAuth.credential_pool?.[authProvider]) {
+      targetAuth.credential_pool = { ...(targetAuth.credential_pool || {}), [authProvider]: sourceAuth.credential_pool[authProvider] }
+      copied.add(authProvider)
+    }
+  }
+  if (copied.size === 0) return []
+
+  mkdirSync(targetDir, { recursive: true })
+  if (existsSync(targetAuthPath)) {
+    writeFileSync(`${targetAuthPath}.bak.${Date.now()}`, JSON.stringify(readAuthJson(targetAuthPath), null, 2) + '\n', 'utf-8')
+  }
+  writeFileSync(targetAuthPath, JSON.stringify(targetAuth, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
+  return [...copied]
+}
+
 /**
  * 一站式：清理新 profile 的独占凭据 + 禁用 config.yaml 中的独占平台
  *
  * @param profileName profile 名称（'default' → ~/.hermes/，其他 → ~/.hermes/profiles/<name>/）
  */
 export function smartCloneCleanup(profileName: string): SmartCloneCleanup {
-  const profileDir = profileName === 'default'
-    ? HERMES_BASE
-    : join(HERMES_BASE, 'profiles', profileName)
-  const configResult = disableExclusivePlatformsInConfig(join(profileDir, 'config.yaml'))
+  const targetDir = profileDir(profileName)
+  const configResult = disableExclusivePlatformsInConfig(join(targetDir, 'config.yaml'))
   return {
-    strippedCredentials: stripExclusivePlatformCredentials(join(profileDir, '.env')),
+    strippedCredentials: stripExclusivePlatformCredentials(join(targetDir, '.env')),
     disabledPlatforms: configResult.disabled,
     strippedConfigCredentials: configResult.strippedConfigCredentials,
   }

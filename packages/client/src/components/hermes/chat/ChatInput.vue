@@ -5,10 +5,20 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
+import { fetchSkills, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NPopselect, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import VoiceDialogueControls from './VoiceDialogueControls.vue'
+import { useMicRecorder } from '@/composables/useMicRecorder'
+import { useGlobalSpeech } from '@/composables/useSpeech'
+import { useVoiceDialogue } from '@/composables/useVoiceDialogue'
+import { transcribeSpeech } from '@/api/hermes/stt'
+import type { StoredSttProvider } from '@/api/hermes/stt-settings'
+import { useSttSettings } from '@/composables/useSttSettings'
+import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
+import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-session-commands'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -16,6 +26,32 @@ const profilesStore = useProfilesStore()
 const { t } = useI18n()
 const message = useMessage()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+
+const reasoningEffortOptions = computed(() => [
+  { label: t('chat.reasoningEffort.options.default'), value: '' },
+  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+])
+const currentReasoningEffort = computed<string>(() =>
+  chatStore.activeSession?.reasoningEffort || ''
+)
+const reasoningEffortLabel = computed<string>(() => {
+  const v = currentReasoningEffort.value
+  if (!v) return t('chat.reasoningEffort.defaultLabel')
+  const opt = reasoningEffortOptions.value.find(o => o.value === v)
+  return opt?.label || v
+})
+function onReasoningEffortChange(value: string | null | undefined) {
+  const sid = chatStore.activeSessionId
+  if (!sid) return
+  chatStore.setSessionReasoningEffort(sid, value || '')
+}
+const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
+type DraftMap = Record<string, string>
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -24,39 +60,228 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const speech = useGlobalSpeech()
+const micRecorder = useMicRecorder({
+  messages: {
+    unsupported: t('chat.voiceInput.microphoneUnsupported'),
+    recordingFailed: t('chat.voiceInput.microphoneRecordingFailed'),
+  },
+})
+const sttSettings = useSttSettings()
+const browserRecognition = useBrowserSpeechRecognition({
+  messages: {
+    unsupported: t('chat.voiceInput.browserSpeechUnsupported'),
+    failed: t('chat.voiceInput.browserSpeechFailed'),
+    failedWithReason: (reason) => t('chat.voiceInput.browserSpeechFailedWithReason', { error: reason }),
+  },
+})
+const activeVoiceCaptureMode = ref<'browser' | 'backend' | null>(null)
 
-const bridgeCommands = computed(() => [
-  { name: 'usage', args: '', description: t('chat.slashCommands.usage') },
-  { name: 'status', args: '', description: t('chat.slashCommands.status') },
-  { name: 'abort', args: '', description: t('chat.slashCommands.abort') },
-  { name: 'queue', args: t('chat.slashCommandArgs.message'), description: t('chat.slashCommands.queue') },
-  { name: 'plan', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.plan') },
-  { name: 'goal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.goal') },
-  { name: 'goal', args: 'status', insertText: 'goal status', description: t('chat.slashCommands.goalStatus') },
-  { name: 'goal', args: 'pause', insertText: 'goal pause', description: t('chat.slashCommands.goalPause') },
-  { name: 'goal', args: 'resume', insertText: 'goal resume', description: t('chat.slashCommands.goalResume') },
-  { name: 'goal', args: 'done', insertText: 'goal done', description: t('chat.slashCommands.goalDone') },
-  { name: 'goal', args: 'clear', insertText: 'goal clear', description: t('chat.slashCommands.goalClear') },
-  { name: 'subgoal', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.subgoal') },
-  { name: 'clear', args: '', description: t('chat.slashCommands.clear') },
-  { name: 'clear', args: '--history', insertText: 'clear --history', description: t('chat.slashCommands.clearHistory') },
-  { name: 'title', args: t('chat.slashCommandArgs.title'), description: t('chat.slashCommands.title') },
-  { name: 'compress', args: '', description: t('chat.slashCommands.compress') },
-  { name: 'steer', args: t('chat.slashCommandArgs.text'), description: t('chat.slashCommands.steer') },
-  { name: 'destroy', args: '', description: t('chat.slashCommands.destroy') },
-  { name: 'reload-mcp', args: '', description: t('chat.slashCommands.reloadMcp') },
-])
+type SlashCommandOption = {
+  name: string
+  args: string
+  description: string
+  insertText?: string
+  key: string
+  opensSkillPicker?: boolean
+}
+
+function normalizeVoiceTranscript(text: string) {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function backendTranscribeOptions(): {
+  provider: StoredSttProvider
+  language?: string
+  prompt?: string
+} {
+  if (sttSettings.provider.value === 'custom') {
+    return {
+      provider: 'custom',
+      language: sttSettings.customLanguage.value.trim() || undefined,
+      prompt: sttSettings.customPrompt.value.trim() || undefined,
+    }
+  }
+
+  if (sttSettings.provider.value === 'doubao') {
+    return {
+      provider: 'doubao',
+    }
+  }
+
+  return {
+    provider: 'openai',
+    language: sttSettings.openaiLanguage.value.trim() || undefined,
+    prompt: sttSettings.openaiPrompt.value.trim() || undefined,
+  }
+}
+
+function browserCaptureLanguage() {
+  return sttSettings.openaiLanguage.value.trim() || sttSettings.customLanguage.value.trim() || ''
+}
+
+function insertVoiceTranscriptIntoInput(text: string) {
+  const normalizedTranscript = normalizeVoiceTranscript(text)
+  if (!normalizedTranscript) return
+
+  const el = textareaRef.value
+  const currentValue = inputText.value
+  const selectionStart = el?.selectionStart ?? currentValue.length
+  const selectionEnd = el?.selectionEnd ?? selectionStart
+  const before = currentValue.slice(0, selectionStart)
+  const after = currentValue.slice(selectionEnd)
+  const prefix = before && !/\s$/.test(before) ? ' ' : ''
+  const suffix = after && !/^\s/.test(after) ? ' ' : ''
+  const nextValue = `${before}${prefix}${normalizedTranscript}${suffix}${after}`
+  const nextCursorPosition = before.length + prefix.length + normalizedTranscript.length
+
+  inputText.value = nextValue
+  slashActive.value = false
+
+  nextTick(() => {
+    const textarea = textareaRef.value
+    if (!textarea) return
+
+    textarea.focus()
+    textarea.setSelectionRange(nextCursorPosition, nextCursorPosition)
+
+    if (textareaHeight.value === null) {
+      textarea.style.height = 'auto'
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 100)}px`
+    }
+  })
+}
+
+const voiceDialogue = useVoiceDialogue({
+  transcribe: async (audio) => {
+    const { provider, language, prompt } = backendTranscribeOptions()
+    return transcribeSpeech({ audio, provider, language, prompt })
+  },
+  sendMessage: async (text) => {
+    insertVoiceTranscriptIntoInput(text)
+  },
+  stopOutputAudio: () => speech.stop(true),
+})
+const voiceDialogueTranscript = computed(() => {
+  if (activeVoiceCaptureMode.value !== 'browser' || voiceDialogue.status.value !== 'capturing') {
+    return voiceDialogue.transcript.value
+  }
+
+  return normalizeVoiceTranscript([
+    browserRecognition.transcript.value,
+    browserRecognition.partialTranscript.value,
+  ].filter(Boolean).join(' '))
+})
+const shouldShowBrowserRecognitionError = computed(() =>
+  sttSettings.provider.value === 'browser' || activeVoiceCaptureMode.value === 'browser',
+)
+const voiceDialogueError = computed(() =>
+  voiceDialogue.error.value?.message
+  ?? (shouldShowBrowserRecognitionError.value ? browserRecognition.error.value?.message : null)
+  ?? micRecorder.state.value.error?.message
+  ?? null,
+)
+
+const bridgeCommands = computed<SlashCommandOption[]>(() =>
+  BRIDGE_SESSION_COMMAND_DEFINITIONS.map(command => ({
+    key: command.key,
+    name: command.name,
+    args: command.argsKey ? t(command.argsKey) : command.args || '',
+    description: t(command.descriptionKey),
+    insertText: command.insertText,
+    opensSkillPicker: command.opensSkillPicker,
+  }))
+)
 
 const slashActive = ref(false)
 const slashQuery = ref('')
 const slashActiveIndex = ref(0)
+const skillCategories = ref<SkillCategory[]>([])
+const showSkillPicker = ref(false)
+const skillSearch = ref('')
+const skillPickerLoading = ref(false)
+let skillsLoadedKey = ''
+let skillsLoadRequest: Promise<void> | null = null
 const isBridgeSession = computed(() => chatStore.activeSession?.source === 'cli')
+const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
+const skillPickerItems = computed(() => {
+  const byName = new Map<string, SkillInfo>()
+  for (const category of skillCategories.value) {
+    for (const skill of category.skills || []) {
+      if (skill.enabled === false) continue
+      if (!byName.has(skill.name)) byName.set(skill.name, skill)
+    }
+  }
+  return [...byName.values()].map(skill => {
+    const commandName = skillCommandName(skill.name)
+    return {
+      key: `skill:${commandName}`,
+      name: skill.name,
+      commandName,
+      description: skill.description || skill.name,
+    }
+  })
+})
 const filteredBridgeCommands = computed(() => {
-  const query = slashQuery.value.toLowerCase()
-  return bridgeCommands.value.filter(command =>
-    command.name.includes(query) || command.insertText?.includes(query),
+  const query = slashQuery.value.trim().toLowerCase()
+  const commands = isBridgeSession.value
+    ? bridgeCommands.value
+    : isForkCommandSession.value
+      ? bridgeCommands.value.filter(command => command.name === 'fork')
+      : []
+  if (!query) return commands
+  return commands.filter((command) => {
+    const name = command.name.toLowerCase()
+    const insertText = command.insertText?.toLowerCase()
+    const description = command.description.toLowerCase()
+    return name.startsWith(query) || insertText?.startsWith(query) || description.includes(query)
+  })
+})
+const filteredSkillPickerItems = computed(() => {
+  const query = skillSearch.value.trim().toLowerCase()
+  if (!query) return skillPickerItems.value
+  return skillPickerItems.value.filter(skill =>
+    skill.name.toLowerCase().includes(query)
+    || skill.commandName.includes(query)
+    || skill.description.toLowerCase().includes(query),
   )
 })
+
+function skillCommandName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function currentSkillsKey() {
+  return chatStore.activeSession?.profile || profilesStore.activeProfileName || 'default'
+}
+
+async function loadSkills() {
+  if (!isBridgeSession.value) return
+  const key = currentSkillsKey()
+  if (skillsLoadedKey === key || skillsLoadRequest) return skillsLoadRequest
+  skillsLoadRequest = (async () => {
+    try {
+      const data = await fetchSkills(key)
+      if (currentSkillsKey() !== key) return
+      skillCategories.value = data.categories || []
+      skillsLoadedKey = key
+    } catch {
+      if (currentSkillsKey() !== key) return
+      skillCategories.value = []
+      skillsLoadedKey = key
+    } finally {
+      skillsLoadRequest = null
+    }
+  })()
+  return skillsLoadRequest
+}
 
 // 自定义高度拖拽
 const textareaHeight = ref<number | null>(null) // null = auto
@@ -92,8 +317,43 @@ function startResize(e: MouseEvent) {
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
+function readDraftMap(): DraftMap {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function getActiveDraftSessionId() {
+  return chatStore.activeSessionId || chatStore.activeSession?.id || ''
+}
+
+function loadDraftForActiveSession() {
+  const sessionId = getActiveDraftSessionId()
+  inputText.value = sessionId ? readDraftMap()[sessionId] || '' : ''
+}
+
+function saveDraftForActiveSession(value: string) {
+  const sessionId = getActiveDraftSessionId()
+  if (!sessionId) return
+  const drafts = readDraftMap()
+  if (value) {
+    drafts[sessionId] = value
+  } else {
+    delete drafts[sessionId]
+  }
+  if (Object.keys(drafts).length > 0) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts))
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  }
+}
+
 // 从 localStorage 读取设置
 onMounted(() => {
+  loadDraftForActiveSession()
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
@@ -109,6 +369,22 @@ watch(autoPlaySpeech, (value) => {
   chatStore.setAutoPlaySpeech(value)
 })
 
+watch(inputText, (value) => {
+  saveDraftForActiveSession(value)
+})
+
+watch(() => chatStore.activeSession?.id, () => {
+  loadDraftForActiveSession()
+})
+
+watch(
+  () => [chatStore.activeSession?.profile, profilesStore.activeProfileName],
+  () => {
+    skillsLoadedKey = ''
+    skillCategories.value = []
+  },
+)
+
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
 
 function scrollCommandIntoView() {
@@ -120,7 +396,7 @@ function scrollCommandIntoView() {
 }
 
 function updateSlashState() {
-  if (!isBridgeSession.value) {
+  if (!isBridgeSession.value && !isForkCommandSession.value) {
     slashActive.value = false
     return
   }
@@ -137,9 +413,39 @@ function updateSlashState() {
   slashActive.value = filteredBridgeCommands.value.length > 0
 }
 
-function selectBridgeCommand(command: { name: string; args: string; insertText?: string }) {
+function selectBridgeCommand(command: SlashCommandOption) {
+  if (command.opensSkillPicker) {
+    slashActive.value = false
+    void openSkillPicker()
+    return
+  }
   inputText.value = `/${command.insertText || command.name} `
   slashActive.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    const pos = inputText.value.length
+    el.setSelectionRange(pos, pos)
+    el.focus()
+  })
+}
+
+async function openSkillPicker() {
+  if (!isBridgeSession.value) return
+  slashActive.value = false
+  skillSearch.value = ''
+  showSkillPicker.value = true
+  skillPickerLoading.value = true
+  try {
+    await loadSkills()
+  } finally {
+    skillPickerLoading.value = false
+  }
+}
+
+function selectSkill(skill: { commandName: string }) {
+  inputText.value = `/skill ${skill.commandName} `
+  showSkillPicker.value = false
   nextTick(() => {
     const el = textareaRef.value
     if (!el) return
@@ -161,8 +467,10 @@ let contextLengthRequest: Promise<void> | null = null
 const showContextEditModal = ref(false)
 const editingContextLimit = ref(256000)
 const isSavingContextLimit = ref(false)
+const isCodingAgentSession = computed(() => chatStore.activeSession?.source === 'coding_agent')
 
 async function handleEditContextLimit() {
+  if (isCodingAgentSession.value) return
   editingContextLimit.value = contextLength.value
   showContextEditModal.value = true
 }
@@ -210,6 +518,7 @@ function currentContextLengthKey() {
 }
 
 async function loadContextLength() {
+  if (isCodingAgentSession.value) return
   const key = currentContextLengthKey()
   if (key === contextLengthLoadedKey) return
   if (key === contextLengthRequestKey && contextLengthRequest) return contextLengthRequest
@@ -246,18 +555,21 @@ watch(
     chatStore.activeSession?.profile,
     chatStore.activeSession?.provider,
     chatStore.activeSession?.model,
+    chatStore.activeSession?.source,
   ],
   loadContextLength,
   { flush: 'post' },
 )
 
 const totalTokens = computed(() => {
+  if (isCodingAgentSession.value) return 0
   const context = chatStore.activeSession?.contextTokens
   if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
 })
+const showContextUsage = computed(() => totalTokens.value > 0)
 
 const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
 
@@ -287,6 +599,11 @@ function addFile(file: File) {
   })
 }
 
+function addFiles(files: File[]) {
+  for (const file of files) addFile(file)
+  if (files.length > 0) textareaRef.value?.focus()
+}
+
 function handleAttachClick() {
   fileInputRef.value?.click()
 }
@@ -294,7 +611,7 @@ function handleAttachClick() {
 function handleFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files) return
-  for (const file of input.files) addFile(file)
+  addFiles(Array.from(input.files))
   input.value = ''
 }
 
@@ -310,7 +627,7 @@ function handlePaste(e: ClipboardEvent) {
     if (!blob) continue
     const ext = item.type.split('/')[1] || 'png'
     const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })
-    addFile(file)
+    addFiles([file])
   }
 }
 
@@ -342,24 +659,117 @@ function handleDrop(e: DragEvent) {
   isDragging.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (!files.length) return
-  for (const file of files) addFile(file)
-  textareaRef.value?.focus()
+  addFiles(files)
 }
+
+defineExpose({ addFiles })
 
 // --- Send ---
 
 function handleSend() {
   const text = inputText.value.trim()
   if (!text && attachments.value.length === 0) return
+  if (isBridgeSession.value && text === '/skill' && attachments.value.length === 0) {
+    void openSkillPicker()
+    return
+  }
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
+  saveDraftForActiveSession('')
   attachments.value = []
   slashActive.value = false
 
   if (textareaRef.value) {
     textareaRef.value.style.height = 'auto'
   }
+}
+
+async function startVoiceCapture() {
+  browserRecognition.clearError()
+  const { captureId } = await voiceDialogue.beginCapture()
+  const useBrowserProvider = sttSettings.provider.value === 'browser'
+
+  activeVoiceCaptureMode.value = useBrowserProvider ? 'browser' : 'backend'
+
+  try {
+    if (useBrowserProvider) {
+      await browserRecognition.start({ language: browserCaptureLanguage() })
+      return
+    }
+
+    await micRecorder.start()
+  } catch {
+    activeVoiceCaptureMode.value = null
+    voiceDialogue.cancelCapture(captureId)
+  }
+}
+
+async function stopVoiceCapture() {
+  const captureId = voiceDialogue.activeCaptureId.value
+  if (!captureId) return
+
+  if (activeVoiceCaptureMode.value === 'browser') {
+    let transcript = ''
+
+    try {
+      transcript = await browserRecognition.stop()
+    } catch {
+      activeVoiceCaptureMode.value = null
+      voiceDialogue.cancelCapture(captureId)
+      return
+    }
+
+    activeVoiceCaptureMode.value = null
+
+    try {
+      await voiceDialogue.commitTranscript(captureId, transcript)
+    } catch {
+      // Voice dialogue state already tracks send errors.
+    }
+    return
+  }
+
+  if (micRecorder.state.value.status === 'requesting') {
+    micRecorder.cancel()
+    activeVoiceCaptureMode.value = null
+    voiceDialogue.cancelCapture(captureId)
+    return
+  }
+
+  let audio: Blob
+
+  try {
+    audio = await micRecorder.stop()
+  } catch {
+    activeVoiceCaptureMode.value = null
+    voiceDialogue.cancelCapture(captureId)
+    return
+  }
+
+  activeVoiceCaptureMode.value = null
+
+  if (audio.size <= 0) {
+    voiceDialogue.cancelCapture(captureId)
+    return
+  }
+
+  try {
+    await voiceDialogue.transcribeAndSend(captureId, audio)
+  } catch {
+    // Voice dialogue state already tracks transcription/send errors.
+  }
+}
+
+function cancelVoiceCapture() {
+  if (activeVoiceCaptureMode.value === 'browser') {
+    browserRecognition.cancel()
+  } else {
+    micRecorder.cancel()
+  }
+
+  activeVoiceCaptureMode.value = null
+  voiceDialogue.cancelCapture()
 }
 
 function handleCompositionStart() {
@@ -473,6 +883,35 @@ function isImage(type: string): boolean {
         {{ t('chat.attachFiles') }}
       </NTooltip>
 
+      <NPopselect
+        v-if="!isCodingAgentSession"
+        :value="currentReasoningEffort"
+        :options="reasoningEffortOptions"
+        trigger="click"
+        @update:value="onReasoningEffortChange"
+      >
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton
+              quaternary
+              size="tiny"
+              circle
+              class="reasoning-effort-button"
+              :class="{ active: !!currentReasoningEffort }"
+              :aria-label="`${t('chat.reasoningEffort.tooltip')}: ${reasoningEffortLabel}`"
+            >
+              <template #icon>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+                  <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+                </svg>
+              </template>
+            </NButton>
+          </template>
+          {{ t('chat.reasoningEffort.tooltip') }}: {{ reasoningEffortLabel }}
+        </NTooltip>
+      </NPopselect>
+
       <div class="auto-play-speech-switch">
         <NTooltip trigger="hover">
           <template #trigger>
@@ -509,7 +948,7 @@ function isImage(type: string): boolean {
         {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
       </NTooltip>
 
-      <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
+      <span v-if="showContextUsage" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
         <NTooltip trigger="hover">
           <template #trigger>
@@ -521,7 +960,7 @@ function isImage(type: string): boolean {
         </NTooltip>
         · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
       </span>
-      <div v-if="totalTokens > 0" class="context-bar">
+      <div v-if="showContextUsage" class="context-bar">
         <div
           class="context-bar-fill"
           :class="{
@@ -594,7 +1033,7 @@ function isImage(type: string): boolean {
         >
           <div
             v-for="(command, i) in filteredBridgeCommands"
-            :key="command.name"
+            :key="command.key"
             class="slash-command-item"
             :class="{ active: i === slashActiveIndex }"
             @mousedown.prevent="selectBridgeCommand(command)"
@@ -607,6 +1046,15 @@ function isImage(type: string): boolean {
         </div>
       </Transition>
       <div class="input-actions">
+        <VoiceDialogueControls
+          :status="voiceDialogue.status.value"
+          :transcript="voiceDialogueTranscript"
+          :error="voiceDialogueError"
+          :events="voiceDialogue.events.value"
+          :on-start="startVoiceCapture"
+          :on-stop="stopVoiceCapture"
+          :on-cancel="cancelVoiceCapture"
+        />
         <NButton
           v-if="chatStore.isStreaming"
           size="small"
@@ -629,6 +1077,47 @@ function isImage(type: string): boolean {
         </NButton>
       </div>
     </div>
+
+    <NModal
+      v-model:show="showSkillPicker"
+      :title="t('skills.title')"
+      :mask-closable="true"
+      preset="card"
+      style="width: min(620px, calc(100vw - 32px))"
+    >
+      <div v-if="showSkillPicker" class="skill-picker-modal">
+        <input
+          v-model="skillSearch"
+          class="skill-picker-search"
+          :placeholder="t('skills.searchPlaceholder')"
+          type="search"
+        />
+        <div class="skill-picker-list">
+          <div v-if="skillPickerLoading" class="skill-picker-empty">
+            {{ t('common.loading') }}
+          </div>
+          <template v-else>
+            <div
+              v-for="skill in filteredSkillPickerItems"
+              :key="skill.key"
+              role="button"
+              tabindex="0"
+              class="skill-picker-item"
+              @click="selectSkill(skill)"
+              @keydown.enter.prevent="selectSkill(skill)"
+              @keydown.space.prevent="selectSkill(skill)"
+            >
+              <div class="skill-picker-command">/skill {{ skill.commandName }}</div>
+              <div class="skill-picker-name">{{ skill.name }}</div>
+              <div class="skill-picker-desc">{{ skill.description }}</div>
+            </div>
+          </template>
+          <div v-if="!skillPickerLoading && filteredSkillPickerItems.length === 0" class="skill-picker-empty">
+            {{ skillSearch ? t('skills.noMatch') : t('skills.noSkills') }}
+          </div>
+        </div>
+      </div>
+    </NModal>
 
     <!-- Context Length Edit Modal -->
     <NModal
@@ -754,9 +1243,17 @@ function isImage(type: string): boolean {
   }
 }
 
+.reasoning-effort-button {
+  &.active {
+    color: #4caf50;
+  }
+}
+
 .context-info {
   font-size: 11px;
   color: $text-muted;
+  min-width: 0;
+  white-space: nowrap;
 
   &.context-warning {
     color: #e8a735;
@@ -779,6 +1276,7 @@ function isImage(type: string): boolean {
 .context-bar {
   width: 60px;
   height: 4px;
+  margin-left: -4px;
   background: rgba(128, 128, 128, 0.2);
   border-radius: 2px;
   overflow: hidden;
@@ -796,6 +1294,25 @@ function isImage(type: string): boolean {
 
   &.context-bar-danger {
     background: linear-gradient(90deg, #c43a2a, #e85d4a);
+  }
+}
+
+@media (max-width: 768px) {
+  .input-top-bar {
+    gap: 5px;
+  }
+
+  .context-info {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 10px;
+    line-height: 14px;
+    margin-right: 10px;
+  }
+
+  .context-bar {
+    width: 42px;
+    flex-shrink: 0;
   }
 }
 
@@ -925,6 +1442,10 @@ function isImage(type: string): boolean {
   min-height: 20px;
   overflow-y: auto;
 
+  @media (max-width: 768px) {
+    font-size: 16px;
+  }
+
   &::placeholder {
     color: $text-muted;
     white-space: nowrap;
@@ -973,6 +1494,7 @@ function isImage(type: string): boolean {
   &:hover {
     background: rgba(var(--accent-primary-rgb), 0.1);
   }
+
 }
 
 .slash-command-name {
@@ -996,6 +1518,108 @@ function isImage(type: string): boolean {
   white-space: nowrap;
   color: $text-secondary;
   font-size: 12px;
+}
+
+.skill-picker-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-picker-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-input;
+  color: $text-primary;
+  outline: none;
+  font-family: $font-ui;
+  font-size: 13px;
+
+  &:focus {
+    border-color: $accent-primary;
+  }
+}
+
+.skill-picker-list {
+  max-height: min(420px, 52vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-picker-item {
+  display: block;
+  flex: 0 0 76px;
+  width: 100%;
+  height: 76px;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: $bg-secondary;
+  color: $text-primary;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  outline: none;
+
+  &:focus-visible,
+  &:hover {
+    border-color: rgba(var(--accent-primary-rgb), 0.5);
+    background: rgba(var(--accent-primary-rgb), 0.08);
+  }
+}
+
+.skill-picker-command {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: $font-code;
+  font-size: 12px;
+  line-height: 16px;
+  color: $accent-primary;
+  white-space: nowrap;
+}
+
+.skill-picker-name,
+.skill-picker-desc {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-picker-name {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 18px;
+  color: $text-primary;
+}
+
+.skill-picker-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 16px;
+  color: $text-secondary;
+}
+
+.skill-picker-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: $text-muted;
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .skill-picker-item {
+    height: 76px;
+  }
 }
 
 .dropdown-fade-enter-active,

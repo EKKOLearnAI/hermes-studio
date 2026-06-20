@@ -11,7 +11,7 @@ vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
-import { proxy, setGatewayManagerForTest, setRunSession } from '../../packages/server/src/routes/hermes/proxy-handler'
+import { proxy, setGatewayProxyTargetForTest, setRunSession } from '../../packages/server/src/routes/hermes/proxy-handler'
 
 function createMockCtx(overrides: Record<string, any> = {}) {
   const ctx: any = {
@@ -63,7 +63,7 @@ function createSSEBody(events: string[]): ReadableStream<Uint8Array> {
 describe('Proxy Handler', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    setGatewayManagerForTest({
+    setGatewayProxyTargetForTest({
       getUpstream: () => 'http://127.0.0.1:8642',
       getApiKey: () => null,
     })

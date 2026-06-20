@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePlatformPath } from '../../packages/server/src/services/hermes/file-provider'
+import { join, resolve } from 'path'
+import { tmpdir } from 'os'
+import { normalizePlatformPath, validatePath } from '../../packages/server/src/services/hermes/file-provider'
 import { isPathWithin, relativePathFromBase } from '../../packages/server/src/services/hermes/hermes-path'
 
 describe('file provider platform path normalization', () => {
@@ -20,6 +22,18 @@ describe('file provider platform path normalization', () => {
   it('leaves normal Windows paths unchanged', () => {
     expect(normalizePlatformPath('C:\\Users\\Administrator\\Desktop\\screenshot.png', 'win32'))
       .toBe('C:\\Users\\Administrator\\Desktop\\screenshot.png')
+  })
+
+  it('allows literal double dots inside safe absolute path segments', () => {
+    const filePath = join(tmpdir(), 'foo..bar.txt')
+
+    expect(validatePath(filePath)).toBe(resolve(filePath))
+  })
+
+  it('rejects parent-directory traversal segments', () => {
+    const filePath = `${join(tmpdir(), 'safe')}/../evil.txt`
+
+    expect(() => validatePath(filePath)).toThrow('Invalid file path')
   })
 })
 

@@ -23,6 +23,7 @@ function appendPinoContext(message: string, obj: any): string {
     parts.push(`profile=${obj.profile}`)
   }
   if (obj.request?.action) parts.push(`action=${obj.request.action}`)
+  if (obj.err?.message) parts.push(`error=${obj.err.message}`)
   if (obj.sessionId) parts.push(`session=${obj.sessionId}`)
   if (obj.runId) parts.push(`run=${obj.runId}`)
   if (obj.status) parts.push(`status=${obj.status}`)

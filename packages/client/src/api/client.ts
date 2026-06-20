@@ -1,6 +1,7 @@
 import router from '@/router'
 
 const DEFAULT_BASE_URL = ''
+const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
 
 function isDesktopShell(): boolean {
   return typeof window !== 'undefined' &&
@@ -29,6 +30,11 @@ export function clearApiKey() {
   localStorage.removeItem('hermes_api_key')
 }
 
+function clearAuthSessionState() {
+  clearApiKey()
+  localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
+}
+
 export function hasApiKey(): boolean {
   return !!getApiKey()
 }
@@ -53,8 +59,22 @@ export function isStoredSuperAdmin(): boolean {
   return getStoredUserRole() === 'super_admin'
 }
 
+export function getStoredUsername(): string | null {
+  const token = getApiKey()
+  const payload = token.split('.')[1]
+  if (!payload) return null
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const data = JSON.parse(atob(padded)) as { username?: unknown }
+    return typeof data.username === 'string' && data.username.length > 0 ? data.username : null
+  } catch {
+    return null
+  }
+}
+
 export function getActiveProfileName(): string | null {
-  return localStorage.getItem('hermes_active_profile_name')
+  return localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY)
 }
 
 function bodyHasProfileSelector(body: BodyInit | null | undefined): boolean {
@@ -93,11 +113,45 @@ function emitAuthNotice(kind: 'expired' | 'forbidden') {
   window.dispatchEvent(new CustomEvent('hermes-auth-notice', { detail: { kind } }))
 }
 
+function messageFromErrorValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value == null) return ''
+  if (typeof value !== 'object') return String(value)
+
+  const record = value as Record<string, unknown>
+  for (const key of ['message', 'error', 'detail', 'description']) {
+    const message = messageFromErrorValue(record[key])
+    if (message) return message
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(messageFromErrorValue).filter(Boolean).join('\n')
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function responseErrorMessage(text: string, statusText: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return statusText
+  try {
+    const parsed = JSON.parse(trimmed)
+    return messageFromErrorValue(parsed) || trimmed
+  } catch {
+    return trimmed
+  }
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const base = getBaseUrl()
   const url = `${base}${path}`
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormDataBody ? {} : { 'Content-Type': 'application/json' }),
     ...options.headers as Record<string, string>,
   }
 
@@ -121,7 +175,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     !path.startsWith('/v1/')
 
   if (res.status === 401 && isLocalBff) {
-    clearApiKey()
+    clearAuthSessionState()
     emitAuthNotice('expired')
     if (router.currentRoute.value.name !== 'login') {
       router.replace({ name: 'login' })
@@ -133,7 +187,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     const text = await res.text().catch(() => '')
     if (res.status === 403 && isLocalBff) {
       if (text.includes('User is disabled or does not exist')) {
-        clearApiKey()
+        clearAuthSessionState()
         emitAuthNotice('expired')
         if (router.currentRoute.value.name !== 'login') {
           router.replace({ name: 'login' })
@@ -142,7 +196,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
         emitAuthNotice('forbidden')
       }
     }
-    throw new Error(`API Error ${res.status}: ${text || res.statusText}`)
+    throw new Error(`API Error ${res.status}: ${responseErrorMessage(text, res.statusText)}`)
   }
 
   return res.json()

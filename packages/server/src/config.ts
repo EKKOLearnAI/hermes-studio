@@ -7,7 +7,7 @@ import { homedir } from 'os'
  * Server/listen:
  * - PORT: Web UI listen port. Default: 8648.
  * - BIND_HOST: Web UI bind host. Default: 0.0.0.0.
- * - CORS_ORIGINS: Koa CORS origin setting. Default: *.
+ * - CORS_ORIGINS: Comma/space-separated cross-origin allowlist. Default: same host only.
  *
  * Web UI storage:
  * - HERMES_WEB_UI_HOME: Web UI data home for auth token, credentials, logs, DB, and default uploads.
@@ -21,9 +21,18 @@ import { homedir } from 'os'
  *
  * Runtime behavior:
  * - PROFILE: Initial Hermes profile name. Default: default.
- * - GATEWAY_HOST: Default gateway host written into profile config. Default: 127.0.0.1.
- * - HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: Whether Web UI shutdown also stops gateways.
- * - WORKSPACE_BASE: Base directory for workspace browsing. Default: /opt/data/workspace.
+ * - HERMES_GATEWAY_URL / GATEWAY_URL: Explicit Hermes gateway upstream URL for proxy routes.
+ * - GATEWAY_HOST: Default Hermes gateway upstream host. Default: 127.0.0.1.
+ * - GATEWAY_PORT: Default Hermes gateway upstream port. Default: 8642.
+ * - HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART: Disable Web UI gateway autostart checks and config-driven gateway start/stop reconciliation.
+ * - HERMES_WEB_UI_MANAGED_GATEWAY: Web UI-managed Hermes gateway handling. Enabled by default; set 0/false/off to use CLI start.
+ * - HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN: Whether Web UI shutdown also stops managed gateways.
+ * - HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT: Disable Hermes Studio MCP config injection.
+ * - HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT: Allow MCP injection when HERMES_WEB_UI_HOME is under a temp dir.
+ * - HERMES_LAN_DISCOVERY_ENABLED: Set false/0/off to disable UDP LAN discovery responder.
+ * - HERMES_LAN_DISCOVERY_HTTP_PORTS: HTTP ports to probe during UDP discovery scans. Default: 8648,8748 plus current PORT.
+ *   Discovery probes are sent to the fixed UDP port 48640 plus legacy mapped ports for compatibility.
+ * - WORKSPACE_BASE: Base directory for workspace browsing. Default: current user's home directory.
  *
  * Limits/logging:
  * - MAX_DOWNLOAD_SIZE: Max file download size. Default: 200MB.
@@ -46,6 +55,10 @@ export function shouldCreateWebUiDataDir(env: Record<string, string | undefined>
   return env.NODE_ENV !== 'production'
 }
 
+export function getCorsOrigins(env: Record<string, string | undefined> = process.env): string {
+  return env.CORS_ORIGINS?.trim() || ''
+}
+
 const appHome = getWebUiHome()
 
 export const config = {
@@ -55,5 +68,5 @@ export const config = {
   appHome,
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
-  corsOrigins: process.env.CORS_ORIGINS || '*',
+  corsOrigins: getCorsOrigins(),
 }

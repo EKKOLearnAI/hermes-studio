@@ -77,9 +77,11 @@ const priorityText = computed(() => {
 
   &.status-triage { --kanban-card-status-color: #94a3b8; }
   &.status-todo { --kanban-card-status-color: #38bdf8; }
+  &.status-scheduled { --kanban-card-status-color: #06b6d4; }
   &.status-ready { --kanban-card-status-color: #f59e0b; }
   &.status-running { --kanban-card-status-color: #8b5cf6; }
   &.status-blocked { --kanban-card-status-color: #ef4444; }
+  &.status-review { --kanban-card-status-color: #ec4899; }
   &.status-done { --kanban-card-status-color: #22c55e; }
   &.status-archived { --kanban-card-status-color: #64748b; }
 

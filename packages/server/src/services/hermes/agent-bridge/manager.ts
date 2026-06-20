@@ -1,17 +1,19 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
-import { createServer } from 'net'
+import { createConnection, createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
-import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
+import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
 const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
 const MAX_AGENT_BRIDGE_RESTART_DELAY_MS = 30000
+const DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS = 5000
+const DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS = 250
 const OPENROUTER_WEB_UI_ATTRIBUTION_ENV = {
-  HERMES_OPENROUTER_APP_REFERER: 'https://ekkolearnai.com',
-  HERMES_OPENROUTER_APP_TITLE: 'Hermes Web UI',
+  HERMES_OPENROUTER_APP_REFERER: 'https://hermes-studio.ai',
+  HERMES_OPENROUTER_APP_TITLE: 'Hermes Studio',
   HERMES_OPENROUTER_APP_CATEGORIES: 'cli-agent,personal-agent',
 } as const
 
@@ -34,11 +36,41 @@ export interface AgentBridgeManagerRuntimeState {
   endpoint: string
   running: boolean
   ready: boolean
+  attached: boolean
   pid?: number
   starting: boolean
   stopping: boolean
   restartScheduled: boolean
   restartAttempts: number
+}
+
+export type AgentBridgeEndpointKind = 'ipc' | 'tcp' | 'unknown'
+
+export type AgentBridgeReadinessStatus = 'ready' | 'starting' | 'recovering' | 'stopping' | 'restarting' | 'unreachable'
+
+export interface AgentBridgeReadinessOptions {
+  timeoutMs?: number
+  connectRetryMs?: number
+}
+
+export interface AgentBridgeEnsureReadyOptions extends AgentBridgeReadinessOptions {
+  recover?: boolean
+}
+
+export interface AgentBridgeReadiness {
+  endpoint: string
+  endpointKind: AgentBridgeEndpointKind
+  status: AgentBridgeReadinessStatus
+  reachable: boolean
+  ready: boolean
+  running: boolean
+  attached: boolean
+  starting: boolean
+  stopping: boolean
+  restartScheduled: boolean
+  restartAttempts: number
+  pid?: number
+  error?: string
 }
 
 function envPositiveInt(name: string): number | undefined {
@@ -48,8 +80,15 @@ function envPositiveInt(name: string): number | undefined {
   return Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+function isLegacyGlobalDefaultEndpoint(endpoint: string): boolean {
+  const normalized = endpoint.trim().toLowerCase()
+  return normalized === 'ipc:///tmp/hermes-agent-bridge.sock' ||
+    normalized === 'tcp://127.0.0.1:18765' ||
+    normalized === 'tcp://localhost:18765'
+}
+
 export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string | undefined, agentRoot: string | undefined): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HERMES_AGENT_BRIDGE_ENDPOINT: endpoint,
     HERMES_HOME: hermesHome,
@@ -58,6 +97,8 @@ export function buildAgentBridgeProcessEnv(endpoint: string, hermesHome: string 
     HERMES_OPENROUTER_APP_CATEGORIES: process.env.HERMES_OPENROUTER_APP_CATEGORIES || OPENROUTER_WEB_UI_ATTRIBUTION_ENV.HERMES_OPENROUTER_APP_CATEGORIES,
     ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
   }
+  delete env.ANTHROPIC_AUTH_TOKEN
+  return env
 }
 
 function pathCandidates(agentRoot?: string): string[] {
@@ -228,11 +269,11 @@ export function resolveAgentBridgeCommand(options: AgentBridgeManagerOptions = {
 
 function bridgeScriptPath(): string {
   const candidates = [
-    // Built server: dist/server/index.js -> dist/server/agent-bridge/hermes_bridge.py
-    resolve(__dirname, 'agent-bridge', 'hermes_bridge.py'),
+    // Built server: dist/server/index.js -> dist/server/agent-bridge/python/hermes_bridge.py
+    resolve(__dirname, 'agent-bridge', 'python', 'hermes_bridge.py'),
     // ts-node/dev source tree.
-    resolve(__dirname, 'services/hermes/agent-bridge/hermes_bridge.py'),
-    resolve(process.cwd(), 'packages/server/src/services/hermes/agent-bridge/hermes_bridge.py'),
+    resolve(__dirname, 'services/hermes/agent-bridge/python/hermes_bridge.py'),
+    resolve(process.cwd(), 'packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py'),
   ]
   const found = candidates.find(candidate => existsSync(candidate))
   if (!found) {
@@ -243,6 +284,46 @@ function bridgeScriptPath(): string {
 
 function isTcpEndpoint(endpoint: string): boolean {
   return endpoint.startsWith('tcp://')
+}
+
+function classifyEndpointKind(endpoint: string): AgentBridgeEndpointKind {
+  if (endpoint.startsWith('ipc://')) return 'ipc'
+  if (endpoint.startsWith('tcp://')) return 'tcp'
+  return 'unknown'
+}
+
+function normalizeReadinessError(endpoint: string, err: unknown): string {
+  if (!endpoint.trim()) return 'agent bridge endpoint is not configured'
+  const message = err instanceof Error
+    ? err.message
+    : typeof err === 'string'
+      ? err
+      : undefined
+  const normalized = message?.replace(/^Error:\s*/, '').trim()
+  return normalized || 'agent bridge is unreachable'
+}
+
+function mergeStartFailureReadinessError(readiness: AgentBridgeReadiness, err: unknown): string | undefined {
+  if (readiness.reachable) {
+    return undefined
+  }
+
+  const readinessError = readiness.error?.trim()
+  const startError = normalizeReadinessError(readiness.endpoint, err)
+  if (readinessError && readinessError !== startError) {
+    return `${readinessError}; start failed: ${startError}`
+  }
+
+  return readinessError || startError
+}
+
+function isDesktopRuntime(): boolean {
+  return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
+}
+
+function shouldKillStaleIpcBridgeProcesses(): boolean {
+  const raw = String(process.env.HERMES_AGENT_BRIDGE_KILL_STALE_IPC || '').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(raw)
 }
 
 async function canListenTcpEndpoint(endpoint: string): Promise<boolean> {
@@ -261,6 +342,26 @@ async function canListenTcpEndpoint(endpoint: string): Promise<boolean> {
     probe.listen(port, host, () => {
       probe.close(() => done(true))
     })
+  })
+}
+
+async function canConnectTcpEndpoint(endpoint: string): Promise<boolean> {
+  const url = new URL(endpoint)
+  const host = url.hostname || '127.0.0.1'
+  const port = Number(url.port)
+  if (!Number.isFinite(port) || port <= 0) return false
+
+  return await new Promise<boolean>((resolveConnected) => {
+    const socket = createConnection({ port, host })
+    const done = (connected: boolean) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolveConnected(connected)
+    }
+    socket.setTimeout(250)
+    socket.once('connect', () => done(true))
+    socket.once('timeout', () => done(false))
+    socket.once('error', () => done(false))
   })
 }
 
@@ -315,14 +416,79 @@ async function killWindowsEndpointOccupants(endpoint: string): Promise<void> {
   await waitForTcpEndpoint(endpoint, 3000)
 }
 
+/**
+ * Find and kill stale bridge broker/worker processes that are still connected
+ * to the given IPC socket path.  This happens after a `systemctl restart` with
+ * KillMode=process where the Node parent is killed but bridge Python children
+ * survive as orphans.
+ */
+async function killStaleIpcBridgeProcesses(endpoint: string): Promise<void> {
+  const sockPath = endpoint.replace(/^ipc:\/\//, '')
+  if (!sockPath) return
+
+  const isWorkerSock = sockPath.includes('hermes-agent-bridge-workers')
+  // Also derive the worker socket path so we can kill worker orphans too.
+  const workerSockDir = `${sockPath.replace(/\/[^/]+$/, '')}`.replace(
+    /hermes-agent-bridge-workers$/,
+    'hermes-agent-bridge-workers',
+  )
+  const socketsToCheck = [sockPath]
+  if (!isWorkerSock) {
+    // broker socket — also check worker sockets under the same namespace
+    const workerDir = require('path').join(require('path').dirname(sockPath), 'hermes-agent-bridge-workers')
+    try {
+      const fs = await import('fs')
+      for (const entry of await fs.promises.readdir(workerDir)) {
+        socketsToCheck.push(require('path').join(workerDir, entry))
+      }
+    } catch { /* dir may not exist */ }
+  }
+
+  const pidsToKill = new Set<number>()
+  for (const sock of socketsToCheck) {
+    try {
+      // lsof finds processes with the Unix socket open (listening or connected)
+      const out = execFileSync('lsof', ['-F', 'p', '-U', '--', sock], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim()
+      for (const line of out.split('\n')) {
+        const pid = Number(line.replace(/^p/, ''))
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
+          pidsToKill.add(pid)
+        }
+      }
+    } catch {
+      // lsof exits non-zero when nothing found — that's fine
+    }
+  }
+
+  if (!pidsToKill.size) return
+
+  for (const pid of pidsToKill) {
+    try {
+      logger.warn('[agent-bridge] killing stale bridge process pid=%d on IPC socket %s', pid, sockPath)
+      process.kill(pid, 'SIGKILL')
+    } catch (err) {
+      logger.warn(err, '[agent-bridge] failed to kill stale bridge process pid=%d', pid)
+    }
+  }
+  // Give processes time to exit
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
+
 export class AgentBridgeManager {
   endpoint: string
   private readonly options: AgentBridgeManagerOptions
   private readonly explicitEndpoint: boolean
   private child: ChildProcess | null = null
+  private attached = false
   private starting: Promise<void> | null = null
+  private recovery: Promise<AgentBridgeReadiness> | null = null
   private ready = false
   private stopping = false
+  private stopGeneration = 0
   private restartTimer: NodeJS.Timeout | null = null
   private restartAttempts = 0
 
@@ -333,7 +499,7 @@ export class AgentBridgeManager {
   }
 
   get running(): boolean {
-    return !!this.child && !this.child.killed && this.ready
+    return this.ready && (this.attached || (!!this.child && !this.child.killed))
   }
 
   getRuntimeState(): AgentBridgeManagerRuntimeState {
@@ -341,12 +507,280 @@ export class AgentBridgeManager {
       endpoint: this.endpoint,
       running: this.running,
       ready: this.ready,
+      attached: this.attached,
       pid: this.child?.pid,
       starting: !!this.starting,
       stopping: this.stopping,
       restartScheduled: !!this.restartTimer,
       restartAttempts: this.restartAttempts,
     }
+  }
+
+  private transientReadiness(status: AgentBridgeReadinessStatus, error?: string): AgentBridgeReadiness {
+    const state = this.getRuntimeState()
+    const endpoint = state.endpoint
+    const readiness: AgentBridgeReadiness = {
+      endpoint,
+      endpointKind: classifyEndpointKind(endpoint),
+      status,
+      reachable: false,
+      ready: false,
+      running: false,
+      attached: state.attached,
+      starting: state.starting,
+      stopping: state.stopping,
+      restartScheduled: state.restartScheduled,
+      restartAttempts: state.restartAttempts,
+      pid: state.pid,
+    }
+    return error ? { ...readiness, error } : readiness
+  }
+
+  private async waitForPromiseSettlementWithin(promise: Promise<unknown>, timeoutMs?: number): Promise<boolean> {
+    if (!timeoutMs || timeoutMs <= 0) {
+      try {
+        await promise
+      } catch {}
+      return true
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const timeout = setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(false)
+      }, timeoutMs)
+
+      promise.finally(() => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        resolve(true)
+      }).catch(() => {})
+    })
+  }
+
+  private async waitForReadinessWithin(
+    promise: Promise<AgentBridgeReadiness>,
+    timeoutMs?: number,
+  ): Promise<AgentBridgeReadiness | null> {
+    if (!timeoutMs || timeoutMs <= 0) {
+      return promise
+    }
+
+    return new Promise<AgentBridgeReadiness | null>((resolve) => {
+      let settled = false
+      const timeout = setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(null)
+      }, timeoutMs)
+
+      promise.then(
+        (value) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          resolve(value)
+        },
+        (err) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          resolve(this.transientReadiness('recovering', normalizeReadinessError(this.endpoint, err)))
+        },
+      )
+    })
+  }
+
+  private async checkReadinessInternal(
+    options: AgentBridgeReadinessOptions = {},
+    ignoreRecovery = false,
+  ): Promise<AgentBridgeReadiness> {
+    const state = this.getRuntimeState()
+    const endpoint = state.endpoint
+    const endpointKind = classifyEndpointKind(endpoint)
+    const readiness: AgentBridgeReadiness = {
+      endpoint,
+      endpointKind,
+      status: 'unreachable',
+      reachable: false,
+      ready: state.ready,
+      running: state.running,
+      attached: state.attached,
+      starting: state.starting,
+      stopping: state.stopping,
+      restartScheduled: state.restartScheduled,
+      restartAttempts: state.restartAttempts,
+      pid: state.pid,
+    }
+
+    if (state.stopping) {
+      return {
+        ...readiness,
+        status: 'stopping',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (!ignoreRecovery && this.recovery) {
+      return {
+        ...readiness,
+        status: 'recovering',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (state.starting) {
+      return {
+        ...readiness,
+        status: 'starting',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (state.restartScheduled) {
+      return {
+        ...readiness,
+        status: 'restarting',
+        reachable: false,
+        ready: false,
+        running: false,
+      }
+    }
+
+    if (!endpoint.trim()) {
+      return {
+        ...readiness,
+        ready: false,
+        running: false,
+        error: normalizeReadinessError(endpoint, undefined),
+      }
+    }
+
+    try {
+      const client = new AgentBridgeClient({
+        endpoint,
+        timeoutMs: options.timeoutMs ?? 1000,
+        connectRetryMs: options.connectRetryMs ?? 0,
+      })
+      await client.ping()
+      return {
+        ...readiness,
+        status: 'ready',
+        reachable: true,
+        ready: true,
+        running: true,
+      }
+    } catch (err) {
+      return {
+        ...readiness,
+        ready: false,
+        running: false,
+        error: normalizeReadinessError(endpoint, err),
+      }
+    }
+  }
+
+  async checkReadiness(options: AgentBridgeReadinessOptions = {}): Promise<AgentBridgeReadiness> {
+    return this.checkReadinessInternal(options)
+  }
+
+  private async performManagedRecovery(
+    child: ChildProcess,
+    options: AgentBridgeEnsureReadyOptions,
+  ): Promise<AgentBridgeReadiness> {
+    const recoveryStopGeneration = this.stopGeneration
+    this.ready = false
+
+    const exited = await this.waitForManagedChildExit(child)
+    if (!exited) {
+      const message = `managed child pid=${child.pid} did not exit after SIGTERM/SIGKILL during recovery`
+      const recoveryReadiness = await this.checkReadinessInternal({ ...options, connectRetryMs: 0 }, true)
+      return {
+        ...recoveryReadiness,
+        status: 'unreachable',
+        reachable: false,
+        ready: false,
+        running: false,
+        error: recoveryReadiness.error ? `${message}; ${recoveryReadiness.error}` : message,
+      }
+    }
+
+    if (this.stopGeneration !== recoveryStopGeneration || this.stopping) {
+      return this.checkReadinessInternal({ ...options, connectRetryMs: 0 }, true)
+    }
+
+    try {
+      await this.start()
+      return await this.checkReadinessInternal(options, true)
+    } catch (err) {
+      const recoveredReadiness = await this.checkReadinessInternal({ ...options, connectRetryMs: 0 }, true)
+      const error = mergeStartFailureReadinessError(recoveredReadiness, err)
+      return error
+        ? { ...recoveredReadiness, error }
+        : recoveredReadiness
+    }
+  }
+
+  async ensureReady(options: AgentBridgeEnsureReadyOptions = {}): Promise<AgentBridgeReadiness> {
+    const readiness = await this.checkReadiness(options)
+    if (readiness.reachable) {
+      return readiness
+    }
+
+    if (options.recover === false) {
+      return readiness
+    }
+
+    if (this.recovery) {
+      const recovered = await this.waitForReadinessWithin(this.recovery, options.timeoutMs)
+      return recovered ?? this.transientReadiness('recovering')
+    }
+
+    if (readiness.status === 'starting' && this.starting) {
+      const completed = await this.waitForPromiseSettlementWithin(this.starting, options.timeoutMs)
+      return completed
+        ? this.checkReadiness(options)
+        : this.transientReadiness('starting')
+    }
+
+    if (readiness.status !== 'unreachable') {
+      return readiness
+    }
+
+    const child = this.child
+    if (!child || this.attached) {
+      this.ready = false
+      return readiness
+    }
+
+    if (isLegacyGlobalDefaultEndpoint(this.endpoint)) {
+      this.ready = false
+      const message = 'managed bridge recovery is disabled for legacy global default endpoint; merge endpoint scoping before enabling recovery'
+      return {
+        ...readiness,
+        error: readiness.error ? `${readiness.error}; ${message}` : message,
+      }
+    }
+
+    let recoveryPromise: Promise<AgentBridgeReadiness>
+    recoveryPromise = this.performManagedRecovery(child, options).finally(() => {
+      if (this.recovery === recoveryPromise) {
+        this.recovery = null
+      }
+    })
+    this.recovery = recoveryPromise
+
+    const recovered = await this.waitForReadinessWithin(recoveryPromise, options.timeoutMs)
+    return recovered ?? this.transientReadiness('recovering')
   }
 
   async start(): Promise<void> {
@@ -365,7 +799,85 @@ export class AgentBridgeManager {
     }
   }
 
+  private async waitForManagedChildExit(child: ChildProcess): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const gracefulTimeoutMs = envPositiveInt('HERMES_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS')
+        ?? DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS
+      const sigkillWaitMs = envPositiveInt('HERMES_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS')
+        ?? DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS
+
+      let settled = false
+      let gracefulTimeout: NodeJS.Timeout | null = null
+      let sigkillTimeout: NodeJS.Timeout | null = null
+
+      const cleanup = () => {
+        if (gracefulTimeout) clearTimeout(gracefulTimeout)
+        if (sigkillTimeout) clearTimeout(sigkillTimeout)
+        child.off('exit', onExit)
+      }
+
+      const finish = (exited: boolean) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(exited)
+      }
+
+      const onExit = () => {
+        if (this.child === child) {
+          this.child = null
+        }
+        finish(true)
+      }
+
+      const sendSignal = (signal: NodeJS.Signals) => {
+        try {
+          // Node marks child.killed=true after a signal is successfully sent, not
+          // after the process has actually exited. Recovery must still be able to
+          // escalate SIGTERM -> SIGKILL while waiting for an observed exit.
+          if (signal === 'SIGKILL' || !child.killed) {
+            child.kill(signal)
+          }
+        } catch (err) {
+          logger.warn(err, '[agent-bridge] failed to signal managed child pid=%s signal=%s', child.pid, signal)
+        }
+      }
+
+      if (child.exitCode != null || child.signalCode != null) {
+        onExit()
+        return
+      }
+
+      child.once('exit', onExit)
+
+      gracefulTimeout = setTimeout(() => {
+        if (settled) return
+        logger.warn(
+          '[agent-bridge] managed child pid=%s did not exit after SIGTERM within %dms; sending SIGKILL',
+          child.pid,
+          gracefulTimeoutMs,
+        )
+        sendSignal('SIGKILL')
+        sigkillTimeout = setTimeout(() => {
+          if (settled) return
+          logger.warn(
+            '[agent-bridge] managed child pid=%s still has not exited %dms after SIGKILL; not starting a replacement',
+            child.pid,
+            sigkillWaitMs,
+          )
+          finish(false)
+        }, sigkillWaitMs)
+      }, gracefulTimeoutMs)
+
+      sendSignal('SIGTERM')
+    })
+  }
+
   private async startProcess(): Promise<void> {
+    if (await this.attachExistingBridge()) {
+      return
+    }
+
     const script = bridgeScriptPath()
     const command = resolveAgentBridgeCommand(this.options)
     await this.prepareEndpoint()
@@ -381,27 +893,28 @@ export class AgentBridgeManager {
     const child = spawn(command.command, args, {
       env,
       cwd: process.cwd(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: process.platform !== 'win32',
       windowsHide: true,
     })
     this.child = child
+    this.attached = false
     this.ready = false
 
     child.once('exit', (code, signal) => {
-      const shouldRestart = this.ready && !this.stopping && this.child === child && this.autoRestartEnabled()
+      const isCurrentChild = this.child === child
+      if (!isCurrentChild) {
+        logger.warn('[agent-bridge] stale managed child exit ignored code=%s signal=%s pid=%s', code, signal, child.pid)
+        return
+      }
+      const shouldRestart = this.ready && !this.stopping && this.autoRestartEnabled()
       logger.warn('[agent-bridge] exited code=%s signal=%s', code, signal)
       this.ready = false
-      if (this.child === child) this.child = null
+      this.child = null
       if (shouldRestart) this.scheduleRestart(code, signal)
     })
 
-    child.stderr?.on('data', chunk => {
-      const text = String(chunk).trim()
-      if (text) logger.warn('[agent-bridge] %s', text)
-    })
-
     await new Promise<void>((resolveReady, rejectReady) => {
-      let buffered = ''
       const startupTimeoutMs = this.options.startupTimeoutMs
         ?? envPositiveInt('HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS')
         ?? DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS
@@ -416,51 +929,75 @@ export class AgentBridgeManager {
         child.off('error', onError)
       }
 
+      const markReady = () => {
+        if (readyResolved) return
+        this.ready = true
+        this.restartAttempts = 0
+        readyResolved = true
+        cleanup()
+        resolveReady()
+      }
+
       const onError = (err: Error) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(err)
       }
 
       const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null) => {
         cleanup()
-        child.stdout?.off('data', onStdout)
         rejectReady(new Error(`agent bridge exited before ready code=${code} signal=${signal}`))
       }
 
       let readyResolved = false
-      const onStdout = (chunk: Buffer) => {
-        const text = chunk.toString('utf8')
-        buffered += text
-        for (;;) {
-          const newline = buffered.indexOf('\n')
-          if (newline < 0) break
-          const line = buffered.slice(0, newline).trim()
-          buffered = buffered.slice(newline + 1)
-          if (!line) continue
-          logger.info('[agent-bridge] %s', line)
-          if (!readyResolved) {
-            try {
-              const parsed = JSON.parse(line)
-              if (parsed?.event === 'ready') {
-                this.ready = true
-                this.restartAttempts = 0
-                readyResolved = true
-                cleanup()
-                resolveReady()
-                return
-              }
-            } catch {}
-          }
-        }
-      }
 
       child.once('error', onError)
       child.once('exit', onExitBeforeReady)
-      child.stdout?.on('data', onStdout)
+
+      const probe = async () => {
+        const client = new AgentBridgeClient({
+          endpoint: this.endpoint,
+          timeoutMs: 1000,
+          connectRetryMs: 0,
+        })
+        while (!readyResolved && !child.killed) {
+          try {
+            await client.ping()
+            markReady()
+            return
+          } catch {
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+        }
+      }
+      probe().catch(onError)
     })
 
     logger.info('[agent-bridge] ready at %s', this.endpoint)
+    if (process.platform !== 'win32') {
+      child.unref()
+    }
+  }
+
+  private async attachExistingBridge(): Promise<boolean> {
+    try {
+      const client = new AgentBridgeClient({
+        endpoint: this.endpoint,
+        timeoutMs: envPositiveInt('HERMES_AGENT_BRIDGE_ATTACH_TIMEOUT_MS') ?? 5000,
+        connectRetryMs: envPositiveInt('HERMES_AGENT_BRIDGE_ATTACH_RETRY_MS') ?? 5000,
+      })
+      await client.ping()
+      this.child = null
+      this.attached = true
+      this.ready = true
+      this.restartAttempts = 0
+      logger.info('[agent-bridge] attached to existing bridge at %s', this.endpoint)
+      return true
+    } catch (err) {
+      logger.debug(err, '[agent-bridge] no reusable bridge at %s', this.endpoint)
+      this.attached = false
+      this.ready = false
+      return false
+    }
   }
 
   private async prepareEndpoint(): Promise<void> {
@@ -468,6 +1005,12 @@ export class AgentBridgeManager {
       if (!(await canListenTcpEndpoint(this.endpoint))) {
         await killWindowsEndpointOccupants(this.endpoint)
       }
+    }
+    // Preserve surviving bridge processes by default so Web UI restarts do not
+    // terminate active conversations. Operators can opt in to cleanup for
+    // known-stale sockets with HERMES_AGENT_BRIDGE_KILL_STALE_IPC=1.
+    if (this.endpoint.startsWith('ipc://') && process.platform !== 'win32' && shouldKillStaleIpcBridgeProcesses()) {
+      await killStaleIpcBridgeProcesses(this.endpoint)
     }
     process.env.HERMES_AGENT_BRIDGE_ENDPOINT = this.endpoint
   }
@@ -503,21 +1046,46 @@ export class AgentBridgeManager {
   }
 
   async stop(): Promise<void> {
+    this.stopGeneration += 1
     this.stopping = true
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
     }
     const child = this.child
-    if (!child) return
+    if (!child) {
+      if (this.attached || this.ready) {
+        try {
+          const client = new AgentBridgeClient({
+            endpoint: this.endpoint,
+            timeoutMs: envPositiveInt('HERMES_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS') ?? 5000,
+            connectRetryMs: 0,
+          })
+          await client.shutdown()
+        } catch (err) {
+          logger.warn(err, '[agent-bridge] failed to request attached bridge shutdown')
+        }
+      }
+      this.ready = false
+      this.attached = false
+      this.stopping = false
+      return
+    }
     this.ready = false
+    this.attached = false
     this.child = null
 
     await new Promise<void>((resolveStop) => {
+      // Allow enough time for the broker to gracefully stop its worker
+      // subprocesses (WorkerProcess.stop uses a 3s timeout per worker).
       const timeout = setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL')
+        // `child.killed` only means a signal was sent. Escalate on shutdown
+        // timeout even if SIGTERM was already sent by recovery.
+        try {
+          child.kill('SIGKILL')
+        } catch {}
         resolveStop()
-      }, 1500)
+      }, 10_000)
       child.once('exit', () => {
         clearTimeout(timeout)
         resolveStop()
@@ -526,6 +1094,7 @@ export class AgentBridgeManager {
         child.kill('SIGTERM')
       }
     })
+    this.stopping = false
   }
 }
 

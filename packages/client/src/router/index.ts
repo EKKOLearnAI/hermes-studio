@@ -31,6 +31,16 @@ const router = createRouter({
       component: () => import('@/views/hermes/HistoryView.vue'),
     },
     {
+      path: '/hermes/global-agent',
+      name: 'hermes.globalAgent',
+      component: () => import('@/views/hermes/GlobalAgentView.vue'),
+    },
+    {
+      path: '/hermes/global-agent/session/:sessionId',
+      name: 'hermes.globalAgentSession',
+      component: () => import('@/views/hermes/GlobalAgentView.vue'),
+    },
+    {
       path: '/hermes/jobs',
       name: 'hermes.jobs',
       component: () => import('@/views/hermes/JobsView.vue'),
@@ -101,6 +111,12 @@ const router = createRouter({
       path: '/hermes/terminal',
       name: 'hermes.terminal',
       component: () => import('@/views/hermes/TerminalView.vue'),
+      meta: { requiresSuperAdmin: true },
+    },
+    {
+      path: '/hermes/devices',
+      name: 'hermes.devices',
+      component: () => import('@/views/hermes/DevicesView.vue'),
     },
     {
       path: '/hermes/group-chat',

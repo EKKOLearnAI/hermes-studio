@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getActiveProfileName } from '../services/hermes/hermes-profile'
 import { getProfileUploadDir } from '../services/hermes/upload-paths'
+import { MultipartParseError, parseMultipartBoundary, parseMultipartFilename, splitMultipart } from '../lib/multipart'
 
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024 // 50MB
 
@@ -15,8 +16,8 @@ export async function handleUpload(ctx: any) {
   if (!contentType.startsWith('multipart/form-data')) {
     ctx.status = 400; ctx.body = { error: 'Expected multipart/form-data' }; return
   }
-  const boundary = '--' + contentType.split('boundary=')[1]
-  if (!boundary || boundary === '--undefined') {
+  const boundaryBuf = parseMultipartBoundary(contentType)
+  if (!boundaryBuf) {
     ctx.status = 400; ctx.body = { error: 'Missing boundary' }; return
   }
   const chunks: Buffer[] = []
@@ -29,7 +30,6 @@ export async function handleUpload(ctx: any) {
     chunks.push(chunk)
   }
   const raw = Buffer.concat(chunks)
-  const boundaryBuf = Buffer.from(boundary)
   const parts = splitMultipart(raw, boundaryBuf)
   const results: { name: string; path: string }[] = []
   const uploadDir = getProfileUploadDir(requestedProfile(ctx))
@@ -40,14 +40,16 @@ export async function handleUpload(ctx: any) {
     const headerBuf = part.subarray(0, headerEnd)
     const header = headerBuf.toString('utf-8')
     const data = part.subarray(headerEnd + 4, part.length - 2)
-    let filename = ''
-    const filenameStarMatch = header.match(/filename\*=UTF-8''(.+)/i)
-    if (filenameStarMatch) { filename = decodeURIComponent(filenameStarMatch[1]) }
-    else {
-      const filenameMatch = header.match(/filename="([^"]+)"/)
-      if (!filenameMatch) continue
-      filename = filenameMatch[1]
+    let filename: string | null
+    try {
+      filename = parseMultipartFilename(header)
+    } catch (error) {
+      if (error instanceof MultipartParseError) {
+        ctx.status = 400; ctx.body = { error: error.message }; return
+      }
+      throw error
     }
+    if (!filename) continue
     const ext = filename.includes('.') ? '.' + filename.split('.').pop() : ''
     const savedName = randomBytes(8).toString('hex') + ext
     const savedPath = join(uploadDir, savedName)
@@ -55,16 +57,4 @@ export async function handleUpload(ctx: any) {
     results.push({ name: filename, path: savedPath })
   }
   ctx.body = { files: results }
-}
-
-function splitMultipart(raw: Buffer, boundary: Buffer): Buffer[] {
-  const parts: Buffer[] = []
-  let start = 0
-  while (true) {
-    const idx = raw.indexOf(boundary, start)
-    if (idx === -1) break
-    if (start > 0) { parts.push(raw.subarray(start + 2, idx)) }
-    start = idx + boundary.length
-  }
-  return parts
 }

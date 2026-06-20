@@ -4,9 +4,18 @@ export interface SessionSummary {
   id: string
   profile?: string | null
   source: string
+  agent?: string
+  agent_mode?: 'global' | 'scoped' | string
+  agent_session_id?: string
+  agent_native_session_id?: string
   model: string
   provider?: string
   title: string | null
+  parent_session_id?: string | null
+  fork_point_message_id?: string | null
+  parent_title?: string | null
+  parent_last_message?: string | null
+  parent_last_message_role?: string | null
   preview?: string
   started_at: number
   ended_at: number | null
@@ -30,6 +39,24 @@ export interface SessionDetail extends SessionSummary {
   messages: HermesMessage[]
 }
 
+export interface SessionContextMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: number
+  reasoning?: string | null
+  reasoning_content?: string | null
+}
+
+export interface SessionContext {
+  session_id: string
+  profile?: string | null
+  source?: string
+  title?: string | null
+  messages: SessionContextMessage[]
+  message_count: number
+}
+
 export interface PaginatedSessionMessages {
   session: SessionSummary
   messages: HermesMessage[]
@@ -50,6 +77,8 @@ export interface HermesMessage {
   session_id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
   content: string
+  display_role?: 'user' | 'assistant' | 'system' | 'tool' | 'command' | null
+  display_content?: string | null
   tool_call_id: string | null
   tool_calls: any[] | null
   tool_name: string | null
@@ -105,10 +134,21 @@ export async function fetchSession(id: string, profile?: string | null): Promise
   }
 }
 
+export async function fetchSessionContext(id: string, profile?: string | null): Promise<SessionContext | null> {
+  try {
+    const params = new URLSearchParams()
+    if (profile) params.set('profile', profile)
+    const query = params.toString()
+    return await request<SessionContext>(`/api/hermes/sessions/${encodeURIComponent(id)}/context${query ? `?${query}` : ''}`)
+  } catch {
+    return null
+  }
+}
+
 export async function fetchSessionMessagesPage(
   id: string,
   offset: number,
-  limit = 300,
+  limit = 150,
   profile?: string | null,
 ): Promise<PaginatedSessionMessages | null> {
   try {

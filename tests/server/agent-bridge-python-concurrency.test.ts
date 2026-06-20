@@ -52,6 +52,10 @@ approval = types.ModuleType("tools.approval")
 approval._session_key = contextvars.ContextVar("approval_session_key", default="")
 approval._notify = {}
 approval._resolved_gateway = []
+approval._session_approved = {}
+approval._permanent_approved = set()
+approval._saved_permanent = set()
+approval._check_execute_code_calls = []
 
 def set_current_session_key(session_key):
     return approval._session_key.set(session_key or "")
@@ -72,15 +76,43 @@ def resolve_gateway_approval(session_key, choice):
     approval._resolved_gateway.append((session_key, choice))
     return 1
 
+def is_approved(session_key, pattern_key):
+    return (
+        pattern_key in approval._permanent_approved or
+        pattern_key in approval._session_approved.get(session_key, set())
+    )
+
+def approve_session(session_key, pattern_key):
+    approval._session_approved.setdefault(session_key, set()).add(pattern_key)
+
+def approve_permanent(pattern_key):
+    approval._permanent_approved.add(pattern_key)
+
+def save_permanent_allowlist(patterns):
+    approval._saved_permanent = set(patterns)
+
+def load_permanent_allowlist():
+    return set(approval._permanent_approved)
+
+def check_execute_code_guard(code, env_type):
+    approval._check_execute_code_calls.append((code, env_type))
+    return {"approved": False, "message": "upstream prompt"}
+
 approval.set_current_session_key = set_current_session_key
 approval.reset_current_session_key = reset_current_session_key
 approval.get_current_session_key = get_current_session_key
 approval.register_gateway_notify = register_gateway_notify
 approval.unregister_gateway_notify = unregister_gateway_notify
 approval.resolve_gateway_approval = resolve_gateway_approval
+approval.is_approved = is_approved
+approval.approve_session = approve_session
+approval.approve_permanent = approve_permanent
+approval.save_permanent_allowlist = save_permanent_allowlist
+approval.load_permanent_allowlist = load_permanent_allowlist
+approval.check_execute_code_guard = check_execute_code_guard
 sys.modules["tools.approval"] = approval
 
-path = Path("packages/server/src/services/hermes/agent-bridge/hermes_bridge.py")
+path = Path("packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py")
 spec = importlib.util.spec_from_file_location("hermes_bridge", path)
 bridge = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = bridge
@@ -151,6 +183,221 @@ def wait_for(condition, timeout=20):
 `
 
 describe('agent bridge Python session concurrency', () => {
+  it('hot-switches a loaded idle session model without recreating the session', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": f"https://{provider or 'openai'}.example/v1",
+        "api_key": f"key:{model}",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+
+class SwitchableAgent:
+    def __init__(self):
+        self.model = "old-model"
+        self.provider = "openai"
+        self.base_url = "https://old.example/v1"
+        self.api_key = "old-key"
+        self.api_mode = "chat_completions"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+        self.base_url = kwargs["base_url"]
+        self.api_key = kwargs["api_key"]
+        self.api_mode = kwargs["api_mode"]
+
+agent = SwitchableAgent()
+session = bridge.AgentSession(
+    session_id="session-model",
+    agent=agent,
+    config={"profile": "default", "model": "old-model", "provider": "openai"},
+)
+pool._sessions["session-model"] = session
+
+result = pool.switch_session_model("session-model", "new-model", "anthropic", "default")
+
+assert result["switched"] is True
+assert pool._sessions["session-model"] is session
+assert agent.switch_calls == [{
+    "new_model": "new-model",
+    "new_provider": "anthropic",
+    "api_key": "key:new-model",
+    "base_url": "https://anthropic.example/v1",
+    "api_mode": "chat_completions",
+}]
+assert session.config["model"] == "new-model"
+assert session.config["provider"] == "anthropic"
+assert "pending_model_switch_note" in session.config
+`)
+  })
+
+  it('defers a loaded session model switch while a run is active and applies it after completion', () => {
+    runPython(String.raw`
+${harness}
+
+def fake_resolve_runtime(model, provider=None):
+    return {
+        "provider": provider or "openai",
+        "base_url": f"https://{provider or 'openai'}.example/v1",
+        "api_key": f"key:{model}",
+        "api_mode": "chat_completions",
+    }
+
+bridge._resolve_runtime = fake_resolve_runtime
+pool, _fake_db = make_pool()
+release = threading.Event()
+
+class RunningAgent:
+    def __init__(self):
+        self.model = "old-model"
+        self.provider = "openai"
+        self.switch_calls = []
+
+    def switch_model(self, **kwargs):
+        self.switch_calls.append(kwargs)
+        self.model = kwargs["new_model"]
+        self.provider = kwargs["new_provider"]
+
+    def run_conversation(self, message, **kwargs):
+        release.wait(timeout=5)
+        return {"messages": [{"role": "assistant", "content": "done"}]}
+
+agent = RunningAgent()
+session, record, thread = start_manual_run(pool, "running-model", agent)
+session.config.update({"profile": "default", "model": "old-model", "provider": "openai"})
+assert wait_for(lambda: session.running)
+
+result = pool.switch_session_model("running-model", "new-model", "anthropic", "default")
+assert result["deferred"] is True
+assert agent.switch_calls == []
+
+release.set()
+thread.join(timeout=5)
+
+assert record.status == "complete"
+assert agent.switch_calls == [{
+    "new_model": "new-model",
+    "new_provider": "anthropic",
+    "api_key": "key:new-model",
+    "base_url": "https://anthropic.example/v1",
+    "api_mode": "chat_completions",
+}]
+assert session.config["model"] == "new-model"
+assert session.config["provider"] == "anthropic"
+assert "pending_model_switch" not in session.config
+`)
+  })
+
+  it('syncs generated result tail to the session DB when the agent crashes after generation', () => {
+    runPython(String.raw`
+${harness}
+
+class CrashingAgent:
+    def run_conversation(self, message, **kwargs):
+        self.messages = [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "assistant survived"},
+        ]
+        raise RuntimeError("late post-processing failure")
+
+pool, fake_db = make_pool()
+_session, record, thread = start_manual_run(pool, "tail-sync", CrashingAgent())
+thread.join(timeout=5)
+
+assert record.status == "error"
+messages = fake_db.get_messages("tail-sync")
+assert [(msg["role"], msg["content"]) for msg in messages] == [
+    ("user", "message:tail-sync"),
+    ("assistant", "assistant survived"),
+]
+`)
+  })
+
+  it('only appends missing generated tail messages when the session DB is partially flushed', () => {
+    runPython(String.raw`
+${harness}
+
+class PartiallyFlushedAgent:
+    def __init__(self, db):
+        self.db = db
+
+    def run_conversation(self, message, **kwargs):
+        self.db.append_message("partial-tail-sync", "assistant", "already flushed")
+        self.messages = [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "already flushed"},
+            {"role": "tool", "content": "missing tool result", "tool_name": "demo"},
+        ]
+        raise RuntimeError("late post-processing failure")
+
+pool, fake_db = make_pool()
+_session, record, thread = start_manual_run(pool, "partial-tail-sync", PartiallyFlushedAgent(fake_db))
+thread.join(timeout=5)
+
+assert record.status == "error"
+messages = fake_db.get_messages("partial-tail-sync")
+assert [(msg["role"], msg["content"]) for msg in messages] == [
+    ("user", "message:partial-tail-sync"),
+    ("assistant", "already flushed"),
+    ("tool", "missing tool result"),
+]
+`)
+  })
+
+  it('remembers execute_code approvals inside the bridge without patching upstream files', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+
+notify = pool._gateway_approval_notify("session-a")
+notify({
+    "command": "execute_code <<'PY'\nprint(1)\nPY",
+    "description": "execute_code script execution",
+    "pattern_key": "execute_code",
+    "pattern_keys": ["execute_code"],
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+result = pool.respond_approval(approval_id, "session")
+assert result["resolved"] is True
+assert approval.is_approved("session-a", "execute_code") is True
+assert approval._saved_permanent == set()
+
+notify = pool._gateway_approval_notify("session-b")
+notify({
+    "command": "execute_code <<'PY'\nprint(2)\nPY",
+    "description": "execute_code script execution",
+    "pattern_key": "execute_code",
+    "pattern_keys": ["execute_code"],
+})
+approval_id = next(iter(pool._gateway_approval_requests.keys()))
+result = pool.respond_approval(approval_id, "always")
+assert result["resolved"] is True
+assert approval.is_approved("session-b", "execute_code") is True
+assert "execute_code" in approval._permanent_approved
+assert "execute_code" in approval._saved_permanent
+
+bridge._install_execute_code_approval_memory_patch()
+token = approval.set_current_session_key("session-c")
+try:
+    approval.approve_session("session-c", "execute_code")
+    check_result = approval.check_execute_code_guard("print(3)", "local")
+    assert check_result["approved"] is True
+    assert approval._check_execute_code_calls == []
+finally:
+    approval.reset_current_session_key(token)
+`)
+  })
+
   it('routes terminal/gateway approvals and stream callbacks per concurrent session', () => {
     runPython(String.raw`
 ${harness}
@@ -390,6 +637,108 @@ assert resp["running_sessions_by_profile"] == {"default": 1}
 `)
   })
 
+  it('does not start a worker for unloaded broker status checks', () => {
+    runPython(String.raw`
+${harness}
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "session-a",
+    "profile": "default",
+})
+
+assert resp["session_id"] == "session-a"
+assert resp["running"] is False
+assert resp["loaded"] is False
+assert broker._workers == {}
+`)
+  })
+
+  it('forwards unloaded-safe status checks to an existing routed worker', () => {
+    runPython(String.raw`
+${harness}
+
+class StatusWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+
+    def __init__(self):
+        self.profile = "default"
+        self.key = "default"
+        self.requests = []
+
+    def request(self, req, timeout=None):
+        self.requests.append(req)
+        assert req["action"] == "status"
+        assert "worker_key" not in req
+        return {
+            "ok": True,
+            "session_id": req["session_id"],
+            "exists": True,
+            "running": True,
+            "current_run_id": "run-a",
+        }
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+worker = StatusWorker()
+broker._workers["default"] = worker
+broker._session_profile["session-a"] = "default"
+broker._session_worker_key["session-a"] = "default"
+
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "session-a",
+    "profile": "default",
+})
+
+assert resp["running"] is True
+assert resp["current_run_id"] == "run-a"
+assert resp["loaded"] is True
+assert len(worker.requests) == 1
+assert len(broker._workers) == 1
+`)
+  })
+
+  it('does not record a route for missing sessions during unloaded-safe status checks', () => {
+    runPython(String.raw`
+${harness}
+
+class StatusWorker:
+    running = True
+    pid = 12345
+    endpoint = "ipc:///tmp/worker.sock"
+    last_used_at = 12.5
+    profile = "default"
+    key = "default"
+
+    def request(self, req, timeout=None):
+        return {
+            "ok": True,
+            "session_id": req["session_id"],
+            "exists": False,
+            "running": False,
+            "message_count": 0,
+        }
+
+broker = bridge.BridgeBroker("ipc:///tmp/unused.sock")
+broker._workers["default"] = StatusWorker()
+
+resp = broker.handle({
+    "action": "status_if_loaded",
+    "session_id": "missing-session",
+    "profile": "default",
+})
+
+assert resp["exists"] is False
+assert resp["loaded"] is True
+assert broker._session_profile == {}
+assert broker._session_worker_key == {}
+`)
+  })
+
   it('routes worker-keyed broker requests without stopping the worker on session destroy', () => {
     runPython(String.raw`
 ${harness}
@@ -556,6 +905,96 @@ assert calls == [("cmd", "desc", False)]
 `)
   })
 
+  it('does not persist session-level approval for repeated memory write prompts', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+callback = pool._approval_callback("session-a")
+result = {}
+
+def first_prompt():
+    result["first"] = callback("memory text", "Save to memory: add to memory", allow_permanent=False)
+
+thread = threading.Thread(target=first_prompt)
+thread.start()
+
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+assert pool.respond_approval(approval_id, "session") == {
+    "approval_id": approval_id,
+    "resolved": True,
+    "choice": "session",
+}
+thread.join(timeout=5)
+assert result["first"] == "session"
+
+second_result = {}
+def second_prompt():
+    second_result["choice"] = callback("memory text 2", "Save to memory: add to memory", allow_permanent=False)
+
+thread = threading.Thread(target=second_prompt)
+thread.start()
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+pool.respond_approval(approval_id, "once")
+thread.join(timeout=5)
+assert second_result["choice"] == "once"
+`)
+  })
+
+  it('keeps bound approval session when Hermes propagates callback to tool workers', () => {
+    runPython(String.raw`
+${harness}
+
+pool, _fake_db = make_pool()
+pool._install_approval_dispatcher_for_current_thread("session-a")
+parent_callback = terminal_tool._get_approval_callback()
+assert parent_callback is not None
+
+result = {}
+def worker_prompt():
+    # Hermes propagates the terminal approval callback object to worker threads,
+    # but it does not propagate bridge_pool._run_context because that is a
+    # bridge-local threading.local(). The callback itself must carry session-a.
+    assert getattr(pool._run_context, "session_id", "") == ""
+    result["first"] = parent_callback("memory text", "Save to memory: add preference", allow_permanent=False)
+
+thread = threading.Thread(target=worker_prompt)
+thread.start()
+
+deadline = time.time() + 5
+approval_id = None
+while time.time() < deadline:
+    with pool._lock:
+        approval_id = next(iter(pool._approval_requests), None)
+    if approval_id:
+        break
+    time.sleep(0.01)
+
+assert approval_id is not None
+pool.respond_approval(approval_id, "session")
+thread.join(timeout=5)
+assert result["first"] == "session"
+`)
+  })
+
   it('cleans broker workers and wires worker parent watchdog state', () => {
     runPython(String.raw`
 ${harness}
@@ -600,6 +1039,8 @@ class FakeProcess:
 def fake_popen(args, **kwargs):
     created["args"] = args
     created["env"] = kwargs["env"]
+    created["encoding"] = kwargs.get("encoding")
+    created["errors"] = kwargs.get("errors")
     return FakeProcess()
 
 original_popen = bridge.subprocess.Popen
@@ -607,6 +1048,7 @@ original_getpid = bridge.os.getpid
 try:
     bridge.subprocess.Popen = fake_popen
     bridge.os.getpid = lambda: 4242
+    bridge.os.environ["ANTHROPIC_AUTH_TOKEN"] = "stale-bearer-token"
     proc_worker = bridge.WorkerProcess("default:compression:session-a", "default", "ipc:///tmp/worker.sock", "/agent", "/home")
     proc_worker._pipe_stderr = lambda: None
     proc_worker._wait_ready = lambda: None
@@ -614,9 +1056,13 @@ try:
 finally:
     bridge.subprocess.Popen = original_popen
     bridge.os.getpid = original_getpid
+    bridge.os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
 
 assert created["env"]["HERMES_AGENT_BRIDGE_BROKER_PID"] == "4242"
 assert created["env"]["HERMES_AGENT_BRIDGE_WORKER_PROFILE"] == "default"
+assert "ANTHROPIC_AUTH_TOKEN" not in created["env"]
+assert created["encoding"] == "utf-8"
+assert created["errors"] == "replace"
 
 stop_event = threading.Event()
 seen_pids = []

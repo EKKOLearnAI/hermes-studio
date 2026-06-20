@@ -1,8 +1,25 @@
-import { copyFile, mkdir, readdir, rm, stat } from 'fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { existsSync, readdirSync } from 'fs'
+import { createHash } from 'crypto'
 import { join, resolve } from 'path'
 import { detectHermesRootHome } from './hermes-path'
 import { logger } from '../logger'
+
+const MANIFEST_FILENAME = '.webui-managed-skills.json'
+const MANIFEST_OWNER = 'hermes-web-ui'
+const HASH_IGNORED_FILENAMES = new Set([
+  '.DS_Store',
+  'Thumbs.db',
+  '.wui-managed.json', // legacy per-skill marker; do not treat it as skill payload
+])
+
+interface ManagedSkillManifestEntry {
+  owner?: string
+  source_hash?: string
+  installed_hash?: string
+}
+
+type ManagedSkillManifest = Record<string, ManagedSkillManifestEntry>
 
 export interface SkillInjectionTargetResult {
   profile?: string
@@ -140,28 +157,118 @@ export class HermesSkillInjector {
     }
 
     await mkdir(targetDir, { recursive: true })
+    const manifest = await this.readManifest(targetDir)
+    let manifestChanged = false
+
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const sourceSkillDir = join(this.sourceDir, entry.name)
       const targetSkillDir = join(targetDir, entry.name)
+      const sourceHash = await this.hashDir(sourceSkillDir)
       const existed = existsSync(targetSkillDir)
-      if (existsSync(targetSkillDir)) {
-        await rm(targetSkillDir, { recursive: true, force: true })
+
+      if (!existed) {
+        const installedHash = await this.installManagedSkill(sourceSkillDir, targetSkillDir)
+        manifest[entry.name] = { owner: MANIFEST_OWNER, source_hash: sourceHash, installed_hash: installedHash }
+        manifestChanged = true
+        result.injected.push(entry.name)
+        continue
       }
-      await this.copyDir(sourceSkillDir, targetSkillDir)
-      if (existed) result.updated.push(entry.name)
-      else result.injected.push(entry.name)
+
+      const currentHash = await this.hashDir(targetSkillDir)
+      const manifestEntry = manifest[entry.name]
+      const isManaged = manifestEntry?.owner === MANIFEST_OWNER
+      const isUnchangedManagedCopy = isManaged && manifestEntry?.installed_hash === currentHash
+      const isExistingBundledCopy = !manifestEntry && currentHash === sourceHash
+
+      if (isUnchangedManagedCopy) {
+        if (manifestEntry?.source_hash !== sourceHash) {
+          const installedHash = await this.installManagedSkill(sourceSkillDir, targetSkillDir)
+          manifest[entry.name] = { owner: MANIFEST_OWNER, source_hash: sourceHash, installed_hash: installedHash }
+          manifestChanged = true
+          result.updated.push(entry.name)
+        }
+        continue
+      }
+
+      if (isExistingBundledCopy) {
+        manifest[entry.name] = { owner: MANIFEST_OWNER, source_hash: sourceHash, installed_hash: currentHash }
+        manifestChanged = true
+        result.updated.push(entry.name)
+        continue
+      }
+
+      result.skipped.push(entry.name)
+      logger.warn({
+        profile,
+        skill: entry.name,
+        targetSkillDir,
+      }, '[skill-injector] skipped bundled skill because target was not an unchanged Web UI-managed copy')
     }
 
-    if (result.injected.length > 0 || result.updated.length > 0) {
+    if (manifestChanged) await this.writeManifest(targetDir, manifest)
+
+    if (result.injected.length > 0 || result.updated.length > 0 || result.skipped.length > 0) {
       logger.info({
         profile,
         injected: result.injected,
         updated: result.updated,
+        skipped: result.skipped,
         targetDir,
       }, '[skill-injector] synced bundled skills')
     }
     return result
+  }
+
+  private async installManagedSkill(sourceSkillDir: string, targetSkillDir: string): Promise<string> {
+    if (existsSync(targetSkillDir)) {
+      await rm(targetSkillDir, { recursive: true, force: true })
+    }
+    await this.copyDir(sourceSkillDir, targetSkillDir)
+    return await this.hashDir(targetSkillDir)
+  }
+
+  private async readManifest(targetDir: string): Promise<ManagedSkillManifest> {
+    try {
+      const raw = await readFile(join(targetDir, MANIFEST_FILENAME), 'utf-8')
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as ManagedSkillManifest : {}
+    } catch {
+      return {}
+    }
+  }
+
+  private async writeManifest(targetDir: string, manifest: ManagedSkillManifest): Promise<void> {
+    const sorted: ManagedSkillManifest = {}
+    for (const key of Object.keys(manifest).sort()) {
+      sorted[key] = manifest[key]
+    }
+    await writeFile(join(targetDir, MANIFEST_FILENAME), `${JSON.stringify(sorted, null, 2)}\n`, 'utf-8')
+  }
+
+  private async hashDir(dir: string): Promise<string> {
+    const hash = createHash('sha256')
+    await this.hashDirInto(hash, dir, '')
+    return hash.digest('hex')
+  }
+
+  private async hashDirInto(hash: ReturnType<typeof createHash>, dir: string, relativeDir: string): Promise<void> {
+    const entries = (await readdir(dir, { withFileTypes: true }))
+      .filter(entry => !HASH_IGNORED_FILENAMES.has(entry.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    for (const entry of entries) {
+      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name
+      const fullPath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        hash.update(`dir\0${relativePath}\0`)
+        await this.hashDirInto(hash, fullPath, relativePath)
+      } else if (entry.isFile()) {
+        hash.update(`file\0${relativePath}\0`)
+        hash.update(await readFile(fullPath))
+        hash.update('\0')
+      }
+    }
   }
 
   private async isDirectory(path: string): Promise<boolean> {

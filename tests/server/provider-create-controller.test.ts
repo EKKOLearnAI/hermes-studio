@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import YAML from 'js-yaml'
 
 vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
@@ -22,6 +23,10 @@ function makeCtx(body: Record<string, any>, profile = 'default') {
     status: 200,
     body: undefined as unknown,
   }
+}
+
+function readYaml(filePath: string) {
+  return YAML.load(readFileSync(filePath, 'utf-8')) as any
 }
 
 describe('providers controller create', () => {
@@ -74,5 +79,76 @@ describe('providers controller create', () => {
     const envAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
     expect(envAfter).toContain('DEEPSEEK_API_KEY=deepseek-key')
     expect(envAfter).toContain('DEEPSEEK_BASE_URL=https://deepseek-proxy.invalid/v1')
+  })
+
+  it('creates xAI OAuth as a direct config provider without an API key or custom provider entry', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({
+      name: 'xAI Grok OAuth',
+      base_url: 'https://api.x.ai/v1',
+      api_key: '',
+      model: 'grok-4.3',
+      providerKey: 'xai-oauth',
+    })
+
+    await create(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.model).toEqual({ default: 'grok-4.3', provider: 'xai-oauth' })
+    expect(configAfter.custom_providers).toBeUndefined()
+    expect(readFileSync(join(hermesHome, '.env'), 'utf-8')).toBe('')
+  })
+
+  it('creates LongCat preset as a custom provider instead of env-backed builtin provider', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({
+      name: 'LongCat',
+      base_url: 'https://api.longcat.chat/openai',
+      api_key: 'longcat-key',
+      model: 'LongCat-2.0-Preview',
+      providerKey: 'longcat',
+    })
+
+    await create(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.model).toEqual({ default: 'LongCat-2.0-Preview', provider: 'custom:longcat' })
+    expect(configAfter.custom_providers).toEqual([
+      expect.objectContaining({
+        name: 'longcat',
+        base_url: 'https://api.longcat.chat/openai',
+        api_key: 'longcat-key',
+        model: 'LongCat-2.0-Preview',
+        api_mode: 'codex_responses',
+      }),
+    ])
+    expect(readFileSync(join(hermesHome, '.env'), 'utf-8')).not.toContain('LONGCAT_API_KEY')
+  })
+
+  it('persists api_mode for custom providers', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({
+      name: 'Research Proxy',
+      base_url: 'https://research.invalid/v1',
+      api_key: 'research-key',
+      model: 'research-model',
+      api_mode: 'chat_completions',
+    })
+
+    await create(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const configAfter = readYaml(join(hermesHome, 'config.yaml'))
+    expect(configAfter.custom_providers).toEqual([
+      expect.objectContaining({
+        name: 'research-proxy',
+        base_url: 'https://research.invalid/v1',
+        api_key: 'research-key',
+        model: 'research-model',
+        api_mode: 'chat_completions',
+      }),
+    ])
   })
 })

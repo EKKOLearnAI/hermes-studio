@@ -1,46 +1,159 @@
 import { app, dialog } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
+import { t } from './desktop-i18n'
 
 let initialized = false
+let checking = false
+let updateDownloaded = false
+let tryingFallbackFeed = false
 
-export function initAutoUpdater() {
+const CLOUDFLARE_LATEST_FEED_URL = 'https://download.ekkolearnai.com/latest'
+const GITHUB_LATEST_FEED_URL = 'https://github.com/EKKOLearnAI/hermes-studio/releases/latest/download'
+
+interface AutoUpdaterOptions {
+  beforeQuitAndInstall?: () => void
+}
+
+let options: AutoUpdaterOptions = {}
+
+function configureUpdateFeed(url: string): void {
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url,
+  })
+}
+
+async function checkForUpdatesWithFallback(): Promise<void> {
+  configureUpdateFeed(CLOUDFLARE_LATEST_FEED_URL)
+  try {
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    console.warn(`[updater] Cloudflare update feed failed, trying GitHub: ${err instanceof Error ? err.message : String(err)}`)
+    tryingFallbackFeed = true
+    try {
+      configureUpdateFeed(GITHUB_LATEST_FEED_URL)
+      await autoUpdater.checkForUpdates()
+    } finally {
+      tryingFallbackFeed = false
+    }
+  }
+}
+
+function showUpToDate(info?: UpdateInfo) {
+  const version = info?.version || app.getVersion()
+  dialog.showMessageBox({
+    type: 'info',
+    title: t('update.upToDateTitle'),
+    message: t('update.upToDateMessage'),
+    detail: t('update.currentVersion', { version }),
+    buttons: [t('common.ok')],
+  }).catch(() => undefined)
+}
+
+function showUpdateCheckFailed() {
+  dialog.showMessageBox({
+    type: 'error',
+    title: t('update.failedTitle'),
+    message: t('update.failedMessage'),
+    buttons: [t('common.ok')],
+  }).catch(() => undefined)
+}
+
+export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
+  options = { ...options, ...nextOptions }
   if (initialized) return
   initialized = true
 
   if (!app.isPackaged) return // dev mode: skip
-  if (process.env.HERMES_DESKTOP_ENABLE_AUTO_UPDATE !== 'true') return
 
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
   autoUpdater.on('update-available', info => {
     console.log(`[updater] update available: ${info.version}`)
+    dialog.showMessageBox({
+      type: 'info',
+      title: t('update.availableTitle'),
+      message: t('update.availableMessage', { version: info.version }),
+      detail: t('update.downloading'),
+      buttons: [t('common.ok')],
+    }).catch(() => undefined)
   })
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', info => {
     console.log('[updater] up to date')
+    if (checking) showUpToDate(info)
   })
   autoUpdater.on('error', err => {
     console.error('[updater] error:', err)
+    if (checking && !tryingFallbackFeed) showUpdateCheckFailed()
   })
-  autoUpdater.on('update-downloaded', async info => {
+  autoUpdater.on('download-progress', (info: ProgressInfo) => {
+    console.log(`[updater] download ${Math.round(info.percent)}%`)
+  })
+  autoUpdater.on('update-downloaded', async (info: UpdateDownloadedEvent) => {
+    updateDownloaded = true
     const { response } = await dialog.showMessageBox({
       type: 'info',
-      title: 'Update ready',
-      message: `Hermes Studio ${info.version} is ready to install.`,
-      detail: 'Restart now to apply the update, or it will be installed on next quit.',
-      buttons: ['Restart now', 'Later'],
+      title: t('update.readyTitle'),
+      message: t('update.readyMessage', { version: info.version }),
+      detail: t('update.readyDetail'),
+      buttons: [t('update.restartNow'), t('update.later')],
       defaultId: 0,
       cancelId: 1,
     })
-    if (response === 0) autoUpdater.quitAndInstall()
+    if (response === 0) {
+      options.beforeQuitAndInstall?.()
+      autoUpdater.quitAndInstall()
+    }
   })
 
-  autoUpdater.checkForUpdates().catch(err => {
-    console.error('[updater] initial check failed:', err)
-  })
+  if (process.env.HERMES_DESKTOP_ENABLE_AUTO_UPDATE !== 'false') {
+    checkForDesktopUpdates(false).catch(err => {
+      console.error('[updater] initial check failed:', err)
+    })
+  }
 
   // Recheck every 6h while app is running
   setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => undefined)
+    checkForDesktopUpdates(false).catch(() => undefined)
   }, 6 * 60 * 60 * 1000)
+}
+
+export async function checkForDesktopUpdates(manual: boolean): Promise<void> {
+  if (!app.isPackaged) {
+    if (manual) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: t('update.checkingTitle'),
+        message: t('update.packagedOnlyMessage'),
+        buttons: [t('common.ok')],
+      })
+    }
+    return
+  }
+
+  if (updateDownloaded) {
+    options.beforeQuitAndInstall?.()
+    autoUpdater.quitAndInstall()
+    return
+  }
+
+  if (manual) {
+    await dialog.showMessageBox({
+      type: 'info',
+      title: t('update.checkingTitle'),
+      message: t('update.checkingMessage'),
+      buttons: [t('common.ok')],
+    })
+  }
+
+  checking = manual
+  try {
+    await checkForUpdatesWithFallback()
+  } catch (err) {
+    if (manual) showUpdateCheckFailed()
+    throw err
+  } finally {
+    checking = false
+  }
 }

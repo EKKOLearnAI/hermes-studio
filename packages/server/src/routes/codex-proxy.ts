@@ -1,5 +1,5 @@
 import Router from '@koa/router'
-import { codexProxyModels, codexProxyResponses } from '../services/codex-proxy'
+import { codexProxyModels, codexProxyResponses } from '../services/agent-runner/proxies/codex-proxy'
 
 export const codexProxyRoutes = new Router()
 

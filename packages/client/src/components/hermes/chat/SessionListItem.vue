@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   pinned: boolean
   canDelete: boolean
   streaming?: boolean
+  completedUnread?: boolean
   selectable?: boolean
   selected?: boolean
   showProfile?: boolean
@@ -32,11 +33,6 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
-const sessionModelName = computed(() =>
-  props.session.model
-    ? appStore.displayModelName(props.session.model, props.session.provider)
-    : '',
-)
 const profileName = computed(() => props.session.profile || 'default')
 const profileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === profileName.value)?.avatar)
 const profileHasModels = computed(() => {
@@ -46,6 +42,16 @@ const profileHasModels = computed(() => {
 const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
+const isGlobalAgentSession = computed(() => props.session.source === 'global_agent')
+const sessionAgentLogo = computed(() => {
+  if (props.session.source === 'coding_agent') {
+    if (props.session.codingAgentId === 'codex' || props.session.agent === 'codex') {
+      return { label: 'Codex', src: '/coding-agents/codex-openai.png' }
+    }
+    return { label: 'Claude Code', src: '/coding-agents/claude-code.svg' }
+  }
+  return { label: 'Hermes', src: '/coding-agents/hermes.png' }
+})
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -117,35 +123,61 @@ onUnmounted(() => {
     </div>
     <div class="session-item-content">
       <span class="session-item-title-row">
-        <span v-if="pinned" class="session-item-pin" aria-hidden="true">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 17v5" />
-            <path d="M5 8l14 0" />
-            <path d="M8 3l8 0 0 5 3 5-14 0 3-5z" />
-          </svg>
+        <span class="session-item-title-main">
+          <span v-if="pinned" class="session-item-pin" aria-hidden="true">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 17v5" />
+              <path d="M5 8l14 0" />
+              <path d="M8 3l8 0 0 5 3 5-14 0 3-5z" />
+            </svg>
+          </span>
+          <span v-if="completedUnread" class="session-item-unread-dot" aria-hidden="true" />
+          <span class="session-item-title">
+            {{ session.title }}
+          </span>
+          <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
+            <template #trigger>
+              <button class="session-item-warning" type="button" @click.stop.prevent>
+                !
+              </button>
+            </template>
+            {{ t('chat.profileMissingModelsTip', { profile: profileName }) }}
+          </NTooltip>
         </span>
-        <span class="session-item-title">
-          <svg v-if="streaming" class="session-item-streaming" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          {{ session.title }}
-        </span>
-        <NTooltip v-if="profileModelsMissing" trigger="click" placement="top">
-          <template #trigger>
-            <button class="session-item-warning" type="button" @click.stop.prevent>
-              !
-            </button>
-          </template>
-          {{ t('chat.profileMissingModelsTip', { profile: profileName }) }}
-        </NTooltip>
-      </span>
-      <span class="session-item-meta">
-        <span v-if="sessionModelName" class="session-item-model" :title="session.model">{{ sessionModelName }}</span>
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
       </span>
-      <span v-if="props.showProfile" class="session-item-profile">
-        <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
-        <span class="session-item-profile-name">{{ profileName }}</span>
+      <span class="session-item-agent-row">
+        <span class="session-item-agent-logo-wrap" :class="{ streaming }">
+          <img
+            class="session-item-agent-logo"
+            :src="sessionAgentLogo.src"
+            :alt="sessionAgentLogo.label"
+          >
+        </span>
+        <span v-if="props.showProfile" class="session-item-profile">
+          <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
+          <span class="session-item-profile-name">{{ profileName }}</span>
+        </span>
       </span>
     </div>
+    <svg
+      v-if="isGlobalAgentSession"
+      class="session-item-global-icon"
+      :aria-label="t('sidebar.globalAgent')"
+      :title="t('sidebar.globalAgent')"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4" />
+      <path d="M10 10h4v4h-4z" />
+    </svg>
     <NPopconfirm v-if="canDelete && !selectable" @positive-click="emit('delete')">
       <template #trigger>
         <button class="session-item-delete" @click.stop.prevent>
@@ -158,12 +190,158 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  margin-bottom: 2px;
+}
+
+.session-item:hover {
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  color: var(--text-primary);
+}
+
+.session-item:hover .session-item-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-item:focus-within .session-item-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-item.active {
+  background: rgba(var(--accent-primary-rgb), 0.12);
+  color: var(--text-primary);
+  font-weight: 500;
+  border-radius: 6px;
+}
+
+.session-item.active .session-item-title {
+  color: var(--accent-primary);
+}
+
+.session-item.missing-models {
+  color: #b42318;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.session-item.missing-models .session-item-title,
+.session-item.missing-models .session-item-profile-name,
+.session-item.missing-models .session-item-time {
+  color: #b42318;
+}
+
+.session-item.missing-models:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.session-item-content {
+  flex: 1;
+  min-width: 0;
+  overflow: visible;
+}
+
+.session-item-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-item-title-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.session-item-title {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
+
+.session-item-unread-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(var(--accent-primary-rgb), 0.12);
+}
+
+.session-item-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.session-item-global-icon {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  color: #d6a019;
+  pointer-events: none;
+}
+
+.session-item-delete {
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all var(--transition-fast);
+}
+
+.session-item-delete:hover {
+  color: var(--error);
+  background: rgba(var(--error-rgb), 0.1);
+}
+
+@media (hover: none) {
+  .session-item-delete {
+    opacity: 0.5;
+    pointer-events: auto;
+  }
+}
+
 .session-item-profile {
   display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-  margin-top: 4px;
 }
 
 .session-item-profile-avatar {
@@ -192,5 +370,94 @@ onUnmounted(() => {
   font-weight: 700;
   line-height: 14px;
   cursor: pointer;
+}
+
+.session-item-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 3px;
+  padding: 3px 0;
+}
+
+.session-item-agent-logo-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.session-item-agent-logo-wrap.streaming::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px #ff6b6b,
+    0 0 10px rgba(255, 107, 107, 0.4),
+    0 0 20px rgba(255, 107, 107, 0.2);
+  animation: rainbow-glow 4s linear infinite;
+}
+
+.session-item-agent-logo {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  border-radius: inherit;
+  object-fit: contain;
+  background: #fff;
+}
+
+@keyframes rainbow-glow {
+  0% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
+  16.66% {
+    box-shadow:
+      0 0 0 2px #feca57,
+      0 0 10px rgba(254, 202, 87, 0.4),
+      0 0 20px rgba(254, 202, 87, 0.2);
+  }
+  33.33% {
+    box-shadow:
+      0 0 0 2px #48dbfb,
+      0 0 10px rgba(72, 219, 251, 0.4),
+      0 0 20px rgba(72, 219, 251, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px #ff9ff3,
+      0 0 10px rgba(255, 159, 243, 0.4),
+      0 0 20px rgba(255, 159, 243, 0.2);
+  }
+  66.66% {
+    box-shadow:
+      0 0 0 2px #54a0ff,
+      0 0 10px rgba(84, 160, 255, 0.4),
+      0 0 20px rgba(84, 160, 255, 0.2);
+  }
+  83.33% {
+    box-shadow:
+      0 0 0 2px #5f27cd,
+      0 0 10px rgba(95, 39, 205, 0.4),
+      0 0 20px rgba(95, 39, 205, 0.2);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px #ff6b6b,
+      0 0 10px rgba(255, 107, 107, 0.4),
+      0 0 20px rgba(255, 107, 107, 0.2);
+  }
 }
 </style>

@@ -37,6 +37,7 @@ test('logs in with password through the BFF before entering the app', async ({ p
 
   await expect(page).toHaveURL(/#\/hermes\/chat$/)
   await expect(page.evaluate(() => window.localStorage.getItem('hermes_api_key'))).resolves.toBe(TEST_ACCESS_KEY)
+  await expect.poll(() => api.requests.some((request) => request.pathname === '/health')).toBe(true)
 
   const loginRequest = api.requests.find((request) => request.pathname === '/api/auth/login')
   expect(loginRequest?.method).toBe('POST')

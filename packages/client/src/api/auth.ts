@@ -35,12 +35,46 @@ export interface CurrentUser {
   created_at: number
   updated_at: number
   last_login_at: number | null
+  avatar?: string
   requiresCredentialChange?: boolean
+}
+
+export interface UserAvatar {
+  type: 'image' | 'default'
+  dataUrl?: string
+  seed?: string
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUser> {
   const res = await request<{ user: CurrentUser }>('/api/auth/me')
   return res.user
+}
+
+export async function fetchMyAvatar(): Promise<UserAvatar | null> {
+  const res = await request<{ avatar: string }>('/api/auth/avatar')
+  if (!res.avatar) return null
+  try {
+    const parsed = JSON.parse(res.avatar) as UserAvatar
+    if (parsed && (parsed.type === 'image' || parsed.type === 'default')) return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+export async function updateMyAvatar(avatar: UserAvatar): Promise<void> {
+  const payload = JSON.stringify(avatar)
+  await request('/api/auth/avatar', {
+    method: 'PUT',
+    body: JSON.stringify({ avatar: payload }),
+  })
+}
+
+export async function resetMyAvatar(): Promise<void> {
+  await request('/api/auth/avatar', {
+    method: 'PUT',
+    body: JSON.stringify({ avatar: { type: 'default' } }),
+  })
 }
 
 export async function setupPassword(username: string, password: string): Promise<void> {
@@ -136,7 +170,7 @@ export async function deleteManagedUser(id: number): Promise<ManagedUsersRespons
 
 export interface LockedIp {
   ip: string
-  type: 'password' | 'token'
+  type: 'password' | 'token' | 'pairing'
   failures: number
   lockedUntil: number
 }

@@ -3,17 +3,26 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { getActiveEnvPath, getActiveAuthPath, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { readConfigYaml, readConfigYamlForProfile, updateConfigYaml, updateConfigYamlForProfile, fetchProviderModels, buildModelGroups, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 import { buildProviderModelMap, PROVIDER_PRESETS } from '../../shared/providers'
 import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMeta } from '../../services/hermes/copilot-models'
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import {
+  getCachedProviderModels,
+  readProviderModelCatalogCache,
+  refreshConfiguredProviderModelCatalogs,
+  writeProviderModelCatalogEntry,
+  type ProviderModelCatalogCache,
+} from '../../services/hermes/model-catalog-cache'
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
 type ModelMeta = { preview?: boolean; disabled?: boolean; alias?: string }
-type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string }
+type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
+type AvailableGroup = { provider: string; label: string; base_url: string; models: string[]; api_key: string; api_mode?: ProviderApiMode; builtin?: boolean; model_meta?: Record<string, ModelMeta>; available_models?: string[]; base_url_env?: string; provider_source?: 'custom_providers' | 'providers'; provider_key?: string }
 type ModelVisibility = Record<string, ModelVisibilityRule>
 type CustomModels = Record<string, string[]>
 
@@ -93,12 +102,14 @@ function applyCustomModels(groups: AvailableGroup[], customModels: CustomModels)
 
 function providerPresetToGroup(p: any, models?: string[]): AvailableGroup {
   const envMapping = PROVIDER_ENV_MAP[p.value]
+  const apiMode = providerApiMode(p.value)
   return {
     provider: p.value,
     label: p.label,
     base_url: p.base_url,
     models: models || p.models,
     api_key: '',
+    ...(apiMode ? { api_mode: apiMode } : {}),
     ...(p.builtin ? { builtin: true } : {}),
     ...(envMapping?.base_url_env ? { base_url_env: envMapping.base_url_env } : {}),
   }
@@ -191,11 +202,34 @@ function isBuiltinProviderKey(providerKey: string): boolean {
   return PROVIDER_PRESETS.some((preset: any) => preset.value === normalized && preset.builtin === true)
 }
 
+function normalizeProviderApiMode(mode: unknown): AvailableGroup['api_mode'] {
+  return mode === 'chat_completions' ||
+    mode === 'codex_responses' ||
+    mode === 'anthropic_messages' ||
+    mode === 'bedrock_converse' ||
+    mode === 'codex_app_server'
+    ? mode
+    : undefined
+}
+
+function providerApiMode(providerKey: string, configuredMode?: unknown): AvailableGroup['api_mode'] {
+  const explicitMode = normalizeProviderApiMode(configuredMode)
+  if (explicitMode) return explicitMode
+  const normalized = providerKeyWithoutCustomPrefix(providerKey)
+  const preset = PROVIDER_PRESETS.find((item: any) => item.value === normalized)
+  return normalizeProviderApiMode(preset?.api_mode)
+}
+
 function providerShouldFetchLiveModels(providerKey: string): boolean {
   return providerKey === 'openrouter' ||
     providerKey === 'cliproxyapi' ||
     providerKey === 'ollama-cloud' ||
-    providerKey === 'lmstudio'
+    providerKey === 'lmstudio' ||
+    providerKey === 'nvidia'
+}
+
+function providerSupportsStoredOAuth(providerKey: string): boolean {
+  return providerKey === 'claude-oauth'
 }
 
 function includeConfiguredDefaultModel(providerKey: string, modelsList: string[], currentDefault: string, currentDefaultProvider: string): string[] {
@@ -220,6 +254,7 @@ function mergeAvailableGroups(groups: AvailableGroup[]): AvailableGroup[] {
     existing.available_models = [...new Set([...(existing.available_models || existing.models), ...(group.available_models || group.models)])]
     existing.api_key = existing.api_key || group.api_key
     existing.base_url = existing.base_url || group.base_url
+    existing.api_mode = existing.api_mode || group.api_mode
     existing.builtin = existing.builtin || group.builtin
     existing.model_meta = { ...(existing.model_meta || {}), ...(group.model_meta || {}) }
     if (existing.model_meta && Object.keys(existing.model_meta).length === 0) delete existing.model_meta
@@ -278,7 +313,7 @@ async function isCopilotAuthorized(envContent: string): Promise<boolean> {
 
 async function buildAvailableForProfile(
   profile: string,
-  fetchCache: ProviderFetchCache,
+  modelCatalogCache: ProviderModelCatalogCache,
   appConfig: Awaited<ReturnType<typeof readAppConfig>>,
 ): Promise<{
   profile: string
@@ -294,9 +329,9 @@ async function buildAvailableForProfile(
     currentDefault = String(modelSection.default || '').trim()
     currentDefaultProvider = String(modelSection.provider || '').trim()
     if (currentDefaultProvider === 'custom' && currentDefault) {
-      const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+      const cps = getCompatibleCustomProviders(config)
       const match = cps.find(
-        (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
+        (cp) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
           && cp.model === currentDefault,
       )
       if (match) currentDefaultProvider = providerKeyForCustom(String(match.name || ''))
@@ -324,21 +359,14 @@ async function buildAvailableForProfile(
     } catch { return false }
   }
 
-  let copilotLiveModels: CopilotModelMeta[] | null = null
-  const getCopilotLive = async (): Promise<CopilotModelMeta[]> => {
-    if (copilotLiveModels !== null) return copilotLiveModels
-    try { copilotLiveModels = await getCopilotModelsDetailed(envContent) }
-    catch { copilotLiveModels = [] }
-    return copilotLiveModels
-  }
-
   const groups: AvailableGroup[] = []
   const seenProviders = new Set<string>()
-  const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
+  const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key' | 'api_mode'>) => {
     if (seenProviders.has(provider)) return
     seenProviders.add(provider)
     const availableModels = [...new Set(models)]
-    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
+    const apiMode = providerApiMode(provider, extra?.api_mode)
+    groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
   }
 
   const copilotEnabled = appConfig.copilotEnabled === true
@@ -348,7 +376,8 @@ async function buildAvailableForProfile(
   }
 
   for (const [providerKey, envMapping] of Object.entries(PROVIDER_ENV_MAP)) {
-    if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env)) continue
+    const oauthAuthorized = providerSupportsStoredOAuth(providerKey) ? isOAuthAuthorized(providerKey) : false
+    if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env) && !oauthAuthorized) continue
     if (!envMapping.api_key_env) {
       if (providerKey === 'copilot') {
         if (!copilotEnabled) continue
@@ -364,61 +393,41 @@ async function buildAvailableForProfile(
       baseUrl = envGetValue(envMapping.base_url_env) || baseUrl
     }
     const catalogModels = PROVIDER_MODEL_CATALOG[providerKey]
-    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : []
-    let modelMeta: Record<string, ModelMeta> | undefined
-    if (providerKey === 'copilot') {
-      const live = await getCopilotLive()
-      if (live.length > 0) {
-        modelsList = live.map((m) => m.id)
-        modelMeta = {}
-        for (const m of live) {
-          if (m.preview || m.disabled) {
-            modelMeta[m.id] = {
-              ...(m.preview ? { preview: true } : {}),
-              ...(m.disabled ? { disabled: true } : {}),
-            }
-          }
-        }
-        if (Object.keys(modelMeta).length === 0) modelMeta = undefined
-      }
-    } else if (providerShouldFetchLiveModels(providerKey)) {
-      if (envMapping.api_key_env) {
-        const apiKey = envGetValue(envMapping.api_key_env)
-        if (apiKey) {
-          try {
-            const fetched = await cachedProviderModels(fetchCache, baseUrl, apiKey, providerKey === 'openrouter')
-            if (fetched.length > 0) modelsList = fetched
-          } catch { /* ignore live catalog failures */ }
-        }
-      }
-    }
+    let modelsList: string[] = catalogModels && catalogModels.length > 0 ? [...catalogModels] : [...(preset?.models || [])]
+    const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl, providerKey === 'openrouter')
+    if (cachedModels) modelsList = [...cachedModels]
     modelsList = includeConfiguredDefaultModel(providerKey, modelsList, currentDefault, currentDefaultProvider)
     if (modelsList.length > 0) {
       const apiKey = envMapping.api_key_env ? envGetValue(envMapping.api_key_env) : ''
-      addGroup(providerKey, label, baseUrl, modelsList, apiKey, true, modelMeta)
+      addGroup(providerKey, label, baseUrl, modelsList, apiKey, true)
     }
   }
 
-  const customProviders = Array.isArray(config.custom_providers)
-    ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
-    : []
+  const customProviders = getCompatibleCustomProviders(config)
   const customFetches = await Promise.allSettled(
     customProviders.map(async cp => {
       if (!cp.base_url) return null
       const providerKey = providerKeyForCustom(cp.name)
       const baseUrl = cp.base_url.replace(/\/+$/, '')
-      let models = [cp.model].filter(Boolean)
-      if (cp.api_key) {
-        const fetched = await cachedProviderModels(fetchCache, baseUrl, cp.api_key)
-        if (fetched.length > 0) models = [...new Set([...models, ...fetched])]
-      }
-      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
+      const builtinProviderKey = providerKeyWithoutCustomPrefix(providerKey)
+      const builtinPreset = PROVIDER_PRESETS.find((preset: any) => preset.value === builtinProviderKey)
+      const builtinCatalogModels = isBuiltinProviderKey(providerKey)
+        ? PROVIDER_MODEL_CATALOG[builtinProviderKey] || builtinPreset?.models || []
+        : []
+      // Pull configured models from the v12+ providers.<name>.models dict (if any)
+      // alongside the legacy single `model` field; both contribute to what the
+      // UI shows. `models` is normalized to a dict shape regardless of source.
+      const configuredModels = cp.models ? Object.keys(cp.models) : []
+      let models = [...new Set([cp.model, ...configuredModels, ...builtinCatalogModels].filter(Boolean) as string[])]
+      const cachedModels = getCachedProviderModels(modelCatalogCache, providerKey, baseUrl)
+      if (cachedModels) models = [...new Set([...models, ...cachedModels])]
+      return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', api_mode: cp.api_mode, builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
     }),
   )
   for (const result of customFetches) {
     if (result.status === 'fulfilled' && result.value?.models.length) {
-      const { providerKey, label, base_url, models, api_key, builtin } = result.value
-      addGroup(providerKey, label, base_url, models, api_key, builtin)
+      const { providerKey, label, base_url, models, api_key, api_mode, builtin, provider_source, provider_key } = result.value
+      addGroup(providerKey, label, base_url, models, api_key, builtin, undefined, { provider_source, provider_key, api_mode })
     }
   }
 
@@ -448,10 +457,10 @@ export async function getAvailable(ctx: any) {
       const modelAliases = normalizeAliases(appConfig.modelAliases)
       const modelVisibility = normalizeModelVisibility(appConfig.modelVisibility)
       const customModels = normalizeCustomModels(appConfig.customModels)
-      const fetchCache: ProviderFetchCache = new Map()
+      const modelCatalogCache = await readProviderModelCatalogCache()
       const visibleProfiles = visibleProfileNamesForUser(ctx)
       const profileResults = await Promise.all(
-        visibleProfiles.map(profile => buildAvailableForProfile(profile, fetchCache, appConfig)),
+        visibleProfiles.map(profile => buildAvailableForProfile(profile, modelCatalogCache, appConfig)),
       )
       const mergedGroups = mergeAvailableGroups(profileResults.flatMap(result => result.groups))
       const groupsWithAliases = applyModelAliases(mergedGroups, modelAliases)
@@ -465,7 +474,10 @@ export async function getAvailable(ctx: any) {
         defaultProfile?.default_provider || '',
         visibleGroups,
       )
-      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p))
+      const allProvidersBase = PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
+        p,
+        getCachedProviderModels(modelCatalogCache, p.value, p.base_url, p.value === 'openrouter') || p.models,
+      ))
       ctx.body = {
         default: visibleDefault.defaultModel,
         default_provider: visibleDefault.defaultProvider,
@@ -488,7 +500,8 @@ export async function getAvailable(ctx: any) {
     const modelAliasesForProfile = normalizeAliases(appConfigForProfile.modelAliases)
     const modelVisibilityForProfile = normalizeModelVisibility(appConfigForProfile.modelVisibility)
     const customModelsForProfile = normalizeCustomModels(appConfigForProfile.customModels)
-    const profileResult = await buildAvailableForProfile(requestedProfile, new Map(), appConfigForProfile)
+    const modelCatalogCacheForProfile = await readProviderModelCatalogCache()
+    const profileResult = await buildAvailableForProfile(requestedProfile, modelCatalogCacheForProfile, appConfigForProfile)
     const profileGroupsWithAliases = applyModelAliases(profileResult.groups, modelAliasesForProfile)
     const visibleProfileGroups = applyModelVisibility(profileGroupsWithAliases, modelVisibilityForProfile)
     const visibleProfileDefault = resolveVisibleDefault(profileResult.default, profileResult.default_provider, visibleProfileGroups)
@@ -496,7 +509,10 @@ export async function getAvailable(ctx: any) {
       default: visibleProfileDefault.defaultModel,
       default_provider: visibleProfileDefault.defaultProvider,
       groups: visibleProfileGroups,
-      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(p)), modelAliasesForProfile),
+      allProviders: applyModelAliases(PROVIDER_PRESETS.map((p: any) => providerPresetToGroup(
+        p,
+        getCachedProviderModels(modelCatalogCacheForProfile, p.value, p.base_url, p.value === 'openrouter') || p.models,
+      )), modelAliasesForProfile),
       model_aliases: modelAliasesForProfile,
       model_visibility: modelVisibilityForProfile,
       custom_models: customModelsForProfile,
@@ -517,9 +533,9 @@ export async function getAvailable(ctx: any) {
       currentDefault = String(modelSection.default || '').trim()
       currentDefaultProvider = String(modelSection.provider || '').trim()
       // When hermes CLI sets provider: custom, resolve to custom:name
-      // by matching base_url + model against custom_providers
+      // by matching base_url + model against custom providers (v12 dict + legacy list).
       if (currentDefaultProvider === 'custom' && currentDefault) {
-        const cps = Array.isArray(config.custom_providers) ? config.custom_providers as any[] : []
+        const cps = getCompatibleCustomProviders(config) as any[]
         const match = cps.find(
           (cp: any) => cp.base_url?.replace(/\/+$/, '') === String(modelSection.base_url || '').replace(/\/+$/, '')
             && cp.model === currentDefault,
@@ -548,11 +564,12 @@ export async function getAvailable(ctx: any) {
       const match = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
       return match?.[1]?.trim() || ''
     }
-    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>) => {
+    const addGroup = (provider: string, label: string, base_url: string, models: string[], api_key: string, builtin?: boolean, model_meta?: Record<string, ModelMeta>, extra?: Pick<AvailableGroup, 'provider_source' | 'provider_key'>) => {
       if (seenProviders.has(provider)) return
       seenProviders.add(provider)
       const availableModels = [...models]
-      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}) })
+      const apiMode = providerApiMode(provider)
+      groups.push({ provider, label, base_url, models: availableModels, available_models: availableModels, api_key, ...(apiMode ? { api_mode: apiMode } : {}), ...(builtin ? { builtin: true } : {}), ...(model_meta ? { model_meta } : {}), ...(extra?.provider_source ? { provider_source: extra.provider_source } : {}), ...(extra?.provider_key ? { provider_key: extra.provider_key } : {}) })
     }
 
     const isOAuthAuthorized = (providerKey: string): boolean => {
@@ -600,7 +617,8 @@ export async function getAvailable(ctx: any) {
     }
 
     for (const [providerKey, envMapping] of Object.entries(PROVIDER_ENV_MAP)) {
-      if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env)) continue
+      const oauthAuthorized = providerSupportsStoredOAuth(providerKey) ? isOAuthAuthorized(providerKey) : false
+      if (envMapping.api_key_env && !envHasValue(envMapping.api_key_env) && !oauthAuthorized) continue
       if (!envMapping.api_key_env) {
         if (providerKey === 'copilot') {
           if (!copilotEnabled) continue
@@ -652,28 +670,27 @@ export async function getAvailable(ctx: any) {
       }
     }
 
-    const customProviders = Array.isArray(config.custom_providers)
-      ? config.custom_providers as Array<{ name: string; base_url: string; model: string; api_key?: string }>
-      : []
+    const customProviders = getCompatibleCustomProviders(config)
 
     const customFetches = await Promise.allSettled(
       customProviders.map(async cp => {
         if (!cp.base_url) return null
         const providerKey = `custom:${cp.name.trim().toLowerCase().replace(/ /g, '-')}`
         const baseUrl = cp.base_url.replace(/\/+$/, '')
-        let models = [cp.model]
+        const configuredModels = cp.models ? Object.keys(cp.models) : []
+        let models = [...new Set([cp.model, ...configuredModels].filter(Boolean) as string[])]
         if (cp.api_key) {
-          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([cp.model, ...fetched])] } catch { }
+          try { const fetched = await fetchProviderModels(baseUrl, cp.api_key); if (fetched.length > 0) models = [...new Set([...models, ...fetched])] } catch { }
         }
-        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey) }
+        return { providerKey, label: cp.name, base_url: baseUrl, models, api_key: cp.api_key || '', builtin: isBuiltinProviderKey(providerKey), provider_source: cp.source, provider_key: cp.provider_key }
       }),
     )
 
     for (const result of customFetches) {
       const value = (result as { value?: any }).value
       if (value) {
-        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin } = value
-        addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin)
+        const { providerKey, label, base_url, models, api_key: cpApiKey, builtin: cpBuiltin, provider_source, provider_key } = value
+        addGroup(providerKey, label, base_url, models, cpApiKey, cpBuiltin, undefined, { provider_source, provider_key })
       }
     }
 
@@ -697,6 +714,7 @@ export async function getAvailable(ctx: any) {
       const fallback = buildModelGroups(config)
       const fallbackGroups: AvailableGroup[] = fallback.groups.map(group => {
         const models = group.models.map(model => model.id)
+        const apiMode = providerApiMode(group.provider)
         return {
           provider: group.provider,
           label: group.provider,
@@ -704,6 +722,7 @@ export async function getAvailable(ctx: any) {
           models,
           available_models: models,
           api_key: '',
+          ...(apiMode ? { api_mode: apiMode } : {}),
         }
       })
       const fallbackGroupsWithAliases = applyModelAliases(fallbackGroups, modelAliases)
@@ -786,10 +805,12 @@ export async function removeCustomModel(ctx: any) {
 
 export async function fetchProviderModelList(ctx: any) {
   try {
-    const body = ctx.request.body as { base_url?: string; api_key?: string; freeOnly?: boolean }
+    const body = ctx.request.body as { base_url?: string; api_key?: string; freeOnly?: boolean; provider?: string; label?: string; update_cache?: boolean }
     const baseUrl = String(body?.base_url || '').trim()
     const apiKey = String(body?.api_key || '').trim()
     const freeOnly = body?.freeOnly === true
+    const provider = String(body?.provider || '').trim()
+    const label = String(body?.label || provider).trim()
 
     if (!baseUrl) {
       ctx.status = 400
@@ -837,10 +858,31 @@ export async function fetchProviderModelList(ctx: any) {
       .map(m => String(m?.id || '').trim())
       .filter(Boolean)
     if (freeOnly) models = models.filter(m => m.endsWith(':free'))
-    ctx.body = { models: Array.from(new Set(models)).sort() }
+    const uniqueModels = Array.from(new Set(models)).sort()
+    if (body?.update_cache === true && provider) {
+      await writeProviderModelCatalogEntry({
+        provider,
+        label,
+        base_url: baseUrl,
+        models: uniqueModels,
+        source: 'live',
+        free_only: freeOnly,
+      })
+    }
+    ctx.body = { models: uniqueModels }
   } catch (err: any) {
     ctx.status = err?.name === 'TimeoutError' ? 504 : 502
     ctx.body = { error: err?.message || 'Failed to fetch provider models' }
+  }
+}
+
+export async function refreshProviderModelCatalogCache(ctx: any) {
+  try {
+    await refreshConfiguredProviderModelCatalogs({ force: true })
+    ctx.body = { success: true }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to refresh provider model cache' }
   }
 }
 

@@ -122,6 +122,29 @@ describe('chat-run socket reconnect handling', () => {
     expect(onDone).not.toHaveBeenCalled()
   })
 
+  it('keeps concurrent resume callbacks scoped to their requested session', async () => {
+    const { resumeSession } = await import('../../packages/client/src/api/hermes/chat')
+    const onSessionA = vi.fn()
+    const onSessionB = vi.fn()
+
+    resumeSession('session-a', onSessionA, 'default')
+    resumeSession('session-b', onSessionB, 'default')
+
+    const socket = socketState.sockets[0]
+    const resumedB = { session_id: 'session-b', messages: [], isWorking: false, events: [] }
+    socket.__trigger('resumed', resumedB)
+
+    expect(onSessionA).not.toHaveBeenCalled()
+    expect(onSessionB).toHaveBeenCalledWith(resumedB)
+    expect(socket.__listenerCount('resumed')).toBe(1)
+
+    const resumedA = { session_id: 'session-a', messages: [], isWorking: false, events: [] }
+    socket.__trigger('resumed', resumedA)
+
+    expect(onSessionA).toHaveBeenCalledWith(resumedA)
+    expect(socket.__listenerCount('resumed')).toBe(0)
+  })
+
   it('keeps fatal disconnects fatal and removes per-run listeners', async () => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/hermes/chat')
     const onError = vi.fn()

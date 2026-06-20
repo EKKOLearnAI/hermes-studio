@@ -100,4 +100,31 @@ describe('providers controller update', () => {
     expect(defaultConfig.custom_providers[0].api_key).toBe('keep-default-custom-key')
     expect(researchConfig.custom_providers[0].api_key).toBe('new-research-custom-key')
   })
+
+  it('updates custom provider api_mode in the request-scoped profile config only', async () => {
+    const defaultConfigPath = join(hermesHome, 'config.yaml')
+    writeFileSync(defaultConfigPath, [
+      'model:',
+      '  provider: custom:research-proxy',
+      '  default: default-model',
+      'custom_providers:',
+      '  - name: research-proxy',
+      '    base_url: https://default.invalid/v1',
+      '    api_key: keep-default-custom-key',
+      '    model: default-model',
+      '    api_mode: codex_responses',
+      '',
+    ].join('\n'))
+
+    const { update } = await loadProvidersController()
+    const ctx = makeCtx('custom:research-proxy', { api_mode: 'chat_completions' })
+
+    await update(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    const defaultConfig = readYaml(defaultConfigPath)
+    const researchConfig = readYaml(join(hermesHome, 'profiles', 'research', 'config.yaml'))
+    expect(defaultConfig.custom_providers[0].api_mode).toBe('codex_responses')
+    expect(researchConfig.custom_providers[0].api_mode).toBe('chat_completions')
+  })
 })

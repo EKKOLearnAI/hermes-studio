@@ -10,6 +10,21 @@ const mockMessage = vi.hoisted(() => ({
   error: vi.fn(),
 }))
 
+const mockFetchSkills = vi.hoisted(() => vi.fn(async () => ({
+  categories: [
+    {
+      name: 'local',
+      description: '',
+      skills: [
+        { name: 'planner', description: 'Plan work' },
+        { name: 'reviewer', description: 'Review work' },
+        { name: 'disabled-skill', description: 'Disabled', enabled: false },
+      ],
+    },
+  ],
+  archived: [],
+})))
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key,
@@ -21,6 +36,10 @@ vi.mock('@/stores/hermes/kanban', () => ({
     assignees: [{ name: 'alice', counts: { todo: 1 } }],
     createTask: mockCreateTask,
   }),
+}))
+
+vi.mock('@/api/hermes/skills', () => ({
+  fetchSkills: mockFetchSkills,
 }))
 
 vi.mock('naive-ui', () => ({
@@ -35,14 +54,24 @@ vi.mock('naive-ui', () => ({
     emits: ['update:value'],
     template: '<input class="n-input-stub" :value="value" @input="$emit(\'update:value\', $event.target.value)" />',
   }),
-  NSelect: defineComponent({
-    props: { value: { required: false }, options: { type: Array, default: () => [] } },
+  NInputNumber: defineComponent({
+    props: { value: { type: Number, required: false } },
     emits: ['update:value'],
-    template: '<select class="n-select-stub" @change="$emit(\'update:value\', $event.target.value === \'\' ? null : (/^\\d+$/.test($event.target.value) ? Number($event.target.value) : $event.target.value))"><option value=""></option><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
+    template: '<input class="n-input-number-stub" type="number" :value="value ?? \'\'" @input="$emit(\'update:value\', $event.target.value === \'\' ? null : Number($event.target.value))" />',
+  }),
+  NSelect: defineComponent({
+    props: { value: { required: false }, options: { type: Array, default: () => [] }, multiple: { type: Boolean, default: false } },
+    emits: ['update:value'],
+    template: '<select class="n-select-stub" :multiple="multiple" @change="$emit(\'update:value\', multiple ? Array.from($event.target.selectedOptions).map(option => option.value) : ($event.target.value === \'\' ? null : (/^\\d+$/.test($event.target.value) ? Number($event.target.value) : $event.target.value)))"><option value=""></option><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
   }),
   NButton: defineComponent({
     emits: ['click'],
     template: '<button class="n-button-stub" @click.prevent="$emit(\'click\')"><slot /></button>',
+  }),
+  NCheckbox: defineComponent({
+    props: { checked: { type: Boolean, required: false } },
+    emits: ['update:checked'],
+    template: '<label class="n-checkbox-stub"><input type="checkbox" :checked="checked" @change="$emit(\'update:checked\', $event.target.checked)" /><slot /></label>',
   }),
   useMessage: () => mockMessage,
 }))
@@ -85,6 +114,47 @@ describe('KanbanCreateForm', () => {
     expect(mockMessage.success).toHaveBeenCalledWith('kanban.message.taskCreated')
     expect(wrapper.emitted('created')).toBeTruthy()
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('submits advanced dispatcher options', async () => {
+    mockCreateTask.mockResolvedValue({ id: 'task-1' })
+    const wrapper = mount(KanbanCreateForm)
+
+    await flushPromises()
+    const inputs = () => wrapper.findAll('.n-input-stub')
+    const selects = wrapper.findAll('.n-select-stub')
+    await inputs()[0].setValue('Build parity')
+    await inputs()[1].setValue('cover cli create flags')
+    await selects[2].setValue('worktree')
+    await flushPromises()
+    await inputs()[2].setValue('ops')
+    await inputs()[3].setValue('/repo')
+    await inputs()[4].setValue('kanban-ui')
+    await selects[3].setValue(['planner', 'reviewer'])
+    await inputs()[5].setValue('2h')
+    await wrapper.findAll('.n-input-number-stub')[0].setValue('3')
+    const checkboxes = wrapper.findAll('input[type="checkbox"]')
+    await checkboxes[0].setValue(true)
+    await checkboxes[1].setValue(true)
+    await flushPromises()
+    await wrapper.findAll('.n-input-number-stub')[1].setValue('12')
+
+    await wrapper.findAll('.n-button-stub')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: 'Build parity',
+      body: 'cover cli create flags',
+      tenant: 'ops',
+      triage: true,
+      workspace: 'worktree:/repo',
+      branch: 'kanban-ui',
+      skills: ['planner', 'reviewer'],
+      maxRuntime: '2h',
+      maxRetries: 3,
+      goalMode: true,
+      goalMaxTurns: 12,
+    })
   })
 
   it('uses compact profile names for assignee options', () => {

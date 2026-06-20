@@ -20,6 +20,7 @@ const searchResults = ref<SessionSearchResult[]>([])
 const activeIndex = ref(0)
 const inputRef = ref<InstanceType<typeof NInput> | null>(null)
 const profileFilter = computed(() => chatStore.sessionProfileFilter || undefined)
+const runtimeSource = computed(() => chatStore.runtimeMode === 'global_agent' ? 'global_agent' : undefined)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let requestSeq = 0
@@ -54,6 +55,7 @@ function formatSource(source: string): string {
     signal: 'Signal',
     cron: 'Cron',
     weixin: 'WeChat',
+    global_agent: 'Global Agent',
   }
   return map[source] || source
 }
@@ -81,8 +83,8 @@ async function loadRecentSessions() {
   loading.value = true
   try {
     const sessions = profileFilter.value
-      ? await fetchSessions(undefined, 8, profileFilter.value)
-      : await fetchSessions(undefined, 8)
+      ? await fetchSessions(runtimeSource.value, 8, profileFilter.value)
+      : await fetchSessions(runtimeSource.value, 8)
     if (seq !== requestSeq) return
     recentSessions.value = sessions
     searchResults.value = []
@@ -103,8 +105,8 @@ async function runSearch(text: string) {
   try {
     const results = text.trim()
       ? profileFilter.value
-        ? await searchSessions(text.trim(), undefined, 10, profileFilter.value)
-        : await searchSessions(text.trim(), undefined, 10)
+        ? await searchSessions(text.trim(), runtimeSource.value, 10, profileFilter.value)
+        : await searchSessions(text.trim(), runtimeSource.value, 10)
       : []
     if (seq !== requestSeq) return
     searchResults.value = results
@@ -148,8 +150,9 @@ async function openItem(item: SearchItem) {
     })
   }
   await chatStore.switchSession(item.id, messageId)
-  if (router.currentRoute.value.name !== 'hermes.chat') {
-    await router.push({ name: 'hermes.chat' })
+  const routeName = chatStore.runtimeMode === 'global_agent' ? 'hermes.globalAgentSession' : 'hermes.session'
+  if (router.currentRoute.value.name !== routeName || router.currentRoute.value.params.sessionId !== item.id) {
+    await router.push({ name: routeName, params: { sessionId: item.id } })
   }
 }
 

@@ -1,13 +1,37 @@
 import type { Context } from 'koa'
 import { updateUsage } from '../../db/hermes/usage-store'
 
-let gatewayManager: any = null
-
-export function setGatewayManagerForTest(manager: any): void {
-  gatewayManager = manager
+interface GatewayProxyTarget {
+  getUpstream(profile?: string): string
+  getApiKey?(profile?: string): string | null | undefined
 }
 
-function getGatewayManager() { return gatewayManager }
+let gatewayProxyTargetForTest: GatewayProxyTarget | null = null
+
+export function setGatewayProxyTargetForTest(target: GatewayProxyTarget | null): void {
+  gatewayProxyTargetForTest = target
+}
+
+function normalizeGatewayUrl(raw: string): string {
+  return raw.replace(/\/$/, '')
+}
+
+function defaultGatewayUpstream(): string {
+  const explicit = String(process.env.HERMES_GATEWAY_URL || process.env.GATEWAY_URL || '').trim()
+  if (explicit) return normalizeGatewayUrl(explicit)
+  const host = String(process.env.GATEWAY_HOST || '127.0.0.1').trim() || '127.0.0.1'
+  const rawPort = parseInt(String(process.env.GATEWAY_PORT || '8642'), 10)
+  const port = rawPort > 0 && rawPort <= 65535 ? rawPort : 8642
+  const formattedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+  return `http://${formattedHost}:${port}`
+}
+
+function getGatewayProxyTarget(): GatewayProxyTarget {
+  return gatewayProxyTargetForTest || {
+    getUpstream: () => defaultGatewayUpstream(),
+    getApiKey: () => null,
+  }
+}
 
 // --- run_id → session_id mapping (in-memory, ephemeral) ---
 
@@ -71,15 +95,12 @@ function resolveProfile(ctx: Context): string {
 
 /** Resolve upstream URL for a request based on profile header/query */
 function resolveUpstream(ctx: Context): string {
-  const mgr = getGatewayManager()
-  if (!mgr) {
-    throw new Error('GatewayManager not initialized')
-  }
+  const target = getGatewayProxyTarget()
   const profile = resolveProfile(ctx)
   if (profile && profile !== 'default') {
-    return mgr.getUpstream(profile)
+    return target.getUpstream(profile)
   }
-  return mgr.getUpstream()
+  return target.getUpstream()
 }
 
 function buildProxyHeaders(ctx: Context, upstream: string): Record<string, string> {
@@ -97,9 +118,9 @@ function buildProxyHeaders(ctx: Context, upstream: string): Record<string, strin
     }
   }
 
-  const mgr = getGatewayManager()
-  if (mgr) {
-    const apiKey = mgr.getApiKey(resolveProfile(ctx))
+  const target = getGatewayProxyTarget()
+  if (target.getApiKey) {
+    const apiKey = target.getApiKey(resolveProfile(ctx))
     if (apiKey) {
       headers['authorization'] = `Bearer ${apiKey}`
     }
@@ -194,7 +215,7 @@ export async function proxy(ctx: Context) {
     upstream = resolveUpstream(ctx)
   } catch (e: any) {
     ctx.status = 503
-    ctx.body = { error: { message: e?.message || 'GatewayManager not initialized' } }
+    ctx.body = { error: { message: e?.message || 'Hermes gateway upstream is not available' } }
     return
   }
   const upstreamPath = ctx.path.replace(/^\/api\/hermes\/v1/, '/v1').replace(/^\/api\/hermes/, '/api')

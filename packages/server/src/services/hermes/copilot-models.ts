@@ -22,23 +22,25 @@ export interface CopilotModelMeta {
 }
 
 const FALLBACK_MODELS: CopilotModelMeta[] = [
+  { id: 'gpt-5.5', preview: false, disabled: false },
   { id: 'gpt-5.4', preview: false, disabled: false },
   { id: 'gpt-5.4-mini', preview: false, disabled: false },
+  { id: 'gpt-5.4-nano', preview: false, disabled: false },
   { id: 'gpt-5-mini', preview: false, disabled: false },
   { id: 'gpt-5.3-codex', preview: false, disabled: false },
-  { id: 'gpt-5.2-codex', preview: false, disabled: false },
-  { id: 'gpt-4.1', preview: false, disabled: false },
-  { id: 'gpt-4o', preview: false, disabled: false },
-  { id: 'gpt-4o-mini', preview: false, disabled: false },
-  { id: 'claude-sonnet-4.6', preview: false, disabled: false },
-  { id: 'claude-sonnet-4', preview: false, disabled: false },
-  { id: 'claude-sonnet-4.5', preview: false, disabled: false },
+  { id: 'claude-opus-4.8', preview: false, disabled: false },
+  { id: 'claude-opus-4.7', preview: false, disabled: false },
+  { id: 'claude-opus-4.6', preview: false, disabled: false },
+  { id: 'claude-opus-4.6-fast', preview: true, disabled: false },
+  { id: 'claude-opus-4.5', preview: false, disabled: false },
   { id: 'claude-haiku-4.5', preview: false, disabled: false },
-  { id: 'gemini-3.1-pro-preview', preview: true, disabled: false },
-  { id: 'gemini-3-pro-preview', preview: true, disabled: false },
-  { id: 'gemini-3-flash-preview', preview: true, disabled: false },
+  { id: 'claude-sonnet-4.6', preview: false, disabled: false },
+  { id: 'claude-sonnet-4.5', preview: false, disabled: false },
   { id: 'gemini-2.5-pro', preview: false, disabled: false },
-  { id: 'grok-code-fast-1', preview: false, disabled: false },
+  { id: 'gemini-3-flash', preview: true, disabled: false },
+  { id: 'gemini-3.1-pro', preview: true, disabled: false },
+  { id: 'gemini-3.5-flash', preview: false, disabled: false },
+  { id: 'raptor-mini', preview: true, disabled: false },
 ]
 
 interface CacheEntry {

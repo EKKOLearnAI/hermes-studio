@@ -228,16 +228,16 @@ function handleSend() {
 }
 
 function handleInput(e: Event) {
-    // 用户手动拖拽自定义高度时，不覆盖
-    if (textareaHeight.value !== null) return
     store.emitTyping()
-    const el = e.target as HTMLTextAreaElement
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 100) + 'px'
-
     if (!isComposing.value) {
         updateMentionState()
     }
+
+    // 用户手动拖拽自定义高度时，不覆盖
+    if (textareaHeight.value !== null) return
+    const el = e.target as HTMLTextAreaElement
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px'
 }
 
 function handleMentionClick(option: MentionOption) {
@@ -290,6 +290,11 @@ function addFile(file: File) {
     })
 }
 
+function addFiles(files: File[]) {
+    for (const file of files) addFile(file)
+    if (files.length > 0) textareaRef.value?.focus()
+}
+
 function handleAttachClick() {
     fileInputRef.value?.click()
 }
@@ -297,7 +302,7 @@ function handleAttachClick() {
 function handleFileChange(e: Event) {
     const input = e.target as HTMLInputElement
     if (!input.files) return
-    for (const file of input.files) addFile(file)
+    addFiles(Array.from(input.files))
     input.value = ''
 }
 
@@ -310,7 +315,7 @@ function handlePaste(e: ClipboardEvent) {
         const blob = item.getAsFile()
         if (!blob) continue
         const ext = item.type.split('/')[1] || 'png'
-        addFile(new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type }))
+        addFiles([new File([blob], `pasted-${Date.now()}.${ext}`, { type: item.type })])
     }
 }
 
@@ -338,9 +343,10 @@ function handleDrop(e: DragEvent) {
     e.preventDefault()
     dragCounter.value = 0
     isDragging.value = false
-    for (const file of Array.from(e.dataTransfer?.files || [])) addFile(file)
-    textareaRef.value?.focus()
+    addFiles(Array.from(e.dataTransfer?.files || []))
 }
+
+defineExpose({ addFiles })
 
 function removeAttachment(id: string) {
     const idx = attachments.value.findIndex(a => a.id === id)
@@ -685,6 +691,10 @@ function isImage(type: string): boolean {
     max-height: 400px;
     min-height: 20px;
     overflow-y: auto;
+
+    @media (max-width: 768px) {
+        font-size: 16px;
+    }
 
     &::placeholder {
         color: $text-muted;

@@ -22,33 +22,66 @@ const features = [
 </script>
 
 <template>
-  <section class="section">
-    <h2 class="section-title reveal">{{ t('features.title') }}</h2>
-    <p class="section-desc reveal">{{ t('features.desc') }}</p>
-    <div class="features-grid">
-      <div
-        v-for="(f, i) in features"
-        :key="f.key"
-        class="feature-card reveal"
-        :class="[`reveal-delay-${(i % 4) + 1}`]"
-      >
-        <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path :d="f.icon" />
-          </svg>
+  <section class="features-section">
+    <div class="features-inner">
+      <h2 class="section-title reveal">{{ t('features.title') }}</h2>
+      <p class="section-desc reveal">{{ t('features.desc') }}</p>
+      <div class="features-grid">
+        <div
+          v-for="(f, i) in features"
+          :key="f.key"
+          class="feature-card reveal"
+          :class="[`reveal-delay-${(i % 4) + 1}`]"
+        >
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path :d="f.icon" />
+            </svg>
+          </div>
+          <h3 class="feature-title">{{ t(`features.${f.key}.title`) }}</h3>
+          <p class="feature-desc">{{ t(`features.${f.key}.desc`) }}</p>
         </div>
-        <h3 class="feature-title">{{ t(`features.${f.key}.title`) }}</h3>
-        <p class="feature-desc">{{ t(`features.${f.key}.desc`) }}</p>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped lang="scss">
+.features-section {
+  padding: 82px 18px;
+  background: transparent;
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: 54px 10px;
+  }
+}
+
+.features-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.section-title {
+  margin: 0 auto 16px;
+  color: rgba(30, 38, 52, 0.92);
+  font-size: clamp(32px, 4vw, 54px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.section-desc {
+  max-width: 680px;
+  margin: 0 auto 36px;
+  color: rgba(42, 50, 64, 0.68);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
 .features-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  gap: 14px;
 
   @media (max-width: 900px) {
     grid-template-columns: repeat(2, 1fr);
@@ -60,33 +93,41 @@ const features = [
 }
 
 .feature-card {
-  padding: 28px 24px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  transition: all $transition-normal;
+  min-height: 220px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 253, 0.72));
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  transition: transform $transition-normal, border-color $transition-normal, box-shadow $transition-normal, background $transition-normal;
 
   &:hover {
-    border-color: var(--text-muted);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    border-color: rgba(30, 50, 90, 0.14);
+    box-shadow: 0 18px 44px rgba(30, 50, 90, 0.08);
     transform: translateY(-2px);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 253, 0.82));
   }
 }
 
 .feature-icon {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary);
-  border-radius: $radius-sm;
-  margin-bottom: 16px;
-  color: var(--accent-primary);
-  transition: background $transition-normal;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(238, 242, 247, 0.82));
+  border: 1px solid rgba(30, 50, 90, 0.08);
+  border-radius: 16px;
+  margin-bottom: 18px;
+  color: rgba(30, 50, 90, 0.78);
+  transition: background $transition-normal, color $transition-normal;
 
   .feature-card:hover & {
-    background: var(--border-color);
+    color: rgba(30, 50, 90, 0.95);
+    background: rgba(255, 255, 255, 0.92);
   }
 
   svg {
@@ -97,14 +138,14 @@ const features = [
 
 .feature-title {
   font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--text-primary);
+  font-weight: 650;
+  margin-bottom: 9px;
+  color: rgba(30, 38, 52, 0.9);
 }
 
 .feature-desc {
   font-size: 14px;
   line-height: 1.6;
-  color: var(--text-secondary);
+  color: rgba(42, 50, 64, 0.64);
 }
 </style>

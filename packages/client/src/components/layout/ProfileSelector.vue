@@ -13,6 +13,10 @@ import {
 import ProfileAvatarView from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { useI18n } from 'vue-i18n'
 
+const emit = defineEmits<{
+  'modal-show-change': [show: boolean]
+}>()
+
 const { t } = useI18n()
 const message = useMessage()
 const profilesStore = useProfilesStore()
@@ -32,6 +36,11 @@ const profileRestarting = ref<Record<string, boolean>>({})
 const profileSwitching = ref<Record<string, boolean>>({})
 const statusByProfile = computed(() => new Map(runtimeStatuses.value.map(status => [status.profile, status])))
 let runtimeRefreshToken = 0
+
+function setProfileModalShow(show: boolean) {
+  showProfileModal.value = show
+  emit('modal-show-change', show)
+}
 
 async function loadRuntimeStatuses(options: { background?: boolean } = {}): Promise<boolean> {
   const token = ++runtimeRefreshToken
@@ -54,7 +63,7 @@ async function loadRuntimeStatuses(options: { background?: boolean } = {}): Prom
 }
 
 function openProfileModal() {
-  showProfileModal.value = true
+  setProfileModalShow(true)
   void loadRuntimeStatuses().then((refreshing) => {
     if (refreshing) scheduleRuntimeStatusPoll()
   })
@@ -68,6 +77,10 @@ function scheduleRuntimeStatusPoll(attempt = 0) {
       if (refreshing) scheduleRuntimeStatusPoll(attempt + 1)
     })
   }, attempt === 0 ? 700 : 1200)
+}
+
+function handleProfileModalShowChange(show: boolean) {
+  setProfileModalShow(show)
 }
 
 function openAvatarModal(profile: HermesProfile) {
@@ -211,11 +224,12 @@ onMounted(() => {
     </div>
 
     <NModal
-      v-model:show="showProfileModal"
+      :show="showProfileModal"
       preset="card"
       :bordered="false"
       :style="{ width: '720px', maxWidth: 'calc(100vw - 32px)' }"
       class="profile-manager-modal"
+      @update:show="handleProfileModalShowChange"
     >
       <template #header>
         <div class="profile-modal-header">

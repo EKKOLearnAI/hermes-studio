@@ -27,6 +27,22 @@ const PREVIEW_FRONTEND_PORT = 8651
 const PREVIEW_AGENT_BRIDGE_PORT = 18650
 const DEFAULT_USERNAME = 'admin'
 const DEFAULT_PASSWORD = '123456'
+const DEFAULT_RESTART_GRACE_MS = 5000
+const DEFAULT_STOP_GRACE_MS = 15000
+const STOP_POLL_INTERVAL_MS = 500
+
+function envPositiveInt(name) {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function getDaemonStopGraceMs(options = {}) {
+  const { restart = false } = options
+  if (restart) {
+    return envPositiveInt('HERMES_WEB_UI_RESTART_GRACE_MS') ?? DEFAULT_RESTART_GRACE_MS
+  }
+  return envPositiveInt('HERMES_WEB_UI_STOP_GRACE_MS') ?? DEFAULT_STOP_GRACE_MS
+}
 
 // ─── Auto-fix node-pty native module ──────────────────────────
 function ensureNativeModules() {
@@ -165,6 +181,21 @@ function getUpdatePort() {
 function getPort() {
   const argPort = getPortFromArgs()
   return argPort ?? DEFAULT_PORT
+}
+
+function shouldOpenBrowser(argv = process.argv) {
+  return !argv.includes('--no-open')
+}
+
+function getRestartArgs(port, argv = process.argv) {
+  const args = ['restart', '--port', String(port)]
+  if (!shouldOpenBrowser(argv)) args.push('--no-open')
+  return args
+}
+
+function enableClientMode() {
+  process.env.HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART = '1'
+  process.env.CORS_ORIGINS = '*'
 }
 
 function commandExists(command) {
@@ -387,6 +418,7 @@ function startDaemon(port) {
     serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
   }
   const child = spawn(process.execPath, [serverEntry], {
+    cwd: pkgDir,
     detached: true,
     stdio: ['ignore', logStream, logStream],
     env: serverEnv,
@@ -422,13 +454,19 @@ function startDaemon(port) {
 
     fetch(healthUrl).then(res => {
       if (res.ok) {
+        const listeningPid = recoverPidFromPort()
+        if (listeningPid) {
+          writePid(listeningPid)
+        }
         const url = `http://localhost:${port}`
         console.log(`  ✓ hermes-web-ui started`)
         console.log(`    ${url}`)
         console.log(`    Log: ${LOG_FILE}`)
-        const isWin = process.platform === 'win32'
-        const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
-        try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        if (shouldOpenBrowser()) {
+          const isWin = process.platform === 'win32'
+          const cmd = isWin ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`
+          try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        }
       } else if (waited < maxWait) {
         setTimeout(poll, interval)
       } else {
@@ -452,17 +490,21 @@ function startDaemon(port) {
   setTimeout(poll, interval)
 }
 
-function stopDaemon() {
+function stopDaemon(options = {}) {
+  const { restart = false } = options
   const stoppedPreviewPids = stopPreviewRuntimeFromCli()
-  const pidFromFile = readPidFile()
+  let pidFromFile = readPidFile()
+  let cleanedStalePid = false
   if (pidFromFile && !isRunning(pidFromFile)) {
     removePid()
     console.log(`  ✓ hermes-web-ui was not running (cleaned stale PID: ${pidFromFile})`)
-    return
+    pidFromFile = null
+    cleanedStalePid = true
   }
 
   const pid = pidFromFile ?? recoverPidFromPort()
   if (!pid) {
+    if (cleanedStalePid) return
     if (stoppedPreviewPids) {
       console.log(`  ✓ hermes-web-ui preview stopped`)
       return
@@ -479,11 +521,14 @@ function stopDaemon() {
 
   try {
     try {
-      process.kill(pid, 'SIGTERM')
-      // Wait briefly for graceful shutdown
-      for (let i = 0; i < 10; i++) {
+      process.kill(pid, restart ? 'SIGUSR2' : 'SIGTERM')
+      // Restart keeps the bridge alive and should be quick. Stop waits longer
+      // so the server can ask the bridge broker to stop worker subprocesses.
+      const graceMs = getDaemonStopGraceMs({ restart })
+      const attempts = Math.max(1, Math.ceil(graceMs / STOP_POLL_INTERVAL_MS))
+      for (let i = 0; i < attempts; i++) {
         if (!isRunning(pid)) break
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STOP_POLL_INTERVAL_MS)
       }
     } catch {}
     // Force kill if still alive
@@ -610,6 +655,7 @@ Usage: hermes-web-ui <command> [options]
 
 Commands:
   start [port]       Start the server (default port: ${DEFAULT_PORT})
+  client [port]      Start server for a remote client (disable gateway autostart, allow all CORS)
   stop               Stop the server
   restart [port]     Restart the server
   status             Show server status
@@ -622,7 +668,8 @@ Commands:
 Options:
   -v, --version      Show version number
   -h, --help         Show this help message
-  --port <port>      Specify port (used with start/restart)
+  --no-open          Do not open a browser after startup
+  --port <port>      Specify port (used with start/client/restart)
   --restart          Restart after clear-login-locks
 `)
     process.exit(0)
@@ -632,11 +679,15 @@ Options:
     case 'start':
       startDaemon(getPort())
       break
+    case 'client':
+      enableClientMode()
+      startDaemon(getPort())
+      break
     case 'stop':
       stopDaemon()
       break
     case 'restart':
-      stopDaemon()
+      stopDaemon({ restart: true })
       setTimeout(() => startDaemon(getPort()), 500)
       break
     case 'status':
@@ -647,7 +698,7 @@ Options:
       const result = clearLoginLocks()
       if (restartAfterClear && result.serverRunning) {
         const port = getRunningPort() ?? getPort()
-        stopDaemon()
+        stopDaemon({ restart: true })
         setTimeout(() => startDaemon(port), 500)
       }
       break
@@ -673,6 +724,7 @@ Options:
         serverEnv.ComSpec = serverEnv.ComSpec?.trim() || windowsShell
       }
       const child = spawn(process.execPath, [serverEntry], {
+        cwd: pkgDir,
         stdio: 'inherit',
         env: serverEnv,
         windowsHide: true,
@@ -721,7 +773,7 @@ function runUpdateInstall(npm) {
         process.exit(1)
       }
 
-      const restart = spawnCli(cli, ['restart', '--port', String(getUpdatePort())], {
+      const restart = spawnCli(cli, getRestartArgs(getUpdatePort()), {
         stdio: 'inherit',
         windowsHide: true,
         env: getCurrentNodeEnv(),
@@ -748,8 +800,11 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
 export {
   clearLoginLocks,
   commandExists,
+  getDaemonStopGraceMs,
   getListeningPids,
+  getRestartArgs,
   parseUnixNetstatListeningPids,
   resetDefaultLogin,
+  shouldOpenBrowser,
   stopDaemon,
 }

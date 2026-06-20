@@ -3,20 +3,24 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
-const { mockRestartGatewayForProfile } = vi.hoisted(() => ({
+const { mockGatewayAutostartDisabledByEnv, mockRestartGatewayForProfile } = vi.hoisted(() => ({
+  mockGatewayAutostartDisabledByEnv: vi.fn(() => false),
   mockRestartGatewayForProfile: vi.fn().mockResolvedValue({ running: true, profile: 'research' }),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => ({
+  gatewayAutostartDisabledByEnv: mockGatewayAutostartDisabledByEnv,
   restartGatewayForProfile: mockRestartGatewayForProfile,
 }))
 
 let hermesHome = ''
 const originalHermesHome = process.env.HERMES_HOME
+const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 
 async function loadController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
+  process.env.HERMES_WEB_UI_HOME = hermesHome
   return import('../../packages/server/src/controllers/hermes/weixin')
 }
 
@@ -32,6 +36,7 @@ function makeCtx(body: Record<string, any>, profile = 'research'): any {
 describe('weixin controller', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
+    mockGatewayAutostartDisabledByEnv.mockReturnValue(false)
     hermesHome = await mkdtemp(join(tmpdir(), 'hwui-weixin-controller-'))
     await mkdir(join(hermesHome, 'profiles', 'research'), { recursive: true })
     await writeFile(join(hermesHome, '.env'), [
@@ -51,6 +56,8 @@ describe('weixin controller', () => {
     vi.resetModules()
     if (originalHermesHome === undefined) delete process.env.HERMES_HOME
     else process.env.HERMES_HOME = originalHermesHome
+    if (originalWebUiHome === undefined) delete process.env.HERMES_WEB_UI_HOME
+    else process.env.HERMES_WEB_UI_HOME = originalWebUiHome
     if (hermesHome) await rm(hermesHome, { recursive: true, force: true })
     hermesHome = ''
   })
@@ -86,5 +93,24 @@ describe('weixin controller', () => {
     expect(ctx.body).toEqual({ error: 'Missing account_id or token' })
     expect(mockRestartGatewayForProfile).not.toHaveBeenCalled()
     await expect(readFile(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')).resolves.toBe(envBefore)
+  })
+
+  it('saves scanned Weixin credentials without restarting when gateway auto-start is disabled', async () => {
+    await writeFile(join(hermesHome, 'config.json'), JSON.stringify({
+      gatewayAutoStart: { enabled: false },
+    }), 'utf-8')
+    const { save } = await loadController()
+    const ctx = makeCtx({
+      account_id: 'new-research-account',
+      token: 'new-research-token',
+    })
+
+    await save(ctx)
+
+    expect(ctx.body).toEqual({ success: true })
+    expect(mockRestartGatewayForProfile).not.toHaveBeenCalled()
+    const researchEnv = await readFile(join(hermesHome, 'profiles', 'research', '.env'), 'utf-8')
+    expect(researchEnv).toContain('WEIXIN_ACCOUNT_ID=new-research-account')
+    expect(researchEnv).toContain('WEIXIN_TOKEN=new-research-token')
   })
 })

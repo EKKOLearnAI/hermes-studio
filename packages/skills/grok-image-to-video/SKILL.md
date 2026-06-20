@@ -32,7 +32,14 @@ Resolve the Hermes Web UI base URL in this order:
 
 1. `HERMES_WEB_UI_URL` environment variable, if set.
 2. `http://127.0.0.1:${PORT}`, if `PORT` is set.
-3. `http://127.0.0.1:8648` for local development.
+3. `http://127.0.0.1:8648` for the Web UI single-server default.
+
+Common local ports:
+
+- Development API backend: `http://127.0.0.1:8647`. Use this with `npm run dev`; do not target the Vite frontend port.
+- Web UI single-server default: `http://127.0.0.1:8648`.
+- Desktop app default: `http://127.0.0.1:8748`.
+- Custom port: set `HERMES_WEB_UI_URL` to the full base URL, or set `PORT` to use `http://127.0.0.1:${PORT}`.
 
 When Hermes Web UI is running from the provided Docker Compose setup, the default external URL is `http://127.0.0.1:6060`.
 

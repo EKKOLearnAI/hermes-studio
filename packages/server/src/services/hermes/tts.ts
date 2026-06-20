@@ -15,15 +15,18 @@ export interface TtsOptions {
   voice?: string
   rate?: string
   pitch?: string
+  outputFormat?: string
 }
 
 export async function edgeTts(opts: TtsOptions): Promise<Buffer> {
   const id = randomUUID()
-  const tmpFile = join(tmpdir(), `tts-${id}.mp3`)
+  const outputFormat = opts.outputFormat || 'audio-24khz-48kbitrate-mono-mp3'
+  const tmpFile = join(tmpdir(), `tts-${id}${outputFormat.includes('pcm') ? '.pcm' : '.mp3'}`)
 
   try {
     const tts = new EdgeTTS({
       voice: opts.voice || FIXED_VOICE,
+      outputFormat,
       rate: opts.rate || FIXED_RATE,
       pitch: opts.pitch || FIXED_PITCH,
       timeout: 15000,
@@ -41,8 +44,9 @@ export async function textToSpeech(opts: TtsOptions): Promise<{ audio: Buffer; e
   const voice = opts.voice || FIXED_VOICE
   const rate = opts.rate || FIXED_RATE
   const pitch = opts.pitch || FIXED_PITCH
+  const outputFormat = opts.outputFormat || 'audio-24khz-48kbitrate-mono-mp3'
   const audio = await edgeTts(opts)
-  logger.debug({ engine: 'edge', voice, rate, pitch }, 'TTS generated via Edge')
+  logger.debug({ engine: 'edge', voice, rate, pitch, outputFormat }, 'TTS generated via Edge')
   return { audio, engine: 'edge' }
 }
 

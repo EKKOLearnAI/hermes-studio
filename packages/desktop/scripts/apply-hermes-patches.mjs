@@ -33,6 +33,8 @@ const sitePkgs = process.env.HERMES_AGENT_SITE_PACKAGES ?? (
 )
 
 const dtPath = join(sitePkgs, 'gateway', 'platforms', 'dingtalk.py')
+const browserToolPath = join(sitePkgs, 'tools', 'browser_tool.py')
+const sitecustomizePath = join(sitePkgs, 'sitecustomize.py')
 if (!existsSync(dtPath)) {
   console.error(`dingtalk.py not found at ${dtPath} — is hermes-agent installed?`)
   process.exit(1)
@@ -56,6 +58,21 @@ function patch(id, marker, find, replace) {
   src = src.replace(find, replace)
   console.log(`  ✓ ${id}`)
   applied++
+}
+
+function patchText(text, id, marker, find, replace) {
+  if (text.includes(marker)) {
+    console.log(`  · ${id}  (already applied)`)
+    skipped++
+    return text
+  }
+  if (!text.includes(find)) {
+    console.log(`  ✗ ${id}  (anchor not found — upstream changed?)`)
+    return text
+  }
+  applied++
+  console.log(`  ✓ ${id}`)
+  return text.replace(find, replace)
 }
 
 console.log(`Patching ${dtPath}`)
@@ -177,4 +194,149 @@ patch(
 if (src !== before) {
   writeFileSync(dtPath, src)
 }
+
+if (existsSync(browserToolPath)) {
+  console.log(`Patching ${browserToolPath}`)
+  let browserSrc = readFileSync(browserToolPath, 'utf-8')
+  const browserBefore = browserSrc
+
+  browserSrc = patchText(
+    browserSrc,
+    'browser-stdout-decode-fallback',
+    '# patch:browser-stdout-decode-fallback',
+    `from hermes_cli.config import cfg_get\n`,
+    `from hermes_cli.config import cfg_get
+
+# patch:browser-stdout-decode-fallback
+def _hermes_read_browser_output(path: str) -> str:
+    data = Path(path).read_bytes()
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    return data.decode("utf-8", errors="replace")
+`,
+  )
+
+  for (const [id, find, replace] of [
+    [
+      'browser-fallback-stdout-read',
+      `            with open(stdout_path, "r", encoding="utf-8") as f:
+                stdout = f.read().strip()`,
+      `            # patch:browser-fallback-stdout-read
+            stdout = _hermes_read_browser_output(stdout_path).strip()`,
+    ],
+    [
+      'browser-command-stdout-read',
+      `            with open(stdout_path, "r", encoding="utf-8") as f:
+                stdout = f.read()
+            with open(stderr_path, "r", encoding="utf-8") as f:
+                stderr = f.read()`,
+      `            # patch:browser-command-stdout-read
+            stdout = _hermes_read_browser_output(stdout_path)
+            stderr = _hermes_read_browser_output(stderr_path)`,
+    ],
+  ]) {
+    browserSrc = patchText(
+      browserSrc,
+      id,
+      `# patch:${id}`,
+      find,
+      replace,
+    )
+  }
+
+  if (browserSrc !== browserBefore) {
+    writeFileSync(browserToolPath, browserSrc)
+  }
+}
+
+const brotlicffiCompatMarker = '# patch:brotlicffi-error-compat'
+const brotlicffiCompat = `
+${brotlicffiCompatMarker}
+try:
+    import brotlicffi as _hermes_brotlicffi
+    if not hasattr(_hermes_brotlicffi, "error"):
+        _hermes_brotlicffi.error = (
+            getattr(_hermes_brotlicffi, "Error", None)
+            or getattr(_hermes_brotlicffi, "BrotliError", None)
+            or Exception
+        )
+except Exception:
+    pass
+`
+
+const desktopHiddenSubprocessMarker = '# patch:desktop-hidden-subprocess-defaults'
+const desktopHiddenSubprocessDefaults = `
+${desktopHiddenSubprocessMarker}
+try:
+    import os as _hermes_os
+    if _hermes_os.name == "nt" and _hermes_os.environ.get("HERMES_DESKTOP", "").strip().lower() == "true":
+        import asyncio as _hermes_asyncio
+        import subprocess as _hermes_subprocess
+        if not getattr(_hermes_subprocess, "_hermes_desktop_hidden_defaults_installed", False):
+            _hermes_create_no_window = getattr(_hermes_subprocess, "CREATE_NO_WINDOW", 0) or 0x08000000
+
+            def _hermes_apply_hidden_process_options(kwargs):
+                flags = kwargs.get("creationflags", 0) or 0
+                try:
+                    kwargs["creationflags"] = int(flags) | _hermes_create_no_window
+                except Exception:
+                    kwargs["creationflags"] = _hermes_create_no_window
+
+                startupinfo = kwargs.get("startupinfo")
+                if startupinfo is None:
+                    try:
+                        startupinfo = _hermes_subprocess.STARTUPINFO()
+                    except Exception:
+                        return
+                    kwargs["startupinfo"] = startupinfo
+                try:
+                    startupinfo.dwFlags |= getattr(_hermes_subprocess, "STARTF_USESHOWWINDOW", 1)
+                    startupinfo.wShowWindow = getattr(_hermes_subprocess, "SW_HIDE", 0)
+                except Exception:
+                    pass
+
+            _hermes_original_popen = _hermes_subprocess.Popen
+            _hermes_original_create_subprocess_exec = _hermes_asyncio.create_subprocess_exec
+            _hermes_original_create_subprocess_shell = _hermes_asyncio.create_subprocess_shell
+
+            class _HermesHiddenPopen(_hermes_original_popen):
+                def __init__(self, *args, **kwargs):
+                    _hermes_apply_hidden_process_options(kwargs)
+                    super().__init__(*args, **kwargs)
+
+            async def _hermes_hidden_create_subprocess_exec(*args, **kwargs):
+                _hermes_apply_hidden_process_options(kwargs)
+                return await _hermes_original_create_subprocess_exec(*args, **kwargs)
+
+            async def _hermes_hidden_create_subprocess_shell(*args, **kwargs):
+                _hermes_apply_hidden_process_options(kwargs)
+                return await _hermes_original_create_subprocess_shell(*args, **kwargs)
+
+            _hermes_subprocess.Popen = _HermesHiddenPopen
+            _hermes_asyncio.create_subprocess_exec = _hermes_hidden_create_subprocess_exec
+            _hermes_asyncio.create_subprocess_shell = _hermes_hidden_create_subprocess_shell
+            _hermes_subprocess._hermes_desktop_hidden_defaults_installed = True
+except Exception:
+    pass
+`
+
+function appendSitecustomizePatch(id, marker, body) {
+  const sitecustomize = existsSync(sitecustomizePath) ? readFileSync(sitecustomizePath, 'utf-8') : ''
+  if (sitecustomize.includes(marker)) {
+    console.log(`  · ${id}  (already applied)`)
+    skipped++
+    return
+  }
+  const nextSitecustomize = `${sitecustomize.replace(/\s*$/, '')}\n${body.trim()}\n`
+  writeFileSync(sitecustomizePath, nextSitecustomize)
+  console.log(`  ✓ ${id}`)
+  applied++
+}
+
+appendSitecustomizePatch('brotlicffi-error-compat', brotlicffiCompatMarker, brotlicffiCompat)
+appendSitecustomizePatch('desktop-hidden-subprocess-defaults', desktopHiddenSubprocessMarker, desktopHiddenSubprocessDefaults)
+
 console.log(`Done. Applied ${applied}, skipped ${skipped}.`)

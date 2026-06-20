@@ -1,0 +1,108 @@
+name: Publish Web UI Artifact to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the Web UI artifact to"
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: webui-release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  webui:
+    name: Web UI
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild node-pty
+
+      - name: Build Web UI
+        run: npm run build
+
+      - name: Keep production dependencies only
+        run: npm prune --omit=dev --no-audit --no-fund
+
+      - name: Package Web UI
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          asset="hermes-web-ui-${version}.tar.gz"
+          manifest="hermes-web-ui-${version}.json"
+          mkdir -p release/webui /tmp/hermes-web-ui-package/webui
+
+          cp package.json package-lock.json /tmp/hermes-web-ui-package/webui/
+          cp -R bin dist node_modules /tmp/hermes-web-ui-package/webui/
+
+          tar -czf "release/webui/${asset}" -C /tmp/hermes-web-ui-package webui
+          sha256="$(shasum -a 256 "release/webui/${asset}" | awk '{print $1}')"
+          size="$(stat -c%s "release/webui/${asset}")"
+          printf '%s  %s\n' "$sha256" "$asset" > "release/webui/${asset}.sha256"
+
+          node - <<'NODE' "$version" "$asset" "$sha256" "$size" "release/webui/${manifest}"
+          const { writeFileSync } = require('node:fs')
+          const [version, asset, sha256, size, manifest] = process.argv.slice(2)
+          writeFileSync(manifest, JSON.stringify({
+            schema: 1,
+            webUiVersion: version,
+            createdAt: new Date().toISOString(),
+            asset: {
+              name: asset,
+              sha256,
+              size: Number(size),
+            },
+          }, null, 2) + '\n')
+          NODE
+
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+          echo "manifest=${manifest}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Web UI artifact to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: |
+            release/webui/${{ steps.package.outputs.asset }}
+            release/webui/${{ steps.package.outputs.asset }}.sha256
+            release/webui/${{ steps.package.outputs.manifest }}
+
+  keep-release-out-of-latest:
+    name: Keep release out of GitHub latest
+    if: always() && github.event_name == 'release'
+    needs: webui
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Mark release as not latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest=false

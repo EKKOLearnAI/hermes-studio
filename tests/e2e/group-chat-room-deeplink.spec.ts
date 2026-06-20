@@ -144,10 +144,10 @@ test.describe('group chat room deep links', () => {
     await expect(second.getByText('Alpha room message')).toHaveCount(0)
   })
 
-  test('unknown route room id falls back to base group chat route', async ({ page }) => {
+  test('unknown route room id falls back to the first available room', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/missing-room')
 
-    await expect(page).toHaveURL(/#\/hermes\/group-chat$/)
-    await expect(page.getByText('Alpha Room')).toBeVisible()
+    await expect(page).toHaveURL(/#\/hermes\/group-chat\/room\/room-alpha$/)
+    await expect(page.locator('.room-title-text', { hasText: 'Alpha Room' })).toBeVisible()
   })
 })

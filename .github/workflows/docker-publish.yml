@@ -6,7 +6,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -44,3 +44,18 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.sha }}
             ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.event.release.tag_name || github.ref_name }}
+
+  keep-release-out-of-latest:
+    name: Keep release out of GitHub latest
+    if: always() && github.event_name == 'release'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark release as not latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --latest=false

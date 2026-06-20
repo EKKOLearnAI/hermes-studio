@@ -6,11 +6,8 @@ import App from './App.vue'
 import '@client/styles/variables.scss'
 import './styles/global.scss'
 
-const savedTheme = localStorage.getItem('hermes_website_theme') || 'system'
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-if (savedTheme === 'dark' || (savedTheme === 'system' && prefersDark)) {
-  document.documentElement.classList.add('dark')
-}
+localStorage.setItem('hermes_website_theme', 'light')
+document.documentElement.classList.remove('dark')
 
 const app = createApp(App)
 app.use(i18n)

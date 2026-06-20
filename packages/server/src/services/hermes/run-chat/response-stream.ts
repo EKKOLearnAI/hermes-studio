@@ -8,6 +8,56 @@ import { logger } from '../../logger'
 import { summarizeToolArguments, responseFunctionCallToToolCall } from './response-utils'
 import type { SessionState, ResponseRunState } from './types'
 
+function textFromResponseMessageItem(item: any): string {
+  const content = Array.isArray(item?.content) ? item.content : []
+  return content
+    .map((part: any) => {
+      if (typeof part?.text === 'string') return part.text
+      if (typeof part?.content === 'string') return part.content
+      return ''
+    })
+    .filter(Boolean)
+    .join('')
+}
+
+function reasoningTextFromEvent(parsed: any): string {
+  if (typeof parsed?.delta === 'string') return parsed.delta
+  if (typeof parsed?.text === 'string') return parsed.text
+  if (typeof parsed?.summary === 'string') return parsed.summary
+  if (typeof parsed?.reasoning === 'string') return parsed.reasoning
+  if (Array.isArray(parsed?.summary)) {
+    return parsed.summary
+      .map((part: any) => typeof part?.text === 'string' ? part.text : typeof part === 'string' ? part : '')
+      .filter(Boolean)
+      .join('')
+  }
+  return ''
+}
+
+function isReasoningResponseItem(item: any): boolean {
+  const type = String(item?.type || '')
+  return type === 'reasoning' || type === 'reasoning_text' || type === 'reasoning_summary'
+}
+
+function appendedTextDelta(existing: string, next: string): string {
+  if (!existing || !next) return next
+  if (next.startsWith(existing)) return next.slice(existing.length)
+  const max = Math.min(existing.length, next.length)
+  for (let length = max; length >= 16; length--) {
+    if (existing.endsWith(next.slice(0, length))) return next.slice(length)
+  }
+  return next
+}
+
+function appendReasoningToMessage(run: ResponseRunState, message: any, text: string): void {
+  if (!text || message?.role !== 'assistant') return
+  const delta = appendedTextDelta(message.reasoning || message.reasoning_content || '', text)
+  if (!delta) return
+  message.reasoning = `${message.reasoning || ''}${delta}`
+  message.reasoning_content = `${message.reasoning_content || ''}${delta}`
+  run.reasoningMessageId = message.id
+}
+
 export function applyResponseStreamEvent(
   state: SessionState,
   sessionId: string,
@@ -40,16 +90,27 @@ export function applyResponseStreamEvent(
 
     const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
     if (last?.role === 'assistant' && last.finish_reason == null && !last.tool_calls?.length) {
+      if (run.pendingReasoning) {
+        appendReasoningToMessage(run, last, run.pendingReasoning)
+        run.pendingReasoning = undefined
+      }
       last.content += deltaText
     } else {
-      state.messages.push({
+      const message = {
         id: state.messages.length + 1,
         session_id: sessionId,
         runMarker,
         role: 'assistant',
         content: deltaText,
         timestamp: now(),
-      })
+        reasoning: run.pendingReasoning || null,
+        reasoning_content: run.pendingReasoning || null,
+      }
+      state.messages.push(message)
+      if (run.pendingReasoning) {
+        run.reasoningMessageId = message.id
+        run.pendingReasoning = undefined
+      }
     }
     return {
       event: 'message.delta',
@@ -60,6 +121,33 @@ export function applyResponseStreamEvent(
         delta: deltaText,
       },
     }
+  }
+
+  if (
+    eventType === 'response.reasoning.delta' ||
+    eventType === 'response.reasoning_text.delta' ||
+    eventType === 'response.reasoning_summary_text.delta'
+  ) {
+    const deltaText = reasoningTextFromEvent(parsed)
+    if (!deltaText) return null
+
+    const existingTarget = run.reasoningMessageId != null
+      ? state.messages.find(m => m.id === run.reasoningMessageId)
+      : null
+    const fallbackTarget = [...state.messages].reverse().find(m =>
+      m.runMarker === runMarker &&
+      m.role === 'assistant' &&
+      !m.tool_calls?.length,
+    )
+    const target = existingTarget?.role === 'assistant' ? existingTarget : fallbackTarget
+    if (target) {
+      appendReasoningToMessage(run, target, deltaText)
+    } else {
+      const delta = appendedTextDelta(run.pendingReasoning || '', deltaText)
+      if (!delta) return null
+      run.pendingReasoning = `${run.pendingReasoning || ''}${delta}`
+    }
+    return null
   }
 
   if (eventType === 'response.output_text.done') {
@@ -88,6 +176,38 @@ export function applyResponseStreamEvent(
         name: toolCall.function.name,
         arguments: toolCall.function.arguments,
         preview: summarizeToolArguments(toolCall.function.arguments),
+      },
+    }
+  }
+
+  if (eventType === 'response.function_call_arguments.delta') {
+    const callId = parsed.call_id || parsed.item_id || parsed.id
+    if (!callId) return null
+    const existing = run.toolCalls.get(callId)
+    if (!existing) return null
+    const delta = typeof parsed.delta === 'string' ? parsed.delta : ''
+    if (!delta) return null
+    const rawPreviousArgs = typeof existing.function?.arguments === 'string' ? existing.function.arguments : ''
+    const previousArgs = rawPreviousArgs === '{}' && /^[\[{]/.test(delta.trim()) ? '' : rawPreviousArgs
+    const nextToolCall = {
+      ...existing,
+      function: {
+        ...existing.function,
+        arguments: `${previousArgs}${delta}`,
+      },
+    }
+    run.toolCalls.set(callId, nextToolCall)
+    return {
+      event: 'tool.started',
+      payload: {
+        event: 'tool.started',
+        run_id: run.responseId,
+        response_id: run.responseId,
+        tool_call_id: callId,
+        tool: nextToolCall.function.name,
+        name: nextToolCall.function.name,
+        arguments: nextToolCall.function.arguments,
+        preview: summarizeToolArguments(nextToolCall.function.arguments),
       },
     }
   }
@@ -163,11 +283,42 @@ export function applyResponseStreamEvent(
     run.responseId = response.id || run.responseId
     const output = Array.isArray(response.output) ? response.output : []
     for (const item of output) {
-      if (item.type === 'function_call') {
+      if (item.type === 'message') {
+        const finalText = textFromResponseMessageItem(item)
+        if (!finalText) continue
+        const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+        if (last?.role === 'assistant' && !last.tool_calls?.length) {
+          if (run.pendingReasoning) {
+            appendReasoningToMessage(run, last, run.pendingReasoning)
+            run.pendingReasoning = undefined
+          }
+          if (!last.content) last.content = finalText
+          last.finish_reason = last.finish_reason || 'stop'
+        } else {
+          const message = {
+            id: state.messages.length + 1,
+            session_id: sessionId,
+            runMarker,
+            role: 'assistant',
+            content: finalText,
+            finish_reason: 'stop',
+            timestamp: now(),
+            reasoning: run.pendingReasoning || null,
+            reasoning_content: run.pendingReasoning || null,
+          }
+          state.messages.push(message)
+          if (run.pendingReasoning) {
+            run.reasoningMessageId = message.id
+            run.pendingReasoning = undefined
+          }
+        }
+      } else if (item.type === 'function_call') {
         applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.added', { item })
         applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
       } else if (item.type === 'function_call_output') {
         applyResponseStreamEvent(state, sessionId, runMarker, 'response.output_item.done', { item })
+      } else if (isReasoningResponseItem(item)) {
+        applyResponseStreamEvent(state, sessionId, runMarker, 'response.reasoning.delta', item)
       }
     }
   }
@@ -202,6 +353,8 @@ export function flushResponseRunToDb(state: SessionState, sessionId: string) {
       tool_calls: msg.tool_calls ?? null,
       tool_name: msg.tool_name ?? null,
       finish_reason: msg.finish_reason ?? null,
+      reasoning: msg.reasoning ?? null,
+      reasoning_content: msg.reasoning_content ?? null,
       timestamp: msg.timestamp,
     })
     flushed++

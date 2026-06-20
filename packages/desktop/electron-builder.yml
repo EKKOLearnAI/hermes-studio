@@ -6,6 +6,10 @@ directories:
   output: release
   buildResources: build
 
+publish:
+  provider: generic
+  url: https://download.ekkolearnai.com
+
 # Don't auto-prune our root node_modules; we curate `files` and `extraResources` ourselves.
 buildDependenciesFromSource: false
 nodeGypRebuild: false
@@ -18,17 +22,23 @@ files:
   - "!**/node_modules/.bin"
   - "!**/{.DS_Store,.git,.gitignore,.eslintrc*,.prettierrc*,*.map,tsconfig.json}"
 
-# Web UI source (built dist) and bundled Python live outside the asar.
+# Web UI source (built dist) lives outside the asar. Python/Node/Git runtime
+# assets are downloaded into the user's Web UI home on first launch.
 # This package lives at packages/desktop, so ../.. is the hermes-web-ui repo root.
 extraResources:
   - from: "build"
     to: "build"
     filter:
       - "icon.png"
+      - "icon.ico"
+      - "trayTemplate.png"
+      - "trayWindows.png"
+      - "runtime-release.json"
   - from: "../.."
     to: "webui"
     filter:
       - "package.json"
+      - "bin/**"
       - "dist/**"
       - "node_modules/**"
       # Drop other-platform node-pty prebuilds (saves ~45MB)
@@ -37,10 +47,6 @@ extraResources:
       - "!packages/desktop/**"
       - "!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}"
       - "!node_modules/**/*.md"
-  - from: "resources/python/${os}-${arch}"
-    to: "python"
-    filter:
-      - "**/*"
 
 asarUnpack:
   - "**/*.node"
@@ -49,17 +55,19 @@ mac:
   target:
     - target: dmg
       arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: true
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+  artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
 
 win:
   target:
     - target: nsis
       arch: [x64]
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+  artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
 
 linux:
   icon: build/icons
@@ -69,9 +77,14 @@ linux:
     - target: deb
       arch: [x64]   # fpm has no arm64 binary; deb only on x64
   category: Development
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+  artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
+
+deb:
+  afterInstall: build/linux-after-install.tpl
+  afterRemove: build/linux-after-remove.tpl
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
+  include: build/installer.nsh

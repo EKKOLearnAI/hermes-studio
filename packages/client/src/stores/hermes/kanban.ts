@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import * as kanbanApi from '@/api/hermes/kanban'
-import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions, KanbanBulkUpdateRequest } from '@/api/hermes/kanban'
+import type { KanbanTask, KanbanStats, KanbanAssignee, KanbanBoard, KanbanCapabilities, KanbanDiagnosticsOptions, KanbanDispatchOptions, KanbanBulkUpdateRequest, KanbanCreateRequest } from '@/api/hermes/kanban'
 
 export const KANBAN_SELECTED_BOARD_STORAGE_KEY = 'hermes.kanban.selectedBoard'
 export const DEFAULT_KANBAN_BOARD = 'default'
@@ -327,7 +327,7 @@ export const useKanbanStore = defineStore('kanban', () => {
     }
   }
 
-  async function createTask(data: { title: string; body?: string; assignee?: string; priority?: number; tenant?: string }) {
+  async function createTask(data: KanbanCreateRequest) {
     const board = selectedBoard.value
     const task = await kanbanApi.createTask(data, { board })
     if (board === selectedBoard.value) {

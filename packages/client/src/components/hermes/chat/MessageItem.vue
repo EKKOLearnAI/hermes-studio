@@ -13,12 +13,15 @@ import { useSettingsStore } from "@/stores/hermes/settings";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
+  extractUnifiedDiffPayload,
   handleCodeBlockCopyClick,
+  inferStructuredLanguage,
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
+import { formatChatTimestamp } from "@/utils/chat-timestamp";
 
 const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000;
 const JSON_STRING_DISPLAY_LIMIT = 200;
@@ -28,7 +31,7 @@ const JSON_MAX_KEYS_PER_OBJECT = 50;
 const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
-const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
+const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string; showForkAction?: boolean }>();
 const { t } = useI18n();
 const toast = useMessage();
 
@@ -194,6 +197,11 @@ const copyableContent = computed(() => {
   return content
 })
 
+function forkFromCurrentTail() {
+  if (!props.showForkAction || chatStore.isStreaming || chatStore.isForkPending) return
+  chatStore.sendMessage('/fork')
+}
+
 async function copyBubbleContent() {
   const text = copyableContent.value
   if (!text) return
@@ -291,10 +299,7 @@ function formatDuration(ms: number): string {
   return r === 0 ? `${m}m` : `${m}m ${r}s`;
 }
 
-const timeStr = computed(() => {
-  const d = new Date(props.message.timestamp);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-});
+const timeStr = computed(() => formatChatTimestamp(props.message.timestamp));
 
 function isImage(type: string): boolean {
   return type.startsWith("image/");
@@ -439,36 +444,65 @@ function truncateJsonValue(value: unknown, marker: string): unknown {
   return { [JSON_TRUNCATED_KEY]: marker };
 }
 
-function formatToolPayload(raw?: string): ToolPayload {
-  if (!raw) {
+function normalizeToolPayload(raw: unknown): string {
+  if (raw === null || raw === undefined || raw === "") return "";
+  if (typeof raw === "string") return raw;
+  try {
+    const serialized = JSON.stringify(raw);
+    if (serialized !== undefined) return serialized;
+  } catch {
+    // Fall through to String(raw) for non-serializable runtime payloads.
+  }
+  return String(raw);
+}
+
+function formatToolPayload(raw?: unknown, extractDiff = false): ToolPayload {
+  const text = normalizeToolPayload(raw);
+  if (!text) {
     return { full: "", display: "" };
   }
 
-  try {
-    const parsed = JSON.parse(raw);
-    const full = JSON.stringify(parsed, null, 2);
-    const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-      ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
-      : full;
-    return {
-      full,
-      display,
-      language: "json",
-    };
-  } catch {
-    return {
-      full: raw,
-      display:
-        raw.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-          ? raw.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
-          : raw,
-    };
+  const shouldParseJson = typeof raw !== "string" || /^[\[{]/.test(text.trim());
+  if (shouldParseJson) {
+    try {
+      const parsed = JSON.parse(text);
+      const full = JSON.stringify(parsed, null, 2);
+      const extractedDiff = extractDiff ? extractUnifiedDiffPayload(parsed) : null;
+      if (extractedDiff) {
+        return {
+          full,
+          display: extractedDiff,
+          language: "diff",
+        };
+      }
+      const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+        ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
+        : full;
+      return {
+        full,
+        display,
+        language: "json",
+      };
+    } catch {
+      // Fall through to text rendering for non-JSON strings.
+    }
   }
+
+  const language = inferStructuredLanguage(text);
+  return {
+    full: text,
+    display:
+      language === "diff" || text.length <= TOOL_PAYLOAD_DISPLAY_LIMIT
+        ? text
+        : text.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated"),
+    language,
+  };
 }
 
 function renderToolPayload(content: string, language?: string): string {
   return renderHighlightedCodeBlock(content, language, t("common.copy"), {
     maxHighlightLength: TOOL_PAYLOAD_DISPLAY_LIMIT,
+    formatDiffFoldLabel: (hiddenCount) => t("chat.unchangedLines", { count: hiddenCount }),
   });
 }
 
@@ -504,12 +538,12 @@ const hasAttachments = computed(
   () => (props.message.attachments?.length ?? 0) > 0,
 );
 
-const hasToolDetails = computed(
-  () => !!(props.message.toolArgs || props.message.toolResult),
-);
-
 const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
-const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
+
+const hasToolDetails = computed(
+  () => !!(toolArgsPayload.value.full || toolResultPayload.value.full),
+);
 
 const fullToolArgs = computed(() => toolArgsPayload.value.full);
 const formattedToolArgs = computed(() => toolArgsPayload.value.display);
@@ -537,22 +571,22 @@ const canPlaySpeech = computed(() => {
   // 只有 assistant 消息可以播放
   if (props.message.role !== 'assistant') return false
   if (!copyableContent.value) return false
-  // OpenAI / Custom / Edge / MiMo 不依赖浏览器 Web Speech API
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') return true
+  // OpenAI / Custom / Edge / MiMo / Doubao 不依赖浏览器 Web Speech API
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') return true
   return speech.isSupported
 })
 
 const isPlayingThisMessage = computed(() => {
-  // OpenAI / Custom / Edge / MiMo 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+  // OpenAI / Custom / Edge / MiMo / Doubao 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
 })
 
 const isPausedThisMessage = computed(() => {
-  // OpenAI / Custom / Edge / MiMo 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+  // OpenAI / Custom / Edge / MiMo / Doubao 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo' || voiceSettings.provider.value === 'doubao') {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPaused.value
@@ -572,6 +606,7 @@ function handleSpeechToggle() {
       return
     }
     speech.openaiToggle(props.message.id, content, {
+      provider: 'openai',
       baseUrl: voiceSettings.openaiBaseUrl.value,
       apiKey: voiceSettings.openaiApiKey.value,
       model: voiceSettings.openaiModel.value,
@@ -588,6 +623,7 @@ function handleSpeechToggle() {
       return
     }
     speech.openaiToggle(props.message.id, content, {
+      provider: 'custom',
       baseUrl: voiceSettings.customUrl.value,
       apiKey: voiceSettings.customApiKey.value || undefined,
     })
@@ -599,6 +635,7 @@ function handleSpeechToggle() {
     // URL 为空时使用内建后端代理
     const apiUrl = voiceSettings.edgeUrl.value || '/api/tts/proxy'
     speech.openaiToggle(props.message.id, content, {
+      provider: 'edge',
       baseUrl: apiUrl,
       voice: voiceSettings.edgeVoice.value,
       rate: speedToEdgeRate(voiceSettings.edgeRate.value),
@@ -610,30 +647,37 @@ function handleSpeechToggle() {
   // MiMo TTS 模式
   if (voiceSettings.provider.value === 'mimo') {
     const apiKey = voiceSettings.mimoApiKey.value
-    if (!apiKey) {
-      console.warn('[MessageItem] MiMo TTS API Key 为空')
-      return
-    }
     speech.mimoToggle(props.message.id, content, {
       baseUrl: voiceSettings.mimoBaseUrl.value,
-      apiKey,
+      apiKey: apiKey || undefined,
+      authMode: voiceSettings.mimoAuthMode.value,
       model: voiceSettings.mimoModel.value,
+      voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
       voice: voiceSettings.mimoVoice.value,
       voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+      voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+      voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
       stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
+    })
+    return
+  }
+
+  if (voiceSettings.provider.value === 'doubao') {
+    speech.openaiToggle(props.message.id, content, {
+      provider: 'doubao',
+      baseUrl: voiceSettings.doubaoBaseUrl.value,
+      model: voiceSettings.doubaoModel.value,
+      voice: voiceSettings.doubaoVoice.value,
+      stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
     })
     return
   }
 
   // Web Speech API 模式
   if (voiceSettings.provider.value === 'webspeech') {
-    const text = speech.extractReadableText(content)
-    if (text) {
-      speech.stop(false)
-      speech.speakViaBrowser(props.message.id, text, {
-        voiceName: voiceSettings.webspeechVoice.value || undefined,
-      })
-    }
+    speech.toggleBrowser(props.message.id, content, {
+      voiceName: voiceSettings.webspeechVoice.value || undefined,
+    })
     return
   }
 
@@ -644,6 +688,11 @@ function handleSpeechToggle() {
 // 监听自动播放事件
 let autoPlayHandler: ((e: Event) => void) | null = null
 
+function handleAutoplayTtsError(err: unknown) {
+  if (err instanceof Error && err.name === 'AbortError') return
+  console.warn('[MessageItem] TTS autoplay failed:', err)
+}
+
 onMounted(() => {
   autoPlayHandler = (e: Event) => {
     const customEvent = e as CustomEvent<{ messageId: string; content: string }>
@@ -651,37 +700,50 @@ onMounted(() => {
       const content = customEvent.detail.content || props.message.content || ''
       if (voiceSettings.provider.value === 'openai') {
         const apiUrl = voiceSettings.openaiBaseUrl.value
-        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+        if (apiUrl) void speech.openaiPlay(props.message.id, content, {
+          provider: 'openai',
           baseUrl: voiceSettings.openaiBaseUrl.value,
           apiKey: voiceSettings.openaiApiKey.value,
           model: voiceSettings.openaiModel.value,
           voice: voiceSettings.openaiVoice.value,
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'custom') {
         const apiUrl = voiceSettings.customUrl.value
-        if (apiUrl) speech.openaiPlay(props.message.id, content, {
+        if (apiUrl) void speech.openaiPlay(props.message.id, content, {
+          provider: 'custom',
           baseUrl: voiceSettings.customUrl.value,
           apiKey: voiceSettings.customApiKey.value || undefined,
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'edge') {
-        speech.openaiPlay(props.message.id, content, {
+        void speech.openaiPlay(props.message.id, content, {
+          provider: 'edge',
           baseUrl: '/api/tts/proxy',
           voice: voiceSettings.edgeVoice.value,
           rate: speedToEdgeRate(voiceSettings.edgeRate.value),
           pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
-        })
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'mimo') {
         const apiKey = voiceSettings.mimoApiKey.value
-        if (apiKey) {
-          speech.mimoPlay(props.message.id, content, {
-            baseUrl: voiceSettings.mimoBaseUrl.value,
-            apiKey,
-            model: voiceSettings.mimoModel.value,
-            voice: voiceSettings.mimoVoice.value,
-            voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-            stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-          })
-        }
+        void speech.mimoPlay(props.message.id, content, {
+          baseUrl: voiceSettings.mimoBaseUrl.value,
+          apiKey: apiKey || undefined,
+          authMode: voiceSettings.mimoAuthMode.value,
+          model: voiceSettings.mimoModel.value,
+          voiceMode: voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voicedesign' ? 'voiceDesign' : voiceSettings.mimoModel.value === 'mimo-v2.5-tts-voiceclone' ? 'voiceClone' : 'preset',
+          voice: voiceSettings.mimoVoice.value,
+          voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
+          voiceCloneDataUri: voiceSettings.mimoVoiceCloneDataUri.value || undefined,
+          voiceCloneFormat: voiceSettings.mimoVoiceCloneFormat.value,
+          stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
+        }).catch(handleAutoplayTtsError)
+      } else if (voiceSettings.provider.value === 'doubao') {
+        void speech.openaiPlay(props.message.id, content, {
+          provider: 'doubao',
+          baseUrl: voiceSettings.doubaoBaseUrl.value,
+          model: voiceSettings.doubaoModel.value,
+          voice: voiceSettings.doubaoVoice.value,
+          stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+        }).catch(handleAutoplayTtsError)
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)
         if (text) {
@@ -703,7 +765,7 @@ onBeforeUnmount(() => {
   if (autoPlayHandler) {
     window.removeEventListener('auto-play-speech', autoPlayHandler)
   }
-  if (speech.currentMessageId.value === props.message.id) {
+  if (speech.currentMessageId.value === props.message.id || speech.currentCustomMessageId.value === props.message.id) {
     speech.stop();
   }
 });
@@ -979,6 +1041,20 @@ onBeforeUnmount(() => {
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
             </button>
+            <button
+              v-if="showForkAction"
+              class="fork-bubble-btn"
+              @click="forkFromCurrentTail"
+              :title="t('chat.slashCommands.fork')"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6" cy="5" r="2.25" />
+                <circle cx="18" cy="5" r="2.25" />
+                <circle cx="12" cy="19" r="2.25" />
+                <path d="M6 7.25v2.25a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4V7.25" />
+                <path d="M12 13.5v3.25" />
+              </svg>
+            </button>
             <span class="message-time">{{ timeStr }}</span>
           </div>
         </div>
@@ -1087,12 +1163,16 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 8px;
   max-width: 85%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .msg-content {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .message-bubble {
@@ -1100,8 +1180,10 @@ onBeforeUnmount(() => {
   font-size: 14px;
   line-height: 1.65;
   word-break: break-word;
+  overflow-wrap: anywhere;
   border-radius: 10px;
   max-width: 100%;
+  min-width: 0;
   position: relative;
   box-sizing: border-box;
 
@@ -1387,7 +1469,8 @@ onBeforeUnmount(() => {
 }
 
 .copy-bubble-btn,
-.speech-bubble-btn {
+.speech-bubble-btn,
+.fork-bubble-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1551,6 +1634,13 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  :deep(.hljs-unified-diff code.hljs) {
+    max-height: none;
+    overflow-y: visible;
+    white-space: pre;
+    word-break: normal;
   }
 }
 

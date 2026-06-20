@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'fs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
@@ -28,13 +28,20 @@ await esbuild.build({
   logLevel: 'info',
 })
 
-const bridgeOutDir = resolve(serverOutDir, 'agent-bridge')
+const bridgeOutDir = resolve(serverOutDir, 'agent-bridge', 'python')
+const bridgeSrcDir = resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/python')
 mkdirSync(bridgeOutDir, { recursive: true })
-cpSync(
-  resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/hermes_bridge.py'),
-  resolve(bridgeOutDir, 'hermes_bridge.py'),
-)
+for (const fileName of readdirSync(bridgeSrcDir)) {
+  if (fileName.endsWith('.py')) {
+    cpSync(resolve(bridgeSrcDir, fileName), resolve(bridgeOutDir, fileName))
+  }
+}
 chmodSync(resolve(bridgeOutDir, 'hermes_bridge.py'), 0o755)
+
+cpSync(
+  resolve(rootDir, 'docs/openapi.json'),
+  resolve(serverOutDir, 'openapi.json'),
+)
 
 const skillsOutDir = resolve(rootDir, 'dist/skills')
 rmSync(skillsOutDir, { recursive: true, force: true })
@@ -43,3 +50,12 @@ cpSync(
   skillsOutDir,
   { recursive: true },
 )
+
+const firmwareSrc = resolve(rootDir, 'packages/esp32-c3/.pio/build/esp32-c3-devkitm-1/firmware.bin')
+const firmwareOutDir = resolve(rootDir, 'dist/mcu')
+if (existsSync(firmwareSrc)) {
+  mkdirSync(firmwareOutDir, { recursive: true })
+  cpSync(firmwareSrc, resolve(firmwareOutDir, 'firmware.bin'))
+} else {
+  console.warn('[build-server] ESP32-C3 firmware not found, skipped dist/mcu/firmware.bin')
+}

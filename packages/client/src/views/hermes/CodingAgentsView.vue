@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NForm, NFormItem, NInput, NModal, NRadioButton, NRadioGroup, NSelect, NSpace, NSpin, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
   deleteCodingAgent,
   fetchCodingAgentsStatus,
+  inferCodingAgentApiMode,
   installCodingAgent,
   launchCodingAgentNativeTerminal,
+  normalizeCodingAgentApiMode,
   prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
   writeCodingAgentConfigFile,
@@ -52,6 +54,14 @@ const installing = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
 })
+const installFailureHints = ref<Record<CodingAgentId, string>>({
+  'claude-code': '',
+  codex: '',
+})
+const installFailureDetails = ref<Record<CodingAgentId, string>>({
+  'claude-code': '',
+  codex: '',
+})
 const deleting = ref<Record<CodingAgentId, boolean>>({
   'claude-code': false,
   codex: false,
@@ -70,6 +80,7 @@ const launchResult = ref<CodingAgentLaunchResult | null>(null)
 const terminalVisible = ref(false)
 const terminalCommand = ref('')
 const terminalKey = ref(0)
+const CODING_AGENT_AUTH_PROVIDER_KEYS = new Set(['openai-codex', 'copilot', 'xai-oauth', 'nous', 'google-gemini-cli', 'claude-oauth'])
 
 const agentLogos: Record<CodingAgentBlock['tool'], string> = {
   'Claude Code': '/coding-agents/claude-code.svg',
@@ -128,7 +139,18 @@ const statusById = computed(() => {
 
 const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
 
-const launchProviderOptions = computed(() => launchProviders.value.map(provider => ({
+function isCodingAgentAuthProvider(provider: AvailableModelGroup) {
+  const providerKey = String(provider.provider || '').toLowerCase()
+  return CODING_AGENT_AUTH_PROVIDER_KEYS.has(providerKey)
+}
+
+const selectableLaunchProviders = computed(() => (
+  launchMode.value === 'scoped'
+    ? launchProviders.value.filter(provider => !isCodingAgentAuthProvider(provider))
+    : launchProviders.value
+))
+
+const launchProviderOptions = computed(() => selectableLaunchProviders.value.map(provider => ({
   label: provider.label && provider.label !== provider.provider
     ? `${provider.label} (${provider.provider})`
     : provider.provider,
@@ -136,7 +158,7 @@ const launchProviderOptions = computed(() => launchProviders.value.map(provider 
 })))
 
 const selectedLaunchProvider = computed(() => (
-  launchProviders.value.find(provider => provider.provider === launchProvider.value) || null
+  selectableLaunchProviders.value.find(provider => provider.provider === launchProvider.value) || null
 ))
 
 const launchModelOptions = computed(() => (
@@ -236,39 +258,29 @@ async function saveConfigFile(agentId: CodingAgentId) {
 }
 
 function resetLaunchSelection() {
-  const firstProvider = launchProviders.value[0]
+  const firstProvider = selectableLaunchProviders.value[0]
   launchProvider.value = firstProvider?.provider || ''
   launchModel.value = firstProvider?.models[0] || ''
   launchApiMode.value = defaultLaunchApiMode(firstProvider)
 }
 
 function handleLaunchProviderChange(value: string) {
-  const provider = launchProviders.value.find(item => item.provider === value)
+  const provider = selectableLaunchProviders.value.find(item => item.provider === value)
   launchModel.value = provider?.models[0] || ''
   launchApiMode.value = defaultLaunchApiMode(provider)
 }
 
+watch([selectableLaunchProviders, launchMode], () => {
+  if (useGlobalLaunchConfig.value) return
+  if (selectedLaunchProvider.value) return
+  resetLaunchSelection()
+})
+
 function defaultLaunchApiMode(provider?: AvailableModelGroup | null): CodingAgentApiMode {
-  const providerKey = String(provider?.provider || '').toLowerCase()
-  const baseUrl = String(provider?.base_url || '').toLowerCase()
-  if (
-    providerKey.includes('claude') ||
-    providerKey === 'anthropic' ||
-    baseUrl.includes('anthropic') ||
-    baseUrl.includes('/anthropic')
-  ) {
-    return 'anthropic_messages'
-  }
-  if (
-    providerKey === 'deepseek' ||
-    providerKey === 'lmstudio' ||
-    baseUrl.includes('deepseek') ||
-    baseUrl.includes('127.0.0.1') ||
-    baseUrl.includes('localhost')
-  ) {
-    return 'chat_completions'
-  }
-  return 'codex_responses'
+  return normalizeCodingAgentApiMode(
+    provider?.api_mode,
+    inferCodingAgentApiMode(provider?.provider, provider?.base_url),
+  )
 }
 
 async function openLaunchModal(agentId: CodingAgentId) {
@@ -363,17 +375,27 @@ async function launchNativeTerminal() {
 
 async function handleInstall(id: CodingAgentId) {
   installing.value[id] = true
+  installFailureHints.value[id] = ''
+  installFailureDetails.value[id] = ''
   try {
     const result = await installCodingAgent(id)
     tools.value = result.tools
     if (result.success) {
       message.success(t('codingAgents.installSuccess'))
+      installFailureHints.value[id] = ''
+      installFailureDetails.value[id] = ''
     } else {
-      message.error(codingAgentMessage(result.code, result.message, 'codingAgents.installFailed'))
+      const errorMessage = codingAgentMessage(result.code, result.message, 'codingAgents.installFailed')
+      message.error(errorMessage)
+      installFailureHints.value[id] = t('codingAgents.installFailedHermesHint')
+      installFailureDetails.value[id] = errorMessage
     }
   } catch (err: any) {
     const payload = parseErrorPayload(err)
-    message.error(codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.installFailed'))
+    const errorMessage = codingAgentMessage(payload?.code, payload?.message || err?.message, 'codingAgents.installFailed')
+    message.error(errorMessage)
+    installFailureHints.value[id] = t('codingAgents.installFailedHermesHint')
+    installFailureDetails.value[id] = errorMessage
   } finally {
     installing.value[id] = false
   }
@@ -467,6 +489,18 @@ onMounted(() => {
               {{ installing[block.id] ? t('codingAgents.installing') : t('codingAgents.installNow') }}
             </NButton>
           </div>
+
+          <NAlert
+            v-if="installFailureHints[block.id]"
+            class="install-helper-alert"
+            type="warning"
+            :bordered="false"
+          >
+            <div>{{ installFailureHints[block.id] }}</div>
+            <div v-if="installFailureDetails[block.id]" class="install-error-detail">
+              {{ t('codingAgents.installFailureReason') }}: {{ installFailureDetails[block.id] }}
+            </div>
+          </NAlert>
 
           <div class="config-file-section">
             <div class="config-file-title">{{ t('codingAgents.configFiles') }}</div>
@@ -709,6 +743,18 @@ onMounted(() => {
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid $border-light;
+}
+
+.install-helper-alert {
+  margin: 10px 14px 0;
+}
+
+.install-error-detail {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .install-state-main {

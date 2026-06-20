@@ -32,10 +32,16 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   id: 'TEXT PRIMARY KEY',
   profile: 'TEXT NOT NULL DEFAULT \'default\'',
   source: 'TEXT NOT NULL DEFAULT \'api_server\'',
+  agent: 'TEXT NOT NULL DEFAULT \'\'',
+  agent_mode: 'TEXT NOT NULL DEFAULT \'\'',
+  agent_session_id: 'TEXT NOT NULL DEFAULT \'\'',
+  agent_native_session_id: 'TEXT NOT NULL DEFAULT \'\'',
   user_id: 'TEXT',
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
+  parent_session_id: 'TEXT',
+  fork_point_message_id: 'TEXT',
   started_at: 'INTEGER NOT NULL',
   ended_at: 'INTEGER',
   end_reason: 'TEXT',
@@ -62,6 +68,8 @@ export const MESSAGES_SCHEMA: Record<string, string> = {
   session_id: 'TEXT NOT NULL',
   role: 'TEXT NOT NULL',
   content: 'TEXT NOT NULL DEFAULT \'\'',
+  display_role: 'TEXT',
+  display_content: 'TEXT',
   tool_call_id: 'TEXT',
   tool_calls: 'TEXT',
   tool_name: 'TEXT',
@@ -119,6 +127,7 @@ export const USERS_SCHEMA: Record<string, string> = {
   created_at: 'INTEGER NOT NULL',
   updated_at: 'INTEGER NOT NULL',
   last_login_at: 'INTEGER',
+  avatar: "TEXT NOT NULL DEFAULT ''",
 }
 
 export const USER_PROFILES_TABLE = 'user_profiles'
@@ -134,6 +143,93 @@ export const USER_PROFILES_INDEXES = {
   idx_user_profiles_user: 'CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON user_profiles(user_id)',
   idx_user_profiles_profile: 'CREATE INDEX IF NOT EXISTS idx_user_profiles_profile ON user_profiles(profile_name)',
   idx_user_profiles_default: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_default ON user_profiles(user_id) WHERE is_default = 1',
+}
+
+// ============================================================================
+// LAN Devices
+// ============================================================================
+
+export const DEVICES_TABLE = 'devices'
+
+export const DEVICES_SCHEMA: Record<string, string> = {
+  id: 'TEXT PRIMARY KEY',
+  status: "TEXT NOT NULL DEFAULT 'none'",
+  inbound_status: "TEXT NOT NULL DEFAULT 'none'",
+  outbound_status: "TEXT NOT NULL DEFAULT 'none'",
+  device_public_key: "TEXT NOT NULL DEFAULT ''",
+  computer_name: "TEXT NOT NULL DEFAULT ''",
+  endpoint_kind: "TEXT NOT NULL DEFAULT 'custom'",
+  ip: "TEXT NOT NULL DEFAULT ''",
+  http_port: 'INTEGER NOT NULL DEFAULT 0',
+  url: "TEXT NOT NULL DEFAULT ''",
+  os_json: "TEXT NOT NULL DEFAULT '{}'",
+  hermes_agent_version: "TEXT NOT NULL DEFAULT ''",
+  hermes_web_ui_version: "TEXT NOT NULL DEFAULT ''",
+  response_ms: 'INTEGER NOT NULL DEFAULT 0',
+  requested_at: 'INTEGER NOT NULL DEFAULT 0',
+  decided_at: 'INTEGER',
+  outbound_requested_at: 'INTEGER NOT NULL DEFAULT 0',
+  outbound_decided_at: 'INTEGER',
+  inbound_history_deleted_at: 'INTEGER',
+  last_seen_at: 'INTEGER NOT NULL DEFAULT 0',
+  updated_at: 'INTEGER NOT NULL',
+}
+
+export const DEVICES_INDEXES = {
+  idx_devices_status: 'CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status)',
+  idx_devices_last_seen: 'CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen_at)',
+}
+
+export const STT_PROVIDER_SETTINGS_TABLE = 'stt_provider_settings'
+
+export const STT_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const STT_PROVIDER_SETTINGS_INDEXES = {
+  idx_stt_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_stt_provider_settings_user ON stt_provider_settings(user_id)',
+  idx_stt_provider_settings_user_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_provider_settings_user_provider ON stt_provider_settings(user_id, provider)',
+}
+
+export const STT_USER_SETTINGS_TABLE = 'stt_user_settings'
+
+export const STT_USER_SETTINGS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER PRIMARY KEY',
+  active_provider: "TEXT NOT NULL DEFAULT 'browser'",
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROVIDER_SETTINGS_TABLE = 'tts_provider_settings'
+
+export const TTS_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  user_id: 'INTEGER NOT NULL',
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROVIDER_SETTINGS_INDEXES = {
+  idx_tts_provider_settings_user: 'CREATE INDEX IF NOT EXISTS idx_tts_provider_settings_user ON tts_provider_settings(user_id)',
+  idx_tts_provider_settings_user_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_provider_settings_user_provider ON tts_provider_settings(user_id, provider)',
+}
+
+export const TTS_USER_SETTINGS_TABLE = 'tts_user_settings'
+
+export const TTS_USER_SETTINGS_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER PRIMARY KEY',
+  active_provider: "TEXT NOT NULL DEFAULT 'edge'",
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
 }
 
 // ============================================================================
@@ -204,6 +300,8 @@ export const GC_ROOM_MEMBERS_SCHEMA: Record<string, string> = {
   description: "TEXT NOT NULL DEFAULT ''",
   joinedAt: 'INTEGER NOT NULL',
   updatedAt: 'INTEGER NOT NULL',
+  avatar: "TEXT NOT NULL DEFAULT ''",
+  authUserId: 'INTEGER',
 }
 
 export const GC_PENDING_SESSION_DELETES_TABLE = 'gc_pending_session_deletes'
@@ -297,6 +395,54 @@ function addMissingSafeColumns(
   }
 }
 
+function createIndexes(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  indexes?: Record<string, string>,
+): void {
+  if (!indexes) return
+
+  for (const indexSQL of Object.values(indexes)) {
+    db.exec(indexSQL)
+  }
+}
+
+function migrateLegacySttProviderSettingsUserIdDefault(
+  db: NonNullable<ReturnType<typeof getDb>>,
+): void {
+  if (!tableExists(db, STT_PROVIDER_SETTINGS_TABLE)) return
+
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)})`).all() as Array<{
+    name: string
+    dflt_value: string | null
+  }>
+  const userIdColumn = columns.find((column) => column.name === 'user_id')
+
+  if (!userIdColumn || userIdColumn.dflt_value === null) {
+    return
+  }
+
+  const replacementTableName = `${STT_PROVIDER_SETTINGS_TABLE}__rebuilt`
+  const preservedColumns = ['id', 'user_id', 'provider', 'settings_json', 'secrets_json', 'created_at', 'updated_at']
+  const quotedPreservedColumns = preservedColumns.map((column) => quoteIdentifier(column)).join(', ')
+
+  db.exec('BEGIN')
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(replacementTableName)}`)
+    createTable(db, replacementTableName, STT_PROVIDER_SETTINGS_SCHEMA)
+    db.exec(
+      `INSERT INTO ${quoteIdentifier(replacementTableName)} (${quotedPreservedColumns}) ` +
+      `SELECT ${quotedPreservedColumns} FROM ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`
+    )
+    db.exec(`DROP TABLE ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`)
+    db.exec(`ALTER TABLE ${quoteIdentifier(replacementTableName)} RENAME TO ${quoteIdentifier(STT_PROVIDER_SETTINGS_TABLE)}`)
+    createIndexes(db, STT_PROVIDER_SETTINGS_INDEXES)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 /**
  * 主同步函数
  * - 表不存在：创建
@@ -318,11 +464,7 @@ export function syncTable(
     createTable(db, tableName, schema, options?.primaryKey)
 
     // 创建索引
-    if (options?.indexes) {
-      for (const indexSQL of Object.values(options.indexes)) {
-        db.exec(indexSQL)
-      }
-    }
+    createIndexes(db, options?.indexes)
     return
   }
 
@@ -367,6 +509,20 @@ export function initAllHermesTables(): void {
       primaryKey: 'user_id, profile_name',
       indexes: USER_PROFILES_INDEXES,
     })
+
+    // LAN devices and link request status
+    syncTable(DEVICES_TABLE, DEVICES_SCHEMA, {
+      indexes: DEVICES_INDEXES,
+    })
+    syncTable(STT_PROVIDER_SETTINGS_TABLE, STT_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: STT_PROVIDER_SETTINGS_INDEXES,
+    })
+    syncTable(STT_USER_SETTINGS_TABLE, STT_USER_SETTINGS_SCHEMA)
+    migrateLegacySttProviderSettingsUserIdDefault(db)
+    syncTable(TTS_PROVIDER_SETTINGS_TABLE, TTS_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: TTS_PROVIDER_SETTINGS_INDEXES,
+    })
+    syncTable(TTS_USER_SETTINGS_TABLE, TTS_USER_SETTINGS_SCHEMA)
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)

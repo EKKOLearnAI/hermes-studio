@@ -49,6 +49,9 @@ export interface AgentBridgeChatOptions {
   source?: string
   wait?: boolean
   timeout?: number
+  /** Local patch (reasoning-effort): per-session reasoning effort override.
+   * Empty/undefined = use config.yaml default. */
+  reasoning_effort?: string
 }
 
 export type AgentBridgeMessage =
@@ -91,6 +94,11 @@ export interface AgentBridgeRunResult extends AgentBridgeResponse {
   error?: string | null
 }
 
+export interface AgentBridgeSessionTitle extends AgentBridgeResponse {
+  session_id: string
+  title: string
+}
+
 export interface AgentBridgeContextEstimate extends AgentBridgeResponse {
   session_id: string
   token_count?: number | null
@@ -125,6 +133,25 @@ export interface AgentBridgeCommandResult extends AgentBridgeResponse {
   kickoff_prompt?: string
   clear_goal_continuations?: boolean
   max_turns?: number
+}
+
+export interface AgentBridgeSkillReloadResult extends AgentBridgeResponse {
+  action: 'reload-skills'
+  added: Array<{ name: string; description?: string }>
+  removed: Array<{ name: string; description?: string }>
+  unchanged: string[]
+  total: number
+  commands?: number
+}
+
+export interface AgentBridgeSessionModelSwitch extends AgentBridgeResponse {
+  session_id: string
+  model: string
+  provider?: string
+  loaded: boolean
+  switched: boolean
+  deferred?: boolean
+  reason?: string
 }
 
 export interface AgentBridgeGoalEvaluation extends AgentBridgeResponse {
@@ -415,6 +442,8 @@ export class AgentBridgeClient {
       ...(options.wait ? { wait: true } : {}),
       ...(options.timeout ? { timeout: options.timeout } : {}),
       ...(options.force_compress ? { force_compress: true } : {}),
+      // Local patch (reasoning-effort): per-session reasoning effort override.
+      ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
     })
   }
 
@@ -445,6 +474,21 @@ export class AgentBridgeClient {
     })
   }
 
+  switchSessionModel(
+    sessionId: string,
+    model: string,
+    provider?: string,
+    profile?: string,
+  ): Promise<AgentBridgeSessionModelSwitch> {
+    return this.request<AgentBridgeSessionModelSwitch>({
+      action: 'switch_session_model',
+      session_id: sessionId,
+      model,
+      ...(provider ? { provider } : {}),
+      ...(profile ? { profile } : {}),
+    })
+  }
+
   goalEvaluate(sessionId: string, finalResponse: string, profile?: string): Promise<AgentBridgeGoalEvaluation> {
     return this.request<AgentBridgeGoalEvaluation>({
       action: 'goal_evaluate',
@@ -460,6 +504,14 @@ export class AgentBridgeClient {
       run_id: runId,
       cursor,
       event_cursor: eventCursor,
+    }, options)
+  }
+
+  getSessionTitle(sessionId: string, profile?: string, options: AgentBridgeRequestOptions = {}): Promise<AgentBridgeSessionTitle> {
+    return this.request<AgentBridgeSessionTitle>({
+      action: 'get_session_title',
+      session_id: sessionId,
+      ...(profile ? { profile } : {}),
     }, options)
   }
 
@@ -570,6 +622,14 @@ export class AgentBridgeClient {
     })
   }
 
+  statusIfLoaded(sessionId: string, profile?: string, options: AgentBridgeRequestOptions = {}): Promise<AgentBridgeResponse> {
+    return this.request({
+      action: 'status_if_loaded',
+      session_id: sessionId,
+      ...(profile ? { profile } : {}),
+    }, options)
+  }
+
   destroy(sessionId: string, profile?: string, workerKey?: string): Promise<AgentBridgeResponse> {
     return this.request({
       action: 'destroy',
@@ -609,12 +669,16 @@ export class AgentBridgeClient {
     return this.request({ action: 'mcp_server_test', name, ...(profile ? { profile } : {}) }, { timeoutMs: 180_000 })
   }
 
-  mcpTools(server?: string, profile?: string): Promise<McpActionResponse> {
-    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}) })
+  mcpTools(server?: string, profile?: string, raw?: boolean): Promise<McpActionResponse> {
+    return this.request({ action: 'mcp_tools_list', ...(server ? { server } : {}), ...(profile ? { profile } : {}), ...(raw ? { raw } : {}) })
   }
 
   mcpReload(server?: string, profile?: string): Promise<McpActionResponse> {
     return this.request({ action: 'mcp_reload', ...(server ? { server } : {}), ...(profile ? { profile } : {}) }, { serialize: true })
+  }
+
+  reloadSkills(profile?: string): Promise<AgentBridgeSkillReloadResult> {
+    return this.request({ action: 'skills_reload', ...(profile ? { profile } : {}) }, { serialize: true })
   }
 }
 

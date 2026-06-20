@@ -194,7 +194,7 @@ function hasOwn(body: Record<string, unknown>, key: string): boolean {
 
 function optionalTaskStatus(value: unknown, name: string): { value?: kanbanCli.KanbanTaskStatus; error?: string } {
   if (value === undefined || value === null) return {}
-  if (value !== 'triage' && value !== 'todo' && value !== 'ready' && value !== 'running' && value !== 'blocked' && value !== 'done' && value !== 'archived') {
+  if (value !== 'triage' && value !== 'todo' && value !== 'scheduled' && value !== 'ready' && value !== 'running' && value !== 'blocked' && value !== 'review' && value !== 'done' && value !== 'archived') {
     return { error: `${name} must be a valid kanban task status` }
   }
   return { value }
@@ -210,6 +210,14 @@ function requiredNonEmptyStringArray(value: unknown, name: string): { value?: st
     return { error: `${name} is required` }
   }
   return { value }
+}
+
+function optionalStringArray(value: unknown, name: string): { value?: string[]; error?: string } {
+  if (value === undefined || value === null) return {}
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    return { error: `${name} must be an array of strings` }
+  }
+  return { value: value.map(item => item.trim()).filter(Boolean) }
 }
 
 function optionalBoolean(value: unknown, name: string): BooleanResult {
@@ -390,13 +398,35 @@ export async function create(ctx: Context) {
   const assignee = optionalString(payload.assignee, 'assignee')
   const priority = optionalInteger(payload.priority, 'priority')
   const tenant = optionalString(payload.tenant, 'tenant')
-  if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error)) return
+  const workspace = optionalString(payload.workspace, 'workspace')
+  const branch = optionalString(payload.branch, 'branch')
+  const triage = optionalBoolean(payload.triage, 'triage')
+  const skills = optionalStringArray(payload.skills, 'skills')
+  const maxRuntime = optionalString(payload.maxRuntime, 'maxRuntime')
+  const maxRetries = optionalPositiveInteger(payload.maxRetries, 'maxRetries', 100)
+  const goalMode = optionalBoolean(payload.goalMode, 'goalMode')
+  const goalMaxTurns = optionalPositiveInteger(payload.goalMaxTurns, 'goalMaxTurns', 100)
+  if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error || workspace.error || branch.error || triage.error || skills.error || maxRuntime.error || maxRetries.error || goalMode.error || goalMaxTurns.error)) return
   const targetAssignee = assignee.value || requestedProfile(ctx) || undefined
   if (targetAssignee && denyProfileAccess(ctx, targetAssignee)) return
   const board = requestBoard(ctx)
   if (!board) return
   try {
-    const task = await kanbanCli.createTask(title.value!, { board, body: body.value, assignee: targetAssignee, priority: priority.value, tenant: tenant.value })
+    const task = await kanbanCli.createTask(title.value!, {
+      board,
+      body: body.value,
+      assignee: targetAssignee,
+      priority: priority.value,
+      tenant: tenant.value,
+      workspace: workspace.value,
+      branch: branch.value,
+      triage: triage.value,
+      skills: skills.value,
+      maxRuntime: maxRuntime.value,
+      maxRetries: maxRetries.value,
+      goalMode: goalMode.value,
+      goalMaxTurns: goalMaxTurns.value,
+    })
     ctx.body = { task }
   } catch (err: any) {
     ctx.status = 500

@@ -41,6 +41,7 @@ declare module 'koa' {
 
 const JWT_AUDIENCE = 'hermes-web-ui'
 const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 30
+export const MODEL_RUN_EXPIRES_SECONDS = 60 * 60
 
 function base64UrlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -70,13 +71,30 @@ function requestToken(ctx: Context): string {
   return typeof ctx.query.token === 'string' ? ctx.query.token.trim() : ''
 }
 
-const SERVER_TOKEN_MEDIA_PATHS = new Set([
+const SERVER_TOKEN_EXACT_PATHS = new Set([
   '/api/hermes/media/apikey-image-generate',
   '/api/hermes/media/grok-image-to-video',
 ])
 
-async function allowServerTokenForMedia(ctx: Context, token: string): Promise<boolean> {
-  if (!token || !SERVER_TOKEN_MEDIA_PATHS.has(ctx.path)) return false
+function allowsServerTokenPath(path: string): boolean {
+  return SERVER_TOKEN_EXACT_PATHS.has(path)
+}
+
+function isLoopbackRequest(ctx: Context): boolean {
+  const ip = String(ctx.ip || ctx.request.ip || '').trim()
+  const remote = String(ctx.req.socket.remoteAddress || '').trim()
+  const values = [ip, remote].map(value => value.startsWith('::ffff:') ? value.slice(7) : value)
+  return values.some(value => (
+    value === '127.0.0.1' ||
+    value === '::1' ||
+    value === 'localhost' ||
+    value.startsWith('127.')
+  ))
+}
+
+async function allowServerTokenForAgentEndpoint(ctx: Context, token: string): Promise<boolean> {
+  if (!token || !allowsServerTokenPath(ctx.path)) return false
+  if (!isLoopbackRequest(ctx)) return false
   const serverToken = await getToken()
   if (token !== serverToken) return false
   ctx.state.serverTokenAuth = true
@@ -90,7 +108,12 @@ function isProtectedHttpPath(path: string): boolean {
     lowerPath.startsWith('/upload')
 }
 
-export function signUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>, secret: string, now = Date.now()): string {
+export function signUserJwt(
+  user: Pick<UserRecord, 'id' | 'username' | 'role'>,
+  secret: string,
+  now = Date.now(),
+  expiresSeconds = DEFAULT_EXPIRES_SECONDS,
+): string {
   const iat = Math.floor(now / 1000)
   const payload: JwtPayload = {
     sub: String(user.id),
@@ -99,7 +122,7 @@ export function signUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>, 
     type: 'access',
     aud: JWT_AUDIENCE,
     iat,
-    exp: iat + DEFAULT_EXPIRES_SECONDS,
+    exp: iat + expiresSeconds,
   }
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' })
   const body = base64UrlJson(payload)
@@ -129,6 +152,11 @@ export function verifyUserJwt(token: string, secret: string, now = Date.now()): 
 export async function issueUserJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
   const secret = await getJwtSecret()
   return signUserJwt(user, secret)
+}
+
+export async function issueModelRunJwt(user: Pick<UserRecord, 'id' | 'username' | 'role'>): Promise<string> {
+  const secret = await getJwtSecret()
+  return signUserJwt(user, secret, Date.now(), MODEL_RUN_EXPIRES_SECONDS)
 }
 
 export function toAuthenticatedUser(user: Pick<UserRecord, 'id' | 'username' | 'role'>): AuthenticatedUser {
@@ -169,7 +197,7 @@ export async function requireUserJwt(ctx: Context, next: Next): Promise<void> {
   const token = requestToken(ctx)
   const payload = token ? verifyUserJwt(token, secret) : null
   if (!payload) {
-    if (await allowServerTokenForMedia(ctx, token)) {
+    if (await allowServerTokenForAgentEndpoint(ctx, token)) {
       await next()
       return
     }

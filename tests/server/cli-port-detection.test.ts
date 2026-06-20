@@ -141,6 +141,46 @@ describe('CLI port detection', () => {
     }
   })
 
+  it('keeps restart grace short while allowing stop to wait for bridge cleanup', async () => {
+    const { getDaemonStopGraceMs } = await loadCli()
+
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(5_000)
+    expect(getDaemonStopGraceMs()).toBe(15_000)
+  })
+
+  it('allows CLI stop and restart grace periods to be overridden separately', async () => {
+    process.env.HERMES_WEB_UI_RESTART_GRACE_MS = '2500'
+    process.env.HERMES_WEB_UI_STOP_GRACE_MS = '9000'
+    const { getDaemonStopGraceMs } = await loadCli()
+
+    expect(getDaemonStopGraceMs({ restart: true })).toBe(2_500)
+    expect(getDaemonStopGraceMs()).toBe(9_000)
+  })
+
+  it('skips browser launch when --no-open is provided', async () => {
+    const { shouldOpenBrowser } = await loadCli()
+
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'start'])).toBe(true)
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'start', '--no-open'])).toBe(false)
+    expect(shouldOpenBrowser(['node', 'bin/hermes-web-ui.mjs', 'restart', '--port', '9000', '--no-open'])).toBe(false)
+  })
+
+  it('preserves --no-open when update respawns restart', async () => {
+    const { getRestartArgs } = await loadCli()
+
+    expect(getRestartArgs(9000, ['node', 'bin/hermes-web-ui.mjs', 'update', '--port', '9000'])).toEqual([
+      'restart',
+      '--port',
+      '9000',
+    ])
+    expect(getRestartArgs(9000, ['node', 'bin/hermes-web-ui.mjs', 'update', '--port', '9000', '--no-open'])).toEqual([
+      'restart',
+      '--port',
+      '9000',
+      '--no-open',
+    ])
+  })
+
   it('resets an existing admin user to the default password', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hermes-web-ui-cli-default-login-'))
     process.env.HERMES_WEB_UI_HOME = home

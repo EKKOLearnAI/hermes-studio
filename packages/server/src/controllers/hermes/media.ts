@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'path'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../../services/hermes/hermes-profile'
 import { config } from '../../config'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { getCompatibleCustomProviders } from '../../services/hermes/custom-providers-compat'
 
 const XAI_VIDEO_GENERATIONS_URL = 'https://api.x.ai/v1/videos/generations'
 const XAI_VIDEO_STATUS_URL = 'https://api.x.ai/v1/videos'
@@ -22,7 +23,8 @@ type AuthJson = {
 
 type ApiKeyImageMode = 'text' | 'image' | 'edit'
 
-type FunCodexProvider = {
+type ApiKeyImageProvider = {
+  name: string
   apiKey: string
   baseUrl: string
   model: string
@@ -79,16 +81,33 @@ function buildApiUrl(baseUrl: string, pathWithV1: string): string {
   return `${base}${apiPath}`
 }
 
-async function resolveFunCodexProvider(profile: string): Promise<FunCodexProvider | null> {
+function normalizeCustomProviderName(value: unknown): string {
+  const name = String(value || '').trim()
+  if (!name) return ''
+  return name.startsWith('custom:') ? name.slice('custom:'.length).trim() : name
+}
+
+function requestedApiKeyImageProviderName(body: any): string {
+  return normalizeCustomProviderName(body?.provider || body?.provider_name || body?.custom_provider) || APIKEY_IMAGE_PROVIDER
+}
+
+function apiKeyFromCustomProvider(provider: any): string {
+  const direct = String(provider?.api_key || '').trim()
+  if (direct) return direct
+  const envName = String(provider?.api_key_env || provider?.key_env || '').trim()
+  return envName ? String(process.env[envName] || '').trim() : ''
+}
+
+async function resolveApiKeyImageProvider(profile: string, providerName = APIKEY_IMAGE_PROVIDER): Promise<ApiKeyImageProvider | null> {
+  const requestedName = normalizeCustomProviderName(providerName) || APIKEY_IMAGE_PROVIDER
   const hermesConfig = await readConfigYamlForProfile(profile)
-  const customProviders = Array.isArray(hermesConfig.custom_providers)
-    ? hermesConfig.custom_providers as any[]
-    : []
-  const provider = customProviders.find(entry => String(entry?.name || '').trim() === APIKEY_IMAGE_PROVIDER)
-  const apiKey = String(provider?.api_key || '').trim()
+  const customProviders = getCompatibleCustomProviders(hermesConfig)
+  const provider = customProviders.find(entry => normalizeCustomProviderName(entry?.name) === requestedName)
+  const apiKey = apiKeyFromCustomProvider(provider)
   const baseUrl = String(provider?.base_url || '').trim()
   if (!provider || !apiKey || !baseUrl) return null
   return {
+    name: requestedName,
     apiKey,
     baseUrl,
     model: String(provider?.model || '').trim(),
@@ -351,7 +370,7 @@ async function readSseImageResults(res: Response, limit: number): Promise<string
   return images.slice(0, limit)
 }
 
-async function requestApiKeyImage(provider: FunCodexProvider, mode: ApiKeyImageMode, body: any): Promise<string[]> {
+async function requestApiKeyImage(provider: ApiKeyImageProvider, mode: ApiKeyImageMode, body: any): Promise<string[]> {
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (!prompt) {
     const err: any = new Error('prompt is required')
@@ -466,17 +485,19 @@ export async function apiKeyImageGenerate(ctx: Context) {
     return
   }
 
-  const provider = await resolveFunCodexProvider(profile)
+  const body = ctx.request.body as any
+  const providerName = requestedApiKeyImageProviderName(body)
+  const provider = await resolveApiKeyImageProvider(profile, providerName)
   if (!provider) {
     ctx.status = 401
+    const isDefaultProvider = providerName === APIKEY_IMAGE_PROVIDER
     ctx.body = {
-      error: `Missing fun-codex provider in profile "${profile}" config.yaml.`,
-      code: 'missing_fun_codex_provider',
+      error: `Missing ${providerName} provider in profile "${profile}" config.yaml.`,
+      code: isDefaultProvider ? 'missing_fun_codex_provider' : 'missing_apikey_image_provider',
     }
     return
   }
 
-  const body = ctx.request.body as any
   try {
     const mode = normalizeImageMode(body.mode)
     const images = await requestApiKeyImage(provider, mode, body)
@@ -486,7 +507,7 @@ export async function apiKeyImageGenerate(ctx: Context) {
       ok: true,
       mode,
       output_paths: outputPaths,
-      provider: APIKEY_IMAGE_PROVIDER,
+      provider: provider.name,
       base_url: provider.baseUrl,
       profile,
     }

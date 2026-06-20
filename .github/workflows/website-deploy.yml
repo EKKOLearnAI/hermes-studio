@@ -13,26 +13,41 @@ on:
       - tsconfig.website.json
       - vite.config.website.ts
       - .github/workflows/website-deploy.yml
-  release:
+  workflow_run:
+    workflows:
+      - Publish Desktop Artifacts to Release
     types:
-      - published
+      - completed
   workflow_dispatch:
+    inputs:
+      download_version:
+        description: "Optional release/download version used for website download links (defaults to package.json)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: website-${{ github.event.pull_request.number || github.ref }}
+  group: website-${{ github.event.pull_request.number || github.event.workflow_run.id || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build website
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
+        if: github.event_name != 'workflow_run'
         uses: actions/checkout@v4
+
+      - name: Checkout desktop release ref
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.event.workflow_run.head_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,10 +63,12 @@ jobs:
         run: npx vue-tsc -p tsconfig.website.json --noEmit
 
       - name: Build website
+        env:
+          WEBSITE_DOWNLOAD_VERSION: ${{ github.event.inputs.download_version }}
         run: npm run build:website
 
       - name: Prepare SSH
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
         env:
           WEBSITE_SSH_KEY: ${{ secrets.WEBSITE_SSH_KEY }}
           WEBSITE_SSH_KNOWN_HOSTS: ${{ secrets.WEBSITE_SSH_KNOWN_HOSTS }}
@@ -66,7 +83,7 @@ jobs:
           fi
 
       - name: Deploy website
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
         env:
           WEBSITE_SSH_USER: ${{ secrets.WEBSITE_SSH_USER }}
           WEBSITE_SSH_PORT: ${{ secrets.WEBSITE_SSH_PORT }}

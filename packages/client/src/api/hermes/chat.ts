@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { getBaseUrlValue, getApiKey } from '../client'
+import type { ProviderApiMode } from './system'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -20,7 +21,21 @@ export interface StartRunRequest {
   provider?: string
   model_groups?: Array<{ provider: string; models: string[] }>
   queue_id?: string
-  source?: 'api_server' | 'cli'
+  source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent'
+  session_source?: 'global_agent'
+  coding_agent_id?: 'claude-code' | 'codex'
+  agent_id?: 'claude-code' | 'codex'
+  mode?: 'scoped' | 'global'
+  workspace?: string | null
+  baseUrl?: string
+  base_url?: string
+  apiKey?: string
+  api_key?: string
+  apiMode?: ProviderApiMode
+  api_mode?: ProviderApiMode
+  /** Per-session reasoning effort override.
+   * Empty/undefined = use config.yaml default. */
+  reasoning_effort?: string
 }
 
 export interface StartRunResponse {
@@ -50,6 +65,8 @@ export interface RunEvent {
   }
   /** session_id tag added by server for client-side filtering */
   session_id?: string
+  /** Generated session title from session.title.updated. */
+  title?: string
   /** Queue length from run.queued event */
   queue_length?: number
   /** Queue item that was just removed because it is starting now. */
@@ -96,6 +113,8 @@ export interface ResumeSessionPayload {
 let chatRunSocket: Socket | null = null
 let globalListenersRegistered = false
 let chatRunSocketProfile: string | null = null
+export type ChatRunTransport = 'chat-run' | 'global-agent'
+let chatRunSocketTransport: ChatRunTransport = 'chat-run'
 
 const TRANSIENT_DISCONNECT_REASONS = new Set<string>([
   'transport close',
@@ -121,10 +140,12 @@ const sessionEventHandlers = new Map<string, {
   onCompressionStarted: (event: RunEvent) => void
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
+  onAbortTimeout?: (event: RunEvent) => void
   onAbortCompleted: (event: RunEvent) => void
   onUsageUpdated: (event: RunEvent) => void
   onAgentEvent?: (event: RunEvent) => void
   onSessionCommand?: (event: RunEvent) => void
+  onSessionTitleUpdated?: (event: RunEvent) => void
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
@@ -135,6 +156,7 @@ const sessionEventHandlers = new Map<string, {
 
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
+const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
 
 /**
  * Global message.delta event handler
@@ -325,6 +347,19 @@ function globalAbortStartedHandler(event: RunEvent): void {
 }
 
 /**
+ * Global abort.timeout event handler
+ */
+function globalAbortTimeoutHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAbortTimeout) {
+    handlers.onAbortTimeout(event)
+  }
+}
+
+/**
  * Global abort.completed event handler
  */
 function globalAbortCompletedHandler(event: RunEvent): void {
@@ -369,7 +404,31 @@ function globalSessionCommandHandler(event: RunEvent): void {
   }
 }
 
+function globalSessionTitleUpdatedHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers) {
+    handlers.onSessionTitleUpdated?.(event)
+  }
+
+  for (const handler of sessionTitleUpdatedHandlers) {
+    handler(event)
+  }
+}
+
 function globalAgentEventHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onAgentEvent) {
+    handlers.onAgentEvent(event)
+  }
+}
+
+function globalRunReattachFailedHandler(event: RunEvent): void {
   const sid = event.session_id
   if (!sid) return
 
@@ -455,10 +514,12 @@ export function registerSessionHandlers(
     onCompressionStarted: (event: RunEvent) => void
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
+    onAbortTimeout?: (event: RunEvent) => void
     onAbortCompleted: (event: RunEvent) => void
     onUsageUpdated: (event: RunEvent) => void
     onAgentEvent?: (event: RunEvent) => void
     onSessionCommand?: (event: RunEvent) => void
+    onSessionTitleUpdated?: (event: RunEvent) => void
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
@@ -497,12 +558,20 @@ export function onSessionCommand(handler: (event: RunEvent) => void): () => void
   }
 }
 
+export function onSessionTitleUpdated(handler: (event: RunEvent) => void): () => void {
+  sessionTitleUpdatedHandlers.add(handler)
+  return () => {
+    sessionTitleUpdatedHandlers.delete(handler)
+  }
+}
+
 export function respondClarify(
   sessionId: string,
   clarifyId: string,
   response: string,
+  transport: ChatRunTransport = 'chat-run',
 ): void {
-  const socket = connectChatRun()
+  const socket = connectChatRun(null, transport)
   socket.emit('clarify.respond', {
     session_id: sessionId,
     clarify_id: clarifyId,
@@ -514,8 +583,9 @@ export function respondToolApproval(
   sessionId: string,
   approvalId: string,
   choice: 'once' | 'session' | 'always' | 'deny',
+  transport: ChatRunTransport = 'chat-run',
 ): void {
-  const socket = connectChatRun()
+  const socket = connectChatRun(null, transport)
   socket.emit('approval.respond', {
     session_id: sessionId,
     approval_id: approvalId,
@@ -523,13 +593,18 @@ export function respondToolApproval(
   })
 }
 
-export function getChatRunSocket(): Socket | null {
+export function getChatRunSocket(transport?: ChatRunTransport): Socket | null {
+  if (transport && chatRunSocketTransport !== transport) return null
   return chatRunSocket
 }
 
-export function connectChatRun(requestedProfile?: string | null): Socket {
+export function connectChatRun(requestedProfile?: string | null, transport: ChatRunTransport = 'chat-run'): Socket {
   const normalizedRequestedProfile = requestedProfile?.trim() || null
-  if (chatRunSocket?.connected && (!normalizedRequestedProfile || chatRunSocketProfile === normalizedRequestedProfile)) {
+  if (
+    chatRunSocket?.connected &&
+    chatRunSocketTransport === transport &&
+    (!normalizedRequestedProfile || chatRunSocketProfile === normalizedRequestedProfile)
+  ) {
     return chatRunSocket
   }
 
@@ -557,8 +632,10 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     profile = normalizedRequestedProfile || localStorage.getItem('hermes_active_profile_name') || 'default'
   }
   chatRunSocketProfile = profile
+  chatRunSocketTransport = transport
 
-  chatRunSocket = io(`${baseUrl}/chat-run`, {
+  const namespace = transport === 'global-agent' ? '/global-agent' : '/chat-run'
+  chatRunSocket = io(`${baseUrl}${namespace}`, {
     auth: { token },
     query: { profile },
     transports: ['websocket', 'polling'],
@@ -601,12 +678,15 @@ export function connectChatRun(requestedProfile?: string | null): Socket {
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
     chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
     chatRunSocket.on('abort.started', globalAbortStartedHandler)
+    chatRunSocket.on('abort.timeout', globalAbortTimeoutHandler)
     chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
     chatRunSocket.on('agent.event', globalAgentEventHandler)
+    chatRunSocket.on('run.reattach_failed', globalRunReattachFailedHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)
+    chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
 
     globalListenersRegistered = true
   }
@@ -619,6 +699,7 @@ export function disconnectChatRun(): void {
     chatRunSocket.disconnect()
     chatRunSocket = null
     chatRunSocketProfile = null
+    chatRunSocketTransport = 'chat-run'
     globalListenersRegistered = false
     sessionEventHandlers.clear()
   }
@@ -647,10 +728,16 @@ export function resumeSession(
   sessionId: string,
   onResumed: (data: ResumeSessionPayload) => void,
   profile?: string | null,
+  transport: ChatRunTransport = 'chat-run',
 ): Socket {
-  const socket = connectChatRun(profile)
+  const socket = connectChatRun(profile, transport)
 
-  socket.once('resumed', onResumed)
+  const handleResumed = (data: ResumeSessionPayload) => {
+    if (data?.session_id !== sessionId) return
+    removeSocketListener(socket, 'resumed', handleResumed)
+    onResumed(data)
+  }
+  socket.on('resumed', handleResumed)
   socket.emit('resume', { session_id: sessionId, ...(profile ? { profile } : {}) })
 
   return socket
@@ -664,6 +751,7 @@ export function startRunViaSocket(
   onStarted?: (runId: string) => void,
   options?: {
     onReconnectResume?: (data: ResumeSessionPayload) => void
+    transport?: ChatRunTransport
   },
 ): { abort: () => void } {
   const sid = body.session_id
@@ -672,7 +760,7 @@ export function startRunViaSocket(
   }
 
   let closed = false
-  const socket = connectChatRun(body.profile)
+  const socket = connectChatRun(body.profile, options?.transport)
   if (sessionEventHandlers.has(sid)) {
     socket.emit('run', body)
     return {
@@ -807,6 +895,10 @@ export function startRunViaSocket(
       if (closed) return
       onEvent(evt)
     },
+    onAbortTimeout: (evt: RunEvent) => {
+      if (closed) return
+      onEvent(evt)
+    },
     onAbortCompleted: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
@@ -831,6 +923,9 @@ export function startRunViaSocket(
       removeTerminalSocketListeners()
       sessionEventHandlers.delete(sid)
       onDone()
+    },
+    onSessionTitleUpdated: (evt: RunEvent) => {
+      onEvent(evt)
     },
     onRunQueued: (evt: RunEvent) => {
       if (closed) return

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onUnmounted, computed, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import { useTheme } from '@/composables/useTheme'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
+import DesktopTitleBar from '@/components/layout/DesktopTitleBar.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
@@ -16,13 +17,16 @@ const { isDark, isComic } = useTheme()
 const { t } = useI18n()
 const appStore = useAppStore()
 const route = useRoute()
-const router = useRouter()
-const ready = ref(false)
 
 const themeOverrides = computed(() => getThemeOverrides(isDark.value, isComic.value))
 const naiveTheme = computed(() => isDark.value ? darkTheme : null)
 
 const isLoginPage = computed(() => route.name === 'login')
+const usesPageSidebar = computed(() =>
+  ['hermes.chat', 'hermes.session', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom'].includes(route.name as string),
+)
+const showAppSidebar = computed(() => !isLoginPage.value && !usesPageSidebar.value)
+const showMobileMenuButton = computed(() => !isLoginPage.value && (showAppSidebar.value || usesPageSidebar.value))
 
 const nodeVersionLow = computed(() => {
   const v = appStore.nodeVersion
@@ -30,21 +34,31 @@ const nodeVersionLow = computed(() => {
   return !isNaN(major) && major < 23
 })
 
-// Close mobile sidebar on route change
-watch(() => route.path, () => {
-  appStore.closeSidebar()
+const isDesktopShell = computed(() =>
+  (window as typeof window & { hermesDesktop?: { isDesktop?: boolean } }).hermesDesktop?.isDesktop === true,
+)
+const hasDesktopTitleBar = computed(() => {
+  const platform = (window as typeof window & { hermesDesktop?: { platform?: string } }).hermesDesktop?.platform
+  return isDesktopShell.value && (platform === 'darwin' || platform === 'win32')
 })
 
-// Wait for router to resolve before rendering layout
-router.isReady().then(() => {
-  ready.value = true
-})
-
-onMounted(() => {
-  if (!isLoginPage.value) {
-    appStore.loadModels()
-    appStore.startHealthPolling()
+function handleMobileMenuClick() {
+  if (usesPageSidebar.value) {
+    window.dispatchEvent(new CustomEvent('hermes:open-page-sidebar'))
+    return
   }
+  appStore.toggleSidebar()
+}
+
+watch(isLoginPage, (loginPage) => {
+  if (loginPage) {
+    appStore.stopHealthPolling()
+    return
+  }
+  appStore.loadModels()
+  appStore.startHealthPolling()
+}, {
+  immediate: true,
 })
 
 onUnmounted(() => {
@@ -60,18 +74,21 @@ useKeyboard()
       <AuthEventListener />
       <NDialogProvider>
         <NNotificationProvider>
-          <div v-if="nodeVersionLow && ready" class="node-warning-bar">
-            {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
-          </div>
-          <div v-if="ready" class="app-layout" :class="{ 'no-sidebar': isLoginPage }">
-            <button v-if="!isLoginPage" class="hamburger-btn" @click="appStore.toggleSidebar">
-              <img src="/logo.png" alt="Menu" style="width: 24px; height: 24px;" />
-            </button>
-            <div v-if="!isLoginPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
-            <AppSidebar v-if="!isLoginPage" />
-            <main class="app-main">
-              <router-view />
-            </main>
+          <div class="app-shell" :class="{ desktop: isDesktopShell, 'desktop-titlebar-host': hasDesktopTitleBar }">
+            <DesktopTitleBar v-if="isDesktopShell" />
+            <div v-if="nodeVersionLow" class="node-warning-bar">
+              {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
+            </div>
+            <div class="app-layout" :class="{ 'no-sidebar': isLoginPage || !showAppSidebar }">
+              <button v-if="showMobileMenuButton" class="hamburger-btn" @click="handleMobileMenuClick">
+                <img src="/logo.png" alt="Menu" style="width: 24px; height: 24px;" />
+              </button>
+              <div v-if="!isLoginPage && showAppSidebar && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
+              <AppSidebar v-if="!isLoginPage && showAppSidebar" />
+              <main class="app-main">
+                <router-view />
+              </main>
+            </div>
           </div>
           <SessionSearchModal />
           <DefaultCredentialPrompt />
@@ -84,10 +101,22 @@ useKeyboard()
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
 
+.app-shell {
+  height: calc(100 * var(--vh));
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: $bg-primary;
+}
+
 .app-layout {
   display: flex;
-  height: calc(100 * var(--vh));
-  width: 100vw;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
 
   &.no-sidebar {
@@ -95,20 +124,23 @@ useKeyboard()
   }
 }
 
+.app-shell.desktop-titlebar-host .app-layout {
+  --vh: calc(1vh - 0.36px);
+}
+
 .app-main {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   background-color: $bg-primary;
 
   .no-sidebar & {
-    height: calc(100 * var(--vh));
+    height: 100%;
   }
 }
 
 .node-warning-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
+  flex: 0 0 auto;
   width: 100%;
   z-index: 100;
   padding: 4px 16px;

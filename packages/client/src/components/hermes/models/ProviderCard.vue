@@ -137,7 +137,10 @@ async function handleDelete() {
           chatStore.clearProviderFromSessions('copilot')
           await modelsStore.fetchProviders()
         } else {
-          await modelsStore.removeProvider(props.provider.provider)
+          await modelsStore.removeProvider(props.provider.provider, {
+            source: props.provider.provider_source,
+            providerKey: props.provider.provider_key,
+          })
         }
         // 删完之后若已没有默认模型，自动从剩余 provider 里挑一个，避免 chat 页
         // "无默认模型"的尴尬态。与 hermes CLI `model` 子命令的隐含行为对齐。

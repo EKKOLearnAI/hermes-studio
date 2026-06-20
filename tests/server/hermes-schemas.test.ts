@@ -21,7 +21,7 @@ describe('Hermes schema initialization', () => {
   })
 
   it('initializes all tables with correct schemas', async () => {
-    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, USERS_TABLE, USER_PROFILES_TABLE } =
+    const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, DEVICES_TABLE } =
       await import('../../packages/server/src/db/hermes/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
@@ -34,6 +34,7 @@ describe('Hermes schema initialization', () => {
     expect(tables.map(t => t.name)).toContain(GC_ROOMS_TABLE)
     expect(tables.map(t => t.name)).toContain(USERS_TABLE)
     expect(tables.map(t => t.name)).toContain(USER_PROFILES_TABLE)
+    expect(tables.map(t => t.name)).toContain(DEVICES_TABLE)
 
     // Verify USAGE_TABLE structure
     const usageCols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
@@ -41,6 +42,10 @@ describe('Hermes schema initialization', () => {
     expect(usageCols.some(c => c.name === 'session_id')).toBe(true)
     expect(usageCols.some(c => c.name === 'input_tokens')).toBe(true)
     expect(usageCols.some(c => c.name === 'output_tokens')).toBe(true)
+
+    const sessionCols = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(sessionCols.some(c => c.name === 'source')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'agent')).toBe(true)
 
     const userCols = db.prepare(`PRAGMA table_info("${USERS_TABLE}")`).all() as Array<{ name: string }>
     expect(userCols.some(c => c.name === 'id')).toBe(true)
@@ -52,6 +57,11 @@ describe('Hermes schema initialization', () => {
     expect(profileCols.some(c => c.name === 'user_id')).toBe(true)
     expect(profileCols.some(c => c.name === 'profile_name')).toBe(true)
     expect(profileCols.some(c => c.name === 'is_default')).toBe(true)
+
+    const deviceCols = db.prepare(`PRAGMA table_info("${DEVICES_TABLE}")`).all() as Array<{ name: string }>
+    expect(deviceCols.some(c => c.name === 'id')).toBe(true)
+    expect(deviceCols.some(c => c.name === 'status')).toBe(true)
+    expect(deviceCols.some(c => c.name === 'device_public_key')).toBe(true)
   })
 
   it('preserves existing data when adding safe schema columns', async () => {
