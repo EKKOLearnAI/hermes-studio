@@ -294,6 +294,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
 | `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
 | `AUTH_JWT_SECRET` | `AUTH_TOKEN` | JWT signing secret override for username/password sessions. |
+| `AUTH_JWT_EXPIRES_SECONDS` | `2592000` | Login JWT lifetime in seconds. Must be a positive integer; invalid values fall back to the 30-day default. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
 | `LOG_LEVEL` | `info` | Server log level. |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` or `info` | Bridge log level. |

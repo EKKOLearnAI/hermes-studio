@@ -272,18 +272,40 @@ describe('user auth tables and middleware', () => {
     const now = 1_000_000
     const spy = vi.spyOn(Date, 'now').mockReturnValue(now)
 
-    const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
-    const payload = auth.verifyUserJwt(token, 'test-secret', now)
+    try {
+      const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
+      const payload = auth.verifyUserJwt(token, 'test-secret', now)
 
-    expect(payload).toMatchObject({
-      sub: '1',
-      username: 'admin',
-      role: 'super_admin',
-      iat: 1000,
-      exp: 1000 + 7200,
-    })
+      expect(payload).toMatchObject({
+        sub: '1',
+        username: 'admin',
+        role: 'super_admin',
+        iat: 1000,
+        exp: 1000 + 7200,
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
 
-    spy.mockRestore()
+  it('falls back to the default login JWT expiry for invalid AUTH_JWT_EXPIRES_SECONDS values', async () => {
+    const { auth } = await initUsers()
+    const now = 1_000_000
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const defaultExpiresSeconds = 60 * 60 * 24 * 30
+
+    try {
+      for (const value of ['7200abc', '30 days', '0', '-1', '1.5', '', String(Number.MAX_SAFE_INTEGER + 1)]) {
+        vi.stubEnv('AUTH_JWT_EXPIRES_SECONDS', value)
+
+        const token = await auth.issueUserJwt({ id: 1, username: 'admin', role: 'super_admin' })
+        const payload = auth.verifyUserJwt(token, 'test-secret', now)
+
+        expect(payload?.exp).toBe(1000 + defaultExpiresSeconds)
+      }
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('signs and verifies user JWTs', async () => {

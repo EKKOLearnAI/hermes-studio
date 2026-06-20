@@ -299,6 +299,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `CORS_ORIGINS` | 仅同 host | HTTP、Socket.IO、WebSocket 跨源 allowlist，支持逗号或空格分隔。只有明确需要旧版 wildcard CORS 时才设置为 `*`。 |
 | `AUTH_TOKEN` | 自动生成 | 显式指定 bearer token。未设置时，Web UI 会在 `HERMES_WEB_UI_HOME` 下自动生成。 |
 | `AUTH_JWT_SECRET` | `AUTH_TOKEN` | 用户名/密码会话的 JWT 签名密钥覆盖。 |
+| `AUTH_JWT_EXPIRES_SECONDS` | `2592000` | 登录 JWT 有效期，单位为秒。必须是正整数；非法值会回退到默认 30 天。 |
 | `PROFILE` | `default` | 启动/默认 Hermes profile。运行时请求使用前端当前选择且当前账号有权限访问的 Profile。 |
 | `LOG_LEVEL` | `info` | Server 日志级别。 |
 | `BRIDGE_LOG_LEVEL` | `$LOG_LEVEL` 或 `info` | Bridge 日志级别。 |

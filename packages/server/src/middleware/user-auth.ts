@@ -44,8 +44,11 @@ const DEFAULT_EXPIRES_SECONDS = 60 * 60 * 24 * 30
 export const MODEL_RUN_EXPIRES_SECONDS = 60 * 60
 
 function userJwtExpiresSeconds(env: NodeJS.ProcessEnv = process.env): number {
-  const configured = Number.parseInt(String(env.AUTH_JWT_EXPIRES_SECONDS || '').trim(), 10)
-  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_EXPIRES_SECONDS
+  const rawValue = String(env.AUTH_JWT_EXPIRES_SECONDS || '').trim()
+  if (!/^\d+$/.test(rawValue)) return DEFAULT_EXPIRES_SECONDS
+
+  const configured = Number(rawValue)
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_EXPIRES_SECONDS
 }
 
 function base64UrlJson(value: unknown): string {
