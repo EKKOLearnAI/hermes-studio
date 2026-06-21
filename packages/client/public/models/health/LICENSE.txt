@@ -1,0 +1,15 @@
+BodyParts3D attribution notice used by this project
+
+Source dataset:
+BodyParts3D / Anatomography
+The Database Center for Life Science
+
+Attribution statement from the upstream mirror:
+"BodyParts3D, (c) The Database Center for Life Science licensed under CC Attribution-Share Alike 2.1 Japan"
+
+Upstream references:
+- https://github.com/Kevin-Mattheus-Moerman/BodyParts3D
+- http://dbarchive.biosciencedbc.jp/en/bodyparts3d/lic.html
+- http://lifesciencedb.jp/bp3d/
+
+This project includes only a subset of the STL files needed for the interactive health viewer.
