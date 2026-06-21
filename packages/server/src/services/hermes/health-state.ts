@@ -82,6 +82,44 @@ export interface HealthSupplementSummary {
   }>
 }
 
+export interface HealthExternalSummary {
+  currentWeightKg: number | null
+  targetWeightKg: number | null
+  topRegions: HealthBodyConcern[]
+  recentWorkoutCount: number
+}
+
+export interface HealthInternalMarker {
+  id: string
+  key: string
+  label: string
+  value: number | string | null
+  unit: string | null
+  status: string
+  source: string
+  recordedAt: string
+  referenceRange: string | null
+  notes: string
+}
+
+export interface HealthMicronutrientSummary {
+  items: Array<{
+    key: string
+    consumed: number
+    target: number
+    remaining: number
+    status: 'low' | 'ok' | 'high' | 'unknown'
+  }>
+}
+
+export interface HealthDigitalTwinSummary {
+  currentWeightKg: number | null
+  targetWeightKg: number | null
+  externalConcernCount: number
+  internalMarkerCount: number
+  micronutrientGapCount: number
+}
+
 export interface HealthOverview {
   generatedAt: string
   profile: string
@@ -90,6 +128,10 @@ export interface HealthOverview {
   nutritionSummary: HealthNutritionSummary
   recentWorkouts: HealthWorkoutSummary[]
   topBodyConcerns: HealthBodyConcern[]
+  digitalTwinSummary: HealthDigitalTwinSummary
+  externalSummary: HealthExternalSummary
+  internalMarkers: HealthInternalMarker[]
+  micronutrientSummary: HealthMicronutrientSummary
   latestPlan: HealthDailyPlanSummary | null
   supplementSummary: HealthSupplementSummary
   bodyMap: Array<Record<string, unknown>>
@@ -431,15 +473,26 @@ export function getHealthOverview(options: { profile?: string } | string = {}): 
       ORDER BY date(plan_date) DESC, datetime(created_at) DESC, id DESC
     `).all() as unknown as HealthDailyPlanRow[]
     const dailyCheckins = db.prepare('SELECT * FROM health_daily_checkins ORDER BY date(checkin_date) DESC, id DESC').all() as Array<Record<string, unknown>>
+    const weightSummary = buildWeightSummary(healthProfile, records)
+    const nutritionSummary = buildNutritionSummary(healthProfile.nutritionTargets, foodLogs)
+    const recentWorkouts = workouts.slice(0, 10).map(rowToWorkoutSummary)
+    const topBodyConcerns = buildTopBodyConcerns(bodyMapRows)
+    const internalMarkers = buildInternalMarkers(records)
+    const micronutrientSummary = buildMicronutrientSummary(healthProfile.nutritionTargets, foodLogs)
+    const externalSummary = buildExternalSummary(weightSummary, topBodyConcerns, recentWorkouts)
 
     return {
       generatedAt: nowIso(),
       profile,
       healthProfile,
-      weightSummary: buildWeightSummary(healthProfile, records),
-      nutritionSummary: buildNutritionSummary(healthProfile.nutritionTargets, foodLogs),
-      recentWorkouts: workouts.slice(0, 10).map(rowToWorkoutSummary),
-      topBodyConcerns: buildTopBodyConcerns(bodyMapRows),
+      weightSummary,
+      nutritionSummary,
+      recentWorkouts,
+      topBodyConcerns,
+      digitalTwinSummary: buildDigitalTwinSummary(weightSummary, topBodyConcerns, internalMarkers, micronutrientSummary),
+      externalSummary,
+      internalMarkers,
+      micronutrientSummary,
       latestPlan: dailyPlans[0] ? rowToDailyPlanSummary(dailyPlans[0]) : null,
       supplementSummary: buildSupplementSummary(supplements, supplementLogs),
       bodyMap: bodyMapRows.map(rowToBodyMapRecord),
@@ -748,6 +801,7 @@ function buildWeightSummary(profile: HealthProfile, records: HealthRecordRow[]):
 }
 
 const NUTRITION_KEYS = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'water']
+const INTERNAL_RECORD_KINDS = new Set(['lab', 'checkup', 'blood', 'urine', 'vitamin', 'mineral', 'micronutrient', 'biomarker'])
 
 function buildNutritionSummary(targets: Record<string, number>, foodLogs: HealthFoodLogRow[]): HealthNutritionSummary {
   const today = new Date().toISOString().slice(0, 10)
@@ -767,6 +821,119 @@ function buildNutritionSummary(targets: Record<string, number>, foodLogs: Health
 
 function withNutritionDefaults(targets: Record<string, number>): Record<string, number> {
   return Object.fromEntries(NUTRITION_KEYS.map(key => [key, Number(targets[key] || 0)])) as Record<string, number>
+}
+
+function buildInternalMarkers(records: HealthRecordRow[]): HealthInternalMarker[] {
+  return records
+    .filter(record => INTERNAL_RECORD_KINDS.has(record.kind))
+    .map(record => {
+      const value = parseJson<Record<string, unknown>>(record.value_json, {})
+      const numeric = numericValue(value)
+      const rawValue = value.value
+      return {
+        id: record.id,
+        key: normalizeMarkerKey(nullableText(value.marker) || record.title || record.kind),
+        label: record.title,
+        value: numeric ?? (typeof rawValue === 'string' ? rawValue : null),
+        unit: record.unit,
+        status: nullableText(value.status) || inferMarkerStatus(numeric, value),
+        source: record.source,
+        recordedAt: record.recorded_at,
+        referenceRange: nullableText(value.referenceRange ?? value.reference_range),
+        notes: record.notes,
+      }
+    })
+}
+
+function buildMicronutrientSummary(targets: Record<string, number>, foodLogs: HealthFoodLogRow[]): HealthMicronutrientSummary {
+  const today = new Date().toISOString().slice(0, 10)
+  const consumed: Record<string, number> = {}
+  foodLogs
+    .filter(log => log.logged_at.slice(0, 10) === today)
+    .forEach(log => {
+      const nutrition = parseJson<Record<string, unknown>>(log.nutrition_json, {})
+      const micros = nutrition.micros && typeof nutrition.micros === 'object' ? numericRecord(nutrition.micros as Record<string, unknown>) : {}
+      Object.entries(micros).forEach(([key, value]) => {
+        consumed[key] = round((consumed[key] || 0) + value)
+      })
+    })
+
+  const macroKeys = new Set(NUTRITION_KEYS)
+  const keys = new Set<string>()
+  Object.keys(targets).forEach(key => {
+    if (!macroKeys.has(key)) keys.add(key)
+  })
+  Object.keys(consumed).forEach(key => keys.add(key))
+
+  return {
+    items: Array.from(keys)
+      .sort((left, right) => left.localeCompare(right))
+      .map(key => {
+        const target = Number(targets[key] || 0)
+        const total = round(consumed[key] || 0)
+        const remaining = round(target - total)
+        return {
+          key,
+          consumed: total,
+          target,
+          remaining,
+          status: micronutrientStatus(total, target),
+        }
+      }),
+  }
+}
+
+function buildExternalSummary(
+  weightSummary: HealthWeightSummary,
+  topBodyConcerns: HealthBodyConcern[],
+  recentWorkouts: HealthWorkoutSummary[],
+): HealthExternalSummary {
+  return {
+    currentWeightKg: weightSummary.currentKg,
+    targetWeightKg: weightSummary.targetKg,
+    topRegions: topBodyConcerns.slice(0, 5),
+    recentWorkoutCount: recentWorkouts.length,
+  }
+}
+
+function buildDigitalTwinSummary(
+  weightSummary: HealthWeightSummary,
+  topBodyConcerns: HealthBodyConcern[],
+  internalMarkers: HealthInternalMarker[],
+  micronutrientSummary: HealthMicronutrientSummary,
+): HealthDigitalTwinSummary {
+  return {
+    currentWeightKg: weightSummary.currentKg,
+    targetWeightKg: weightSummary.targetKg,
+    externalConcernCount: topBodyConcerns.length,
+    internalMarkerCount: internalMarkers.length,
+    micronutrientGapCount: micronutrientSummary.items.filter(item => item.status === 'low').length,
+  }
+}
+
+function inferMarkerStatus(value: number | null, payload: Record<string, unknown>): string {
+  if (value === null) return 'unknown'
+  const min = nullableNumber(payload.min ?? payload.low)
+  const max = nullableNumber(payload.max ?? payload.high)
+  if (min !== null && value < min) return 'low'
+  if (max !== null && value > max) return 'high'
+  if (min !== null || max !== null) return 'ok'
+  return 'unknown'
+}
+
+function micronutrientStatus(consumed: number, target: number): 'low' | 'ok' | 'high' | 'unknown' {
+  if (!target) return 'unknown'
+  if (consumed < target) return 'low'
+  if (consumed > target * 1.2) return 'high'
+  return 'ok'
+}
+
+function normalizeMarkerKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 function buildTopBodyConcerns(rows: HealthBodyMapRow[]): HealthBodyConcern[] {
