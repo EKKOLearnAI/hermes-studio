@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Paulo Cavallari Tech">
+  <defs>
+    <linearGradient id="g" x1="18" y1="12" x2="110" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c8cff" />
+      <stop offset="100%" stop-color="#14b8a6" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="32" fill="#07111f" />
+  <circle cx="64" cy="64" r="46" fill="url(#g)" fill-opacity="0.18" />
+  <rect x="18" y="18" width="92" height="92" rx="26" fill="url(#g)" fill-opacity="0.92" />
+  <text
+    x="64"
+    y="74"
+    text-anchor="middle"
+    font-size="46"
+    font-weight="800"
+    font-family="Inter, Arial, sans-serif"
+    fill="#ffffff"
+    letter-spacing="2"
+  >PC</text>
+</svg>

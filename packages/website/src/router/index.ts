@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
 
 const EmptyView = { render: () => null }
 
@@ -9,12 +10,19 @@ const router = createRouter({
       path: '/',
       name: 'landing',
       component: () => import('@/views/LandingView.vue'),
+      meta: {
+        hideChrome: true,
+        title: 'Paulo Cavallari Tech',
+      },
     },
     {
       path: '/docs',
       name: 'docs',
       component: () => import('@/views/DocsView.vue'),
       redirect: { name: 'docs.getting-started' },
+      meta: {
+        title: 'Documentação — Hermes Studio',
+      },
       children: [
         {
           path: 'getting-started',
@@ -62,6 +70,32 @@ const router = createRouter({
   scrollBehavior() {
     return { top: 0 }
   },
+})
+
+router.beforeEach((to, _from, next) => {
+  // Public pages don't need auth
+  if (to.meta.public) {
+    // Already has key, skip login
+    if (to.name === 'login' && hasApiKey()) {
+      next({ path: '/hermes/chat' })
+      return
+    }
+    next()
+    return
+  }
+
+  // All other pages require token
+  if (!hasApiKey()) {
+    next({ name: 'login' })
+    return
+  }
+
+  if (to.meta.requiresSuperAdmin && !isStoredSuperAdmin()) {
+    next({ name: 'hermes.chat' })
+    return
+  }
+
+  next()
 })
 
 export default router
