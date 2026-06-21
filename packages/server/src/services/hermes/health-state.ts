@@ -1,9 +1,14 @@
 import { mkdirSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { dirname, join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { getProfileDir } from './hermes-profile'
 
 const SCHEMA_VERSION = 1
+
+function id(prefix: string): string {
+  return `${prefix}-${randomUUID().replace(/-/g, '').slice(0, 12)}`
+}
 
 export interface HealthProfile {
   displayName: string | null
@@ -100,6 +105,7 @@ export interface HealthOverview {
 }
 
 interface HealthProfileRow {
+  id: string
   display_name: string | null
   birth_date: string | null
   sex: string | null
@@ -111,6 +117,8 @@ interface HealthProfileRow {
   conditions_json: string
   allergies_json: string
   nutrition_targets_json: string
+  created_at: string
+  updated_at: string
 }
 
 interface HealthRecordRow {
@@ -450,6 +458,245 @@ export function getHealthOverview(options: { profile?: string } | string = {}): 
   }
 }
 
+export function getHealthProfile(profile?: string): HealthProfile {
+  return getHealthOverview({ profile }).healthProfile
+}
+
+export function updateHealthProfile(input: Record<string, unknown>, _actor = 'user', profile?: string): HealthProfile {
+  const db = openHealthStateDb(profile)
+  try {
+    const updatedAt = nowIso()
+    const current = db.prepare('SELECT * FROM health_profile ORDER BY datetime(updated_at) DESC, id DESC LIMIT 1').get() as HealthProfileRow | undefined
+    const next = {
+      displayName: text(input.displayName ?? input.display_name ?? current?.display_name),
+      birthDate: text(input.birthDate ?? input.birth_date ?? current?.birth_date),
+      sex: text(input.sex ?? current?.sex),
+      heightCm: nullableNumber(input.heightCm ?? input.height_cm ?? current?.height_cm),
+      weightKg: nullableNumber(input.weightKg ?? input.weight_kg ?? current?.weight_kg),
+      weightTargetKg: nullableNumber(input.weightTargetKg ?? input.weight_target_kg ?? current?.weight_target_kg),
+      activityLevel: text(input.activityLevel ?? input.activity_level ?? current?.activity_level),
+      goals: Array.isArray(input.goals) ? input.goals : parseJson(current?.goals_json, []),
+      conditions: Array.isArray(input.conditions) ? input.conditions : parseJson(current?.conditions_json, []),
+      allergies: Array.isArray(input.allergies) ? input.allergies : parseJson(current?.allergies_json, []),
+      nutritionTargets: input.nutritionTargets && typeof input.nutritionTargets === 'object'
+        ? input.nutritionTargets
+        : parseJson(current?.nutrition_targets_json, {}),
+    }
+    db.prepare(`
+      INSERT INTO health_profile (
+        id, display_name, birth_date, sex, height_cm, weight_kg, weight_target_kg,
+        activity_level, goals_json, conditions_json, allergies_json, nutrition_targets_json,
+        created_at, updated_at
+      )
+      VALUES ('profile-default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name=excluded.display_name,
+        birth_date=excluded.birth_date,
+        sex=excluded.sex,
+        height_cm=excluded.height_cm,
+        weight_kg=excluded.weight_kg,
+        weight_target_kg=excluded.weight_target_kg,
+        activity_level=excluded.activity_level,
+        goals_json=excluded.goals_json,
+        conditions_json=excluded.conditions_json,
+        allergies_json=excluded.allergies_json,
+        nutrition_targets_json=excluded.nutrition_targets_json,
+        updated_at=excluded.updated_at
+    `).run(
+      next.displayName,
+      next.birthDate,
+      next.sex,
+      next.heightCm,
+      next.weightKg,
+      next.weightTargetKg,
+      next.activityLevel,
+      JSON.stringify(next.goals),
+      JSON.stringify(next.conditions),
+      JSON.stringify(next.allergies),
+      JSON.stringify(next.nutritionTargets),
+      current?.created_at || updatedAt,
+      updatedAt,
+    )
+  } finally {
+    db.close()
+  }
+  return getHealthProfile(profile)
+}
+
+export function getHealthBodyMap(profile?: string): Array<Record<string, unknown>> {
+  return getHealthOverview({ profile }).bodyMap
+}
+
+export function updateHealthBodyMap(input: unknown, _actor = 'user', profile?: string): Array<Record<string, unknown>> {
+  const entries = Array.isArray(input) ? input : []
+  const db = openHealthStateDb(profile)
+  try {
+    const updatedAt = nowIso()
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue
+      const item = entry as Record<string, unknown>
+      const region = text(item.region)
+      if (!region) continue
+      const bodyMapId = text(item.id) || `body-${region}`
+      db.prepare(`
+        INSERT INTO health_body_map (id, region, status, notes, payload_json, recorded_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          region=excluded.region,
+          status=excluded.status,
+          notes=excluded.notes,
+          payload_json=excluded.payload_json,
+          recorded_at=excluded.recorded_at,
+          updated_at=excluded.updated_at
+      `).run(
+        bodyMapId,
+        region,
+        text(item.status || 'active'),
+        text(item.notes),
+        JSON.stringify(item.payload || item),
+        text(item.recordedAt || item.recorded_at || updatedAt),
+        updatedAt,
+        updatedAt,
+      )
+    }
+  } finally {
+    db.close()
+  }
+  return getHealthBodyMap(profile)
+}
+
+export function listHealthRecords(profile?: string): Array<Record<string, unknown>> {
+  return getHealthOverview({ profile }).records
+}
+
+export function createHealthRecord(input: Record<string, unknown>, actor = 'user', profile?: string): Record<string, unknown> {
+  const db = openHealthStateDb(profile)
+  const recordId = text(input.id) || id('health-record')
+  const kind = text(input.kind || input.category || 'metric')
+  try {
+    const createdAt = nowIso()
+    const value = Object.prototype.hasOwnProperty.call(input, 'value') ? { value: input.value } : input.valueJson || input.value_json || null
+    db.prepare(`
+      INSERT INTO health_records (id, kind, title, value_json, unit, source, notes, recorded_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      recordId,
+      kind,
+      text(input.title || kind),
+      JSON.stringify(value),
+      text(input.unit),
+      text(input.source || actor),
+      text(input.notes),
+      text(input.recordedAt || input.recorded_at || createdAt),
+      createdAt,
+      createdAt,
+    )
+  } finally {
+    db.close()
+  }
+  return listHealthRecords(profile).find(record => record.id === recordId) || { id: recordId, kind }
+}
+
+export function listHealthWorkouts(profile?: string): Array<Record<string, unknown>> {
+  return getHealthOverview({ profile }).workouts
+}
+
+export function createHealthWorkout(input: Record<string, unknown>, _actor = 'user', profile?: string): Record<string, unknown> {
+  const db = openHealthStateDb(profile)
+  const workoutId = text(input.id) || id('health-workout')
+  try {
+    const createdAt = nowIso()
+    db.prepare(`
+      INSERT INTO health_workouts (
+        id, kind, title, duration_minutes, intensity, metrics_json, notes, started_at, ended_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      workoutId,
+      text(input.kind || 'workout'),
+      text(input.title || input.exerciseType || input.exercise_type || 'Workout'),
+      nullableNumber(input.durationMinutes ?? input.duration_minutes ?? input.duration),
+      text(input.intensity),
+      JSON.stringify(input.metrics || {}),
+      text(input.notes),
+      text(input.startedAt || input.started_at || input.workoutAt || input.workout_at || createdAt),
+      text(input.endedAt || input.ended_at),
+      createdAt,
+      createdAt,
+    )
+  } finally {
+    db.close()
+  }
+  return listHealthWorkouts(profile).find(workout => workout.id === workoutId) || { id: workoutId }
+}
+
+export function listHealthFoodItems(profile?: string): Array<Record<string, unknown>> {
+  return getHealthOverview({ profile }).foodItems
+}
+
+export function listHealthFoodLogs(profile?: string): Array<Record<string, unknown>> {
+  return getHealthOverview({ profile }).foodLogs
+}
+
+export function createHealthFoodLog(input: Record<string, unknown>, _actor = 'user', profile?: string): Record<string, unknown> {
+  const db = openHealthStateDb(profile)
+  const logId = text(input.id) || id('health-food-log')
+  try {
+    const createdAt = nowIso()
+    db.prepare(`
+      INSERT INTO health_food_logs (
+        id, food_item_id, meal, quantity, unit, nutrition_json, logged_at, notes, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      logId,
+      nullableText(input.foodItemId || input.food_item_id),
+      text(input.meal || input.mealType || input.meal_type || 'uncategorized'),
+      nullableNumber(input.quantity) || 1,
+      text(input.unit || 'serving'),
+      JSON.stringify(input.nutrition || {}),
+      text(input.loggedAt || input.logged_at || createdAt),
+      text(input.notes),
+      createdAt,
+      createdAt,
+    )
+  } finally {
+    db.close()
+  }
+  return listHealthFoodLogs(profile).find(log => log.id === logId) || { id: logId }
+}
+
+export function getTodayHealthPlan(profile?: string): HealthDailyPlanSummary | null {
+  return getHealthOverview({ profile }).latestPlan
+}
+
+export function createHealthCheckIn(input: Record<string, unknown>, _actor = 'user', profile?: string): Record<string, unknown> {
+  const db = openHealthStateDb(profile)
+  const checkInId = text(input.id) || id('health-checkin')
+  try {
+    const createdAt = nowIso()
+    db.prepare(`
+      INSERT INTO health_daily_checkins (
+        id, checkin_date, mood, energy, sleep_json, metrics_json, notes, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      checkInId,
+      text(input.checkinDate || input.checkin_date || createdAt.slice(0, 10)),
+      text(input.mood),
+      nullableNumber(input.energy),
+      JSON.stringify(input.sleep || {}),
+      JSON.stringify(input.metrics || input),
+      text(input.notes),
+      createdAt,
+      createdAt,
+    )
+  } finally {
+    db.close()
+  }
+  return getHealthOverview({ profile }).dailyCheckins.find(checkIn => checkIn.id === checkInId) || { id: checkInId }
+}
+
 function rowToHealthProfile(row: HealthProfileRow | undefined): HealthProfile {
   if (!row) return emptyHealthProfile()
   return {
@@ -710,6 +957,16 @@ function nullableNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null
   }
   return null
+}
+
+function text(value: unknown, fallback = ''): string {
+  if (value === null || value === undefined) return fallback
+  return String(value)
+}
+
+function nullableText(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  return String(value)
 }
 
 function round(value: number): number {
