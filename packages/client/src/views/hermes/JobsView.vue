@@ -81,11 +81,6 @@ function arrowIcon(field: 'time' | 'name'): string {
   if (sortBy.value !== field) return '↕'
   return sortAsc.value ? '↑' : '↓'
 }
-
-const sortParams = computed(() => ({
-  field: sortBy.value,
-  asc: sortAsc.value,
-}))
 </script>
 
 <template>
@@ -134,7 +129,8 @@ const sortParams = computed(() => ({
         <NSpin :show="jobsStore.loading && jobsStore.jobs.length === 0">
           <JobsPanel
             :selected-job-id="selectedJobId"
-            :sort-params="sortParams"
+            :sort-by="sortBy"
+            :sort-asc="sortAsc"
             @edit="openEditModal"
             @select="handleSelectJob"
           />
