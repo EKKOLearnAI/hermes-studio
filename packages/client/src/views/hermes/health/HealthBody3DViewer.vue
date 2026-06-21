@@ -16,6 +16,7 @@ import {
   type HealthPostureProfile,
   type HealthWorkoutLike,
 } from './body-visualization'
+import ProfessionalAnatomyViewer from './ProfessionalAnatomyViewer.vue'
 
 const props = withDefaults(defineProps<{
   bodyMap?: HealthBodyMap
@@ -54,6 +55,17 @@ const regionSummaries = computed(() =>
 const selectedAnatomy = computed(() => getAnatomyRegionDefinition(activeRegion.value))
 const selectedSummary = computed(() => getBodyRegionSummary(activeRegion.value, props.bodyMap))
 const selectedTone = computed(() => getBodyRegionStatusTone(activeRegion.value, props.bodyMap))
+const professionalAssets = computed(() => {
+  const seen = new Set<string>()
+  return ANATOMY_REGION_DEFINITIONS
+    .flatMap(region => region.assets)
+    .filter(asset => {
+      if (seen.has(asset.file)) return false
+      seen.add(asset.file)
+      return true
+    })
+})
+const selectedAssetFiles = computed(() => selectedAnatomy.value.assets.map(asset => asset.file))
 const relatedWorkout = computed(() => getRelatedWorkoutSummary(activeRegion.value, props.workouts))
 const postureOverlays = computed(() =>
   getVisiblePostureIssueOverlays(props.postureProfile)
@@ -104,6 +116,12 @@ function toneLabel(tone: string): string {
 
       <div class="digital-twin-stage">
         <div class="twin-scan" data-test="digital-twin-human" aria-label="Full body digital twin">
+          <ProfessionalAnatomyViewer
+            :assets="professionalAssets"
+            :highlighted-assets="selectedAssetFiles"
+            :label="selectedAnatomy.label"
+            :tone="selectedTone"
+          />
           <div class="scan-line" aria-hidden="true"></div>
           <svg class="human-silhouette" viewBox="0 0 260 620" role="img" aria-label="人体数字孪生">
             <defs>
@@ -237,7 +255,7 @@ function toneLabel(tone: string): string {
 }
 
 .viewer-main {
-  min-height: 520px;
+  min-height: 620px;
   padding: 18px;
   overflow: hidden;
 }
@@ -293,7 +311,7 @@ h5 {
   align-items: center;
   gap: 14px;
   margin-top: 18px;
-  min-height: 430px;
+  min-height: 530px;
 }
 
 .digital-twin-stage::before,
@@ -317,8 +335,8 @@ h5 {
 .twin-scan {
   position: relative;
   z-index: 1;
-  width: min(100%, 520px);
-  min-height: 374px;
+  width: min(100%, 620px);
+  min-height: 500px;
   margin: 0 auto;
   border: 1px solid rgba(37, 99, 235, 0.16);
   border-radius: 8px;
@@ -381,9 +399,12 @@ h5 {
 .human-silhouette {
   position: absolute;
   inset: 14px 76px 14px;
+  z-index: 0;
   width: calc(100% - 152px);
   height: calc(100% - 28px);
+  opacity: 0.06;
   filter: drop-shadow(0 18px 28px rgba(15, 23, 42, 0.16));
+  pointer-events: none;
 }
 
 .body-part,
@@ -401,17 +422,18 @@ h5 {
 .body-region {
   position: absolute;
   z-index: 4;
-  min-width: 88px;
-  max-width: 116px;
-  min-height: 46px;
-  border: 1px solid rgba(148, 163, 184, 0.42);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.86);
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
   color: #0f172a;
   text-align: center;
-  padding: 7px 8px;
+  padding: 0;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.13);
   backdrop-filter: blur(6px);
 }
 
@@ -471,32 +493,27 @@ h5 {
 
 .region-dot {
   display: block;
-  width: 8px;
-  height: 8px;
-  margin: 0 auto 4px;
+  width: 9px;
+  height: 9px;
+  margin: 8px auto 0;
   border-radius: 999px;
   background: currentColor;
 }
 
-.body-region span,
+.body-region .region-label,
 .body-region small {
-  display: block;
-}
-
-.body-region span {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.body-region small {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 11px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .body-region.active {
   border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16), 0 10px 22px rgba(15, 23, 42, 0.16);
 }
 
 .body-region.chain {
@@ -600,7 +617,7 @@ h5 {
 
 @media (max-width: 620px) {
   .twin-scan {
-    min-height: 460px;
+    min-height: 500px;
   }
 
   .human-silhouette {
@@ -609,8 +626,10 @@ h5 {
   }
 
   .body-region {
-    min-width: 74px;
-    max-width: 92px;
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    min-height: 26px;
     font-size: 12px;
   }
 }

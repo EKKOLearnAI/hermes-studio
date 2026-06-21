@@ -74,7 +74,8 @@
     "node-edge-tts": "^1.2.10",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@koa/bodyparser": "^5.0.0",
@@ -95,6 +96,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.12.2",
     "@types/qrcode": "^1.5.6",
+    "@types/three": "^0.184.1",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.5",
     "@vitest/coverage-v8": "^3.2.4",
