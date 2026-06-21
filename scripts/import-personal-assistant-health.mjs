@@ -209,7 +209,7 @@ function importHealthStats(source, target) {
       numberOrNull(row.weight),
       numberOrNull(row.weight_target),
       json(goals),
-      json(parseJson(row.nutrition_config, {})),
+      json(nutritionTargets(parseJson(row.nutrition_config, {}))),
       text(row.created_at),
       text(row.updated_at || row.created_at),
     )
@@ -594,6 +594,40 @@ function micronutrients(row) {
   for (const [key, column] of Object.entries(columns)) {
     const value = numberOrNull(row[column])
     if (value !== null) result[key] = value
+  }
+  return result
+}
+
+function nutritionTargets(value) {
+  const keys = [
+    'calories',
+    'protein',
+    'carbs',
+    'fat',
+    'fiber',
+    'water',
+    'sugar',
+    'sodium',
+    'potassium',
+    'calcium',
+    'magnesium',
+    'iron',
+    'zinc',
+    'vitamin_a',
+    'vitamin_c',
+    'vitamin_d',
+    'vitamin_e',
+    'vitamin_b6',
+    'vitamin_b12',
+    'folate',
+    'cholesterol',
+    'saturated_fat',
+    'trans_fat',
+  ]
+  const result = {}
+  for (const key of keys) {
+    const numeric = numberOrNull(value?.[key])
+    if (numeric !== null) result[key] = numeric
   }
   return result
 }

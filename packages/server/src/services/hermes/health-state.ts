@@ -801,6 +801,25 @@ function buildWeightSummary(profile: HealthProfile, records: HealthRecordRow[]):
 }
 
 const NUTRITION_KEYS = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'water']
+const MICRONUTRIENT_KEYS = new Set([
+  'sugar',
+  'sodium',
+  'potassium',
+  'calcium',
+  'magnesium',
+  'iron',
+  'zinc',
+  'vitamin_a',
+  'vitamin_c',
+  'vitamin_d',
+  'vitamin_e',
+  'vitamin_b6',
+  'vitamin_b12',
+  'folate',
+  'cholesterol',
+  'saturated_fat',
+  'trans_fat',
+])
 const INTERNAL_RECORD_KINDS = new Set(['lab', 'checkup', 'blood', 'urine', 'vitamin', 'mineral', 'micronutrient', 'biomarker', 'vital', 'blood_pressure'])
 
 function buildNutritionSummary(targets: Record<string, number>, foodLogs: HealthFoodLogRow[]): HealthNutritionSummary {
@@ -861,9 +880,11 @@ function buildMicronutrientSummary(targets: Record<string, number>, foodLogs: He
   const macroKeys = new Set(NUTRITION_KEYS)
   const keys = new Set<string>()
   Object.keys(targets).forEach(key => {
-    if (!macroKeys.has(key)) keys.add(key)
+    if (!macroKeys.has(key) && MICRONUTRIENT_KEYS.has(key)) keys.add(key)
   })
-  Object.keys(consumed).forEach(key => keys.add(key))
+  Object.keys(consumed).forEach(key => {
+    if (MICRONUTRIENT_KEYS.has(key)) keys.add(key)
+  })
 
   return {
     items: Array.from(keys)

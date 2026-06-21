@@ -14,6 +14,44 @@ export interface HealthProfile {
   nutritionTargets: Record<string, number>
 }
 
+export interface HealthDigitalTwinSummary {
+  currentWeightKg: number | null
+  targetWeightKg: number | null
+  externalConcernCount: number
+  internalMarkerCount: number
+  micronutrientGapCount: number
+}
+
+export interface HealthExternalSummary {
+  currentWeightKg: number | null
+  targetWeightKg: number | null
+  topRegions: Array<Record<string, unknown>>
+  recentWorkoutCount: number
+}
+
+export interface HealthInternalMarker {
+  id: string
+  key: string
+  label: string
+  value: number | string | null
+  unit: string | null
+  status: string
+  source: string
+  recordedAt: string
+  referenceRange: string | null
+  notes: string
+}
+
+export interface HealthMicronutrientSummary {
+  items: Array<{
+    key: string
+    consumed: number
+    target: number
+    remaining: number
+    status: 'low' | 'ok' | 'high' | 'unknown'
+  }>
+}
+
 export interface HealthOverview {
   generatedAt: string
   profile: string
@@ -26,6 +64,10 @@ export interface HealthOverview {
   }
   recentWorkouts: Array<Record<string, unknown>>
   topBodyConcerns: Array<Record<string, unknown>>
+  digitalTwinSummary: HealthDigitalTwinSummary
+  externalSummary: HealthExternalSummary
+  internalMarkers: HealthInternalMarker[]
+  micronutrientSummary: HealthMicronutrientSummary
   latestPlan: Record<string, unknown> | null
   supplementSummary: Record<string, unknown>
   bodyMap: Array<Record<string, unknown>>

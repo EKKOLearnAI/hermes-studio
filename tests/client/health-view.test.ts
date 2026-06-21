@@ -27,6 +27,28 @@ const healthOverview = vi.hoisted(() => ({
   },
   recentWorkouts: [{ id: 'workout-1', title: 'Bench Press', durationMinutes: 45, intensity: 'medium', startedAt: '2026-06-20T12:00:00Z' }],
   topBodyConcerns: [{ id: 'body-1', region: 'upper_chest', priority: 'high', score: 74 }],
+  digitalTwinSummary: {
+    currentWeightKg: 80,
+    targetWeightKg: 75,
+    externalConcernCount: 1,
+    internalMarkerCount: 1,
+    micronutrientGapCount: 2,
+  },
+  externalSummary: {
+    currentWeightKg: 80,
+    targetWeightKg: 75,
+    topRegions: [{ id: 'body-1', region: 'upper_chest', priority: 'high', score: 74 }],
+    recentWorkoutCount: 1,
+  },
+  internalMarkers: [
+    { id: 'record-1', key: 'blood_pressure', label: 'blood_pressure', value: '118/75', unit: 'mmHg', status: 'ok', source: 'personal-assistant-import', recordedAt: '2026-06-21T07:05:00Z', referenceRange: null, notes: 'resting' },
+  ],
+  micronutrientSummary: {
+    items: [
+      { key: 'magnesium', consumed: 170, target: 350, remaining: 180, status: 'low' },
+      { key: 'vitamin_d', consumed: 4, target: 10, remaining: 6, status: 'low' },
+    ],
+  },
   latestPlan: { id: 'plan-1', planDate: '2026-06-21', targets: {}, meals: [], workouts: [{ title: 'Upper Push' }], supplements: [], notes: 'Cut day' },
   supplementSummary: { total: 12, completedToday: 3, remainingToday: 9, items: [] },
   bodyMap: [
@@ -101,6 +123,11 @@ describe('HealthView', () => {
     expect(wrapper.text()).toContain('1100')
     expect(wrapper.text()).toContain('Bench Press')
     expect(wrapper.text()).toContain('Body3D')
+    expect(wrapper.text()).toContain('身体数字孪生')
+    expect(wrapper.text()).toContain('外在健康')
+    expect(wrapper.text()).toContain('内在健康')
+    expect(wrapper.text()).toContain('blood_pressure')
+    expect(wrapper.text()).toContain('magnesium')
     expect(wrapper.text()).toContain('Upper Push')
     expect(wrapper.find('[data-test="body-region-chest"]').exists()).toBe(true)
   })

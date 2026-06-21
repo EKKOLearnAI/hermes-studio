@@ -23,6 +23,11 @@ const nutritionSummary = computed(() => overview.value?.nutritionSummary ?? null
 const latestPlan = computed(() => overview.value?.latestPlan ?? null)
 const recentWorkouts = computed(() => overview.value?.recentWorkouts ?? [])
 const supplementSummary = computed(() => overview.value?.supplementSummary ?? null)
+const digitalTwinSummary = computed(() => overview.value?.digitalTwinSummary ?? null)
+const externalSummary = computed(() => overview.value?.externalSummary ?? null)
+const internalMarkers = computed(() => overview.value?.internalMarkers ?? [])
+const micronutrientItems = computed(() => overview.value?.micronutrientSummary?.items ?? [])
+const topExternalRegions = computed(() => externalSummary.value?.topRegions ?? overview.value?.topBodyConcerns ?? [])
 
 const bodyMap = computed<HealthBodyMap>(() => {
   const rows = overview.value?.bodyMap ?? []
@@ -38,7 +43,7 @@ const viewerWorkouts = computed<HealthWorkoutLike[]>(() =>
   recentWorkouts.value.map(workout => ({
     id: String(workout.id ?? ''),
     title: typeof workout.title === 'string' ? workout.title : undefined,
-    durationMinutes: numberOrNull(workout.durationMinutes),
+    durationMinutes: numberOrNull(workout.durationMinutes) ?? undefined,
     intensity: typeof workout.intensity === 'string' ? workout.intensity : null,
     startedAt: typeof workout.startedAt === 'string' ? workout.startedAt : undefined,
     notes: typeof workout.notes === 'string' ? workout.notes : null,
@@ -91,6 +96,25 @@ function nutritionValue(key: string, kind: 'targets' | 'consumed' | 'remaining')
   return numberOrNull(nutritionSummary.value?.[kind]?.[key]) ?? 0
 }
 
+function displayValue(value: unknown, fallback = '--'): string {
+  if (value === null || value === undefined || value === '') return fallback
+  return String(value)
+}
+
+function formatMarkerValue(marker: Record<string, unknown>): string {
+  const value = displayValue(marker.value)
+  const unit = displayValue(marker.unit, '')
+  return unit ? `${value} ${unit}` : value
+}
+
+function statusText(status: unknown): string {
+  const value = displayValue(status, 'unknown')
+  if (value === 'low') return '偏低'
+  if (value === 'high') return '偏高'
+  if (value === 'ok') return '正常'
+  return value
+}
+
 function planWorkoutTitle(workout: unknown): string {
   if (!isRecord(workout)) return String(workout)
   return String(workout.title || workout.name || workout.exercise || t('health.workout'))
@@ -113,8 +137,8 @@ function planWorkoutTitle(workout: unknown): string {
       <section class="health-hero">
         <div>
           <span class="panel-kicker">{{ activeProfile }}</span>
-          <h3>{{ t('health.cockpit') }}</h3>
-          <p>{{ t('health.cockpitSummary') }}</p>
+          <h3>身体数字孪生</h3>
+          <p>把外在体型、训练体态、饮食营养和内在指标合并成 Hermes 可读取的健康上下文。</p>
         </div>
         <div class="metric-row">
           <div>
@@ -133,17 +157,55 @@ function planWorkoutTitle(workout: unknown): string {
             <span class="metric-value">{{ supplementRemaining }}</span>
             <span class="metric-label">{{ t('health.supplementsRemaining') }}</span>
           </div>
+          <div>
+            <span class="metric-value">{{ digitalTwinSummary?.internalMarkerCount ?? 0 }}</span>
+            <span class="metric-label">内在指标</span>
+          </div>
+          <div>
+            <span class="metric-value">{{ digitalTwinSummary?.micronutrientGapCount ?? 0 }}</span>
+            <span class="metric-label">营养缺口</span>
+          </div>
         </div>
       </section>
 
       <section v-if="overview" class="health-layout">
-        <HealthBody3DViewer
-          v-model:selected-region="selectedRegion"
-          :body-map="bodyMap"
-          :workouts="viewerWorkouts"
-        />
+        <div class="twin-column">
+          <HealthBody3DViewer
+            v-model:selected-region="selectedRegion"
+            :body-map="bodyMap"
+            :workouts="viewerWorkouts"
+          />
+
+          <article class="panel">
+            <div class="panel-title-row">
+              <h3>外在健康</h3>
+              <span>{{ externalSummary?.recentWorkoutCount ?? workoutCount }} {{ t('health.recentWorkouts') }}</span>
+            </div>
+            <ul class="compact-list region-list">
+              <li v-for="region in topExternalRegions.slice(0, 4)" :key="String(region.id || region.region)">
+                <strong>{{ displayValue(region.region) }}</strong>
+                <span>{{ displayValue(region.priority, 'normal') }} · score {{ displayValue(region.score, '0') }}</span>
+              </li>
+            </ul>
+            <p v-if="!topExternalRegions.length" class="muted">暂无体态或肌群关注点。</p>
+          </article>
+        </div>
 
         <div class="side-panels">
+          <article class="panel">
+            <div class="panel-title-row">
+              <h3>内在健康</h3>
+              <span>{{ internalMarkers.length }} 指标</span>
+            </div>
+            <ul class="compact-list">
+              <li v-for="marker in internalMarkers.slice(0, 4)" :key="marker.id">
+                <strong>{{ marker.label || marker.key }}</strong>
+                <span>{{ formatMarkerValue(marker) }} · {{ statusText(marker.status) }}</span>
+              </li>
+            </ul>
+            <p v-if="!internalMarkers.length" class="muted">暂无体检、血液、微量元素或生命体征记录。</p>
+          </article>
+
           <article class="panel">
             <div class="panel-title-row">
               <h3>{{ t('health.smartDiet') }}</h3>
@@ -154,6 +216,13 @@ function planWorkoutTitle(workout: unknown): string {
                 <span class="metric-label">{{ t(`health.nutrition.${key}`) }}</span>
                 <strong>{{ nutritionValue(key, 'consumed') }}</strong>
                 <small>/ {{ nutritionValue(key, 'targets') }}</small>
+              </div>
+            </div>
+            <div v-if="micronutrientItems.length" class="micro-list">
+              <div v-for="item in micronutrientItems.slice(0, 4)" :key="item.key" class="micro-row">
+                <span>{{ item.key }}</span>
+                <strong>{{ item.consumed }} / {{ item.target }}</strong>
+                <small>{{ statusText(item.status) }}</small>
               </div>
             </div>
           </article>
@@ -244,7 +313,7 @@ function planWorkoutTitle(workout: unknown): string {
 
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(84px, 1fr));
+  grid-template-columns: repeat(6, minmax(84px, 1fr));
   gap: 16px;
 }
 
@@ -262,6 +331,12 @@ function planWorkoutTitle(workout: unknown): string {
 .health-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.7fr);
+  gap: 16px;
+}
+
+.twin-column {
+  display: grid;
+  align-content: start;
   gap: 16px;
 }
 
@@ -336,9 +411,48 @@ function planWorkoutTitle(workout: unknown): string {
   }
 }
 
+.region-list strong {
+  text-transform: none;
+}
+
+.micro-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.micro-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    font-size: 13px;
+  }
+
+  small {
+    color: var(--text-color-3);
+  }
+}
+
 @media (max-width: 1180px) {
   .health-layout {
     grid-template-columns: 1fr;
+  }
+
+  .metric-row {
+    grid-template-columns: repeat(3, minmax(84px, 1fr));
   }
 }
 
@@ -349,6 +463,10 @@ function planWorkoutTitle(workout: unknown): string {
 
   .health-hero,
   .metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .micro-row {
     grid-template-columns: 1fr;
   }
 }

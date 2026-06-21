@@ -54,6 +54,7 @@ describe('personal assistant health importer', () => {
       const profile = db.prepare('SELECT * FROM health_profile WHERE id = ?').get('profile-default') as any
       expect(profile.weight_kg).toBe(82.4)
       expect(profile.weight_target_kg).toBe(75)
+      expect(JSON.parse(profile.nutrition_targets_json)).toEqual({ calories: 2200, protein: 160 })
       const foodItem = db.prepare('SELECT nutrition_json FROM health_food_items WHERE id = ?').get('pa-food-item-1') as any
       expect(JSON.parse(foodItem.nutrition_json).micros).toMatchObject({
         vitamin_c: 12,
@@ -205,7 +206,7 @@ function seedOldHealthDb(path: string): void {
       12,
       JSON.stringify({ training_days_per_week: 4 }),
       JSON.stringify({ shoulders: { priority: 'high' } }),
-      JSON.stringify({ calories: 2200, protein: 160 }),
+      JSON.stringify({ calories: 2200, protein: 160, age: 30, height_cm: 175, weight_kg: 82.4 }),
       JSON.stringify({ stack_name: 'basic' }),
       '2026-06-01T00:00:00Z',
       '2026-06-01T00:00:00Z',

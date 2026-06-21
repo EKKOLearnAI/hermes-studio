@@ -316,7 +316,7 @@ describe('health state service', () => {
         JSON.stringify(['fat_loss']),
         '[]',
         '[]',
-        JSON.stringify({ calories: 2100, protein: 160, vitamin_c: 100, magnesium: 350 }),
+        JSON.stringify({ calories: 2100, protein: 160, vitamin_c: 100, magnesium: 350, age: 30, height_cm: 175 }),
         now,
         now,
       )
