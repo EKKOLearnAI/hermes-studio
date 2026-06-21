@@ -24,6 +24,10 @@ function isYamlUpdateResult<T>(value: unknown): value is YamlUpdateResult<T> {
   return !!value && typeof value === 'object' && Object.hasOwn(value as Record<string, unknown>, 'data')
 }
 
+function shouldUseFallbackBackup(err: any): boolean {
+  return ['EACCES', 'EPERM', 'EEXIST'].includes(err?.code)
+}
+
 export class SafeFileStore {
   private queues = new Map<string, Promise<unknown>>()
 
@@ -127,7 +131,13 @@ export class SafeFileStore {
       try {
         await copyFile(target, options.backupPath || `${target}.bak`)
       } catch (err: any) {
-        if (err?.code !== 'ENOENT') throw err
+        if (err?.code === 'ENOENT') {
+          // Continue without a backup when the target does not exist yet.
+        } else if (!options.backupPath && shouldUseFallbackBackup(err)) {
+          await copyFile(target, `${target}.bak.${Date.now()}.${randomUUID()}`)
+        } else {
+          throw err
+        }
       }
     }
 
