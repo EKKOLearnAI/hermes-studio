@@ -262,6 +262,33 @@ export default {
     taskCheckInFailed: 'Task check-in failed',
   },
 
+  health: {
+    title: 'Health',
+    subtitle: 'Bring Body3D, smart diet, smart fitness, supplements, and cutting goals into Hermes Studio.',
+    cockpit: 'Health Cockpit',
+    cockpitSummary: 'This view shows migrated health state from personal-assistant and exposes readable context for Hermes.',
+    currentWeight: 'Current Weight',
+    targetWeight: 'Target Weight',
+    recentWorkouts: 'Recent Workouts',
+    supplementsRemaining: 'Supplements Left',
+    smartDiet: 'Smart Diet',
+    smartFitness: 'Smart Fitness',
+    todayPlan: 'Today Plan',
+    logs: 'logs',
+    items: 'items',
+    workout: 'Workout',
+    planned: 'Planned',
+    noWorkouts: 'No workouts yet',
+    noPlan: 'No health plan for today',
+    loadFailed: 'Failed to load health system',
+    nutrition: {
+      calories: 'Calories',
+      protein: 'Protein',
+      carbs: 'Carbs',
+      fat: 'Fat',
+    },
+  },
+
   runtimeVersions: {
     title: 'Version Management',
     runtimeTitle: 'Hermes Runtime',

@@ -103,6 +103,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/PersonalOSView.vue'),
     },
     {
+      path: '/hermes/personal-os/health',
+      name: 'hermes.personalHealth',
+      component: () => import('@/views/hermes/HealthView.vue'),
+    },
+    {
       path: '/hermes/settings',
       name: 'hermes.settings',
       component: () => import('@/views/hermes/SettingsView.vue'),

@@ -262,6 +262,33 @@ export default {
     taskCheckInFailed: '任务打卡失败',
   },
 
+  health: {
+    title: '身体健康',
+    subtitle: '把 Body3D、智能饮食、智能健身、补剂和减脂目标接入 Hermes Studio。',
+    cockpit: '健康驾驶舱',
+    cockpitSummary: '这里展示旧 personal-assistant 健康数据迁移后的当前状态，并为 Hermes 提供可读取的健康上下文。',
+    currentWeight: '当前体重',
+    targetWeight: '目标体重',
+    recentWorkouts: '近期训练',
+    supplementsRemaining: '今日待补剂',
+    smartDiet: '智能饮食',
+    smartFitness: '智能健身',
+    todayPlan: '今日计划',
+    logs: '记录',
+    items: '项',
+    workout: '训练',
+    planned: '已计划',
+    noWorkouts: '暂无训练记录',
+    noPlan: '暂无今日健康计划',
+    loadFailed: '加载健康系统失败',
+    nutrition: {
+      calories: '热量',
+      protein: '蛋白质',
+      carbs: '碳水',
+      fat: '脂肪',
+    },
+  },
+
   runtimeVersions: {
     title: '版本管理',
     runtimeTitle: 'Hermes Runtime',
