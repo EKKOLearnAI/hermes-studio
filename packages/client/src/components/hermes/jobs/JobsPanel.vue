@@ -6,10 +6,8 @@ import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   selectedJobId: string | null
-  sortParams: {
-    field: 'time' | 'name'
-    asc: boolean
-  }
+  sortBy: 'time' | 'name'
+  sortAsc: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +21,8 @@ const jobsStore = useJobsStore()
 
 const sortedJobs = computed(() => {
   const jobs = [...jobsStore.jobs]
-  const { field, asc } = props.sortParams
+  const field = props.sortBy
+  const asc = props.sortAsc
 
   if (field === 'name') {
     jobs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') * (asc ? 1 : -1))
