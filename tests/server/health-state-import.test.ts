@@ -31,7 +31,7 @@ describe('personal assistant health importer', () => {
       foodItems: 1,
       foodLogs: 1,
       foodTemplates: 1,
-      healthRecords: 1,
+      healthRecords: 2,
       workouts: 1,
       supplements: 1,
       supplementLogs: 1,
@@ -45,7 +45,7 @@ describe('personal assistant health importer', () => {
       expect(count(db, 'health_food_items')).toBe(1)
       expect(count(db, 'health_food_logs')).toBe(1)
       expect(count(db, 'health_food_templates')).toBe(1)
-      expect(count(db, 'health_records')).toBe(1)
+      expect(count(db, 'health_records')).toBe(2)
       expect(count(db, 'health_workouts')).toBe(1)
       expect(count(db, 'health_supplements')).toBe(1)
       expect(count(db, 'health_supplement_logs')).toBe(1)
@@ -54,6 +54,18 @@ describe('personal assistant health importer', () => {
       const profile = db.prepare('SELECT * FROM health_profile WHERE id = ?').get('profile-default') as any
       expect(profile.weight_kg).toBe(82.4)
       expect(profile.weight_target_kg).toBe(75)
+      const foodItem = db.prepare('SELECT nutrition_json FROM health_food_items WHERE id = ?').get('pa-food-item-1') as any
+      expect(JSON.parse(foodItem.nutrition_json).micros).toMatchObject({
+        vitamin_c: 12,
+        magnesium: 34,
+        iron: 2.5,
+      })
+      const bloodPressure = db.prepare('SELECT * FROM health_records WHERE id = ?').get('pa-health-record-2') as any
+      expect(bloodPressure.kind).toBe('blood_pressure')
+      expect(JSON.parse(bloodPressure.value_json)).toMatchObject({
+        value: '118/75',
+        marker: 'blood_pressure',
+      })
     } finally {
       db.close()
     }
@@ -107,6 +119,9 @@ function seedOldHealthDb(path: string): void {
         carbs_per_100g REAL,
         fat_per_100g REAL,
         fiber_per_100g REAL,
+        vitamin_c_per_100g REAL,
+        magnesium_per_100g REAL,
+        iron_per_100g REAL,
         default_serving_g REAL,
         serving_unit TEXT,
         brand TEXT,
@@ -196,8 +211,9 @@ function seedOldHealthDb(path: string): void {
       '2026-06-01T00:00:00Z',
     )
     db.prepare('INSERT INTO life_health_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(1, 1, 'weight', 82.4, 'kg', 'morning', '2026-06-21T07:00:00Z', '2026-06-21T07:00:00Z')
+    db.prepare('INSERT INTO life_health_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(2, 1, 'blood_pressure', '118/75', 'mmHg', 'resting', '2026-06-21T07:05:00Z', '2026-06-21T07:05:00Z')
     db.prepare('INSERT INTO life_health_workouts VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(1, 1, 'bench press', 45, 'medium', 'push', '2026-06-20T18:00:00Z', '2026-06-20T18:00:00Z')
-    db.prepare('INSERT INTO food_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(1, '鸡胸肉', 'protein', 165, 31, 0, 3.6, 0, 100, 'g', '', '2026-06-01T00:00:00Z')
+    db.prepare('INSERT INTO food_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(1, '鸡胸肉', 'protein', 165, 31, 0, 3.6, 0, 12, 34, 2.5, 100, 'g', '', '2026-06-01T00:00:00Z')
     db.prepare('INSERT INTO life_awakening_food_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(1, 1, '鸡胸肉', 330, 62, 0, 7.2, 0, 0.5, 'lunch', '{}', 'ok', '2026-06-21T12:00:00Z')
     db.prepare('INSERT INTO life_awakening_food_templates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(1, 1, '高蛋白午餐', 600, 55, 60, 15, 8, 0.5, 'template', '2026-06-01T00:00:00Z')
     db.prepare('INSERT INTO life_awakening_medications VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(1, 1, '叶黄素', '1粒', JSON.stringify(['07:30']), 1, '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')

@@ -260,7 +260,7 @@ function importHealthRecords(source, target) {
       `pa-health-record-${row.id}`,
       text(row.category || 'metric'),
       text(row.category || 'metric'),
-      json({ value: row.value }),
+      json({ value: row.value, marker: normalizeMarkerKey(row.category || 'metric'), sourceTag: nullableText(row.source_tag), sourceId: nullableText(row.source_id) }),
       nullableText(row.unit),
       text(row.notes),
       text(row.recorded_at || createdAt),
@@ -518,6 +518,7 @@ function foodItemNutrition(row) {
     carbs: numberOrZero(row.carbs_per_100g),
     fat: numberOrZero(row.fat_per_100g),
     fiber: numberOrZero(row.fiber_per_100g),
+    micros: micronutrients(row),
   }
 }
 
@@ -567,6 +568,42 @@ function numberOrNull(value) {
 
 function numberOrZero(value) {
   return numberOrNull(value) ?? 0
+}
+
+function micronutrients(row) {
+  const columns = {
+    sugar: 'sugar_per_100g',
+    sodium: 'sodium_per_100g',
+    potassium: 'potassium_per_100g',
+    calcium: 'calcium_per_100g',
+    magnesium: 'magnesium_per_100g',
+    iron: 'iron_per_100g',
+    zinc: 'zinc_per_100g',
+    vitamin_a: 'vitamin_a_per_100g',
+    vitamin_c: 'vitamin_c_per_100g',
+    vitamin_d: 'vitamin_d_per_100g',
+    vitamin_e: 'vitamin_e_per_100g',
+    vitamin_b6: 'vitamin_b6_per_100g',
+    vitamin_b12: 'vitamin_b12_per_100g',
+    folate: 'folate_per_100g',
+    cholesterol: 'cholesterol_per_100g',
+    saturated_fat: 'saturated_fat_per_100g',
+    trans_fat: 'trans_fat_per_100g',
+  }
+  const result = {}
+  for (const [key, column] of Object.entries(columns)) {
+    const value = numberOrNull(row[column])
+    if (value !== null) result[key] = value
+  }
+  return result
+}
+
+function normalizeMarkerKey(value) {
+  return text(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 function parseArgs(argv) {

@@ -801,7 +801,7 @@ function buildWeightSummary(profile: HealthProfile, records: HealthRecordRow[]):
 }
 
 const NUTRITION_KEYS = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'water']
-const INTERNAL_RECORD_KINDS = new Set(['lab', 'checkup', 'blood', 'urine', 'vitamin', 'mineral', 'micronutrient', 'biomarker'])
+const INTERNAL_RECORD_KINDS = new Set(['lab', 'checkup', 'blood', 'urine', 'vitamin', 'mineral', 'micronutrient', 'biomarker', 'vital', 'blood_pressure'])
 
 function buildNutritionSummary(targets: Record<string, number>, foodLogs: HealthFoodLogRow[]): HealthNutritionSummary {
   const today = new Date().toISOString().slice(0, 10)
