@@ -746,6 +746,8 @@ export default {
     createJob: '建立任務',
     editJob: '編輯任務',
     noJobs: '目前無排程任務，建立一個開始吧。',
+    sortByName: '名稱',
+    sortByTime: '建立時間',
     name: '名稱',
     namePlaceholder: '任務名稱',
     schedule: '排程運算式 (Cron)',

@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import JobCard from './JobCard.vue'
 import { useJobsStore } from '@/stores/hermes/jobs'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   selectedJobId: string | null
+  sortBy?: 'time' | 'name'
 }>()
 
 const emit = defineEmits<{
@@ -15,6 +17,15 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const jobsStore = useJobsStore()
+
+const sortedJobs = computed(() => {
+  const jobs = [...jobsStore.jobs]
+  if (props.sortBy === 'name') {
+    jobs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+  }
+  // default 'time': keep original order (created_at ascending = array order)
+  return jobs
+})
 
 function handleSelect(jobId: string) {
   emit('select', props.selectedJobId === jobId ? null : jobId)
@@ -39,7 +50,7 @@ function handleDeselect() {
   </div>
   <div v-else class="jobs-grid">
     <JobCard
-      v-for="job in jobsStore.jobs"
+      v-for="job in sortedJobs"
       :key="job.id"
       :job="job"
       :selected="selectedJobId === (job.job_id || job.id)"

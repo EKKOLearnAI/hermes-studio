@@ -610,6 +610,8 @@ export default {
     createJob: 'Aufgabe erstellen',
     editJob: 'Aufgabe bearbeiten',
     noJobs: 'Noch keine geplanten Aufgaben. Erstellen Sie eine, um zu beginnen.',
+    sortByName: 'Name',
+    sortByTime: 'Erstellt',
     name: 'Name',
     namePlaceholder: 'Aufgabenname',
     schedule: 'Zeitplan (Cron-Ausdruck)',

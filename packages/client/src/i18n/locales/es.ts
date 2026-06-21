@@ -610,6 +610,8 @@ export default {
     createJob: 'Crear tarea',
     editJob: 'Editar tarea',
     noJobs: 'No hay tareas programadas aun. Crea una para comenzar.',
+    sortByName: 'Nombre',
+    sortByTime: 'Fecha de creación',
     name: 'Nombre',
     namePlaceholder: 'Nombre de la tarea',
     schedule: 'Programacion (expresion Cron)',

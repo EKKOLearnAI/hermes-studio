@@ -650,6 +650,8 @@ export default {
     createJob: 'Создать задачу',
     editJob: 'Редактировать задачу',
     noJobs: 'Нет периодических задач. Создайте первую.',
+    sortByName: 'Имя',
+    sortByTime: 'Дата создания',
     name: 'Название',
     namePlaceholder: 'Название задачи',
     schedule: 'Выражение расписания (Cron)',

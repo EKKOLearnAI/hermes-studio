@@ -610,6 +610,8 @@ export default {
     createJob: 'Criar tarefa',
     editJob: 'Editar tarefa',
     noJobs: 'Nenhuma tarefa agendada ainda. Crie uma para comecar.',
+    sortByName: 'Nome',
+    sortByTime: 'Criado',
     name: 'Nome',
     namePlaceholder: 'Nome da tarefa',
     schedule: 'Agendamento (expressao Cron)',

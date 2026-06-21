@@ -610,6 +610,8 @@ export default {
     createJob: 'ジョブを作成',
     editJob: 'ジョブを編集',
     noJobs: 'スケジュールジョブがありません。作成して始めましょう。',
+    sortByName: '名前',
+    sortByTime: '作成日時',
     name: '名前',
     namePlaceholder: 'ジョブ名',
     schedule: 'スケジュール (Cron 式)',

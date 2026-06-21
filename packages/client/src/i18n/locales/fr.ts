@@ -610,6 +610,8 @@ export default {
     createJob: 'Creer une tache',
     editJob: 'Modifier la tache',
     noJobs: 'Aucune tache planifiee. Creez-en une pour commencer.',
+    sortByName: 'Nom',
+    sortByTime: 'Date de création',
     name: 'Nom',
     namePlaceholder: 'Nom de la tache',
     schedule: 'Planification (expression Cron)',

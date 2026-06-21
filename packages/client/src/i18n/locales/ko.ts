@@ -610,6 +610,8 @@ export default {
     createJob: '작업 생성',
     editJob: '작업 편집',
     noJobs: '예약된 작업이 없습니다. 새로 만들어 시작하세요.',
+    sortByName: '이름',
+    sortByTime: '작성일',
     name: '이름',
     namePlaceholder: '작업 이름',
     schedule: '스케줄 (Cron 표현식)',

@@ -746,6 +746,8 @@ export default {
     createJob: '创建任务',
     editJob: '编辑任务',
     noJobs: '暂无定时任务，创建一个开始吧。',
+    sortByName: '名称',
+    sortByTime: '创建时间',
     name: '名称',
     namePlaceholder: '任务名称',
     schedule: '调度表达式 (Cron)',

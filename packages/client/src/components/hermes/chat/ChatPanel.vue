@@ -197,6 +197,16 @@ function handleChatDrop(event: DragEvent) {
   chatInputRef.value?.addFiles?.(files);
 }
 
+function onOutlineMessagesLoaded(messages: any[]) {
+  if (chatStore.activeSession) {
+    // Skip leading init messages before first user.
+    // CRON sessions in history don't use this handler.
+    const firstUserIdx = messages.findIndex(m => m.role === 'user');
+    const clean = firstUserIdx > 0 ? messages.slice(firstUserIdx) : messages;
+    chatStore.activeSession.messages = clean;
+  }
+}
+
 async function handleSessionClick(sessionId: string) {
   chatStore.clearSessionCompletedUnread(sessionId);
   await router.push({
