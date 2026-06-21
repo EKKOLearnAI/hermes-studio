@@ -244,4 +244,35 @@ describe('coding agent resumed session config', () => {
       .rejects.toThrow('Coding agent provider credentials are missing')
     expect(startRunMock).not.toHaveBeenCalled()
   })
+
+  it('resolves custom-provider credentials from key_env on continuation', async () => {
+    const home = makeHome()
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'claude',
+      agent_session_id: 'agent-session-1',
+      provider: 'custom:sensenova',
+      model: 'deepseek-v4-flash',
+    })
+    readConfigYamlForProfileMock.mockResolvedValue({
+      custom_providers: [{
+        name: 'sensenova',
+        base_url: 'https://api.sensenova.cn/v1',
+        key_env: 'SENSENOVA_API_KEY',
+        model: 'deepseek-v4-flash',
+      }],
+    })
+    safeReadFileMock.mockResolvedValue('SENSENOVA_API_KEY=sk-from-env\n')
+
+    const { startCodingAgentRun } = await import('../../packages/server/src/services/coding-agents')
+    await expect(startCodingAgentRun('claude-code', { sessionId: 'session-1' })).resolves.toEqual(
+      expect.objectContaining({
+        provider: 'custom:sensenova',
+      }),
+    )
+    expect(startRunMock).toHaveBeenCalled()
+    expect(home).toBeTruthy()
+  })
 })

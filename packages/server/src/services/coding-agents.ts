@@ -503,6 +503,10 @@ async function resolveStoredProviderLaunchInput(
     canonicalProvider = `custom:${slugProviderName(String(customEntry.name || normalizedProvider))}`
     if (!baseUrl) baseUrl = String(customEntry.base_url || '').trim()
     if (!apiKey) apiKey = String(customEntry.api_key || '').trim()
+    if (!apiKey) {
+      const keyEnv = String(customEntry.key_env || '').trim()
+      if (keyEnv) apiKey = parseEnvValue(envContent, keyEnv)
+    }
     if (!apiMode) {
       apiMode = normalizeLaunchApiMode(
         customEntry.api_mode,
