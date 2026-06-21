@@ -30,9 +30,13 @@ describe('HealthBody3DViewer', () => {
     })
 
     expect(wrapper.text()).toContain('Body3D')
+    expect(wrapper.text()).toContain('身体数字孪生')
+    expect(wrapper.text()).toContain('全身扫描')
     expect(wrapper.text()).toContain('胸部')
     expect(wrapper.text()).toContain('6 STL')
     expect(wrapper.text()).toContain('Bench Press')
+    expect(wrapper.find('[data-test="digital-twin-human"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="twin-region-chest"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="selected-region"]').text()).toContain('高优先级')
 
     await wrapper.find('[data-test="body-region-shoulders"]').trigger('click')

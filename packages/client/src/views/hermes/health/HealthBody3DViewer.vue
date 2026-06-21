@@ -96,24 +96,74 @@ function toneLabel(tone: string): string {
       <div class="viewer-header">
         <div>
           <p class="eyebrow">Body3D</p>
-          <h3>肌群与体态地图</h3>
+          <h3>身体数字孪生</h3>
+          <span class="scan-status">全身扫描</span>
         </div>
         <div class="asset-count">{{ selectedAnatomy.assets.length }} STL</div>
       </div>
 
-      <div class="body-map" aria-label="Body region selector">
-        <button
-          v-for="region in regionSummaries"
-          :key="region.anatomy.regionId"
-          type="button"
-          class="body-region"
-          :class="[`tone-${region.tone}`, { active: activeRegion === region.anatomy.regionId, chain: compensationRegions.has(region.anatomy.regionId) }]"
-          :data-test="`body-region-${region.anatomy.regionId}`"
-          @click="selectRegion(region.anatomy.regionId)"
-        >
-          <span>{{ region.anatomy.label }}</span>
-          <small>{{ toneLabel(region.tone) }}</small>
-        </button>
+      <div class="digital-twin-stage">
+        <div class="vitals-stack left-vitals">
+          <div>
+            <span>肌肉发达度</span>
+            <strong>{{ formatLevel(selectedSummary.developmentLevel) }}</strong>
+          </div>
+          <div>
+            <span>神经激活</span>
+            <strong>{{ formatLevel(selectedSummary.activationLevel) }}</strong>
+          </div>
+        </div>
+
+        <div class="twin-scan" data-test="digital-twin-human" aria-label="Full body digital twin">
+          <div class="scan-line" aria-hidden="true"></div>
+          <svg class="human-silhouette" viewBox="0 0 260 620" role="img" aria-label="人体数字孪生">
+            <defs>
+              <linearGradient id="twinBodyFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#dbeafe" />
+                <stop offset="0.48" stop-color="#bfdbfe" />
+                <stop offset="1" stop-color="#a7f3d0" />
+              </linearGradient>
+            </defs>
+            <circle class="body-part head" cx="130" cy="54" r="36" />
+            <path class="body-part torso" d="M91 104 C106 92 154 92 169 104 C184 135 188 214 171 278 C159 322 101 322 89 278 C72 214 76 135 91 104Z" />
+            <path class="body-part arm left-arm" d="M83 120 C54 153 39 205 36 273 C35 297 51 302 59 280 C68 228 80 181 101 143Z" />
+            <path class="body-part arm right-arm" d="M177 120 C206 153 221 205 224 273 C225 297 209 302 201 280 C192 228 180 181 159 143Z" />
+            <path class="body-part hips" d="M94 311 C112 331 148 331 166 311 C174 342 166 372 151 389 C139 401 121 401 109 389 C94 372 86 342 94 311Z" />
+            <path class="body-part leg left-leg" d="M111 386 C96 431 87 499 82 574 C80 598 105 602 111 578 C121 521 132 457 134 392Z" />
+            <path class="body-part leg right-leg" d="M149 386 C164 431 173 499 178 574 C180 598 155 602 149 578 C139 521 128 457 126 392Z" />
+            <path class="body-core" d="M105 146 C119 136 141 136 155 146 C164 184 164 241 153 275 C143 290 117 290 107 275 C96 241 96 184 105 146Z" />
+          </svg>
+
+          <button
+            v-for="region in regionSummaries"
+            :key="region.anatomy.regionId"
+            type="button"
+            class="body-region"
+            :class="[
+              `region-${region.anatomy.regionId}`,
+              `tone-${region.tone}`,
+              { active: activeRegion === region.anatomy.regionId, chain: compensationRegions.has(region.anatomy.regionId) },
+            ]"
+            :data-test="`body-region-${region.anatomy.regionId}`"
+            :aria-label="`${region.anatomy.label} ${toneLabel(region.tone)}`"
+            @click="selectRegion(region.anatomy.regionId)"
+          >
+            <span class="region-dot"></span>
+            <span class="region-label" :data-test="`twin-region-${region.anatomy.regionId}`">{{ region.anatomy.label }}</span>
+            <small>{{ toneLabel(region.tone) }}</small>
+          </button>
+        </div>
+
+        <div class="vitals-stack right-vitals">
+          <div>
+            <span>体态限制</span>
+            <strong>{{ formatLevel(selectedSummary.postureConstraintLevel) }}</strong>
+          </div>
+          <div>
+            <span>优先级</span>
+            <strong>{{ priorityLabel(selectedSummary.priority) }}</strong>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -192,6 +242,7 @@ function toneLabel(tone: string): string {
 .viewer-main {
   min-height: 440px;
   padding: 18px;
+  overflow: hidden;
 }
 
 .viewer-details {
@@ -220,7 +271,8 @@ h5 {
 }
 
 .asset-count,
-.tone-pill {
+.tone-pill,
+.scan-status {
   flex: none;
   border-radius: 999px;
   padding: 4px 9px;
@@ -230,22 +282,200 @@ h5 {
   font-weight: 650;
 }
 
-.body-map {
+.scan-status {
+  display: inline-flex;
+  margin-top: 8px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+}
+
+.digital-twin-stage {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(116px, 0.5fr) minmax(260px, 1fr) minmax(116px, 0.5fr);
+  align-items: center;
+  gap: 18px;
   margin-top: 18px;
+  min-height: 368px;
+}
+
+.digital-twin-stage::before,
+.digital-twin-stage::after {
+  position: absolute;
+  inset: 20px 18%;
+  content: '';
+  pointer-events: none;
+}
+
+.digital-twin-stage::before {
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 999px;
+}
+
+.digital-twin-stage::after {
+  border-top: 1px solid rgba(34, 197, 94, 0.22);
+  border-bottom: 1px solid rgba(34, 197, 94, 0.22);
+}
+
+.vitals-stack {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 12px;
+}
+
+.vitals-stack div {
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(241, 245, 249, 0.78));
+  padding: 10px;
+}
+
+.vitals-stack span,
+.vitals-stack strong {
+  display: block;
+}
+
+.vitals-stack span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.vitals-stack strong {
+  margin-top: 5px;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.twin-scan {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 360px);
+  min-height: 374px;
+  margin: 0 auto;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    radial-gradient(circle at 50% 45%, rgba(59, 130, 246, 0.18), transparent 56%),
+    #f8fafc;
+  background-size: 28px 28px, 28px 28px, auto, auto;
+  box-shadow: inset 0 0 42px rgba(37, 99, 235, 0.1);
+  overflow: hidden;
+}
+
+.scan-line {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 18%;
+  z-index: 3;
+  height: 2px;
+  background: rgba(16, 185, 129, 0.78);
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.7);
+  animation: scan-pass 4.8s linear infinite;
+  pointer-events: none;
+}
+
+.human-silhouette {
+  position: absolute;
+  inset: 14px 76px 14px;
+  width: calc(100% - 152px);
+  height: calc(100% - 28px);
+  filter: drop-shadow(0 18px 28px rgba(15, 23, 42, 0.16));
+}
+
+.body-part,
+.body-core {
+  fill: url(#twinBodyFill);
+  stroke: rgba(37, 99, 235, 0.46);
+  stroke-width: 3;
+}
+
+.body-core {
+  fill: rgba(255, 255, 255, 0.34);
+  stroke: rgba(14, 165, 233, 0.36);
 }
 
 .body-region {
-  min-height: 72px;
-  border: 1px solid #d8e0ec;
+  position: absolute;
+  z-index: 4;
+  min-width: 88px;
+  max-width: 116px;
+  min-height: 46px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
   border-radius: 8px;
-  background: #f8fafc;
+  background: rgba(255, 255, 255, 0.86);
   color: #0f172a;
-  text-align: left;
-  padding: 12px;
+  text-align: center;
+  padding: 7px 8px;
   cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(6px);
+}
+
+.region-chest {
+  left: 50%;
+  top: 25%;
+  transform: translateX(-50%);
+}
+
+.region-shoulders {
+  left: 14%;
+  top: 22%;
+}
+
+.region-biceps {
+  right: 10%;
+  top: 31%;
+}
+
+.region-forearms {
+  left: 7%;
+  top: 48%;
+}
+
+.region-abs {
+  left: 50%;
+  top: 43%;
+  transform: translateX(-50%);
+}
+
+.region-lats {
+  right: 10%;
+  top: 48%;
+}
+
+.region-glutes {
+  left: 50%;
+  top: 59%;
+  transform: translateX(-50%);
+}
+
+.region-quads {
+  left: 16%;
+  bottom: 18%;
+}
+
+.region-hamstrings {
+  right: 12%;
+  bottom: 18%;
+}
+
+.region-calves {
+  left: 50%;
+  bottom: 5%;
+  transform: translateX(-50%);
+}
+
+.region-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 0 auto 4px;
+  border-radius: 999px;
+  background: currentColor;
 }
 
 .body-region span,
@@ -254,12 +484,14 @@ h5 {
 }
 
 .body-region span {
+  font-size: 13px;
   font-weight: 700;
 }
 
 .body-region small {
-  margin-top: 6px;
+  margin-top: 3px;
   color: #64748b;
+  font-size: 11px;
 }
 
 .body-region.active {
@@ -289,6 +521,23 @@ h5 {
 .tone-empty {
   background: #f8fafc;
   color: #475569;
+}
+
+@keyframes scan-pass {
+  0% {
+    top: 12%;
+    opacity: 0;
+  }
+
+  10%,
+  90% {
+    opacity: 1;
+  }
+
+  100% {
+    top: 86%;
+    opacity: 0;
+  }
 }
 
 .metric-grid {
@@ -346,6 +595,31 @@ h5 {
 @media (max-width: 900px) {
   .health-body-viewer {
     grid-template-columns: 1fr;
+  }
+
+  .digital-twin-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .vitals-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .twin-scan {
+    min-height: 460px;
+  }
+
+  .human-silhouette {
+    inset-inline: 52px;
+    width: calc(100% - 104px);
+  }
+
+  .body-region {
+    min-width: 74px;
+    max-width: 92px;
+    font-size: 12px;
   }
 }
 </style>
