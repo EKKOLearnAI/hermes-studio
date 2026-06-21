@@ -207,7 +207,6 @@ function onOutlineMessagesLoaded(messages: any[]) {
     chatStore.activeSession.messages = clean;
   }
 }
-}
 
 async function handleSessionClick(sessionId: string) {
   chatStore.clearSessionCompletedUnread(sessionId);
