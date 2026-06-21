@@ -6,7 +6,10 @@ import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   selectedJobId: string | null
-  sortBy?: 'time' | 'name'
+  sortParams: {
+    field: 'time' | 'name'
+    asc: boolean
+  }
 }>()
 
 const emit = defineEmits<{
@@ -20,10 +23,16 @@ const jobsStore = useJobsStore()
 
 const sortedJobs = computed(() => {
   const jobs = [...jobsStore.jobs]
-  if (props.sortBy === 'name') {
-    jobs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+  const { field, asc } = props.sortParams
+
+  if (field === 'name') {
+    jobs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') * (asc ? 1 : -1))
+  } else {
+    // time: array index = creation order (index 0 = oldest)
+    // asc: oldest first (original order), desc: newest first (reversed)
+    if (!asc) jobs.reverse()
   }
-  // default 'time': keep original order (created_at ascending = array order)
+
   return jobs
 })
 
