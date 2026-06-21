@@ -103,17 +103,6 @@ function toneLabel(tone: string): string {
       </div>
 
       <div class="digital-twin-stage">
-        <div class="vitals-stack left-vitals">
-          <div>
-            <span>肌肉发达度</span>
-            <strong>{{ formatLevel(selectedSummary.developmentLevel) }}</strong>
-          </div>
-          <div>
-            <span>神经激活</span>
-            <strong>{{ formatLevel(selectedSummary.activationLevel) }}</strong>
-          </div>
-        </div>
-
         <div class="twin-scan" data-test="digital-twin-human" aria-label="Full body digital twin">
           <div class="scan-line" aria-hidden="true"></div>
           <svg class="human-silhouette" viewBox="0 0 260 620" role="img" aria-label="人体数字孪生">
@@ -154,7 +143,15 @@ function toneLabel(tone: string): string {
           </button>
         </div>
 
-        <div class="vitals-stack right-vitals">
+        <div class="vital-strip" data-test="twin-vital-strip">
+          <div>
+            <span>发达度</span>
+            <strong>{{ formatLevel(selectedSummary.developmentLevel) }}</strong>
+          </div>
+          <div>
+            <span>激活度</span>
+            <strong>{{ formatLevel(selectedSummary.activationLevel) }}</strong>
+          </div>
           <div>
             <span>体态限制</span>
             <strong>{{ formatLevel(selectedSummary.postureConstraintLevel) }}</strong>
@@ -228,7 +225,7 @@ function toneLabel(tone: string): string {
 <style scoped>
 .health-body-viewer {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -240,7 +237,7 @@ function toneLabel(tone: string): string {
 }
 
 .viewer-main {
-  min-height: 440px;
+  min-height: 520px;
   padding: 18px;
   overflow: hidden;
 }
@@ -292,11 +289,11 @@ h5 {
 .digital-twin-stage {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(116px, 0.5fr) minmax(260px, 1fr) minmax(116px, 0.5fr);
+  grid-template-columns: minmax(260px, 1fr);
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   margin-top: 18px;
-  min-height: 368px;
+  min-height: 430px;
 }
 
 .digital-twin-stage::before,
@@ -317,40 +314,10 @@ h5 {
   border-bottom: 1px solid rgba(34, 197, 94, 0.22);
 }
 
-.vitals-stack {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  gap: 12px;
-}
-
-.vitals-stack div {
-  border: 1px solid rgba(148, 163, 184, 0.36);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(241, 245, 249, 0.78));
-  padding: 10px;
-}
-
-.vitals-stack span,
-.vitals-stack strong {
-  display: block;
-}
-
-.vitals-stack span {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.vitals-stack strong {
-  margin-top: 5px;
-  color: #0f172a;
-  font-size: 16px;
-}
-
 .twin-scan {
   position: relative;
   z-index: 1;
-  width: min(100%, 360px);
+  width: min(100%, 520px);
   min-height: 374px;
   margin: 0 auto;
   border: 1px solid rgba(37, 99, 235, 0.16);
@@ -363,6 +330,39 @@ h5 {
   background-size: 28px 28px, 28px 28px, auto, auto;
   box-shadow: inset 0 0 42px rgba(37, 99, 235, 0.1);
   overflow: hidden;
+}
+
+.vital-strip {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  width: min(100%, 620px);
+  margin: 0 auto;
+}
+
+.vital-strip div {
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.94), rgba(241, 245, 249, 0.78));
+  padding: 10px;
+}
+
+.vital-strip span,
+.vital-strip strong {
+  display: block;
+}
+
+.vital-strip span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.vital-strip strong {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 15px;
 }
 
 .scan-line {
@@ -593,15 +593,7 @@ h5 {
 }
 
 @media (max-width: 900px) {
-  .health-body-viewer {
-    grid-template-columns: 1fr;
-  }
-
-  .digital-twin-stage {
-    grid-template-columns: 1fr;
-  }
-
-  .vitals-stack {
+  .vital-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

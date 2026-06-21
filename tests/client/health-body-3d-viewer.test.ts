@@ -37,6 +37,7 @@ describe('HealthBody3DViewer', () => {
     expect(wrapper.text()).toContain('Bench Press')
     expect(wrapper.find('[data-test="digital-twin-human"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="twin-region-chest"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="twin-vital-strip"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="selected-region"]').text()).toContain('高优先级')
 
     await wrapper.find('[data-test="body-region-shoulders"]').trigger('click')

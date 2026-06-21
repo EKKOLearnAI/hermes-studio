@@ -130,6 +130,7 @@ describe('HealthView', () => {
     expect(wrapper.text()).toContain('magnesium')
     expect(wrapper.text()).toContain('Upper Push')
     expect(wrapper.find('[data-test="body-region-chest"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-test="health-summary-metric"]')).toHaveLength(4)
   })
 
   it('falls back to default profile when profile refresh fails', async () => {

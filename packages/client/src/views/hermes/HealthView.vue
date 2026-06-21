@@ -22,7 +22,6 @@ const weightSummary = computed(() => overview.value?.weightSummary ?? {})
 const nutritionSummary = computed(() => overview.value?.nutritionSummary ?? null)
 const latestPlan = computed(() => overview.value?.latestPlan ?? null)
 const recentWorkouts = computed(() => overview.value?.recentWorkouts ?? [])
-const supplementSummary = computed(() => overview.value?.supplementSummary ?? null)
 const digitalTwinSummary = computed(() => overview.value?.digitalTwinSummary ?? null)
 const externalSummary = computed(() => overview.value?.externalSummary ?? null)
 const internalMarkers = computed(() => overview.value?.internalMarkers ?? [])
@@ -52,7 +51,6 @@ const viewerWorkouts = computed<HealthWorkoutLike[]>(() =>
 
 const foodLogCount = computed(() => overview.value?.foodLogs.length ?? 0)
 const workoutCount = computed(() => overview.value?.recentWorkouts.length ?? 0)
-const supplementRemaining = computed(() => numberOrNull(supplementSummary.value?.remainingToday) ?? 0)
 const weightCurrent = computed(() => numberOrNull(weightSummary.value.currentKg) ?? healthProfile.value?.weightKg ?? null)
 const weightTarget = computed(() => numberOrNull(weightSummary.value.targetKg) ?? healthProfile.value?.weightTargetKg ?? null)
 
@@ -141,29 +139,21 @@ function planWorkoutTitle(workout: unknown): string {
           <p>把外在体型、训练体态、饮食营养和内在指标合并成 Hermes 可读取的健康上下文。</p>
         </div>
         <div class="metric-row">
-          <div>
+          <div data-test="health-summary-metric">
             <span class="metric-value">{{ formatKg(weightCurrent) }}</span>
             <span class="metric-label">{{ t('health.currentWeight') }}</span>
           </div>
-          <div>
+          <div data-test="health-summary-metric">
             <span class="metric-value">{{ formatKg(weightTarget) }}</span>
             <span class="metric-label">{{ t('health.targetWeight') }}</span>
           </div>
-          <div>
+          <div data-test="health-summary-metric">
             <span class="metric-value">{{ workoutCount }}</span>
             <span class="metric-label">{{ t('health.recentWorkouts') }}</span>
           </div>
-          <div>
-            <span class="metric-value">{{ supplementRemaining }}</span>
-            <span class="metric-label">{{ t('health.supplementsRemaining') }}</span>
-          </div>
-          <div>
+          <div data-test="health-summary-metric">
             <span class="metric-value">{{ digitalTwinSummary?.internalMarkerCount ?? 0 }}</span>
             <span class="metric-label">内在指标</span>
-          </div>
-          <div>
-            <span class="metric-value">{{ digitalTwinSummary?.micronutrientGapCount ?? 0 }}</span>
-            <span class="metric-label">营养缺口</span>
           </div>
         </div>
       </section>
@@ -300,8 +290,8 @@ function planWorkoutTitle(workout: unknown): string {
 
 .health-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.8fr);
+  gap: 18px;
   margin-bottom: 16px;
 }
 
@@ -313,8 +303,15 @@ function planWorkoutTitle(workout: unknown): string {
 
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(6, minmax(84px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(84px, 1fr));
+  gap: 10px;
+}
+
+.metric-row > div {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-color);
+  padding: 10px;
 }
 
 .metric-value {
@@ -330,7 +327,7 @@ function planWorkoutTitle(workout: unknown): string {
 
 .health-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.7fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.8fr);
   gap: 16px;
 }
 
@@ -452,7 +449,7 @@ function planWorkoutTitle(workout: unknown): string {
   }
 
   .metric-row {
-    grid-template-columns: repeat(3, minmax(84px, 1fr));
+    grid-template-columns: repeat(2, minmax(84px, 1fr));
   }
 }
 
