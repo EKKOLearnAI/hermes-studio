@@ -100,7 +100,7 @@ export interface HealthOverview {
   foodTemplates: Array<Record<string, unknown>>
   supplements: Array<Record<string, unknown>>
   supplementLogs: Array<Record<string, unknown>>
-  dailyPlans: Array<Record<string, unknown>>
+  dailyPlans: HealthDailyPlanSummary[]
   dailyCheckins: Array<Record<string, unknown>>
 }
 
