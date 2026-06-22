@@ -56,9 +56,9 @@ function authUserId(ctx: Context): number | null {
 }
 
 function requestedProfile(ctx: Context): string {
-  const queryProfile = typeof ctx.query.profile === 'string' ? ctx.query.profile : ''
+  const queryProfile = typeof ctx.query?.profile === 'string' ? ctx.query.profile : ''
   const headerProfile = ctx.get?.('x-hermes-profile') || ''
-  return (ctx.state.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
+  return (ctx.state?.profile?.name || queryProfile || headerProfile || 'default').trim() || 'default'
 }
 
 function bearerToken(ctx: Context): string {
@@ -67,8 +67,8 @@ function bearerToken(ctx: Context): string {
   return match?.[1]?.trim() || ''
 }
 
-function resolveSttProfileStatus(userId: number, profile: string) {
-  const activeProvider = getActiveSttProvider(userId)
+function resolveSttProfileStatus(profile: string) {
+  const activeProvider = getActiveSttProvider(profile)
   if (!activeProvider || activeProvider === 'browser') {
     return {
       profile,
@@ -87,7 +87,7 @@ function resolveSttProfileStatus(userId: number, profile: string) {
     }
   }
 
-  const storedSetting = getSttProviderSetting(userId, activeProvider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(profile, activeProvider, { includeSecrets: true })
   const hasSecret = Boolean(storedSetting?.secrets.apiKey)
   return {
     profile,
@@ -292,9 +292,10 @@ export async function listSettings(ctx: Context) {
   if (!userId) return
 
   try {
+    const profile = requestedProfile(ctx)
     ctx.body = {
-      settings: listSttProviderSettings(userId),
-      activeProvider: getActiveSttProvider(userId),
+      settings: listSttProviderSettings(profile),
+      activeProvider: getActiveSttProvider(profile),
     }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -306,14 +307,14 @@ export async function profileStatus(ctx: Context) {
   const userId = authUserId(ctx)
   if (!userId) return
 
-  ctx.body = resolveSttProfileStatus(userId, requestedProfile(ctx))
+  ctx.body = resolveSttProfileStatus(requestedProfile(ctx))
 }
 
 export async function missingProfileAudio(ctx: Context) {
   const userId = authUserId(ctx)
   if (!userId) return
 
-  const status = resolveSttProfileStatus(userId, requestedProfile(ctx))
+  const status = resolveSttProfileStatus(requestedProfile(ctx))
   if (status.configured) {
     ctx.status = 204
     return
@@ -339,14 +340,15 @@ export async function saveSettings(ctx: Context) {
   } | undefined
 
   try {
+    const profile = requestedProfile(ctx)
     const storedProvider = assertStoredSttProvider(provider)
-    const setting = saveSttProviderSetting(userId, storedProvider, {
+    const setting = saveSttProviderSetting(profile, storedProvider, {
       settings: body?.settings,
       secrets: body?.secrets,
     })
     const activeProvider = body?.activeProvider === undefined
-      ? saveActiveSttProvider(userId, storedProvider)
-      : saveActiveSttProvider(userId, assertActiveSttProvider(String(body.activeProvider)))
+      ? saveActiveSttProvider(profile, storedProvider)
+      : saveActiveSttProvider(profile, assertActiveSttProvider(String(body.activeProvider)))
 
     ctx.body = { setting, activeProvider }
   } catch (error) {
@@ -368,7 +370,9 @@ export async function deleteBaseUrlPreset(ctx: Context) {
   }
 
   try {
-    const setting = removeSttBaseUrlPreset(userId, assertStoredSttProvider(provider), rawUrl)
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const setting = removeSttBaseUrlPreset(profile, storedProvider, rawUrl)
     ctx.body = { success: true, setting }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -384,7 +388,9 @@ export async function deleteSecret(ctx: Context) {
   const secretName = ctx.params.secretName || ''
 
   try {
-    const setting = clearStoredSttSecret(userId, assertStoredSttProvider(provider), secretName)
+    const profile = requestedProfile(ctx)
+    const storedProvider = assertStoredSttProvider(provider)
+    const setting = clearStoredSttSecret(profile, storedProvider, secretName)
     ctx.body = { success: true, setting }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -399,7 +405,8 @@ export async function saveActiveProvider(ctx: Context) {
   const body = ctx.request.body as { provider?: unknown } | undefined
 
   try {
-    const activeProvider = saveActiveSttProvider(userId, assertActiveSttProvider(String(body?.provider || '')))
+    const profile = requestedProfile(ctx)
+    const activeProvider = saveActiveSttProvider(profile, assertActiveSttProvider(String(body?.provider || '')))
     ctx.body = { activeProvider }
   } catch (error) {
     if (handleSettingsError(ctx, error)) return
@@ -437,7 +444,7 @@ export async function transcribe(ctx: Context) {
     return
   }
 
-  const storedSetting = getSttProviderSetting(userId, provider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(requestedProfile(ctx), provider, { includeSecrets: true })
   if (!storedSetting) {
     ctx.status = 400
     ctx.body = { error: `STT settings are required for provider ${provider}` }
@@ -494,7 +501,7 @@ export async function mcuVoiceTurn(ctx: Context) {
   if (!userId) return
 
   const profile = requestedProfile(ctx)
-  const status = resolveSttProfileStatus(userId, profile)
+  const status = resolveSttProfileStatus(profile)
   if (!status.configured || !status.activeProvider || status.activeProvider === 'browser' || !isStoredSttProvider(status.activeProvider)) {
     ctx.body = {
       ok: false,
@@ -519,7 +526,7 @@ export async function mcuVoiceTurn(ctx: Context) {
     return
   }
 
-  const storedSetting = getSttProviderSetting(userId, status.activeProvider, { includeSecrets: true })
+  const storedSetting = getSttProviderSetting(profile, status.activeProvider, { includeSecrets: true })
   if (!storedSetting?.secrets.apiKey) {
     ctx.body = {
       ok: false,

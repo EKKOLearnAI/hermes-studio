@@ -6,6 +6,7 @@ import { useSpeech, type MimoTtsOptions, type OpenaiTtsOptions } from '@/composa
 import { useMicRecorder } from '@/composables/useMicRecorder'
 import { transcribeSpeech } from '@/api/hermes/stt'
 import { useVoiceApiConnections } from '@/composables/useVoiceApiConnections'
+import { speedToEdgeRate, hzToEdgePitch } from '@/utils/ttsHelpers'
 import VoiceApiCard, { type VoiceApiCardTestState } from './voice/VoiceApiCard.vue'
 import VoiceApiFormModal from './voice/VoiceApiFormModal.vue'
 import VoiceApiConfigurator from './voice/VoiceApiConfigurator.vue'
@@ -124,12 +125,18 @@ function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
   const provider = connection.provider === 'edge' || connection.provider === 'openai' || connection.provider === 'custom' || connection.provider === 'doubao'
     ? connection.provider
     : undefined
+  const edgeRate = Number(options.rate)
+  const edgePitch = Number(options.pitch)
   return {
     baseUrl: String(options.baseUrl || ''),
     model: typeof options.model === 'string' ? options.model : undefined,
     voice: typeof options.voice === 'string' ? options.voice : undefined,
-    rate: typeof options.rate === 'string' ? options.rate : undefined,
-    pitch: typeof options.pitch === 'string' ? options.pitch : undefined,
+    rate: connection.provider === 'edge' && Number.isFinite(edgeRate)
+      ? speedToEdgeRate(edgeRate)
+      : typeof options.rate === 'string' ? options.rate : undefined,
+    pitch: connection.provider === 'edge' && Number.isFinite(edgePitch)
+      ? hzToEdgePitch(edgePitch)
+      : typeof options.pitch === 'string' ? options.pitch : undefined,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
     provider,
   }

@@ -512,7 +512,7 @@ class PlainWebSocketRelayClient {
         const segmentText = normalizeMcuSpeechText(text)
         if (!segmentText) return
         const segmentId = `${voice.interactionId}-tts-${++segmentIndex}`
-        ttsQueue = ttsQueue.then(() => this.enqueueMcuSpeechSegment(voice.interactionId, segmentId, segmentText))
+        ttsQueue = ttsQueue.then(() => this.enqueueMcuSpeechSegment(voice.profile, voice.interactionId, segmentId, segmentText))
           .catch((err) => {
             if (err instanceof Error && err.message === 'audio.interrupted') {
               this.interruptedInteractions.add(voice.interactionId)
@@ -787,10 +787,10 @@ class PlainWebSocketRelayClient {
     return `mcu-${instance}-${profileId}`
   }
 
-  private async enqueueMcuSpeechSegment(interactionId: string, segmentId: string, text: string): Promise<void> {
+  private async enqueueMcuSpeechSegment(profile: string, interactionId: string, segmentId: string, text: string): Promise<void> {
     if (this.interruptedInteractions.has(interactionId)) return
     this.sendJson({ type: 'interaction.status', interactionId, status: 'speaking' })
-    const audio = await this.synthesizeMcuSpeech(text)
+    const audio = await this.synthesizeMcuSpeech(text, profile)
     if (this.interruptedInteractions.has(interactionId)) return
     const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
     this.sendJson({
@@ -818,18 +818,20 @@ class PlainWebSocketRelayClient {
     })
   }
 
-  private async synthesizeMcuSpeech(text: string): Promise<{ url: string }> {
+  private async synthesizeMcuSpeech(text: string, profile: string): Promise<{ url: string }> {
     if (!this.options.userToken) {
       throw new Error('missing Web UI auth token')
     }
 
     const baseUrl = this.options.localBaseUrl.replace(/\/$/, '')
+    const headers = {
+      Authorization: `Bearer ${this.options.userToken}`,
+      'Content-Type': 'application/json',
+      'X-Hermes-Profile': profile || 'default',
+    }
     const requestTts = (provider?: 'edge') => this.options.fetchImpl(`${baseUrl}/api/hermes/tts/synthesize`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.options.userToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         ...(provider ? { provider } : {}),
         text,
@@ -880,10 +882,7 @@ class PlainWebSocketRelayClient {
       try {
         const fallback = await this.options.fetchImpl(`${baseUrl}/api/hermes/tts/synthesize`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.options.userToken}`,
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify({
             provider: 'edge',
             text,

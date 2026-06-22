@@ -65,6 +65,7 @@ describe('tts synthesize controller', () => {
     vi.clearAllMocks()
     vi.doUnmock('../../packages/server/src/services/hermes/tts-providers')
     vi.doUnmock('../../packages/server/src/controllers/hermes/tts')
+    vi.doUnmock('../../packages/server/src/db/index')
   })
 
   it('returns 400 for an unknown provider', async () => {
@@ -83,6 +84,203 @@ describe('tts synthesize controller', () => {
     expect(ctx.body).toEqual({ error: 'unknown TTS provider' })
   })
 
+  it('saves TTS settings when the legacy provider table has no unique index', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      getDb: () => db,
+      getStoragePath: () => ':memory:',
+    }))
+
+    try {
+      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      schemas.initAllHermesTables()
+      db.exec('DROP INDEX IF EXISTS idx_tts_provider_settings_user_provider')
+      db.exec('DROP TABLE tts_provider_settings')
+      db.exec(`
+        CREATE TABLE tts_provider_settings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          profile TEXT NOT NULL DEFAULT 'default',
+          provider TEXT NOT NULL,
+          settings_json TEXT NOT NULL DEFAULT '{}',
+          secrets_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `)
+      db.exec('DROP TABLE tts_user_settings')
+      db.exec(`
+        CREATE TABLE tts_user_settings (
+          profile TEXT PRIMARY KEY DEFAULT 'default',
+          active_provider TEXT NOT NULL DEFAULT 'edge',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `)
+
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        settings: {
+          model: 'tts-1',
+          voice: 'alloy',
+        },
+        secrets: {
+          apiKey: 'server-secret',
+        },
+      })
+      ctx.state = { user: { id: 7 } }
+      ctx.params = { provider: 'openai' }
+      ctx.query = {}
+      ctx.get = vi.fn(() => '')
+
+      await ctrl.saveSettings(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.setting).toMatchObject({
+        provider: 'openai',
+        settings: {
+          model: 'tts-1',
+          voice: 'alloy',
+        },
+        secrets: {
+          apiKey: '[stored]',
+        },
+      })
+
+      const profileRow = db.prepare(
+        'SELECT settings_json, secrets_json FROM tts_profile_provider_settings WHERE profile = ? AND provider = ?'
+      ).get('default', 'openai') as { settings_json: string; secrets_json: string }
+      expect(JSON.parse(profileRow.settings_json)).toMatchObject({ model: 'tts-1', voice: 'alloy' })
+      expect(JSON.parse(profileRow.secrets_json)).toEqual({ apiKey: 'server-secret' })
+    } finally {
+      db.close()
+      vi.doUnmock('../../packages/server/src/db/index')
+    }
+  })
+
+  it('preserves numeric Edge TTS rate and pitch settings on save', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      getDb: () => db,
+      getStoragePath: () => ':memory:',
+    }))
+
+    try {
+      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      schemas.initAllHermesTables()
+
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        settings: {
+          voice: 'zh-CN-YunxiNeural',
+          rate: 1.35,
+          pitch: -6,
+        },
+      })
+      ctx.state = { user: { id: 7 } }
+      ctx.params = { provider: 'edge' }
+      ctx.query = {}
+      ctx.get = vi.fn(() => '')
+
+      await ctrl.saveSettings(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.setting).toMatchObject({
+        provider: 'edge',
+        settings: {
+          voice: 'zh-CN-YunxiNeural',
+          rate: '1.35',
+          pitch: '-6',
+        },
+      })
+
+      const listCtx = createMockCtx().ctx
+      listCtx.state = { user: { id: 7 } }
+      listCtx.query = {}
+      listCtx.get = vi.fn(() => '')
+
+      await ctrl.listSettings(listCtx)
+      expect(listCtx.body.settings).toEqual([
+        expect.objectContaining({
+          provider: 'edge',
+          settings: expect.objectContaining({
+            rate: '1.35',
+            pitch: '-6',
+          }),
+        }),
+      ])
+    } finally {
+      db.close()
+      vi.doUnmock('../../packages/server/src/db/index')
+    }
+  })
+
+  it('repairs preexisting profile TTS tables before saving settings', async () => {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(':memory:')
+    vi.doMock('../../packages/server/src/db/index', () => ({
+      getDb: () => db,
+      getStoragePath: () => ':memory:',
+    }))
+
+    try {
+      db.exec(`
+        CREATE TABLE tts_profile_provider_settings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          profile TEXT NOT NULL DEFAULT 'default',
+          provider TEXT NOT NULL,
+          settings_json TEXT NOT NULL DEFAULT '{}',
+          secrets_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `)
+      db.exec(`
+        CREATE TABLE tts_profile_settings (
+          profile TEXT NOT NULL DEFAULT 'default',
+          active_provider TEXT NOT NULL DEFAULT 'edge',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `)
+      db.prepare(
+        'INSERT INTO tts_profile_provider_settings (profile, provider, settings_json, secrets_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run('default', 'edge', '{"voice":"old"}', '{}', 1, 1)
+      db.prepare(
+        'INSERT INTO tts_profile_provider_settings (profile, provider, settings_json, secrets_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run('default', 'edge', '{"voice":"newer"}', '{}', 2, 2)
+      db.prepare(
+        'INSERT INTO tts_profile_settings (profile, active_provider, created_at, updated_at) VALUES (?, ?, ?, ?)'
+      ).run('default', 'edge', 1, 1)
+      db.prepare(
+        'INSERT INTO tts_profile_settings (profile, active_provider, created_at, updated_at) VALUES (?, ?, ?, ?)'
+      ).run('default', 'openai', 2, 2)
+
+      const schemas = await import('../../packages/server/src/db/hermes/schemas')
+      schemas.initAllHermesTables()
+
+      const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+      const { ctx } = createMockCtx({
+        settings: { voice: 'zh-CN-XiaoxiaoNeural' },
+      })
+      ctx.state = { user: { id: 7 } }
+      ctx.params = { provider: 'edge' }
+      ctx.query = {}
+      ctx.get = vi.fn(() => '')
+
+      await ctrl.saveSettings(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body.setting.settings.voice).toBe('zh-CN-XiaoxiaoNeural')
+      expect(db.prepare('SELECT COUNT(*) AS count FROM tts_profile_provider_settings WHERE profile = ? AND provider = ?').get('default', 'edge').count).toBe(1)
+      expect(db.prepare('SELECT COUNT(*) AS count FROM tts_profile_settings WHERE profile = ?').get('default').count).toBe(1)
+    } finally {
+      db.close()
+      vi.doUnmock('../../packages/server/src/db/index')
+    }
+  })
+
   it('uses the active TTS provider when request provider is omitted', async () => {
     const audio = Buffer.from('active-audio')
     const provider = {
@@ -95,12 +293,14 @@ describe('tts synthesize controller', () => {
     }
     const getTtsProvider = vi.fn(() => provider)
     const getActiveTtsProvider = vi.fn(() => 'doubao')
+    const getTtsProviderSetting = vi.fn(() => null)
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
       ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
       getActiveTtsProvider,
+      getTtsProviderSetting,
     }))
 
     const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
@@ -109,7 +309,7 @@ describe('tts synthesize controller', () => {
 
     await ctrl.synthesize(ctx)
 
-    expect(getActiveTtsProvider).toHaveBeenCalledWith(7)
+    expect(getActiveTtsProvider).toHaveBeenCalledWith('default')
     expect(getTtsProvider).toHaveBeenCalledWith('doubao')
     expect(provider.synthesize).toHaveBeenCalledWith(
       { text: 'hello', signal: expect.any(AbortSignal) },
@@ -129,12 +329,16 @@ describe('tts synthesize controller', () => {
     }
     const getTtsProvider = vi.fn(() => provider)
     const getActiveTtsProvider = vi.fn(() => null)
+    const getTtsProviderSetting = vi.fn(() => null)
+    const listTtsProviderSettings = vi.fn(() => [])
     vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
       getTtsProvider,
     }))
     vi.doMock('../../packages/server/src/db/hermes/tts-settings-store', async (importOriginal) => ({
       ...await importOriginal<typeof import('../../packages/server/src/db/hermes/tts-settings-store')>(),
       getActiveTtsProvider,
+      getTtsProviderSetting,
+      listTtsProviderSettings,
     }))
 
     const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
@@ -143,7 +347,8 @@ describe('tts synthesize controller', () => {
 
     await ctrl.synthesize(ctx)
 
-    expect(getActiveTtsProvider).toHaveBeenCalledWith(7)
+    expect(getActiveTtsProvider).toHaveBeenCalledWith('default')
+    expect(listTtsProviderSettings).toHaveBeenCalledWith('default')
     expect(getTtsProvider).toHaveBeenCalledWith('edge')
     expect(provider.synthesize).toHaveBeenCalledWith(
       { text: 'hello', signal: expect.any(AbortSignal) },
@@ -265,7 +470,7 @@ describe('tts synthesize controller', () => {
 
     await ctrl.synthesize(ctx)
 
-    expect(getTtsProviderSetting).toHaveBeenCalledWith(7, 'openai', { includeSecrets: true })
+    expect(getTtsProviderSetting).toHaveBeenCalledWith('default', 'openai', { includeSecrets: true })
     expect(provider.synthesize).toHaveBeenCalledWith(
       { text: 'Hello world', signal: expect.any(AbortSignal) },
       {

@@ -1,5 +1,8 @@
 import { getDb } from '../index'
-import { STT_PROVIDER_SETTINGS_TABLE, STT_USER_SETTINGS_TABLE } from './schemas'
+import {
+  STT_PROFILE_PROVIDER_SETTINGS_TABLE,
+  STT_PROFILE_SETTINGS_TABLE,
+} from './schemas'
 import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 
 export type StoredSttProvider = 'openai' | 'custom' | 'doubao'
@@ -15,7 +18,7 @@ export type SttStoredSettings = Partial<Record<Exclude<SttSettingKey, 'baseUrlPr
 export type SttStoredSecrets = Partial<Record<SttSecretKey, string>>
 
 export interface StoredSttProviderRow {
-  userId: number
+  profile: string
   provider: StoredSttProvider
   settings: SttStoredSettings
   secrets: SttStoredSecrets
@@ -37,7 +40,7 @@ const PROVIDER_LABELS: Record<StoredSttProvider, string> = {
   doubao: 'Doubao STT',
 }
 type StoredRow = {
-  user_id: number
+  profile: string
   provider: string
   settings_json: string
   secrets_json: string
@@ -70,11 +73,15 @@ function requireDb() {
   return db
 }
 
-function normalizeUserId(userId: number): number {
-  if (!Number.isInteger(userId) || userId <= 0) {
-    throw new SttSettingsValidationError('invalid user id')
+function normalizeProfile(profile: string): string {
+  if (typeof profile !== 'string') {
+    throw new SttSettingsValidationError('invalid profile')
   }
-  return userId
+  const value = profile.trim() || 'default'
+  if (value.length > 128) {
+    throw new SttSettingsValidationError('invalid profile')
+  }
+  return value
 }
 
 export function isStoredSttProvider(provider: string): provider is StoredSttProvider {
@@ -99,32 +106,32 @@ export function assertActiveSttProvider(provider: string): ActiveSttProvider {
   return provider
 }
 
-export function getActiveSttProvider(userId: number): ActiveSttProvider | null {
-  const id = normalizeUserId(userId)
+export function getActiveSttProvider(profile: string): ActiveSttProvider | null {
+  const profileName = normalizeProfile(profile)
   const db = getDb()
   if (!db) return null
 
   const row = db.prepare(
-    `SELECT active_provider FROM ${STT_USER_SETTINGS_TABLE} WHERE user_id = ?`
-  ).get(id) as { active_provider?: string } | null
+    `SELECT active_provider FROM ${STT_PROFILE_SETTINGS_TABLE} WHERE profile = ?`
+  ).get(profileName) as { active_provider?: string } | null
 
   const activeProvider = row?.active_provider
   return typeof activeProvider === 'string' && isActiveSttProvider(activeProvider) ? activeProvider : null
 }
 
-export function saveActiveSttProvider(userId: number, provider: ActiveSttProvider): ActiveSttProvider {
-  const id = normalizeUserId(userId)
+export function saveActiveSttProvider(profile: string, provider: ActiveSttProvider): ActiveSttProvider {
+  const profileName = normalizeProfile(profile)
   const activeProvider = assertActiveSttProvider(provider)
   const db = requireDb()
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO ${STT_USER_SETTINGS_TABLE} (user_id, active_provider, created_at, updated_at)
+    `INSERT INTO ${STT_PROFILE_SETTINGS_TABLE} (profile, active_provider, created_at, updated_at)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
+     ON CONFLICT(profile) DO UPDATE SET
        active_provider = excluded.active_provider,
        updated_at = excluded.updated_at`
-  ).run(id, activeProvider, now, now)
+  ).run(profileName, activeProvider, now, now)
 
   return activeProvider
 }
@@ -136,12 +143,12 @@ function assertKnownSecretName(secretName: string): SttSecretKey {
   return secretName as SttSecretKey
 }
 
-function readStoredRow(userId: number, provider: StoredSttProvider): StoredRow | null {
+function readStoredRow(profile: string, provider: StoredSttProvider): StoredRow | null {
   const db = getDb()
   if (!db) return null
   return db.prepare(
-    `SELECT user_id, provider, settings_json, secrets_json, created_at, updated_at FROM ${STT_PROVIDER_SETTINGS_TABLE} WHERE user_id = ? AND provider = ?`
-  ).get(userId, provider) as StoredRow | null
+    `SELECT profile, provider, settings_json, secrets_json, created_at, updated_at FROM ${STT_PROFILE_PROVIDER_SETTINGS_TABLE} WHERE profile = ? AND provider = ?`
+  ).get(profile, provider) as StoredRow | null
 }
 
 function normalizeBaseUrlPresets(provider: StoredSttProvider, input: unknown): string[] {
@@ -261,7 +268,7 @@ function rowToResult(row: StoredRow, includeSecrets: boolean): StoredSttProvider
   const secrets = sanitizeStoredSecrets(parseJsonObject(row.secrets_json))
 
   return {
-    userId: Number(row.user_id),
+    profile: row.profile || 'default',
     provider,
     settings,
     secrets: includeSecrets ? secrets : maskSecrets(secrets),
@@ -270,44 +277,44 @@ function rowToResult(row: StoredRow, includeSecrets: boolean): StoredSttProvider
   }
 }
 
-export function listSttProviderSettings(userId: number): StoredSttProviderRow[] {
-  const id = normalizeUserId(userId)
+export function listSttProviderSettings(profile: string): StoredSttProviderRow[] {
+  const profileName = normalizeProfile(profile)
   const db = getDb()
   if (!db) return []
 
   const rows = db.prepare(
-    `SELECT user_id, provider, settings_json, secrets_json, created_at, updated_at
-     FROM ${STT_PROVIDER_SETTINGS_TABLE}
-     WHERE user_id = ? AND provider IN (${PROVIDER_SQL_PLACEHOLDERS})
+    `SELECT profile, provider, settings_json, secrets_json, created_at, updated_at
+     FROM ${STT_PROFILE_PROVIDER_SETTINGS_TABLE}
+     WHERE profile = ? AND provider IN (${PROVIDER_SQL_PLACEHOLDERS})
      ORDER BY provider ASC`
-  ).all(id, ...PROVIDERS) as StoredRow[]
+  ).all(profileName, ...PROVIDERS) as StoredRow[]
 
   return rows.map(row => rowToResult(row, false))
 }
 
 export function getSttProviderSetting(
-  userId: number,
+  profile: string,
   provider: StoredSttProvider,
   options?: { includeSecrets?: boolean },
 ): StoredSttProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredSttProvider(provider)
-  const row = readStoredRow(id, storedProvider)
+  const row = readStoredRow(profileName, storedProvider)
   return row ? rowToResult(row, options?.includeSecrets === true) : null
 }
 
 export function saveSttProviderSetting(
-  userId: number,
+  profile: string,
   provider: StoredSttProvider,
   input: {
     settings?: unknown
     secrets?: unknown
   },
 ): StoredSttProviderRow {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredSttProvider(provider)
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   const existingSettings = existing ? sanitizeStoredSettings(storedProvider, parseJsonObject(existing.settings_json)) : {}
   const existingSecrets = existing ? sanitizeStoredSecrets(parseJsonObject(existing.secrets_json)) : {}
   const nextSettings = sanitizeStoredSettings(storedProvider, asObject(input.settings))
@@ -323,27 +330,27 @@ export function saveSttProviderSetting(
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO ${STT_PROVIDER_SETTINGS_TABLE} (user_id, provider, settings_json, secrets_json, created_at, updated_at)
+    `INSERT INTO ${STT_PROFILE_PROVIDER_SETTINGS_TABLE} (profile, provider, settings_json, secrets_json, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id, provider) DO UPDATE SET
+     ON CONFLICT(profile, provider) DO UPDATE SET
        settings_json = excluded.settings_json,
        secrets_json = excluded.secrets_json,
        updated_at = excluded.updated_at`
-  ).run(id, storedProvider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), existing?.created_at || now, now)
+  ).run(profileName, storedProvider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), existing?.created_at || now, now)
 
-  return getSttProviderSetting(id, storedProvider) as StoredSttProviderRow
+  return getSttProviderSetting(profileName, storedProvider) as StoredSttProviderRow
 }
 
 export function removeSttBaseUrlPreset(
-  userId: number,
+  profile: string,
   provider: StoredSttProvider,
   url: string,
 ): StoredSttProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredSttProvider(provider)
   const normalizedUrl = normalizeSafeTtsBaseUrl(url, PROVIDER_LABELS[storedProvider])
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   if (!existing) {
     return null
   }
@@ -365,22 +372,22 @@ export function removeSttBaseUrlPreset(
 
   const now = Date.now()
   db.prepare(
-    `UPDATE ${STT_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE user_id = ? AND provider = ?`
-  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, id, storedProvider)
+    `UPDATE ${STT_PROFILE_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE profile = ? AND provider = ?`
+  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, profileName, storedProvider)
 
-  return getSttProviderSetting(id, storedProvider)
+  return getSttProviderSetting(profileName, storedProvider)
 }
 
 export function clearStoredSttSecret(
-  userId: number,
+  profile: string,
   provider: StoredSttProvider,
   secretName: string,
 ): StoredSttProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredSttProvider(provider)
   const secretKey = assertKnownSecretName(secretName)
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   if (!existing) {
     return null
   }
@@ -391,8 +398,8 @@ export function clearStoredSttSecret(
   const now = Date.now()
 
   db.prepare(
-    `UPDATE ${STT_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE user_id = ? AND provider = ?`
-  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, id, storedProvider)
+    `UPDATE ${STT_PROFILE_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE profile = ? AND provider = ?`
+  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, profileName, storedProvider)
 
-  return getSttProviderSetting(id, storedProvider)
+  return getSttProviderSetting(profileName, storedProvider)
 }

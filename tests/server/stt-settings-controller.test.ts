@@ -68,6 +68,21 @@ describe('stt settings controller', () => {
     })
     expect(JSON.stringify(saveCtx.body)).not.toContain('server-secret')
 
+    const profileProviderRow = db.prepare(
+      'SELECT provider, settings_json, secrets_json FROM stt_profile_provider_settings WHERE profile = ? AND provider = ?'
+    ).get('default', 'openai') as { provider: string; settings_json: string; secrets_json: string }
+    expect(profileProviderRow.provider).toBe('openai')
+    expect(JSON.parse(profileProviderRow.settings_json)).toMatchObject({
+      model: 'gpt-4o-transcribe',
+      language: 'en',
+    })
+    expect(JSON.parse(profileProviderRow.secrets_json)).toEqual({ apiKey: 'server-secret' })
+
+    const profileActiveRow = db.prepare(
+      'SELECT active_provider FROM stt_profile_settings WHERE profile = ?'
+    ).get('default') as { active_provider: string }
+    expect(profileActiveRow.active_provider).toBe('openai')
+
     const listCtx = makeCtx(user)
     await ctrl.listSettings(listCtx)
 

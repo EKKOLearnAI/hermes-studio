@@ -1,5 +1,8 @@
 import { getDb } from '../index'
-import { TTS_PROVIDER_SETTINGS_TABLE, TTS_USER_SETTINGS_TABLE } from './schemas'
+import {
+  TTS_PROFILE_PROVIDER_SETTINGS_TABLE,
+  TTS_PROFILE_SETTINGS_TABLE,
+} from './schemas'
 import { normalizeSafeTtsBaseUrl } from '../../services/hermes/tts-providers/url-safety'
 
 export type StoredTtsProvider = 'openai' | 'custom' | 'edge' | 'mimo' | 'doubao'
@@ -27,7 +30,7 @@ export type TtsStoredSettings = Partial<Record<Exclude<TtsSettingKey, 'baseUrlPr
 export type TtsStoredSecrets = Partial<Record<TtsSecretKey, string>>
 
 export interface StoredTtsProviderRow {
-  userId: number
+  profile: string
   provider: StoredTtsProvider
   settings: TtsStoredSettings
   secrets: TtsStoredSecrets
@@ -52,7 +55,7 @@ const PROVIDER_LABELS: Record<StoredTtsProvider, string> = {
 }
 
 type StoredRow = {
-  user_id: number
+  profile: string
   provider: string
   settings_json: string
   secrets_json: string
@@ -85,11 +88,15 @@ function requireDb() {
   return db
 }
 
-function normalizeUserId(userId: number): number {
-  if (!Number.isInteger(userId) || userId <= 0) {
-    throw new TtsSettingsValidationError('invalid user id')
+function normalizeProfile(profile: string): string {
+  if (typeof profile !== 'string') {
+    throw new TtsSettingsValidationError('invalid profile')
   }
-  return userId
+  const value = profile.trim() || 'default'
+  if (value.length > 128) {
+    throw new TtsSettingsValidationError('invalid profile')
+  }
+  return value
 }
 
 export function isStoredTtsProvider(provider: string): provider is StoredTtsProvider {
@@ -114,32 +121,32 @@ export function assertActiveTtsProvider(provider: string): ActiveTtsProvider {
   return provider
 }
 
-export function getActiveTtsProvider(userId: number): ActiveTtsProvider | null {
-  const id = normalizeUserId(userId)
+export function getActiveTtsProvider(profile: string): ActiveTtsProvider | null {
+  const profileName = normalizeProfile(profile)
   const db = getDb()
   if (!db) return null
 
   const row = db.prepare(
-    `SELECT active_provider FROM ${TTS_USER_SETTINGS_TABLE} WHERE user_id = ?`
-  ).get(id) as { active_provider?: string } | null
+    `SELECT active_provider FROM ${TTS_PROFILE_SETTINGS_TABLE} WHERE profile = ?`
+  ).get(profileName) as { active_provider?: string } | null
 
   const activeProvider = row?.active_provider
   return typeof activeProvider === 'string' && isActiveTtsProvider(activeProvider) ? activeProvider : null
 }
 
-export function saveActiveTtsProvider(userId: number, provider: ActiveTtsProvider): ActiveTtsProvider {
-  const id = normalizeUserId(userId)
+export function saveActiveTtsProvider(profile: string, provider: ActiveTtsProvider): ActiveTtsProvider {
+  const profileName = normalizeProfile(profile)
   const activeProvider = assertActiveTtsProvider(provider)
   const db = requireDb()
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO ${TTS_USER_SETTINGS_TABLE} (user_id, active_provider, created_at, updated_at)
+    `INSERT INTO ${TTS_PROFILE_SETTINGS_TABLE} (profile, active_provider, created_at, updated_at)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
+     ON CONFLICT(profile) DO UPDATE SET
        active_provider = excluded.active_provider,
        updated_at = excluded.updated_at`
-  ).run(id, activeProvider, now, now)
+  ).run(profileName, activeProvider, now, now)
 
   return activeProvider
 }
@@ -151,12 +158,12 @@ function assertKnownSecretName(secretName: string): TtsSecretKey {
   return secretName as TtsSecretKey
 }
 
-function readStoredRow(userId: number, provider: StoredTtsProvider): StoredRow | null {
+function readStoredRow(profile: string, provider: StoredTtsProvider): StoredRow | null {
   const db = getDb()
   if (!db) return null
   return db.prepare(
-    `SELECT user_id, provider, settings_json, secrets_json, created_at, updated_at FROM ${TTS_PROVIDER_SETTINGS_TABLE} WHERE user_id = ? AND provider = ?`
-  ).get(userId, provider) as StoredRow | null
+    `SELECT profile, provider, settings_json, secrets_json, created_at, updated_at FROM ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE} WHERE profile = ? AND provider = ?`
+  ).get(profile, provider) as StoredRow | null
 }
 
 function normalizeBaseUrlPresets(provider: StoredTtsProvider, input: unknown): string[] {
@@ -203,6 +210,11 @@ function sanitizeStoredSettings(provider: StoredTtsProvider, input: Record<strin
     if (key === 'baseUrlPresets') {
       const presets = normalizeBaseUrlPresets(provider, rawValue)
       if (presets.length) out.baseUrlPresets = presets
+      continue
+    }
+
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue) && (key === 'rate' || key === 'pitch')) {
+      out[key] = String(rawValue)
       continue
     }
 
@@ -258,7 +270,7 @@ function rowToResult(row: StoredRow, includeSecrets: boolean): StoredTtsProvider
   const secrets = sanitizeStoredSecrets(parseJsonObject(row.secrets_json))
 
   return {
-    userId: Number(row.user_id),
+    profile: row.profile || 'default',
     provider,
     settings,
     secrets: includeSecrets ? secrets : maskSecrets(secrets),
@@ -267,41 +279,41 @@ function rowToResult(row: StoredRow, includeSecrets: boolean): StoredTtsProvider
   }
 }
 
-export function listTtsProviderSettings(userId: number): StoredTtsProviderRow[] {
-  const id = normalizeUserId(userId)
+export function listTtsProviderSettings(profile: string): StoredTtsProviderRow[] {
+  const profileName = normalizeProfile(profile)
   const db = getDb()
   if (!db) return []
 
   const rows = db.prepare(
-    `SELECT user_id, provider, settings_json, secrets_json, created_at, updated_at
-     FROM ${TTS_PROVIDER_SETTINGS_TABLE}
-     WHERE user_id = ? AND provider IN (${PROVIDER_SQL_PLACEHOLDERS})
+    `SELECT profile, provider, settings_json, secrets_json, created_at, updated_at
+     FROM ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE}
+     WHERE profile = ? AND provider IN (${PROVIDER_SQL_PLACEHOLDERS})
      ORDER BY provider ASC`
-  ).all(id, ...PROVIDERS) as StoredRow[]
+  ).all(profileName, ...PROVIDERS) as StoredRow[]
 
   return rows.map(row => rowToResult(row, false))
 }
 
 export function getTtsProviderSetting(
-  userId: number,
+  profile: string,
   provider: StoredTtsProvider,
   options?: { includeSecrets?: boolean },
 ): StoredTtsProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredTtsProvider(provider)
-  const row = readStoredRow(id, storedProvider)
+  const row = readStoredRow(profileName, storedProvider)
   return row ? rowToResult(row, options?.includeSecrets === true) : null
 }
 
 export function saveTtsProviderSetting(
-  userId: number,
+  profile: string,
   provider: StoredTtsProvider,
   input: { settings?: unknown; secrets?: unknown },
 ): StoredTtsProviderRow {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredTtsProvider(provider)
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   const existingSettings = existing ? sanitizeStoredSettings(storedProvider, parseJsonObject(existing.settings_json)) : {}
   const existingSecrets = existing ? sanitizeStoredSecrets(parseJsonObject(existing.secrets_json)) : {}
   const nextSettings = sanitizeStoredSettings(storedProvider, asObject(input.settings))
@@ -317,27 +329,27 @@ export function saveTtsProviderSetting(
   const now = Date.now()
 
   db.prepare(
-    `INSERT INTO ${TTS_PROVIDER_SETTINGS_TABLE} (user_id, provider, settings_json, secrets_json, created_at, updated_at)
+    `INSERT INTO ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE} (profile, provider, settings_json, secrets_json, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id, provider) DO UPDATE SET
+     ON CONFLICT(profile, provider) DO UPDATE SET
        settings_json = excluded.settings_json,
        secrets_json = excluded.secrets_json,
        updated_at = excluded.updated_at`
-  ).run(id, storedProvider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), existing?.created_at || now, now)
+  ).run(profileName, storedProvider, JSON.stringify(mergedSettings), JSON.stringify(mergedSecrets), existing?.created_at || now, now)
 
-  return getTtsProviderSetting(id, storedProvider) as StoredTtsProviderRow
+  return getTtsProviderSetting(profileName, storedProvider) as StoredTtsProviderRow
 }
 
 export function removeTtsBaseUrlPreset(
-  userId: number,
+  profile: string,
   provider: StoredTtsProvider,
   url: string,
 ): StoredTtsProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredTtsProvider(provider)
   const normalizedUrl = normalizeSafeTtsBaseUrl(url, PROVIDER_LABELS[storedProvider])
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   if (!existing) return null
 
   const settings = sanitizeStoredSettings(storedProvider, parseJsonObject(existing.settings_json))
@@ -357,22 +369,22 @@ export function removeTtsBaseUrlPreset(
 
   const now = Date.now()
   db.prepare(
-    `UPDATE ${TTS_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE user_id = ? AND provider = ?`
-  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, id, storedProvider)
+    `UPDATE ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE profile = ? AND provider = ?`
+  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, profileName, storedProvider)
 
-  return getTtsProviderSetting(id, storedProvider)
+  return getTtsProviderSetting(profileName, storedProvider)
 }
 
 export function clearStoredTtsSecret(
-  userId: number,
+  profile: string,
   provider: StoredTtsProvider,
   secretName: string,
 ): StoredTtsProviderRow | null {
-  const id = normalizeUserId(userId)
+  const profileName = normalizeProfile(profile)
   const storedProvider = assertStoredTtsProvider(provider)
   const secretKey = assertKnownSecretName(secretName)
   const db = requireDb()
-  const existing = readStoredRow(id, storedProvider)
+  const existing = readStoredRow(profileName, storedProvider)
   if (!existing) return null
 
   const settings = sanitizeStoredSettings(storedProvider, parseJsonObject(existing.settings_json))
@@ -381,8 +393,8 @@ export function clearStoredTtsSecret(
   const now = Date.now()
 
   db.prepare(
-    `UPDATE ${TTS_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE user_id = ? AND provider = ?`
-  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, id, storedProvider)
+    `UPDATE ${TTS_PROFILE_PROVIDER_SETTINGS_TABLE} SET settings_json = ?, secrets_json = ?, updated_at = ? WHERE profile = ? AND provider = ?`
+  ).run(JSON.stringify(settings), JSON.stringify(secrets), now, profileName, storedProvider)
 
-  return getTtsProviderSetting(id, storedProvider)
+  return getTtsProviderSetting(profileName, storedProvider)
 }

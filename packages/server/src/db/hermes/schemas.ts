@@ -206,6 +206,32 @@ export const STT_USER_SETTINGS_SCHEMA: Record<string, string> = {
   updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
 }
 
+export const STT_PROFILE_PROVIDER_SETTINGS_TABLE = 'stt_profile_provider_settings'
+
+export const STT_PROFILE_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const STT_PROFILE_PROVIDER_SETTINGS_INDEXES = {
+  idx_stt_profile_provider_settings_profile: 'CREATE INDEX IF NOT EXISTS idx_stt_profile_provider_settings_profile ON stt_profile_provider_settings(profile)',
+  idx_stt_profile_provider_settings_profile_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_profile_provider_settings_profile_provider ON stt_profile_provider_settings(profile, provider)',
+}
+
+export const STT_PROFILE_SETTINGS_TABLE = 'stt_profile_settings'
+
+export const STT_PROFILE_SETTINGS_SCHEMA: Record<string, string> = {
+  profile: "TEXT PRIMARY KEY DEFAULT 'default'",
+  active_provider: "TEXT NOT NULL DEFAULT 'browser'",
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
 export const TTS_PROVIDER_SETTINGS_TABLE = 'tts_provider_settings'
 
 export const TTS_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
@@ -227,6 +253,32 @@ export const TTS_USER_SETTINGS_TABLE = 'tts_user_settings'
 
 export const TTS_USER_SETTINGS_SCHEMA: Record<string, string> = {
   user_id: 'INTEGER PRIMARY KEY',
+  active_provider: "TEXT NOT NULL DEFAULT 'edge'",
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROFILE_PROVIDER_SETTINGS_TABLE = 'tts_profile_provider_settings'
+
+export const TTS_PROFILE_PROVIDER_SETTINGS_SCHEMA: Record<string, string> = {
+  id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  provider: 'TEXT NOT NULL',
+  settings_json: `TEXT NOT NULL DEFAULT '{}'`,
+  secrets_json: `TEXT NOT NULL DEFAULT '{}'`,
+  created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+  updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
+}
+
+export const TTS_PROFILE_PROVIDER_SETTINGS_INDEXES = {
+  idx_tts_profile_provider_settings_profile: 'CREATE INDEX IF NOT EXISTS idx_tts_profile_provider_settings_profile ON tts_profile_provider_settings(profile)',
+  idx_tts_profile_provider_settings_profile_provider: 'CREATE UNIQUE INDEX IF NOT EXISTS idx_tts_profile_provider_settings_profile_provider ON tts_profile_provider_settings(profile, provider)',
+}
+
+export const TTS_PROFILE_SETTINGS_TABLE = 'tts_profile_settings'
+
+export const TTS_PROFILE_SETTINGS_SCHEMA: Record<string, string> = {
+  profile: "TEXT PRIMARY KEY DEFAULT 'default'",
   active_provider: "TEXT NOT NULL DEFAULT 'edge'",
   created_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
   updated_at: `INTEGER NOT NULL DEFAULT (strftime('%s','now'))`,
@@ -443,6 +495,107 @@ function migrateLegacySttProviderSettingsUserIdDefault(
   }
 }
 
+function copyLegacyProviderSettingsToDefaultProfile(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  sourceTableName: string,
+  targetTableName: string,
+): void {
+  if (!tableExists(db, sourceTableName) || !tableExists(db, targetTableName)) return
+
+  db.prepare(
+    `INSERT OR IGNORE INTO ${quoteIdentifier(targetTableName)} ` +
+    `(profile, provider, settings_json, secrets_json, created_at, updated_at) ` +
+    `SELECT 'default', old.provider, old.settings_json, old.secrets_json, old.created_at, old.updated_at ` +
+    `FROM ${quoteIdentifier(sourceTableName)} old ` +
+    `WHERE old.provider IS NOT NULL ` +
+    `AND NOT EXISTS (` +
+    `SELECT 1 FROM ${quoteIdentifier(sourceTableName)} newer ` +
+    `WHERE newer.provider = old.provider ` +
+    `AND (newer.updated_at > old.updated_at OR (newer.updated_at = old.updated_at AND newer.rowid > old.rowid))` +
+    `)`
+  ).run()
+}
+
+function copyLegacyActiveSettingsToDefaultProfile(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  sourceTableName: string,
+  targetTableName: string,
+): void {
+  if (!tableExists(db, sourceTableName) || !tableExists(db, targetTableName)) return
+
+  db.prepare(
+    `INSERT OR IGNORE INTO ${quoteIdentifier(targetTableName)} ` +
+    `(profile, active_provider, created_at, updated_at) ` +
+    `SELECT 'default', active_provider, created_at, updated_at ` +
+    `FROM ${quoteIdentifier(sourceTableName)} ` +
+    `WHERE active_provider IS NOT NULL ` +
+    `ORDER BY updated_at DESC, rowid DESC ` +
+    `LIMIT 1`
+  ).run()
+}
+
+function tableHasColumn(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+  columnName: string,
+): boolean {
+  if (!tableExists(db, tableName)) return false
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
+  return columns.some(column => column.name === columnName)
+}
+
+function pruneDuplicateProfileProviderSettings(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+): void {
+  if (!tableHasColumn(db, tableName, 'profile') || !tableHasColumn(db, tableName, 'provider')) return
+
+  db.prepare(
+    `DELETE FROM ${quoteIdentifier(tableName)} ` +
+    `WHERE rowid NOT IN (` +
+    `SELECT kept.rowid FROM ${quoteIdentifier(tableName)} kept ` +
+    `WHERE NOT EXISTS (` +
+    `SELECT 1 FROM ${quoteIdentifier(tableName)} newer ` +
+    `WHERE newer.profile = kept.profile ` +
+    `AND newer.provider = kept.provider ` +
+    `AND (newer.updated_at > kept.updated_at OR (newer.updated_at = kept.updated_at AND newer.rowid > kept.rowid))` +
+    `)` +
+    `)`
+  ).run()
+}
+
+function pruneDuplicateProfileActiveSettings(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+): void {
+  if (!tableHasColumn(db, tableName, 'profile')) return
+
+  db.prepare(
+    `DELETE FROM ${quoteIdentifier(tableName)} ` +
+    `WHERE rowid NOT IN (` +
+    `SELECT kept.rowid FROM ${quoteIdentifier(tableName)} kept ` +
+    `WHERE NOT EXISTS (` +
+    `SELECT 1 FROM ${quoteIdentifier(tableName)} newer ` +
+    `WHERE newer.profile = kept.profile ` +
+    `AND (newer.updated_at > kept.updated_at OR (newer.updated_at = kept.updated_at AND newer.rowid > kept.rowid))` +
+    `)` +
+    `)`
+  ).run()
+}
+
+function ensureProfileSettingsIndexes(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  activeTableName: string,
+  activeIndexName: string,
+  providerTableName: string,
+  providerIndexes: Record<string, string>,
+): void {
+  pruneDuplicateProfileActiveSettings(db, activeTableName)
+  pruneDuplicateProfileProviderSettings(db, providerTableName)
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${quoteIdentifier(activeIndexName)} ON ${quoteIdentifier(activeTableName)}(profile)`)
+  createIndexes(db, providerIndexes)
+}
+
 /**
  * 主同步函数
  * - 表不存在：创建
@@ -519,10 +672,36 @@ export function initAllHermesTables(): void {
     })
     syncTable(STT_USER_SETTINGS_TABLE, STT_USER_SETTINGS_SCHEMA)
     migrateLegacySttProviderSettingsUserIdDefault(db)
+    syncTable(STT_PROFILE_PROVIDER_SETTINGS_TABLE, STT_PROFILE_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: STT_PROFILE_PROVIDER_SETTINGS_INDEXES,
+    })
+    syncTable(STT_PROFILE_SETTINGS_TABLE, STT_PROFILE_SETTINGS_SCHEMA)
+    ensureProfileSettingsIndexes(
+      db,
+      STT_PROFILE_SETTINGS_TABLE,
+      'idx_stt_profile_settings_profile',
+      STT_PROFILE_PROVIDER_SETTINGS_TABLE,
+      STT_PROFILE_PROVIDER_SETTINGS_INDEXES,
+    )
+    copyLegacyProviderSettingsToDefaultProfile(db, STT_PROVIDER_SETTINGS_TABLE, STT_PROFILE_PROVIDER_SETTINGS_TABLE)
+    copyLegacyActiveSettingsToDefaultProfile(db, STT_USER_SETTINGS_TABLE, STT_PROFILE_SETTINGS_TABLE)
     syncTable(TTS_PROVIDER_SETTINGS_TABLE, TTS_PROVIDER_SETTINGS_SCHEMA, {
       indexes: TTS_PROVIDER_SETTINGS_INDEXES,
     })
     syncTable(TTS_USER_SETTINGS_TABLE, TTS_USER_SETTINGS_SCHEMA)
+    syncTable(TTS_PROFILE_PROVIDER_SETTINGS_TABLE, TTS_PROFILE_PROVIDER_SETTINGS_SCHEMA, {
+      indexes: TTS_PROFILE_PROVIDER_SETTINGS_INDEXES,
+    })
+    syncTable(TTS_PROFILE_SETTINGS_TABLE, TTS_PROFILE_SETTINGS_SCHEMA)
+    ensureProfileSettingsIndexes(
+      db,
+      TTS_PROFILE_SETTINGS_TABLE,
+      'idx_tts_profile_settings_profile',
+      TTS_PROFILE_PROVIDER_SETTINGS_TABLE,
+      TTS_PROFILE_PROVIDER_SETTINGS_INDEXES,
+    )
+    copyLegacyProviderSettingsToDefaultProfile(db, TTS_PROVIDER_SETTINGS_TABLE, TTS_PROFILE_PROVIDER_SETTINGS_TABLE)
+    copyLegacyActiveSettingsToDefaultProfile(db, TTS_USER_SETTINGS_TABLE, TTS_PROFILE_SETTINGS_TABLE)
 
     // Group chat - basic tables
     syncTable(GC_ROOMS_TABLE, GC_ROOMS_SCHEMA)

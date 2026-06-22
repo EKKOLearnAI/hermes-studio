@@ -1068,13 +1068,15 @@ export class GlobalAgentServer {
     return `mcu-${instance}-${profileId}`
   }
 
-  private async synthesizeMcuSpeech(text: string, userToken: string): Promise<{ url: string }> {
+  private async synthesizeMcuSpeech(text: string, userToken: string, profile: string): Promise<{ url: string }> {
+    const headers = {
+      Authorization: `Bearer ${userToken}`,
+      'Content-Type': 'application/json',
+      'X-Hermes-Profile': profile || 'default',
+    }
     const requestTts = (provider?: 'edge') => this.fetchImpl(`${this.localBaseUrl}/api/hermes/tts/synthesize`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${userToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         ...(provider ? { provider } : {}),
         text,
@@ -1121,10 +1123,7 @@ export class GlobalAgentServer {
       try {
         const fallback = await this.fetchImpl(`${this.localBaseUrl}/api/hermes/tts/synthesize`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${userToken}`,
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify({
             provider: 'edge',
             text,
@@ -1151,7 +1150,7 @@ export class GlobalAgentServer {
   private async enqueueMcuSpeechSegment(options: McuVoiceChatTurnOptions, segmentId: string, text: string): Promise<void> {
     if (this.interruptedMcuInteractions.has(options.interactionId)) return
     this.emitMcuEvent({ type: 'interaction.status', interactionId: options.interactionId, status: 'speaking' }, { clientId: options.clientId })
-    const audio = await this.synthesizeMcuSpeech(text, options.userToken)
+    const audio = await this.synthesizeMcuSpeech(text, options.userToken, options.profile)
     if (this.interruptedMcuInteractions.has(options.interactionId)) return
     const waitForDone = this.waitForMcuAudioDone(segmentId, Math.max(90_000, Math.min(text.length * 1200, 300_000)))
     this.emitMcuEvent({

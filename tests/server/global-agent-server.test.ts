@@ -489,8 +489,11 @@ describe('GlobalAgentServer', () => {
     })
     server.init()
 
-    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt')
+    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
     expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.pcm$/)
+    expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
+      'X-Hermes-Profile': 'research',
+    })
   })
 
   it('marks TTS requests as MCU playback without forcing every provider to PCM', async () => {
@@ -510,8 +513,11 @@ describe('GlobalAgentServer', () => {
     })
     server.init()
 
-    await (server as any).synthesizeMcuSpeech('hello', 'user-jwt')
+    await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
 
+    expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
+      'X-Hermes-Profile': 'research',
+    })
     expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
       text: 'hello',
       options: {
@@ -547,10 +553,13 @@ describe('GlobalAgentServer', () => {
     })
     server.init()
 
-    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt')
+    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
 
     expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.pcm$/)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
+      'X-Hermes-Profile': 'research',
+    })
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
       provider: 'edge',
       text: 'hello',
@@ -587,10 +596,13 @@ describe('GlobalAgentServer', () => {
     })
     server.init()
 
-    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt')
+    const audio = await (server as any).synthesizeMcuSpeech('hello', 'user-jwt', 'research')
 
     expect(audio.url).toMatch(/^\/api\/hermes\/mcu\/audio\/[a-f0-9-]+\.pcm$/)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
+      'X-Hermes-Profile': 'research',
+    })
     expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
       provider: 'edge',
       text: 'hello',
