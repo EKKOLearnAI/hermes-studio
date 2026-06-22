@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import ProfileCard from './ProfileCard.vue'
+import type { HermesProfile } from '@/api/hermes/profiles'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
-defineEmits<{ rename: [name: string] }>()
+defineEmits<{
+  rename: [name: string]
+  edit: [profile: HermesProfile]
+}>()
 
 const { t } = useI18n()
 const profilesStore = useProfilesStore()
@@ -23,6 +27,7 @@ const profilesStore = useProfilesStore()
       :key="p.name"
       :profile="p"
       @rename="$emit('rename', $event)"
+      @edit="$emit('edit', $event)"
     />
   </div>
 </template>

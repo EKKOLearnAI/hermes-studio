@@ -2,9 +2,11 @@
 import { ref, onMounted } from 'vue'
 import { NButton, NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import type { HermesProfile } from '@/api/hermes/profiles'
 import ProfilesPanel from '@/components/hermes/profiles/ProfilesPanel.vue'
 import ProfileCreateModal from '@/components/hermes/profiles/ProfileCreateModal.vue'
 import ProfileRenameModal from '@/components/hermes/profiles/ProfileRenameModal.vue'
+import ProfileEditModal from '@/components/hermes/profiles/ProfileEditModal.vue'
 import ProfileImportModal from '@/components/hermes/profiles/ProfileImportModal.vue'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
@@ -14,6 +16,7 @@ const profilesStore = useProfilesStore()
 const showCreateModal = ref(false)
 const showImportModal = ref(false)
 const renamingProfile = ref<string | null>(null)
+const editingProfile = ref<HermesProfile | null>(null)
 
 onMounted(() => {
   profilesStore.fetchHermesProfiles()
@@ -25,6 +28,10 @@ function handleCreated() {
 
 function handleRenamed() {
   renamingProfile.value = null
+}
+
+function handleEdited() {
+  editingProfile.value = null
 }
 
 function handleImported() {
@@ -61,7 +68,10 @@ function handleImported() {
 
     <div class="profiles-content">
       <NSpin :show="profilesStore.loading && profilesStore.profiles.length === 0">
-        <ProfilesPanel @rename="renamingProfile = $event" />
+        <ProfilesPanel
+          @rename="renamingProfile = $event"
+          @edit="editingProfile = $event"
+        />
       </NSpin>
     </div>
 
@@ -75,6 +85,12 @@ function handleImported() {
       :profile-name="renamingProfile"
       @close="renamingProfile = null"
       @saved="handleRenamed"
+    />
+    <ProfileEditModal
+      v-if="editingProfile"
+      :profile="editingProfile"
+      @close="editingProfile = null"
+      @saved="handleEdited"
     />
     <ProfileImportModal
       v-if="showImportModal"

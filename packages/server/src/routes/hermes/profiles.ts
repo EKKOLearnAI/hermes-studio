@@ -13,6 +13,7 @@ profileRoutes.post('/api/hermes/profiles/:name/gateway/restart', ctrl.restartGat
 profileRoutes.put('/api/hermes/profiles/:name/avatar', ctrl.updateAvatar)
 profileRoutes.delete('/api/hermes/profiles/:name/avatar', ctrl.deleteAvatar)
 profileRoutes.get('/api/hermes/profiles/:name', ctrl.get)
+profileRoutes.put('/api/hermes/profiles/:name/model', ctrl.updateModel)
 profileRoutes.delete('/api/hermes/profiles/:name', ctrl.remove)
 profileRoutes.post('/api/hermes/profiles/:name/rename', ctrl.rename)
 profileRoutes.put('/api/hermes/profiles/active', requireSuperAdmin, ctrl.switchProfile)

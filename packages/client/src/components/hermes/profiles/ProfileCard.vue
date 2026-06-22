@@ -7,7 +7,9 @@ import { useI18n } from 'vue-i18n'
 import ProfileAvatar from './ProfileAvatar.vue'
 
 const props = defineProps<{ profile: HermesProfile }>()
-const emit = defineEmits<{}>()
+const emit = defineEmits<{
+  edit: [profile: HermesProfile]
+}>()
 
 const { t } = useI18n()
 const profilesStore = useProfilesStore()
@@ -60,6 +62,10 @@ async function performHermesSwitch() {
   } finally {
     switching.value = false
   }
+}
+
+function handleEdit() {
+  emit('edit', props.profile)
 }
 
 function handleDelete() {
@@ -162,6 +168,9 @@ async function handleExport() {
         @click="handleSwitch"
       >
         {{ t('profiles.switchTo') }}
+      </NButton>
+      <NButton size="tiny" quaternary @click.stop="handleEdit">
+        {{ t('common.edit') }}
       </NButton>
       <NButton
         size="tiny"

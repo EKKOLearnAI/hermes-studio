@@ -16,6 +16,7 @@ import { smartCloneCleanup, copyModelProviderAuthForClone } from '../../services
 import { detectHermesRootHome } from '../../services/hermes/hermes-path'
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
+import { updateConfigYamlForProfile } from '../../services/config-helpers'
 import type { HermesProfile } from '../../services/hermes/hermes-cli'
 import { listUserProfiles } from '../../db/hermes/users-store'
 
@@ -470,6 +471,42 @@ export async function get(ctx: any) {
   try {
     const profile = await hermesCli.getProfile(name)
     ctx.body = { profile: { ...profile, avatar: readProfileAvatar(profile.name) } }
+  } catch (err: any) {
+    ctx.status = err.message.includes('not found') ? 404 : 500
+    ctx.body = { error: err.message }
+  }
+}
+
+export async function updateModel(ctx: any) {
+  const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
+  if (isForbiddenProfileName(name)) {
+    ctx.status = 400
+    ctx.body = { error: `Profile name '${name}' is reserved` }
+    return
+  }
+
+  const body = ctx.request.body as { default?: string; provider?: string }
+  const defaultModel = String(body.default || '').trim()
+  if (!defaultModel) {
+    ctx.status = 400
+    ctx.body = { error: 'Missing default model' }
+    return
+  }
+
+  try {
+    await hermesCli.getProfile(name)
+    await updateConfigYamlForProfile(name, (config) => {
+      const model = config.model && typeof config.model === 'object' && !Array.isArray(config.model)
+        ? { ...config.model }
+        : {}
+      model.default = defaultModel
+      const provider = String(body.provider || '').trim()
+      if (provider) model.provider = provider
+      config.model = model
+      return config
+    })
+    ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = err.message.includes('not found') ? 404 : 500
     ctx.body = { error: err.message }

@@ -313,6 +313,46 @@ describe('Profile Routes', () => {
     })
   })
 
+  describe('profile model editing', () => {
+    it('updates the profile default model in config.yaml without changing the provider', async () => {
+      const hermesHome = await mkdtemp(join(tmpdir(), 'hermes-profile-model-'))
+      tempHomes.push(hermesHome)
+      process.env.HERMES_HOME = hermesHome
+      const profileDir = join(hermesHome, 'profiles', 'work')
+      await mkdir(profileDir, { recursive: true })
+      await writeFile(join(profileDir, 'config.yaml'), [
+        'model:',
+        '  default: old-model',
+        '  provider: old-provider',
+        '',
+      ].join('\n'), 'utf-8')
+      vi.mocked(hermesCli.getProfile).mockResolvedValue({
+        name: 'work',
+        path: profileDir,
+        model: 'old-model',
+        provider: 'old-provider',
+        skills: 0,
+        hasEnv: false,
+        hasSoulMd: false,
+      } as any)
+      const { updateModel } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const ctx: any = {
+        params: { name: 'work' },
+        request: { body: { default: 'new-model' } },
+        status: 200,
+        body: undefined,
+      }
+
+      await updateModel(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toEqual({ success: true })
+      const updated = readFileSync(join(profileDir, 'config.yaml'), 'utf-8')
+      expect(updated).toContain('default: new-model')
+      expect(updated).toContain('provider: old-provider')
+    })
+  })
+
   describe('profile avatars', () => {
     it('stores generated avatar metadata under the Web UI home', async () => {
       const webUiHome = await mkdtemp(join(tmpdir(), 'hermes-web-ui-avatar-'))
