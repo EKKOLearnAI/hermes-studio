@@ -35,6 +35,7 @@ function goHome() {
       <nav class="header-nav">
         <a class="nav-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="nav-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
+        <a class="nav-link" @click.prevent="navigateTo('docs.esp32')">{{ t('nav.miniBox') }}</a>
         <a
           class="nav-link"
           href="https://github.com/EKKOLearnAI/hermes-studio"
@@ -66,6 +67,7 @@ function goHome() {
       <div class="mobile-menu-inner" @click.stop>
         <a class="mobile-link" @click.prevent="navigateTo('landing')">{{ t('nav.home') }}</a>
         <a class="mobile-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
+        <a class="mobile-link" @click.prevent="navigateTo('docs.esp32')">{{ t('nav.miniBox') }}</a>
         <a class="mobile-link" href="https://github.com/EKKOLearnAI/hermes-studio" target="_blank" rel="noopener">{{ t('nav.github') }}</a>
         <div class="mobile-actions">
           <button class="mobile-action-btn" @click="switchLocale">

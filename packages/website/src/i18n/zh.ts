@@ -17,6 +17,7 @@ export default {
   nav: {
     home: '首页',
     docs: '文档',
+    miniBox: '小方盒',
     github: 'GitHub',
   },
   hero: {

@@ -17,6 +17,7 @@ export default {
   nav: {
     home: 'Home',
     docs: 'Documentation',
+    miniBox: 'Mini Box',
     github: 'GitHub',
   },
   hero: {
