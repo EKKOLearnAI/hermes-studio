@@ -1,4 +1,5 @@
 import { request, getApiKey, getBaseUrlValue } from '../client'
+import type { ProviderApiMode } from './system'
 
 export interface SessionSummary {
   id: string
@@ -254,11 +255,11 @@ export async function setSessionWorkspace(id: string, workspace: string | null):
   }
 }
 
-export async function setSessionModel(id: string, model: string, provider: string): Promise<boolean> {
+export async function setSessionModel(id: string, model: string, provider: string, apiMode?: ProviderApiMode): Promise<boolean> {
   try {
     await request(`/api/hermes/sessions/${id}/model`, {
       method: 'POST',
-      body: JSON.stringify({ model, provider }),
+      body: JSON.stringify({ model, provider, apiMode }),
     })
     return true
   } catch {

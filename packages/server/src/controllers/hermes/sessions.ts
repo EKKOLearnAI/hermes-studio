@@ -25,6 +25,7 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { codingAgentRunManager } from '../../services/agent-runner/coding-agent-run-manager'
 import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
+import { ensureHermesRunWorkspace } from '../../services/hermes/run-chat/workspace'
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -802,13 +803,28 @@ export async function setModel(ctx: any) {
   const existing = getSession(id)
   if (denySessionAccess(ctx, existing)) return
   const profile = existing?.profile || requestedProfile(ctx) || 'default'
-  if (!existing) {
-    createSession({ id, profile, title: '' })
-  }
   const cleanModel = model.trim()
   const cleanProvider = (provider || '').trim()
-  updateSession(id, { model: cleanModel, provider: cleanProvider } as any)
-  await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
+  const codingAgentSession = isCodingAgentSession(existing)
+  const workspace = !codingAgentSession
+    ? await ensureHermesRunWorkspace(profile, existing?.workspace)
+    : undefined
+  if (!existing) {
+    createSession({ id, profile, title: '', model: cleanModel, provider: cleanProvider, workspace })
+  }
+  const updates: Record<string, string> = { model: cleanModel, provider: cleanProvider }
+  if (!codingAgentSession && existing && !existing.workspace && workspace) updates.workspace = workspace
+  if (
+    codingAgentSession &&
+    existing &&
+    (existing.model !== cleanModel || existing.provider !== cleanProvider)
+  ) {
+    updates.agent_native_session_id = ''
+  }
+  updateSession(id, updates as any)
+  if (!codingAgentSession) {
+    await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)
+  }
   ctx.body = { ok: true }
 }
 

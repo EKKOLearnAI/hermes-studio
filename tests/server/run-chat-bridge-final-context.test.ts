@@ -92,6 +92,10 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () =>
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
 }))
 
+vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+  getProfileDir: (profile: string) => `/tmp/hermes-bridge-final-context/${profile || 'default'}`,
+}))
+
 vi.mock('../../packages/server/src/middleware/user-auth', () => ({
   issueModelRunJwt: issueModelRunJwtMock,
 }))
@@ -356,6 +360,7 @@ describe('bridge run final context usage', () => {
     expect(createSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       id: 'session-1',
       source: 'global_agent',
+      workspace: '/tmp/hermes-bridge-final-context/default/workspace',
     }))
     expect(state.source).toBe('global_agent')
   })

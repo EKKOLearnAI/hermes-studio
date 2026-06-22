@@ -542,6 +542,12 @@ function isCodingAgentLikeSession(session?: Pick<Session, 'source' | 'agent' | '
     session?.agent === 'codex'
 }
 
+function clearCodingAgentRuntimeCredentials(session?: Session | null) {
+  if (!session || !isCodingAgentLikeSession(session)) return
+  session.baseUrl = undefined
+  session.apiKey = undefined
+}
+
 function isQuotaExceededError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const e = error as { name?: string, code?: number }
@@ -1230,19 +1236,29 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
-  async function switchSessionModel(modelId: string, provider?: string, sessionId?: string): Promise<boolean> {
+  async function switchSessionModel(modelId: string, provider?: string, sessionId?: string, apiMode?: ProviderApiMode): Promise<boolean> {
     const targetId = sessionId || activeSession.value?.id
     if (!targetId) return false
-    const ok = await setSessionModel(targetId, modelId, provider || '')
-    if (!ok) return false
     const target = sessions.value.find(s => s.id === targetId)
+    const activeTarget = activeSession.value?.id === targetId ? activeSession.value : null
+    const previousProvider = String(target?.provider ?? activeTarget?.provider ?? '')
+    const nextProvider = provider || ''
+    const shouldClearRuntimeCredentials = previousProvider !== nextProvider && (
+      isCodingAgentLikeSession(target) || isCodingAgentLikeSession(activeTarget)
+    )
+    const ok = await setSessionModel(targetId, modelId, provider || '', apiMode)
+    if (!ok) return false
     if (target) {
       target.model = modelId
       target.provider = provider || ''
+      if (apiMode) target.apiMode = apiMode
+      if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(target)
     }
-    if (activeSession.value?.id === targetId) {
-      activeSession.value.model = modelId
-      activeSession.value.provider = provider || ''
+    if (activeTarget) {
+      activeTarget.model = modelId
+      activeTarget.provider = provider || ''
+      if (apiMode) activeTarget.apiMode = apiMode
+      if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
     return true
   }

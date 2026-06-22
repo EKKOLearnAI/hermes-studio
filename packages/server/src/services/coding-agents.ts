@@ -454,6 +454,30 @@ function inferLaunchApiMode(provider: string, baseUrl: string, fallback: ApiMode
   return fallback
 }
 
+function providerPresetHost(value?: string): string {
+  const url = String(value || '').trim()
+  if (!url) return ''
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+function belongsToDifferentBuiltinProvider(provider: string, baseUrl: string): boolean {
+  const providerKey = providerKeyWithoutCustomPrefix(String(provider || '').trim().toLowerCase())
+  if (!providerKey || provider !== providerKey) return false
+  const currentPreset = PROVIDER_PRESETS.find(item => item.value === providerKey)
+  if (!currentPreset) return false
+  const inputHost = providerPresetHost(baseUrl)
+  const currentHost = providerPresetHost(currentPreset.base_url)
+  if (!inputHost || !currentHost || inputHost === currentHost) return false
+  return PROVIDER_PRESETS.some((item) => (
+    item.value !== providerKey &&
+    providerPresetHost(item.base_url) === inputHost
+  ))
+}
+
 function isScopedCodingAgentAuthProvider(provider: string, apiKey = ''): boolean {
   const providerKey = String(provider || '').trim().toLowerCase()
   return CODING_AGENT_SCOPED_AUTH_PROVIDERS.has(providerKey)
@@ -476,13 +500,19 @@ async function resolveStoredProviderLaunchInput(
   const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
   const provider = String(input.provider || existingSession?.provider || '').trim()
   const model = String(input.model || existingSession?.model || '').trim()
+  const workspace = input.workspace || existingSession?.workspace || undefined
   let baseUrl = String(input.baseUrl || '').trim()
   let apiKey = String(input.apiKey || '').trim()
   let apiMode = input.apiMode
   let canonicalProvider = provider
+  const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
+  if (ignoredStaleProviderRuntime) {
+    baseUrl = ''
+    apiKey = ''
+  }
 
   if (!provider || (baseUrl && apiKey && apiMode)) {
-    return { ...input, profile, provider: provider || input.provider, model: model || input.model, baseUrl, apiKey, apiMode }
+    return { ...input, profile, provider: provider || input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
   }
 
   let config: Record<string, any> = {}
@@ -538,8 +568,9 @@ async function resolveStoredProviderLaunchInput(
     profile,
     provider: canonicalProvider,
     model: model || input.model,
-    baseUrl: baseUrl || input.baseUrl,
-    apiKey: apiKey || input.apiKey,
+    workspace,
+    baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
+    apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
     apiMode,
   }
 }
@@ -1719,7 +1750,9 @@ export async function startCodingAgentRun(
   const agentSessionId = resolvedInput.agentSessionId || existingAgentSessionId || makeAgentSessionId()
   const canResumeNativeSession = existingSession
     ? storedCodingAgentMode(existingSession) === requestedMode &&
-      (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent)
+      (existingSession.agent === (id === 'codex' ? 'codex' : 'claude') || !existingSession.agent) &&
+      String(existingSession.provider || '').trim() === String(resolvedInput.provider || '').trim() &&
+      String(existingSession.model || '').trim() === String(resolvedInput.model || '').trim()
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
   const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' ? randomUUID() : '')

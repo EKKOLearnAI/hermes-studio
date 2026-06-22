@@ -11,6 +11,7 @@ import type { ContentBlock, SessionState } from './types'
 import { writeModelRunProfileToken } from './model-run-prompt'
 import type { AuthenticatedUser } from '../../../middleware/user-auth'
 import { getSystemPrompt } from '../../../lib/llm-prompt'
+import { getSession } from '../../../db/hermes/session-store'
 
 export interface CodingAgentRunSocketData {
   input: string | ContentBlock[]
@@ -57,11 +58,14 @@ export async function handleCodingAgentRun(
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
   const mode = data.mode === 'global' ? 'global' : 'scoped'
+  const storedSession = getSession(sessionId)
+  const launchProvider = data.provider || (mode === 'scoped' ? storedSession?.provider || undefined : undefined)
+  const launchModel = data.model || (mode === 'scoped' ? storedSession?.model || undefined : undefined)
   if (runId && !codingAgentRunManager.isSessionLaunchCompatible(sessionId, {
     agentId,
     mode,
-    provider: data.provider,
-    model: data.model,
+    provider: launchProvider,
+    model: launchModel,
   })) {
     codingAgentRunManager.stop(sessionId, { reportClosed: false })
     runId = undefined
@@ -71,8 +75,8 @@ export async function handleCodingAgentRun(
       sessionId,
       mode,
       profile,
-      provider: data.provider,
-      model: data.model,
+      provider: launchProvider,
+      model: launchModel,
       workspace: data.workspace,
       baseUrl: data.baseUrl || data.base_url,
       apiKey: data.apiKey || data.api_key,

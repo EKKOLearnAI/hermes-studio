@@ -77,6 +77,7 @@ describe('chat store reasoning/tool boundaries', () => {
     setActivePinia(createPinia())
     chatApi.startRunViaSocket.mockReturnValue({ abort: vi.fn() })
     sessionsApi.deleteSession.mockResolvedValue(true)
+    sessionsApi.setSessionModel.mockResolvedValue(true)
   })
 
   it('merges reasoning across tool cycles without appending post-tool text before the tool', async () => {
@@ -321,6 +322,38 @@ describe('chat store reasoning/tool boundaries', () => {
     expect(body.apiKey).toBeUndefined()
     expect(body.apiMode).toBeUndefined()
     expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it('clears stale coding-agent runtime credentials when switching providers', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'coding_agent'
+    session.agent = 'codex'
+    session.codingAgentId = 'codex'
+    session.codingAgentMode = 'scoped'
+    session.provider = 'xiaomi'
+    session.model = 'mimo-v2.5-pro'
+    session.baseUrl = 'https://api.xiaomimimo.com/v1'
+    session.apiKey = 'sk-xiaomi'
+    session.apiMode = 'chat_completions'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    const ok = await store.switchSessionModel('deepseek-v4-pro', 'deepseek', 'session-1', 'chat_completions')
+
+    expect(ok).toBe(true)
+    expect(sessionsApi.setSessionModel).toHaveBeenCalledWith(
+      'session-1',
+      'deepseek-v4-pro',
+      'deepseek',
+      'chat_completions',
+    )
+    expect(session.provider).toBe('deepseek')
+    expect(session.model).toBe('deepseek-v4-pro')
+    expect(session.baseUrl).toBeUndefined()
+    expect(session.apiKey).toBeUndefined()
+    expect(session.apiMode).toBe('chat_completions')
   })
 
   it('sends the selected workspace when starting a coding-agent run', async () => {

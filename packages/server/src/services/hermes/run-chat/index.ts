@@ -25,6 +25,7 @@ import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
+import { ensureHermesRunWorkspace } from './workspace'
 
 export type { ContentBlock } from './types'
 
@@ -425,7 +426,7 @@ export class ChatRunSocket {
         : getSystemPrompt()
       if (data.session_id) {
         const sessionRow = getSession(data.session_id)
-        const workspace = sessionRow?.workspace || String(data.workspace || '').trim()
+        const workspace = await ensureHermesRunWorkspace(profile, sessionRow?.workspace || data.workspace)
         if (workspace) {
           const workspaceCtx = `[Current working directory: ${workspace}]`
           fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
