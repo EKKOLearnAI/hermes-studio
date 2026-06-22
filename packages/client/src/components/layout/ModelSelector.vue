@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { NModal, NInput, NSelect } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
+import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useI18n } from 'vue-i18n'
 
@@ -11,6 +12,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 
 const showModal = ref(false)
@@ -18,6 +20,8 @@ const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
 const customInput = ref('')
 const customProvider = ref('')
+const selectingModelKey = ref<string | null>(null)
+const selectionError = ref('')
 
 const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
 const activeModelGroups = computed(() => {
@@ -26,10 +30,14 @@ const activeModelGroups = computed(() => {
 })
 
 const providerOptions = computed(() => {
-  const current = appStore.selectedProvider
+  const current = effectiveProvider.value || appStore.selectedProvider
   customProvider.value = current
   return activeModelGroups.value.map(g => ({ label: g.label, value: g.provider }))
 })
+
+const effectiveModel = computed(() => chatStore.activeSession?.model || appStore.selectedModel)
+const effectiveProvider = computed(() => chatStore.activeSession?.provider || appStore.selectedProvider)
+const isSelectingModel = computed(() => selectingModelKey.value !== null)
 
 const modelGroupsWithCustom = computed(() =>
   activeModelGroups.value.map(g => ({
@@ -43,14 +51,14 @@ const modelGroupsWithCustom = computed(() =>
 
 const selectedModelInActiveProfile = computed(() =>
   modelGroupsWithCustom.value.some(group =>
-    group.provider === appStore.selectedProvider && group.models.includes(appStore.selectedModel),
+    group.provider === effectiveProvider.value && group.models.includes(effectiveModel.value),
   ),
 )
 
 const selectedDisplayName = computed(() =>
   selectedModelInActiveProfile.value
-    ? appStore.displayModelName(appStore.selectedModel, appStore.selectedProvider)
-    : '',
+    ? appStore.displayModelName(effectiveModel.value, effectiveProvider.value)
+    : effectiveModel.value,
 )
 
 function isCustomModel(model: string, provider: string) {
@@ -87,12 +95,43 @@ function isGroupCollapsed(provider: string) {
   return !!collapsedGroups.value[provider]
 }
 
-function handleSelect(model: string, provider: string) {
+async function persistSelectedModel(model: string, provider: string) {
+  if (chatStore.activeSession?.id) {
+    return chatStore.switchSessionModel(model, provider, chatStore.activeSession.id)
+  } else {
+    await appStore.switchModel(model, provider)
+    return true
+  }
+}
+
+function modelSelectionKey(model: string, provider: string) {
+  return `${provider}\u0000${model}`
+}
+
+function isModelSwitching(model: string, provider: string) {
+  return selectingModelKey.value === modelSelectionKey(model, provider)
+}
+
+async function handleSelect(model: string, provider: string) {
+  if (isSelectingModel.value) return
   const meta = activeModelGroups.value.find(g => g.provider === provider)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, provider)
-  setModalShow(false)
-  searchQuery.value = ''
+  selectingModelKey.value = modelSelectionKey(model, provider)
+  selectionError.value = ''
+  try {
+    const ok = await persistSelectedModel(model, provider)
+    if (!ok) {
+      selectionError.value = t('chat.modelSetFailed')
+      return
+    }
+    setModalShow(false)
+    searchQuery.value = ''
+  } catch (err) {
+    console.error('Failed to select model:', err)
+    selectionError.value = t('chat.modelSetFailed')
+  } finally {
+    selectingModelKey.value = null
+  }
 }
 
 function modelDisplayName(model: string, provider: string) {
@@ -103,16 +142,30 @@ function modelAlias(model: string, provider: string) {
   return appStore.getModelAlias(model, provider)
 }
 
-function handleCustomSubmit() {
+async function handleCustomSubmit() {
+  if (isSelectingModel.value) return
   const model = customInput.value.trim()
   if (!model || !customProvider.value) return
   // 拦截 disabled 模型，避免 custom input 绕过列表里的灰显限制
   const meta = activeModelGroups.value.find(g => g.provider === customProvider.value)?.model_meta?.[model]
   if (meta?.disabled) return
-  appStore.switchModel(model, customProvider.value)
-  setModalShow(false)
-  searchQuery.value = ''
-  customInput.value = ''
+  selectingModelKey.value = modelSelectionKey(model, customProvider.value)
+  selectionError.value = ''
+  try {
+    const ok = await persistSelectedModel(model, customProvider.value)
+    if (!ok) {
+      selectionError.value = t('chat.modelSetFailed')
+      return
+    }
+    setModalShow(false)
+    searchQuery.value = ''
+    customInput.value = ''
+  } catch (err) {
+    console.error('Failed to select custom model:', err)
+    selectionError.value = t('chat.modelSetFailed')
+  } finally {
+    selectingModelKey.value = null
+  }
 }
 
 function setModalShow(show: boolean) {
@@ -123,12 +176,14 @@ function setModalShow(show: boolean) {
 function openModal() {
   collapsedGroups.value = {}
   searchQuery.value = ''
+  selectionError.value = ''
   customInput.value = ''
-  customProvider.value = appStore.selectedProvider
+  customProvider.value = effectiveProvider.value || appStore.selectedProvider
   setModalShow(true)
 }
 
 function handleModalShowChange(show: boolean) {
+  if (!show && isSelectingModel.value) return
   setModalShow(show)
 }
 
@@ -172,8 +227,11 @@ async function handleRefresh() {
         </svg>
       </button>
     </div>
-    <button class="model-trigger" @click="openModal">
-      <span class="model-name" :title="appStore.selectedModel">{{ selectedDisplayName || '—' }}</span>
+    <button class="model-trigger" :class="{ switching: isSelectingModel }" :disabled="isSelectingModel" @click="openModal">
+      <span class="model-name" :title="effectiveModel">
+        {{ isSelectingModel ? t('common.loading') : (selectedDisplayName || '—') }}
+      </span>
+      <span v-if="isSelectingModel" class="model-trigger-spinner" aria-hidden="true" />
       <svg class="model-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9" />
       </svg>
@@ -184,16 +242,21 @@ async function handleRefresh() {
       preset="card"
       :title="t('models.title')"
       :style="{ width: 'min(480px, calc(100vw - 32px))' }"
-      :mask-closable="true"
+      :mask-closable="!isSelectingModel"
       @update:show="handleModalShowChange"
     >
       <NInput
         v-model:value="searchQuery"
         :placeholder="t('models.searchPlaceholder')"
+        :disabled="isSelectingModel"
         clearable
         size="small"
         class="model-search"
       />
+      <div v-if="isSelectingModel || selectionError" class="model-selection-status" :class="{ error: selectionError }" role="status" aria-live="polite">
+        <span v-if="isSelectingModel" class="model-status-spinner" aria-hidden="true" />
+        <span>{{ selectionError || t('common.loading') }}</span>
+      </div>
       <div class="model-list">
         <div v-for="group in filteredGroups" :key="group.provider" class="model-group">
           <div class="model-group-header" @click="toggleGroup(group.provider)">
@@ -213,8 +276,10 @@ async function handleRefresh() {
               :key="model"
               class="model-item"
               :class="{
-                active: model === appStore.selectedModel && group.provider === appStore.selectedProvider,
+                active: model === effectiveModel && group.provider === effectiveProvider,
                 disabled: !!group.model_meta?.[model]?.disabled,
+                switching: isModelSwitching(model, group.provider),
+                busy: isSelectingModel,
               }"
               :title="group.model_meta?.[model]?.disabled ? t('models.disabledTooltip') : ''"
               @click="handleSelect(model, group.provider)"
@@ -232,12 +297,14 @@ async function handleRefresh() {
                 v-if="isCustomModel(model, group.provider)"
                 class="model-custom-remove"
                 type="button"
+                :disabled="isSelectingModel"
                 :title="t('models.removeCustomModel')"
                 @click.stop="removeCustomModel(model, group.provider)"
               >
                 ×
               </button>
-              <svg v-if="model === appStore.selectedModel && group.provider === appStore.selectedProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <span v-if="isModelSwitching(model, group.provider)" class="model-switch-spinner" aria-hidden="true" />
+              <svg v-if="model === effectiveModel && group.provider === effectiveProvider" class="model-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
@@ -251,12 +318,14 @@ async function handleRefresh() {
             <NSelect
               v-model:value="customProvider"
               :options="providerOptions"
+              :disabled="isSelectingModel"
               size="small"
               class="model-custom-provider"
             />
             <NInput
               v-model:value="customInput"
               :placeholder="t('models.customModelPlaceholder')"
+              :disabled="isSelectingModel"
               size="small"
               class="model-custom-input"
               @keydown.enter="handleCustomSubmit"
@@ -341,11 +410,61 @@ async function handleRefresh() {
   color: $text-primary;
   font-size: 13px;
   cursor: pointer;
-  transition: border-color $transition-fast;
+  transition: border-color $transition-fast, background-color $transition-fast;
 
-  &:hover {
+  &:hover:not(:disabled) {
     border-color: $accent-muted;
   }
+
+  &:disabled {
+    cursor: wait;
+  }
+
+  &.switching {
+    border-color: rgba(var(--accent-primary-rgb), 0.45);
+    background: rgba(var(--accent-primary-rgb), 0.06);
+  }
+}
+
+.model-trigger-spinner,
+.model-status-spinner,
+.model-switch-spinner {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(var(--accent-primary-rgb), 0.2);
+  border-top-color: $accent-primary;
+  border-radius: 50%;
+  animation: model-selection-spin 0.75s linear infinite;
+}
+
+.model-trigger-spinner {
+  width: 12px;
+  height: 12px;
+}
+
+.model-selection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.18);
+  border-radius: $radius-sm;
+  background: rgba(var(--accent-primary-rgb), 0.06);
+  color: $text-secondary;
+  font-size: 12px;
+
+  &.error {
+    border-color: rgba(var(--error-rgb), 0.28);
+    background: rgba(var(--error-rgb), 0.08);
+    color: $error;
+  }
+}
+
+@keyframes model-selection-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .model-name {
@@ -435,6 +554,18 @@ async function handleRefresh() {
   &.active {
     color: $accent-primary;
     font-weight: 500;
+  }
+
+  &.busy {
+    cursor: wait;
+    opacity: 0.62;
+  }
+
+  &.switching {
+    opacity: 1;
+    color: $accent-primary;
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    box-shadow: inset 2px 0 0 $accent-primary;
   }
 
   &.disabled {

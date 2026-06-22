@@ -251,6 +251,35 @@ describe('chat store session.command fanout', () => {
     expect(store.isStreaming).toBe(false)
   })
 
+  it('sends the session model on every non-coding-agent run', async () => {
+    const store = useChatStore()
+    const session = makeSession()
+    session.source = 'cli'
+    session.messageCount = 3
+    session.model = 'glm-5.2'
+    session.provider = 'zai'
+    store.sessions = [session]
+    store.activeSessionId = 'session-1'
+    store.activeSession = session
+
+    await store.sendMessage('use the session model')
+
+    expect(chatApi.startRunViaSocket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: 'use the session model',
+        session_id: 'session-1',
+        source: 'cli',
+        model: 'glm-5.2',
+        provider: 'zai',
+      }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      undefined,
+      expect.any(Object),
+    )
+  })
+
   it('adds and switches to a branched child session from session.command branch events', async () => {
     const store = useChatStore()
     const session = makeSession()

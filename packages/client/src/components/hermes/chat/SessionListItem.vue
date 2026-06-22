@@ -42,6 +42,11 @@ const profileHasModels = computed(() => {
 const profileModelsMissing = computed(() =>
   appStore.profileModelGroups.length > 0 && !profileHasModels.value,
 )
+const sessionModelLabel = computed(() => {
+  const model = props.session.model?.trim()
+  if (!model) return ''
+  return appStore.displayModelName(model, props.session.provider)
+})
 const isGlobalAgentSession = computed(() => props.session.source === 'global_agent')
 const sessionAgentLogo = computed(() => {
   if (props.session.source === 'coding_agent') {
@@ -157,6 +162,9 @@ onUnmounted(() => {
         <span v-if="props.showProfile" class="session-item-profile">
           <ProfileAvatar class="session-item-profile-avatar" :name="profileName" :avatar="profileAvatar" :size="16" />
           <span class="session-item-profile-name">{{ profileName }}</span>
+        </span>
+        <span v-if="sessionModelLabel" class="session-item-model" :title="sessionModelLabel">
+          {{ sessionModelLabel }}
         </span>
       </span>
     </div>
@@ -356,6 +364,28 @@ onUnmounted(() => {
   font-size: 11px;
   line-height: 16px;
   color: var(--text-muted);
+}
+
+.session-item-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 125px;
+  padding: 1px 6px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.16);
+  border-radius: 999px;
+  background: rgba(var(--accent-primary-rgb), 0.07);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
+}
+
+.session-item.active .session-item-model {
+  border-color: rgba(var(--accent-primary-rgb), 0.24);
+  background: rgba(var(--accent-primary-rgb), 0.1);
+  color: var(--accent-primary);
 }
 
 .session-item-warning {

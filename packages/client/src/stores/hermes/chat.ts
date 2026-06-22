@@ -2037,10 +2037,10 @@ export const useChatStore = defineStore('chat', () => {
         profile: sessionProfile,
         model: sessionSource === 'coding_agent'
           ? (codingAgentMode === 'global' ? undefined : sessionModel || undefined)
-          : shouldSendInitialSessionConfig ? sessionModel || undefined : undefined,
+          : sessionModel || undefined,
         provider: sessionSource === 'coding_agent'
           ? (codingAgentMode === 'global' ? undefined : sessionProvider || undefined)
-          : shouldSendInitialSessionConfig ? sessionProvider || undefined : undefined,
+          : sessionProvider || undefined,
         model_groups: runModelGroups.map(group => ({
           provider: group.provider,
           models: group.models,

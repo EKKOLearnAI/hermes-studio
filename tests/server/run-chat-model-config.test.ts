@@ -28,7 +28,7 @@ describe('run chat model config', () => {
     expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
-  it('keeps an existing session model ahead of a requested model', async () => {
+  it('uses the requested model ahead of a stale session model', async () => {
     const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
 
     const result = await resolveBridgeRunModelConfig({
@@ -43,7 +43,7 @@ describe('run chat model config', () => {
       ],
     })
 
-    expect(result).toEqual({ model: 'claude-sonnet-4.5', provider: 'anthropic' })
+    expect(result).toEqual({ model: 'gpt-5.2', provider: 'openai' })
     expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
@@ -74,13 +74,25 @@ describe('run chat model config', () => {
     expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to the profile default when the candidate model is unavailable', async () => {
+  it('keeps an explicit session model even when it is missing from the loaded model groups', async () => {
     const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',
-      requestedModel: 'missing-model',
-      requestedProvider: 'openai',
+      sessionModel: 'claude-opus-4-8',
+      sessionProvider: 'anthropic',
+      modelGroups: [{ provider: 'openai', models: ['gpt-5.2'] }],
+    })
+
+    expect(result).toEqual({ model: 'claude-opus-4-8', provider: 'anthropic' })
+    expect(readConfigYamlForProfileMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the profile default only when no explicit model/provider exists', async () => {
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+
+    const result = await resolveBridgeRunModelConfig({
+      profile: 'default',
       modelGroups: [{ provider: 'openai', models: ['gpt-5.2'] }],
     })
 

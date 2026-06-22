@@ -7,6 +7,7 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => ({
     profileModelGroups: [],
+    displayModelName: (model: string) => (model === 'gpt-test' ? 'GPT Test Alias' : model),
   }),
 }))
 
@@ -69,6 +70,26 @@ describe('SessionListItem', () => {
     const link = wrapper.get('a.session-item')
     expect(link.attributes('href')).toBe('/session/s1')
     expect(wrapper.find('button.session-item').exists()).toBe(false)
+  })
+
+  it('renders the session model alias in the sidebar row', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: false,
+        canDelete: true,
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const model = wrapper.get('.session-item-model')
+    expect(model.text()).toBe('GPT Test Alias')
+    expect(model.attributes('title')).toBe('GPT Test Alias')
   })
 
   it('renders selectable mode as a button and does not expose row href', () => {

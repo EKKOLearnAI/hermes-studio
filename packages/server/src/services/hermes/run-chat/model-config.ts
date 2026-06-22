@@ -22,12 +22,6 @@ async function resolveDefaultModelConfig(profile: string): Promise<{ model: stri
   }
 }
 
-function hasModelInGroups(groups: RunModelGroup[] | undefined, provider: string, model: string): boolean {
-  if (!groups?.length || !provider || !model) return false
-  const group = groups.find(item => item.provider === provider)
-  return Array.isArray(group?.models) && group.models.includes(model)
-}
-
 export async function resolveBridgeRunModelConfig(options: {
   profile: string
   sessionModel?: string | null
@@ -40,12 +34,9 @@ export async function resolveBridgeRunModelConfig(options: {
   const sessionProvider = String(options.sessionProvider || '').trim()
   const requestedModel = String(options.requestedModel || '').trim()
   const requestedProvider = String(options.requestedProvider || '').trim()
-  const candidateModel = sessionModel || requestedModel
-  const candidateProvider = sessionProvider || requestedProvider
-  const hasGroups = Array.isArray(options.modelGroups) && options.modelGroups.length > 0
-  const candidateAvailable = hasGroups && hasModelInGroups(options.modelGroups, candidateProvider, candidateModel)
-  const shouldUseDefault = !candidateModel || !candidateProvider || (hasGroups && !candidateAvailable)
-  return shouldUseDefault
+  const candidateModel = requestedModel || sessionModel
+  const candidateProvider = requestedProvider || sessionProvider
+  return !candidateModel || !candidateProvider
     ? resolveDefaultModelConfig(options.profile)
     : { model: candidateModel, provider: runtimeProvider(candidateProvider) }
 }
