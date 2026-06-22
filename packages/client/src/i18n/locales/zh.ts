@@ -186,6 +186,7 @@ export default {
     history: '历史',
     jobs: '任务',
     kanban: '看板',
+    workflow: '工作流',
     models: '模型',
     profiles: '用户',
     plugins: '插件',
@@ -606,6 +607,58 @@ export default {
     resumeSpeech: '继续',
     stopSpeech: '停止',
     speechNotSupported: '此浏览器不支持语音播放',
+  },
+
+  workflow: {
+    title: '工作流',
+    actions: {
+      addNode: '添加节点',
+      reset: '重置',
+      deleteNode: '删除节点',
+      deleteEdge: '删除连接线',
+    },
+    node: {
+      agent: 'Agent',
+      model: '模型',
+      input: '输入',
+      promptPlaceholder: '描述这个 Agent 要做什么...',
+    },
+    inspector: {
+      selected: '选中节点',
+      none: '未选择节点',
+    },
+    stats: {
+      nodes: '节点',
+      edges: '连线',
+    },
+    agents: {
+      planner: '规划',
+      researcher: '研究',
+      builder: '执行',
+      reviewer: '审查',
+    },
+    models: {
+      default: '默认模型',
+      fast: '快速模型',
+      reasoning: '推理模型',
+    },
+    initialNodes: {
+      node1: '节点 1',
+      node2: '节点 2',
+      node3: '节点 3',
+      plan: '规划',
+      execute: '执行',
+      review: '审查',
+    },
+    initialPrompts: {
+      node1: '输入这个节点的内容。',
+      node2: '输入这个节点的内容。',
+      node3: '输入这个节点的内容。',
+      plan: '把需求拆成可执行步骤。',
+      execute: '执行实现步骤并产出结果。',
+      review: '审查产出质量并识别后续工作。',
+    },
+    newNodeTitle: '节点 {count}',
   },
 
   // 看板

@@ -112,6 +112,7 @@ export default {
     history: 'История',
     jobs: 'Задачи',
     kanban: 'Канбан',
+    workflow: 'Рабочий процесс',
     models: 'Модели',
     profiles: 'Пользователи',
     plugins: 'Плагины',
@@ -510,6 +511,59 @@ export default {
     resumeSpeech: 'Продолжить',
     stopSpeech: 'Остановить',
     speechNotSupported: 'Этот браузер не поддерживает воспроизведение речи',
+  },
+
+
+  workflow: {
+    title: 'Рабочий процесс',
+    actions: {
+      addNode: 'Добавить узел',
+      reset: 'Сбросить',
+      deleteNode: 'Удалить узел',
+      deleteEdge: 'Удалить соединение',
+    },
+    node: {
+      agent: 'Agent',
+      model: 'Модель',
+      input: 'Ввод',
+      promptPlaceholder: 'Опишите, что должен сделать этот Agent...',
+    },
+    inspector: {
+      selected: 'Выбранный узел',
+      none: 'Узел не выбран',
+    },
+    stats: {
+      nodes: 'Узлы',
+      edges: 'Связи',
+    },
+    agents: {
+      planner: 'Planner',
+      researcher: 'Researcher',
+      builder: 'Builder',
+      reviewer: 'Reviewer',
+    },
+    models: {
+      default: 'Модель по умолчанию',
+      fast: 'Быстрая модель',
+      reasoning: 'Модель рассуждений',
+    },
+    initialNodes: {
+      node1: 'Node 1',
+      node2: 'Node 2',
+      node3: 'Node 3',
+      plan: 'Plan',
+      execute: 'Execute',
+      review: 'Review',
+    },
+    initialPrompts: {
+      node1: 'Введите данные для этого узла.',
+      node2: 'Введите данные для этого узла.',
+      node3: 'Введите данные для этого узла.',
+      plan: 'Разбейте запрос на выполнимые шаги.',
+      execute: 'Выполните шаги реализации и создайте артефакты.',
+      review: 'Проверьте качество результата и определите дальнейшую работу.',
+    },
+    newNodeTitle: 'Node {count}',
   },
 
 

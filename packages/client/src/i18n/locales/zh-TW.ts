@@ -186,6 +186,7 @@ export default {
     history: '歷史',
     jobs: '任務',
     kanban: '看板',
+    workflow: '工作流',
     models: '模型',
     profiles: '使用者',
     plugins: '插件',
@@ -606,6 +607,58 @@ export default {
     setModel: '設定模型',
     newCliChat: '新增 CLI',
     cliEmptyState: '開始 CLI 對話',
+  },
+
+  workflow: {
+    title: '工作流',
+    actions: {
+      addNode: '新增節點',
+      reset: '重置',
+      deleteNode: '刪除節點',
+      deleteEdge: '刪除連接線',
+    },
+    node: {
+      agent: 'Agent',
+      model: '模型',
+      input: '輸入',
+      promptPlaceholder: '描述這個 Agent 要做什麼...',
+    },
+    inspector: {
+      selected: '選中節點',
+      none: '未選擇節點',
+    },
+    stats: {
+      nodes: '節點',
+      edges: '連線',
+    },
+    agents: {
+      planner: '規劃',
+      researcher: '研究',
+      builder: '執行',
+      reviewer: '審查',
+    },
+    models: {
+      default: '預設模型',
+      fast: '快速模型',
+      reasoning: '推理模型',
+    },
+    initialNodes: {
+      node1: '節點 1',
+      node2: '節點 2',
+      node3: '節點 3',
+      plan: '規劃',
+      execute: '執行',
+      review: '審查',
+    },
+    initialPrompts: {
+      node1: '輸入這個節點的內容。',
+      node2: '輸入這個節點的內容。',
+      node3: '輸入這個節點的內容。',
+      plan: '把需求拆成可執行步驟。',
+      execute: '執行實作步驟並產出結果。',
+      review: '審查產出品質並識別後續工作。',
+    },
+    newNodeTitle: '節點 {count}',
   },
 
   // 看板

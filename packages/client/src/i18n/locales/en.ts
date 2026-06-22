@@ -186,6 +186,7 @@ export default {
     history: 'History',
     jobs: 'Jobs',
     kanban: 'Kanban',
+    workflow: 'Workflow',
     models: 'Models',
     profiles: 'Profiles',
     skills: 'Skills',
@@ -606,6 +607,58 @@ export default {
     resumeSpeech: 'Resume',
     stopSpeech: 'Stop',
     speechNotSupported: 'Voice playback not supported in this browser',
+  },
+
+  workflow: {
+    title: 'Workflow',
+    actions: {
+      addNode: 'Add Node',
+      reset: 'Reset',
+      deleteNode: 'Delete Node',
+      deleteEdge: 'Delete Connection',
+    },
+    node: {
+      agent: 'Agent',
+      model: 'Model',
+      input: 'Input',
+      promptPlaceholder: 'Describe what this agent should do...',
+    },
+    inspector: {
+      selected: 'Selected Node',
+      none: 'No node selected',
+    },
+    stats: {
+      nodes: 'Nodes',
+      edges: 'Links',
+    },
+    agents: {
+      planner: 'Planner',
+      researcher: 'Researcher',
+      builder: 'Builder',
+      reviewer: 'Reviewer',
+    },
+    models: {
+      default: 'Default Model',
+      fast: 'Fast Model',
+      reasoning: 'Reasoning Model',
+    },
+    initialNodes: {
+      node1: 'Node 1',
+      node2: 'Node 2',
+      node3: 'Node 3',
+      plan: 'Plan',
+      execute: 'Execute',
+      review: 'Review',
+    },
+    initialPrompts: {
+      node1: 'Enter this node input.',
+      node2: 'Enter this node input.',
+      node3: 'Enter this node input.',
+      plan: 'Break the request into actionable steps.',
+      execute: 'Run the implementation steps and produce artifacts.',
+      review: 'Review output quality and identify follow-up work.',
+    },
+    newNodeTitle: 'Node {count}',
   },
 
   // Kanban

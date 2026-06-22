@@ -119,6 +119,16 @@ function openVersionManagement() {
             </svg>
             <span>{{ t("sidebar.kanban") }}</span>
           </RouteLinkItem>
+          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.workflow' }" :active="selectedKey === 'hermes.workflow'">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="12" r="3" />
+              <circle cx="19" cy="6" r="3" />
+              <circle cx="19" cy="18" r="3" />
+              <path d="M8 12h3a4 4 0 0 0 4-4V6" />
+              <path d="M8 12h3a4 4 0 0 1 4 4v2" />
+            </svg>
+            <span>{{ t("sidebar.workflow") }}</span>
+          </RouteLinkItem>
           <RouteLinkItem class="nav-item" :to="{ name: 'hermes.channels' }" :active="selectedKey === 'hermes.channels'">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
