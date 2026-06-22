@@ -91,6 +91,18 @@ export async function updateProfileAvatar(name: string, avatar: ProfileAvatar): 
   return res.avatar
 }
 
+export async function updateProfileModel(name: string, model: string, provider?: string): Promise<boolean> {
+  try {
+    await request(`/api/hermes/profiles/${encodeURIComponent(name)}/model`, {
+      method: 'PUT',
+      body: JSON.stringify({ default: model, provider }),
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function deleteProfileAvatar(name: string): Promise<void> {
   await request(`/api/hermes/profiles/${encodeURIComponent(name)}/avatar`, { method: 'DELETE' })
 }

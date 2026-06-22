@@ -7750,6 +7750,60 @@
         ]
       }
     },
+    "/api/hermes/profiles/{name}/model": {
+      "put": {
+        "tags": [
+          "Profiles"
+        ],
+        "summary": "Update model",
+        "description": "PUT /api/hermes/profiles/:name/model",
+        "operationId": "updateModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "default": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hermes/profiles/{name}/rename": {
       "post": {
         "tags": [

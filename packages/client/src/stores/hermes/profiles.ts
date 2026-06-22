@@ -84,6 +84,15 @@ export const useProfilesStore = defineStore('profiles', () => {
     return saved
   }
 
+  async function updateProfileModel(name: string, model: string, provider?: string) {
+    const ok = await profilesApi.updateProfileModel(name, model, provider)
+    if (ok) {
+      delete detailMap.value[name]
+      await fetchHermesProfiles()
+    }
+    return ok
+  }
+
   async function deleteAvatar(name: string) {
     await profilesApi.deleteProfileAvatar(name)
     profiles.value = profiles.value.map(profile => (
@@ -186,6 +195,7 @@ export const useProfilesStore = defineStore('profiles', () => {
     exportProfile,
     importProfile,
     updateAvatar,
+    updateProfileModel,
     deleteAvatar,
     clearAllSessionCaches,
   }
