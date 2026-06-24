@@ -1839,6 +1839,12 @@ export default {
 
   // 변경 이력
   changelog: {
+    new_0_6_20_1: 'Workflow가 정식으로 제공됩니다: Agent node를 만들고 graph로 연결한 뒤 Workflow 페이지에서 전체 flow를 실행할 수 있습니다',
+    new_0_6_20_2: 'Workflow run은 run record, graph snapshot, node session, live node status, failure reason, run stop/delete action을 저장합니다',
+    new_0_6_20_3: 'Workflow 보기와 편집은 run history, read-only snapshot, node chat session review, 더 큰 connection handle, create-workflow-first guard로 더 완성되었습니다',
+    new_0_6_20_4: 'Desktop은 오래된 executable path를 고정하지 않고 AGENT_BROWSER_HOME에서 agent-browser가 Chrome을 찾도록 하며 patch integrity guard와 browser stdout fix도 포함합니다',
+    new_0_6_20_5: '지원되는 desktop platform의 packaged browser runtime은 Chrome for Testing 149.0.7827.55로 고정되어 runtime browser regression을 피합니다',
+    new_0_6_20_6: 'ESP32와 Xiao Fang He는 tutorial link 업데이트, 밝은 배경 badge 표시, Windows 호환 flow animation을 개선했습니다',
     new_0_6_19_1: '이번 릴리스는 0.6.18 이후 병합된 16개 PR을 포함하며 UI에서 보이는 디바이스, 음성, Coding Agent, 설정 경험을 개선합니다',
     new_0_6_19_2: 'Coding Agent session에서 model을 전환할 수 있으며 새 session은 global default model을 올바르게 따릅니다',
     new_0_6_19_3: 'MCU 상호작용은 시작 시 Wi-Fi/boot debounce, 대상 디바이스로만 audio 전송, hardware double-click clear 및 interrupt 개선으로 더 안정적입니다',

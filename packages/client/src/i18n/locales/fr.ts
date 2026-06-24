@@ -1840,6 +1840,12 @@ jobTriggered: 'Job declenche',
 
   // Journal des modifications
   changelog: {
+    new_0_6_20_1: 'Workflow est maintenant disponible: creez des nodes Agent, connectez-les en graphe et lancez le flow complet depuis la page Workflow',
+    new_0_6_20_2: 'Les workflow runs conservent run records, graph snapshots, sessions par node, live node status, raisons d echec et actions stop/delete',
+    new_0_6_20_3: 'La vue et l edition workflow sont plus completes avec run history, snapshots read-only, consultation des chats par node, handles plus grands et garde create-workflow-first',
+    new_0_6_20_4: 'Le desktop laisse agent-browser resoudre Chrome depuis AGENT_BROWSER_HOME au lieu de figer un executable path obsolete, avec guards d integrite des patches et fixes stdout navigateur',
+    new_0_6_20_5: 'Les browser runtimes packages fixent Chrome for Testing 149.0.7827.55 sur les plateformes desktop supportees pour eviter les regressions runtime browser',
+    new_0_6_20_6: 'ESP32 et Xiao Fang He gagnent des liens tutoriel mis a jour, un badge plus lisible sur fond clair et une animation de flux compatible Windows',
     new_0_6_19_1: 'Cette version inclut 16 PR depuis 0.6.18 et ameliore les experiences visibles de device, voice, Coding Agent et settings',
     new_0_6_19_2: 'Les sessions Coding Agent peuvent changer de modele, et les nouvelles sessions suivent maintenant correctement le modele global par defaut',
     new_0_6_19_3: 'Les interactions MCU sont plus stables avec le debounce Wi-Fi/boot au demarrage, l audio envoye seulement au device cible et un meilleur double-clic materiel pour vider et interrompre',

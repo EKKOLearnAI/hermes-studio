@@ -2220,6 +2220,12 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_6_20_1: 'Workflow is now online: create agent nodes, connect them into a graph, and run the full flow directly from the Workflow page',
+    new_0_6_20_2: 'Workflow runs now persist records, graph snapshots, per-node sessions, live node status, failure reasons, and run stop/delete actions',
+    new_0_6_20_3: 'Workflow viewing and editing are more complete with run history, read-only snapshots, per-node chat session review, larger connection handles, and a create-workflow-first guard',
+    new_0_6_20_4: 'Desktop launches now let agent-browser resolve Chrome from AGENT_BROWSER_HOME instead of pinning a stale executable path, with patch integrity guards and browser stdout fixes',
+    new_0_6_20_5: 'Packaged browser runtimes now pin Chrome for Testing 149.0.7827.55 on supported desktop platforms to avoid runtime browser regressions',
+    new_0_6_20_6: 'ESP32 and Xiao Fang He details were polished with updated tutorial links, a lighter badge background, and a Windows-compatible flowing badge animation',
     new_0_6_19_1: 'This release includes 16 PRs since 0.6.18, focused on device, voice, Coding Agent, and settings improvements visible in the UI',
     new_0_6_19_2: 'Coding Agent sessions can switch models, and new sessions now correctly follow the global default model',
     new_0_6_19_3: 'MCU interactions are steadier with startup Wi-Fi/boot debounce fixes, audio routed only to the target device, and better hardware double-click clear and interrupt behavior',

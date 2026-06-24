@@ -1839,6 +1839,12 @@ export default {
 
   // 更新履歴
   changelog: {
+    new_0_6_20_1: 'Workflow が正式に利用可能になりました: Agent node を作成し、graph として接続し、Workflow ページから flow 全体を実行できます',
+    new_0_6_20_2: 'Workflow run は run record、graph snapshot、node session、live node status、failure reason、run stop/delete action を保存します',
+    new_0_6_20_3: 'Workflow の表示と編集は、run history、read-only snapshot、node chat session review、大きい connection handle、create-workflow-first guard でより完成しました',
+    new_0_6_20_4: 'Desktop は古い executable path を固定せず、AGENT_BROWSER_HOME から agent-browser が Chrome を解決します。Patch integrity guard と browser stdout fix も追加しました',
+    new_0_6_20_5: '対応 desktop platform の packaged browser runtime は Chrome for Testing 149.0.7827.55 に固定され、runtime browser regression を避けます',
+    new_0_6_20_6: 'ESP32 と Xiao Fang He は tutorial link 更新、light background 用 badge 表示、Windows 互換の flow animation を改善しました',
     new_0_6_19_1: 'このリリースは 0.6.18 以降の 16 件の PR を含み、UI 上で見える device、voice、Coding Agent、settings 体験を改善します',
     new_0_6_19_2: 'Coding Agent session は model を切り替えられ、新しい session は global default model に正しく従います',
     new_0_6_19_3: 'MCU 操作は起動時 Wi-Fi/boot debounce、対象 device のみへの audio 送信、hardware double-click の clear と interrupt 改善で安定しました',

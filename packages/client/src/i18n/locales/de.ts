@@ -1840,6 +1840,12 @@ jobTriggered: 'Job ausgelost',
 
   // Anderungsprotokoll
   changelog: {
+    new_0_6_20_1: 'Workflow ist jetzt verfuegbar: Agent Nodes erstellen, zu einem Graph verbinden und den gesamten Flow direkt auf der Workflow-Seite ausfuehren',
+    new_0_6_20_2: 'Workflow Runs speichern Run Records, Graph Snapshots, Node Sessions, Live Node Status, Fehlergruende sowie Stop- und Delete-Aktionen',
+    new_0_6_20_3: 'Workflow Ansicht und Editing sind kompletter mit Run History, read-only Snapshots, Node Chat Session Review, groesseren Connection Handles und Create-Workflow-First Guard',
+    new_0_6_20_4: 'Desktop-Starts lassen agent-browser Chrome ueber AGENT_BROWSER_HOME aufloesen, statt einen veralteten executable path zu pinnen, inklusive Patch-Integrity Guards und Browser-stdout-Fixes',
+    new_0_6_20_5: 'Browser-Runtimes pinnen Chrome for Testing 149.0.7827.55 auf unterstuetzten Desktop-Plattformen, um Runtime-Browser-Regressionen zu vermeiden',
+    new_0_6_20_6: 'ESP32- und Xiao-Fang-He-Details wurden mit aktualisierten Tutorial-Links, hellerem Badge-Hintergrund und Windows-kompatibler Flow-Animation verbessert',
     new_0_6_19_1: 'Diese Version umfasst 16 PRs seit 0.6.18 und verbessert sichtbar Device-, Voice-, Coding-Agent- und Settings-Erlebnisse',
     new_0_6_19_2: 'Coding-Agent Sessions koennen Modelle wechseln, und neue Sessions folgen nun korrekt dem globalen Default-Modell',
     new_0_6_19_3: 'MCU Interaktionen sind stabiler mit Wi-Fi/boot Debounce beim Start, Audio nur fuer das Zielgeraet und besserem Hardware-Doppelklick zum Leeren und Unterbrechen',
