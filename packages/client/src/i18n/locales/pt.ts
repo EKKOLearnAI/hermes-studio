@@ -2024,6 +2024,7 @@ jobTriggered: 'Job acionado',
     actions: {
       newWorkflow: 'New Workflow',
       addNode: 'Add Node',
+      createWorkflowFirst: 'Please create a workflow first',
       reset: 'Reset',
       startExecution: 'Start Execution',
       executionPending: 'Workflow execution is not connected yet',

@@ -621,6 +621,7 @@ export default {
     actions: {
       newWorkflow: '新增工作流',
       addNode: '新增節點',
+      createWorkflowFirst: '請先建立工作流',
       reset: '重置',
       startExecution: '開始執行',
       executionPending: '工作流執行功能待接入',

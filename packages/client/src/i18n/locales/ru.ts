@@ -526,6 +526,7 @@ export default {
     actions: {
       newWorkflow: 'Новый workflow',
       addNode: 'Добавить узел',
+      createWorkflowFirst: 'Сначала создайте workflow',
       reset: 'Сбросить',
       startExecution: 'Запустить выполнение',
       executionPending: 'Выполнение workflow пока не подключено',

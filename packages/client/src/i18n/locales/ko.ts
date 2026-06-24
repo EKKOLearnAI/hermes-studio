@@ -2023,6 +2023,7 @@ export default {
     actions: {
       newWorkflow: '새 워크플로',
       addNode: '노드 추가',
+      createWorkflowFirst: '먼저 워크플로를 생성하세요',
       reset: '재설정',
       startExecution: '실행 시작',
       executionPending: '워크플로 실행 기능은 아직 연결되지 않았습니다',

@@ -1486,6 +1486,10 @@ function getNextVisibleNodePosition() {
 
 async function addAgentNode() {
   if (selectedWorkflowRunId.value) return
+  if (!activeWorkflowId.value) {
+    message.warning(t('workflow.actions.createWorkflowFirst'))
+    return
+  }
   const id = `agent-${nextNodeIndex.value}`
   nodes.value = [
     ...nodes.value,
